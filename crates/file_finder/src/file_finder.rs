@@ -8,7 +8,7 @@ pub use open_path_prompt::OpenPathDelegate;
 
 use channel::ChannelStore;
 use client::ChannelId;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use editor::Editor;
 use file_icons::FileIcons;
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -116,7 +116,6 @@ impl FileFinder {
         cx: &mut Context<Workspace>,
     ) -> Task<()> {
         let project = workspace.project().read(cx);
-        let fs = project.fs();
 
         let currently_opened_path = workspace.active_item(cx).and_then(|item| {
             let project_path = item.project_path(cx)?;
@@ -131,22 +130,9 @@ impl FileFinder {
             .recent_navigation_history(Some(MAX_RECENT_SELECTIONS), cx)
             .into_iter()
             .filter_map(|(project_path, abs_path)| {
-                if project.entry_for_path(&project_path, cx).is_some() {
-                    return Some(Task::ready(Some(FoundPath::new(project_path, abs_path?))));
-                }
-                let abs_path = abs_path?;
-                if project.is_local() {
-                    let fs = fs.clone();
-                    Some(cx.background_spawn(async move {
-                        if fs.is_file(&abs_path).await {
-                            Some(FoundPath::new(project_path, abs_path))
-                        } else {
-                            None
-                        }
-                    }))
-                } else {
-                    Some(Task::ready(Some(FoundPath::new(project_path, abs_path))))
-                }
+                let path = FoundPath::new(project_path, abs_path?);
+                let is_file = path.is_file(project, cx);
+                Some(cx.background_spawn(async move { is_file.await.then_some(path) }))
             })
             .collect::<Vec<_>>();
         cx.spawn_in(window, async move |workspace, cx| {
@@ -232,6 +218,7 @@ impl FileFinder {
                 picker.set_query(&seed_query, window, cx);
                 picker.select_query(window, cx);
             }
+            picker.delegate.refresh_history(window, cx);
         });
         Self {
             picker,
@@ -426,6 +413,7 @@ pub struct FileFinderDelegate {
     cancel_flag: Arc<AtomicBool>,
     search_in_flight: Arc<AtomicBool>,
     history_items: Vec<FoundPath>,
+    history_refresh: Task<()>,
     separate_history: bool,
     first_update: bool,
     focus_handle: FocusHandle,
@@ -893,6 +881,27 @@ impl FoundPath {
     fn new(project: ProjectPath, absolute: PathBuf) -> Self {
         Self { project, absolute }
     }
+
+    fn is_file(&self, project: &Project, cx: &App) -> Task<bool> {
+        if let Some(entry) = project.entry_for_path(&self.project, cx) {
+            return Task::ready(entry.is_file());
+        }
+        if project.is_local() {
+            let fs = project.fs().clone();
+            let path = self.absolute.clone();
+            cx.background_spawn(async move { fs.is_file(&path).await })
+        } else if project.is_via_remote_server() {
+            let Some(path) = self.absolute.to_str() else {
+                return Task::ready(false);
+            };
+            let resolve_path = project.resolve_abs_path(path, cx);
+            cx.background_spawn(
+                async move { resolve_path.await.is_some_and(|path| path.is_file()) },
+            )
+        } else {
+            Task::ready(true)
+        }
+    }
 }
 
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(100);
@@ -1041,6 +1050,7 @@ impl FileFinderDelegate {
             cancel_flag: Arc::new(AtomicBool::new(false)),
             search_in_flight: Arc::new(AtomicBool::new(false)),
             history_items,
+            history_refresh: Task::ready(()),
             separate_history,
             first_update: true,
             focus_handle: cx.focus_handle(),
@@ -1059,6 +1069,7 @@ impl FileFinderDelegate {
             match event {
                 project::Event::WorktreeUpdatedEntries(_, _) => {
                     file_finder.picker.update(cx, |picker, cx| {
+                        picker.delegate.refresh_history(window, cx);
                         picker.delegate.debounce_next_refresh = true;
                         picker.refresh(window, cx);
                     })
@@ -1072,6 +1083,98 @@ impl FileFinderDelegate {
             };
         })
         .detach();
+    }
+
+    fn refresh_history(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let project = self.project.read(cx);
+        let paths = self
+            .history_items
+            .iter()
+            .chain(self.currently_opened_path.iter())
+            .cloned()
+            .chain(
+                self.selected_matches
+                    .iter()
+                    .filter_map(|entry| match &entry.0 {
+                        Match::History { path, .. } => Some(path.clone()),
+                        Match::Search(path_match) => {
+                            let path =
+                                project_path_for_search_match(&self.project, &path_match.0, cx);
+                            let absolute = project.absolute_path(&path, cx)?;
+                            Some(FoundPath::new(path, absolute))
+                        }
+                        Match::Channel { .. } | Match::CreateNew(_) => None,
+                    }),
+            )
+            .filter(|path| {
+                project
+                    .entry_for_path(&path.project, cx)
+                    .is_none_or(|entry| !entry.is_file())
+            })
+            .map(|path| (path.project.clone(), path))
+            .collect::<HashMap<_, _>>();
+        if paths.is_empty() {
+            self.history_refresh = Task::ready(());
+            return;
+        }
+        let checks = paths
+            .into_values()
+            .map(|path| {
+                let is_file = path.is_file(project, cx);
+                async move { (!is_file.await).then_some(path.project) }
+            })
+            .collect::<Vec<_>>();
+        self.history_refresh = cx.spawn_in(window, async move |picker, cx| {
+            let removed_paths = join_all(checks)
+                .await
+                .into_iter()
+                .flatten()
+                .collect::<HashSet<_>>();
+            if removed_paths.is_empty() {
+                return;
+            }
+            picker
+                .update_in(cx, |picker, window, cx| {
+                    picker.delegate.remove_invalid_paths(&removed_paths, cx);
+                    picker.delegate.debounce_next_refresh = true;
+                    picker.refresh(window, cx);
+                })
+                .ok();
+        });
+    }
+
+    fn remove_invalid_paths(&mut self, removed_paths: &HashSet<ProjectPath>, cx: &App) {
+        let retain_path = |path: &ProjectPath| !removed_paths.contains(path);
+        self.history_items.retain(|path| retain_path(&path.project));
+        if self
+            .currently_opened_path
+            .as_ref()
+            .is_some_and(|path| !retain_path(&path.project))
+        {
+            self.currently_opened_path = None;
+        }
+
+        let project = &self.project;
+        let retain_match = |entry: &Match| match entry {
+            Match::History { path, .. } => retain_path(&path.project),
+            Match::Search(path_match) => {
+                retain_path(&project_path_for_search_match(project, &path_match.0, cx))
+            }
+            Match::Channel { .. } | Match::CreateNew(_) => true,
+        };
+        self.selected_matches.retain(|entry| retain_match(&entry.0));
+
+        let mut index = 0;
+        let mut selected_index = self.selected_index;
+        self.matches.matches.retain(|entry| {
+            let retain = retain_match(entry);
+            if !retain && index < self.selected_index {
+                selected_index -= 1;
+            }
+            index += 1;
+            retain
+        });
+        self.selected_index = selected_index.min(self.matches.len().saturating_sub(1));
     }
 
     fn prepend_selected_matches(&mut self) {
