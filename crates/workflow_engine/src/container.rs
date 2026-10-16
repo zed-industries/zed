@@ -221,12 +221,12 @@ async fn execute_until(
     let deadline = timeout.map(|d| tokio::time::Instant::now() + d);
 
     for iteration in 0..limit.count {
-        if let Some(deadline) = deadline {
-            if tokio::time::Instant::now() >= deadline {
-                return Err(format!(
-                    "{action_id}: timed out after {iteration} iteration(s) without \"until\" becoming truthy"
-                ));
-            }
+        if let Some(deadline) = deadline
+            && tokio::time::Instant::now() >= deadline
+        {
+            return Err(format!(
+                "{action_id}: timed out after {iteration} iteration(s) without \"until\" becoming truthy"
+            ));
         }
 
         let result = run_level(body, ctx, |id, a, c| {

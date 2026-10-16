@@ -81,11 +81,11 @@ pub fn paint_edges(state: &FlowState, origin: (f32, f32), window: &mut Window) {
         }
 
         let color: Background = if edge.selected {
-            selected_color.clone()
+            selected_color
         } else if let Some(c) = edge.color {
             gpui::rgb(c).into()
         } else {
-            edge_color.clone()
+            edge_color
         };
         let stroke = edge.stroke_width.unwrap_or(2.0);
 
@@ -110,7 +110,7 @@ pub fn paint_edges(state: &FlowState, origin: (f32, f32), window: &mut Window) {
                 );
 
                 if let Ok(path) = builder.build() {
-                    window.paint_path(path, color.clone());
+                    window.paint_path(path, color);
                 }
 
                 // Draw arrowhead at target
@@ -133,7 +133,7 @@ pub fn paint_edges(state: &FlowState, origin: (f32, f32), window: &mut Window) {
                 builder.line_to(pt(straight.target.0, straight.target.1));
 
                 if let Ok(path) = builder.build() {
-                    window.paint_path(path, color.clone());
+                    window.paint_path(path, color);
                 }
 
                 paint_arrowhead(
@@ -176,7 +176,7 @@ pub fn paint_edges(state: &FlowState, origin: (f32, f32), window: &mut Window) {
                 }
 
                 if let Ok(path) = builder.build() {
-                    window.paint_path(path, color.clone());
+                    window.paint_path(path, color);
                 }
 
                 paint_arrowhead(window, origin, scale, last.0, last.1, prev.0, prev.1, color);

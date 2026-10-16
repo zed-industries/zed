@@ -76,17 +76,12 @@ impl HandleDef {
 }
 
 /// Background grid pattern style.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum BackgroundPattern {
+    #[default]
     Dots,
     Lines,
     Cross,
-}
-
-impl Default for BackgroundPattern {
-    fn default() -> Self {
-        BackgroundPattern::Dots
-    }
 }
 
 /// The visual type and parameters of an edge.

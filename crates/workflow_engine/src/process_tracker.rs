@@ -174,10 +174,10 @@ impl ProcessRegistry {
     pub fn list(&self) -> Vec<ProcessInfo> {
         let mut entries = self.entries.lock().unwrap();
         for entry in entries.values_mut() {
-            if entry.info.status == ProcessStatus::Running {
-                if let Ok(Some(exit_status)) = entry.child.try_wait() {
-                    entry.info.status = ProcessStatus::Exited(exit_status.code().unwrap_or(-1));
-                }
+            if entry.info.status == ProcessStatus::Running
+                && let Ok(Some(exit_status)) = entry.child.try_wait()
+            {
+                entry.info.status = ProcessStatus::Exited(exit_status.code().unwrap_or(-1));
             }
         }
         let mut infos: Vec<ProcessInfo> = entries.values().map(|e| e.info.clone()).collect();
@@ -231,6 +231,10 @@ impl ProcessRegistry {
 }
 
 #[cfg(target_os = "windows")]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "waits for taskkill, which returns at once; `stop` is not called on the UI thread"
+)]
 fn kill_process_tree(pid: u32) {
     use std::os::windows::process::CommandExt;
     let mut c = std::process::Command::new("taskkill.exe");
@@ -243,6 +247,10 @@ fn kill_process_tree(pid: u32) {
 /// way), so a negative id signals the whole group. A process that already
 /// exited leaves no group, and `start_kill` in `stop` covers what is left.
 #[cfg(not(target_os = "windows"))]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "waits for kill, which returns at once; `stop` is not called on the UI thread"
+)]
 fn kill_process_tree(pid: u32) {
     let _ = std::process::Command::new("kill")
         .args(["-9", "--", &format!("-{pid}")])

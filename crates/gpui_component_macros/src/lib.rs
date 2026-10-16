@@ -62,7 +62,7 @@ fn pascal_case(filename: &str) -> String {
     filename
         .strip_suffix(".svg")
         .unwrap_or(filename)
-        .split(|c: char| c == '-' || c == '_' || c == '.')
+        .split(['-', '_', '.'])
         .filter(|part| !part.is_empty())
         .map(|word| {
             let mut chars = word.chars();

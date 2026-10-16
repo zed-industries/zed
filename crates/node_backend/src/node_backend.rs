@@ -53,6 +53,13 @@ pub fn write_file(path: String, content: String) -> Result<(), String> {
 /// the file selected (`explorer /select,<path>`); the `CREATE_NO_WINDOW` flag
 /// prevents a console flash. On other platforms it opens the parent
 /// directory.
+///
+/// Starts the file manager without waiting for it, but starting a process can
+/// still take a moment: call it from a background thread.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "doesn't wait for the file manager; callers run it off the UI thread"
+)]
 pub fn reveal_in_explorer(path: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
@@ -195,6 +202,13 @@ pub fn scan_node_projects(root: &str, depth: usize) -> Vec<DetectedNodeProject> 
 /// Run a command that might be a `.cmd` shim, returning its captured stdout
 /// (or stderr when stdout is empty). Falls back to `cmd /C` on Windows so
 /// npm-installed `.cmd` CLIs resolve through PATHEXT.
+///
+/// Blocks until the command exits: only reached through `query_runtime`,
+/// whose callers run it on background threads.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "blocking by design; only called from background threads"
+)]
 fn run_captured(exe: &str, args: &[&str]) -> Result<String, String> {
     let mut c = gpui_util::new_std_command(exe);
     c.args(args);

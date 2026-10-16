@@ -1068,7 +1068,7 @@ impl FlowGraph {
                 height: px(border),
             },
         );
-        window.paint_quad(fill(top, border_color.clone()));
+        window.paint_quad(fill(top, border_color));
         // Bottom
         let bottom = Bounds::new(
             Point::new(px(x), px(y + h - border)),
@@ -1077,7 +1077,7 @@ impl FlowGraph {
                 height: px(border),
             },
         );
-        window.paint_quad(fill(bottom, border_color.clone()));
+        window.paint_quad(fill(bottom, border_color));
         // Left
         let left = Bounds::new(
             Point::new(px(x), px(y)),
@@ -1086,7 +1086,7 @@ impl FlowGraph {
                 height: px(h),
             },
         );
-        window.paint_quad(fill(left, border_color.clone()));
+        window.paint_quad(fill(left, border_color));
         // Right
         let right = Bounds::new(
             Point::new(px(x + w - border), px(y)),
@@ -1170,7 +1170,7 @@ impl FlowGraph {
         h.move_to(Point::new(px(cx - half + pad), px(cy)));
         h.line_to(Point::new(px(cx + half - pad), px(cy)));
         if let Ok(path) = h.build() {
-            window.paint_path(path, line_color.clone());
+            window.paint_path(path, line_color);
         }
         let mut v = PathBuilder::stroke(px(stroke));
         v.move_to(Point::new(px(cx), px(cy - half + pad)));
@@ -1507,7 +1507,6 @@ impl Render for FlowGraph {
             )
             // Mouse down on empty space → start panning, deselect, or edge selection
             .on_mouse_down(MouseButton::Left, {
-                let entity_id = entity_id;
                 let canvas_origin_for_left_click = self.canvas_origin.clone();
                 move |event, _window, cx| {
                     let mouse_pos = event.position;
@@ -1617,7 +1616,6 @@ impl Render for FlowGraph {
             })
             // Global mouse move → handle dragging, panning, or connecting
             .on_mouse_move({
-                let entity_id = entity_id;
                 let canvas_origin_for_mouse_move = self.canvas_origin.clone();
                 let hover_edges = self.on_edge_insert.is_some();
                 move |event, _window, cx| {
@@ -1759,7 +1757,6 @@ impl Render for FlowGraph {
             })
             // Global mouse up → end dragging, panning, or cancel connection
             .on_mouse_up(MouseButton::Left, {
-                let entity_id = entity_id;
                 let on_connection_drop = on_connection_drop.clone();
                 move |_event, _window, cx| {
                     let mut changed = false;
@@ -1840,7 +1837,6 @@ impl Render for FlowGraph {
             })
             // Keyboard shortcuts (delete, undo/redo)
             .on_key_down({
-                let entity_id = entity_id;
                 let focus = self.focus_handle.clone();
                 move |event: &KeyDownEvent, window, cx| {
                     let key: &str = event.keystroke.key.as_ref();
