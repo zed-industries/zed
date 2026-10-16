@@ -17,12 +17,14 @@ use std::process::{Command, Stdio};
 use semver::{Version, VersionReq};
 
 mod engines;
+mod package_manager;
 mod path_env;
 
 pub use engines::{
     EngineCompat, NodeRequirement, RequirementCheck, Verdict, engine_compat, node_requirement,
     npm_range_matches,
 };
+pub use package_manager::{Detected, Detection, PackageManager, Source, detect, is_available};
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -73,26 +75,6 @@ pub enum UpdateKind {
     Major,
     /// Target is the current
     Current,
-}
-
-/// Which package manager a project signals via its lockfile.
-#[derive(serde::Serialize, Clone, Copy, PartialEq, Eq, Debug)]
-pub enum PackageManager {
-    Npm,
-    Yarn,
-    Pnpm,
-    Bun,
-}
-
-impl PackageManager {
-    pub fn cli_name(self) -> &'static str {
-        match self {
-            PackageManager::Npm => "npm",
-            PackageManager::Yarn => "yarn",
-            PackageManager::Pnpm => "pnpm",
-            PackageManager::Bun => "bun",
-        }
-    }
 }
 
 // ── Registry data model ───────────────────────────────────────────────
@@ -149,11 +131,13 @@ pub struct NpmPackageDetails {
 /// `path_env::path_with_node`). So this runs under the same Node.js as the
 /// IDE's terminals and scripts. On Windows the child is spawned with
 /// `CREATE_NO_WINDOW` to avoid a console flash.
-pub fn run_npm_cli(
-    project_root: &str,
-    cli_name: &str,
-    args: &[String],
-) -> Result<String, String> {
+///
+/// Blocks until the CLI exits: every caller runs it on a background thread.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "blocking by design; only called from background threads"
+)]
+pub fn run_npm_cli(project_root: &str, cli_name: &str, args: &[String]) -> Result<String, String> {
     let make_command = |exe: &str, run_args: &[String]| {
         let mut command = Command::new(exe);
         command
@@ -205,10 +189,7 @@ pub fn run_npm_cli(
     let code = output.status.code().unwrap_or(-1);
     if code > 1 {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let mut msg = format!(
-            "`{cli_name} {}` exited with {code:?}",
-            args.join(" "),
-        );
+        let mut msg = format!("`{cli_name} {}` exited with {code:?}", args.join(" "),);
         if !stderr.trim().is_empty() {
             msg.push_str(&format!("\n{stderr}"));
         }
@@ -217,21 +198,27 @@ pub fn run_npm_cli(
     Ok(stdout)
 }
 
-/// Determines the lockfile-driven package manager for `project_root`,
-/// defaulting to npm when nothing (or only `package-lock.json`) exists.
+/// The package manager of the project in `project_root`, always one answer:
+/// [`detect`] limited to that folder, as this has always looked only there.
+/// Lock files of more than one kind give the first of pnpm, Yarn, Bun, npm,
+/// the order this used to check them in.
+///
+/// A default for callers that can't ask (the Package Manager tab's initial
+/// choice, the package lists); an explicit choice is the caller's to keep.
 pub fn detect_package_manager(project_root: &str) -> PackageManager {
     let dir = std::path::Path::new(project_root);
-    for (file, mgr) in [
-        ("pnpm-lock.yaml", PackageManager::Pnpm),
-        ("yarn.lock", PackageManager::Yarn),
-        ("bun.lockb", PackageManager::Bun),
-        ("bun.lock", PackageManager::Bun),
-    ] {
-        if dir.join(file).exists() {
-            return mgr;
-        }
+    match detect(dir, Some(dir)) {
+        Detection::Found(detected) => detected.manager,
+        Detection::Ambiguous(candidates) => [
+            PackageManager::Pnpm,
+            PackageManager::Yarn,
+            PackageManager::Bun,
+            PackageManager::Npm,
+        ]
+        .into_iter()
+        .find(|manager| candidates.contains(manager))
+        .unwrap_or(PackageManager::Npm),
     }
-    PackageManager::Npm
 }
 
 /// Lists installed packages (`npm ls --json --depth 0`), returned as tagged
@@ -331,12 +318,10 @@ pub fn parse_installed(raw: &str) -> Result<Vec<NpmInstalledPkg>, String> {
             });
         }
     } else {
-        return Err(
-            "npm ls output had neither 'dependencies' nor 'packages'".to_string(),
-        );
+        return Err("npm ls output had neither 'dependencies' nor 'packages'".to_string());
     }
 
-    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out.sort_by_key(|a| a.name.to_lowercase());
     Ok(out)
 }
 
@@ -346,7 +331,9 @@ pub fn parse_installed(raw: &str) -> Result<Vec<NpmInstalledPkg>, String> {
 pub fn parse_outdated(raw: &str) -> Result<Vec<NpmOutdatedPkg>, String> {
     let json: serde_json::Value =
         serde_json::from_str(raw).map_err(|e| format!("cannot parse npm outdated output: {e}"))?;
-    let Ok(obj) = json.as_object().ok_or_else(|| "npm outdated returned no object".to_string())
+    let Ok(obj) = json
+        .as_object()
+        .ok_or_else(|| "npm outdated returned no object".to_string())
     else {
         return Ok(Vec::new());
     };
@@ -409,8 +396,13 @@ pub fn parse_audit(raw: &str) -> Result<Vec<NpmAuditVuln>, String> {
                 .map(|v| {
                     (
                         v.get("title").and_then(|t| t.as_str()).unwrap_or(""),
-                        v.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string(),
-                        v.get("exploitability").and_then(|e| e.as_u64()).map(|e| e as u8),
+                        v.get("url")
+                            .and_then(|u| u.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        v.get("exploitability")
+                            .and_then(|e| e.as_u64())
+                            .map(|e| e as u8),
                     )
                 })
                 .unwrap_or(("", String::new(), None));
@@ -505,10 +497,7 @@ pub fn parse_npm_search(json: &serde_json::Value) -> (Vec<NpmSearchResult>, usiz
             });
         }
     }
-    let total = json
-        .get("total")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as usize;
+    let total = json.get("total").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
     let count = out.len();
     (out, total.max(count))
 }
@@ -532,9 +521,7 @@ pub fn parse_npm_packument(json: &serde_json::Value) -> Result<NpmPackageDetails
         .unwrap_or("")
         .to_string();
 
-    let latest = json
-        .get("versions")
-        .and_then(|v| v.get(&version));
+    let latest = json.get("versions").and_then(|v| v.get(&version));
     let description = latest
         .and_then(|v| v.get("description"))
         .or_else(|| json.get("description"))
@@ -582,10 +569,12 @@ pub fn parse_npm_packument(json: &serde_json::Value) -> Result<NpmPackageDetails
             });
         }
     }
-    versions.sort_by(|a, b| match (Version::parse(&a.version), Version::parse(&b.version)) {
-        (Ok(va), Ok(vb)) => vb.cmp(&va),
-        _ => b.version.cmp(&a.version),
-    });
+    versions.sort_by(
+        |a, b| match (Version::parse(&a.version), Version::parse(&b.version)) {
+            (Ok(va), Ok(vb)) => vb.cmp(&va),
+            _ => b.version.cmp(&a.version),
+        },
+    );
 
     Ok(NpmPackageDetails {
         name,
@@ -623,7 +612,11 @@ pub fn peer_conflicts_with_installed(
         .filter(|(name, range)| {
             installed.iter().find(|p| &p.name == name).is_some_and(|p| {
                 VersionReq::parse(range)
-                    .map(|req| !req.matches(&Version::parse(&p.version).unwrap_or_else(|_| Version::new(0, 0, 0))))
+                    .map(|req| {
+                        !req.matches(
+                            &Version::parse(&p.version).unwrap_or_else(|_| Version::new(0, 0, 0)),
+                        )
+                    })
                     .unwrap_or(false)
             })
         })
@@ -637,7 +630,11 @@ pub fn peer_conflicts_with_installed(
 pub fn classify_update(current: &str, latest: &str) -> UpdateKind {
     let (Ok(cur), Ok(latest)) = (Version::parse(current), Version::parse(latest)) else {
         // Non-semver tags (git deps, URLs): out-of-spec → treat as major-range.
-        return if current == latest { UpdateKind::Current } else { UpdateKind::Major };
+        return if current == latest {
+            UpdateKind::Current
+        } else {
+            UpdateKind::Major
+        };
     };
     if cur == latest {
         return UpdateKind::Current;
@@ -670,10 +667,7 @@ pub fn version_matches_all(version: &str, ranges: &[String]) -> bool {
 /// Compatibility of a dep version chosen for install against the locked
 /// peer-dependency ranges in the tree. Returns the list of peer range
 /// descriptions that *would* break at `candidate`.
-pub fn peer_conflicts_for(
-    candidate: &str,
-    peer_dep_ranges: &[(String, String)],
-) -> Vec<String> {
+pub fn peer_conflicts_for(candidate: &str, peer_dep_ranges: &[(String, String)]) -> Vec<String> {
     let candidate_ver = Version::parse(candidate).unwrap_or_else(|_| Version::new(0, 0, 0));
     peer_dep_ranges
         .iter()
@@ -685,7 +679,6 @@ pub fn peer_conflicts_for(
         .map(|(pkg, range)| format!("{pkg}@{range}"))
         .collect()
 }
-
 
 /// Best-effort version of the active node/npm, parsing the `vX.Y.Z` prefix
 /// out of their `--version` output.
@@ -783,7 +776,10 @@ mod tests {
                 ("zod", "3.23.8", false),
             ]
         );
-        assert_eq!(packages[0].path.as_deref(), Some("/app/node_modules/@types/node"));
+        assert_eq!(
+            packages[0].path.as_deref(),
+            Some("/app/node_modules/@types/node")
+        );
         assert_eq!(packages[3].path, None);
     }
 
@@ -821,7 +817,11 @@ mod tests {
     fn installed_rejects_unrecognized_output() {
         assert!(parse_installed(r#"{"name":"app"}"#).is_err());
         assert!(parse_installed("npm ERR! something").is_err());
-        assert!(parse_installed(r#"{"dependencies":{}}"#).unwrap().is_empty());
+        assert!(
+            parse_installed(r#"{"dependencies":{}}"#)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -962,7 +962,8 @@ mod tests {
 
     #[test]
     fn search_total_never_undercounts_the_page() {
-        let json = json!({ "objects": [{ "package": { "name": "a" } }, { "package": { "name": "b" } }] });
+        let json =
+            json!({ "objects": [{ "package": { "name": "a" } }, { "package": { "name": "b" } }] });
         let (results, total) = parse_npm_search(&json);
         assert_eq!(results.len(), 2);
         assert_eq!(total, 2);
@@ -996,15 +997,28 @@ mod tests {
         assert_eq!(details.version, "10.0.0");
         assert_eq!(details.description.as_deref(), Some("latest description"));
         assert_eq!(details.license.as_deref(), Some("MIT"));
-        assert_eq!(details.homepage.as_deref(), Some("https://example.test/widget"));
+        assert_eq!(
+            details.homepage.as_deref(),
+            Some("https://example.test/widget")
+        );
         assert_eq!(details.readme.as_deref(), Some("# Widget"));
         assert_eq!(details.weekly_downloads, None);
 
         // Semver order, not string order: 10.0.0 sorts above 9.0.0.
-        let versions: Vec<_> = details.versions.iter().map(|v| v.version.as_str()).collect();
+        let versions: Vec<_> = details
+            .versions
+            .iter()
+            .map(|v| v.version.as_str())
+            .collect();
         assert_eq!(versions, vec!["10.0.0", "9.0.0", "2.5.0"]);
-        assert_eq!(details.versions[0].peer_deps, peers(&[("react", "^18.0.0")]));
-        assert_eq!(details.versions[1].peer_deps, peers(&[("react", "^17.0.0")]));
+        assert_eq!(
+            details.versions[0].peer_deps,
+            peers(&[("react", "^18.0.0")])
+        );
+        assert_eq!(
+            details.versions[1].peer_deps,
+            peers(&[("react", "^17.0.0")])
+        );
         assert!(details.versions[2].peer_deps.is_empty());
     }
 
@@ -1019,7 +1033,10 @@ mod tests {
         });
         let details = parse_npm_packument(&json).unwrap();
         assert_eq!(details.version, "1.0.0");
-        assert_eq!(details.description.as_deref(), Some("top-level description"));
+        assert_eq!(
+            details.description.as_deref(),
+            Some("top-level description")
+        );
         assert_eq!(details.license.as_deref(), Some("Apache-2.0"));
         assert_eq!(details.readme, None);
         assert!(details.versions.is_empty());
@@ -1035,7 +1052,10 @@ mod tests {
 
     #[test]
     fn weekly_downloads() {
-        assert_eq!(parse_npm_downloads(&json!({ "downloads": 98765, "package": "x" })), Some(98765));
+        assert_eq!(
+            parse_npm_downloads(&json!({ "downloads": 98765, "package": "x" })),
+            Some(98765)
+        );
         assert_eq!(parse_npm_downloads(&json!({ "error": "not found" })), None);
     }
 
@@ -1047,7 +1067,10 @@ mod tests {
         assert_eq!(node_engine_compatible("16.20.0", ">=18"), Some(false));
         // npm's own syntax: alternatives and space-separated conditions.
         assert_eq!(node_engine_compatible("20.11.0", "^18 || ^20"), Some(true));
-        assert_eq!(node_engine_compatible("22.22.3", ">=18.17.1 <19.0.0"), Some(false));
+        assert_eq!(
+            node_engine_compatible("22.22.3", ">=18.17.1 <19.0.0"),
+            Some(false)
+        );
         // Unknown rather than a guess when either side can't be read.
         assert_eq!(node_engine_compatible("v20", ">=18"), None);
         assert_eq!(node_engine_compatible("20.11.0", "lts/iron"), None);
@@ -1055,7 +1078,10 @@ mod tests {
 
     #[test]
     fn peer_conflicts_against_installed_packages() {
-        let tree = [installed("react", "18.2.0"), installed("weird", "not-semver")];
+        let tree = [
+            installed("react", "18.2.0"),
+            installed("weird", "not-semver"),
+        ];
         let conflicts = peer_conflicts_with_installed(
             &peers(&[
                 ("react", "^17.0.0"),
@@ -1079,7 +1105,11 @@ mod tests {
 
     #[test]
     fn version_must_match_every_parseable_range() {
-        let ranges = vec!["^18.0.0".to_string(), ">=18.2".to_string(), "workspace:*".to_string()];
+        let ranges = vec![
+            "^18.0.0".to_string(),
+            ">=18.2".to_string(),
+            "workspace:*".to_string(),
+        ];
         assert!(version_matches_all("18.2.0", &ranges));
         assert!(!version_matches_all("18.1.0", &ranges));
         assert!(!version_matches_all("latest", &ranges));
@@ -1096,23 +1126,34 @@ mod tests {
 
     #[test]
     fn classify_update_non_semver() {
-        assert_eq!(classify_update("github:user/repo", "github:user/repo"), UpdateKind::Current);
-        assert_eq!(classify_update("github:user/repo", "1.0.0"), UpdateKind::Major);
+        assert_eq!(
+            classify_update("github:user/repo", "github:user/repo"),
+            UpdateKind::Current
+        );
+        assert_eq!(
+            classify_update("github:user/repo", "1.0.0"),
+            UpdateKind::Major
+        );
     }
-
 
     #[test]
     fn version_from_cli_output() {
         assert_eq!(version_from_output("v20.11.0\n"), "20.11.0");
         assert_eq!(version_from_output("10.2.4"), "10.2.4");
         assert_eq!(version_from_output("npm 10.2.4 on win32"), "10.2.4");
-        assert_eq!(version_from_output("  command not found  "), "command not found");
+        assert_eq!(
+            version_from_output("  command not found  "),
+            "command not found"
+        );
     }
 
     #[test]
     fn has_vuln_matches_by_package_name() {
         let audit = parse_audit(r#"{"vulnerabilities":{"lodash":{"severity":"high"}}}"#).unwrap();
-        assert!(has_vuln(&["react".to_string(), "lodash".to_string()], &audit));
+        assert!(has_vuln(
+            &["react".to_string(), "lodash".to_string()],
+            &audit
+        ));
         assert!(!has_vuln(&["react".to_string()], &audit));
         assert!(!has_vuln(&[], &audit));
     }

@@ -41,7 +41,9 @@ fn expand_env_vars(input: &str) -> String {
 #[cfg(target_os = "windows")]
 fn read_env_path(key: &windows_registry::Key) -> Option<String> {
     let val = key.get_string("Path").ok()?;
-    if val.is_empty() { return None; }
+    if val.is_empty() {
+        return None;
+    }
     Some(expand_env_vars(&val))
 }
 
@@ -51,7 +53,9 @@ fn dedupe_path(path: &str) -> String {
     let mut out: Vec<String> = Vec::new();
     for part in path.split(';') {
         let part = part.trim();
-        if part.is_empty() { continue; }
+        if part.is_empty() {
+            continue;
+        }
         let key = part.to_lowercase();
         if !seen.contains(&key) {
             seen.push(key);
@@ -77,9 +81,7 @@ pub fn merged_path() -> Option<String> {
         Err(_) => log::debug!("npm_backend: cannot open HKCU Environment"),
     }
 
-    match LOCAL_MACHINE
-        .open(r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment")
-    {
+    match LOCAL_MACHINE.open(r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment") {
         Ok(env_key) => {
             if let Some(val) = read_env_path(&env_key) {
                 parts.push(val);
@@ -91,7 +93,11 @@ pub fn merged_path() -> Option<String> {
     }
 
     let merged = dedupe_path(&parts.join(";"));
-    if merged.is_empty() { None } else { Some(merged) }
+    if merged.is_empty() {
+        None
+    } else {
+        Some(merged)
+    }
 }
 
 #[cfg(not(target_os = "windows"))]

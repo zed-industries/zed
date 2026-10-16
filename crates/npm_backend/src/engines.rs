@@ -105,7 +105,8 @@ fn condition_to_semver(condition: &str) -> Option<String> {
     // `18`, `18.17`, `18.x`, `18.17.*`: everything below the given parts.
     let given = parts.iter().take_while(|part| !wildcard(part)).count();
     if given < 3 {
-        if !parts[..given].iter().all(numeric) || parts[given..].iter().any(|part| !wildcard(part)) {
+        if !parts[..given].iter().all(numeric) || parts[given..].iter().any(|part| !wildcard(part))
+        {
             return None;
         }
         if given == 0 {
@@ -235,7 +236,9 @@ pub fn engine_compat(project: &Path, node_version: &str, npm_version: &str) -> E
     EngineCompat {
         node: check(
             node_version,
-            node_requirement.as_ref().map(|requirement| requirement.range.as_str()),
+            node_requirement
+                .as_ref()
+                .map(|requirement| requirement.range.as_str()),
         ),
         npm: check(npm_version, npm_range.as_deref()),
         node_requirement,
@@ -283,17 +286,16 @@ impl EngineCompat {
             )),
             _ => None,
         };
-        let verdict = if self.node == RequirementCheck::Mismatch
-            || self.npm == RequirementCheck::Mismatch
-        {
-            Verdict::Problem
-        } else if self.node == RequirementCheck::Unreadable
-            || self.npm == RequirementCheck::Unreadable
-        {
-            Verdict::Unknown
-        } else {
-            Verdict::Fine
-        };
+        let verdict =
+            if self.node == RequirementCheck::Mismatch || self.npm == RequirementCheck::Mismatch {
+                Verdict::Problem
+            } else if self.node == RequirementCheck::Unreadable
+                || self.npm == RequirementCheck::Unreadable
+            {
+                Verdict::Unknown
+            } else {
+                Verdict::Fine
+            };
         let text = match npm_part {
             Some(npm) => format!("{node_part} \u{2014} {npm}"),
             None => format!("{node_part}  |  npm {}", self.npm_version),
@@ -379,7 +381,11 @@ mod tests {
             ("v20", ">=18", None),
         ];
         for (version, range, expected) in cases {
-            assert_eq!(npm_range_matches(version, range), *expected, "{version} in {range:?}");
+            assert_eq!(
+                npm_range_matches(version, range),
+                *expected,
+                "{version} in {range:?}"
+            );
         }
     }
 
@@ -396,7 +402,10 @@ mod tests {
     #[test]
     fn the_requirement_comes_from_the_first_file_that_states_one() {
         let dir = project(&[
-            ("package.json", r#"{"engines": {"node": ">=22.14.0 < 23.0.0"}}"#),
+            (
+                "package.json",
+                r#"{"engines": {"node": ">=22.14.0 < 23.0.0"}}"#,
+            ),
             (".nvmrc", "# pinned for the team\n\n20\n"),
         ]);
         let requirement = node_requirement(dir.path()).unwrap();
@@ -411,7 +420,10 @@ mod tests {
 
     #[test]
     fn a_parent_folders_requirement_applies_and_says_so() {
-        let dir = project(&[(".node-version", "18.20.4\n"), ("packages/app/package.json", "{}")]);
+        let dir = project(&[
+            (".node-version", "18.20.4\n"),
+            ("packages/app/package.json", "{}"),
+        ]);
         let requirement = node_requirement(&dir.path().join("packages").join("app")).unwrap();
         assert_eq!(requirement.range, "18.20.4");
         assert_eq!(requirement.source, "../../.node-version");
@@ -432,7 +444,12 @@ mod tests {
             "Node.js 22.22.3 isn't supported: this project requires >=18.17.1 <19.0.0 \
              (package.json engines)  |  npm 10.9.9"
         );
-        assert!(check.install_warning().unwrap().contains("requires >=18.17.1 <19.0.0"));
+        assert!(
+            check
+                .install_warning()
+                .unwrap()
+                .contains("requires >=18.17.1 <19.0.0")
+        );
 
         let fits = engine_compat(spfx_120.path(), "18.20.4", "10.8.2");
         assert_eq!(fits.summary().0, Verdict::Fine);
@@ -460,6 +477,11 @@ mod tests {
         let check = engine_compat(old_npm.path(), "22.22.3", "10.9.9");
         assert_eq!(check.npm, RequirementCheck::Mismatch);
         assert_eq!(check.summary().0, Verdict::Problem);
-        assert!(check.install_warning().unwrap().contains("The active npm is 10.9.9"));
+        assert!(
+            check
+                .install_warning()
+                .unwrap()
+                .contains("The active npm is 10.9.9")
+        );
     }
 }
