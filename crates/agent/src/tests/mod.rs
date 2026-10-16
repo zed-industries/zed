@@ -1,10 +1,9 @@
 use super::*;
 use acp_thread::{
     AgentConnection, AgentModelGroupName, AgentModelId, AgentModelList, AgentThreadEntry,
-    ClientUserMessageId, PermissionOptions, ThreadStatus,
+    ClientUserMessageId, PermissionOptions, ProcessOutput, ThreadStatus,
 };
 use agent_client_protocol::schema::MaybeUndefined;
-use agent_client_protocol::schema::v1 as acp;
 use agent_client_protocol::schema::v2 as acp_v2;
 use agent_settings::{AgentProfileId, AgentSettings, AutoCompactThreshold, COMPACTION_PROMPT};
 use anyhow::Result;
@@ -55,7 +54,7 @@ use std::{
 };
 use util::path;
 
-mod test_tools;
+pub(crate) mod test_tools;
 use test_tools::*;
 
 /// Returns the fake provider that serves the registry's default model.
@@ -76,8 +75,8 @@ pub(crate) struct FakeTerminalHandle {
     killed: Arc<AtomicBool>,
     stopped_by_user: Arc<AtomicBool>,
     exit_sender: std::cell::RefCell<Option<futures::channel::oneshot::Sender<()>>>,
-    wait_for_exit: Shared<Task<acp::TerminalExitStatus>>,
-    output: acp::TerminalOutputResponse,
+    wait_for_exit: Shared<Task<acp_v2::TerminalExitStatus>>,
+    output: ProcessOutput,
     id: acp_v2::TerminalId,
 }
 
@@ -92,7 +91,7 @@ impl FakeTerminalHandle {
             .spawn(async move |_cx| {
                 // Wait for the exit signal (sent when kill() is called)
                 let _ = exit_receiver.await;
-                acp::TerminalExitStatus::new()
+                acp_v2::TerminalExitStatus::new()
             })
             .shared();
 
@@ -101,7 +100,7 @@ impl FakeTerminalHandle {
             stopped_by_user,
             exit_sender: std::cell::RefCell::new(Some(exit_sender)),
             wait_for_exit,
-            output: acp::TerminalOutputResponse::new("partial output".to_string(), false),
+            output: ProcessOutput::new("partial output".to_string(), false),
             id: acp_v2::TerminalId::new("fake_terminal".to_string()),
         }
     }
@@ -112,7 +111,7 @@ impl FakeTerminalHandle {
         let (exit_sender, _exit_receiver) = futures::channel::oneshot::channel();
 
         let wait_for_exit = cx
-            .spawn(async move |_cx| acp::TerminalExitStatus::new().exit_code(exit_code))
+            .spawn(async move |_cx| acp_v2::TerminalExitStatus::new().exit_code(exit_code))
             .shared();
 
         Self {
@@ -120,12 +119,12 @@ impl FakeTerminalHandle {
             stopped_by_user,
             exit_sender: std::cell::RefCell::new(Some(exit_sender)),
             wait_for_exit,
-            output: acp::TerminalOutputResponse::new("command output".to_string(), false),
+            output: ProcessOutput::new("command output".to_string(), false),
             id: acp_v2::TerminalId::new("fake_terminal".to_string()),
         }
     }
 
-    pub(crate) fn with_output(mut self, output: acp::TerminalOutputResponse) -> Self {
+    pub(crate) fn with_output(mut self, output: ProcessOutput) -> Self {
         self.output = output;
         self
     }
@@ -150,11 +149,11 @@ impl crate::TerminalHandle for FakeTerminalHandle {
         Ok(self.id.clone())
     }
 
-    fn current_output(&self, _cx: &AsyncApp) -> Result<acp::TerminalOutputResponse> {
+    fn current_output(&self, _cx: &AsyncApp) -> Result<ProcessOutput> {
         Ok(self.output.clone())
     }
 
-    fn wait_for_exit(&self, _cx: &AsyncApp) -> Result<Shared<Task<acp::TerminalExitStatus>>> {
+    fn wait_for_exit(&self, _cx: &AsyncApp) -> Result<Shared<Task<acp_v2::TerminalExitStatus>>> {
         Ok(self.wait_for_exit.clone())
     }
 
@@ -230,7 +229,7 @@ impl crate::ThreadEnvironment for FakeThreadEnvironment {
     fn create_terminal(
         &self,
         _command: String,
-        _extra_env: Vec<acp::EnvVariable>,
+        _extra_env: Vec<(String, String)>,
         _cwd: Option<std::path::PathBuf>,
         output_byte_limit: Option<u64>,
         _sandbox_wrap: Option<acp_thread::SandboxWrap>,
@@ -283,7 +282,7 @@ impl crate::ThreadEnvironment for MultiTerminalEnvironment {
     fn create_terminal(
         &self,
         _command: String,
-        _extra_env: Vec<acp::EnvVariable>,
+        _extra_env: Vec<(String, String)>,
         _cwd: Option<std::path::PathBuf>,
         _output_byte_limit: Option<u64>,
         _sandbox_wrap: Option<acp_thread::SandboxWrap>,
@@ -569,6 +568,39 @@ async fn test_thinking_allowed_when_model_cannot_disable_thinking(cx: &mut TestA
     fake.update_model("fake", |model| model.supports_disabling_thinking = false);
     thread.update(cx, |thread, cx| {
         thread.refresh_model(&model.provider_id, cx);
+        let request = thread
+            .build_completion_request(CompletionIntent::UserPrompt, cx)
+            .unwrap();
+        assert!(request.thinking_allowed);
+    });
+
+    // A model-level capability can be overridden by the selected effort.
+    fake.update_model("fake", |model| {
+        model.supported_effort_levels = [
+            language_model::LanguageModelEffortLevel {
+                name: "High".into(),
+                value: "high".into(),
+                is_default: true,
+                supports_disabling_thinking: Some(true),
+            },
+            language_model::LanguageModelEffortLevel {
+                name: "Max".into(),
+                value: "max".into(),
+                is_default: false,
+                supports_disabling_thinking: None,
+            },
+        ]
+        .into();
+    });
+    thread.update(cx, |thread, cx| {
+        thread.refresh_model(&model.provider_id, cx);
+        thread.set_thinking_effort(Some("high".to_string()), cx);
+        let request = thread
+            .build_completion_request(CompletionIntent::UserPrompt, cx)
+            .unwrap();
+        assert!(!request.thinking_allowed);
+
+        thread.set_thinking_effort(Some("max".to_string()), cx);
         let request = thread
             .build_completion_request(CompletionIntent::UserPrompt, cx)
             .unwrap();
@@ -4497,7 +4529,8 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     });
 
     // Test cancel
-    cx.update(|cx| connection.cancel(&session_id, cx));
+    cx.update(|cx| connection.cancel(&session_id, cx))
+        .expect("cancellation succeeds");
     request.await.expect("prompt should fail gracefully");
 
     // Explicitly close the session and drop the ACP thread.
@@ -4505,12 +4538,9 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     release_dropped_entities(cx);
     let result = cx
         .update(|cx| {
-            acp_thread::AgentSessionClientUserMessageIds::prompt(
-                &connection,
-                acp_thread::ClientUserMessageId::new(),
-                acp_v2::PromptRequest::new(session_id.0.clone(), vec!["ghi".into()]),
-                cx,
-            )
+            connection
+                .submit_native(session_id.clone(), Some(vec!["ghi".into()]), cx)
+                .0
         })
         .await;
     assert_eq!(
@@ -5850,7 +5880,9 @@ async fn test_ask_user_elicitation_references_scoped_tool_call_id(cx: &mut TestA
     });
     cx.run_until_parked();
 
-    let send = acp_thread.update(cx, |thread, cx| thread.send_raw("Prompt", cx));
+    let send = cx.update(|cx| {
+        connection.send_and_wait_for_completion(acp_thread.clone(), vec!["Prompt".into()], cx)
+    });
     cx.run_until_parked();
     let ask_user_input = AskUserToolInput {
         question: "Which directory should we explore?".to_string(),
@@ -6054,7 +6086,9 @@ async fn test_subagent_tool_call_end_to_end(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
 
-    let send = acp_thread.update(cx, |thread, cx| thread.send_raw("Prompt", cx));
+    let send = cx.update(|cx| {
+        connection.send_and_wait_for_completion(acp_thread.clone(), vec!["Prompt".into()], cx)
+    });
     cx.run_until_parked();
     let request = fake.pending_completions_for(&model).pop().unwrap();
     fake.send_text(&model, &request, "spawning subagent");
@@ -6194,7 +6228,9 @@ async fn test_subagent_tool_output_does_not_include_thinking(cx: &mut TestAppCon
     });
     cx.run_until_parked();
 
-    let send = acp_thread.update(cx, |thread, cx| thread.send_raw("Prompt", cx));
+    let send = cx.update(|cx| {
+        connection.send_and_wait_for_completion(acp_thread.clone(), vec!["Prompt".into()], cx)
+    });
     cx.run_until_parked();
     let request = fake.pending_completions_for(&model).pop().unwrap();
     fake.send_text(&model, &request, "spawning subagent");
@@ -6351,7 +6387,9 @@ async fn test_subagent_tool_call_cancellation_during_task_prompt(cx: &mut TestAp
     });
     cx.run_until_parked();
 
-    let send = acp_thread.update(cx, |thread, cx| thread.send_raw("Prompt", cx));
+    let send = cx.update(|cx| {
+        connection.send_and_wait_for_completion(acp_thread.clone(), vec!["Prompt".into()], cx)
+    });
     cx.run_until_parked();
     let request = fake.pending_completions_for(&model).pop().unwrap();
     fake.send_text(&model, &request, "spawning subagent");
@@ -6402,7 +6440,10 @@ async fn test_subagent_tool_call_cancellation_during_task_prompt(cx: &mut TestAp
 
     // cx.run_until_parked();
 
-    acp_thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+    acp_thread
+        .update(cx, |thread, cx| thread.cancel(cx))
+        .await
+        .expect("cancellation succeeds");
 
     cx.run_until_parked();
 
@@ -6484,7 +6525,9 @@ async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     // === First turn: create subagent ===
-    let send = acp_thread.update(cx, |thread, cx| thread.send_raw("First prompt", cx));
+    let send = cx.update(|cx| {
+        connection.send_and_wait_for_completion(acp_thread.clone(), vec!["First prompt".into()], cx)
+    });
     cx.run_until_parked();
     let request = fake.pending_completions_for(&model).pop().unwrap();
     fake.send_text(&model, &request, "spawning subagent");
@@ -6554,7 +6597,9 @@ async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
     });
 
     // === Second turn: resume subagent with session_id ===
-    let send2 = acp_thread.update(cx, |thread, cx| thread.send_raw("Follow up", cx));
+    let send2 = cx.update(|cx| {
+        connection.send_and_wait_for_completion(acp_thread.clone(), vec!["Follow up".into()], cx)
+    });
     cx.run_until_parked();
     let request = fake.pending_completions_for(&model).pop().unwrap();
     fake.send_text(&model, &request, "resuming subagent");
@@ -7391,6 +7436,33 @@ async fn test_subagent_compaction_exhausts_transient_retries(cx: &mut TestAppCon
 }
 
 #[gpui::test]
+async fn test_subagent_parent_cancellation_before_acceptance(cx: &mut TestAppContext) {
+    let test = SubagentCompactionTest::new(cx).await;
+    let send = cx.update(|cx| {
+        test.handle
+            .send("subagent task prompt".into(), &cx.to_async())
+    });
+    while test
+        .parent
+        .read_with(cx, |thread, cx| thread.running_subagent_ids(cx).is_empty())
+    {
+        assert!(cx.executor().tick(), "subagent registers with its parent");
+    }
+    assert!(
+        test.thread
+            .read_with(cx, |thread, _| thread.last_user_message_id().is_none())
+    );
+    test.parent.update(cx, |thread, cx| thread.cancel(cx)).await;
+    cx.run_until_parked();
+    assert!(
+        test.fake.pending_completions().is_empty(),
+        "cancelled child must not start a provider request"
+    );
+    assert_eq!(send.await.unwrap_err().to_string(), "User canceled");
+    test.assert_stopped(cx);
+}
+
+#[gpui::test]
 async fn test_subagent_compaction_parent_cancellation(cx: &mut TestAppContext) {
     let test = SubagentCompactionTest::new(cx).await;
     let send = test.send("subagent task prompt", cx);
@@ -7487,7 +7559,9 @@ async fn test_subagent_error_propagation(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     // Start the parent turn
-    let send = acp_thread.update(cx, |thread, cx| thread.send_raw("Prompt", cx));
+    let send = cx.update(|cx| {
+        connection.send_and_wait_for_completion(acp_thread.clone(), vec!["Prompt".into()], cx)
+    });
     cx.run_until_parked();
     let request = fake.pending_completions_for(&model).pop().unwrap();
     fake.send_text(&model, &request, "spawning subagent");

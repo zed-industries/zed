@@ -1,6 +1,7 @@
 use crate::{
     DEFAULT_THREAD_TITLE, SelectPermissionGranularity,
     conversation_view::thread_search_bar::{ThreadSearchBar, ThreadSearchBarEvent},
+    entry_view_state::TERMINAL_CONTENT_TOP_PADDING,
     open_abs_path_at_point, project_path_for_file_link,
     thread_metadata_store::{ThreadId, ThreadMetadataStore},
 };
@@ -454,7 +455,7 @@ fn highlight_code_runs(
 
     let mut runs = Vec::new();
     let mut offset = 0;
-    for (range, highlight_id) in language.highlight_text(&Rope::from(code), 0..code.len()) {
+    for (range, highlight_id) in language.highlight_text(code, 0..code.len()) {
         if range.start > offset {
             runs.push(code_text_style.to_run(range.start - offset));
         }
@@ -1268,6 +1269,14 @@ impl ThreadView {
         self.parent_session_id.is_some()
     }
 
+    fn has_visible_conversation(&self, cx: &App) -> bool {
+        self.generating_indicator_in_list
+            || self.thread.read(cx).entries().iter().any(|entry| {
+                !matches!(entry, AgentThreadEntry::UserMessage(message)
+                    if message.content.source_blocks().is_empty())
+            })
+    }
+
     pub(super) fn can_edit_user_message(&self, index: usize, cx: &App) -> bool {
         let thread = self.thread.read(cx);
         let Some(message) = thread
@@ -1278,6 +1287,7 @@ impl ThreadView {
             return false;
         };
         thread.can_rewind_to(message.client_id.as_ref(), cx)
+            && !message.content.source_blocks().is_empty()
             && message
                 .content
                 .source_blocks()
@@ -1498,6 +1508,15 @@ impl ThreadView {
         cx.notify();
     }
 
+    pub(crate) fn sync_follow_agent_state(&mut self, cx: &mut Context<Self>) {
+        self.should_be_following = self
+            .workspace
+            .update(cx, |workspace, _| {
+                workspace.is_being_followed(CollaboratorId::Agent)
+            })
+            .unwrap_or_default();
+    }
+
     pub(crate) fn report_activity_completion(
         &self,
         stop_reason: &Option<acp_v2::StopReason>,
@@ -1609,6 +1628,13 @@ impl ThreadView {
                         SubmissionState::Accepted { echoed: false, .. } => {
                             ("Waiting for message to appear…".into(), false)
                         }
+                        SubmissionState::Disconnected { receipt: Some(_) } => {
+                            ("Message accepted; agent connection lost".into(), true)
+                        }
+                        SubmissionState::Disconnected { receipt: None } => (
+                            "Connection lost; message acceptance is unknown".into(),
+                            true,
+                        ),
                         SubmissionState::Failed(error) => (
                             format!(
                                 "Message failed to send: {}",
@@ -1624,6 +1650,10 @@ impl ThreadView {
                         submission_id,
                         status,
                         settled,
+                        matches!(
+                            record.state,
+                            SubmissionState::Failed(_) | SubmissionState::Cancelled
+                        ),
                         Itertools::intersperse(Self::submission_text_parts(&record.content), "\n")
                             .flat_map(str::chars)
                             .take(161)
@@ -1637,7 +1667,7 @@ impl ThreadView {
         }
         let rows = submissions
             .into_iter()
-            .map(|(submission_id, status, settled, text)| {
+            .map(|(submission_id, status, settled, restorable, text)| {
                 let preview: SharedString = util::truncate_and_trailoff(&text, 160).into();
                 let row_id = submission_id.as_u64();
                 v_flex()
@@ -1671,7 +1701,7 @@ impl ThreadView {
                                             })),
                                     ),
                             )
-                            .when(settled, |this| {
+                            .when(restorable, |this| {
                                 this.child(
                                     div()
                                         .debug_selector(move || {
@@ -1692,7 +1722,9 @@ impl ThreadView {
                                                 )),
                                         ),
                                 )
-                                .child(
+                            })
+                            .when(settled, |this| {
+                                this.child(
                                     Button::new(("discard-submission", row_id), "Discard")
                                         .label_size(LabelSize::Small)
                                         .on_click(cx.listener(move |this, _, _, cx| {
@@ -2117,12 +2149,7 @@ impl ThreadView {
                 match res {
                     Ok(Some(SubmissionResponse::LegacyCompleted(_))) => {
                         this.current_submission.take();
-                        this.should_be_following = this
-                            .workspace
-                            .update(cx, |workspace, _| {
-                                workspace.is_being_followed(CollaboratorId::Agent)
-                            })
-                            .unwrap_or_default();
+                        this.sync_follow_agent_state(cx);
                     }
                     Ok(Some(SubmissionResponse::Accepted(_))) => {}
                     Ok(None) => {}
@@ -2182,12 +2209,16 @@ impl ThreadView {
         let cancelled = thread.update(cx, |thread, cx| thread.cancel(cx));
 
         cx.spawn_in(window, async move |this, cx| {
-            cancelled.await;
+            if let Err(error) = cancelled.await {
+                this.update(cx, |this, cx| this.handle_thread_error(error, cx))
+                    .log_err();
+                return;
+            }
 
             this.update_in(cx, |this, window, cx| {
                 this.send_impl(message_editor, window, cx);
             })
-            .ok();
+            .log_err();
         })
         .detach();
     }
@@ -2315,9 +2346,19 @@ impl ThreadView {
         self.thread_retry_status.take();
         self.thread_error.take();
         self.message_queue.pause();
-        self._cancel_task = Some(self.thread.update(cx, |thread, cx| thread.cancel(cx)));
+        self._cancel_task = Some(self.cancel_thread(&self.thread, cx));
         self.sync_generating_indicator(cx);
         cx.notify();
+    }
+
+    fn cancel_thread(&self, thread: &Entity<AcpThread>, cx: &mut Context<Self>) -> Task<()> {
+        let cancellation = thread.update(cx, |thread, cx| thread.cancel(cx));
+        cx.spawn(async move |this, cx| {
+            if let Err(error) = cancellation.await {
+                this.update(cx, |this, cx| this.handle_thread_error(error, cx))
+                    .log_err();
+            }
+        })
     }
 
     pub fn retry_generation(&mut self, cx: &mut Context<Self>) {
@@ -2685,14 +2726,12 @@ impl ThreadView {
 
         self.message_editor.focus_handle(cx).focus(window, cx);
 
-        let content = entry.content;
-        let tracked_buffers = entry.tracked_buffers;
-
         // A queued message can itself be a built-in command (e.g. the user typed
         // `/compact` while a turn was generating). Detect that so we run it as a
         // command turn without echoing it as a user message, matching the
         // non-queued path.
-        let is_native_command = content
+        let is_native_command = entry
+            .content
             .first()
             .and_then(|block| match block {
                 acp_v2::ContentBlock::Text(text) => Some(text.text.as_str()),
@@ -2708,8 +2747,16 @@ impl ThreadView {
         let workspace = self.workspace.clone();
 
         let should_be_following = self.should_be_following;
-        let contents_task = cx.spawn_in(window, async move |_this, cx| {
-            cancelled.await;
+        let contents_task = cx.spawn_in(window, async move |this, cx| {
+            if let Err(error) = cancelled.await {
+                this.update(cx, |this, cx| {
+                    this.message_queue.restore_after_failed_send(entry);
+                    this.sync_queue_flag_to_native_thread(cx);
+                    cx.notify();
+                })
+                .log_err();
+                return Err(error);
+            }
             if should_be_following {
                 workspace
                     .update_in(cx, |workspace, window, cx| {
@@ -2718,7 +2765,7 @@ impl ThreadView {
                     .ok();
             }
 
-            Ok(Some((content, tracked_buffers)))
+            Ok(Some((entry.content, entry.tracked_buffers)))
         });
 
         self.send_content(contents_task, is_native_command, window, cx);
@@ -2817,7 +2864,7 @@ impl ThreadView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.list_state.item_count() == 0 {
+        if !self.has_visible_conversation(cx) {
             return;
         }
         self.set_editor_is_expanded(!self.editor_expanded, cx);
@@ -4901,11 +4948,9 @@ impl ThreadView {
                                             .icon_size(IconSize::Small)
                                             .icon_color(Color::Error)
                                             .tooltip(Tooltip::text("Stop Subagent"))
-                                            .on_click(move |_, _, cx| {
-                                                thread.update(cx, |thread, cx| {
-                                                    thread.cancel(cx).detach();
-                                                });
-                                            }),
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.cancel_thread(&thread, cx).detach();
+                                            })),
                                     )
                                 })
                                 .child(
@@ -4947,7 +4992,7 @@ impl ThreadView {
         };
 
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
-        let has_messages = self.list_state.item_count() > 0;
+        let has_messages = self.has_visible_conversation(cx);
         let fills_container = !has_messages || editor_expanded;
         let composer_is_read_only = self.message_editor.read(cx).editor().read(cx).read_only(cx);
         let discard_draft_button = composer_is_read_only.then(|| {
@@ -5137,11 +5182,10 @@ impl ThreadView {
                 let keybinding_size = rems_from_px(12_f32);
                 let steer_on = entry.steer;
 
-                let min_width = rems_from_px(160_f32);
-
                 h_flex()
                     .group("queue_entry")
                     .w_full()
+                    .flex_wrap()
                     .p_1p5()
                     .gap_1()
                     .bg(cx.theme().colors().editor_background)
@@ -5152,6 +5196,7 @@ impl ThreadView {
                     .child(
                         div()
                             .id("next_in_queue")
+                            .flex_none()
                             .child(
                                 Icon::new(IconName::Circle)
                                     .size(IconSize::Small)
@@ -5159,11 +5204,16 @@ impl ThreadView {
                             )
                             .tooltip(Tooltip::text(tooltip_text)),
                     )
-                    .child(editor.clone())
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(rems_from_px(120_f32))
+                            .child(editor.clone()),
+                    )
                     .child(if editor_focused {
                         h_flex()
                             .gap_1()
-                            .min_w(min_width)
+                            .ml_auto()
                             .justify_end()
                             .child(
                                 IconButton::new(("edit", index), IconName::Pencil)
@@ -5207,7 +5257,7 @@ impl ThreadView {
                         h_flex()
                             .when(!is_next, |this| this.visible_on_hover("queue_entry"))
                             .gap_1()
-                            .min_w(min_width)
+                            .ml_auto()
                             .justify_end()
                             .child(
                                 IconButton::new(("delete", index), IconName::Trash)
@@ -5757,35 +5807,40 @@ impl ThreadView {
             return None;
         }
 
-        // A toggle would be dishonest for models that always think: only
-        // offer the effort selector.
-        if !model.supports_disabling_thinking() {
-            let effort_levels = model.supported_effort_levels();
+        let effort_levels = model.supported_effort_levels();
+        let selected_effort = thread.thinking_effort().cloned();
+        let supports_disabling_thinking =
+            model.supports_disabling_thinking_at_effort(selected_effort.as_deref());
+        let supports_disabling_thinking_at_any_effort = supports_disabling_thinking
+            || effort_levels.iter().any(|effort_level| {
+                model.supports_disabling_thinking_at_effort(Some(effort_level.value.as_ref()))
+            });
+
+        // A toggle would be dishonest for models that always think at every
+        // effort level: only offer the effort selector.
+        if !supports_disabling_thinking_at_any_effort {
             if effort_levels.is_empty() {
                 return None;
             }
             return Some(
-                self.render_effort_selector(
-                    effort_levels,
-                    thread.thinking_effort().cloned(),
-                    true,
-                    cx,
-                )
-                .into_any_element(),
+                self.render_effort_selector(effort_levels, selected_effort, true, cx)
+                    .into_any_element(),
             );
         }
 
-        let thinking = thread.thinking_enabled();
+        let thinking = thread.thinking_enabled() || !supports_disabling_thinking;
 
-        let (tooltip_label, icon, color) = if thinking {
+        let (tooltip_label, icon, color) = if !supports_disabling_thinking {
+            (None, IconName::ThinkingMode, Color::Accent)
+        } else if thinking {
             (
-                "Disable Thinking Mode",
+                Some("Disable Thinking Mode"),
                 IconName::ThinkingMode,
                 Color::Accent,
             )
         } else {
             (
-                "Enable Thinking Mode",
+                Some("Enable Thinking Mode"),
                 IconName::ThinkingModeOff,
                 Color::Custom(cx.theme().colors().icon_disabled.opacity(0.8)),
             )
@@ -5796,10 +5851,24 @@ impl ThreadView {
         let thinking_toggle = IconButton::new("thinking-mode", icon)
             .icon_size(IconSize::Small)
             .icon_color(color)
-            .tooltip(move |_, cx| {
-                Tooltip::for_action_in(tooltip_label, &ToggleThinkingMode, &focus_handle, cx)
-            })
-            .on_click(cx.listener(move |this, _, _window, cx| {
+            .map(|this| {
+                if let Some(tooltip_label) = tooltip_label {
+                    this.tooltip(move |_, cx| {
+                        Tooltip::for_action_in(
+                            tooltip_label,
+                            &ToggleThinkingMode,
+                            &focus_handle,
+                            cx,
+                        )
+                    })
+                } else {
+                    this.tooltip(Tooltip::text(
+                        "Thinking is always on at this effort level. Select a lower effort level to make it optional.",
+                    ))
+                }
+            });
+        let thinking_toggle = if supports_disabling_thinking {
+            thinking_toggle.on_click(cx.listener(move |this, _, _window, cx| {
                 if let Some(thread) = this.as_native_thread(cx) {
                     thread.update(cx, |thread, cx| {
                         let enable_thinking = !thread.thinking_enabled();
@@ -5825,23 +5894,21 @@ impl ThreadView {
                         });
                     });
                 }
-            }));
+            }))
+        } else {
+            thinking_toggle.cursor_style(gpui::CursorStyle::Arrow)
+        };
 
-        if model.supported_effort_levels().is_empty() {
+        if effort_levels.is_empty() {
             return Some(thinking_toggle.into_any_element());
         }
 
-        if !model.supported_effort_levels().is_empty() && !thinking {
+        if !thinking {
             return Some(thinking_toggle.into_any_element());
         }
 
         let left_btn = thinking_toggle;
-        let right_btn = self.render_effort_selector(
-            model.supported_effort_levels(),
-            thread.thinking_effort().cloned(),
-            false,
-            cx,
-        );
+        let right_btn = self.render_effort_selector(effort_levels, selected_effort, false, cx);
 
         Some(
             SplitButton::new(left_btn, right_btn.into_any_element())
@@ -6759,6 +6826,9 @@ impl ThreadView {
 
         let primary = match &entry {
             AgentThreadEntry::UserMessage(message) => {
+                if message.content.source_blocks().is_empty() {
+                    return Empty.into_any_element();
+                }
                 let Some(editor) = self
                     .entry_view_state
                     .read(cx)
@@ -7902,7 +7972,7 @@ impl ThreadView {
     }
 
     pub(crate) fn sync_editor_mode(&mut self, cx: &mut Context<Self>) {
-        let has_messages = self.list_state.item_count() > 0;
+        let has_messages = self.has_visible_conversation(cx);
         let v2_empty_state = !has_messages;
 
         if !has_messages {
@@ -8633,11 +8703,9 @@ impl ThreadView {
             .when(is_expanded && terminal_view.is_some(), |this| {
                 this.child(
                     div()
-                        .pt_2()
                         .border_t_1()
                         .when(tool_failed || command_failed, |card| card.border_dashed())
                         .border_color(border_color)
-                        .bg(cx.theme().colors().terminal_background)
                         .rounded_b_md()
                         .text_ui_sm(cx)
                         .h_full()
@@ -8647,7 +8715,10 @@ impl ThreadView {
                                 .content_mode(window, cx)
                                 .is_scrollable()
                             {
-                                div().h_72().child(terminal_view).into_any_element()
+                                div()
+                                    .h(rems(18. + TERMINAL_CONTENT_TOP_PADDING))
+                                    .child(terminal_view)
+                                    .into_any_element()
                             } else {
                                 terminal_view.into_any_element()
                             };
@@ -11605,11 +11676,9 @@ impl ThreadView {
                                         .map(|view| view.read(cx).thread.clone()),
                                     |this, thread| {
                                         this.on_click(cx.listener(
-                                            move |_this, _event, _window, cx| {
+                                            move |this, _event, _window, cx| {
                                                 telemetry::event!("Subagent Stopped");
-                                                thread.update(cx, |thread, cx| {
-                                                    thread.cancel(cx).detach();
-                                                });
+                                                this.cancel_thread(&thread, cx).detach();
                                             },
                                         ))
                                     },
@@ -12961,7 +13030,11 @@ impl ThreadView {
             let Some(model) = thread_ref.model() else {
                 return;
             };
-            if !model.supports_thinking() || !thread_ref.thinking_enabled() {
+            let thinking_enabled = thread_ref.thinking_enabled()
+                || !model.supports_disabling_thinking_at_effort(
+                    thread_ref.thinking_effort().map(String::as_str),
+                );
+            if !model.supports_thinking() || !thinking_enabled {
                 return;
             }
             let effort_levels = model.supported_effort_levels();
@@ -13013,7 +13086,7 @@ impl Render for ThreadView {
         // renders (settings, connection state, feature flags).
         self.sync_local_commands(cx);
 
-        let has_messages = self.list_state.item_count() > 0;
+        let has_messages = self.has_visible_conversation(cx);
         let list_state = self.list_state.clone();
 
         let conversation = v_flex()
@@ -13161,9 +13234,11 @@ impl Render for ThreadView {
                 }
                 if let Some(thread) = this.as_native_thread(cx) {
                     thread.update(cx, |thread, cx| {
-                        let model_allows_disabling = thread
-                            .model()
-                            .is_none_or(|model| model.supports_disabling_thinking());
+                        let model_allows_disabling = thread.model().is_none_or(|model| {
+                            model.supports_disabling_thinking_at_effort(
+                                thread.thinking_effort().map(String::as_str),
+                            )
+                        });
                         if model_allows_disabling {
                             thread.set_thinking_enabled(!thread.thinking_enabled(), cx);
                         }
@@ -13427,7 +13502,7 @@ pub(crate) fn open_link(
                             ));
                             break;
                         }
-                        let paths = if path_style.is_absolute(&path.to_string_lossy())
+                        let paths = if path_style.has_root(&path)
                             || path.starts_with("~")
                         {
                             vec![path]
@@ -13625,7 +13700,7 @@ fn file_link_parts(input: &str, path_style: PathStyle) -> Option<(&str, Option<&
     let (path, fragment) = input
         .split_once('#')
         .map_or((input, None), |(path, fragment)| (path, Some(fragment)));
-    if !path_style.is_absolute(path)
+    if !path_style.has_root(Path::new(path))
         && let Ok(url) = Url::parse(input)
         && (!url.scheme().contains('.')
             || url.path().trim_matches(':').is_empty()
@@ -13644,7 +13719,7 @@ fn file_link_candidates(
     fragment_point: Option<Point>,
     path_style: PathStyle,
 ) -> Vec<(PathBuf, Option<Point>)> {
-    if path_style.is_windows() && path_style.is_absolute(path) {
+    if path_style.is_windows() && path_style.has_root(Path::new(path)) {
         return [
             MentionUri::parse_hyperlink(path, path_style).ok(),
             MentionUri::parse_hyperlink_literal(path, path_style),
