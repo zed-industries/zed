@@ -1,7 +1,7 @@
 @group(1) @binding(0) var t_instances: texture_2d<u32>;
 
-// Each texel of `t_instances` packs four 32-bit words of instance data. Records
-// are read strictly front to back, so all readers share a cursor that keeps the
+// Each texel of `t_instances` packs four 32-bit words of instance data. Most
+// records are read strictly front to back through a cursor that keeps the
 // most recently fetched texel and only touches the texture again when the next
 // word crosses a texel boundary. This fetches each texel exactly once per
 // record load instead of once per word. The `read_*` functions must therefore
@@ -136,16 +136,57 @@ fn read_transformation(cursor: ptr<function, InstanceCursor>) -> TransformationM
 }
 
 fn load_quad(instance_id: u32) -> Quad {
-    var cursor = instance_cursor(instance_id * 40u);
+    // Keep this fixed-layout decoder explicit. Some WebGL shader compilers fail
+    // to optimize the cursor's branches and dynamic vector indexing for quads.
+    let first_texel_index = instance_id * 10u;
+    let width = textureDimensions(t_instances).x;
+    let texel0 = fetch_instance_texel(first_texel_index, width);
+    let texel1 = fetch_instance_texel(first_texel_index + 1u, width);
+    let texel2 = fetch_instance_texel(first_texel_index + 2u, width);
+    let texel3 = fetch_instance_texel(first_texel_index + 3u, width);
+    let texel4 = fetch_instance_texel(first_texel_index + 4u, width);
+    let texel5 = fetch_instance_texel(first_texel_index + 5u, width);
+    let texel6 = fetch_instance_texel(first_texel_index + 6u, width);
+    let texel7 = fetch_instance_texel(first_texel_index + 7u, width);
+    let texel8 = fetch_instance_texel(first_texel_index + 8u, width);
+    let texel9 = fetch_instance_texel(first_texel_index + 9u, width);
+
+    let values0 = bitcast<vec4<f32>>(texel0);
+    let values1 = bitcast<vec4<f32>>(texel1);
+    let values2 = bitcast<vec4<f32>>(texel2);
+    let values3 = bitcast<vec4<f32>>(texel3);
+    let values4 = bitcast<vec4<f32>>(texel4);
+    let values5 = bitcast<vec4<f32>>(texel5);
+    let values6 = bitcast<vec4<f32>>(texel6);
+    let values7 = bitcast<vec4<f32>>(texel7);
+    let values8 = bitcast<vec4<f32>>(texel8);
+    let values9 = bitcast<vec4<f32>>(texel9);
+
     return Quad(
-        read_word(&cursor),
-        read_word(&cursor),
-        read_bounds(&cursor),
-        read_bounds(&cursor),
-        read_background(&cursor),
-        read_hsla(&cursor),
-        read_corners(&cursor),
-        read_edges(&cursor),
+        texel0.x,
+        texel0.y,
+        Bounds(values0.zw, values1.xy),
+        Bounds(values1.zw, values2.xy),
+        Background(
+            texel2.z,
+            texel2.w,
+            Hsla(values3.x, values3.y, values3.z, values3.w),
+            values4.x,
+            array<LinearColorStop, 2>(
+                LinearColorStop(
+                    Hsla(values4.y, values4.z, values4.w, values5.x),
+                    values5.y,
+                ),
+                LinearColorStop(
+                    Hsla(values5.z, values5.w, values6.x, values6.y),
+                    values6.z,
+                ),
+            ),
+            texel6.w,
+        ),
+        Hsla(values7.x, values7.y, values7.z, values7.w),
+        Corners(values8.x, values8.y, values8.z, values8.w),
+        Edges(values9.x, values9.y, values9.z, values9.w),
     );
 }
 

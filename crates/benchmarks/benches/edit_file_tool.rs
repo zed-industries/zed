@@ -16,9 +16,7 @@ use benchmarks::bench_utils::{
     RUST_FUNCTION_BODY_LINES, RUST_FUNCTION_LINES, RUST_MODULE_HEADER_LINES, random_rust_file,
     rust_file_line_count, rust_identifier as identifier,
 };
-use criterion::{
-    BatchSize, BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main,
-};
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use editor::{Editor, EditorStyle};
 use futures::{StreamExt as _, pin_mut, task::noop_waker};
 use gpui::{
@@ -26,12 +24,13 @@ use gpui::{
     UpdateGlobal as _,
 };
 use language::{FakeLspAdapter, rust_lang};
-use language_model::fake_provider::FakeLanguageModel;
+use language_model::LanguageModelRegistry;
 use project::{FakeFs, Project};
 use prompt_store::ProjectContext;
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use serde_json::{Value, json};
 use settings::{Settings as _, SettingsStore};
+use std::hint::black_box;
 use ui::IntoElement as _;
 
 const SEED: u64 = 0x5EED_5EED;
@@ -206,7 +205,7 @@ async fn setup_editor_and_tool(cx: &mut TestAppContext, file_text: String) -> Ha
 
     let context_server_registry =
         cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
-    let model = Arc::new(FakeLanguageModel::default());
+    let model = cx.update(|cx| LanguageModelRegistry::test(cx).model("fake"));
     let thread = cx.new(|cx| {
         Thread::new(
             project.clone(),
