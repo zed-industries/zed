@@ -20,7 +20,7 @@ The panel is a stack of collapsible sections:
 | --- | --- |
 | Node Versions | Lists installed Node.js versions; switch, install or uninstall |
 | Projects | Every directory with a `package.json` under the workspace; pick the active one |
-| Quick Actions | Common commands for the active project, plus **Package Manager** and **Task Chain** |
+| Quick Actions | **Install** with the project's own package manager, **Task Chain** and **Package Manager** |
 | Packages | Installed dependencies |
 | Outdated | Packages with newer versions, with **Update all (patch)** / **Update all (minor)** |
 | Vulnerabilities | `npm audit` findings for the active project |
@@ -98,6 +98,15 @@ is opened after the panel, the panel moves to it.
 
 Useful to know:
 
+- **Install** runs the selected project's own package manager: `npm`, `yarn`,
+  `pnpm` or `bun install`, decided by the `packageManager` field in
+  `package.json`, else its lock file, looked for up to the workspace root (a
+  pnpm or Yarn workspace keeps it there); npm when there is neither. The
+  button says which, as **Install (pnpm)**. With lock files of more than one
+  kind it asks which to use, for that install only. When the tool isn't on
+  the `PATH` the install would get, the button shows a warning and suggests
+  `corepack enable` (Yarn, pnpm); nothing is installed for you. Scripts are
+  run from the **Scripts** section, which lists the ones the project has.
 - Running a script or quick action sends the command to the **Script Runner**
   panel, which opens and streams the output. It runs under the Node.js
   version described above.

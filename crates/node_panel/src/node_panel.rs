@@ -38,11 +38,13 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Result;
+use db::kvp::KeyValueStore;
+use flows_panel::FlowsPanel;
 use gpui::{
     Action, AnchoredPositionMode, AnyElement, App, AppContext as _, AsyncApp, AsyncWindowContext,
     Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, InteractiveElement as _,
-    IntoElement, ParentElement as _, Pixels, PromptLevel, Render, StatefulInteractiveElement as _, Styled as _,
-    Subscription, WeakEntity, Window, actions, anchored, deferred, div, point,
+    IntoElement, ParentElement as _, Pixels, PromptLevel, Render, StatefulInteractiveElement as _,
+    Styled as _, Subscription, WeakEntity, Window, actions, anchored, deferred, div, point,
     prelude::FluentBuilder as _, px, relative, svg,
 };
 use gpui_component::{
@@ -61,19 +63,18 @@ use node_backend::{
     DetectedNodeProject, query_runtime, read_text_file, reveal_in_explorer, scan_node_projects,
     write_file,
 };
+pub use node_panel_settings::NodePanelSettings;
 use node_versions::{ChoiceSource, NodeChoice, NodeVersion, ProjectNode};
 use npm_backend::{
-    NodeRequirement, NpmAuditVuln, NpmInstalledPkg, NpmOutdatedPkg, UpdateKind, classify_update,
+    Detected, Detection, NodeRequirement, NpmAuditVuln, NpmInstalledPkg, NpmOutdatedPkg,
+    PackageManager, Source as PackageManagerSource, UpdateKind, classify_update,
     detect_package_manager, list_audit_vulns, list_installed, list_outdated, node_requirement,
     npm_range_matches,
 };
-use flows_panel::FlowsPanel;
+use runtime_processes::ProcessList;
 use script_runner_panel::ScriptRunnerPanel;
 use script_runner_panel::command::{check_package_name, check_script_name};
-use db::kvp::KeyValueStore;
 use serde::Deserialize;
-use runtime_processes::ProcessList;
-pub use node_panel_settings::NodePanelSettings;
 use settings::{DockSide, Settings as _};
 use workspace::{
     Workspace,
@@ -259,6 +260,10 @@ pub struct NodePanel {
     /// (pinned, or by the project) but isn't installed.
     choice_source: ChoiceSource,
     choice_missing: Option<String>,
+    /// The selected project's package manager, which Install runs, and
+    /// those of its candidates that aren't on the `PATH` it would run with.
+    package_manager: Detection,
+    unavailable_managers: Vec<PackageManager>,
     /// The Node.js already on this machine's `PATH`, whoever put it there.
     /// Shown as the "System" entry; `None` when there isn't one.
     system_node_ver: Option<String>,
@@ -596,6 +601,8 @@ impl NodePanel {
                 node_choice: NodeChoice::Auto,
                 choice_source: ChoiceSource::Default,
                 choice_missing: None,
+                package_manager: npm_default(),
+                unavailable_managers: Vec::new(),
                 system_node_ver: None,
                 project_node: ProjectNode::default(),
                 project_requirement: None,
@@ -762,7 +769,9 @@ impl NodePanel {
         let kvp = KeyValueStore::global(cx);
         cx.background_spawn(async move {
             if let Ok(json) = serde_json::to_string(&sections) {
-                kvp.write_kvp(OPEN_SECTIONS_KEY.to_string(), json).await.ok();
+                kvp.write_kvp(OPEN_SECTIONS_KEY.to_string(), json)
+                    .await
+                    .ok();
             }
         })
         .detach();
@@ -901,7 +910,7 @@ impl NodePanel {
         // `PATH` itself (`ide_env`), as it does for everything it runs, so
         // `node`, `npm` and anything they start resolve to it.
         cx.spawn(async move |_, cx: &mut AsyncApp| {
-            let _ = cx.update(|app| {
+            cx.update(|app| {
                 script_runner.update(app, |panel, cx| {
                     panel.run_external(command, cwd, cx);
                 });
@@ -923,18 +932,16 @@ impl NodePanel {
             let projects = cx
                 .background_spawn(async move { scan_node_projects(&root, 0) })
                 .await;
-            let _ = cx.update(|app| {
+            cx.update(|app| {
                 if let Some(panel) = this.upgrade() {
-                    let _ = panel.update(app, |panel, cx| {
+                    panel.update(app, |panel, cx| {
                         panel.scanning = false;
                         panel.projects = projects;
                         // Keep the current selection across rescans; only
                         // (re)select when it's empty or the project it pointed
                         // at disappeared (e.g. a scaffold removed it).
-                        let selection_still_exists = panel
-                            .selected_project
-                            .as_ref()
-                            .is_some_and(|selected| {
+                        let selection_still_exists =
+                            panel.selected_project.as_ref().is_some_and(|selected| {
                                 panel.projects.iter().any(|p| &p.path == selected)
                             });
                         if !selection_still_exists {
@@ -964,18 +971,20 @@ impl NodePanel {
     /// pending task, and the last one to survive the debounce reruns
     /// `scan_projects`.
     fn schedule_project_rescan(&mut self, cx: &mut Context<Self>) {
-        self._rescan_task = Some(cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
-            cx.background_executor()
-                .timer(Duration::from_millis(500))
-                .await;
-            let _ = cx.update(|app| {
-                if let Some(panel) = this.upgrade() {
-                    let _ = panel.update(app, |panel, cx| {
-                        panel.scan_projects(cx);
-                    });
-                }
-            });
-        }));
+        self._rescan_task = Some(cx.spawn(
+            async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+                cx.background_executor()
+                    .timer(Duration::from_millis(500))
+                    .await;
+                cx.update(|app| {
+                    if let Some(panel) = this.upgrade() {
+                        panel.update(app, |panel, cx| {
+                            panel.scan_projects(cx);
+                        });
+                    }
+                });
+            },
+        ));
     }
 
     /// Whether a changed worktree-relative path (`/`-separated) sits directly
@@ -995,23 +1004,27 @@ impl NodePanel {
     /// Debounced like `schedule_project_rescan`, and skipped while a bulk
     /// update is streaming so it can't race the `run_subscription` reload.
     fn schedule_data_reload(&mut self, cx: &mut Context<Self>) {
-        self._data_reload_task =
-            Some(cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+        self._data_reload_task = Some(cx.spawn(
+            async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
                 cx.background_executor()
                     .timer(Duration::from_millis(500))
                     .await;
-                let _ = cx.update(|app| {
+                cx.update(|app| {
                     if let Some(panel) = this.upgrade() {
-                        let _ = panel.update(app, |panel, cx| {
+                        panel.update(app, |panel, cx| {
                             if panel.running_action.is_some() {
                                 return;
                             }
                             panel.load_scripts(cx);
                             panel.reload_package_data(cx);
+                            // A new lock file or `packageManager` field
+                            // changes what Install runs.
+                            panel.refresh_runtime_versions(cx);
                         });
                     }
                 });
-            }));
+            },
+        ));
     }
 
     fn load_scripts(&mut self, cx: &mut Context<Self>) {
@@ -1023,9 +1036,9 @@ impl NodePanel {
             let result = cx
                 .background_spawn(async move { read_text_file(pkg_path) })
                 .await;
-            let _ = cx.update(|app| {
+            cx.update(|app| {
                 if let Some(panel) = this.upgrade() {
-                    let _ = panel.update(app, |panel, cx| {
+                    panel.update(app, |panel, cx| {
                         panel.scripts = result.ok().and_then(|raw| {
                             let json: serde_json::Value = serde_json::from_str(&raw).ok()?;
                             let obj = json.get("scripts")?.as_object()?;
@@ -1079,9 +1092,9 @@ impl NodePanel {
                     )
                 })
                 .await;
-            let _ = cx.update(|app| {
+            cx.update(|app| {
                 if let Some(panel) = this.upgrade() {
-                    let _ = panel.update(app, |panel, cx| {
+                    panel.update(app, |panel, cx| {
                         panel.load_scripts(cx);
                     });
                 }
@@ -1111,9 +1124,9 @@ impl NodePanel {
                     )
                 })
                 .await;
-            let _ = cx.update(|app| {
+            cx.update(|app| {
                 if let Some(panel) = this.upgrade() {
-                    let _ = panel.update(app, |panel, cx| {
+                    panel.update(app, |panel, cx| {
                         panel.load_scripts(cx);
                     });
                 }
@@ -1155,9 +1168,9 @@ impl NodePanel {
                     )
                 })
                 .await;
-            let _ = cx.update(|app| {
+            cx.update(|app| {
                 if let Some(panel) = this.upgrade() {
-                    let _ = panel.update(app, |panel, cx| {
+                    panel.update(app, |panel, cx| {
                         panel.load_scripts(cx);
                     });
                 }
@@ -1178,9 +1191,9 @@ impl NodePanel {
             let runtimes = cx
                 .background_spawn(async move { probe_runtimes(project, root, choice) })
                 .await;
-            let _ = cx.update(|app| {
+            cx.update(|app| {
                 if let Some(panel) = this.upgrade() {
-                    let _ = panel.update(app, |panel, cx| {
+                    panel.update(app, |panel, cx| {
                         panel.apply_runtimes(runtimes);
                         cx.notify();
                     });
@@ -1209,6 +1222,8 @@ impl NodePanel {
         self.project_requirement = runtimes.requirement;
         self.choice_source = runtimes.source;
         self.choice_missing = runtimes.missing;
+        self.package_manager = runtimes.package_manager;
+        self.unavailable_managers = runtimes.unavailable_managers;
     }
 
     fn load_managed_versions(&mut self, cx: &mut Context<Self>) {
@@ -1216,9 +1231,9 @@ impl NodePanel {
             let result = cx
                 .background_spawn(async { node_versions::list(&node_versions::store_dir()) })
                 .await;
-            let _ = cx.update(|app| {
+            cx.update(|app| {
                 if let Some(panel) = this.upgrade() {
-                    let _ = panel.update(app, |panel, cx| {
+                    panel.update(app, |panel, cx| {
                         match result {
                             Ok(versions) => {
                                 panel.versions_loaded = Some(true);
@@ -1261,9 +1276,9 @@ impl NodePanel {
                     }
                 })
                 .await;
-            let _ = cx.update(|app| {
+            cx.update(|app| {
                 if let Some(panel) = this.upgrade() {
-                    let _ = panel.update(app, |panel, cx| {
+                    panel.update(app, |panel, cx| {
                         match result {
                             Ok(output) => panel.script_output.push(output),
                             Err(e) => panel.script_output.push(format!("Error: {e}")),
@@ -1351,9 +1366,7 @@ impl NodePanel {
                     let store = node_versions::store_dir();
                     match action {
                         VersionAction::Install => match project {
-                            Some(project) => {
-                                node_versions::install_for_project(&store, &project)
-                            }
+                            Some(project) => node_versions::install_for_project(&store, &project),
                             None => node_versions::install(&store, &version_for_run),
                         },
                         VersionAction::Uninstall => {
@@ -1362,9 +1375,9 @@ impl NodePanel {
                     }
                 })
                 .await;
-            let _ = cx.update(|app| {
+            cx.update(|app| {
                 if let Some(panel) = this.upgrade() {
-                    let _ = panel.update(app, |panel, cx| {
+                    panel.update(app, |panel, cx| {
                         panel.version_step = Some(match result {
                             Ok(output) => VersionStep::Done(action, version.clone(), output),
                             Err(e) => VersionStep::Error(action, version.clone(), e),
@@ -1401,9 +1414,9 @@ impl NodePanel {
             let sppkg = cx
                 .background_spawn(async move { scan_sppkg(&sppkg_proj) })
                 .await;
-            let _ = cx.update(|app| {
+            cx.update(|app| {
                 if let Some(panel) = this.upgrade() {
-                    let _ = panel.update(app, |panel, cx| {
+                    panel.update(app, |panel, cx| {
                         panel.spfx = spfx;
                         panel.sppkg_files = sppkg;
                         cx.notify();
@@ -1442,9 +1455,9 @@ impl NodePanel {
                     list_installed(&dir, cli).unwrap_or_default()
                 })
                 .await;
-            let _ = cx.update(|app| {
+            cx.update(|app| {
                 if let Some(panel) = this.upgrade() {
-                    let _ = panel.update(app, |panel, cx| {
+                    panel.update(app, |panel, cx| {
                         panel.installed_pkgs = packages;
                         cx.notify();
                     });
@@ -1473,9 +1486,9 @@ impl NodePanel {
                     list_outdated(&dir, cli)
                 })
                 .await;
-            let _ = cx.update(|app| {
+            cx.update(|app| {
                 if let Some(panel) = this.upgrade() {
-                    let _ = panel.update(app, |panel, cx| {
+                    panel.update(app, |panel, cx| {
                         panel.outdated = match result {
                             Ok(list) => PackagesState::Ready(list),
                             Err(e) => PackagesState::Error(e),
@@ -1507,9 +1520,9 @@ impl NodePanel {
                     list_audit_vulns(&dir, cli)
                 })
                 .await;
-            let _ = cx.update(|app| {
+            cx.update(|app| {
                 if let Some(panel) = this.upgrade() {
-                    let _ = panel.update(app, |panel, cx| {
+                    panel.update(app, |panel, cx| {
                         panel.vulnerable = match result {
                             Ok(list) => PackagesState::Ready(list),
                             Err(e) => PackagesState::Error(e),
@@ -1579,9 +1592,62 @@ impl NodePanel {
             if answer.await != Ok(0) {
                 return;
             }
-            this.update_in(cx, |this, window, cx| run(this, window, cx)).ok();
+            this.update_in(cx, |this, window, cx| run(this, window, cx))
+                .ok();
         })
         .detach();
+    }
+
+    /// Installs the selected project's dependencies with its own package
+    /// manager. When its lock files are of more than one kind, asks which to
+    /// use, for this install only.
+    fn install_dependencies(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let candidates = match self.package_manager.clone() {
+            Detection::Found(detected) => return self.run_install(detected.manager, window, cx),
+            Detection::Ambiguous(candidates) => candidates,
+        };
+        let answers: Vec<&str> = candidates
+            .iter()
+            .map(|manager| manager.cli_name())
+            .chain(["Cancel"])
+            .collect();
+        let answer = window.prompt(
+            PromptLevel::Info,
+            "Which package manager?",
+            Some(
+                "This project has lock files for more than one package manager. \
+                 The one picked runs this install only; it isn't remembered.",
+            ),
+            &answers,
+            cx,
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(choice) = answer.await else {
+                return;
+            };
+            let Some(manager) = candidates.get(choice).copied() else {
+                return;
+            };
+            this.update_in(cx, |this, window, cx| this.run_install(manager, window, cx))
+                .ok();
+        })
+        .detach();
+    }
+
+    /// Runs `manager`'s install in the Script Runner, asking first when the
+    /// Node.js in use doesn't fit the project.
+    fn run_install(
+        &mut self,
+        manager: PackageManager,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (program, args) = manager.install_args();
+        let command = format!("{program} {}", args.join(" "));
+        let what = command.clone();
+        self.confirm_install(&what, window, cx, move |this, window, cx| {
+            this.dispatch_script(&command, window, cx);
+        });
     }
 
     fn update_all_outdated(
@@ -1679,9 +1745,9 @@ impl NodePanel {
             let result = cx
                 .background_spawn(async move { read_text_file(pkg_path) })
                 .await;
-            let _ = cx.update(|app| {
+            cx.update(|app| {
                 if let Some(panel) = this.upgrade() {
-                    let _ = panel.update(app, |panel, cx| {
+                    panel.update(app, |panel, cx| {
                         panel.view_pkg = result.ok().and_then(|raw| parse_package_json_view(&raw));
                         cx.notify();
                     });
@@ -1720,6 +1786,18 @@ struct Runtimes {
     source: ChoiceSource,
     /// A version asked for but not installed.
     missing: Option<String>,
+    /// The project's package manager, and which candidates aren't on the
+    /// `PATH`.
+    package_manager: Detection,
+    unavailable_managers: Vec<PackageManager>,
+}
+
+/// What Install runs before anything is known: npm.
+fn npm_default() -> Detection {
+    Detection::Found(Detected {
+        manager: PackageManager::Npm,
+        source: PackageManagerSource::Default,
+    })
 }
 
 /// Works out which Node.js and npm a script run in `project` will get under
@@ -1755,6 +1833,25 @@ fn probe_runtimes(project: Option<PathBuf>, root: Option<PathBuf>, choice: NodeC
         None => (system_node.clone(), query_runtime("npm".into()).ok()),
     };
     let requirement = project.as_deref().and_then(node_requirement);
+    // The project's package manager, looked for up to the workspace root
+    // (a pnpm or Yarn workspace keeps its lock file there), and whether it
+    // is on the same `PATH` the Script Runner will give the install. Only
+    // folders are looked in; nothing is started.
+    let package_manager = project
+        .as_deref()
+        .map(|project| npm_backend::detect(project, root.as_deref()))
+        .unwrap_or_else(npm_default);
+    let candidates = match &package_manager {
+        Detection::Found(detected) => vec![detected.manager],
+        Detection::Ambiguous(candidates) => candidates.clone(),
+    };
+    let path = ide_env::path_env(project.as_deref())
+        .or_else(|| std::env::var_os("PATH"))
+        .unwrap_or_default();
+    let unavailable_managers = candidates
+        .into_iter()
+        .filter(|manager| !npm_backend::is_available(*manager, &path))
+        .collect();
     Runtimes {
         node,
         npm,
@@ -1764,6 +1861,8 @@ fn probe_runtimes(project: Option<PathBuf>, root: Option<PathBuf>, choice: NodeC
         project: project_node,
         source: resolved.source,
         missing: resolved.missing,
+        package_manager,
+        unavailable_managers,
     }
 }
 
@@ -1774,9 +1873,9 @@ fn init_discovery(cx: &mut Context<NodePanel>) {
                 .background_spawn(async { probe_runtimes(None, None, NodeChoice::Auto) })
                 .await;
 
-            let _ = cx.update(|app| {
+            cx.update(|app| {
                 if let Some(panel) = this.upgrade() {
-                    let _ = panel.update(app, |panel, cx| {
+                    panel.update(app, |panel, cx| {
                         panel.apply_runtimes(runtimes);
                         // The built-in manager needs no Node.js on the
                         // machine: it is how one gets installed.
@@ -2156,7 +2255,9 @@ impl Panel for NodePanel {
     }
 
     fn icon(&self, _window: &Window, cx: &App) -> Option<ui::IconName> {
-        NodePanelSettings::get_global(cx).button.then_some(ui::IconName::Node)
+        NodePanelSettings::get_global(cx)
+            .button
+            .then_some(ui::IconName::Node)
     }
 
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
@@ -2316,7 +2417,9 @@ impl NodePanel {
                 Some(installed) if active.as_ref() == Some(&installed) && !unsupported => div()
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
-                    .child(format!("Project asks for {shown} \u{2014} using {installed}"))
+                    .child(format!(
+                        "Project asks for {shown} \u{2014} using {installed}"
+                    ))
                     .into_any_element(),
                 Some(installed) => h_flex()
                     .gap_2()
@@ -2344,9 +2447,7 @@ impl NodePanel {
                         div()
                             .text_xs()
                             .text_color(cx.theme().warning)
-                            .child(format!(
-                                "Project asks for {shown}, which isn't installed"
-                            )),
+                            .child(format!("Project asks for {shown}, which isn't installed")),
                     )
                     .child(
                         Button::new("node-version-install-project")
@@ -2442,9 +2543,9 @@ impl NodePanel {
                                                 )
                                             })
                                             .await;
-                                        let _ = cx.update(|app| {
+                                        cx.update(|app| {
                                             if let Some(panel) = weak.upgrade() {
-                                                let _ = panel.update(app, |panel, cx| {
+                                                panel.update(app, |panel, cx| {
                                                     panel.loading_available = false;
                                                     panel.available_versions =
                                                         result.unwrap_or_default();
@@ -2470,8 +2571,9 @@ impl NodePanel {
                             "Using the Node.js already on this machine ({version}). \
                              Install a version here to switch between versions per project."
                         ),
-                        None => "Node.js isn't installed. Install a version to get started."
-                            .to_string(),
+                        None => {
+                            "Node.js isn't installed. Install a version to get started.".to_string()
+                        }
                     };
                     col = col
                         .child(
@@ -2594,7 +2696,11 @@ impl NodePanel {
                                     } else {
                                         cx.theme().muted_foreground
                                     })
-                                    .child(if system_current { "\u{25CF}" } else { "\u{25CB}" }),
+                                    .child(if system_current {
+                                        "\u{25CF}"
+                                    } else {
+                                        "\u{25CB}"
+                                    }),
                             )
                             .child(
                                 Button::new("node-version-system")
@@ -2765,7 +2871,7 @@ impl NodePanel {
                             );
                         }
 
-                        let total_pages = (available.len() + PAGE_SIZE - 1) / PAGE_SIZE;
+                        let total_pages = available.len().div_ceil(PAGE_SIZE);
                         if total_pages > 1 {
                             let can_prev = self.available_page > 0;
                             let can_next = self.available_page + 1 < total_pages;
@@ -3175,40 +3281,63 @@ impl NodePanel {
     fn render_quick_actions(&self, cx: &Context<Self>) -> impl IntoElement {
         let mut row = div().flex().flex_row().flex_wrap().gap_1().px_3().py_1();
 
-        // `dev`/`build`/`test`/`install` dispatch a fixed command to the
-        // Script Runner panel via `set_script_runner`, matching the Forge
-        // original's `dispatch_script` (node_panel.rs:1523-1526 there).
-        // `install` runs plain `npm install` — the source panel's own
-        // dependency-counting progress UI for it was dropped in this port
-        // (see the module doc), so it just streams npm's own output like
-        // any other quick action instead.
-        let actions = [
-            ("dev", "npm run dev"),
-            ("build", "npm run build"),
-            ("test", "npm run test"),
-            ("install", "npm install"),
-        ];
-
-        for (label, cmd) in actions {
-            row = row.child(
-                Button::new(format!("quick-action-{label}"))
-                    .secondary()
-                    .xsmall()
-                    .label(label)
-                    .tooltip(format!("Run \"{cmd}\""))
-                    .on_click(cx.listener(move |this, _e, window, cx| {
-                        // Installing asks first when the active Node.js
-                        // doesn't fit the project; the rest just run.
-                        if label == "install" {
-                            this.confirm_install(cmd, window, cx, move |this, window, cx| {
-                                this.dispatch_script(cmd, window, cx);
-                            });
-                        } else {
-                            this.dispatch_script(cmd, window, cx);
+        // Install, with the project's own package manager: `npm install` in
+        // a pnpm or Yarn project would make a second lock file. Running
+        // scripts is the Scripts section's job, which lists the ones the
+        // project actually has.
+        let (label, tooltip, missing) = match &self.package_manager {
+            Detection::Found(detected) => {
+                let name = detected.manager.cli_name();
+                let missing = self.unavailable_managers.contains(&detected.manager);
+                let tooltip = if missing {
+                    let node = self.node_ver.as_deref().unwrap_or("?").trim();
+                    let hint = match detected.manager {
+                        PackageManager::Yarn | PackageManager::Pnpm => " (try: corepack enable)",
+                        PackageManager::Bun => " (install it from bun.sh)",
+                        PackageManager::Npm => "",
+                    };
+                    format!("{name} was not found for Node {node}{hint}")
+                } else {
+                    let why = match &detected.source {
+                        PackageManagerSource::PackageManagerField => {
+                            "the packageManager field in package.json".to_string()
                         }
-                    })),
-            );
-        }
+                        PackageManagerSource::Lockfile(file) => file.clone(),
+                        PackageManagerSource::Default => "no lock file: npm".to_string(),
+                    };
+                    format!("Run \"{name} install\" ({why})")
+                };
+                (format!("Install ({name})"), tooltip, missing)
+            }
+            Detection::Ambiguous(candidates) => {
+                let names: Vec<&str> = candidates.iter().map(|m| m.cli_name()).collect();
+                (
+                    "Install (?)".to_string(),
+                    format!(
+                        "This project has lock files for {}: asks which to use",
+                        names.join(" and ")
+                    ),
+                    false,
+                )
+            }
+        };
+        let install = Button::new("quick-action-install")
+            .xsmall()
+            .label(label)
+            .tooltip(tooltip)
+            .on_click(cx.listener(|this, _e, window, cx| {
+                this.install_dependencies(window, cx);
+            }));
+        // Still runnable when missing: the PATH a run gets may differ from
+        // what was checked, and the error then says why.
+        let install = if missing {
+            install
+                .custom(ButtonCustomVariant::new(cx).foreground(cx.theme().warning))
+                .icon(IconName::TriangleAlert)
+        } else {
+            install.secondary()
+        };
+        row = row.child(install);
 
         // "task chain" — opens the Flows panel's Add Task Chain wizard,
         // anchored on the selected project, matching Forge's node_panel
@@ -3587,7 +3716,9 @@ impl NodePanel {
                             .with_variant(confirm_variant)
                             .xsmall()
                             .label(confirm_label)
-                            .on_click(cx.listener(|this, _e, _w, cx| this.confirm_version_action(cx))),
+                            .on_click(
+                                cx.listener(|this, _e, _w, cx| this.confirm_version_action(cx)),
+                            ),
                     )
                     .into_any_element()
             }
@@ -3728,8 +3859,14 @@ impl NodePanel {
                                     .xsmall()
                                     .icon(IconName::Folder)
                                     .tooltip("Reveal in file explorer")
-                                    .on_click(cx.listener(move |_this, _e, _w, _cx| {
-                                        let _ = reveal_in_explorer(fpath.clone());
+                                    .on_click(cx.listener(move |_this, _e, _w, cx| {
+                                        // Starting the file manager can take a
+                                        // moment: not on the UI thread.
+                                        let path = fpath.clone();
+                                        cx.background_spawn(async move {
+                                            reveal_in_explorer(path).ok();
+                                        })
+                                        .detach();
                                     })),
                             ),
                         ),
@@ -3873,7 +4010,7 @@ impl NodePanel {
                                             .min_h_0()
                                             .overflow_y_scroll()
                                             .p_3()
-                                            .child(render_package_json_body(view, &theme)),
+                                            .child(render_package_json_body(view, theme)),
                                     ),
                             ),
                     ),
@@ -3893,19 +4030,18 @@ struct SpfxInfo {
 
 fn detect_spfx(project_path: &str) -> SpfxInfo {
     let yo_rc = std::path::Path::new(project_path).join(".yo-rc.json");
-    if let Ok(raw) = std::fs::read_to_string(&yo_rc) {
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) {
-            if let Some(generator) = json.get("@microsoft/generator-sharepoint") {
-                let version = generator
-                    .get("version")
-                    .and_then(|v| v.as_str())
-                    .map(String::from);
-                return SpfxInfo {
-                    is_spfx: true,
-                    version,
-                };
-            }
-        }
+    if let Ok(raw) = std::fs::read_to_string(&yo_rc)
+        && let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw)
+        && let Some(generator) = json.get("@microsoft/generator-sharepoint")
+    {
+        let version = generator
+            .get("version")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        return SpfxInfo {
+            is_spfx: true,
+            version,
+        };
     }
 
     let pks = std::path::Path::new(project_path)
@@ -3919,18 +4055,18 @@ fn detect_spfx(project_path: &str) -> SpfxInfo {
     }
 
     let pkg = std::path::Path::new(project_path).join("package.json");
-    if let Ok(raw) = std::fs::read_to_string(&pkg) {
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) {
-            for key in ["dependencies", "devDependencies"] {
-                if let Some(obj) = json.get(key).and_then(|v| v.as_object()) {
-                    for dep_name in obj.keys() {
-                        if dep_name.starts_with("@microsoft/sp-") {
-                            let version = obj[dep_name].as_str().map(String::from);
-                            return SpfxInfo {
-                                is_spfx: true,
-                                version,
-                            };
-                        }
+    if let Ok(raw) = std::fs::read_to_string(&pkg)
+        && let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw)
+    {
+        for key in ["dependencies", "devDependencies"] {
+            if let Some(obj) = json.get(key).and_then(|v| v.as_object()) {
+                for dep_name in obj.keys() {
+                    if dep_name.starts_with("@microsoft/sp-") {
+                        let version = obj[dep_name].as_str().map(String::from);
+                        return SpfxInfo {
+                            is_spfx: true,
+                            version,
+                        };
                     }
                 }
             }
@@ -4033,10 +4169,19 @@ mod tests {
             .iter()
             .map(|(name, command)| (name.as_str(), command.as_str()))
             .collect();
-        assert_eq!(scripts, vec![("dev", "vite"), ("build", "vite build"), ("broken", "")]);
-        assert_eq!(view.dependencies.get("react").map(String::as_str), Some("^18.2.0"));
         assert_eq!(
-            view.dev_dependencies.keys().map(String::as_str).collect::<Vec<_>>(),
+            scripts,
+            vec![("dev", "vite"), ("build", "vite build"), ("broken", "")]
+        );
+        assert_eq!(
+            view.dependencies.get("react").map(String::as_str),
+            Some("^18.2.0")
+        );
+        assert_eq!(
+            view.dev_dependencies
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
             vec!["vite", "typescript"]
         );
     }
@@ -4077,7 +4222,11 @@ mod tests {
     fn manifest_changes_match_only_the_selected_project() {
         let cwd = "C:/work";
         // The scan root's own manifest.
-        assert!(manifest_change_is_in_project(cwd, "C:/work", "package.json"));
+        assert!(manifest_change_is_in_project(
+            cwd,
+            "C:/work",
+            "package.json"
+        ));
         assert!(manifest_change_is_in_project(cwd, "C:\\work", "yarn.lock"));
         // A nested project's own lockfile.
         assert!(manifest_change_is_in_project(
@@ -4092,7 +4241,11 @@ mod tests {
             "apps/api/package.json"
         ));
         // A file one level below the project root is not its own manifest.
-        assert!(!manifest_change_is_in_project(cwd, "C:/work", "apps/web/package.json"));
+        assert!(!manifest_change_is_in_project(
+            cwd,
+            "C:/work",
+            "apps/web/package.json"
+        ));
     }
 
     #[test]
@@ -4102,29 +4255,47 @@ mod tests {
             outdated("b", "2.0.0", "2.3.0"),
             outdated("c", "3.0.0", "4.0.0"),
         ];
-        assert_eq!(update_command(&list, UpdateKind::Patch).unwrap().as_deref(), Some("npm update a"));
-        assert_eq!(update_command(&list, UpdateKind::Minor).unwrap().as_deref(), Some("npm update a b"));
+        assert_eq!(
+            update_command(&list, UpdateKind::Patch).unwrap().as_deref(),
+            Some("npm update a")
+        );
+        assert_eq!(
+            update_command(&list, UpdateKind::Minor).unwrap().as_deref(),
+            Some("npm update a b")
+        );
         // A major ceiling is still capped at minor: bulk updates never
         // cross a major version.
-        assert_eq!(update_command(&list, UpdateKind::Major).unwrap().as_deref(), Some("npm update a b"));
+        assert_eq!(
+            update_command(&list, UpdateKind::Major).unwrap().as_deref(),
+            Some("npm update a b")
+        );
     }
 
     #[test]
     fn update_command_with_nothing_to_update() {
-        assert_eq!(update_command(&[outdated("c", "3.0.0", "4.0.0")], UpdateKind::Minor), Ok(None));
+        assert_eq!(
+            update_command(&[outdated("c", "3.0.0", "4.0.0")], UpdateKind::Minor),
+            Ok(None)
+        );
         assert_eq!(update_command(&[], UpdateKind::Patch), Ok(None));
     }
 
     #[test]
     fn update_command_runs_nothing_if_any_name_is_unsafe() {
-        let list = [outdated("a", "1.0.0", "1.0.5"), outdated("b && calc", "2.0.0", "2.0.1")];
+        let list = [
+            outdated("a", "1.0.0", "1.0.5"),
+            outdated("b && calc", "2.0.0", "2.0.1"),
+        ];
         assert!(update_command(&list, UpdateKind::Minor).is_err());
     }
 
     #[test]
     fn script_commands() {
         assert_eq!(run_script_command("dev").as_deref(), Ok("npm run dev"));
-        assert_eq!(run_script_command("build:prod").as_deref(), Ok("npm run build:prod"));
+        assert_eq!(
+            run_script_command("build:prod").as_deref(),
+            Ok("npm run build:prod")
+        );
         assert!(run_script_command("dev && calc").is_err());
         assert!(run_script_command("say hi").is_err());
         assert!(run_script_command("").is_err());
@@ -4169,7 +4340,10 @@ mod tests {
             &dir.path().join("package.json"),
             r#"{ "dependencies": { "react": "18.2.0", "@microsoft/signalr": "8.0.0" } }"#,
         );
-        write(&dir.path().join(".yo-rc.json"), r#"{ "generator-other": {} }"#);
+        write(
+            &dir.path().join(".yo-rc.json"),
+            r#"{ "generator-other": {} }"#,
+        );
         assert!(!detect_spfx(&dir.path().to_string_lossy()).is_spfx);
     }
 
