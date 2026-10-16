@@ -864,7 +864,7 @@ impl ToolchainSelectorDelegate {
                 Some(())
             }
         });
-        let placeholder_text = "Select a toolchain…".to_string().into();
+        let placeholder_text = Arc::from("Select a toolchain…");
         Self {
             toolchain_selector,
             candidates: Default::default(),
@@ -957,7 +957,7 @@ impl PickerDelegate for ToolchainSelectorDelegate {
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.toolchain_selector
             .update(cx, |_, cx| cx.emit(DismissEvent))
-            .log_err();
+            .ok();
     }
 
     fn selected_index(&self) -> usize {

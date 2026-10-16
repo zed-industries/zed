@@ -72,71 +72,6 @@ pub(crate) struct ProcessInfo {
     pub(crate) argv: Vec<String>,
 }
 
-/// Process (group) ids of a terminal's shell and foreground job, snapshotted
-/// while the PTY master is still open: reading the foreground process group
-/// requires `tcgetpgrp` on the PTY fd, which the event loop closes when the
-/// terminal shuts down, so these ids must be captured before shutdown and
-/// signalled afterwards.
-#[derive(Clone, Copy)]
-pub(crate) struct TerminalProcessIds {
-    #[cfg_attr(not(unix), allow(dead_code))]
-    foreground: Option<Pid>,
-    #[cfg_attr(not(unix), allow(dead_code))]
-    child: Pid,
-}
-
-#[cfg(unix)]
-impl TerminalProcessIds {
-    /// The spawned child (the shell) leads its own process group, but under
-    /// job control a foreground job runs in a separate process group that
-    /// `killpg` on the shell's group never reaches, so both are signalled
-    /// (see #47412).
-    fn process_group_ids(self) -> impl Iterator<Item = i32> {
-        std::iter::once(self.child)
-            .chain(
-                self.foreground
-                    .filter(|foreground| *foreground != self.child),
-            )
-            .map(|pid| pid.as_u32() as i32)
-            // `killpg(0, ...)` signals the caller's own process group, i.e.
-            // Zed itself, so never let a zero id (or a negative one from an
-            // implausibly large pid wrapping the cast) through.
-            .filter(|process_group_id| *process_group_id > 0)
-    }
-
-    /// Returns whether at least one process group was signalled successfully;
-    /// `killpg` failing with `ESRCH` (the group already exited) is expected and
-    /// reported as an unsuccessful signal.
-    fn signal_process_groups(&self, signal: i32) -> bool {
-        let mut signalled = false;
-        for process_group_id in self.process_group_ids() {
-            signalled |= unsafe { libc::killpg(process_group_id, signal) } == 0;
-        }
-        signalled
-    }
-
-    pub(crate) fn terminate(&self) -> bool {
-        self.signal_process_groups(libc::SIGTERM)
-    }
-
-    pub(crate) fn kill(&self) -> bool {
-        self.signal_process_groups(libc::SIGKILL)
-    }
-}
-
-#[cfg(not(unix))]
-impl TerminalProcessIds {
-    pub(crate) fn terminate(&self) -> bool {
-        false
-    }
-
-    // Windows has no process groups to escalate on; killing the child relies
-    // on [`PtyProcessInfo::kill_child_process`] instead.
-    pub(crate) fn kill(&self) -> bool {
-        false
-    }
-}
-
 /// Fetches Zed-relevant Pseudo-Terminal (PTY) process information
 pub(crate) struct PtyProcessInfo {
     system: RwLock<System>,
@@ -181,13 +116,6 @@ impl PtyProcessInfo {
 
     pub(crate) fn pid_getter(&self) -> &ProcessIdGetter {
         &self.pid_getter
-    }
-
-    pub(crate) fn capture_process_ids(&self) -> TerminalProcessIds {
-        TerminalProcessIds {
-            foreground: self.pid_getter.pid(),
-            child: self.pid_getter.fallback_pid(),
-        }
     }
 
     fn refresh(&self) -> Option<MappedRwLockReadGuard<'_, Process>> {
@@ -235,6 +163,17 @@ impl PtyProcessInfo {
         self.get_child().is_some_and(|process| process.kill())
     }
 
+    #[cfg(unix)]
+    pub(crate) fn terminate_child_process(&self) -> bool {
+        let pid = self.pid_getter.fallback_pid();
+        unsafe { libc::killpg(pid.as_u32() as i32, libc::SIGTERM) == 0 }
+    }
+
+    #[cfg(not(unix))]
+    pub(crate) fn terminate_child_process(&self) -> bool {
+        false
+    }
+
     fn load(&self) -> Option<ProcessInfo> {
         let process = self.refresh()?;
         let cwd = process.cwd().map_or(PathBuf::new(), |p| p.to_owned());
@@ -263,7 +202,7 @@ impl PtyProcessInfo {
             return;
         }
         let this = self.clone();
-        let has_changed = cx.background_executor().spawn(async move {
+        let change_task = cx.background_executor().spawn(async move {
             let previous = this.current.read().clone();
             let current = this.load();
             let has_changed = match (previous.as_ref(), current.as_ref()) {
@@ -272,14 +211,26 @@ impl PtyProcessInfo {
                 _ => true,
             };
             if has_changed {
-                *this.current.write() = current;
+                *this.current.write() = current.clone();
             }
-            has_changed
+            let changed_cwd = match (previous.as_ref(), current.as_ref()) {
+                (Some(prev), Some(now)) if prev.cwd != now.cwd => Some(now.cwd.clone()),
+                (None, Some(now)) => Some(now.cwd.clone()),
+                _ => None,
+            };
+            (has_changed, changed_cwd)
         });
         let this = Arc::downgrade(self);
         *self.task.lock() = Some(cx.spawn(async move |term, cx| {
-            if has_changed.await {
-                term.update(cx, |_, cx| cx.emit(Event::TitleChanged)).ok();
+            let (has_changed, new_cwd) = change_task.await;
+            if has_changed {
+                term.update(cx, |terminal, cx| {
+                    if let Some(cwd) = new_cwd {
+                        terminal.record_cwd_change(cwd);
+                    }
+                    cx.emit(Event::TitleChanged);
+                })
+                .ok();
             }
             if let Some(this) = this.upgrade() {
                 this.task.lock().take();

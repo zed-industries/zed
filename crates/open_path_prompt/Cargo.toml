@@ -12,8 +12,6 @@ fuzzy.workspace = true
 gpui.workspace = true
 picker.workspace = true
 project.workspace = true
-project_panel.workspace = true
-schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 ui.workspace = true
@@ -33,3 +31,4 @@ workspace = true
 
 [lib]
 path = "src/open_path_prompt.rs"
+doctest = false

@@ -67,7 +67,8 @@ impl DapLocator for PythonLocator {
             "request": "launch",
             "python": command,
             "args": args,
-            "cwd": build_config.cwd.clone()
+            "cwd": build_config.cwd.clone(),
+            "env": build_config.env.clone(),
         });
         if let Some(config_obj) = config.as_object_mut() {
             if let Some(module) = mod_name {

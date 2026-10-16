@@ -1,5 +1,8 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
+#[path = "../example_support/fonts.rs"]
+mod example_support;
+
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -159,19 +162,12 @@ fn run_example() {
         base: manifest_dir.join("examples"),
     })
     .run(move |cx: &mut App| {
+        if !example_support::load_fonts(cx) {
+            return;
+        }
         #[cfg(not(target_family = "wasm"))]
         {
             let http_client = ReqwestClient::user_agent("gpui example").unwrap();
-            cx.set_http_client(Arc::new(http_client));
-        }
-        #[cfg(target_family = "wasm")]
-        {
-            // Safety: the web examples run single-threaded; the client is
-            // created and used exclusively on the main thread.
-            let http_client = unsafe {
-                gpui_web::FetchHttpClient::with_user_agent("gpui example")
-                    .expect("failed to create FetchHttpClient")
-            };
             cx.set_http_client(Arc::new(http_client));
         }
 

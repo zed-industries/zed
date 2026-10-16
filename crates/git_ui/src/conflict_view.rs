@@ -237,25 +237,39 @@ fn conflicts_updated(
     // Add new highlights and blocks
     let editor_handle = cx.weak_entity();
     let new_conflicts = &conflict_set.conflicts[event.new_range.clone()];
+    let mut converted_ranges = snapshot
+        .ordered_buffer_anchor_ranges_to_anchor_ranges(new_conflicts.iter().flat_map(|conflict| {
+            [
+                conflict.range.start..conflict.range.start,
+                conflict.range.clone(),
+                conflict.ours.clone(),
+                conflict.theirs.clone(),
+            ]
+        }))
+        .into_iter();
     let mut blocks = Vec::new();
     for conflict in new_conflicts {
-        update_conflict_highlighting(editor, conflict, &snapshot, cx);
+        let block_anchor = converted_ranges.next().flatten().map(|range| range.start);
+        let outer = converted_ranges.next().flatten();
+        let ours = converted_ranges.next().flatten();
+        let theirs = converted_ranges.next().flatten();
+        if let (Some(outer), Some(ours), Some(theirs)) = (outer, ours, theirs) {
+            update_conflict_highlighting(editor, conflict, outer, ours, theirs, cx);
+        }
 
-        let Some(anchor) = snapshot.anchor_in_excerpt(conflict.range.start) else {
-            continue;
-        };
-
-        let editor_handle = editor_handle.clone();
-        blocks.push(BlockProperties {
-            placement: BlockPlacement::Above(anchor),
-            height: Some(1),
-            style: BlockStyle::Sticky,
-            render: Arc::new({
-                let conflict = conflict.clone();
-                move |cx| render_conflict_buttons(&conflict, editor_handle.clone(), cx)
-            }),
-            priority: 0,
-        })
+        if let Some(anchor) = block_anchor {
+            let editor_handle = editor_handle.clone();
+            blocks.push(BlockProperties {
+                placement: BlockPlacement::Above(anchor),
+                height: Some(1),
+                style: BlockStyle::Sticky,
+                render: Arc::new({
+                    let conflict = conflict.clone();
+                    move |cx| render_conflict_buttons(&conflict, editor_handle.clone(), cx)
+                }),
+                priority: 0,
+            })
+        }
     }
     let new_block_ids = editor.insert_blocks(blocks, None, cx);
 
@@ -279,14 +293,12 @@ fn conflicts_updated(
 fn update_conflict_highlighting(
     editor: &mut Editor,
     conflict: &ConflictRegion,
-    buffer: &editor::MultiBufferSnapshot,
+    outer: Range<editor::Anchor>,
+    ours: Range<editor::Anchor>,
+    theirs: Range<editor::Anchor>,
     cx: &mut Context<Editor>,
-) -> Option<()> {
+) {
     log::debug!("update conflict highlighting for {conflict:?}");
-
-    let outer = buffer.buffer_anchor_range_to_anchor_range(conflict.range.clone())?;
-    let ours = buffer.buffer_anchor_range_to_anchor_range(conflict.ours.clone())?;
-    let theirs = buffer.buffer_anchor_range_to_anchor_range(conflict.theirs.clone())?;
 
     let ours_background = |cx: &App| cx.theme().colors().version_control_conflict_marker_ours;
     let theirs_background = |cx: &App| cx.theme().colors().version_control_conflict_marker_theirs;
@@ -318,8 +330,6 @@ fn update_conflict_highlighting(
         options,
         cx,
     );
-
-    Some(())
 }
 
 fn render_conflict_buttons(
@@ -636,7 +646,7 @@ impl Render for MergeConflictIndicator {
         let border_color = cx.theme().colors().text_accent.opacity(0.2);
 
         h_flex()
-            .h(rems_from_px(22.))
+            .h(rems_from_px(22_f32))
             .rounded_sm()
             .border_1()
             .border_color(border_color)

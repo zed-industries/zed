@@ -1,6 +1,8 @@
 use collab_ui::collab_panel;
 use gpui::{App, Menu, MenuItem, OsAction};
+use project::DisableAiSettings;
 use release_channel::ReleaseChannel;
+use settings::Settings;
 use terminal_view::terminal_panel;
 use zed_actions::{Quit, assistant, debug_panel, dev, git_panel, project_panel};
 
@@ -43,12 +45,18 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
         MenuItem::action("Collab Panel", collab_panel::ToggleFocus),
         MenuItem::action("Terminal Panel", terminal_panel::Toggle),
         MenuItem::action("Debugger Panel", debug_panel::ToggleFocus),
-        MenuItem::action("Agent Panel", assistant::ToggleFocus),
+    ];
+
+    if !DisableAiSettings::get_global(cx).disable_ai {
+        view_items.push(MenuItem::action("Agent Panel", assistant::ToggleFocus));
+    }
+
+    view_items.extend([
         MenuItem::action("Git Panel", git_panel::ToggleFocus),
         MenuItem::separator(),
         MenuItem::action("Diagnostics", diagnostics::Deploy),
         MenuItem::separator(),
-    ];
+    ]);
 
     if ReleaseChannel::try_global(cx) == Some(ReleaseChannel::Dev) {
         view_items.push(MenuItem::action(
@@ -236,12 +244,20 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                     "Go to Definition",
                     editor::actions::GoToDefinition::default(),
                 ),
-                MenuItem::action("Go to Declaration", editor::actions::GoToDeclaration),
-                MenuItem::action("Go to Type Definition", editor::actions::GoToTypeDefinition),
+                MenuItem::action(
+                    "Go to Declaration",
+                    editor::actions::GoToDeclaration::default(),
+                ),
+                MenuItem::action(
+                    "Go to Type Definition",
+                    editor::actions::GoToTypeDefinition::default(),
+                ),
                 MenuItem::action(
                     "Find All References",
                     editor::actions::FindAllReferences::default(),
                 ),
+                MenuItem::action("Show Incoming Calls", call_hierarchy::ShowIncomingCalls),
+                MenuItem::action("Show Outgoing Calls", call_hierarchy::ShowOutgoingCalls),
                 MenuItem::separator(),
                 MenuItem::action("Next Problem", editor::actions::GoToDiagnostic::default()),
                 MenuItem::action(
