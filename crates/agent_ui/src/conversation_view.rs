@@ -964,6 +964,23 @@ struct LoadingView {
     _load_task: Task<()>,
 }
 
+#[derive(Debug)]
+struct SessionCloseErrors {
+    failures: Vec<(acp_v2::SessionId, anyhow::Error)>,
+}
+
+impl std::fmt::Display for SessionCloseErrors {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "Failed to close agent sessions")?;
+        for (session_id, error) in &self.failures {
+            write!(formatter, "\n{session_id}: {error:#}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for SessionCloseErrors {}
+
 impl ConnectedServerState {
     pub fn active_view(&self) -> Option<&Entity<ThreadView>> {
         self.active_id.as_ref().and_then(|id| self.threads.get(id))
@@ -980,19 +997,40 @@ impl ConnectedServerState {
         }
     }
 
-    pub fn close_all_sessions(&self, cx: &mut App) -> Task<()> {
-        let tasks = self.threads.values().filter_map(|view| {
-            if self.connection.supports_close_session() {
+    pub fn close_all_sessions(&self, cx: &mut App) -> Task<Result<()>> {
+        if !self.connection.supports_close_session() {
+            return Task::ready(Ok(()));
+        }
+        // Initiate cleanup before a replacement can rebind the same session IDs.
+        let tasks = self
+            .threads
+            .values()
+            .map(|view| {
                 let session_id = view.read(cx).thread.read(cx).session_id().clone();
-                Some(self.connection.clone().close_session(&session_id, cx))
-            } else {
-                None
-            }
-        });
-        let task = futures::future::join_all(tasks);
+                let closing = self.connection.clone().close_session(&session_id, cx);
+                async move { (session_id, closing.await) }
+            })
+            .collect::<Vec<_>>();
         cx.background_spawn(async move {
-            task.await;
+            let failures = futures::future::join_all(tasks)
+                .await
+                .into_iter()
+                .filter_map(|(session_id, result)| result.err().map(|error| (session_id, error)))
+                .collect::<Vec<_>>();
+            if failures.is_empty() {
+                Ok(())
+            } else {
+                Err(SessionCloseErrors { failures }.into())
+            }
         })
+    }
+
+    fn release_sessions(&self, cx: &mut App) -> Task<Result<()>> {
+        if self.connection.should_close_sessions_on_release() {
+            self.close_all_sessions(cx)
+        } else {
+            Task::ready(Ok(()))
+        }
     }
 }
 
@@ -1044,7 +1082,7 @@ impl ConversationView {
         cx.on_release(|this, cx| {
             this.request_elicitation_form_states.clear();
             if let Some(connected) = this.as_connected() {
-                connected.close_all_sessions(cx).detach();
+                connected.release_sessions(cx).detach_and_log_err(cx);
             }
             for window in this.notifications.drain(..) {
                 window
@@ -1101,7 +1139,7 @@ impl ConversationView {
             Self::request_elicitation_connection_for_state(&state);
 
         if let Some(connected) = self.as_connected() {
-            connected.close_all_sessions(cx).detach();
+            connected.release_sessions(cx).detach_and_log_err(cx);
         }
 
         if let Some(connection) = previous_request_elicitation_connection
@@ -18394,49 +18432,175 @@ pub(crate) mod tests {
                     .expect("Should be connected")
                     .close_all_sessions(cx)
             })
-            .await;
+            .await
+            .expect("unsupported batch close is a no-op");
     }
 
     #[gpui::test]
     async fn test_close_all_sessions_calls_close_when_supported(cx: &mut TestAppContext) {
         init_test(cx);
 
+        for replace_state in [false, true] {
+            let connection = CloseCapableConnection::new();
+            assert!(connection.should_close_sessions_on_release());
+            let calls = connection.closed_sessions.clone();
+            let (conversation_view, cx) =
+                setup_conversation_view(StubAgentServer::new(connection), cx).await;
+            let expected = conversation_view.read_with(cx, |view, _| {
+                view.as_connected().expect("connected").threads.len()
+            });
+            assert!(expected > 0);
+            conversation_view
+                .update(cx, |view, cx| {
+                    view.as_connected()
+                        .expect("connected")
+                        .close_all_sessions(cx)
+                })
+                .await
+                .expect("explicit close");
+            assert_eq!(calls.lock().len(), expected);
+            calls.lock().clear();
+            if replace_state {
+                conversation_view.update(cx, |view, cx| {
+                    view.set_server_state(
+                        ServerState::LoadError {
+                            error: LoadError::Other("replacement".into()),
+                        },
+                        cx,
+                    )
+                });
+            } else {
+                drop(conversation_view);
+            }
+            cx.update(|_, _| ());
+            cx.run_until_parked();
+            assert_eq!(
+                calls.lock().len(),
+                expected,
+                "default automatic cleanup is preserved"
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_release_policy_does_not_disable_explicit_close(cx: &mut TestAppContext) {
+        init_test(cx);
+        for replace_state in [false, true] {
+            let connection = StubAgentConnection::new()
+                .with_supports_close_session(true)
+                .with_close_sessions_on_release(false);
+            let (conversation_view, cx) =
+                setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+            conversation_view.read_with(cx, |view, _| {
+                let connection = &view.as_connected().expect("connected").connection;
+                assert!(connection.supports_close_session());
+                assert!(!connection.should_close_sessions_on_release());
+            });
+            conversation_view
+                .update(cx, |view, cx| {
+                    view.as_connected()
+                        .expect("connected")
+                        .close_all_sessions(cx)
+                })
+                .await
+                .expect("explicit close remains available");
+            assert_eq!(connection.take_close_session_calls().len(), 1);
+            if replace_state {
+                conversation_view.update(cx, |view, cx| {
+                    view.set_server_state(
+                        ServerState::LoadError {
+                            error: LoadError::Other("replacement".into()),
+                        },
+                        cx,
+                    )
+                });
+            } else {
+                drop(conversation_view);
+            }
+            cx.update(|_, _| ());
+            cx.run_until_parked();
+            assert!(
+                connection.take_close_session_calls().is_empty(),
+                "release must not terminate autonomous work"
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_close_all_sessions_waits_for_all_results_and_preserves_failures(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let connection = StubAgentConnection::new()
+            .with_supports_close_session(true)
+            .with_close_sessions_on_release(false);
         let (conversation_view, cx) =
-            setup_conversation_view(StubAgentServer::new(CloseCapableConnection::new()), cx).await;
-
-        cx.run_until_parked();
-
-        let close_capable = conversation_view.read_with(cx, |view, _cx| {
-            let connected = view.as_connected().expect("Should be connected");
-            assert!(
-                !connected.threads.is_empty(),
-                "There should be at least one thread"
-            );
-            assert!(
-                connected.connection.supports_close_session(),
-                "CloseCapableConnection should support close"
-            );
-            connected
-                .connection
-                .clone()
-                .into_any()
-                .downcast::<CloseCapableConnection>()
-                .expect("Should be CloseCapableConnection")
-        });
-
-        conversation_view
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        let second = conversation_view
             .update(cx, |view, cx| {
-                view.as_connected()
-                    .expect("Should be connected")
-                    .close_all_sessions(cx)
+                Rc::new(connection.clone()).new_session(
+                    view.project.clone(),
+                    view.project.read(cx).default_path_list(cx),
+                    cx,
+                )
             })
-            .await;
-
-        let closed_count = close_capable.closed_sessions.lock().len();
+            .await
+            .expect("second session");
+        conversation_view.update_in(cx, |view, window, cx| {
+            let session_id = second.read(cx).session_id().clone();
+            let conversation = view.as_connected().expect("connected").conversation.clone();
+            conversation.update(cx, |conversation, cx| {
+                conversation.register_thread(second.clone(), cx)
+            });
+            let thread_view = view.new_thread_view(second, conversation, false, None, window, cx);
+            view.as_connected_mut()
+                .expect("connected")
+                .threads
+                .insert(session_id, thread_view);
+        });
+        let first_response = connection.defer_next_close_response();
+        let second_response = connection.defer_next_close_response();
+        let mut closing = conversation_view.update(cx, |view, cx| {
+            view.as_connected()
+                .expect("connected")
+                .close_all_sessions(cx)
+        });
+        let calls = connection.take_close_session_calls();
+        let [first_id, second_id] = calls.as_slice() else {
+            panic!("both closes must be initiated before a replacement can load")
+        };
+        drop(conversation_view);
+        cx.update(|_, _| ());
+        cx.run_until_parked();
+        let first_error = agent_client_protocol::Error::new(-32042, "First close failed")
+            .data(serde_json::json!({"retain": [null, 7]}));
+        first_response
+            .send(Err(first_error.clone().into()))
+            .expect("first response");
+        cx.run_until_parked();
         assert!(
-            closed_count > 0,
-            "close_session should have been called for each thread"
+            (&mut closing).now_or_never().is_none(),
+            "one failure must not abandon the other close"
         );
+        second_response
+            .send(Err(anyhow!("Second close failed")))
+            .expect("second response");
+        let error = closing.await.expect_err("all failures must be returned");
+        let failures = &error
+            .downcast_ref::<SessionCloseErrors>()
+            .expect("batch failures")
+            .failures;
+        assert_eq!(failures.len(), 2);
+        assert!(failures.iter().any(|(id, error)| id == first_id
+            && error.downcast_ref::<agent_client_protocol::Error>() == Some(&first_error)));
+        assert!(
+            failures
+                .iter()
+                .any(|(id, error)| id == second_id && error.to_string() == "Second close failed")
+        );
+        let message = error.to_string();
+        assert!(message.contains(first_id.0.as_ref()) && message.contains(second_id.0.as_ref()));
+        assert!(message.contains("First close failed") && message.contains("Second close failed"));
     }
 
     #[gpui::test]
