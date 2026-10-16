@@ -2,8 +2,9 @@ use crate::RemoteSettings;
 use editor::Editor;
 use futures::channel::oneshot;
 use gpui::{
-    App, Context, Entity, FocusHandle, Focusable, IntoElement, ParentElement, PromptLevel, Render,
-    SharedString, Styled, Subscription, WeakEntity, Window, div, h_flex, px, v_flex,
+    App, Context, DismissEvent, Div, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
+    ParentElement, PromptLevel, Render, SharedString, Styled, Subscription, WeakEntity, Window,
+    div, px,
 };
 use project::Fs;
 use remote::{SshConnectionOptions, SshPortForwardOption};
@@ -48,6 +49,12 @@ struct ForwardEditor {
     original: Option<SshPortForwardOption>,
     local: Entity<Editor>,
     remote: Entity<Editor>,
+}
+
+fn port_forward_endpoint_input(editor: &Entity<Editor>, cx: &App) -> Div {
+    div()
+        .track_focus(&editor.focus_handle(cx).tab_stop(true))
+        .child(editor.clone())
 }
 
 #[derive(Clone)]
@@ -416,6 +423,8 @@ impl Focusable for PortForwardingPopover {
     }
 }
 
+impl EventEmitter<DismissEvent> for PortForwardingPopover {}
+
 impl Render for PortForwardingPopover {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut list = v_flex().gap_1();
@@ -453,6 +462,7 @@ impl Render for PortForwardingPopover {
         v_flex()
             .id("port-forwarding-popover")
             .track_focus(&self.focus_handle)
+            .tab_group()
             .w(px(384.))
             .max_h(px(480.))
             .gap_2()
@@ -474,7 +484,13 @@ impl Render for PortForwardingPopover {
                             .truncate(),
                     ),
             )
-            .child(div().max_h(px(280.)).overflow_y_scroll().child(list))
+            .child(
+                div()
+                    .id("port-forward-list")
+                    .max_h(px(280.))
+                    .overflow_y_scroll()
+                    .child(list),
+            )
             .when(self.editor.is_none() && !self.is_saving, |this| {
                 this.child(
                     Button::new("add-port-forward", "Add port forward")
@@ -497,6 +513,18 @@ impl Render for PortForwardingPopover {
                     .size(LabelSize::Small)
                     .color(Color::Muted),
             )
+            .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
+                if this.editor.is_some() {
+                    this.cancel_edit(cx);
+                } else {
+                    cx.emit(DismissEvent);
+                }
+            }))
+            .on_action(|_: &menu::SelectNext, window, cx| window.focus_next(cx))
+            .on_action(|_: &menu::SelectPrevious, window, cx| window.focus_prev(cx))
+            .on_action(|_: &editor::actions::Tab, window, cx| window.focus_next(cx))
+            .on_action(|_: &editor::actions::Backtab, window, cx| window.focus_prev(cx))
+            .on_mouse_down_out(cx.listener(|_, _, _, cx| cx.emit(DismissEvent)))
             .into_any_element()
     }
 }
@@ -509,63 +537,64 @@ impl PortForwardingPopover {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let edit_forward = forward.clone();
         let delete_forward = forward.clone();
         h_flex()
             .id(format!("port-forward-row-{index}"))
             .w_full()
-            .min_h_8()
-            .px_2()
-            .gap_2()
-            .justify_between()
-            .rounded_md()
-            .hover(|style| style.bg(cx.theme().colors().element_hover))
+            .gap_1()
             .child(
-                Label::new(format_forward(&forward))
-                    .size(LabelSize::Small)
-                    .truncate(),
+                div().flex_1().min_w_0().child(
+                    Button::new(
+                        format!("edit-port-forward-{index}"),
+                        format_forward(&forward),
+                    )
+                    .full_width()
+                    .label_size(LabelSize::Small)
+                    .truncate(true)
+                    .end_icon(Icon::new(IconName::Pencil).size(IconSize::Small))
+                    .style(ButtonStyle::Subtle)
+                    .disabled(self.editor.is_some() || self.is_saving)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.begin_edit(Some(forward.clone()), window, cx);
+                    })),
+                ),
             )
             .child(
-                h_flex()
-                    .gap_1()
-                    .child(
-                        IconButton::new(format!("edit-port-forward-{index}"), IconName::Pencil)
-                            .shape(IconButtonShape::Square)
-                            .icon_size(IconSize::Small)
-                            .aria_label("Edit port forward")
-                            .tooltip(Tooltip::text("Edit Port Forward"))
-                            .disabled(self.editor.is_some() || self.is_saving)
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.begin_edit(Some(edit_forward.clone()), window, cx);
-                            })),
-                    )
-                    .child(
-                        IconButton::new(format!("delete-port-forward-{index}"), IconName::Trash)
-                            .shape(IconButtonShape::Square)
-                            .icon_size(IconSize::Small)
-                            .aria_label("Remove port forward")
-                            .tooltip(Tooltip::text("Remove Port Forward"))
-                            .disabled(self.editor.is_some() || self.is_saving)
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.confirm_delete(delete_forward.clone(), window, cx);
-                            })),
-                    ),
+                IconButton::new(format!("delete-port-forward-{index}"), IconName::Trash)
+                    .shape(IconButtonShape::Square)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Error)
+                    .style(ButtonStyle::Subtle)
+                    .aria_label("Delete port forward")
+                    .tooltip(Tooltip::text("Delete Port Forward"))
+                    .disabled(self.editor.is_some() || self.is_saving)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.confirm_delete(delete_forward.clone(), window, cx);
+                    })),
             )
     }
 
     fn render_editor(
         &self,
         editor: &ForwardEditor,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         h_flex()
             .id("port-forward-editor")
             .w_full()
             .gap_1()
-            .child(div().flex_1().min_w_0().child(editor.local.clone()))
+            .child(
+                port_forward_endpoint_input(&editor.local, cx)
+                    .flex_1()
+                    .min_w_0(),
+            )
             .child(Icon::new(IconName::ArrowRight).color(Color::Muted))
-            .child(div().flex_1().min_w_0().child(editor.remote.clone()))
+            .child(
+                port_forward_endpoint_input(&editor.remote, cx)
+                    .flex_1()
+                    .min_w_0(),
+            )
             .child(
                 IconButton::new("save-port-forward", IconName::Check)
                     .shape(IconButtonShape::Square)
@@ -590,9 +619,6 @@ impl PortForwardingPopover {
             )
             .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
                 this.save_edit(window, cx);
-            }))
-            .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
-                this.cancel_edit(cx);
             }))
     }
 }
@@ -808,6 +834,29 @@ fn format_forward(forward: &SshPortForwardOption) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::{KeyBinding, TestAppContext};
+
+    struct EndpointFocusFixture {
+        focus_handle: FocusHandle,
+        local_editor: Entity<Editor>,
+        remote_editor: Entity<Editor>,
+    }
+
+    impl Render for EndpointFocusFixture {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            v_flex()
+                .id("port-forward-endpoint-focus-test")
+                .track_focus(&self.focus_handle)
+                .tab_group()
+                .on_action(|_: &menu::SelectNext, window, cx| window.focus_next(cx))
+                .on_action(|_: &menu::SelectPrevious, window, cx| window.focus_prev(cx))
+                .on_action(|_: &editor::actions::Tab, window, cx| window.focus_next(cx))
+                .on_action(|_: &editor::actions::Backtab, window, cx| window.focus_prev(cx))
+                .child(Button::new("existing-forward-action", "Existing forward").tab_index(0))
+                .child(port_forward_endpoint_input(&self.local_editor, cx))
+                .child(port_forward_endpoint_input(&self.remote_editor, cx))
+        }
+    }
 
     fn forward(
         local_host: Option<&str>,
@@ -1014,5 +1063,40 @@ mod tests {
             .is_err()
         );
         assert_eq!(settings_content.ssh_connections, original_settings);
+    }
+
+    #[gpui::test]
+    fn tab_moves_between_port_forward_endpoint_inputs(cx: &mut TestAppContext) {
+        cx.update(|_, cx| {
+            cx.bind_keys([
+                KeyBinding::new("tab", menu::SelectNext, None),
+                KeyBinding::new("shift-tab", menu::SelectPrevious, None),
+                KeyBinding::new("tab", editor::actions::Tab, Some("Editor")),
+                KeyBinding::new("shift-tab", editor::actions::Backtab, Some("Editor")),
+            ]);
+        });
+
+        let (fixture, cx) = cx.add_window_view(|window, cx| EndpointFocusFixture {
+            focus_handle: cx.focus_handle(),
+            local_editor: cx.new(|cx| Editor::single_line(window, cx)),
+            remote_editor: cx.new(|cx| Editor::single_line(window, cx)),
+        });
+        let (local_focus, remote_focus) = fixture.read_with(cx, |fixture, cx| {
+            (
+                fixture.local_editor.focus_handle(cx),
+                fixture.remote_editor.focus_handle(cx),
+            )
+        });
+        cx.update(|window, cx| window.focus(&local_focus, cx));
+
+        cx.simulate_keystrokes("tab");
+        cx.update(|window, _| {
+            assert!(remote_focus.is_focused(window));
+        });
+
+        cx.simulate_keystrokes("shift-tab");
+        cx.update(|window, _| {
+            assert!(local_focus.is_focused(window));
+        });
     }
 }
