@@ -1274,16 +1274,28 @@ async fn target_info_from_abs_path(
     abs_path: &Path,
     project_env: Option<&HashMap<String, String>>,
 ) -> Result<Option<(Option<TargetInfo>, Arc<Path>)>> {
+    let directory = abs_path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("failed to get parent directory"))?;
+    let resolved_directory = fs::canonicalize(directory).await?;
+    let mut ancestors = resolved_directory.ancestors();
+    loop {
+        let Some(ancestor) = ancestors.next() else {
+            return Ok(None);
+        };
+        match fs::metadata(ancestor.join("Cargo.toml")).await {
+            Ok(_) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+
     let mut command = util::command::new_command("cargo");
     if let Some(envs) = project_env {
         command.envs(envs);
     }
     let output = command
-        .current_dir(
-            abs_path
-                .parent()
-                .ok_or_else(|| anyhow::anyhow!("failed to get parent directory"))?,
-        )
+        .current_dir(directory)
         .arg("metadata")
         .arg("--no-deps")
         .arg("--format-version")
@@ -1484,7 +1496,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use settings::SettingsStore;
     use theme::SyntaxTheme;
-    use util::path;
+    use util::{path, paths::SanitizedPath};
 
     #[gpui::test]
     async fn test_process_rust_diagnostics() {
@@ -2347,6 +2359,67 @@ mod tests {
 
             assert_eq!(target_info_from_metadata(metadata, absolute_path), expected);
         }
+    }
+
+    #[test]
+    fn target_info_from_abs_path_without_manifest() -> Result<()> {
+        let temporary_directory = tempfile::tempdir()?;
+        let project_root = temporary_directory.path().canonicalize()?;
+        let project_root = SanitizedPath::new(&project_root);
+
+        for relative_path in ["main.rs", "nested/src/main.rs"] {
+            let source_path = project_root.join(relative_path);
+            std::fs::create_dir_all(source_path.parent().context("source has no parent")?)?;
+            std::fs::write(&source_path, "fn main() {}")?;
+
+            assert_eq!(
+                smol::block_on(target_info_from_abs_path(&source_path, None))?,
+                None
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn target_info_from_abs_path_with_ancestor_manifest() -> Result<()> {
+        let temporary_directory = tempfile::tempdir()?;
+        let project_root = temporary_directory.path().canonicalize()?;
+        let project_root = SanitizedPath::new(&project_root);
+        let source_directory = project_root.join("src/nested");
+        let source_path = source_directory.join("main.rs");
+        std::fs::create_dir_all(&source_directory)?;
+        std::fs::write(&source_path, "fn main() {}")?;
+        std::fs::write(
+            project_root.join("Cargo.toml"),
+            r#"
+[package]
+name = "task-context-package"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "task-context-bin"
+path = "src/nested/main.rs"
+
+[workspace]
+"#,
+        )?;
+
+        assert_eq!(
+            smol::block_on(target_info_from_abs_path(&source_path, None))?,
+            Some((
+                Some(TargetInfo {
+                    package_name: "task-context-package".into(),
+                    target_name: "task-context-bin".into(),
+                    target_kind: TargetKind::Bin,
+                    required_features: Vec::new(),
+                }),
+                Arc::from(project_root.as_path()),
+            ))
+        );
+
+        Ok(())
     }
 
     #[test]
