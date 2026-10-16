@@ -1846,7 +1846,7 @@ mod tests {
         let image_uri = acp_thread::MentionUri::PastedImage {
             name: "Image".into(),
         };
-        assert_eq!(prompt, format!("{} ", image_uri.as_link()));
+        assert_eq!(prompt, format!("{} ", image_uri.to_link()));
     }
 
     #[gpui::test]

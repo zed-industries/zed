@@ -235,8 +235,7 @@ impl MentionSet {
     pub fn confirm_mention_completion(
         &mut self,
         crease_text: SharedString,
-        start: text::Anchor,
-        content_len: usize,
+        range: Range<text::Anchor>,
         mention_uri: MentionUri,
         supports_images: bool,
         editor: Entity<Editor>,
@@ -249,12 +248,15 @@ impl MentionSet {
         };
 
         let snapshot = editor.update(cx, |editor, cx| editor.snapshot(window, cx));
-        let Some(start_anchor) = snapshot.buffer_snapshot().anchor_in_excerpt(start) else {
+        let Some(start_anchor) = snapshot.buffer_snapshot().anchor_in_excerpt(range.start) else {
             return Task::ready(());
         };
-        let end_anchor = snapshot.buffer_snapshot().anchor_before(
-            start_anchor.to_offset(&snapshot.buffer_snapshot()) + content_len + 1usize,
-        );
+        let Some(link_end_anchor) = snapshot.buffer_snapshot().anchor_in_excerpt(range.end) else {
+            return Task::ready(());
+        };
+        let end_anchor = snapshot
+            .buffer_snapshot()
+            .anchor_before(link_end_anchor.to_offset(&snapshot.buffer_snapshot()) + 1usize);
 
         let crease = if let MentionUri::File { abs_path } = &mention_uri
             && is_raster_image_path(abs_path)
@@ -275,8 +277,7 @@ impl MentionSet {
                 })
                 .shared();
             insert_crease_for_mention(
-                start,
-                content_len,
+                range,
                 mention_uri.name().into(),
                 IconName::Image.path().into(),
                 mention_uri.tooltip_text(),
@@ -289,8 +290,7 @@ impl MentionSet {
             )
         } else {
             insert_crease_for_mention(
-                start,
-                content_len,
+                range,
                 crease_text,
                 mention_uri.icon_path(cx),
                 mention_uri.tooltip_text(),
@@ -894,37 +894,30 @@ pub(crate) async fn insert_images_as_context(
         let mention_uri = MentionUri::PastedImage {
             name: name.to_string(),
         };
-        let replacement_text = mention_uri.as_link().to_string();
-        let Some((text_anchor, multibuffer_anchor)) = editor
-            .update_in(cx, |editor, window, cx| {
-                let snapshot = editor.snapshot(window, cx);
-                let (cursor_anchor, buffer_snapshot) = snapshot
-                    .buffer_snapshot()
-                    .anchor_to_buffer_anchor(editor.selections.newest_anchor().start)
-                    .unwrap();
-                let text_anchor = cursor_anchor.bias_left(buffer_snapshot);
-                let multibuffer_anchor = snapshot.buffer_snapshot().anchor_in_excerpt(text_anchor);
-                editor.insert(&format!("{replacement_text} "), window, cx);
-                (text_anchor, multibuffer_anchor)
-            })
-            .ok()
-        else {
+        let replacement_text = mention_uri.to_link();
+        let Ok(range) = editor.update_in(cx, |editor, window, cx| {
+            insert_mention_link(editor, &replacement_text, " ", window, cx)
+        }) else {
             break;
         };
-
-        let content_len = replacement_text.len();
-        let Some(start_anchor) = multibuffer_anchor else {
+        let Some(range) = range else {
             continue;
         };
-        let end_anchor = editor.update(cx, |editor, cx| {
+
+        let (start_anchor, end_anchor) = editor.update(cx, |editor, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
-            snapshot.anchor_before(start_anchor.to_offset(&snapshot) + content_len)
+            (
+                snapshot.anchor_in_excerpt(range.start),
+                snapshot.anchor_in_excerpt(range.end),
+            )
         });
+        let (Some(start_anchor), Some(end_anchor)) = (start_anchor, end_anchor) else {
+            continue;
+        };
         let image = Arc::new(image);
         let Ok(Some((crease_id, tx, crease_entity))) = cx.update(|window, cx| {
             insert_crease_for_mention(
-                text_anchor,
-                content_len,
+                range.clone(),
                 name.clone(),
                 IconName::Image.path().into(),
                 None,
@@ -1090,9 +1083,33 @@ pub(crate) fn paste_images_as_context(
     }))
 }
 
+/// Inserts `link` followed by `separator` at the newest cursor, returning the range the link occupies.
+///
+/// The range is read back from the buffer because the buffer normalizes line endings on insert,
+/// so the inserted text can be shorter than `link`.
+pub(crate) fn insert_mention_link(
+    editor: &mut Editor,
+    link: &str,
+    separator: &str,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) -> Option<Range<text::Anchor>> {
+    let cursor_anchor = |editor: &Editor, cx: &App| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let (anchor, buffer_snapshot) =
+            snapshot.anchor_to_buffer_anchor(editor.selections.newest_anchor().start)?;
+        Some(anchor.bias_left(buffer_snapshot))
+    };
+
+    let start = cursor_anchor(editor, cx)?;
+    editor.insert(link, window, cx);
+    let end = cursor_anchor(editor, cx)?;
+    editor.insert(separator, window, cx);
+    Some(start..end)
+}
+
 pub(crate) fn insert_crease_for_mention(
-    anchor: text::Anchor,
-    content_len: usize,
+    range: Range<text::Anchor>,
     crease_label: SharedString,
     crease_icon: SharedString,
     crease_tooltip: Option<SharedString>,
@@ -1112,10 +1129,10 @@ pub(crate) fn insert_crease_for_mention(
     let crease_id = editor.update(cx, |editor, cx| {
         let snapshot = editor.buffer().read(cx).snapshot(cx);
 
-        let start = snapshot.anchor_in_excerpt(anchor)?;
-
-        let start = start.bias_right(&snapshot);
-        let end = snapshot.anchor_before(start.to_offset(&snapshot) + content_len);
+        let start = snapshot
+            .anchor_in_excerpt(range.start)?
+            .bias_right(&snapshot);
+        let end = snapshot.anchor_in_excerpt(range.end)?.bias_left(&snapshot);
 
         let (render, crease_entity) = render_mention_fold_button(
             crease_label.clone(),

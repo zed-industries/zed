@@ -7,7 +7,9 @@ use crate::{
         PromptCompletionProviderDelegate, PromptContextAction, PromptContextType,
         PromptLocalCommand, SlashCommandCompletion,
     },
-    mention_set::{Mention, MentionImage, MentionSet, insert_crease_for_mention},
+    mention_set::{
+        Mention, MentionImage, MentionSet, insert_crease_for_mention, insert_mention_link,
+    },
 };
 use acp_thread::MentionUri;
 use agent::ThreadStore;
@@ -36,7 +38,7 @@ use project::{
 };
 use rope::Point;
 use settings::Settings;
-use std::{cmp::min, fmt::Write, ops::Range, rc::Rc, sync::Arc};
+use std::{cmp::min, ops::Range, rc::Rc, sync::Arc};
 use text::LineEnding;
 use theme_settings::ThemeSettings;
 use ui::{ContextMenu, prelude::*};
@@ -280,29 +282,15 @@ fn insert_mention_for_project_path(
         (file_name, mention_uri)
     };
 
-    let mention_text = mention_uri.as_link().to_string();
-    let content_len = mention_text.len();
-
-    let text_anchor = editor.update(cx, |editor, cx| {
-        let buffer = editor.buffer().read(cx);
-        let snapshot = buffer.snapshot(cx);
-        let buffer_snapshot = snapshot.as_singleton()?;
-        let text_anchor = snapshot
-            .anchor_to_buffer_anchor(editor.selections.newest_anchor().start)?
-            .0
-            .bias_left(&buffer_snapshot);
-
-        editor.insert(&mention_text, window, cx);
-        editor.insert(" ", window, cx);
-
-        Some(text_anchor)
+    let mention_text = mention_uri.to_link();
+    let range = editor.update(cx, |editor, cx| {
+        insert_mention_link(editor, &mention_text, " ", window, cx)
     })?;
 
     Some(mention_set.update(cx, |mention_set, cx| {
         mention_set.confirm_mention_completion(
             file_name,
-            text_anchor,
-            content_len,
+            range,
             mention_uri,
             supports_images,
             editor.clone(),
@@ -705,18 +693,20 @@ impl MessageEditor {
             id: session_id,
             name: thread_title.to_string(),
         };
-        let content = format!("{}\n", uri.as_link());
+        let content = format!("{}\n", uri.to_link());
 
-        let content_len = content.len() - 1;
-
-        let start = self.editor.update(cx, |editor, cx| {
+        let range = self.editor.update(cx, |editor, cx| {
             editor.set_text(content, window, cx);
             let snapshot = editor.buffer().read(cx).snapshot(cx);
-            snapshot
-                .anchor_to_buffer_anchor(snapshot.anchor_before(Point::zero()))
-                .unwrap()
-                .0
+            let start = snapshot.anchor_to_buffer_anchor(snapshot.anchor_before(Point::zero()))?;
+            let end = snapshot.anchor_to_buffer_anchor(
+                snapshot.anchor_before(snapshot.len().saturating_sub_usize(1)),
+            )?;
+            Some(start.0..end.0)
         });
+        let Some(range) = range else {
+            return;
+        };
 
         let supports_images = self.session_capabilities.read().supports_images();
 
@@ -724,8 +714,7 @@ impl MessageEditor {
             .update(cx, |mention_set, cx| {
                 mention_set.confirm_mention_completion(
                     thread_title,
-                    start,
-                    content_len,
+                    range,
                     uri,
                     supports_images,
                     self.editor.clone(),
@@ -1127,11 +1116,6 @@ impl MessageEditor {
         .unwrap_or(false);
 
         if should_insert_creases && let Some(selections) = editor_clipboard_selections {
-            let snapshot = self.editor.read(cx).buffer().read(cx).snapshot(cx);
-            let (insertion_target, _) = snapshot
-                .anchor_to_buffer_anchor(self.editor.read(cx).selections.newest_anchor().start)
-                .unwrap();
-
             let project = workspace.read(cx).project().clone();
             for selection in selections {
                 if let (Some(file_path), Some(line_range)) =
@@ -1146,22 +1130,15 @@ impl MessageEditor {
                         column: None,
                     };
 
-                    let mention_text = mention_uri.as_link().to_string();
-                    let (text_anchor, content_len) = self.editor.update(cx, |editor, cx| {
-                        let buffer = editor.buffer().read(cx);
-                        let snapshot = buffer.snapshot(cx);
-                        let buffer_snapshot = snapshot.as_singleton().unwrap();
-                        let text_anchor = insertion_target.bias_left(&buffer_snapshot);
-
-                        editor.insert(&mention_text, window, cx);
-                        editor.insert(" ", window, cx);
-
-                        (text_anchor, mention_text.len())
-                    });
+                    let mention_text = mention_uri.to_link();
+                    let Some(range) = self.editor.update(cx, |editor, cx| {
+                        insert_mention_link(editor, &mention_text, " ", window, cx)
+                    }) else {
+                        continue;
+                    };
 
                     let Some((crease_id, tx, crease_entity)) = insert_crease_for_mention(
-                        text_anchor,
-                        content_len,
+                        range,
                         crease_text.into(),
                         mention_uri.icon_path(cx),
                         mention_uri.tooltip_text(),
@@ -1264,10 +1241,17 @@ impl MessageEditor {
 
                     let parsed_mentions = parse_mention_links(&inserted_text, path_style);
                     for (range, mention_uri) in parsed_mentions {
-                        let mention_start_offset = MultiBufferOffset(start_offset.0 + range.start);
-                        let anchor = snapshot.anchor_before(mention_start_offset);
-                        let content_len = range.end - range.start;
-                        all_mentions.push((anchor, content_len, mention_uri));
+                        let start =
+                            snapshot
+                                .anchor_to_buffer_anchor(snapshot.anchor_before(
+                                    MultiBufferOffset(start_offset.0 + range.start),
+                                ));
+                        let end = snapshot.anchor_to_buffer_anchor(
+                            snapshot.anchor_before(MultiBufferOffset(start_offset.0 + range.end)),
+                        );
+                        if let (Some((start, _)), Some((end, _))) = (start, end) {
+                            all_mentions.push((start..end, mention_uri));
+                        }
                     }
                 }
 
@@ -1275,10 +1259,9 @@ impl MessageEditor {
                     let supports_images = self.session_capabilities.read().supports_images();
                     let http_client = workspace.read(cx).client().http_client();
 
-                    for (anchor, content_len, mention_uri) in all_mentions {
+                    for (range, mention_uri) in all_mentions {
                         let Some((crease_id, tx, crease_entity)) = insert_crease_for_mention(
-                            snapshot.anchor_to_buffer_anchor(anchor).unwrap().0,
-                            content_len,
+                            range,
                             mention_uri.name().into(),
                             mention_uri.icon_path(cx),
                             mention_uri.tooltip_text(),
@@ -1485,27 +1468,16 @@ impl MessageEditor {
                     let mention_uri = MentionUri::GitDiff {
                         base_ref: base_ref.to_string(),
                     };
-                    let mention_text = mention_uri.as_link().to_string();
+                    let mention_text = mention_uri.to_link();
 
-                    let (text_anchor, content_len) = editor.update(cx, |editor, cx| {
-                        let buffer = editor.buffer().read(cx);
-                        let snapshot = buffer.snapshot(cx);
-                        let buffer_snapshot = snapshot.as_singleton().unwrap();
-                        let text_anchor = snapshot
-                            .anchor_to_buffer_anchor(editor.selections.newest_anchor().start)
-                            .unwrap()
-                            .0
-                            .bias_left(&buffer_snapshot);
-
-                        editor.insert(&mention_text, window, cx);
-                        editor.insert(" ", window, cx);
-
-                        (text_anchor, mention_text.len())
-                    });
+                    let Some(range) = editor.update(cx, |editor, cx| {
+                        insert_mention_link(editor, &mention_text, " ", window, cx)
+                    }) else {
+                        return;
+                    };
 
                     let Some((crease_id, tx, crease_entity)) = insert_crease_for_mention(
-                        text_anchor,
-                        content_len,
+                        range,
                         mention_uri.name().into(),
                         mention_uri.icon_path(cx),
                         mention_uri.tooltip_text(),
@@ -1558,25 +1530,12 @@ impl MessageEditor {
             skill_file_path: skill.skill_file_path.clone(),
         };
 
-        let link_text = mention_uri.as_link().to_string();
-        let content_len = link_text.len();
-        let mention_text = format!("{} ", link_text);
+        let link_text = mention_uri.to_link();
         let crease_text: SharedString = mention_uri.name().into();
 
-        let start_anchor = self.editor.update(cx, |editor, cx| {
-            let snapshot = editor.buffer().read(cx).snapshot(cx);
-            let buffer_snapshot = snapshot.as_singleton()?;
-            let cursor = editor.selections.newest_anchor().start;
-            let text_anchor = snapshot
-                .anchor_to_buffer_anchor(cursor)?
-                .0
-                .bias_left(buffer_snapshot);
-
-            editor.insert(&mention_text, window, cx);
-            Some(text_anchor)
-        });
-
-        let Some(start_anchor) = start_anchor else {
+        let Some(range) = self.editor.update(cx, |editor, cx| {
+            insert_mention_link(editor, &link_text, " ", window, cx)
+        }) else {
             return;
         };
 
@@ -1584,8 +1543,7 @@ impl MessageEditor {
             .update(cx, |mention_set, cx| {
                 mention_set.confirm_mention_completion(
                     crease_text,
-                    start_anchor,
-                    content_len,
+                    range,
                     mention_uri,
                     false,
                     self.editor.clone(),
@@ -1800,7 +1758,7 @@ impl MessageEditor {
                         continue;
                     };
                     let start = text.len();
-                    append_normalized(&mut text, mention_uri.as_link().to_string());
+                    append_normalized(&mut text, mention_uri.to_link());
                     let end = text.len();
                     mentions.push((
                         start..end,
@@ -1816,7 +1774,7 @@ impl MessageEditor {
                         MentionUri::parse(&resource.uri, path_style).log_err()
                     {
                         let start = text.len();
-                        append_normalized(&mut text, mention_uri.as_link().to_string());
+                        append_normalized(&mut text, mention_uri.to_link());
                         let end = text.len();
                         mentions.push((start..end, mention_uri, Mention::Link));
                     }
@@ -1842,7 +1800,7 @@ impl MessageEditor {
                         continue;
                     };
                     let start = text.len();
-                    append_normalized(&mut text, mention_uri.as_link().to_string());
+                    append_normalized(&mut text, mention_uri.to_link());
                     let end = text.len();
                     mentions.push((
                         start..end,
@@ -1880,12 +1838,18 @@ impl MessageEditor {
         };
 
         for (range, mention_uri, mention) in mentions {
-            let adjusted_start = insertion_start + range.start;
-            let anchor = snapshot.anchor_before(MultiBufferOffset(adjusted_start));
+            let start = snapshot.anchor_to_buffer_anchor(
+                snapshot.anchor_before(MultiBufferOffset(insertion_start + range.start)),
+            );
+            let end = snapshot.anchor_to_buffer_anchor(
+                snapshot.anchor_before(MultiBufferOffset(insertion_start + range.end)),
+            );
+            let (Some((start, _)), Some((end, _))) = (start, end) else {
+                continue;
+            };
             let image_preview = image_preview_task_for_mention(&mention);
             let Some((crease_id, tx, crease_entity)) = insert_crease_for_mention(
-                snapshot.anchor_to_buffer_anchor(anchor).unwrap().0,
-                range.end - range.start,
+                start..end,
                 mention_uri.name().into(),
                 mention_uri.icon_path(cx),
                 mention_uri.tooltip_text(),
@@ -2032,7 +1996,7 @@ impl MessageEditor {
                 if cursor < *start {
                     text.extend(snapshot.text_for_range(cursor..*start));
                 }
-                write!(text, "{}", uri.as_link()).unwrap();
+                text.push_str(&uri.to_link());
                 cursor = *end;
                 has_mentions = true;
             }
@@ -3729,6 +3693,14 @@ mod tests {
         })
     }
 
+    fn folded_texts(editor: &Editor, cx: &mut App) -> Vec<String> {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        fold_ranges(editor, cx)
+            .into_iter()
+            .map(|range| snapshot.text_for_range(range).collect())
+            .collect()
+    }
+
     fn current_completion_labels(editor: &Editor) -> Vec<String> {
         let completions = editor.current_completions().expect("Missing completions");
         completions
@@ -4662,8 +4634,13 @@ mod tests {
                             snapshot.anchor_before(MultiBufferOffset(range.start)),
                         )
                         .expect("selection mention anchor should map to a buffer")
-                        .0,
-                    range.len(),
+                        .0
+                        ..snapshot
+                            .anchor_to_buffer_anchor(
+                                snapshot.anchor_before(MultiBufferOffset(range.end)),
+                            )
+                            .expect("selection mention anchor should map to a buffer")
+                            .0,
                     uri.name().into(),
                     uri.icon_path(cx),
                     uri.tooltip_text(),
@@ -4709,8 +4686,8 @@ mod tests {
         });
         let expected_text = format!(
             "{} needs work\n{} looks fine",
-            first_uri.as_link(),
-            second_uri.as_link()
+            first_uri.to_link(),
+            second_uri.to_link()
         );
         assert_eq!(copied_text, expected_text);
 
@@ -4824,8 +4801,13 @@ mod tests {
                             snapshot.anchor_before(MultiBufferOffset(range.start)),
                         )
                         .expect("selection mention anchor should map to a buffer")
-                        .0,
-                    range.len(),
+                        .0
+                        ..snapshot
+                            .anchor_to_buffer_anchor(
+                                snapshot.anchor_before(MultiBufferOffset(range.end)),
+                            )
+                            .expect("selection mention anchor should map to a buffer")
+                            .0,
                     uri.name().into(),
                     uri.icon_path(cx),
                     uri.tooltip_text(),
@@ -4898,7 +4880,7 @@ mod tests {
                     .map(|(text, _)| text)
             });
 
-        assert_eq!(copied, Some(fixture.first_uri.as_link().to_string()));
+        assert_eq!(copied, Some(fixture.first_uri.to_link()));
     }
 
     #[gpui::test]
@@ -5004,8 +4986,8 @@ mod tests {
 
         let expected_text = format!(
             "{} needs work\n{} looks fine",
-            fixture.first_uri.as_link(),
-            fixture.second_uri.as_link()
+            fixture.first_uri.to_link(),
+            fixture.second_uri.to_link()
         );
 
         let clipboard_text = cx
@@ -5052,7 +5034,7 @@ mod tests {
             .expect("cut should write serialized text to clipboard");
         assert_eq!(
             clipboard_text,
-            format!("{} needs work\n", fixture.first_uri.as_link())
+            format!("{} needs work\n", fixture.first_uri.to_link())
         );
 
         let remaining_text = fixture.message_editor.read_with(&cx, |message_editor, cx| {
@@ -5227,6 +5209,51 @@ mod tests {
 
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(editor.text(cx), format!("[@a\nb.txt]({expected_uri}) "));
+            assert_eq!(
+                folded_texts(editor, cx),
+                vec![format!("[@a\nb.txt]({expected_uri})")]
+            );
+        });
+
+        let contents = mention_contents(&message_editor, &mut cx).await;
+        let [(uri, Mention::Text { content, .. })] = contents.as_slice() else {
+            panic!("Unexpected mentions");
+        };
+        assert_eq!(content, "content");
+        assert_eq!(
+            uri,
+            &MentionUri::File {
+                abs_path: path!("/project/a\r\nb.txt").into(),
+            }
+        );
+    }
+
+    #[gpui::test]
+    async fn test_completion_for_file_with_line_breaks_in_name(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (message_editor, editor, mut cx) =
+            setup_paste_test_message_editor(json!({"a\r\nb.txt": "content"}), cx).await;
+
+        cx.simulate_input("@a");
+        cx.run_until_parked();
+        editor.update_in(&mut cx, |editor, window, cx| {
+            assert!(editor.has_visible_completions_menu());
+            editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
+        });
+        cx.run_until_parked();
+
+        let expected_uri = MentionUri::File {
+            abs_path: path!("/project/a\r\nb.txt").into(),
+        }
+        .to_uri()
+        .to_string();
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(editor.text(cx), format!("[@a\nb.txt]({expected_uri}) "));
+            assert_eq!(
+                folded_texts(editor, cx),
+                vec![format!("[@a\nb.txt]({expected_uri})")]
+            );
         });
 
         let contents = mention_contents(&message_editor, &mut cx).await;
@@ -5500,7 +5527,7 @@ mod tests {
                         name: "Image".into(),
                     };
                     editor.update(&mut cx, |editor, cx| {
-                        assert_eq!(editor.text(cx), format!("{} ", image_uri.as_link()));
+                        assert_eq!(editor.text(cx), format!("{} ", image_uri.to_link()));
                     });
                     let contents = mention_contents(&message_editor, &mut cx).await;
                     assert_eq!(contents.len(), 1);
@@ -5575,13 +5602,13 @@ mod tests {
                 let file_uri = MentionUri::File {
                     abs_path: path.clone(),
                 };
-                expected_text.push_str(&format!("{} ", file_uri.as_link()));
+                expected_text.push_str(&format!("{} ", file_uri.to_link()));
                 assert!(contents.iter().any(|(uri, mention)| {
                     uri == &file_uri
                         && matches!(mention, Mention::Text { content, .. } if content == "plain text")
                 }));
             }
-            expected_text.push_str(&format!("{} ", image_uri.as_link()));
+            expected_text.push_str(&format!("{} ", image_uri.to_link()));
             assert_eq!(contents.len(), if inline { 1 } else { 2 });
             editor.update(&mut cx, |editor, cx| {
                 assert_eq!(editor.text(cx), expected_text);

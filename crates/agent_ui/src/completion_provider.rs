@@ -563,9 +563,8 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             uri.icon_path(cx)
         };
 
-        let new_text = format!("{} ", uri.as_link());
+        let new_text = format!("{} ", uri.to_link());
 
-        let new_text_len = new_text.len();
         Completion {
             replace_range: source_range.clone(),
             new_text,
@@ -580,7 +579,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             confirm: Some(confirm_completion_callback(
                 title,
                 source_range.start,
-                new_text_len - 1,
                 uri,
                 source,
                 editor,
@@ -605,8 +603,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             source: skill.source.to_string(),
             skill_file_path: skill.skill_file_path.clone(),
         };
-        let new_text = format!("{} ", uri.as_link());
-        let new_text_len = new_text.len();
+        let new_text = format!("{} ", uri.to_link());
         let icon_path = skill_completion_icon_path(&skill, &uri, cx);
         let crease_text: SharedString = uri.name().into();
         let source_highlight_id = cx
@@ -629,7 +626,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             confirm: Some(confirm_completion_callback(
                 crease_text,
                 source_range.start,
-                new_text_len - 1,
                 uri,
                 source,
                 editor,
@@ -681,8 +677,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             crease_icon_path
         };
 
-        let new_text = format!("{} ", uri.as_link());
-        let new_text_len = new_text.len();
+        let new_text = format!("{} ", uri.to_link());
         Some(Completion {
             replace_range: source_range.clone(),
             new_text,
@@ -697,7 +692,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             confirm: Some(confirm_completion_callback(
                 file_name,
                 source_range.start,
-                new_text_len - 1,
                 uri,
                 source,
                 editor,
@@ -747,8 +741,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             name: symbol.name.clone(),
             line_range: symbol.range.start.0.row..=symbol.range.end.0.row,
         };
-        let new_text = format!("{} ", uri.as_link());
-        let new_text_len = new_text.len();
+        let new_text = format!("{} ", uri.to_link());
         let icon_path = uri.icon_path(cx);
         Some(Completion {
             replace_range: source_range.clone(),
@@ -764,7 +757,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             confirm: Some(confirm_completion_callback(
                 symbol.name.into(),
                 source_range.start,
-                new_text_len - 1,
                 uri,
                 source,
                 editor,
@@ -794,7 +786,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         let icon_path = mention_uri.icon_path(cx);
         Some(Completion {
             replace_range: source_range.clone(),
-            new_text: new_text.clone(),
+            new_text,
             label: CodeLabel::plain(url_to_fetch.to_string(), None),
             documentation: None,
             source: project::CompletionSource::Custom,
@@ -806,7 +798,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             confirm: Some(confirm_completion_callback(
                 url_to_fetch.to_string().into(),
                 source_range.start,
-                new_text.len() - 1,
                 mention_uri,
                 source,
                 editor,
@@ -939,7 +930,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         let crease_text = diagnostics_crease_label(summary, include_errors, include_warnings);
         let display_text = format!("@{}", crease_text);
         let new_text = format!("[{}]({}) ", display_text, uri.to_uri());
-        let new_text_len = new_text.len();
         Completion {
             replace_range: source_range.clone(),
             new_text,
@@ -954,7 +944,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             confirm: Some(confirm_completion_callback(
                 crease_text,
                 source_range.start,
-                new_text_len - 1,
                 uri,
                 source,
                 editor,
@@ -980,7 +969,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         let crease_text: SharedString = format!("Branch Diff (vs {})", base_ref).into();
         let display_text = format!("@{}", crease_text);
         let new_text = format!("[{}]({}) ", display_text, uri.to_uri());
-        let new_text_len = new_text.len();
         let icon_path = uri.icon_path(cx);
 
         Completion {
@@ -997,7 +985,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             confirm: Some(confirm_completion_callback(
                 crease_text,
                 source_range.start,
-                new_text_len - 1,
                 uri,
                 source,
                 editor,
@@ -1479,15 +1466,13 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                             source: skill.source.to_string(),
                                             skill_file_path: skill.skill_file_path.clone(),
                                         };
-                                        let new_text = format!("{} ", uri.as_link());
-                                        let new_text_len = new_text.len();
+                                        let new_text = format!("{} ", uri.to_link());
                                         let icon_path = skill_completion_icon_path(skill, &uri, cx);
                                         let icon_color = skill_completion_icon_color(skill, cx);
                                         let crease_text: SharedString = uri.name().into();
                                         let confirm = confirm_completion_callback(
                                             crease_text,
                                             source_range.start,
-                                            new_text_len - 1,
                                             uri,
                                             source.clone(),
                                             editor.clone(),
@@ -1942,7 +1927,6 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
 fn confirm_completion_callback<T: PromptCompletionProviderDelegate>(
     crease_text: SharedString,
     start: Anchor,
-    content_len: usize,
     mention_uri: MentionUri,
     source: Arc<T>,
     editor: WeakEntity<Editor>,
@@ -1958,14 +1942,31 @@ fn confirm_completion_callback<T: PromptCompletionProviderDelegate>(
         let workspace = workspace.clone();
         window.defer(cx, move |window, cx| {
             if let Some(editor) = editor.upgrade() {
+                // The buffer normalizes line endings on insert, so read the link's end back from
+                // the cursor, which the completion leaves after the link's trailing space.
+                let end = editor.update(cx, |editor, cx| {
+                    let snapshot = editor.buffer().read(cx).snapshot(cx);
+                    let cursor = editor
+                        .selections
+                        .newest_anchor()
+                        .head()
+                        .to_offset(&snapshot);
+                    snapshot
+                        .anchor_to_buffer_anchor(
+                            snapshot.anchor_before(cursor.saturating_sub_usize(1)),
+                        )
+                        .map(|(end, _)| end)
+                });
+                let Some(end) = end else {
+                    return;
+                };
                 mention_set
                     .clone()
                     .update(cx, |mention_set, cx| {
                         mention_set
                             .confirm_mention_completion(
                                 crease_text,
-                                start,
-                                content_len,
+                                start..end,
                                 mention_uri,
                                 source.supports_images(cx),
                                 editor,

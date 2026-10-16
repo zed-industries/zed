@@ -315,9 +315,9 @@ impl UserMessage {
                 }
                 UserMessageContent::Mention { uri, content } => {
                     if !content.is_empty() {
-                        let _ = writeln!(&mut markdown, "{}\n\n{}", uri.as_link(), content);
+                        let _ = writeln!(&mut markdown, "{}\n\n{}", uri.to_link(), content);
                     } else {
-                        let _ = writeln!(&mut markdown, "{}", uri.as_link());
+                        let _ = writeln!(&mut markdown, "{}", uri.to_link());
                     }
                 }
             }
@@ -486,7 +486,7 @@ impl UserMessage {
                         }
                     }
 
-                    language_model::MessageContent::Text(uri.as_link().to_string())
+                    language_model::MessageContent::Text(uri.to_link())
                 }
             };
 

@@ -2716,7 +2716,7 @@ impl ContentBlock {
 
     fn resource_link_md(uri: &str, path_style: PathStyle) -> String {
         if let Some(uri) = MentionUri::parse(uri, path_style).log_err() {
-            uri.as_link().to_string()
+            uri.to_link()
         } else {
             uri.to_string()
         }
