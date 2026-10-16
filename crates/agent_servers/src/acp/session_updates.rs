@@ -31,6 +31,7 @@ pub enum InboundSessionUpdate {
     AvailableCommands(acp_v2::AvailableCommandsUpdate),
     ConfigOptions(acp_v2::ConfigOptionUpdate),
     Usage(acp_v2::UsageUpdate),
+    State(acp_v2::StateUpdate),
     Notice(acp_v2::Notice),
     Compaction(acp_v2::CompactionUpdate),
     CompactionSummary(acp_v2::CompactionSummaryChunk),
@@ -99,6 +100,7 @@ impl TryFrom<acp_v2::UpdateSessionNotification> for InboundSessionNotification {
                 InboundSessionUpdate::ConfigOptions(update)
             }
             acp_v2::SessionUpdate::UsageUpdate(update) => InboundSessionUpdate::Usage(update),
+            acp_v2::SessionUpdate::StateUpdate(update) => InboundSessionUpdate::State(update),
             acp_v2::SessionUpdate::Notice(notice) => InboundSessionUpdate::Notice(notice),
             acp_v2::SessionUpdate::CompactionUpdate(update) => {
                 InboundSessionUpdate::Compaction(update)
@@ -180,6 +182,7 @@ impl InboundSessionNotification {
                 thread.update_usage(update, cx);
                 Ok(())
             }
+            InboundSessionUpdate::State(update) => thread.update_session_state(update, cx),
             InboundSessionUpdate::Notice(notice) => {
                 thread.push_notice(notice, cx);
                 Ok(())

@@ -456,7 +456,7 @@ fn highlight_code_runs(
 
     let mut runs = Vec::new();
     let mut offset = 0;
-    for (range, highlight_id) in language.highlight_text(&Rope::from(code), 0..code.len()) {
+    for (range, highlight_id) in language.highlight_text(code, 0..code.len()) {
         if range.start > offset {
             runs.push(code_text_style.to_run(range.start - offset));
         }
@@ -1629,6 +1629,13 @@ impl ThreadView {
                         SubmissionState::Accepted { echoed: false, .. } => {
                             ("Waiting for message to appear…".into(), false)
                         }
+                        SubmissionState::Disconnected { receipt: Some(_) } => {
+                            ("Message accepted; agent connection lost".into(), true)
+                        }
+                        SubmissionState::Disconnected { receipt: None } => (
+                            "Connection lost; message acceptance is unknown".into(),
+                            true,
+                        ),
                         SubmissionState::Failed(error) => (
                             format!(
                                 "Message failed to send: {}",
@@ -1644,6 +1651,10 @@ impl ThreadView {
                         submission_id,
                         status,
                         settled,
+                        matches!(
+                            record.state,
+                            SubmissionState::Failed(_) | SubmissionState::Cancelled
+                        ),
                         Itertools::intersperse(Self::submission_text_parts(&record.content), "\n")
                             .flat_map(str::chars)
                             .take(161)
@@ -1657,7 +1668,7 @@ impl ThreadView {
         }
         let rows = submissions
             .into_iter()
-            .map(|(submission_id, status, settled, text)| {
+            .map(|(submission_id, status, settled, restorable, text)| {
                 let preview: SharedString = util::truncate_and_trailoff(&text, 160).into();
                 let row_id = submission_id.as_u64();
                 v_flex()
@@ -1691,7 +1702,7 @@ impl ThreadView {
                                             })),
                                     ),
                             )
-                            .when(settled, |this| {
+                            .when(restorable, |this| {
                                 this.child(
                                     div()
                                         .debug_selector(move || {
@@ -1712,7 +1723,9 @@ impl ThreadView {
                                                 )),
                                         ),
                                 )
-                                .child(
+                            })
+                            .when(settled, |this| {
+                                this.child(
                                     Button::new(("discard-submission", row_id), "Discard")
                                         .label_size(LabelSize::Small)
                                         .on_click(cx.listener(move |this, _, _, cx| {
@@ -5152,11 +5165,10 @@ impl ThreadView {
                 let keybinding_size = rems_from_px(12_f32);
                 let steer_on = entry.steer;
 
-                let min_width = rems_from_px(160_f32);
-
                 h_flex()
                     .group("queue_entry")
                     .w_full()
+                    .flex_wrap()
                     .p_1p5()
                     .gap_1()
                     .bg(cx.theme().colors().editor_background)
@@ -5167,6 +5179,7 @@ impl ThreadView {
                     .child(
                         div()
                             .id("next_in_queue")
+                            .flex_none()
                             .child(
                                 Icon::new(IconName::Circle)
                                     .size(IconSize::Small)
@@ -5174,11 +5187,16 @@ impl ThreadView {
                             )
                             .tooltip(Tooltip::text(tooltip_text)),
                     )
-                    .child(editor.clone())
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(rems_from_px(120_f32))
+                            .child(editor.clone()),
+                    )
                     .child(if editor_focused {
                         h_flex()
                             .gap_1()
-                            .min_w(min_width)
+                            .ml_auto()
                             .justify_end()
                             .child(
                                 IconButton::new(("edit", index), IconName::Pencil)
@@ -5222,7 +5240,7 @@ impl ThreadView {
                         h_flex()
                             .when(!is_next, |this| this.visible_on_hover("queue_entry"))
                             .gap_1()
-                            .min_w(min_width)
+                            .ml_auto()
                             .justify_end()
                             .child(
                                 IconButton::new(("delete", index), IconName::Trash)
