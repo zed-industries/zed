@@ -26,3 +26,4 @@ ui.workspace = true
 urlencoding.workspace = true
 workspace.workspace = true
 worktree.workspace = true
+zed_actions.workspace = true

@@ -28,8 +28,6 @@
 //!   which file it came from. A mismatch is a warning while browsing, and
 //!   installing asks for confirmation first (`run_checked`).
 
-use std::path::Path;
-
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _, PromptLevel, Render,
@@ -54,7 +52,9 @@ use npm_backend::{
 };
 use script_runner_panel::ScriptRunnerPanel;
 use script_runner_panel::command::{check_package_name, check_version};
+use std::path::{Path, PathBuf};
 use workspace::{Item, ItemId, SerializableItem, Workspace, WorkspaceId};
+use zed_actions::npm_manager::{NpmPage, OpenNpmManager};
 
 mod details;
 mod pages;
@@ -63,7 +63,6 @@ mod search;
 actions!(
     npm_manager,
     [
-        OpenNpmManager,
         ReloadNpmManager,
         /// Moves the selection down one row in whichever package list page
         /// (Search/Installed/Updates/Vulnerabilities) currently has focus.
@@ -110,11 +109,26 @@ pub fn open(
 pub fn init(cx: &mut App) {
     workspace::register_serializable_item::<NpmManagerPanel>(cx);
     cx.observe_new(|workspace: &mut Workspace, _, _cx| {
-        workspace.register_action(|workspace, _: &OpenNpmManager, window, cx| {
+        workspace.register_action(|workspace, action: &OpenNpmManager, window, cx| {
             let root = workspace_root(workspace, cx);
             if !root.is_empty() {
+                let path = action.path.clone();
+                // A search shows the Search page even when no page was named.
+                let page = action
+                    .page
+                    .or(action.query.as_ref().map(|_| NpmPage::Search));
+                let query = action.query.clone();
                 let panel = open(root, workspace, window, cx);
                 panel.update(cx, |panel, cx| {
+                    // Pick the project first, then reload once: a reload
+                    // already in flight would ignore a second one.
+                    panel.show_project_containing(path);
+                    if let Some(page) = page {
+                        panel.show_page(page, cx);
+                    }
+                    if let Some(query) = query {
+                        panel.search_for(query, window, cx);
+                    }
                     panel.reload_visible(cx);
                 });
             }
@@ -267,6 +281,15 @@ pub struct NpmManagerPanel {
     /// list. The fallback project in `projects` stays so `active()` (read
     /// synchronously by the status bar) never panics.
     no_projects_found: bool,
+    /// A path (a project folder, or a file in one) whose project to show once
+    /// the scan has found the projects: `OpenNpmManager { path }` can arrive
+    /// before the scan lands.
+    pending_path: Option<PathBuf>,
+    /// The section to show, as `(request_number, page_ix)`, handed to
+    /// `Settings::select_page` on every render.
+    page_request: Option<(usize, usize)>,
+    /// Counts `show_page` calls, so each request gets a new number.
+    page_requests: usize,
     /// The five page views the `Settings` widget embeds. Their `Render` reads
     /// the panel live, so `build_all` stays O(1) per page and only the active
     /// page's rows are ever built.
@@ -373,6 +396,9 @@ impl NpmManagerPanel {
             details_error: None,
             show_readme: false,
             open_readme_on_load: false,
+            pending_path: None,
+            page_request: None,
+            page_requests: 0,
             error: None,
             running_action: None,
             reload_in_flight: false,
@@ -411,6 +437,12 @@ impl NpmManagerPanel {
             .position(|p| p.root == scan_root)
             .unwrap_or(0);
         self.projects = projects;
+        // A project asked for before the scan landed (`show_project_containing`).
+        if let Some(path) = self.pending_path.take()
+            && let Some(index) = self.project_index_for(&path)
+        {
+            self.active_project = index;
+        }
         self.scanning = false;
         self.reload_visible(cx);
     }
@@ -452,6 +484,48 @@ impl NpmManagerPanel {
         }
         self.active_project = index;
         self.reload_visible(cx);
+    }
+
+    /// Shows the project `path` is in: the deepest project folder containing
+    /// it. While the scan is still running, the path is kept and applied when
+    /// it lands (`populate_projects`). Doesn't reload: the caller does, once.
+    pub fn show_project_containing(&mut self, path: Option<PathBuf>) {
+        let Some(path) = path else {
+            return;
+        };
+        if self.scanning {
+            self.pending_path = Some(path);
+            return;
+        }
+        if let Some(index) = self.project_index_for(&path) {
+            self.active_project = index;
+        }
+    }
+
+    /// The project whose folder `path` is in (or is), the deepest one when
+    /// projects are nested.
+    fn project_index_for(&self, path: &Path) -> Option<usize> {
+        self.projects
+            .iter()
+            .enumerate()
+            .filter(|(_, project)| path.starts_with(&project.root))
+            .max_by_key(|(_, project)| Path::new(&project.root).components().count())
+            .map(|(index, _)| index)
+    }
+
+    /// Shows `page`. The `Settings` widget applies it on its next render.
+    pub fn show_page(&mut self, page: NpmPage, cx: &mut Context<Self>) {
+        self.page_requests += 1;
+        self.page_request = Some((self.page_requests, page_index(page)));
+        cx.notify();
+    }
+
+    /// Puts `query` in the search box and searches the registry for it.
+    pub fn search_for(&mut self, query: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.search_input
+            .update(cx, |input, cx| input.set_value(query, window, cx));
+        self.search_page = 0;
+        self.search_npm(cx);
     }
 
     fn cli(&self) -> &'static str {
@@ -993,8 +1067,9 @@ impl Render for NpmManagerPanel {
                 .into_any_element()
         } else {
             let active = self.active();
-            let settings =
-                Settings::new("npm-package-manager").pages(pages::build_all(active, &self.pages));
+            let settings = Settings::new("npm-package-manager")
+                .select_page(self.page_request)
+                .pages(pages::build_all(active, &self.pages));
             if self.selected.is_some() {
                 h_resizable("npm-details-split")
                     .child(
@@ -1025,6 +1100,18 @@ impl Render for NpmManagerPanel {
                 this.child(self.project_tabs(&view))
             })
             .child(body)
+    }
+}
+
+/// `page`'s position among the `Settings` pages: the order
+/// `pages::build_all` builds them in.
+fn page_index(page: NpmPage) -> usize {
+    match page {
+        NpmPage::General => 0,
+        NpmPage::Search => 1,
+        NpmPage::Installed => 2,
+        NpmPage::Updates => 3,
+        NpmPage::Vulnerabilities => 4,
     }
 }
 
@@ -1098,7 +1185,10 @@ mod tests {
 
     #[test]
     fn install_pins_the_exact_version() {
-        assert_eq!(install_args("react", "18.2.0", false).unwrap(), vec!["install", "react@18.2.0"]);
+        assert_eq!(
+            install_args("react", "18.2.0", false).unwrap(),
+            vec!["install", "react@18.2.0"]
+        );
         assert_eq!(
             install_args("@types/node", "20.11.0", true).unwrap(),
             vec!["install", "@types/node@20.11.0", "--save-dev"]
@@ -1112,7 +1202,10 @@ mod tests {
         assert!(install_args("--registry=http://evil.test", "1.0.0", false).is_err());
         assert!(install_args("", "1.0.0", false).is_err());
         assert!(remove_args("react|more").is_err());
-        assert_eq!(remove_args("@scope/widget").unwrap(), vec!["remove", "@scope/widget"]);
+        assert_eq!(
+            remove_args("@scope/widget").unwrap(),
+            vec!["remove", "@scope/widget"]
+        );
     }
 
     #[test]
@@ -1134,7 +1227,10 @@ mod tests {
             outdated("b", "2.0.0", "2.3.0"),
             outdated("c", "3.0.0", "4.0.0"),
         ];
-        assert_eq!(update_all_args(&list, "patch").unwrap().unwrap(), vec!["install", "a@1.0.5"]);
+        assert_eq!(
+            update_all_args(&list, "patch").unwrap().unwrap(),
+            vec!["install", "a@1.0.5"]
+        );
     }
 
     #[test]
@@ -1151,20 +1247,35 @@ mod tests {
 
     #[test]
     fn update_all_runs_nothing_if_any_entry_is_unsafe() {
-        let list = [outdated("a", "1.0.0", "1.0.5"), outdated("b && calc", "2.0.0", "2.0.1")];
+        let list = [
+            outdated("a", "1.0.0", "1.0.5"),
+            outdated("b && calc", "2.0.0", "2.0.1"),
+        ];
         assert!(update_all_args(&list, "minor").is_err());
         // An unsafe entry that wouldn't be updated anyway doesn't block the rest.
-        let list = [outdated("a", "1.0.0", "1.0.5"), outdated("b && calc", "2.0.0", "3.0.0")];
-        assert_eq!(update_all_args(&list, "minor").unwrap().unwrap(), vec!["install", "a@1.0.5"]);
+        let list = [
+            outdated("a", "1.0.0", "1.0.5"),
+            outdated("b && calc", "2.0.0", "3.0.0"),
+        ];
+        assert_eq!(
+            update_all_args(&list, "minor").unwrap().unwrap(),
+            vec!["install", "a@1.0.5"]
+        );
     }
 
     #[test]
     fn command_line_joins_cli_and_arguments() {
         let args = install_args("react", "18.2.0", true).unwrap();
-        assert_eq!(command_line("pnpm", &args), "pnpm install react@18.2.0 --save-dev");
+        assert_eq!(
+            command_line("pnpm", &args),
+            "pnpm install react@18.2.0 --save-dev"
+        );
         assert_eq!(command_line("npm", &[]), "npm");
 
-        let list = [outdated("a", "1.0.0", "1.0.5"), outdated("b", "2.0.0", "2.3.0")];
+        let list = [
+            outdated("a", "1.0.0", "1.0.5"),
+            outdated("b", "2.0.0", "2.3.0"),
+        ];
         assert_eq!(
             command_line("npm", &update_all_args(&list, "minor").unwrap().unwrap()),
             "npm install a@1.0.5 b@2.3.0"

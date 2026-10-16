@@ -106,6 +106,7 @@ uuid.workspace = true
 vim_mode_setting.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+npm_backend.workspace = true
 
 [dev-dependencies]
 assets.workspace = true

@@ -3382,7 +3382,14 @@ impl NodePanel {
                                     .unwrap_or_default()
                             });
                             if !root.is_empty() {
-                                npm_manager_panel::open(root, workspace, window, cx);
+                                // npm_manager_panel::open(root, workspace, window, cx);
+                                window.dispatch_action(
+                                  Box::new(zed_actions::npm_manager::OpenNpmManager {
+                                      path: this.selected_project.clone().map(PathBuf::from),
+                                      ..Default::default()
+                                  }),
+                                    cx,
+                                );
                             }
                         });
                     }

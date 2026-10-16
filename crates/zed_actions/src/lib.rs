@@ -226,6 +226,38 @@ pub struct ResetAllZoom {
     pub persist: bool,
 }
 
+pub mod npm_manager {
+    use std::path::PathBuf;
+    use gpui::Action;
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+
+
+    /// A section of the Node Package Manager tab.
+    #[derive(Clone, Copy, Debug, PartialEq, Deserialize, JsonSchema)]
+    pub enum NpmPage {
+        General,
+        Search,
+        Installed,
+        Updates,
+        Vulnerabilities,
+    }
+
+    /// Opens the Node Package Manager tab: on the project `path` is in, on
+       /// section `page`, searching for `query`, when given.
+       #[derive(Clone, Default, PartialEq, Deserialize, JsonSchema, Action)]
+       #[action(namespace = npm_manager)]
+       #[serde(deny_unknown_fields)]
+       pub struct OpenNpmManager {
+           #[serde(default)]
+           pub path: Option<PathBuf>,
+           #[serde(default)]
+           pub page: Option<NpmPage>,
+           #[serde(default)]
+           pub query: Option<String>,
+       }
+}
+
 pub mod editor {
     use gpui::actions;
     actions!(

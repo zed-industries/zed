@@ -284,18 +284,26 @@ pub(super) struct SearchPage {
 
 impl SearchPage {
     fn new(panel: WeakEntity<NpmManagerPanel>, cx: &mut Context<Self>) -> Self {
-        Self { panel, focus_handle: cx.focus_handle(), selected: None }
+        Self {
+            panel,
+            focus_handle: cx.focus_handle(),
+            selected: None,
+        }
     }
 
     fn select_next(&mut self, _: &SelectNextPackage, _window: &mut Window, cx: &mut Context<Self>) {
-        let Some(view) = self.panel.upgrade() else { return };
+        let Some(view) = self.panel.upgrade() else {
+            return;
+        };
         let len = view.read(cx).search_results.len();
         self.selected = step_selected(self.selected, len, true);
         cx.notify();
     }
 
     fn select_prev(&mut self, _: &SelectPrevPackage, _window: &mut Window, cx: &mut Context<Self>) {
-        let Some(view) = self.panel.upgrade() else { return };
+        let Some(view) = self.panel.upgrade() else {
+            return;
+        };
         let len = view.read(cx).search_results.len();
         self.selected = step_selected(self.selected, len, false);
         cx.notify();
@@ -307,7 +315,9 @@ impl SearchPage {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(view) = self.panel.upgrade() else { return };
+        let Some(view) = self.panel.upgrade() else {
+            return;
+        };
         let Some(name) = self
             .selected
             .and_then(|ix| view.read(cx).search_results.get(ix))
@@ -327,7 +337,9 @@ impl SearchPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(view) = self.panel.upgrade() else { return };
+        let Some(view) = self.panel.upgrade() else {
+            return;
+        };
         let Some((name, version, dev)) = self.selected.and_then(|ix| {
             let panel = view.read(cx);
             let r = panel.search_results.get(ix)?;
@@ -335,7 +347,9 @@ impl SearchPage {
         }) else {
             return;
         };
-        view.update(cx, |panel, cx| panel.install_pkg(&name, &version, dev, window, cx));
+        view.update(cx, |panel, cx| {
+            panel.install_pkg(&name, &version, dev, window, cx)
+        });
     }
 }
 
@@ -411,9 +425,12 @@ impl Render for SearchPage {
                     let mut list = v_flex()
                         .id("npm-search-results-list")
                         .track_focus(&self.focus_handle)
-                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
-                    window.focus(&this.focus_handle, cx);
-                }))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, window, cx| {
+                                window.focus(&this.focus_handle, cx);
+                            }),
+                        )
                         .key_context(PACKAGE_LIST_CONTEXT)
                         .on_action(cx.listener(Self::select_next))
                         .on_action(cx.listener(Self::select_prev))
@@ -524,7 +541,11 @@ impl Render for SearchPage {
                             .p_2()
                             .rounded_md()
                             .border_1()
-                            .border_color(if is_selected { theme.primary } else { theme.border.opacity(0.6) })
+                            .border_color(if is_selected {
+                                theme.primary
+                            } else {
+                                theme.border.opacity(0.6)
+                            })
                             .when(is_selected, |card| card.bg(theme.primary.opacity(0.05)))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.selected = Some(ix);
@@ -619,18 +640,26 @@ pub(super) struct InstalledPage {
 
 impl InstalledPage {
     fn new(panel: WeakEntity<NpmManagerPanel>, cx: &mut Context<Self>) -> Self {
-        Self { panel, focus_handle: cx.focus_handle(), selected: None }
+        Self {
+            panel,
+            focus_handle: cx.focus_handle(),
+            selected: None,
+        }
     }
 
     fn select_next(&mut self, _: &SelectNextPackage, _window: &mut Window, cx: &mut Context<Self>) {
-        let Some(view) = self.panel.upgrade() else { return };
+        let Some(view) = self.panel.upgrade() else {
+            return;
+        };
         let len = view.read(cx).active().installed.len();
         self.selected = step_selected(self.selected, len, true);
         cx.notify();
     }
 
     fn select_prev(&mut self, _: &SelectPrevPackage, _window: &mut Window, cx: &mut Context<Self>) {
-        let Some(view) = self.panel.upgrade() else { return };
+        let Some(view) = self.panel.upgrade() else {
+            return;
+        };
         let len = view.read(cx).active().installed.len();
         self.selected = step_selected(self.selected, len, false);
         cx.notify();
@@ -642,7 +671,9 @@ impl InstalledPage {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(view) = self.panel.upgrade() else { return };
+        let Some(view) = self.panel.upgrade() else {
+            return;
+        };
         let Some(name) = self
             .selected
             .and_then(|ix| view.read(cx).active().installed.get(ix))
@@ -661,7 +692,9 @@ impl InstalledPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(view) = self.panel.upgrade() else { return };
+        let Some(view) = self.panel.upgrade() else {
+            return;
+        };
         let Some(name) = self
             .selected
             .and_then(|ix| view.read(cx).active().installed.get(ix))
@@ -693,9 +726,12 @@ impl Render for InstalledPage {
         let mut list = v_flex()
             .id("npm-installed-list")
             .track_focus(&self.focus_handle)
-                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
                     window.focus(&this.focus_handle, cx);
-                }))
+                }),
+            )
             .key_context(PACKAGE_LIST_CONTEXT)
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_prev))
@@ -780,7 +816,11 @@ impl Render for InstalledPage {
                     .p_2()
                     .rounded_md()
                     .border_1()
-                    .border_color(if is_selected { theme.primary } else { theme.border.opacity(0.6) })
+                    .border_color(if is_selected {
+                        theme.primary
+                    } else {
+                        theme.border.opacity(0.6)
+                    })
                     .when(is_selected, |card| card.bg(theme.primary.opacity(0.05)))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.selected = Some(ix);
@@ -861,18 +901,26 @@ pub(super) struct UpdatesPage {
 
 impl UpdatesPage {
     fn new(panel: WeakEntity<NpmManagerPanel>, cx: &mut Context<Self>) -> Self {
-        Self { panel, focus_handle: cx.focus_handle(), selected: None }
+        Self {
+            panel,
+            focus_handle: cx.focus_handle(),
+            selected: None,
+        }
     }
 
     fn select_next(&mut self, _: &SelectNextPackage, _window: &mut Window, cx: &mut Context<Self>) {
-        let Some(view) = self.panel.upgrade() else { return };
+        let Some(view) = self.panel.upgrade() else {
+            return;
+        };
         let len = view.read(cx).active().outdated.len();
         self.selected = step_selected(self.selected, len, true);
         cx.notify();
     }
 
     fn select_prev(&mut self, _: &SelectPrevPackage, _window: &mut Window, cx: &mut Context<Self>) {
-        let Some(view) = self.panel.upgrade() else { return };
+        let Some(view) = self.panel.upgrade() else {
+            return;
+        };
         let len = view.read(cx).active().outdated.len();
         self.selected = step_selected(self.selected, len, false);
         cx.notify();
@@ -884,7 +932,9 @@ impl UpdatesPage {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(view) = self.panel.upgrade() else { return };
+        let Some(view) = self.panel.upgrade() else {
+            return;
+        };
         let Some(name) = self
             .selected
             .and_then(|ix| view.read(cx).active().outdated.get(ix))
@@ -904,7 +954,9 @@ impl UpdatesPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(view) = self.panel.upgrade() else { return };
+        let Some(view) = self.panel.upgrade() else {
+            return;
+        };
         let Some((name, latest)) = self
             .selected
             .and_then(|ix| view.read(cx).active().outdated.get(ix))
@@ -935,9 +987,12 @@ impl Render for UpdatesPage {
         let mut list = v_flex()
             .id("npm-updates-list")
             .track_focus(&self.focus_handle)
-                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
                     window.focus(&this.focus_handle, cx);
-                }))
+                }),
+            )
             .key_context(PACKAGE_LIST_CONTEXT)
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_prev))
@@ -1050,7 +1105,11 @@ impl Render for UpdatesPage {
                     .p_2()
                     .rounded_md()
                     .border_1()
-                    .border_color(if is_selected { theme.primary } else { theme.border.opacity(0.6) })
+                    .border_color(if is_selected {
+                        theme.primary
+                    } else {
+                        theme.border.opacity(0.6)
+                    })
                     .when(is_selected, |card| card.bg(theme.primary.opacity(0.05)))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.selected = Some(ix);
@@ -1131,18 +1190,26 @@ pub(super) struct VulnPage {
 
 impl VulnPage {
     fn new(panel: WeakEntity<NpmManagerPanel>, cx: &mut Context<Self>) -> Self {
-        Self { panel, focus_handle: cx.focus_handle(), selected: None }
+        Self {
+            panel,
+            focus_handle: cx.focus_handle(),
+            selected: None,
+        }
     }
 
     fn select_next(&mut self, _: &SelectNextPackage, _window: &mut Window, cx: &mut Context<Self>) {
-        let Some(view) = self.panel.upgrade() else { return };
+        let Some(view) = self.panel.upgrade() else {
+            return;
+        };
         let len = view.read(cx).active().audit.len();
         self.selected = step_selected(self.selected, len, true);
         cx.notify();
     }
 
     fn select_prev(&mut self, _: &SelectPrevPackage, _window: &mut Window, cx: &mut Context<Self>) {
-        let Some(view) = self.panel.upgrade() else { return };
+        let Some(view) = self.panel.upgrade() else {
+            return;
+        };
         let len = view.read(cx).active().audit.len();
         self.selected = step_selected(self.selected, len, false);
         cx.notify();
@@ -1154,7 +1221,9 @@ impl VulnPage {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(view) = self.panel.upgrade() else { return };
+        let Some(view) = self.panel.upgrade() else {
+            return;
+        };
         let Some(package) = self
             .selected
             .and_then(|ix| view.read(cx).active().audit.get(ix))
@@ -1175,14 +1244,18 @@ impl VulnPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(view) = self.panel.upgrade() else { return };
+        let Some(view) = self.panel.upgrade() else {
+            return;
+        };
         let Some((package, version)) = self.selected.and_then(|ix| {
             let vuln = view.read(cx).active().audit.get(ix)?;
             Some((vuln.package.clone(), vuln.fixed_in.clone()?))
         }) else {
             return;
         };
-        view.update(cx, |panel, cx| panel.update_pkg(&package, &version, window, cx));
+        view.update(cx, |panel, cx| {
+            panel.update_pkg(&package, &version, window, cx)
+        });
     }
 }
 
@@ -1205,9 +1278,12 @@ impl Render for VulnPage {
         let mut list = v_flex()
             .id("npm-vuln-list")
             .track_focus(&self.focus_handle)
-                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
                     window.focus(&this.focus_handle, cx);
-                }))
+                }),
+            )
             .key_context(PACKAGE_LIST_CONTEXT)
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_prev))
@@ -1240,7 +1316,9 @@ impl Render for VulnPage {
                     .w_full()
                     .rounded_md()
                     .when(is_selected, |row| {
-                        row.bg(theme.primary.opacity(0.08)).border_1().border_color(theme.primary)
+                        row.bg(theme.primary.opacity(0.08))
+                            .border_1()
+                            .border_color(theme.primary)
                     })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.selected = Some(ix);

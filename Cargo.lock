@@ -6072,6 +6072,7 @@ dependencies = [
  "markdown 0.1.0",
  "menu",
  "multi_buffer",
+ "npm_backend",
  "ordered-float 5.5.0",
  "parking_lot",
  "pretty_assertions",
@@ -12799,6 +12800,7 @@ dependencies = [
  "ui",
  "workspace",
  "worktree",
+ "zed_actions",
 ]
 
 [[package]]
@@ -12977,6 +12979,7 @@ dependencies = [
  "urlencoding",
  "workspace",
  "worktree",
+ "zed_actions",
 ]
 
 [[package]]

@@ -33,6 +33,7 @@ settings.workspace = true
 ui.workspace = true
 workspace.workspace = true
 worktree.workspace = true
+zed_actions.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

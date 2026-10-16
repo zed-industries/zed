@@ -232,6 +232,42 @@ pub fn deploy_context_menu(
             .and_then(|buffer| buffer.read(cx).language())
             .is_some_and(|language| language.name().as_ref() == "Markdown");
 
+        let is_node_dependency = editor
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .and_then(|buffer| buffer.read(cx).language())
+            .is_some_and(|language| {
+                matches!(
+                    language.name().as_ref(),
+                    "TypeScript" | "TSX" | "JavaScript"
+                )
+            });
+
+        let file_path = editor.target_file_abs_path(cx);
+        // The npm package the right-clicked import names, for "Search npm for…":
+        // the selected text, else the quoted string under the cursor.
+        let package_to_search = if is_node_dependency {
+            let selection = editor.selections.newest::<text::Point>(&display_map);
+            if selection.start != selection.end {
+                let selected: String = buffer
+                    .text_for_range(selection.start..selection.end)
+                    .collect();
+                npm_backend::package_from_specifier(&selected)
+            } else {
+                let head = selection.head();
+                let line_end = text::Point::new(
+                    head.row,
+                    buffer.line_len(multi_buffer::MultiBufferRow(head.row)),
+                );
+                let line: String = buffer
+                    .text_for_range(text::Point::new(head.row, 0)..line_end)
+                    .collect();
+                npm_backend::package_at(&line, head.column as usize)
+            }
+        } else {
+            None
+        };
         let is_svg = editor
             .buffer()
             .read(cx)
@@ -278,6 +314,26 @@ pub fn deploy_context_menu(
                     "Show Outgoing Calls",
                     Box::new(zed_actions::ShowOutgoingCalls),
                 )
+                .separator()
+                .when(is_node_dependency, |builder| {
+                    builder.action(
+                        "Open in Package Manager",
+                        Box::new(zed_actions::npm_manager::OpenNpmManager {
+                            path: file_path.clone(),
+                            ..Default::default()
+                        }),
+                    )
+                })
+                .when_some(package_to_search.clone(), |builder, package| {
+                    builder.action(
+                        format!("Search npm for \"{package}\""),
+                        Box::new(zed_actions::npm_manager::OpenNpmManager {
+                            path: file_path.clone(),
+                            page: Some(zed_actions::npm_manager::NpmPage::Search),
+                            query: Some(package),
+                        }),
+                    )
+                })
                 .separator()
                 .action("Rename Symbol", Box::new(Rename))
                 .action("Format Buffer", Box::new(Format))
