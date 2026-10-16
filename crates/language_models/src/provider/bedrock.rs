@@ -986,19 +986,21 @@ async fn build_converse_client(
 }
 
 fn converse_language_model(model: &ConverseModel) -> LanguageModel {
-    let is_gpt_6_astra = matches!(model, ConverseModel::Gpt6Astra);
+    let is_gpt_6 = model.is_gpt_6();
     let reasoning_model = converse_reasoning_model(model.request_id());
     LanguageModel {
         supports_tools: model.supports_tool_use(),
         supports_images: model.supports_images(),
         supports_thinking: model.supports_thinking(),
-        // These models always reason, so only offer effort levels.
-        supports_disabling_thinking: reasoning_model.is_none(),
+        // Reasoning models other than GPT-6 Sol and Luna always reason, so only offer effort levels.
+        supports_disabling_thinking: reasoning_model
+            .as_ref()
+            .is_none_or(ConverseModel::supports_disabling_reasoning),
         refusal_fallback_model_id: model
             .id()
             .starts_with(anthropic::FABLE_MODEL_ID_PREFIX)
             .then_some(anthropic::FABLE_FALLBACK_MODEL_ID),
-        supported_effort_levels: if model.supports_adaptive_thinking() || is_gpt_6_astra {
+        supported_effort_levels: if model.supports_adaptive_thinking() || is_gpt_6 {
             vec![
                 language_model::LanguageModelEffortLevel {
                     name: "Low".into(),
@@ -1008,12 +1010,12 @@ fn converse_language_model(model: &ConverseModel) -> LanguageModel {
                 language_model::LanguageModelEffortLevel {
                     name: "Medium".into(),
                     value: "medium".into(),
-                    is_default: is_gpt_6_astra,
+                    is_default: is_gpt_6,
                 },
                 language_model::LanguageModelEffortLevel {
                     name: "High".into(),
                     value: "high".into(),
-                    is_default: !is_gpt_6_astra,
+                    is_default: !is_gpt_6,
                 },
                 language_model::LanguageModelEffortLevel {
                     name: "XHigh".into(),
@@ -1030,7 +1032,7 @@ fn converse_language_model(model: &ConverseModel) -> LanguageModel {
             .filter(|effort_level| {
                 effort_level.value != "xhigh"
                     || model.supports_xhigh_adaptive_thinking()
-                    || is_gpt_6_astra
+                    || is_gpt_6
             })
             .collect()
         } else {
@@ -2060,6 +2062,9 @@ fn deny_tool_use_events(
 fn converse_reasoning_model(model_id: &str) -> Option<ConverseModel> {
     [
         ConverseModel::Gpt6Astra,
+        ConverseModel::Gpt6_1Sol,
+        ConverseModel::Gpt6Sol,
+        ConverseModel::Gpt6Luna,
         ConverseModel::ClaudeFable5_1,
         ConverseModel::ClaudeOpus5_5,
     ]
@@ -2128,7 +2133,9 @@ pub fn into_bedrock(
         reasoning_model,
         Some(ConverseModel::ClaudeFable5_1 | ConverseModel::ClaudeOpus5_5)
     );
-    let is_gpt_6_astra = reasoning_model == Some(ConverseModel::Gpt6Astra);
+    let is_gpt_6 = reasoning_model
+        .as_ref()
+        .is_some_and(ConverseModel::is_gpt_6);
     if always_adaptive && request.tool_choice == Some(LanguageModelToolChoice::Any) {
         anyhow::bail!("{model} does not support forced tool use");
     }
@@ -2322,7 +2329,7 @@ pub fn into_bedrock(
                     })
                     .collect();
                 bedrock_message_content =
-                    prepare_bedrock_content(bedrock_message_content, is_gpt_6_astra);
+                    prepare_bedrock_content(bedrock_message_content, is_gpt_6);
                 if message.cache && supports_caching && !bedrock_message_content.is_empty() {
                     bedrock_message_content.push(BedrockInnerContent::CachePoint(
                         CachePointBlock::builder()
@@ -2453,8 +2460,8 @@ pub fn into_bedrock(
     }
 
     let selected_effort = |default_effort| {
-        // Astra, Fable 5.1, and Opus 5.5 keep reasoning enabled, so suppressed requests use the
-        // default effort, matching the Anthropic and OpenAI providers.
+        // Astra, GPT-6.1 Sol, Fable 5.1, and Opus 5.5 keep reasoning enabled, so suppressed
+        // requests use the default effort, matching the Anthropic and OpenAI providers.
         // <https://developers.openai.com/api/docs/guides/latest-model?model=gpt-6-astra>
         // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-fable-5-1.html>
         // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5-5.html>
@@ -2475,6 +2482,14 @@ pub fn into_bedrock(
             .unwrap_or(default_effort)
     };
     let thinking = match thinking_mode {
+        BedrockModelMode::Reasoning { .. }
+            if !request.thinking_allowed
+                && reasoning_model
+                    .as_ref()
+                    .is_some_and(ConverseModel::supports_disabling_reasoning) =>
+        {
+            Some(bedrock::Thinking::NoReasoning)
+        }
         BedrockModelMode::Reasoning { effort } => Some(bedrock::Thinking::Reasoning {
             effort: selected_effort(effort),
         }),
@@ -2501,7 +2516,7 @@ pub fn into_bedrock(
         }
         _ => None,
     };
-    let temperature = if always_adaptive || is_gpt_6_astra {
+    let temperature = if always_adaptive || is_gpt_6 {
         None
     } else {
         request.temperature.or(default_temperature)
@@ -2543,14 +2558,16 @@ pub fn map_to_language_model_completion_events(
     }
 
     let model = converse_reasoning_model(model.request_id()).unwrap_or(model);
-    let report_refusals = matches!(
-        model,
-        ConverseModel::ClaudeFable5_1 | ConverseModel::ClaudeFable5 | ConverseModel::Gpt6Astra
-    );
-    let preserve_redacted_thinking = matches!(
-        model,
-        ConverseModel::Gpt6Astra | ConverseModel::ClaudeFable5_1 | ConverseModel::ClaudeOpus5_5
-    );
+    let report_refusals = model.is_gpt_6()
+        || matches!(
+            model,
+            ConverseModel::ClaudeFable5_1 | ConverseModel::ClaudeFable5
+        );
+    let preserve_redacted_thinking = model.is_gpt_6()
+        || matches!(
+            model,
+            ConverseModel::ClaudeFable5_1 | ConverseModel::ClaudeOpus5_5
+        );
     let initial_state = State {
         events,
         tool_uses_by_index: HashMap::default(),
@@ -3495,26 +3512,23 @@ mod tests {
     }
 
     #[test]
-    fn test_always_reasoning_model_defaults() -> Result<()> {
-        for (model, expected_thinking) in [
-            (
-                ConverseModel::Gpt6Astra,
-                serde_json::json!({"Reasoning": {"effort": "Medium"}}),
-            ),
-            (
-                ConverseModel::ClaudeFable5_1,
-                serde_json::json!({"Adaptive": {
-                    "effort": "High", "binding_controls_beta": "thinking-binding-controls-2026-08-01"
-                }}),
-            ),
-            (
-                ConverseModel::ClaudeOpus5_5,
-                serde_json::json!({"Adaptive": {
-                    "effort": "High", "binding_controls_beta": "thinking-binding-controls-2026-08-01"
-                }}),
-            ),
+    fn test_reasoning_model_defaults() -> Result<()> {
+        let medium = serde_json::json!({"Reasoning": {"effort": "Medium"}});
+        let no_reasoning = serde_json::json!("NoReasoning");
+        let adaptive = serde_json::json!({"Adaptive": {
+            "effort": "High", "binding_controls_beta": "thinking-binding-controls-2026-08-01"
+        }});
+        for (model, allowed_thinking, disallowed_thinking) in [
+            (ConverseModel::Gpt6Astra, &medium, &medium),
+            (ConverseModel::Gpt6_1Sol, &medium, &medium),
+            (ConverseModel::Gpt6Sol, &medium, &no_reasoning),
+            (ConverseModel::Gpt6Luna, &medium, &no_reasoning),
+            (ConverseModel::ClaudeFable5_1, &adaptive, &adaptive),
+            (ConverseModel::ClaudeOpus5_5, &adaptive, &adaptive),
         ] {
-            for thinking_allowed in [true, false] {
+            for (thinking_allowed, expected_thinking) in
+                [(true, allowed_thinking), (false, disallowed_thinking)]
+            {
                 let request = into_bedrock(
                     LanguageModelRequest {
                         thinking_allowed,
@@ -3530,64 +3544,50 @@ mod tests {
                     None,
                 )?;
                 assert_eq!(
-                    serde_json::to_value(request.thinking)?,
+                    &serde_json::to_value(request.thinking)?,
                     expected_thinking,
                     "{} with thinking_allowed: {thinking_allowed}",
                     model.id()
                 );
                 assert_eq!(request.temperature, None);
             }
-            assert!(!converse_language_model(&model).supports_disabling_thinking);
+            let language_model = converse_language_model(&model);
+            // Only models that can skip reasoning offer turning thinking off.
+            assert_eq!(
+                language_model.supports_disabling_thinking,
+                allowed_thinking != disallowed_thinking,
+                "{}",
+                model.id()
+            );
+            if model.is_gpt_6() {
+                let effort_levels = &language_model.supported_effort_levels;
+                assert_eq!(
+                    effort_levels
+                        .iter()
+                        .map(|level| level.value.as_ref())
+                        .collect::<Vec<_>>(),
+                    ["low", "medium", "high", "xhigh", "max"],
+                    "{}",
+                    model.id()
+                );
+                assert_eq!(
+                    effort_levels
+                        .iter()
+                        .find(|level| level.is_default)
+                        .map(|level| level.value.as_ref()),
+                    Some("medium")
+                );
+            }
         }
         assert!(converse_language_model(&ConverseModel::ClaudeOpus4_8).supports_disabling_thinking);
         Ok(())
     }
 
     #[test]
-    fn test_new_models_replay_only_their_own_encrypted_reasoning() -> Result<()> {
+    fn test_gpt_6_models_replay_only_their_own_encrypted_reasoning() -> Result<()> {
         use bedrock::bedrock_client::types::{
             ContentBlockDeltaEvent, ContentBlockStopEvent, MessageStartEvent,
         };
-
-        let response = futures::stream::iter(vec![
-            Ok(ConverseStreamOutput::MessageStart(
-                MessageStartEvent::builder()
-                    .role(bedrock::BedrockRole::Assistant)
-                    .build()?,
-            )),
-            Ok(ConverseStreamOutput::ContentBlockDelta(
-                ContentBlockDeltaEvent::builder()
-                    .content_block_index(0)
-                    .delta(ContentBlockDelta::ReasoningContent(
-                        ReasoningContentBlockDelta::RedactedContent(BedrockBlob::new([0, 255])),
-                    ))
-                    .build()?,
-            )),
-            Ok(ConverseStreamOutput::ContentBlockStop(
-                ContentBlockStopEvent::builder()
-                    .content_block_index(0)
-                    .build()?,
-            )),
-        ]);
-        let events = futures::executor::block_on(
-            map_to_language_model_completion_events(Box::pin(response), ConverseModel::Gpt6Astra)
-                .collect::<Vec<_>>(),
-        )
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()?;
-        let details = events.iter().find_map(|event| match event {
-            LanguageModelCompletionEvent::ReasoningDetails(value) => Some(Arc::new(value.clone())),
-            _ => None,
-        });
-        let redacted = events.iter().find_map(|event| match event {
-            LanguageModelCompletionEvent::RedactedThinking { data } => Some(data.clone()),
-            _ => None,
-        });
-        assert!(
-            details.is_some(),
-            "the stored reasoning must identify its model"
-        );
-        let redacted = redacted.expect("binary reasoning must survive streaming");
 
         let request_for = |model: ConverseModel, details: Option<Arc<Value>>, content| {
             into_bedrock(
@@ -3610,51 +3610,119 @@ mod tests {
                 None,
             )
         };
-        let own = request_for(
+        let gpt_6_models = [
             ConverseModel::Gpt6Astra,
-            details.clone(),
-            vec![MessageContent::RedactedThinking(redacted.clone())],
-        )?;
-        assert!(matches!(
-            own.messages[0].content().first(),
-            Some(BedrockInnerContent::ReasoningContent(
-                BedrockThinkingBlock::RedactedContent(data)
-            )) if data.as_ref() == [0, 255]
-        ));
+            ConverseModel::Gpt6_1Sol,
+            ConverseModel::Gpt6Sol,
+            ConverseModel::Gpt6Luna,
+        ];
+        for model in gpt_6_models.clone() {
+            let response = futures::stream::iter(vec![
+                Ok(ConverseStreamOutput::MessageStart(
+                    MessageStartEvent::builder()
+                        .role(bedrock::BedrockRole::Assistant)
+                        .build()?,
+                )),
+                Ok(ConverseStreamOutput::ContentBlockDelta(
+                    ContentBlockDeltaEvent::builder()
+                        .content_block_index(0)
+                        .delta(ContentBlockDelta::ReasoningContent(
+                            ReasoningContentBlockDelta::RedactedContent(BedrockBlob::new([0, 255])),
+                        ))
+                        .build()?,
+                )),
+                Ok(ConverseStreamOutput::ContentBlockStop(
+                    ContentBlockStopEvent::builder()
+                        .content_block_index(0)
+                        .build()?,
+                )),
+            ]);
+            let events = futures::executor::block_on(
+                map_to_language_model_completion_events(Box::pin(response), model.clone())
+                    .collect::<Vec<_>>(),
+            )
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()?;
+            let details = events.iter().find_map(|event| match event {
+                LanguageModelCompletionEvent::ReasoningDetails(value) => {
+                    Some(Arc::new(value.clone()))
+                }
+                _ => None,
+            });
+            let redacted = events.iter().find_map(|event| match event {
+                LanguageModelCompletionEvent::RedactedThinking { data } => Some(data.clone()),
+                _ => None,
+            });
+            assert!(
+                details.is_some(),
+                "the stored reasoning must identify {}",
+                model.id()
+            );
+            let redacted = redacted.expect("binary reasoning must survive streaming");
 
-        for (model, source) in [
-            (ConverseModel::ClaudeFable5_1, details.clone()),
-            (ConverseModel::Gpt6Astra, None),
-            // The refusal fallback sends tagged history to a model without reasoning replay.
-            (ConverseModel::ClaudeOpus4_8, details.clone()),
-        ] {
-            let request = request_for(
+            let own = request_for(
+                model.clone(),
+                details.clone(),
+                vec![MessageContent::RedactedThinking(redacted.clone())],
+            )?;
+            assert!(
+                matches!(
+                    own.messages[0].content().first(),
+                    Some(BedrockInnerContent::ReasoningContent(
+                        BedrockThinkingBlock::RedactedContent(data)
+                    )) if data.as_ref() == [0, 255]
+                ),
+                "{}",
+                model.id()
+            );
+
+            let other_gpt_6_models = gpt_6_models
+                .iter()
+                .filter(|other| **other != model)
+                .map(|other| (other.clone(), details.clone()));
+            for (target, source) in [
+                (ConverseModel::ClaudeFable5_1, details.clone()),
+                (model.clone(), None),
+                // The refusal fallback sends tagged history to a model without reasoning replay.
+                (ConverseModel::ClaudeOpus4_8, details.clone()),
+            ]
+            .into_iter()
+            .chain(other_gpt_6_models)
+            {
+                let request = request_for(
+                    target.clone(),
+                    source,
+                    vec![
+                        MessageContent::RedactedThinking(redacted.clone()),
+                        MessageContent::Thinking {
+                            text: "foreign thinking".into(),
+                            signature: Some("foreign signature".into()),
+                        },
+                        MessageContent::Text("Keep this answer".into()),
+                    ],
+                )?;
+                assert_eq!(
+                    request.messages[0].content().len(),
+                    1,
+                    "{} reasoning sent to {}",
+                    model.id(),
+                    target.id()
+                );
+                assert!(matches!(
+                    request.messages[0].content()[0],
+                    BedrockInnerContent::Text(_)
+                ));
+            }
+            let malformed = request_for(
                 model,
-                source,
+                details,
                 vec![
-                    MessageContent::RedactedThinking(redacted.clone()),
-                    MessageContent::Thinking {
-                        text: "foreign thinking".into(),
-                        signature: Some("foreign signature".into()),
-                    },
+                    MessageContent::RedactedThinking("not base64!".into()),
                     MessageContent::Text("Keep this answer".into()),
                 ],
             )?;
-            assert_eq!(request.messages[0].content().len(), 1);
-            assert!(matches!(
-                request.messages[0].content()[0],
-                BedrockInnerContent::Text(_)
-            ));
+            assert_eq!(malformed.messages[0].content().len(), 1);
         }
-        let malformed = request_for(
-            ConverseModel::Gpt6Astra,
-            details,
-            vec![
-                MessageContent::RedactedThinking("not base64!".into()),
-                MessageContent::Text("Keep this answer".into()),
-            ],
-        )?;
-        assert_eq!(malformed.messages[0].content().len(), 1);
         Ok(())
     }
 
@@ -3726,91 +3794,106 @@ mod tests {
     }
 
     #[test]
-    fn test_astra_parallel_tool_results_precede_their_images() -> Result<()> {
-        let results = (1..=2)
-            .map(|index| {
-                let mut content = Vec::new();
-                if index == 1 {
-                    content.push(LanguageModelToolResultContent::Text("Result 1".into()));
-                }
-                content.push(LanguageModelToolResultContent::Image(
-                    language_model::LanguageModelImage {
-                        source: "iVBORw0KGgo=".into(),
-                    },
-                ));
-                MessageContent::ToolResult(language_model::LanguageModelToolResult {
-                    tool_use_id: format!("tool-{index}").into(),
-                    tool_name: "view_image".into(),
-                    is_error: false,
-                    content,
-                    output: None,
+    fn test_gpt_6_parallel_tool_results_precede_their_images() -> Result<()> {
+        // Bedrock rejects images inside GPT-6 tool results.
+        for model in [
+            "us.openai.gpt-6-astra",
+            "us.openai.gpt-6.1-sol",
+            "us.openai.gpt-6-sol",
+            "global.openai.gpt-6-luna",
+        ] {
+            let results = (1..=2)
+                .map(|index| {
+                    let mut content = Vec::new();
+                    if index == 1 {
+                        content.push(LanguageModelToolResultContent::Text("Result 1".into()));
+                    }
+                    content.push(LanguageModelToolResultContent::Image(
+                        language_model::LanguageModelImage {
+                            source: "iVBORw0KGgo=".into(),
+                        },
+                    ));
+                    MessageContent::ToolResult(language_model::LanguageModelToolResult {
+                        tool_use_id: format!("tool-{index}").into(),
+                        tool_name: "view_image".into(),
+                        is_error: false,
+                        content,
+                        output: None,
+                    })
                 })
-            })
-            .collect();
-        let request = into_bedrock(
-            LanguageModelRequest {
-                messages: vec![LanguageModelRequestMessage {
-                    role: Role::User,
-                    content: results,
-                    cache: false,
-                    reasoning_details: None,
-                }],
-                ..Default::default()
-            },
-            "us.openai.gpt-6-astra".into(),
-            None,
-            128_000,
-            BedrockModelMode::Default,
-            false,
-            true,
-            None,
-            None,
-        )?;
-        let kinds = request.messages[0]
-            .content()
-            .iter()
-            .map(|content| match content {
-                BedrockInnerContent::ToolResult(_) => "result",
-                BedrockInnerContent::Image(_) => "image",
-                _ => "other",
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(kinds, ["result", "result", "image", "image"]);
-        assert!(matches!(
-            &request.messages[0].content()[1],
-            BedrockInnerContent::ToolResult(result)
-                if matches!(result.content().first(), Some(BedrockToolResultContentBlock::Text(_)))
-        ));
+                .collect();
+            let request = into_bedrock(
+                LanguageModelRequest {
+                    messages: vec![LanguageModelRequestMessage {
+                        role: Role::User,
+                        content: results,
+                        cache: false,
+                        reasoning_details: None,
+                    }],
+                    ..Default::default()
+                },
+                model.into(),
+                Some(1.0),
+                128_000,
+                BedrockModelMode::Default,
+                false,
+                true,
+                None,
+                None,
+            )?;
+            let kinds = request.messages[0]
+                .content()
+                .iter()
+                .map(|content| match content {
+                    BedrockInnerContent::ToolResult(_) => "result",
+                    BedrockInnerContent::Image(_) => "image",
+                    _ => "other",
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(kinds, ["result", "result", "image", "image"], "{model}");
+            assert!(matches!(
+                &request.messages[0].content()[1],
+                BedrockInnerContent::ToolResult(result)
+                    if matches!(result.content().first(), Some(BedrockToolResultContentBlock::Text(_)))
+            ));
+            // These models also reject `temperature`.
+            assert_eq!(request.temperature, None, "{model}");
+        }
         Ok(())
     }
 
     #[test]
-    fn test_converse_refusals_and_fable_forced_tool_use() -> Result<()> {
-        let fable = ConverseModel::ClaudeFable5_1;
-        let earlier_fable = ConverseModel::ClaudeFable5;
-        assert!(!converse_language_model(&fable).tool_choice_support.any);
-        assert!(
-            converse_language_model(&earlier_fable)
-                .tool_choice_support
-                .any
-        );
-        let forced = into_bedrock(
-            LanguageModelRequest {
-                tool_choice: Some(LanguageModelToolChoice::Any),
-                ..Default::default()
-            },
-            fable.cross_region_inference_id("us-east-1", false)?,
-            fable.default_temperature(),
-            fable.max_output_tokens(),
-            fable.thinking_mode(),
-            fable.supports_caching(),
-            fable.supports_tool_use(),
-            None,
-            None,
-        );
-        assert!(forced.is_err());
+    fn test_converse_refusals_and_forced_tool_use() -> Result<()> {
+        for (model, supports_forced_tool_use) in [
+            (ConverseModel::ClaudeFable5_1, false),
+            (ConverseModel::ClaudeFable5, true),
+            (ConverseModel::Gpt6Astra, true),
+            (ConverseModel::Gpt6_1Sol, true),
+            (ConverseModel::Gpt6Sol, true),
+            (ConverseModel::Gpt6Luna, true),
+        ] {
+            assert_eq!(
+                converse_language_model(&model).tool_choice_support.any,
+                supports_forced_tool_use,
+                "{}",
+                model.id()
+            );
+            let forced = into_bedrock(
+                LanguageModelRequest {
+                    tool_choice: Some(LanguageModelToolChoice::Any),
+                    ..Default::default()
+                },
+                model.cross_region_inference_id("us-east-1", false)?,
+                model.default_temperature(),
+                model.max_output_tokens(),
+                model.thinking_mode(),
+                model.supports_caching(),
+                model.supports_tool_use(),
+                None,
+                None,
+            );
+            assert_eq!(forced.is_ok(), supports_forced_tool_use, "{}", model.id());
 
-        for model in [fable, earlier_fable, ConverseModel::Gpt6Astra] {
             for reason in [StopReason::from("refusal"), StopReason::ContentFiltered] {
                 let response = futures::stream::iter(vec![Ok(ConverseStreamOutput::MessageStop(
                     bedrock::bedrock_client::types::MessageStopEvent::builder()
