@@ -125,6 +125,9 @@ pub struct LanguageModel {
     /// models (e.g. Claude Fable 5) always think and cannot honor an "off"
     /// request. Only meaningful when `supports_thinking` is `true`.
     pub supports_disabling_thinking: bool,
+    /// Whether thinking should be enabled for a newly selected model. Falls
+    /// back to `supports_thinking` when `None`.
+    pub default_thinking_enabled: Option<bool>,
     pub supports_fast_mode: bool,
     /// The effort levels that can be used when thinking.
     pub supported_effort_levels: Arc<[LanguageModelEffortLevel]>,
@@ -203,6 +206,7 @@ impl LanguageModel {
             cost_info: None,
             supports_thinking: false,
             supports_disabling_thinking: true,
+            default_thinking_enabled: None,
             supports_fast_mode: false,
             supported_effort_levels: Arc::default(),
             supports_server_side_compaction: false,
@@ -278,6 +282,11 @@ impl LanguageModel {
 
     pub fn supports_disabling_thinking(&self) -> bool {
         self.supports_disabling_thinking
+    }
+
+    pub fn default_thinking_enabled(&self) -> bool {
+        self.default_thinking_enabled
+            .unwrap_or(self.supports_thinking)
     }
 
     pub fn supports_fast_mode(&self) -> bool {
