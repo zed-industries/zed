@@ -3,10 +3,12 @@ use super::{
     ContextServerConfiguration, ForegroundWork, UnsupportedVersion, drain_foreground_queue,
     enqueue_notification, first_class_terminal_auth_task, map_acp_error,
     mcp_configurations_for_project, runtime, transport, with_v2_client_ingress,
+    work_dirs_from_session_info,
 };
 use acp_thread::{
-    AcpThread, AgentConnection, AgentSessionConfigOptions, ElicitationStore,
-    ReceiptSessionSubmissions, ReceiptSubmission, SubmissionDisconnected,
+    AcpThread, AgentConnection, AgentSessionConfigOptions, AgentSessionInfo, AgentSessionList,
+    AgentSessionListRequest, AgentSessionListResponse, ElicitationStore, ReceiptSessionSubmissions,
+    ReceiptSubmission, SubmissionDisconnected,
 };
 use action_log::ActionLog;
 use agent_client_protocol::{
@@ -300,14 +302,22 @@ impl AcpV2Connection {
         request: acp::LoginAuthRequest,
         cx: &mut App,
     ) -> Task<Result<acp::LoginAuthResponse>> {
+        cx.foreground_executor().spawn(self.login_response(request))
+    }
+
+    fn login_response(
+        &self,
+        request: acp::LoginAuthRequest,
+    ) -> LocalBoxFuture<'static, Result<acp::LoginAuthResponse>> {
         if !self.initialize_response.auth_methods.iter().any(|method| {
             matches!(method, acp::AuthMethod::Agent(agent) if agent.method_id == request.method_id)
         }) {
-            return Task::ready(Err(anyhow!(
+            return futures::future::ready(Err(anyhow!(
                 "Authentication method is not supported for agent-managed login"
-            )));
+            )))
+            .boxed_local();
         }
-        self.scoped_request(request, cx)
+        Self::scoped_request(&self.connection, &self.dispatch_tx, request)
     }
 
     pub fn supports_logout(&self) -> bool {
@@ -319,10 +329,19 @@ impl AcpV2Connection {
         request: acp::LogoutAuthRequest,
         cx: &mut App,
     ) -> Task<Result<acp::LogoutAuthResponse>> {
+        cx.foreground_executor()
+            .spawn(self.logout_response(request))
+    }
+
+    fn logout_response(
+        &self,
+        request: acp::LogoutAuthRequest,
+    ) -> LocalBoxFuture<'static, Result<acp::LogoutAuthResponse>> {
         if !self.supports_logout() {
-            return Task::ready(Err(anyhow!("Logout is not advertised by this agent")));
+            return futures::future::ready(Err(anyhow!("Logout is not advertised by this agent")))
+                .boxed_local();
         }
-        self.scoped_request(request, cx)
+        Self::scoped_request(&self.connection, &self.dispatch_tx, request)
     }
 
     /// Dropping this acceptance RPC only requests RPC cancellation, not cancellation of
@@ -351,13 +370,14 @@ impl AcpV2Connection {
     }
 
     fn scoped_request<Request: JsonRpcRequest + 'static>(
-        &self,
+        connection: &V2ConnectionTo<Agent>,
+        dispatch_tx: &mpsc::UnboundedSender<ForegroundWork>,
         request: Request,
-        cx: &mut App,
-    ) -> Task<Result<Request::Response>> {
-        let connection = self.connection.clone();
-        let dispatch_tx = self.dispatch_tx.clone();
-        cx.foreground_executor().spawn(async move {
+    ) -> LocalBoxFuture<'static, Result<Request::Response>> {
+        let connection = connection.clone();
+        let dispatch_tx = dispatch_tx.clone();
+        // An eagerly spawned child can publish before cancellation drops an unpolled caller.
+        async move {
             let request = connection.prepare_request(request);
             let request_id = request.id().clone();
             let cancellation = request.cancellation_handle();
@@ -377,7 +397,8 @@ impl AcpV2Connection {
             guard.abort();
             drain_foreground_queue(&dispatch_tx).await?;
             Ok(response)
-        })
+        }
+        .boxed_local()
     }
 
     fn new_session_request(
@@ -734,7 +755,7 @@ impl AgentConnection for AcpV2Connection {
     }
 
     fn authenticate(&self, method: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>> {
-        let login = self.login(acp::LoginAuthRequest::new(method), cx);
+        let login = self.login_response(acp::LoginAuthRequest::new(method));
         cx.foreground_executor().spawn(async move {
             login.await?;
             Ok(())
@@ -746,7 +767,7 @@ impl AgentConnection for AcpV2Connection {
     }
 
     fn logout(&self, cx: &mut App) -> Task<Result<()>> {
-        let logout = AcpV2Connection::logout(self, acp::LogoutAuthRequest::new(), cx);
+        let logout = self.logout_response(acp::LogoutAuthRequest::new());
         cx.foreground_executor().spawn(async move {
             logout.await?;
             Ok(())
@@ -789,6 +810,69 @@ impl AgentConnection for AcpV2Connection {
             connection: self.connection.clone(),
             dispatch_tx: self.dispatch_tx.clone(),
         }))
+    }
+
+    fn session_list(&self, _cx: &mut App) -> Option<Rc<dyn AgentSessionList>> {
+        self.initialize_response.capabilities.session.as_ref()?;
+        Some(Rc::new(V2SessionList {
+            connection: self.connection.clone(),
+            dispatch_tx: self.dispatch_tx.clone(),
+        }))
+    }
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+        self
+    }
+}
+
+struct V2SessionList {
+    connection: V2ConnectionTo<Agent>,
+    dispatch_tx: mpsc::UnboundedSender<ForegroundWork>,
+}
+
+impl AgentSessionList for V2SessionList {
+    fn list_sessions(
+        &self,
+        request: AgentSessionListRequest,
+        cx: &mut App,
+    ) -> Task<Result<AgentSessionListResponse>> {
+        let response = AcpV2Connection::scoped_request(
+            &self.connection,
+            &self.dispatch_tx,
+            acp::ListSessionsRequest::new()
+                .cwd(request.cwd.map(acp::AbsolutePath::new))
+                .cursor(request.cursor.map(acp::SessionListCursor::new))
+                .meta(request.meta),
+        );
+        cx.foreground_executor().spawn(async move {
+            let response = response.await?;
+            Ok(AgentSessionListResponse {
+                sessions: response
+                    .sessions
+                    .into_iter()
+                    .map(|session| {
+                        let mut information = AgentSessionInfo::new(session.session_id);
+                        information.work_dirs = Some(work_dirs_from_session_info(
+                            session.cwd.into_inner(),
+                            session
+                                .additional_directories
+                                .into_iter()
+                                .map(acp::AbsolutePath::into_inner)
+                                .collect(),
+                        ));
+                        information.apply_update(
+                            acp::SessionInfoUpdate::new()
+                                .title(session.title)
+                                .updated_at(session.updated_at)
+                                .meta(session.meta),
+                        );
+                        information
+                    })
+                    .collect(),
+                next_cursor: response.next_cursor.map(|cursor| cursor.0.to_string()),
+                meta: response.meta,
+            })
+        })
     }
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
@@ -1028,6 +1112,10 @@ mod tests {
         config_responses: async_channel::Sender<
             Result<acp::SetSessionConfigOptionResponse, agent_client_protocol::Error>,
         >,
+        list_requests: async_channel::Receiver<(
+            acp::ListSessionsRequest,
+            Responder<acp::ListSessionsResponse>,
+        )>,
         closes: async_channel::Receiver<acp::SessionId>,
         agent: V2ConnectionTo<Client>,
         _agent_task: Task<Result<(), agent_client_protocol::Error>>,
@@ -1053,6 +1141,7 @@ mod tests {
             let (new_responses, new_received) = async_channel::unbounded::<
                 Result<acp::NewSessionResponse, agent_client_protocol::Error>,
             >();
+            let (list_sender, list_requests) = async_channel::unbounded();
             let (config_sender, config_requests) = async_channel::unbounded();
             let (config_responses, config_received) = async_channel::unbounded::<
                 Result<acp::SetSessionConfigOptionResponse, agent_client_protocol::Error>,
@@ -1076,6 +1165,15 @@ mod tests {
                                 )
                                 .capabilities(capabilities.clone()),
                             )
+                        },
+                        agent_client_protocol::on_receive_request!(),
+                    )
+                    .on_receive_request(
+                        async move |request: acp::ListSessionsRequest, responder, _| {
+                            list_sender
+                                .try_send((request, responder))
+                                .expect("list receiver");
+                            Ok(())
                         },
                         agent_client_protocol::on_receive_request!(),
                     )
@@ -1186,6 +1284,7 @@ mod tests {
                 new_responses,
                 config_requests,
                 config_responses,
+                list_requests,
                 closes,
                 agent: received.await.expect("agent"),
                 _agent_task: agent_task,
@@ -1675,6 +1774,170 @@ done
     }
 
     #[gpui::test]
+    async fn v2_list_sdk_preserves_filters_pages_and_session_information(cx: &mut TestAppContext) {
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let list = cx
+            .update(|cx| harness.client.session_list(cx))
+            .expect("session discovery");
+        assert!(!list.supports_delete(), "discovery is read-only");
+        assert!(
+            cx.update(|cx| list.watch(cx)).is_none(),
+            "discovery is snapshot-only"
+        );
+        let pending = cx.update(|cx| {
+            list.list_sessions(
+                AgentSessionListRequest {
+                    cwd: Some(session_path("b")),
+                    meta: Some(meta("request")),
+                    ..Default::default()
+                },
+                cx,
+            )
+        });
+        let (request, responder) = bounded(harness.list_requests.recv(), cx)
+            .await
+            .expect("first page");
+        assert_eq!(
+            request,
+            acp::ListSessionsRequest::new()
+                .cwd(Some(acp::AbsolutePath::new(session_path("b"))))
+                .meta(meta("request"))
+        );
+        responder
+            .respond(
+                acp::ListSessionsResponse::new(vec![
+                    acp::SessionInfo::new("listed", session_path("b"))
+                        .additional_directories(vec![
+                            session_path("a"),
+                            session_path("b"),
+                            session_path("a"),
+                        ])
+                        .title("Saved title")
+                        .updated_at("2026-10-01T10:20:30+02:00")
+                        .meta(meta("information")),
+                ])
+                .next_cursor("opaque/+?&")
+                .meta(meta("page")),
+            )
+            .expect("first page response");
+        let page = bounded(pending, cx).await.expect("mapped page");
+        let [information] = page.sessions.as_slice() else {
+            panic!("one listed session")
+        };
+        assert_eq!(information.session_id, acp::SessionId::new("listed"));
+        assert_eq!(
+            information
+                .work_dirs
+                .as_ref()
+                .expect("directories")
+                .ordered_paths()
+                .cloned()
+                .collect::<Vec<_>>(),
+            [session_path("b"), session_path("a")]
+        );
+        assert_eq!(information.title.as_deref(), Some("Saved title"));
+        assert_eq!(
+            information.updated_at.expect("timestamp").to_rfc3339(),
+            "2026-10-01T08:20:30+00:00"
+        );
+        assert!(information.created_at.is_none());
+        assert_eq!(information.meta, Some(meta("information")));
+        assert_eq!(page.meta, Some(meta("page")));
+        assert_eq!(page.next_cursor.as_deref(), Some("opaque/+?&"));
+
+        let pending = cx.update(|cx| {
+            list.list_sessions(
+                AgentSessionListRequest {
+                    cwd: Some(session_path("b")),
+                    cursor: page.next_cursor,
+                    ..Default::default()
+                },
+                cx,
+            )
+        });
+        let (request, responder) = bounded(harness.list_requests.recv(), cx)
+            .await
+            .expect("next page");
+        assert_eq!(
+            request,
+            acp::ListSessionsRequest::new()
+                .cwd(Some(acp::AbsolutePath::new(session_path("b"))))
+                .cursor("opaque/+?&")
+        );
+        responder
+            .respond(acp::ListSessionsResponse::new(vec![]))
+            .expect("last page");
+        let page = bounded(pending, cx).await.expect("last page");
+        assert!(page.sessions.is_empty());
+        assert!(page.next_cursor.is_none());
+        assert!(
+            harness.client.sessions.borrow().is_empty(),
+            "listing must not bind sessions"
+        );
+        assert!(harness.new_requests.is_empty());
+        assert!(harness.closes.is_empty());
+    }
+
+    #[gpui::test]
+    async fn v2_list_sdk_preserves_errors_and_scopes_cancellation(cx: &mut TestAppContext) {
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let list = cx
+            .update(|cx| harness.client.session_list(cx))
+            .expect("session discovery");
+        let unpublished =
+            cx.update(|cx| list.list_sessions(AgentSessionListRequest::default(), cx));
+        drop(unpublished);
+        cx.run_until_parked();
+        assert!(
+            harness.list_requests.is_empty(),
+            "an unpolled observer must not publish"
+        );
+        let failed = cx.update(|cx| list.list_sessions(AgentSessionListRequest::default(), cx));
+        let (request, responder) = bounded(harness.list_requests.recv(), cx)
+            .await
+            .expect("list request");
+        assert_eq!(request, acp::ListSessionsRequest::new());
+        let rejection = agent_client_protocol::Error::new(-32042, "List unavailable")
+            .data(json!({"retain": [null, 7]}));
+        responder
+            .respond_with_error(rejection.clone())
+            .expect("list rejection");
+        assert_eq!(
+            bounded(failed, cx)
+                .await
+                .expect_err("agent rejection")
+                .downcast_ref::<agent_client_protocol::Error>(),
+            Some(&rejection)
+        );
+
+        let dropped = cx.update(|cx| list.list_sessions(AgentSessionListRequest::default(), cx));
+        let (_, responder) = bounded(harness.list_requests.recv(), cx)
+            .await
+            .expect("dropped request");
+        let dropped_cancellation = responder.cancellation();
+        let pending = cx.update(|cx| list.list_sessions(AgentSessionListRequest::default(), cx));
+        let (_, retained) = bounded(harness.list_requests.recv(), cx)
+            .await
+            .expect("retained request");
+        let retained_cancellation = retained.cancellation();
+        drop(dropped);
+        bounded(dropped_cancellation.cancelled(), cx).await;
+        assert!(!retained_cancellation.is_cancelled());
+        drop(harness._agent_task);
+        drop(harness.agent);
+        let error = bounded(pending, cx)
+            .await
+            .expect_err("EOF settles pending list");
+        assert!(
+            error
+                .downcast_ref::<agent_client_protocol::Error>()
+                .is_some_and(agent_client_protocol::is_incoming_transport_closed)
+        );
+        assert!(harness.new_requests.is_empty());
+        assert!(harness.closes.is_empty());
+    }
+
+    #[gpui::test]
     async fn v2_session_sdk_registers_initial_state_before_immediate_notifications(
         cx: &mut TestAppContext,
     ) {
@@ -1829,6 +2092,10 @@ done
     ) {
         let unsupported =
             SessionHarness::new(acp::AgentCapabilities::new(), Vec::new(), Vec::new(), cx).await;
+        assert!(
+            cx.update(|cx| unsupported.client.session_list(cx))
+                .is_none()
+        );
         assert!(bounded(unsupported.create(cx), cx).await.is_err());
         assert!(unsupported.new_requests.is_empty());
         let harness = SessionHarness::new(session_capabilities(), Vec::new(), Vec::new(), cx).await;
@@ -2813,17 +3080,19 @@ done
             "login", "Login",
         ))]);
         let harness = Harness::new(offered, cx).await.expect("connect");
-        let first = cx.update(|cx| {
-            harness
-                .client
-                .login(acp::LoginAuthRequest::new("login"), cx)
-        });
+        let unpublished_login =
+            cx.update(|cx| AgentConnection::authenticate(&harness.client, "login".into(), cx));
+        let unpublished_logout = cx.update(|cx| AgentConnection::logout(&harness.client, cx));
+        drop(unpublished_login);
+        drop(unpublished_logout);
+        cx.run_until_parked();
+        assert!(harness.logins.lock().expect("login log").is_empty());
+        assert!(harness.logouts.lock().expect("logout log").is_empty());
+        let first =
+            cx.update(|cx| AgentConnection::authenticate(&harness.client, "login".into(), cx));
         harness.registered(cx).await;
-        let second = cx.update(|cx| {
-            harness
-                .client
-                .login(acp::LoginAuthRequest::new("login"), cx)
-        });
+        let second =
+            cx.update(|cx| AgentConnection::authenticate(&harness.client, "login".into(), cx));
         harness.registered(cx).await;
         let store = harness.client.request_elicitations();
         let unrelated = store.update(cx, |store, cx| {

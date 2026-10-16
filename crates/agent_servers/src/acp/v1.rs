@@ -4,7 +4,7 @@ use super::{
     enqueue_request, first_class_terminal_auth_task, handle_v2_complete_elicitation,
     handle_v2_create_elicitation, map_acp_error, mcp_configurations_for_project, respond_err,
     respond_result, runtime, session_thread, terminal_auth_task_id, transport,
-    with_v2_client_ingress,
+    with_v2_client_ingress, work_dirs_from_session_info,
 };
 use acp_thread::{
     AgentConnection, AgentSessionInfo, AgentSessionList, AgentSessionListRequest,
@@ -21,7 +21,7 @@ use agent_client_protocol::{
 };
 use anyhow::anyhow;
 use async_channel;
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use futures::channel::mpsc;
 use futures::future::Shared;
 use futures::{Future, FutureExt as _};
@@ -1173,22 +1173,6 @@ fn session_directories_from_work_dirs(
         cwd,
         additional_directories,
     })
-}
-
-fn work_dirs_from_session_info(cwd: PathBuf, additional_directories: Vec<PathBuf>) -> PathList {
-    let mut seen_paths = HashSet::default();
-    let mut paths = Vec::with_capacity(1 + additional_directories.len());
-
-    seen_paths.insert(cwd.clone());
-    paths.push(cwd);
-
-    for path in additional_directories {
-        if seen_paths.insert(path.clone()) {
-            paths.push(path);
-        }
-    }
-
-    PathList::new(&paths)
 }
 
 fn emit_load_error_to_all_sessions(
