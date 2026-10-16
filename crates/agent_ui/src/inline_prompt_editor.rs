@@ -420,6 +420,9 @@ impl<T: 'static> PromptEditor<T> {
                 cx,
             )
         {
+            // Capture-phase actions propagate by default, so stop the editor from also
+            // pasting the clipboard's file paths as text.
+            cx.stop_propagation();
             task.detach();
         }
     }
@@ -1633,7 +1636,7 @@ mod tests {
     use project::Project;
     use settings::SettingsStore;
     use std::cell::RefCell;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::rc::Rc;
     use terminal::TerminalBuilder;
     use terminal::terminal_settings::CursorShape;
@@ -1818,5 +1821,106 @@ mod tests {
             ),
             "Expected ConfirmRequested with execute: false"
         );
+    }
+
+    #[gpui::test]
+    async fn test_paste_image_does_not_paste_file_paths_as_text(cx: &mut TestAppContext) {
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(1, 1)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .expect("encode png");
+        let prompt = paste_into_prompt_editor(
+            vec![
+                gpui::ClipboardEntry::Image(gpui::Image::from_bytes(
+                    gpui::ImageFormat::Png,
+                    png.into_inner(),
+                )),
+                gpui::ClipboardEntry::ExternalPaths(gpui::ExternalPaths(
+                    vec![PathBuf::from(path!("/tmp/screenshot.png"))].into(),
+                )),
+            ],
+            cx,
+        )
+        .await;
+
+        let image_uri = acp_thread::MentionUri::PastedImage {
+            name: "Image".into(),
+        };
+        assert_eq!(prompt, format!("{} ", image_uri.as_link()));
+    }
+
+    #[gpui::test]
+    async fn test_paste_non_image_file_pastes_path_as_text(cx: &mut TestAppContext) {
+        let path = PathBuf::from(path!("/tmp/notes.txt"));
+        let prompt = paste_into_prompt_editor(
+            vec![gpui::ClipboardEntry::ExternalPaths(gpui::ExternalPaths(
+                vec![path.clone()].into(),
+            ))],
+            cx,
+        )
+        .await;
+
+        assert_eq!(prompt, path.display().to_string());
+    }
+
+    async fn paste_into_prompt_editor(
+        entries: Vec<gpui::ClipboardEntry>,
+        cx: &mut TestAppContext,
+    ) -> String {
+        init_test(cx);
+        cx.update(|cx| {
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                let mut model = registry.default_model().expect("fake default model");
+                model.supports_images = true;
+                registry.set_inline_assistant_model(Some(model), cx);
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", serde_json::json!({"file": ""}))
+            .await;
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let (workspace, _) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace.downgrade();
+        let (prompt_editor, cx) = cx.add_window_view(|window, cx| {
+            let terminal = cx.new(|cx| {
+                TerminalBuilder::new_display_only(
+                    CursorShape::default(),
+                    settings::AlternateScroll::On,
+                    None,
+                    0,
+                    cx.background_executor(),
+                    PathStyle::local(),
+                )
+                .subscribe(cx)
+            });
+            let session_id = Uuid::new_v4();
+            let codegen = cx.new(|_| TerminalCodegen::new(terminal, session_id));
+            let prompt_buffer =
+                cx.new(|cx| MultiBuffer::singleton(cx.new(|cx| Buffer::local("", cx)), cx));
+            PromptEditor::new_terminal(
+                TerminalInlineAssistId::default(),
+                VecDeque::new(),
+                prompt_buffer,
+                codegen,
+                session_id,
+                fs,
+                cx.new(|cx| ThreadStore::new(cx)),
+                project.downgrade(),
+                workspace,
+                window,
+                cx,
+            )
+        });
+
+        cx.write_to_clipboard(ClipboardItem { entries });
+        prompt_editor.update_in(cx, |prompt_editor, window, cx| {
+            prompt_editor.editor.focus_handle(cx).focus(window, cx);
+        });
+        cx.dispatch_action(Paste);
+        cx.run_until_parked();
+
+        prompt_editor.read_with(cx, |prompt_editor, cx| prompt_editor.prompt(cx))
     }
 }
