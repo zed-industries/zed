@@ -247,7 +247,9 @@ fn run_captured(exe: &str, args: &[&str]) -> Result<String, String> {
                 }
             }
             #[cfg(not(target_os = "windows"))]
-            return Err(format!("{exe} not found"));
+            {
+                return Err(format!("{exe} not found"));
+            }
         }
     };
     let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -281,7 +283,10 @@ mod tests {
         let path_string = path.to_string_lossy().into_owned();
 
         write_file(path_string.clone(), "{\"name\":\"x\"}".to_string()).unwrap();
-        assert_eq!(read_text_file(path_string.clone()).unwrap(), "{\"name\":\"x\"}");
+        assert_eq!(
+            read_text_file(path_string.clone()).unwrap(),
+            "{\"name\":\"x\"}"
+        );
 
         // Overwrites in place.
         write_file(path_string.clone(), "{}".to_string()).unwrap();
@@ -291,7 +296,11 @@ mod tests {
     #[test]
     fn read_text_file_reports_the_path_on_failure() {
         let dir = tempfile::tempdir().unwrap();
-        let missing = dir.path().join("missing.txt").to_string_lossy().into_owned();
+        let missing = dir
+            .path()
+            .join("missing.txt")
+            .to_string_lossy()
+            .into_owned();
         let error = read_text_file(missing.clone()).unwrap_err();
         assert!(error.contains(&missing), "{error}");
     }
