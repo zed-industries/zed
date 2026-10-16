@@ -85,6 +85,8 @@ use std::{
     task::Poll,
     time::Duration,
 };
+#[cfg(target_os = "linux")]
+use std::{ffi::OsStr, os::unix::ffi::OsStrExt as _};
 use sum_tree::SumTree;
 use task::{ResolvedTask, ShellKind, TaskContext};
 use text::{Anchor, PointUtf16, ReplicaId, ToOffset, Unclipped};
@@ -236,6 +238,153 @@ async fn test_symlinks(cx: &mut gpui::TestAppContext) {
                 .unwrap()
                 .inode
         );
+    });
+}
+
+#[cfg(not(windows))]
+#[gpui::test]
+async fn test_resolve_abs_file_link_project_aliases(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions =
+                    Some(SplicingVec::from(vec!["**/hidden".to_string()]));
+            });
+        });
+    });
+
+    let directory = TempTree::new(json!({
+        "project": {
+            "sub": {},
+            "hidden": {"unopened.rs": "unindexed"},
+        },
+        "outside": {
+            "child": {},
+            "target.rs": "saved",
+            "link.rs": "actual outside target",
+        },
+    }));
+    let root = directory.path().join("project");
+    let target = directory.path().join("outside/target.rs");
+    os::unix::fs::symlink(&target, root.join("link.rs")).unwrap();
+    os::unix::fs::symlink(root.join("sub"), root.join("hop")).unwrap();
+    os::unix::fs::symlink(directory.path().join("outside/child"), root.join("escape")).unwrap();
+    let outside_alias = directory.path().join("outside/alias.rs");
+    os::unix::fs::symlink(&target, &outside_alias).unwrap();
+
+    let project = Project::test(RealFs::new(None, cx.executor()), [root.as_path()], cx).await;
+    let alias = project.read_with(cx, |project, cx| {
+        project
+            .project_path_for_absolute_path(&root.join("link.rs"), cx)
+            .unwrap()
+    });
+    let buffer = project
+        .update(cx, |project, cx| project.open_buffer(alias.clone(), cx))
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "unsaved ")], None, cx);
+    });
+
+    for relative_path in ["hop/../link.rs", "hidden/../link.rs"] {
+        let path = root.join(relative_path);
+        let resolved = project
+            .update(cx, |project, cx| {
+                project.resolve_abs_file_link(path.to_str().unwrap(), cx)
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(resolved.project_path(), Some(&alias), "{relative_path}");
+        let reopened = project
+            .update(cx, |project, cx| {
+                project.open_buffer(resolved.project_path().unwrap().clone(), cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(reopened, buffer);
+        buffer.read_with(cx, |buffer, _| {
+            assert_eq!(buffer.text(), "unsaved saved");
+            assert!(buffer.is_dirty());
+        });
+    }
+
+    let unindexed_path = root.join("hidden/unopened.rs");
+    let unindexed_alias = project.read_with(cx, |project, cx| {
+        let path = project
+            .project_path_for_absolute_path(&unindexed_path, cx)
+            .unwrap();
+        assert!(project.entry_for_path(&path, cx).is_none());
+        assert!(project.get_open_buffer(&path, cx).is_none());
+        assert!(
+            project
+                .entry_for_path(&(alias.worktree_id, rel_path("hidden")).into(), cx)
+                .is_none()
+        );
+        path
+    });
+    let resolved = project
+        .update(cx, |project, cx| {
+            project.resolve_abs_file_link(unindexed_path.to_str().unwrap(), cx)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(resolved.project_path(), Some(&unindexed_alias));
+
+    for (input, expected) in [
+        (
+            root.join("escape/../link.rs"),
+            directory.path().join("outside/link.rs"),
+        ),
+        (outside_alias, target),
+    ] {
+        let resolved = project
+            .update(cx, |project, cx| {
+                project.resolve_abs_file_link(input.to_str().unwrap(), cx)
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(resolved.abs_path(), expected.to_str());
+    }
+    let missing = root.join("missing/../link.rs");
+    let resolved = project
+        .update(cx, |project, cx| {
+            project.resolve_abs_file_link(missing.to_str().unwrap(), cx)
+        })
+        .await
+        .unwrap();
+    assert!(resolved.is_none());
+    project.read_with(cx, |project, cx| {
+        assert_eq!(project.worktrees(cx).count(), 1);
+        assert_eq!(project.get_open_buffer(&alias, cx), Some(buffer));
+    });
+}
+
+#[cfg(target_os = "linux")]
+#[gpui::test]
+async fn test_resolve_abs_file_link_rejects_non_utf8_target(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+    let directory = TempTree::new(json!({}));
+    let target = directory.path().join(OsStr::from_bytes(b"\xff.rs"));
+    std::fs::write(&target, "actual target").unwrap();
+    std::fs::write(directory.path().join("�.rs"), "replacement-character decoy").unwrap();
+    let alias = directory.path().join("alias.rs");
+    os::unix::fs::symlink(&target, &alias).unwrap();
+    let project = Project::test(RealFs::new(None, cx.executor()), [], cx).await;
+    let error = project
+        .update(cx, |project, cx| {
+            project.resolve_abs_file_link(alias.to_str().unwrap(), cx)
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), "canonical file path is not valid UTF-8");
+    project.read_with(cx, |project, cx| {
+        assert_eq!(project.worktrees(cx).count(), 0);
     });
 }
 
@@ -1355,6 +1504,42 @@ async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_single_file_worktree_is_not_an_lsp_workspace_folder(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/the-root"),
+        json!({
+            "main.py": "",
+            "pyproject.toml": ""
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/the-root/main.py").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    let mut fake_python_servers = language_registry.register_fake_lsp(
+        "Python",
+        FakeLspAdapter {
+            name: "ty",
+            ..Default::default()
+        },
+    );
+    language_registry.add(python_lang(fs));
+
+    let (_buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/main.py"), cx)
+        })
+        .await
+        .unwrap();
+    let fake_server = fake_python_servers.next().await.unwrap();
+    cx.run_until_parked();
+
+    assert_eq!(fake_server.server.workspace_folders(), BTreeSet::new());
+}
+
+#[gpui::test]
 async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
     cx: &mut gpui::TestAppContext,
 ) {
@@ -1582,6 +1767,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         json!({
             "test.rs": "const A: i32 = 1;",
             "test2.rs": "",
+            "later.rs": "fn later() {}",
             "Cargo.toml": "a = 1",
             "package.json": "{\"a\": 1}",
         }),
@@ -1629,6 +1815,26 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
                 ..Default::default()
             },
             ..Default::default()
+        },
+    );
+
+    let (initialize_sender, initialize_receiver) = async_channel::unbounded();
+    let mut replacement_rust_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "replacement-rust-server",
+            opt_in_languages: HashSet::from_iter([LanguageName::new_static("Rust")]),
+            initializer: Some(Box::new(move |server| {
+                let initialize_sender = initialize_sender.clone();
+                server.set_request_handler::<lsp::request::Initialize, _, _>(move |params, _| {
+                    initialize_sender.try_send(params).unwrap();
+                    future::ready(Ok(lsp::InitializeResult {
+                        capabilities: lsp::LanguageServer::full_capabilities(),
+                        server_info: None,
+                    }))
+                });
+            })),
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -1905,7 +2111,6 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         project.restart_language_servers_for_buffers(
             vec![rust_buffer.clone(), json_buffer.clone()],
             HashSet::default(),
-            true,
             cx,
         );
     });
@@ -1974,6 +2179,128 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .await,
         close_message,
     );
+
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    lsp_store.update(cx, |lsp_store, cx| lsp_store.stop_all_language_servers(cx));
+    cx.run_until_parked();
+    lsp_store.read_with(cx, |store, _| {
+        assert_eq!(store.language_server_statuses().count(), 0)
+    });
+
+    cx.update_global::<SettingsStore, _>(|store, cx| {
+        store
+            .set_user_settings(
+                r#"{"semantic_tokens":"combined","languages":{"Rust":{"language_servers":["replacement-rust-server"]}}}"#,
+                cx,
+            )
+            .unwrap();
+    });
+    cx.run_until_parked();
+    lsp_store.read_with(cx, |store, _| {
+        assert_eq!(store.language_server_statuses().count(), 0)
+    });
+    project.update(cx, |project, cx| {
+        project.restart_language_servers_for_buffers(
+            vec![rust_buffer.clone()],
+            HashSet::default(),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    lsp_store.read_with(cx, |store, _| {
+        assert_eq!(store.language_server_statuses().count(), 1)
+    });
+    let mut replacement_rust_server = replacement_rust_servers.next().await.unwrap();
+    assert_eq!(
+        initialize_receiver
+            .try_recv()
+            .unwrap()
+            .initialization_options,
+        None
+    );
+
+    let _json_handle = project.update(cx, |project, cx| {
+        project.register_buffer_with_language_servers(&json_buffer, cx)
+    });
+    for (path, text) in [
+        (path!("/dir/test.rs"), "const A: i32 = 12;"),
+        (path!("/dir/later.rs"), "fn later() {}"),
+    ] {
+        let _registration = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer_with_lsp(path, cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            replacement_rust_server
+                .receive_notification::<lsp::notification::DidOpenTextDocument>()
+                .await
+                .text_document,
+            lsp::TextDocumentItem {
+                uri: lsp::Uri::from_file_path(path).unwrap(),
+                version: 0,
+                text: text.to_owned(),
+                language_id: "rust".to_owned(),
+            }
+        );
+    }
+    let mut server_id = replacement_rust_server.server.server_id();
+    for semantic_tokens in ["combined", "full"] {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store
+                .set_user_settings(
+                    &json!({
+                        "semantic_tokens": semantic_tokens,
+                        "languages": { "Rust": { "language_servers": ["replacement-rust-server"] } },
+                        "lsp": { "replacement-rust-server": { "initialization_options": { "check": true } } }
+                    })
+                    .to_string(),
+                    cx,
+                )
+                .unwrap();
+        });
+        cx.run_until_parked();
+        lsp_store.read_with(cx, |store, _| {
+            assert_eq!(store.language_server_statuses().count(), 1);
+        });
+        let server = replacement_rust_servers
+            .next()
+            .now_or_never()
+            .flatten()
+            .expect("resumed server was not restarted after changing settings");
+        assert_ne!(server.server.server_id(), server_id);
+        server_id = server.server.server_id();
+        let params = initialize_receiver.try_recv().unwrap();
+        assert_eq!(
+            params.initialization_options,
+            Some(json!({ "check": true }))
+        );
+        assert_eq!(
+            params
+                .capabilities
+                .text_document
+                .unwrap()
+                .semantic_tokens
+                .unwrap()
+                .augments_syntax_tokens,
+            Some(semantic_tokens == "combined")
+        );
+    }
+    for servers in [
+        &mut fake_rust_servers,
+        &mut fake_json_servers,
+        &mut replacement_rust_servers,
+    ] {
+        assert_eq!(
+            servers
+                .next()
+                .now_or_never()
+                .flatten()
+                .map(|server| server.server.name()),
+            None,
+        );
+    }
 }
 
 #[gpui::test]
@@ -2052,6 +2379,96 @@ async fn test_late_lsp_adapter_registration(cx: &mut gpui::TestAppContext) {
             &[".".to_string(), "::".to_string()]
         );
     });
+}
+
+#[gpui::test]
+async fn test_language_servers_disabled_by_default(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    async fn running_language_servers(
+        settings_json_contents: serde_json::Value,
+        cx: &mut gpui::TestAppContext,
+    ) -> Vec<LanguageServerName> {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/the-root"),
+            json!({
+                ".zed": {
+                    "settings.json": settings_json_contents.to_string(),
+                },
+                "main.rs": "",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/the-root").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang());
+
+        let _default_server = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                name: "default-server",
+                ..Default::default()
+            },
+        );
+        let _opt_in_server = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                name: "opt-in-server",
+                opt_in_languages: HashSet::from_iter([LanguageName::new_static("Rust")]),
+                ..Default::default()
+            },
+        );
+        cx.run_until_parked();
+
+        let (buffer, _handle) = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer_with_lsp(path!("/the-root/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        project.update(cx, |project, cx| {
+            project.lsp_store().update(cx, |lsp_store, cx| {
+                buffer.update(cx, |buffer, cx| {
+                    lsp_store
+                        .running_language_servers_for_local_buffer(buffer, cx)
+                        .map(|(adapter, _)| adapter.name())
+                        .sorted()
+                        .collect()
+                })
+            })
+        })
+    }
+
+    assert_eq!(
+        running_language_servers(json!({}), cx).await,
+        vec![LanguageServerName::new_static("default-server")],
+        "servers disabled by default must not be started without explicit configuration"
+    );
+    assert_eq!(
+        running_language_servers(
+            json!({ "languages": { "Rust": { "language_servers": ["!default-server", "..."] } } }),
+            cx
+        )
+        .await,
+        Vec::<LanguageServerName>::new(),
+        "the `...` wildcard must not include servers disabled by default"
+    );
+    assert_eq!(
+        running_language_servers(
+            json!({ "languages": { "Rust": { "language_servers": ["opt-in-server", "..."] } } }),
+            cx
+        )
+        .await,
+        vec![
+            LanguageServerName::new_static("default-server"),
+            LanguageServerName::new_static("opt-in-server"),
+        ],
+        "servers disabled by default must start when listed explicitly"
+    );
 }
 
 #[gpui::test]
@@ -3023,7 +3440,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
 
     // Restart the server before the diagnostics finish updating.
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer], HashSet::default(), true, cx);
+        project.restart_language_servers_for_buffers(vec![buffer], HashSet::default(), cx);
     });
     let mut events = cx.events(&project);
 
@@ -3141,12 +3558,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
     });
 
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(
-            vec![buffer.clone()],
-            HashSet::default(),
-            true,
-            cx,
-        );
+        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx);
     });
 
     // The diagnostics are cleared.
@@ -3201,12 +3613,7 @@ async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::T
     });
     cx.executor().run_until_parked();
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(
-            vec![buffer.clone()],
-            HashSet::default(),
-            true,
-            cx,
-        );
+        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx);
     });
 
     let mut fake_server = fake_servers.next().await.unwrap();
@@ -3388,7 +3795,7 @@ async fn test_registry_reload_detaches_buffers_from_language_servers(
     language_registry.register_test_language(LanguageConfig {
         name: "Rust".into(),
         matcher: Arc::new(LanguageMatcher {
-            path_suffixes: vec!["rs".to_string()],
+            path_suffixes: vec!["rs".into()],
             ..LanguageMatcher::default()
         }),
         ..LanguageConfig::default()
@@ -4720,12 +5127,7 @@ async fn test_diagnostic_summaries_cleared_on_server_restart(cx: &mut gpui::Test
     let mut events = cx.events(&project);
 
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(
-            vec![buffer.clone()],
-            HashSet::default(),
-            true,
-            cx,
-        );
+        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx);
     });
     cx.executor().run_until_parked();
 
@@ -7963,6 +8365,88 @@ async fn test_range_formatting_prefers_range_capable_current_server(cx: &mut gpu
         0,
         "expected manual range formatting not to use the full-format-only server",
     );
+}
+
+#[gpui::test]
+async fn test_full_buffer_formatting_edit_preserves_unchanged_anchors(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.formatter = Some(FormatterList::Single(
+                    Formatter::LanguageServer(settings::LanguageServerFormatterSpecifier::Current),
+                ));
+            });
+        });
+    });
+
+    let initial_text = "fn main() {\n    println!(\"🙂\");  \n}\n";
+    let formatted_text = "fn main() {\n    println!(\"🙂\");\n}\n";
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "main.rs": initial_text }))
+        .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_language_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let fake_server = fake_language_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    let _format_requests = fake_server.set_request_handler::<lsp::request::Formatting, _, _>({
+        let formatted_text = formatted_text.to_string();
+        move |_, _| {
+            let formatted_text = formatted_text.clone();
+            async move {
+                Ok(Some(vec![lsp::TextEdit {
+                    range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(3, 0)),
+                    new_text: formatted_text,
+                }]))
+            }
+        }
+    });
+    let unchanged_anchor = buffer.read_with(cx, |buffer, _| {
+        buffer.anchor_before(initial_text.find("println!").unwrap())
+    });
+
+    project
+        .update(cx, |project, cx| {
+            project.format(
+                HashSet::from_iter([buffer.clone()]),
+                project::lsp_store::LspFormatTarget::Buffers,
+                false,
+                project::lsp_store::FormatTrigger::Manual,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), formatted_text);
+        assert_eq!(
+            unchanged_anchor.to_offset(buffer),
+            formatted_text.find("println!").unwrap()
+        );
+    });
 }
 
 #[gpui::test(iterations = 10)]
@@ -11630,6 +12114,27 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
             (path!("dir/three.rs").to_string(), vec![37..40]),
             (path!("dir/four.rs").to_string(), vec![25..28, 36..39])
         ])
+    );
+
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                "THREE",
+                false,
+                true,
+                false,
+                Default::default(),
+                Default::default(),
+                false,
+                None,
+            )
+            .unwrap(),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([(path!("dir/three.rs").to_string(), vec![6..11])])
     );
 }
 
@@ -19656,6 +20161,22 @@ async fn test_undo_encoding_change(cx: &mut gpui::TestAppContext) {
         assert_ne!(buffer.text(), "Hi");
         assert!(!buffer.is_dirty());
     });
+
+    let thai = "สวัสดีชาวโลกนี่คือข้อความทดสอบภาษาไทย";
+    fs.insert_file(
+        path!("/dir/test.txt"),
+        thai.encode_utf16().flat_map(u16::to_le_bytes).collect(),
+    )
+    .await;
+    cx.run_until_parked();
+    assert_eq!(buffer.read_with(cx, |buffer, _| buffer.text()), thai);
+    buffer
+        .update(cx, |buffer, cx| {
+            buffer.reload_with_encoding(encoding_rs::UTF_16LE, cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(buffer.read_with(cx, |buffer, _| buffer.text()), thai);
 }
 
 #[gpui::test]
@@ -19789,7 +20310,7 @@ fn json_lang() -> Arc<Language> {
         LanguageConfig {
             name: "JSON".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["json".to_string()],
+                path_suffixes: vec!["json".into()],
                 ..Default::default()
             })
             .into(),
@@ -19804,7 +20325,7 @@ fn js_lang() -> Arc<Language> {
         LanguageConfig {
             name: "JavaScript".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["js".to_string()],
+                path_suffixes: vec!["js".into()],
                 ..Default::default()
             })
             .into(),
@@ -19873,7 +20394,7 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
             LanguageConfig {
                 name: "Python".into(),
                 matcher: (LanguageMatcher {
-                    path_suffixes: vec!["py".to_string()],
+                    path_suffixes: vec!["py".into()],
                     ..Default::default()
                 })
                 .into(),
@@ -19893,7 +20414,7 @@ fn typescript_lang() -> Arc<Language> {
         LanguageConfig {
             name: "TypeScript".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["ts".to_string()],
+                path_suffixes: vec!["ts".into()],
                 ..Default::default()
             })
             .into(),
@@ -19908,7 +20429,7 @@ fn tsx_lang() -> Arc<Language> {
         LanguageConfig {
             name: "tsx".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["tsx".to_string()],
+                path_suffixes: vec!["tsx".into()],
                 ..Default::default()
             })
             .into(),

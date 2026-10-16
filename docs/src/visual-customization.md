@@ -11,7 +11,7 @@ See [All Settings](./reference/all-settings.md) for additional information and o
 
 ## Themes
 
-You can install many [themes](./themes.md) and [icon themes](./icon-themes.md) in form of extensions by running {#action zed::Extensions} from the command palette.
+You can install many [themes](./themes.md) and [icon themes](./icon-themes.md) in form of [extensions](./extensions.md) by running {#action zed::Extensions} from the command palette.
 
 You can preview/choose amongst your installed themes and icon themes with {#action theme_selector::Toggle} ({#kb theme_selector::Toggle}) and {#action icon_theme_selector::Toggle} which will modify the following settings:
 
@@ -78,6 +78,10 @@ If you would like to use distinct themes for light mode/dark mode that can be se
   // and any other snippet of code.
   "agent_buffer_font_size": 12,
 
+  // Controls the font family for Mermaid diagrams in the agent panel and
+  // markdown preview. If not specified, it falls back to the UI font family.
+  "mermaid_font_family": "Inter",
+
   "markdown_preview": {
     // Controls the font size for the markdown preview.
     // If not specified, it falls back to the editor font size.
@@ -87,7 +91,10 @@ If you would like to use distinct themes for light mode/dark mode that can be se
     "font_family": null,
     // Controls the font family for code blocks in the markdown preview.
     // If not specified, it falls back to the editor font family.
-    "code_font_family": null
+    "code_font_family": null,
+    // Controls the font weight for headings (H1 through H6) in the markdown preview,
+    // in CSS units from 100 to 900. Defaults to 600.
+    "heading_font_weight": 600
   }
 ```
 
@@ -136,14 +143,15 @@ To disable this behavior use:
   // Control which items are shown/hidden in the title bar
   "title_bar": {
     "show_branch_status_icon": false, // Show git status on branch icon
-    "show_branch_name": true,       // Show/hide branch name
-    "show_worktree_name": true,     // Show/hide worktree name
-    "show_project_items": true,     // Show/hide project host and name
-    "show_onboarding_banner": true, // Show/hide onboarding banners
-    "show_user_picture": true,      // Show/hide user avatar
-    "show_user_menu": true,         // Show/hide app user button
-    "show_sign_in": true,           // Show/hide sign-in button
-    "show_menus": false             // Show/hide menus
+    "show_branch_name": true,         // Show/hide branch name
+    "show_worktree_name": true,       // Show/hide worktree name
+    "show_project_items": true,       // Show/hide project host and name
+    "show_onboarding_banner": true,   // Show/hide onboarding banners
+    "show_user_picture": true,        // Show/hide user avatar
+    "show_user_menu": true,           // Show/hide app user button
+    "show_sign_in": true,             // Show/hide sign-in button
+    "show_menus": false,              // Show/hide menus
+    "open_menus_on_hover": false      // Automatically open menus on hover
   },
 ```
 
@@ -473,7 +481,7 @@ TBD: Centered layout related settings
 
 ## Project Panel
 
-Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#kb project_panel::ToggleFocus}) or with {#action pane::RevealInProjectPanel} ({#kb pane::RevealInProjectPanel}).
+[Project panel](./project-panel.md) can be shown/hidden with {#action project_panel::ToggleFocus} ({#kb project_panel::ToggleFocus}) or with {#action pane::RevealInProjectPanel} ({#kb pane::RevealInProjectPanel}).
 
 ```json [settings]
   // Project Panel Settings

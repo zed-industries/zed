@@ -278,8 +278,10 @@ impl LspAdapter for GoLspAdapter {
         match completion.kind.zip(completion.detail.as_ref()) {
             Some((lsp::CompletionItemKind::MODULE, detail)) => {
                 let text = format!("{label} {detail}");
-                let source = Rope::from(format!("import {text}").as_str());
-                let runs = language.highlight_text(&source, 7..7 + text[name_offset..].len());
+                let source = format!("import {text}");
+                let runs = language
+                    .highlight_text(source.as_str(), 7..7 + text[name_offset..].len())
+                    .collect();
                 let filter_range = completion
                     .filter_text
                     .as_deref()
@@ -295,11 +297,10 @@ impl LspAdapter for GoLspAdapter {
                 detail,
             )) => {
                 let text = format!("{label} {detail}");
-                let source =
-                    Rope::from(format!("var {} {}", &text[name_offset..], detail).as_str());
+                let source = format!("var {} {}", &text[name_offset..], detail);
                 let runs = adjust_runs(
                     name_offset,
-                    language.highlight_text(&source, 4..4 + text[name_offset..].len()),
+                    language.highlight_text(source.as_str(), 4..4 + text[name_offset..].len()),
                 );
                 let filter_range = completion
                     .filter_text
@@ -313,10 +314,10 @@ impl LspAdapter for GoLspAdapter {
             }
             Some((lsp::CompletionItemKind::STRUCT, _)) => {
                 let text = format!("{label} struct {{}}");
-                let source = Rope::from(format!("type {}", &text[name_offset..]).as_str());
+                let source = format!("type {}", &text[name_offset..]);
                 let runs = adjust_runs(
                     name_offset,
-                    language.highlight_text(&source, 5..5 + text[name_offset..].len()),
+                    language.highlight_text(source.as_str(), 5..5 + text[name_offset..].len()),
                 );
                 let filter_range = completion
                     .filter_text
@@ -330,10 +331,10 @@ impl LspAdapter for GoLspAdapter {
             }
             Some((lsp::CompletionItemKind::INTERFACE, _)) => {
                 let text = format!("{label} interface {{}}");
-                let source = Rope::from(format!("type {}", &text[name_offset..]).as_str());
+                let source = format!("type {}", &text[name_offset..]);
                 let runs = adjust_runs(
                     name_offset,
-                    language.highlight_text(&source, 5..5 + text[name_offset..].len()),
+                    language.highlight_text(source.as_str(), 5..5 + text[name_offset..].len()),
                 );
                 let filter_range = completion
                     .filter_text
@@ -347,11 +348,10 @@ impl LspAdapter for GoLspAdapter {
             }
             Some((lsp::CompletionItemKind::FIELD, detail)) => {
                 let text = format!("{label} {detail}");
-                let source =
-                    Rope::from(format!("type T struct {{ {} }}", &text[name_offset..]).as_str());
+                let source = format!("type T struct {{ {} }}", &text[name_offset..]);
                 let runs = adjust_runs(
                     name_offset,
-                    language.highlight_text(&source, 16..16 + text[name_offset..].len()),
+                    language.highlight_text(source.as_str(), 16..16 + text[name_offset..].len()),
                 );
                 let filter_range = completion
                     .filter_text
@@ -366,10 +366,10 @@ impl LspAdapter for GoLspAdapter {
             Some((lsp::CompletionItemKind::FUNCTION | lsp::CompletionItemKind::METHOD, detail)) => {
                 if let Some(signature) = detail.strip_prefix("func") {
                     let text = format!("{label}{signature}");
-                    let source = Rope::from(format!("func {} {{}}", &text[name_offset..]).as_str());
+                    let source = format!("func {} {{}}", &text[name_offset..]);
                     let runs = adjust_runs(
                         name_offset,
-                        language.highlight_text(&source, 5..5 + text[name_offset..].len()),
+                        language.highlight_text(source.as_str(), 5..5 + text[name_offset..].len()),
                     );
                     let filter_range = completion
                         .filter_text
@@ -442,7 +442,9 @@ impl LspAdapter for GoLspAdapter {
         Some(CodeLabel::new(
             text[display_range.clone()].to_string(),
             filter_range,
-            language.highlight_text(&text.as_str().into(), display_range),
+            language
+                .highlight_text(text.as_str(), display_range)
+                .collect(),
         ))
     }
 
@@ -575,13 +577,10 @@ async fn get_cached_server_binary(container_dir: &Path) -> Option<LanguageServer
 
 fn adjust_runs(
     delta: usize,
-    mut runs: Vec<(Range<usize>, HighlightId)>,
+    runs: impl Iterator<Item = (Range<usize>, HighlightId)>,
 ) -> Vec<(Range<usize>, HighlightId)> {
-    for (range, _) in &mut runs {
-        range.start += delta;
-        range.end += delta;
-    }
-    runs
+    runs.map(|(range, highlight_id)| (range.start + delta..range.end + delta, highlight_id))
+        .collect()
 }
 
 pub(crate) struct GoContextProvider;
@@ -820,6 +819,14 @@ impl ContextProvider for GoContextProvider {
                 command: "go".into(),
                 args: vec!["test".into()],
                 cwd: package_cwd.clone(),
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: format!("go test {}", GO_PACKAGE_TASK_VARIABLE.template_value()),
+                command: "go".into(),
+                args: vec!["test".into()],
+                cwd: package_cwd.clone(),
+                tags: vec!["go-package-test".to_owned()],
                 ..TaskTemplate::default()
             },
             TaskTemplate {
@@ -2136,5 +2143,46 @@ mod tests {
         let input_with_double_quotes = r#"`test with "double quotes"`"#;
         let result = extract_subtest_name(input_with_double_quotes);
         assert_eq!(result, Some(r#"test_with_\"double_quotes\""#.to_string()));
+    }
+
+    #[gpui::test]
+    fn test_go_package_test_detection(cx: &mut TestAppContext) {
+        let language = language("go", tree_sitter_go::LANGUAGE.into());
+
+        let source = r#"
+        package main
+
+        import "testing"
+
+        func TestExample(t *testing.T) {
+            // test code
+        }
+        "#;
+
+        let buffer =
+            cx.new(|cx| crate::Buffer::local(source, cx).with_language(language.clone(), cx));
+        cx.executor().run_until_parked();
+
+        let runnables: Vec<_> = buffer.update(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            snapshot.runnable_ranges(0..source.len()).collect()
+        });
+
+        let tag_strings: Vec<_> = runnables
+            .iter()
+            .flat_map(|r| &r.runnable.tags)
+            .map(|tag| tag.0.to_string())
+            .collect();
+
+        assert!(
+            tag_strings.contains(&"go-package-test".to_string()),
+            "Should find go-package-test tag, found: {:?}",
+            tag_strings
+        );
+        assert!(
+            tag_strings.contains(&"go-test".to_string()),
+            "Should find go-test tag, found: {:?}",
+            tag_strings
+        );
     }
 }
