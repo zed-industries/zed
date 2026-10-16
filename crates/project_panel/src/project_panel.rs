@@ -4699,9 +4699,7 @@ impl ProjectPanel {
                                 }
                             }
                             auto_folded_ancestors.clear();
-                            if (!hide_gitignore || !entry.is_ignored)
-                                && (!hide_hidden || !entry.is_hidden)
-                            {
+                            if is_entry_shown(&entry, hide_gitignore, hide_hidden) {
                                 visible_worktree_entries.push(entry.to_owned());
                             }
                             let precedes_new_entry = if let Some(new_entry_id) = new_entry_parent_id
@@ -4715,8 +4713,7 @@ impl ProjectPanel {
                                 false
                             };
                             if precedes_new_entry
-                                && (!hide_gitignore || !entry.is_ignored)
-                                && (!hide_hidden || !entry.is_hidden)
+                                && is_entry_shown(&entry, hide_gitignore, hide_hidden)
                             {
                                 visible_worktree_entries.push(Self::create_new_git_entry(
                                     entry.entry,
@@ -7074,6 +7071,30 @@ impl ProjectPanel {
         }
     }
 
+    /// Whether `entry` is a directory whose contents are loaded and contain nothing
+    /// the panel would display. Unloaded and pending directories are never empty.
+    fn is_known_empty_dir(&self, worktree_id: WorktreeId, entry: &Entry, cx: &App) -> bool {
+        if entry.kind != EntryKind::Dir {
+            return false;
+        }
+        if self
+            .state
+            .edit_state
+            .as_ref()
+            .is_some_and(|edit_state| edit_state.is_new_entry() && edit_state.entry_id == entry.id)
+        {
+            return false;
+        }
+        let Some(worktree) = self.project.read(cx).worktree_for_id(worktree_id, cx) else {
+            return false;
+        };
+        let settings = ProjectPanelSettings::get_global(cx);
+        !worktree
+            .read(cx)
+            .child_entries(&entry.path)
+            .any(|child| is_entry_shown(child, settings.hide_gitignore, settings.hide_hidden))
+    }
+
     fn details_for_entry(
         &self,
         entry: &Entry,
@@ -7096,6 +7117,10 @@ impl ProjectPanel {
         let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
 
         let (chevron, icon) = Self::entry_icons(entry, is_expanded, cx);
+        let chevron = chevron.filter(|_| {
+            !ProjectPanelSettings::get_global(cx).hide_empty_folder_chevrons
+                || !self.is_known_empty_dir(worktree_id, entry, cx)
+        });
 
         let path_style = self.project.read(cx).path_style(cx);
         let (depth, difference) =
@@ -7469,6 +7494,10 @@ fn entry_file_name<'a>(entry: &'a Entry, root_name: &'a RelPath) -> &'a str {
         .path
         .file_name()
         .unwrap_or_else(|| root_name.as_unix_str())
+}
+
+fn is_entry_shown(entry: &Entry, hide_gitignore: bool, hide_hidden: bool) -> bool {
+    (!hide_gitignore || !entry.is_ignored) && (!hide_hidden || !entry.is_hidden)
 }
 
 fn item_width_estimate(depth: usize, item_text_chars: usize, is_symlink: bool) -> usize {
