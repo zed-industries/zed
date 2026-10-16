@@ -4,7 +4,7 @@ use super::{
     enqueue_request, first_class_terminal_auth_task, handle_v2_complete_elicitation,
     handle_v2_create_elicitation, map_acp_error, mcp_configurations_for_project, respond_err,
     respond_result, runtime, session_thread, terminal_auth_task_id, transport,
-    with_v2_client_ingress,
+    with_v2_client_ingress, work_dirs_from_session_info,
 };
 use acp_thread::{
     AgentConnection, AgentSessionInfo, AgentSessionList, AgentSessionListRequest,
@@ -21,7 +21,7 @@ use agent_client_protocol::{
 };
 use anyhow::anyhow;
 use async_channel;
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use futures::channel::mpsc;
 use futures::future::Shared;
 use futures::{Future, FutureExt as _};
@@ -221,16 +221,6 @@ impl AcpSessionList {
     fn notify_update(&self) {
         self.updates_tx
             .try_send(acp_thread::SessionListUpdate::Refresh)
-            .log_err();
-    }
-
-    pub(super) fn send_info_update(
-        &self,
-        session_id: acp_v2::SessionId,
-        update: acp_v2::SessionInfoUpdate,
-    ) {
-        self.updates_tx
-            .try_send(acp_thread::SessionListUpdate::SessionInfo { session_id, update })
             .log_err();
     }
 }
@@ -522,13 +512,12 @@ impl AcpConnection {
             )
         });
 
-        let client_session_list: Rc<RefCell<Option<Rc<AcpSessionList>>>> =
-            Rc::new(RefCell::new(None));
+        let client_session_list_updates = Rc::new(RefCell::new(None));
         let request_elicitations = cx.new(|_| ElicitationStore::default());
 
         let dispatch_context = ClientContext {
             sessions: sessions.clone(),
-            session_list: client_session_list.clone(),
+            session_list_updates: client_session_list_updates.clone(),
             request_elicitations: request_elicitations.clone(),
             active_request_scopes: None,
         };
@@ -639,7 +628,7 @@ impl AcpConnection {
                 connection.clone(),
                 agent_supports_delete,
             ));
-            *client_session_list.borrow_mut() = Some(list.clone());
+            *client_session_list_updates.borrow_mut() = Some(list.updates_tx.clone());
             Some(list)
         } else {
             None
@@ -1173,22 +1162,6 @@ fn session_directories_from_work_dirs(
         cwd,
         additional_directories,
     })
-}
-
-fn work_dirs_from_session_info(cwd: PathBuf, additional_directories: Vec<PathBuf>) -> PathList {
-    let mut seen_paths = HashSet::default();
-    let mut paths = Vec::with_capacity(1 + additional_directories.len());
-
-    seen_paths.insert(cwd.clone());
-    paths.push(cwd);
-
-    for path in additional_directories {
-        if seen_paths.insert(path.clone()) {
-            paths.push(path);
-        }
-    }
-
-    PathList::new(&paths)
 }
 
 fn emit_load_error_to_all_sessions(
@@ -2039,8 +2012,7 @@ pub mod test_support {
         let logout_count = Arc::new(AtomicUsize::new(0));
         let sessions: Rc<RefCell<HashMap<acp_v2::SessionId, AcpSession>>> =
             Rc::new(RefCell::new(HashMap::default()));
-        let client_session_list: Rc<RefCell<Option<Rc<AcpSessionList>>>> =
-            Rc::new(RefCell::new(None));
+        let client_session_list_updates = Rc::new(RefCell::new(None));
 
         let agent_future = Agent
             .builder()
@@ -2195,7 +2167,7 @@ pub mod test_support {
         let request_elicitations = cx.new(|_| ElicitationStore::default());
         let dispatch_context = ClientContext {
             sessions: sessions.clone(),
-            session_list: client_session_list.clone(),
+            session_list_updates: client_session_list_updates.clone(),
             request_elicitations: request_elicitations.clone(),
             active_request_scopes: None,
         };
@@ -2947,7 +2919,7 @@ mod tests {
             ) {
                 let list = Rc::new(AcpSessionList::new(connection, false));
                 let updates = cx.update(|cx| list.watch(cx).expect("list updates"));
-                *context.session_list.borrow_mut() = Some(list);
+                *context.session_list_updates.borrow_mut() = Some(list.updates_tx.clone());
                 assert!(sender.send(updates).is_ok(), "list update receiver");
             }
             let (sender, receiver) = futures::channel::oneshot::channel();
@@ -7202,8 +7174,7 @@ exit 7
 
         let sessions: Rc<RefCell<HashMap<acp_v2::SessionId, AcpSession>>> =
             Rc::new(RefCell::new(HashMap::default()));
-        let client_session_list: Rc<RefCell<Option<Rc<AcpSessionList>>>> =
-            Rc::new(RefCell::new(None));
+        let client_session_list_updates = Rc::new(RefCell::new(None));
 
         // Build the fake agent side. It handles the requests issued by
         // `AcpConnection` during the test and tracks load/close counts.
@@ -7381,7 +7352,7 @@ exit 7
         let request_elicitations = cx.new(|_| ElicitationStore::default());
         let dispatch_context = ClientContext {
             sessions: sessions.clone(),
-            session_list: client_session_list.clone(),
+            session_list_updates: client_session_list_updates.clone(),
             request_elicitations: request_elicitations.clone(),
             active_request_scopes: None,
         };
@@ -7763,7 +7734,7 @@ exit 7
         let store = cx.new(|_| ElicitationStore::default());
         let context = ClientContext {
             sessions: Rc::new(RefCell::new(HashMap::default())),
-            session_list: Rc::new(RefCell::new(None)),
+            session_list_updates: Rc::new(RefCell::new(None)),
             request_elicitations: store.clone(),
             active_request_scopes: None,
         };
@@ -7885,7 +7856,7 @@ exit 7
     async fn disconnect_cleanup_runs_once_for_both_completion_paths(cx: &mut gpui::TestAppContext) {
         let context = ClientContext {
             sessions: Rc::new(RefCell::new(HashMap::default())),
-            session_list: Rc::new(RefCell::new(None)),
+            session_list_updates: Rc::new(RefCell::new(None)),
             request_elicitations: cx.new(|_| ElicitationStore::default()),
             active_request_scopes: None,
         };
@@ -9541,10 +9512,8 @@ fn handle_session_notification(
         }
     }
 
-    if let acp::SessionUpdate::SessionInfoUpdate(info_update) = &notification.update
-        && let Some(session_list) = ctx.session_list.borrow().as_ref()
-    {
-        session_list.send_info_update(
+    if let acp::SessionUpdate::SessionInfoUpdate(info_update) = &notification.update {
+        ctx.notify_session_info(
             session_id.clone(),
             acp_thread::session_info_update_from_v1(info_update.clone()),
         );

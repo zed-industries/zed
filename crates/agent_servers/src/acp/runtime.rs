@@ -202,7 +202,7 @@ mod tests {
         let weak_store = store.downgrade();
         let context = ClientContext {
             sessions: Rc::new(RefCell::new(HashMap::default())),
-            session_list: Rc::new(RefCell::new(None)),
+            session_list_updates: Rc::new(RefCell::new(None)),
             request_elicitations: store.clone(),
             active_request_scopes: None,
         };

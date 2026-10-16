@@ -12,10 +12,10 @@ use session_updates::{InboundSessionNotification, InboundSessionUpdate};
 pub use terminal_updates::{DecodedTerminalNotification, DecodedTerminalUpdate};
 #[cfg(any(test, feature = "test-support"))]
 pub use v1::test_support;
-pub use v1::{AcpConnection, AcpSessionList, GEMINI_TERMINAL_AUTH_METHOD_ID, connect};
+pub use v1::{AcpConnection, GEMINI_TERMINAL_AUTH_METHOD_ID, connect};
 pub use v2::AcpV2Connection;
 
-use acp_thread::{AcpThread, AuthRequired, ElicitationStore, LoadError};
+use acp_thread::{AcpThread, AuthRequired, ElicitationStore, LoadError, SessionListUpdate};
 use agent_client_protocol::schema::{
     v1::{self as acp, ErrorCode},
     v2 as acp_v2,
@@ -31,10 +31,11 @@ use gpui::{App, AsyncApp, Entity, SharedString, Subscription, Task, WeakEntity};
 use project::agent_server_store::{AgentServerCommand, AgentServerStore};
 use project::context_server_store::ContextServerConfiguration;
 use project::{AgentId, Project};
-use std::{cell::RefCell, process::ExitStatus, rc::Rc, sync::Arc};
+use std::{cell::RefCell, path::PathBuf, process::ExitStatus, rc::Rc, sync::Arc};
 use task::SpawnInTerminal;
 use thiserror::Error;
 use util::ResultExt as _;
+use util::path_list::PathList;
 
 const EXIT_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(250);
 
@@ -60,6 +61,22 @@ fn mcp_configurations_for_project(
             }
         })
         .collect()
+}
+
+fn work_dirs_from_session_info(cwd: PathBuf, additional_directories: Vec<PathBuf>) -> PathList {
+    let mut seen_paths = HashSet::default();
+    let mut paths = Vec::with_capacity(1 + additional_directories.len());
+
+    seen_paths.insert(cwd.clone());
+    paths.push(cwd);
+
+    for path in additional_directories {
+        if seen_paths.insert(path.clone()) {
+            paths.push(path);
+        }
+    }
+
+    PathList::new(&paths)
 }
 
 async fn exited_load_error_after_drain(
@@ -119,10 +136,24 @@ impl<T> FlattenAcpResult<T> for Result<Result<T, acp::Error>, anyhow::Error> {
 /// Holds state needed by foreground work dispatched from background handler closures.
 struct ClientContext {
     sessions: Rc<RefCell<HashMap<acp_v2::SessionId, AcpSession>>>,
-    session_list: Rc<RefCell<Option<Rc<AcpSessionList>>>>,
+    session_list_updates: Rc<RefCell<Option<async_channel::Sender<SessionListUpdate>>>>,
     request_elicitations: Entity<ElicitationStore>,
     // Legacy and ingress-only contexts do not track caller ownership of outgoing RPCs.
     active_request_scopes: Option<RefCell<HashSet<acp_v2::RequestId>>>,
+}
+
+impl ClientContext {
+    fn notify_session_info(
+        &self,
+        session_id: acp_v2::SessionId,
+        update: acp_v2::SessionInfoUpdate,
+    ) {
+        if let Some(updates) = self.session_list_updates.borrow().as_ref() {
+            updates
+                .try_send(SessionListUpdate::SessionInfo { session_id, update })
+                .log_err();
+        }
+    }
 }
 
 fn dispatch_queue_closed_error() -> acp::Error {
@@ -555,10 +586,8 @@ fn handle_v2_session_notification(
         log::warn!("Received ACP v2 update for a released session");
         return;
     };
-    if let InboundSessionUpdate::SessionInfo(update) = &notification.update
-        && let Some(session_list) = context.session_list.borrow().as_ref()
-    {
-        session_list.send_info_update(notification.session_id.clone(), update.clone());
+    if let InboundSessionUpdate::SessionInfo(update) = &notification.update {
+        context.notify_session_info(notification.session_id.clone(), update.clone());
     }
     if let InboundSessionUpdate::ConfigOptions(update) = &notification.update {
         let config_options = {
