@@ -539,12 +539,16 @@ fn validate_trust_scope(
         return Err("Home directory not available".into());
     }
     let expanded = match (trimmed.strip_prefix('~'), home_dir) {
-        (Some(rest), Some(home_dir)) => path_style
-            .join_path(
-                home_dir,
-                rest.trim_start_matches(path_style.separators_ch()),
-            )
-            .map_err(|error| SharedString::from(error.to_string()))?,
+        (Some(rest), Some(home_dir)) => {
+            let rest = rest.trim_start_matches(path_style.separators_ch());
+            if path_style == PathStyle::local() {
+                home_dir.join(rest)
+            } else {
+                path_style
+                    .join_path_preserving_components(home_dir, rest)
+                    .map_err(|error| SharedString::from(error.to_string()))?
+            }
+        }
         _ => PathBuf::from(trimmed),
     };
     if !path_style.is_absolute(&expanded) {
