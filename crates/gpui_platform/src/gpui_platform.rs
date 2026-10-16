@@ -24,6 +24,16 @@ pub fn headless() -> gpui::Application {
     gpui::Application::with_platform(current_platform(true))
 }
 
+/// Returns a Linux app that may switch among `allowed_modes`.
+///
+/// It starts windowed in the process's own environment, or headless if that names no allowed
+/// display server. Set another initial mode with [`gpui::Application::with_windowing`], and
+/// switch later with [`gpui::App::request_windowing`].
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+pub fn linux(allowed_modes: gpui::WindowingModes) -> gpui::Application {
+    gpui::Application::with_platform(gpui_linux::linux_platform(allowed_modes))
+}
+
 #[cfg(target_family = "wasm")]
 pub use gpui_web::WebBackendPreference;
 
@@ -55,6 +65,11 @@ pub fn web_init() {
 
 /// Returns the default [`Platform`] for the current OS.
 pub fn current_platform(headless: bool) -> Rc<dyn Platform> {
+    #[cfg(target_os = "ios")]
+    {
+        gpui_ios::current_platform(headless)
+    }
+
     #[cfg(target_os = "macos")]
     {
         Rc::new(gpui_macos::MacPlatform::new(headless))

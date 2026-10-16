@@ -1,9 +1,9 @@
 use crate::{
     Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, AsyncApp, AvailableSpace,
-    BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DrawPhase, Drawable,
-    Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke,
-    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Platform, PlatformTextSystem, Point, Render, Result, SharedString, Size,
+    BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DisplayId, DrawPhase,
+    Drawable, Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, InputEvent,
+    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Platform, PlatformTextSystem, Point, Render, Result, SharedString, Size,
     SystemNotification, SystemNotificationResponse, Task, TestDispatcher, TestPlatform,
     TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
     WindowHandle, WindowOptions, WindowVisibility, app::GpuiMode, window::ElementArenaScope,
@@ -470,6 +470,36 @@ impl TestAppContext {
     ) {
         self.test_window(window_handle)
             .simulate_visibility_change(visibility);
+    }
+
+    /// Simulates connecting a display.
+    pub fn simulate_display_added(
+        &self,
+        display_id: DisplayId,
+        refresh_interval: Option<std::time::Duration>,
+    ) {
+        self.test_platform
+            .simulate_display_added(display_id, refresh_interval);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_platform(&self) -> &TestPlatform {
+        &self.test_platform
+    }
+
+    /// Simulates disconnecting a display.
+    pub fn simulate_display_removed(&self, display_id: DisplayId) {
+        self.test_platform.simulate_display_removed(display_id);
+    }
+
+    /// Simulates a connected display changing its refresh interval.
+    pub fn simulate_display_refresh_interval_change(
+        &self,
+        display_id: DisplayId,
+        refresh_interval: Option<std::time::Duration>,
+    ) {
+        self.test_platform
+            .simulate_display_refresh_interval_change(display_id, refresh_interval);
     }
 
     /// Simulates visible viewport changes without resizing the window's layout area.
@@ -983,7 +1013,10 @@ impl VisualTestContext {
         self.simulate_window_scale_factor_change(self.window, scale_factor)
     }
 
-    /// debug_bounds returns the bounds of the element with the given selector.
+    /// Returns the bounds of the element with the given debug selector.
+    ///
+    /// Returns `None` in builds without `debug_assertions`, which don't record
+    /// selectors; see [`crate::InteractiveElement::debug_selector`].
     pub fn debug_bounds(&mut self, selector: &'static str) -> Option<Bounds<Pixels>> {
         self.update(|window, _| window.rendered_frame.debug_bounds.get(selector).copied())
     }
@@ -1248,6 +1281,74 @@ mod tests {
     use std::cell::RefCell;
     use std::path::PathBuf;
     use std::rc::Rc;
+
+    #[gpui::test]
+    fn test_mobile_lifecycle_subscriptions(cx: &mut TestAppContext) {
+        use crate::AppLifecyclePhase;
+
+        let phases = Rc::new(RefCell::new(Vec::new()));
+        let subscription = cx.update(|cx| {
+            cx.on_app_lifecycle({
+                let phases = phases.clone();
+                move |phase, cx| {
+                    phases.borrow_mut().push(phase);
+                    cx.defer(|cx| {
+                        cx.set_global(LifecycleObserved);
+                    });
+                }
+            })
+        });
+        struct LifecycleObserved;
+        impl crate::Global for LifecycleObserved {}
+
+        let mut callback = cx
+            .test_platform
+            .app_lifecycle_callback
+            .borrow_mut()
+            .take()
+            .expect("App registers the native lifecycle callback");
+        for phase in [
+            AppLifecyclePhase::Foreground,
+            AppLifecyclePhase::Active,
+            AppLifecyclePhase::Inactive,
+            AppLifecyclePhase::Background,
+            AppLifecyclePhase::Disconnected,
+        ] {
+            callback(phase);
+        }
+        assert_eq!(phases.borrow().len(), 5);
+        assert_eq!(
+            phases.borrow().last(),
+            Some(&AppLifecyclePhase::Disconnected)
+        );
+        cx.update(|cx| assert!(cx.has_global::<LifecycleObserved>()));
+        drop(subscription);
+        callback(AppLifecyclePhase::Foreground);
+        assert_eq!(phases.borrow().len(), 5);
+    }
+
+    #[gpui::test]
+    fn test_memory_warning_subscriptions(cx: &mut TestAppContext) {
+        let warnings = Rc::new(std::cell::Cell::new(0));
+        let subscription = cx.update(|cx| {
+            cx.on_memory_warning({
+                let warnings = warnings.clone();
+                move |_| warnings.set(warnings.get() + 1)
+            })
+        });
+        let mut callback = cx
+            .test_platform
+            .memory_warning_callback
+            .borrow_mut()
+            .take()
+            .expect("App registers the native memory warning callback");
+        callback();
+        callback();
+        assert_eq!(warnings.get(), 2);
+        drop(subscription);
+        callback();
+        assert_eq!(warnings.get(), 2);
+    }
 
     #[gpui::test]
     async fn test_system_notifications_require_identity_and_replace_matching_tags(

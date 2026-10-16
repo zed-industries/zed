@@ -3847,6 +3847,10 @@ impl language::File for File {
         self.worktree.read(cx).full_path(&self.path)
     }
 
+    fn file_system_abs_path(&self, cx: &App) -> Option<PathBuf> {
+        Some(self.worktree.read(cx).absolutize(&self.path))
+    }
+
     /// Returns the last component of this handle's absolute path. If this handle refers to the root
     /// of its worktree, then this method will return the name of the worktree itself.
     fn file_name<'a>(&'a self, cx: &'a App) -> &'a str {
@@ -5406,6 +5410,32 @@ impl BackgroundScanner {
         let mut root_canonical_path = None;
         let mut new_entries: Vec<Entry> = Vec::new();
         let mut new_jobs: Vec<Option<ScanJob>> = Vec::new();
+
+        // Watch before reading so a child created after enumeration still
+        // produces an event.
+        //
+        // For external entries, watch the canonical (resolved) path so OS-level
+        // FS events on the real filesystem location are observed. The same
+        // canonical path is stored in both `external_canonical_to_relative`
+        // (for translating canonical-path FS events back to worktree-relative
+        // paths) and `watched_dir_abs_paths_by_entry_id` (used by `remove_path`
+        // to know which abs path to unwatch), so both cleanup paths agree on
+        // the path the watcher was actually registered on.
+        let watched_abs_path: Option<Arc<Path>> = if job.is_external {
+            self.fs
+                .canonicalize(job.abs_path.as_ref())
+                .await
+                .ok()
+                .map(|canonical| {
+                    let canonical: Arc<Path> = canonical.into();
+                    self.watcher.add(&canonical).log_err();
+                    canonical
+                })
+        } else {
+            self.watcher.add(job.abs_path.as_ref()).log_err();
+            Some(job.abs_path.clone())
+        };
+
         let mut child_paths = self
             .fs
             .read_dir(&job.abs_path)
@@ -5622,33 +5652,6 @@ impl BackgroundScanner {
         }
 
         state.populate_dir(job.path.clone(), new_entries, new_ignore);
-        // For external entries, watch the canonical (resolved) path so OS-level
-        // FS events on the real filesystem location are observed. The same
-        // canonical path is stored in both `external_canonical_to_relative`
-        // (for translating canonical-path FS events back to worktree-relative
-        // paths) and `watched_dir_abs_paths_by_entry_id` (used by `remove_path`
-        // to know which abs path to unwatch), so both cleanup paths agree on
-        // the path the watcher was actually registered on.
-        //
-        // `canonicalize` is an async filesystem operation that may suspend, so
-        // the lock must not be held across the await point below.
-        drop(state);
-        let watched_abs_path: Option<Arc<Path>> = if job.is_external {
-            self.fs
-                .canonicalize(job.abs_path.as_ref())
-                .await
-                .ok()
-                .map(|canonical| {
-                    let canonical: Arc<Path> = canonical.into();
-                    self.watcher.add(&canonical).log_err();
-                    canonical
-                })
-        } else {
-            self.watcher.add(job.abs_path.as_ref()).log_err();
-            Some(job.abs_path.clone())
-        };
-
-        let mut state = self.state.lock().await;
         if let Some(watched_abs_path) = &watched_abs_path {
             if job.is_external {
                 state
@@ -6040,8 +6043,7 @@ impl BackgroundScanner {
                 ignore_stack.append(IgnoreKind::Gitignore(job.abs_path.clone()), ignore.clone());
         }
 
-        let mut entries_by_id_edits = Vec::new();
-        let mut entries_by_path_edits = Vec::new();
+        let mut ignore_changes = Vec::new();
         let Some(path) = job
             .abs_path
             .strip_prefix(snapshot.abs_path.as_path())
@@ -6072,6 +6074,24 @@ impl BackgroundScanner {
             entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, entry.is_dir());
 
             if entry.is_dir() {
+                let state = self.state.lock().await;
+                let Some(current_entry) = state
+                    .snapshot
+                    .entry_for_id(entry.id)
+                    .filter(|current| current.path == entry.path && current.is_dir())
+                else {
+                    continue;
+                };
+                let is_ignored = entry.is_ignored;
+                entry = current_entry.clone();
+                if state
+                    .snapshot
+                    .entries_by_id
+                    .get(&entry.id, ())
+                    .is_some_and(|path_entry| path_entry.scan_id <= snapshot.scan_id)
+                {
+                    entry.is_ignored = is_ignored;
+                }
                 let child_ignore_stack = if entry.is_ignored {
                     IgnoreStack::all()
                 } else {
@@ -6085,7 +6105,6 @@ impl BackgroundScanner {
                     && entry.kind.is_unloaded()
                     && (was_ignored || ignore_stack.repo_root.is_some())
                 {
-                    let state = self.state.lock().await;
                     if self.should_scan_directory(&state, &entry, ignore_stack.repo_root.is_some())
                     {
                         state
@@ -6099,6 +6118,7 @@ impl BackgroundScanner {
                     }
                 }
 
+                drop(state);
                 job.ignore_queue
                     .send(UpdateIgnoreStatusJob {
                         abs_path: abs_path.clone(),
@@ -6111,21 +6131,36 @@ impl BackgroundScanner {
             }
 
             if entry.is_ignored != was_ignored {
-                let mut path_entry = snapshot.entries_by_id.get(&entry.id, ()).unwrap().clone();
-                path_entry.scan_id = snapshot.scan_id;
-                path_entry.is_ignored = entry.is_ignored;
-                entries_by_id_edits.push(Edit::Insert(path_entry));
-                entries_by_path_edits.push(Edit::Insert(entry));
+                ignore_changes.push((entry.id, entry.path, entry.is_ignored));
             }
         }
 
         let state = &mut self.state.lock().await;
-        for edit in &entries_by_path_edits {
-            if let Edit::Insert(entry) = edit
-                && let Err(ix) = state.changed_paths.binary_search(&entry.path)
-            {
-                state.changed_paths.insert(ix, entry.path.clone());
+        let mut entries_by_id_edits = Vec::new();
+        let mut entries_by_path_edits = Vec::new();
+        for (entry_id, path, is_ignored) in ignore_changes {
+            let Some(path_entry) = state.snapshot.entries_by_id.get(&entry_id, ()) else {
+                continue;
+            };
+            if path_entry.path != path || path_entry.scan_id > snapshot.scan_id {
+                continue;
             }
+            let Some(entry) = state.snapshot.entry_for_path(&path) else {
+                continue;
+            };
+            if entry.id != entry_id || entry.is_ignored == is_ignored {
+                continue;
+            }
+            let mut path_entry = path_entry.clone();
+            let mut entry = entry.clone();
+            path_entry.scan_id = state.snapshot.scan_id;
+            path_entry.is_ignored = is_ignored;
+            entry.is_ignored = is_ignored;
+            if let Err(index) = state.changed_paths.binary_search(&path) {
+                state.changed_paths.insert(index, path);
+            }
+            entries_by_id_edits.push(Edit::Insert(path_entry));
+            entries_by_path_edits.push(Edit::Insert(entry));
         }
 
         state
@@ -7391,7 +7426,21 @@ fn push_normalized(rope: &mut Rope, text: &str, scratch: &mut String) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        BackgroundScanner, BackgroundScannerPhase, BackgroundScannerState, IgnoreStack,
+        NullWatcher, RemovedEntries, STREAM_BLOCK_BYTES, ScanRequest, UpdateIgnoreStatusJob,
+        Worktree, stream_utf8_into_rope,
+    };
+    use collections::{HashMap, HashSet};
+    use fs::{FakeFs, Fs, RemoveOptions, RenameOptions};
+    use futures::{FutureExt as _, channel::mpsc};
+    use gpui::TestAppContext;
+    use serde_json::json;
+    use settings::{SettingsStore, WorktreeId};
+    use smallvec::SmallVec;
+    use std::{path::Path, sync::Arc};
+    use text::LineEnding;
+    use util::{path, rel_path::rel_path};
 
     /// Streams `bytes` the way `decode_file_text_to_rope` would, returning the
     /// decoded text and detected line ending, or `None` if the fast path bailed.
@@ -7454,6 +7503,207 @@ mod tests {
                     "ch = {ch:?}, split = {split}"
                 );
             }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_ignore_update_preserves_refreshed_entries(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+        for initially_ignored in [false, true] {
+            let fs = FakeFs::new(cx.background_executor.clone());
+            fs.insert_tree(
+                path!("/root"),
+                json!({
+                    ".gitignore": if initially_ignored { "*.txt\n" } else { "" },
+                    "gone.txt": "gone",
+                    "renamed.txt": "renamed",
+                    "modified.txt": "old",
+
+                    "directory": { "child.txt": "child" },
+                    "removed": { "child.txt": "child" },
+                    "replaced": {},
+                }),
+            )
+            .await;
+            let tree = Worktree::local(
+                Path::new(path!("/root")),
+                true,
+                fs.clone(),
+                Arc::default(),
+                true,
+                WorktreeId::from_proto(0),
+                &mut cx.to_async(),
+            )
+            .await
+            .unwrap();
+            tree.read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+                .await;
+            let (status_updates_tx, _status_updates_rx) = mpsc::unbounded();
+            let scanner = tree.update(cx, |tree, cx| {
+                let tree = tree.as_local_mut().unwrap();
+                tree._background_scanner_tasks.clear();
+                BackgroundScanner {
+                    state: async_lock::Mutex::new(BackgroundScannerState {
+                        snapshot: tree.snapshot.clone(),
+                        prev_snapshot: tree.snapshot.snapshot.clone(),
+                        symlink_paths_by_target: HashMap::default(),
+                        scanned_dirs: HashSet::default(),
+                        watched_dir_abs_paths_by_entry_id: HashMap::default(),
+                        path_prefixes_to_scan: HashSet::default(),
+                        paths_to_scan: HashSet::default(),
+                        removed_entries: RemovedEntries::default(),
+                        changed_paths: Vec::new(),
+                        scanning_enabled: true,
+                    }),
+                    fs: fs.clone(),
+                    fs_case_sensitive: tree.fs_case_sensitive,
+                    status_updates_tx,
+                    executor: cx.background_executor().clone(),
+                    scan_requests_rx: async_channel::unbounded().1,
+                    path_prefixes_to_scan_rx: async_channel::unbounded().1,
+                    next_entry_id: tree.next_entry_id.clone(),
+                    phase: BackgroundScannerPhase::Events,
+                    watcher: Arc::new(NullWatcher),
+                    settings: tree.settings.clone(),
+                    share_private_files: tree.share_private_files,
+                    track_git_repositories: true,
+                    is_single_file: false,
+                    defer_watch: false,
+                }
+            });
+            fs.insert_file(
+                path!("/root/.gitignore"),
+                if initially_ignored {
+                    Vec::new()
+                } else {
+                    b"*.txt\n".to_vec()
+                },
+            )
+            .await;
+            scanner
+                .process_scan_request(
+                    ScanRequest {
+                        relative_paths: vec![rel_path(".gitignore").into_arc()],
+                        done: SmallVec::new(),
+                    },
+                    true,
+                )
+                .await;
+            let old_snapshot = scanner.state.lock().await.snapshot.clone();
+            fs.remove_file(Path::new(path!("/root/gone.txt")), RemoveOptions::default())
+                .await
+                .unwrap();
+            fs.rename(
+                Path::new(path!("/root/renamed.txt")),
+                Path::new(path!("/root/moved.txt")),
+                RenameOptions::default(),
+            )
+            .await
+            .unwrap();
+            fs.insert_file(path!("/root/modified.txt"), b"new content".to_vec())
+                .await;
+            fs.remove_dir(
+                Path::new(path!("/root/removed")),
+                RemoveOptions {
+                    recursive: true,
+                    ..RemoveOptions::default()
+                },
+            )
+            .await
+            .unwrap();
+            fs.remove_dir(Path::new(path!("/root/replaced")), RemoveOptions::default())
+                .await
+                .unwrap();
+            fs.insert_file(path!("/root/replaced"), b"file".to_vec())
+                .await;
+            scanner
+                .process_scan_request(
+                    ScanRequest {
+                        relative_paths: [
+                            "gone.txt",
+                            "renamed.txt",
+                            "moved.txt",
+                            "modified.txt",
+                            "directory",
+                            "removed",
+                            "replaced",
+                        ]
+                        .map(|path| rel_path(path).into_arc())
+                        .to_vec(),
+                        done: SmallVec::new(),
+                    },
+                    true,
+                )
+                .await;
+            let refreshed_snapshot = scanner.state.lock().await.snapshot.clone();
+            let expected_entries = refreshed_snapshot
+                .entries(true, 0)
+                .cloned()
+                .map(|mut entry| {
+                    if entry.path.as_ref() == rel_path("directory/child.txt") {
+                        entry.is_ignored = !initially_ignored;
+                    }
+                    entry
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                refreshed_snapshot.paths().collect::<Vec<_>>(),
+                [
+                    ".gitignore",
+                    "directory",
+                    "directory/child.txt",
+                    "modified.txt",
+                    "moved.txt",
+                    "replaced",
+                ]
+                .map(rel_path),
+            );
+            assert_eq!(
+                refreshed_snapshot
+                    .entry_for_path(rel_path("modified.txt"))
+                    .unwrap()
+                    .size,
+                11
+            );
+            let (ignore_queue, ignore_jobs) = async_channel::unbounded();
+            let (scan_queue, _scan_jobs) = async_channel::unbounded();
+            scanner
+                .update_ignore_status(
+                    UpdateIgnoreStatusJob {
+                        abs_path: Arc::from(Path::new(path!("/root"))),
+                        ignore_stack: IgnoreStack::none(),
+                        ignore_queue,
+                        scan_queue,
+                    },
+                    &old_snapshot,
+                )
+                .await;
+            let child_job = ignore_jobs.try_recv().unwrap();
+            assert_eq!(
+                child_job.abs_path.as_ref(),
+                Path::new(path!("/root/directory"))
+            );
+            scanner.update_ignore_status(child_job, &old_snapshot).await;
+            let state = scanner.state.lock().await;
+            assert_eq!(
+                state.snapshot.entries(true, 0).cloned().collect::<Vec<_>>(),
+                expected_entries
+            );
+            assert!(ignore_jobs.is_empty());
+
+            state.snapshot.check_invariants(false);
+            for entry in &expected_entries {
+                let path_entry = state.snapshot.entries_by_id.get(&entry.id, ()).unwrap();
+
+                assert_eq!(path_entry.is_ignored, entry.is_ignored);
+            }
+            assert_eq!(
+                state.changed_paths,
+                vec![rel_path("directory/child.txt").into_arc()]
+            );
         }
     }
 

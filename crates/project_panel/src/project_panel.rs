@@ -58,6 +58,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use svg_preview::svg_preview_view::SvgPreviewView;
 use theme_settings::ThemeSettings;
 use ui::{
     ContextMenu, DecoratedIcon, IconDecoration, IconDecorationKind, IndentGuideColors,
@@ -222,7 +223,7 @@ enum DragTarget {
     Background,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 struct FoldedDirectoryDragTarget {
     entry_id: ProjectEntryId,
     index: usize,
@@ -449,6 +450,8 @@ actions!(
         OpenMarkdownPreview,
         /// Opens the context menu for the selected entry.
         OpenContextMenu,
+        /// Opens an SVG preview for the selected file.
+        OpenSvgPreview,
     ]
 );
 
@@ -1147,11 +1150,10 @@ impl ProjectPanel {
             let is_remote = project.is_remote();
             let is_collab = project.is_via_collab();
             let is_local = project.is_local() || project.is_via_wsl_with_host_interop(cx);
-            let is_markdown = !is_dir
-                && MarkdownPreviewView::is_markdown_path(
-                    entry.path.as_std_path(),
-                    project.languages(),
-                );
+            let file_name = Path::new(entry_file_name(entry, worktree.root_name()));
+            let is_markdown =
+                !is_dir && MarkdownPreviewView::is_markdown_path(file_name, project.languages());
+            let is_svg = !is_dir && SvgPreviewView::is_svg_path(file_name);
 
             let settings = ProjectPanelSettings::get_global(cx);
             let visible_worktrees_count = project.visible_worktrees(cx).count();
@@ -1183,6 +1185,9 @@ impl ProjectPanel {
                         menu.when(is_markdown, |menu| {
                             menu.action("Open Markdown Preview", Box::new(OpenMarkdownPreview))
                         })
+                        .when(is_svg, |menu| {
+                            menu.action("Open SVG Preview", Box::new(OpenSvgPreview))
+                        })
                         .when(is_dir, |menu| {
                             menu.action("Search Inside", Box::new(NewSearchInDirectory))
                         })
@@ -1202,6 +1207,9 @@ impl ProjectPanel {
                             .action("Open in Terminal", Box::new(OpenInTerminal))
                             .when(is_markdown, |menu| {
                                 menu.action("Open Markdown Preview", Box::new(OpenMarkdownPreview))
+                            })
+                            .when(is_svg, |menu| {
+                                menu.action("Open SVG Preview", Box::new(OpenSvgPreview))
                             })
                             .when(is_dir, |menu| {
                                 menu.separator()
@@ -1886,9 +1894,10 @@ impl ProjectPanel {
             });
             return;
         }
-        if let Some(selection) = self.selection {
-            let (mut worktree_ix, mut entry_ix, _) =
-                self.index_for_selection(selection).unwrap_or_default();
+        if let Some(previous_selection) = self.selection {
+            let (mut worktree_ix, mut entry_ix, _) = self
+                .index_for_selection(previous_selection)
+                .unwrap_or_default();
             if entry_ix > 0 {
                 entry_ix -= 1;
             } else if worktree_ix > 0 {
@@ -1909,12 +1918,36 @@ impl ProjectPanel {
             };
             self.selection = Some(selection);
             if window.modifiers().shift {
-                self.marked_entries.push(selection);
+                self.extend_marked_entries(previous_selection, selection);
             }
             self.autoscroll(cx);
             cx.notify();
         } else {
             self.select_first(&SelectFirst {}, window, cx);
+        }
+    }
+
+    fn extend_marked_entries(
+        &mut self,
+        previous_selection: SelectedEntry,
+        selection: SelectedEntry,
+    ) {
+        // Mark the entry the selection started from too, so that extending a selection
+        // with the keyboard includes it, the same as a shift-click range does.
+        if !self.marked_entries.contains(&previous_selection) {
+            self.marked_entries.push(previous_selection);
+        }
+        if !self.marked_entries.contains(&selection) {
+            self.marked_entries.push(selection);
+        }
+        self.select_outermost_folded_ancestor(selection.entry_id);
+    }
+
+    // A vertical selection gesture says nothing about which segment of a folded
+    // directory is meant, so select the whole folded directory.
+    fn select_outermost_folded_ancestor(&mut self, entry_id: ProjectEntryId) {
+        if let Some(folds) = self.state.ancestors.get_mut(&entry_id) {
+            folds.set_active_index(0);
         }
     }
 
@@ -1970,24 +2003,37 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((worktree, entry)) = self.selected_entry(cx) else {
+        let Some((project_path, file_name)) = self.selected_file(cx) else {
             return;
         };
-        if !entry.is_file()
-            || !MarkdownPreviewView::is_markdown_path(
-                entry.path.as_std_path(),
-                self.project.read(cx).languages(),
-            )
-        {
+        if !MarkdownPreviewView::is_markdown_path(
+            Path::new(file_name),
+            self.project.read(cx).languages(),
+        ) {
             return;
         }
-        let project_path = ProjectPath {
-            worktree_id: worktree.id(),
-            path: entry.path.clone(),
-        };
         self.workspace
             .update(cx, |workspace, cx| {
                 MarkdownPreviewView::open_for_project_path(project_path, workspace, window, cx);
+            })
+            .ok();
+    }
+
+    fn open_svg_preview(
+        &mut self,
+        _: &OpenSvgPreview,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((project_path, file_name)) = self.selected_file(cx) else {
+            return;
+        };
+        if !SvgPreviewView::is_svg_path(Path::new(file_name)) {
+            return;
+        }
+        self.workspace
+            .update(cx, |workspace, cx| {
+                SvgPreviewView::open_for_project_path(project_path, workspace, window, cx)
             })
             .ok();
     }
@@ -3210,9 +3256,10 @@ impl ProjectPanel {
             });
             return;
         }
-        if let Some(selection) = self.selection {
-            let (mut worktree_ix, mut entry_ix, _) =
-                self.index_for_selection(selection).unwrap_or_default();
+        if let Some(previous_selection) = self.selection {
+            let (mut worktree_ix, mut entry_ix, _) = self
+                .index_for_selection(previous_selection)
+                .unwrap_or_default();
             if let Some(worktree_entries) = self
                 .state
                 .visible_entries
@@ -3240,7 +3287,7 @@ impl ProjectPanel {
                 };
                 self.selection = Some(selection);
                 if window.modifiers().shift {
-                    self.marked_entries.push(selection);
+                    self.extend_marked_entries(previous_selection, selection);
                 }
 
                 self.autoscroll(cx);
@@ -4028,14 +4075,20 @@ impl ProjectPanel {
     }
 
     fn selected_file_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        self.selected_file(cx).map(|(project_path, _)| project_path)
+    }
+
+    fn selected_file<'a>(&self, cx: &'a App) -> Option<(ProjectPath, &'a str)> {
         let (worktree, entry) = self.selected_sub_entry(cx)?;
         if entry.is_dir() {
             return None;
         }
-        Some(ProjectPath {
-            worktree_id: worktree.read(cx).id(),
+        let worktree = worktree.read(cx);
+        let project_path = ProjectPath {
+            worktree_id: worktree.id(),
             path: entry.path.clone(),
-        })
+        };
+        Some((project_path, entry_file_name(entry, worktree.root_name())))
     }
 
     fn reveal_in_finder(
@@ -4829,6 +4882,7 @@ impl ProjectPanel {
                     this.update_visible_entries_task.autoscroll = false;
                     this.autoscroll(cx);
                 }
+                this.preload_initial_entry_icons(window, cx);
                 cx.notify();
             })
             .ok();
@@ -4840,6 +4894,77 @@ impl ProjectPanel {
                 || self.update_visible_entries_task.focus_filename_editor,
             autoscroll: autoscroll || self.update_visible_entries_task.autoscroll,
         };
+    }
+
+    fn preload_initial_entry_icons(&self, window: &Window, cx: &mut Context<Self>) {
+        if self.state.edit_state.is_some() {
+            return;
+        }
+        {
+            let scroll = self.scroll_handle.0.borrow();
+            if scroll
+                .last_item_size
+                .is_some_and(|size| size.contents.height > Pixels::ZERO)
+                || scroll.base_handle.offset().y != Pixels::ZERO
+                || scroll.deferred_scroll_to_item.is_some()
+            {
+                return;
+            }
+        }
+
+        let Some(workspace) = Workspace::for_window(window, cx)
+            .filter(|workspace| workspace.entity_id() == self.workspace.entity_id())
+        else {
+            return;
+        };
+        let workspace = workspace.read(cx);
+        let panel_id = cx.entity_id();
+        if workspace
+            .zoomed_item()
+            .and_then(|view| view.upgrade())
+            .is_some_and(|view| view.entity_id() != panel_id)
+            || !workspace.all_docks().into_iter().any(|dock| {
+                dock.read(cx)
+                    .visible_panel()
+                    .is_some_and(|panel| panel.panel_id() == panel_id)
+            })
+        {
+            return;
+        }
+
+        let scale_factor = window.scale_factor();
+        if !scale_factor.is_finite() || scale_factor <= 0.0 {
+            return;
+        }
+        let font_size = ThemeSettings::get_global(cx).ui_font_size(cx).as_f32();
+        let minimum_row_height = (1.5 * font_size * scale_factor).floor() / scale_factor;
+        let row_count = (window.viewport_size().height.as_f32() / minimum_row_height).ceil();
+        if minimum_row_height <= 0.0 || !row_count.is_finite() || row_count <= 0.0 {
+            return;
+        }
+        let row_count = (row_count as usize).saturating_add(1);
+        for (worktree_id, entry) in self
+            .state
+            .visible_entries
+            .iter()
+            .flat_map(|worktree| {
+                worktree
+                    .entries
+                    .iter()
+                    .map(move |entry| (worktree.worktree_id, entry))
+            })
+            .take(row_count)
+        {
+            let is_expanded = self
+                .state
+                .expanded_dir_ids
+                .get(&worktree_id)
+                .is_some_and(|entries| entries.binary_search(&entry.id).is_ok());
+            let (chevron, icon) = Self::entry_icons(entry, is_expanded, cx);
+            for path in chevron.into_iter().chain(icon) {
+                Icon::from_path(path).preload(cx);
+            }
+        }
     }
 
     fn expand_entry(
@@ -5017,6 +5142,18 @@ impl ProjectPanel {
             if existing_cursor != new_cursor {
                 cx.set_active_drag_cursor_style(new_cursor, window);
             }
+        }
+    }
+
+    fn update_folded_directory_drag_target(
+        &mut self,
+        is_hovered: bool,
+        target: FoldedDirectoryDragTarget,
+    ) {
+        if is_hovered {
+            self.folded_directory_drag_target = Some(target);
+        } else if self.folded_directory_drag_target == Some(target) {
+            self.folded_directory_drag_target = None;
         }
     }
 
@@ -6356,9 +6493,18 @@ impl ProjectPanel {
                                 },
                             );
 
-                            for selection in &new_selections {
-                                if !project_panel.marked_entries.contains(selection) {
-                                    project_panel.marked_entries.push(*selection);
+                            for new_selection in &new_selections {
+                                if !project_panel.marked_entries.contains(new_selection) {
+                                    project_panel.marked_entries.push(*new_selection);
+                                }
+
+                                let is_intermediate_entry = new_selection.entry_id
+                                    != selection.entry_id
+                                    && new_selection.entry_id != clicked_entry.entry_id;
+
+                                if is_intermediate_entry {
+                                    project_panel
+                                        .select_outermost_folded_ancestor(new_selection.entry_id);
                                 }
                             }
 
@@ -6714,32 +6860,21 @@ impl ProjectPanel {
                                     .ancestors
                                     .get(components_len - 1 - index)
                                     .cloned();
+                                let drag_target = FoldedDirectoryDragTarget {
+                                    entry_id,
+                                    index,
+                                    is_delimiter_target: false,
+                                };
                                 div.when(drag_and_drop_enabled, |div| {
                                     div.on_drag_move(cx.listener(
                                         move |this,
                                               event: &DragMoveEvent<DraggedSelection>,
                                               _,
                                               _| {
-                                            if event.bounds.contains(&event.event.position) {
-                                                this.folded_directory_drag_target =
-                                                    Some(FoldedDirectoryDragTarget {
-                                                        entry_id,
-                                                        index,
-                                                        is_delimiter_target: false,
-                                                    });
-                                            } else {
-                                                let is_current_target = this
-                                                    .folded_directory_drag_target
-                                                    .as_ref()
-                                                    .is_some_and(|target| {
-                                                        target.entry_id == entry_id
-                                                            && target.index == index
-                                                            && !target.is_delimiter_target
-                                                    });
-                                                if is_current_target {
-                                                    this.folded_directory_drag_target = None;
-                                                }
-                                            }
+                                            this.update_folded_directory_drag_target(
+                                                event.bounds.contains(&event.event.position),
+                                                drag_target,
+                                            );
                                         },
                                     ))
                                     .on_drop(cx.listener(
@@ -6750,6 +6885,27 @@ impl ProjectPanel {
                                                     selections,
                                                     target_entry_id,
                                                     is_file,
+                                                    window,
+                                                    cx,
+                                                );
+                                            }
+                                        },
+                                    ))
+                                    .on_drag_move(cx.listener(
+                                        move |this, event: &DragMoveEvent<ExternalPaths>, _, _| {
+                                            this.update_folded_directory_drag_target(
+                                                event.bounds.contains(&event.event.position),
+                                                drag_target,
+                                            );
+                                        },
+                                    ))
+                                    .on_drop(cx.listener(
+                                        move |this, external_paths: &ExternalPaths, window, cx| {
+                                            this.clear_drag_state(cx);
+                                            if let Some(target_entry_id) = target_entry_id {
+                                                this.drop_external_files(
+                                                    external_paths.paths(),
+                                                    target_entry_id,
                                                     window,
                                                     cx,
                                                 );
@@ -6785,6 +6941,7 @@ impl ProjectPanel {
                                 }
                             }),
                         )
+                        .debug_selector(|| format!("project_panel_path_component_{component}"))
                         .child(
                             Label::new(component)
                                 .single_line()
@@ -6836,6 +6993,11 @@ impl ProjectPanel {
             .ancestors
             .get(components_len - 1 - delimiter_target_index)
             .cloned();
+        let drag_target = FoldedDirectoryDragTarget {
+            entry_id,
+            index: delimiter_target_index,
+            is_delimiter_target: true,
+        };
         div()
             .when(!is_sticky, |div| {
                 div.when(drag_and_drop_enabled, |div| {
@@ -6849,24 +7011,31 @@ impl ProjectPanel {
                     ))
                     .on_drag_move(cx.listener(
                         move |this, event: &DragMoveEvent<DraggedSelection>, _, _| {
-                            if event.bounds.contains(&event.event.position) {
-                                this.folded_directory_drag_target =
-                                    Some(FoldedDirectoryDragTarget {
-                                        entry_id,
-                                        index: delimiter_target_index,
-                                        is_delimiter_target: true,
-                                    });
-                            } else {
-                                let is_current_target =
-                                    this.folded_directory_drag_target.is_some_and(|target| {
-                                        target.entry_id == entry_id
-                                            && target.index == delimiter_target_index
-                                            && target.is_delimiter_target
-                                    });
-                                if is_current_target {
-                                    this.folded_directory_drag_target = None;
-                                }
+                            this.update_folded_directory_drag_target(
+                                event.bounds.contains(&event.event.position),
+                                drag_target,
+                            );
+                        },
+                    ))
+                    .on_drop(cx.listener(
+                        move |this, external_paths: &ExternalPaths, window, cx| {
+                            this.clear_drag_state(cx);
+                            if let Some(target_entry_id) = target_entry_id {
+                                this.drop_external_files(
+                                    external_paths.paths(),
+                                    target_entry_id,
+                                    window,
+                                    cx,
+                                );
                             }
+                        },
+                    ))
+                    .on_drag_move(cx.listener(
+                        move |this, event: &DragMoveEvent<ExternalPaths>, _, _| {
+                            this.update_folded_directory_drag_target(
+                                event.bounds.contains(&event.event.position),
+                                drag_target,
+                            );
                         },
                     ))
                 })
@@ -6876,6 +7045,33 @@ impl ProjectPanel {
                     .single_line()
                     .color(filename_text_color),
             )
+    }
+
+    fn entry_icons(
+        entry: &Entry,
+        is_expanded: bool,
+        cx: &App,
+    ) -> (Option<SharedString>, Option<SharedString>) {
+        let settings = ProjectPanelSettings::get_global(cx);
+        match entry.kind {
+            EntryKind::File => {
+                let icon = if settings.file_icons {
+                    FileIcons::get_icon(entry.path.as_std_path(), cx)
+                } else {
+                    None
+                };
+                (None, icon)
+            }
+            _ => {
+                let indicator = FileIcons::get_folder_indicators(
+                    settings.folder_indicator,
+                    is_expanded,
+                    entry.path.as_std_path(),
+                    cx,
+                );
+                (indicator.chevron, indicator.icon)
+            }
+        }
     }
 
     fn details_for_entry(
@@ -6889,10 +7085,7 @@ impl ProjectPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> EntryDetails {
-        let (show_file_icons, folder_indicator) = {
-            let settings = ProjectPanelSettings::get_global(cx);
-            (settings.file_icons, settings.folder_indicator)
-        };
+        let folder_indicator = ProjectPanelSettings::get_global(cx).folder_indicator;
 
         let expanded_entry_ids = self
             .state
@@ -6902,25 +7095,7 @@ impl ProjectPanel {
             .unwrap_or(&[]);
         let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
 
-        let (chevron, icon) = match entry.kind {
-            EntryKind::File => {
-                let icon = if show_file_icons {
-                    FileIcons::get_icon(entry.path.as_std_path(), cx)
-                } else {
-                    None
-                };
-                (None, icon)
-            }
-            _ => {
-                let indicator = FileIcons::get_folder_indicators(
-                    folder_indicator,
-                    is_expanded,
-                    entry.path.as_std_path(),
-                    cx,
-                );
-                (indicator.chevron, indicator.icon)
-            }
-        };
+        let (chevron, icon) = Self::entry_icons(entry, is_expanded, cx);
 
         let path_style = self.project.read(cx).path_style(cx);
         let (depth, difference) =
@@ -6934,11 +7109,7 @@ impl ProjectPanel {
                     suffix.display(path_style).to_string()
                 })
         } else {
-            entry
-                .path
-                .file_name()
-                .map(|name| name.to_string())
-                .unwrap_or_else(|| root_name.as_unix_str().to_string())
+            entry_file_name(entry, root_name).to_string()
         };
 
         let selection = SelectedEntry {
@@ -7292,6 +7463,14 @@ impl StickyCandidate for StickyProjectPanelCandidate {
     }
 }
 
+/// A single-file worktree's root entry has an empty path, so its name is the worktree's root name.
+fn entry_file_name<'a>(entry: &'a Entry, root_name: &'a RelPath) -> &'a str {
+    entry
+        .path
+        .file_name()
+        .unwrap_or_else(|| root_name.as_unix_str())
+}
+
 fn item_width_estimate(depth: usize, item_text_chars: usize, is_symlink: bool) -> usize {
     const ICON_SIZE_FACTOR: usize = 2;
     let mut item_width = depth * ICON_SIZE_FACTOR + item_text_chars;
@@ -7458,6 +7637,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::open_split_vertical))
                 .on_action(cx.listener(Self::open_split_horizontal))
                 .on_action(cx.listener(Self::open_markdown_preview))
+                .on_action(cx.listener(Self::open_svg_preview))
                 .on_action(cx.listener(Self::confirm))
                 .on_action(cx.listener(Self::cancel))
                 .on_action(cx.listener(Self::copy_path))
@@ -8083,6 +8263,14 @@ impl Panel for ProjectPanel {
                 .root_entry()
                 .is_some_and(|entry| entry.is_dir())
         })
+    }
+
+    fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if active {
+            cx.defer_in(window, |panel, window, cx| {
+                panel.preload_initial_entry_icons(window, cx);
+            });
+        }
     }
 
     fn activation_priority(&self) -> u32 {

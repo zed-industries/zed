@@ -26,6 +26,7 @@ pub mod private {
 
 use gpui::{App, Global};
 
+use crate as settings;
 use std::env;
 use std::{borrow::Cow, fmt, str};
 use util::asset_str;
@@ -53,6 +54,22 @@ pub use settings_store::{
 pub use vscode_import::{VsCodeSettings, VsCodeSettingsSource};
 
 pub use keymap_file::ActionSequence;
+
+#[derive(Clone, Debug, Default, RegisterSetting)]
+pub struct CopilotSettings {
+    pub enterprise_uri: Option<String>,
+}
+
+impl Settings for CopilotSettings {
+    fn from_settings(content: &SettingsContent) -> Self {
+        Self {
+            enterprise_uri: content
+                .copilot
+                .as_ref()
+                .and_then(|copilot| copilot.enterprise_uri.clone()),
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ActiveSettingsProfileName(pub String);

@@ -115,7 +115,7 @@ pub(crate) fn flattened_highlight_regions(
     flatten_capture_regions(range, capture_refs)
 }
 
-fn flatten_capture_regions(
+pub(crate) fn flatten_capture_regions(
     range: Range<usize>,
     mut captures: impl Iterator<Item = (Range<usize>, HighlightCaptureRef)>,
 ) -> Vec<HighlightCaptureRegion> {
@@ -347,9 +347,7 @@ struct ChangedRegion {
 #[derive(Default)]
 struct ChangeRegionSet(Vec<ChangedRegion>);
 
-struct TextProvider<'a>(&'a Rope);
-
-struct ByteChunks<'a>(text::Chunks<'a>);
+pub(crate) struct TextProvider<'a>(pub(crate) &'a Rope);
 
 pub(crate) struct QueryCursorHandle(Option<QueryCursor>);
 
@@ -1046,28 +1044,6 @@ impl SyntaxSnapshot {
         }
     }
 
-    pub fn single_tree_captures<'a>(
-        range: Range<usize>,
-        text: &'a Rope,
-        tree: &'a tree_sitter::Tree,
-        language: &'a Arc<Language>,
-        query: fn(&Grammar) -> Option<&Query>,
-    ) -> SyntaxMapCaptures<'a> {
-        SyntaxMapCaptures::new(
-            range,
-            text,
-            [SyntaxLayer {
-                language,
-                tree,
-                included_sub_ranges: None,
-                depth: 0,
-                offset: (0, tree_sitter::Point::new(0, 0)),
-            }]
-            .into_iter(),
-            query,
-        )
-    }
-
     pub fn captures<'a>(
         &'a self,
         range: Range<usize>,
@@ -1642,7 +1618,8 @@ fn parse_text(
             .parse_with_options(
                 &mut move |offset, _| {
                     chunks.seek(start_byte + offset);
-                    chunks.next().unwrap_or("").as_bytes()
+                    // Tree-sitter can request bytes inside a UTF-8 character.
+                    chunks.peek_bytes().unwrap_or_default()
                 },
                 old_tree,
                 progress_callback
@@ -2248,18 +2225,10 @@ impl std::fmt::Debug for SyntaxLayerEntry {
 }
 
 impl<'a> tree_sitter::TextProvider<&'a [u8]> for TextProvider<'a> {
-    type I = ByteChunks<'a>;
+    type I = text::Bytes<'a>;
 
     fn text(&mut self, node: tree_sitter::Node) -> Self::I {
-        ByteChunks(self.0.chunks_in_range(node.byte_range()))
-    }
-}
-
-impl<'a> Iterator for ByteChunks<'a> {
-    type Item = &'a [u8];
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().map(str::as_bytes)
+        self.0.bytes_in_range(node.byte_range())
     }
 }
 

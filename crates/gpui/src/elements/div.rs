@@ -875,19 +875,25 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     /// Set a key that can be used to look up this element's bounds
-    /// in the [`crate::VisualTestContext::debug_bounds`] map
-    /// This is a noop in release builds
+    /// in the [`crate::VisualTestContext::debug_bounds`] map.
+    ///
+    /// Selectors are only recorded in debug builds with the `test-support`
+    /// feature. Elsewhere this is a no-op, so `test-support` can stay enabled
+    /// in release builds without the per-frame cost.
+    #[cfg(any(test, all(debug_assertions, feature = "test-support")))]
     fn debug_selector(mut self, f: impl FnOnce() -> String) -> Self {
         self.interactivity().debug_selector = Some(f());
         self
     }
 
-    #[cfg(not(any(test, feature = "test-support")))]
     /// Set a key that can be used to look up this element's bounds
-    /// in the [`crate::VisualTestContext::debug_bounds`] map
-    /// This is a noop in release builds
+    /// in the [`crate::VisualTestContext::debug_bounds`] map.
+    ///
+    /// Selectors are only recorded in debug builds with the `test-support`
+    /// feature. Elsewhere this is a no-op, so `test-support` can stay enabled
+    /// in release builds without the per-frame cost.
+    #[cfg(not(any(test, all(debug_assertions, feature = "test-support"))))]
     #[inline]
     fn debug_selector(self, _: impl FnOnce() -> String) -> Self {
         self
@@ -2194,7 +2200,7 @@ pub struct Interactivity {
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) source_location: Option<&'static core::panic::Location<'static>>,
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, all(debug_assertions, feature = "test-support")))]
     pub(crate) debug_selector: Option<String>,
 }
 
@@ -2517,7 +2523,7 @@ impl Interactivity {
 
                 let style = self.compute_style_internal(hitbox, element_state.as_mut(), window, cx);
 
-                #[cfg(any(feature = "test-support", test))]
+                #[cfg(any(test, all(debug_assertions, feature = "test-support")))]
                 if let Some(debug_selector) = &self.debug_selector {
                     window
                         .next_frame
@@ -5242,6 +5248,96 @@ mod tests {
             1,
             "mouse down over an active prompt should not fire mouse-down-out listeners"
         );
+    }
+
+    #[test]
+    fn touch_tap_out_fires_once_after_release() {
+        let mut test_app = TestAppContext::single();
+        let mouse_down_out_count = Rc::new(RefCell::new(0));
+        let window = test_app.add_window({
+            let mouse_down_out_count = mouse_down_out_count.clone();
+            move |_, _| MouseDownOutOwner {
+                mouse_down_out_count,
+            }
+        });
+        let any_window: AnyWindowHandle = window.into();
+
+        test_app
+            .update_window(any_window, |_, window, cx| {
+                window.draw(cx).clear(cx);
+                let started = TouchEvent {
+                    id: TouchId(1),
+                    phase: TouchPhase::Started,
+                    position: point(px(75.), px(75.)),
+                    force: None,
+                    predicted_position: None,
+                };
+                window.dispatch_event(started.clone().to_platform_input(), cx);
+                assert_eq!(*mouse_down_out_count.borrow(), 0);
+                window.dispatch_event(
+                    TouchEvent {
+                        phase: TouchPhase::Ended,
+                        ..started
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+            })
+            .unwrap();
+
+        assert_eq!(
+            *mouse_down_out_count.borrow(),
+            1,
+            "a touch tap outside the element should use mouse-down-out listeners"
+        );
+    }
+
+    #[crate::test]
+    fn touch_pan_and_cancel_do_not_fire_mouse_down_out(cx: &mut TestAppContext) {
+        let mouse_down_out_count = Rc::new(RefCell::new(0));
+        let window = cx.add_window({
+            let mouse_down_out_count = mouse_down_out_count.clone();
+            move |_, _| MouseDownOutOwner {
+                mouse_down_out_count,
+            }
+        });
+        cx.update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+            for (id, samples) in [
+                (
+                    TouchId(1),
+                    [
+                        (TouchPhase::Started, 100.),
+                        (TouchPhase::Moved, 75.),
+                        (TouchPhase::Ended, 75.),
+                    ],
+                ),
+                (
+                    TouchId(2),
+                    [
+                        (TouchPhase::Started, 100.),
+                        (TouchPhase::Moved, 100.),
+                        (TouchPhase::Cancelled, 100.),
+                    ],
+                ),
+            ] {
+                for (phase, vertical_position) in samples {
+                    window.dispatch_event(
+                        TouchEvent {
+                            id,
+                            phase,
+                            position: point(px(75.), px(vertical_position)),
+                            predicted_position: None,
+                            force: None,
+                        }
+                        .to_platform_input(),
+                        cx,
+                    );
+                }
+            }
+        })
+        .unwrap();
+        assert_eq!(*mouse_down_out_count.borrow(), 0);
     }
 
     #[test]

@@ -4,6 +4,7 @@ use std::{
     ptr::NonNull,
     rc::Rc,
     sync::Arc,
+    time::Instant,
 };
 
 use calloop::ping::Ping;
@@ -34,11 +35,12 @@ use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
 use crate::linux::wayland::{display::WaylandDisplay, serial::SerialKind};
 use crate::linux::{Globals, Output, WaylandClientStatePtr, get_window};
 use gpui::{
-    AnyWindowHandle, Bounds, Capslock, Decorations, DevicePixels, ExternalDragPayload, GpuSpecs,
-    Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size,
-    Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
-    WindowControls, WindowDecorations, WindowKind, WindowParams, WindowVisibility,
+    AnyWindowHandle, Bounds, Capslock, Decorations, DevicePixels, ExternalDragPayload,
+    FrameRequestSource, GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformFrameSignal, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton,
+    PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, Tiling, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls, WindowDecorations,
+    WindowKind, WindowParams, WindowVisibility,
     layer_shell::{Anchor, LayerShellNotSupportedError},
     popup::PopupOptions,
     px, size,
@@ -54,6 +56,7 @@ pub(crate) struct Callbacks {
     hover_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     moved: Option<Box<dyn FnMut()>>,
+    display_changed: Option<Box<dyn FnMut()>>,
     should_close: Option<Box<dyn FnMut() -> bool>>,
     close: Option<Box<dyn FnOnce()>>,
     appearance_changed: Option<Box<dyn FnMut()>>,
@@ -111,7 +114,9 @@ pub struct WaylandWindowState {
     outputs: HashMap<ObjectId, Output>,
     display: Option<(ObjectId, Output)>,
     globals: Globals,
-    renderer: WgpuRenderer,
+    /// Taken when the window is dropped. Its GPU objects use the Wayland connection, so they
+    /// mustn't outlive the window, which a display mode switch relies on.
+    renderer: Option<WgpuRenderer>,
     bounds: Bounds<Pixels>,
     scale: f32,
     input_handler: Option<PlatformInputHandler>,
@@ -592,6 +597,7 @@ pub struct WaylandWindowStatePtr {
     callbacks: Rc<RefCell<Callbacks>>,
     frame_loop: Rc<Cell<FrameLoop>>,
     frame_ping: Ping,
+    scheduled_frame_at: Rc<Cell<Option<Instant>>>,
 }
 
 impl WaylandWindowState {
@@ -658,7 +664,7 @@ impl WaylandWindowState {
             globals,
             outputs: HashMap::default(),
             display: None,
-            renderer,
+            renderer: Some(renderer),
             bounds: options.bounds,
             scale: 1.0,
             input_handler: None,
@@ -698,12 +704,19 @@ impl WaylandWindowState {
             .as_ref()
             .and_then(|(_, output)| output.subpixel)
             .is_some_and(|s| s == Subpixel::HorizontalBgr);
-        self.renderer.set_subpixel_layout(is_bgr);
+        if let Some(renderer) = &mut self.renderer {
+            renderer.set_subpixel_layout(is_bgr);
+        }
     }
 
     pub fn primary_output_scale(&mut self) -> i32 {
         let mut scale = 1;
-        let mut current_output = self.display.take();
+        // Keep the display the surface last left only while it is on no
+        // other output.
+        let mut current_output = self
+            .display
+            .take()
+            .filter(|(id, _)| self.outputs.is_empty() || self.outputs.contains_key(id));
         for (id, output) in self.outputs.iter() {
             if let Some((_, output_data)) = &current_output {
                 if output.scale > output_data.scale {
@@ -816,7 +829,7 @@ impl Drop for WaylandWindow {
 
         let client = state.client.clone();
 
-        state.renderer.destroy();
+        state.renderer.take();
 
         // Destroy blur first, this has no dependencies.
         if let Some(blur) = &state.blur {
@@ -842,13 +855,13 @@ impl Drop for WaylandWindow {
         // The wl_surface itself should always be destroyed last.
         state.surface.destroy();
 
+        client.drop_window(&surface_id);
         let state_ptr = self.0.clone();
         state
             .globals
             .executor
             .spawn(async move {
                 state_ptr.close();
-                client.drop_window(&surface_id)
             })
             .detach();
         drop(state);
@@ -915,6 +928,7 @@ impl WaylandWindow {
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
             frame_loop: Rc::new(Cell::new(FrameLoop::Unconfigured)),
             frame_ping,
+            scheduled_frame_at: Rc::new(Cell::new(None)),
         });
 
         // Kick things off. Committing a lock surface before it has a buffer is a protocol error.
@@ -982,7 +996,7 @@ impl WaylandWindowStatePtr {
         state.children.values().any(|&blocking| blocking)
     }
 
-    pub fn frame(&self) {
+    pub fn frame(&self, signal_at: Option<Instant>, signal_source: FrameRequestSource) {
         self.frame_loop.set(FrameLoop::Ticking);
         let mut state = self.state.borrow_mut();
         state.resize_throttle = false;
@@ -1000,6 +1014,8 @@ impl WaylandWindowStatePtr {
         request_frame_callback(RequestFrameOptions {
             force_render,
             require_presentation,
+            signal_at,
+            signal_source,
         });
         self.update_ime_enabled();
         drop(callbacks);
@@ -1051,24 +1067,30 @@ impl WaylandWindowStatePtr {
         self.frame_loop.set(FrameLoop::Parked);
     }
 
-    pub fn frame_callback_fired(&self) {
+    pub fn frame_callback_fired(&self, signal_at: Option<Instant>) {
         // Another wl_surface commit may have carried this callback while a retry
         // timer owned the render-loop wakeup.
         self.state.borrow_mut().pending_frame_callback = None;
         if self.frame_loop.get() == FrameLoop::AwaitingCallback {
-            self.frame();
+            self.frame(signal_at, FrameRequestSource::NativeCallback);
         }
     }
 
     pub fn scheduled_frame_fired(&self) {
         if self.frame_loop.get() == FrameLoop::Scheduled {
-            self.frame();
+            self.frame(
+                self.scheduled_frame_at.take(),
+                FrameRequestSource::LocalSchedule,
+            );
         }
     }
 
-    pub fn retry_timer_fired(&self) {
+    pub fn retry_timer_fired(&self, signal_at: Instant) {
         if self.frame_loop.get() == FrameLoop::RetryScheduled {
-            self.frame();
+            self.frame(
+                PlatformFrameSignal::capture(|| signal_at),
+                FrameRequestSource::LocalSchedule,
+            );
         }
     }
 
@@ -1080,6 +1102,8 @@ impl WaylandWindowStatePtr {
         match self.frame_loop.get() {
             FrameLoop::Parked => {
                 self.frame_loop.set(FrameLoop::Scheduled);
+                self.scheduled_frame_at
+                    .set(PlatformFrameSignal::capture(Instant::now));
                 self.frame_ping.ping();
             }
             FrameLoop::Ticking => {
@@ -1201,7 +1225,7 @@ impl WaylandWindowStatePtr {
             let initial_configure = self.frame_loop.get() == FrameLoop::Unconfigured;
             drop(state);
             if initial_configure {
-                self.frame();
+                self.frame(None, FrameRequestSource::NativeCallback);
             } else {
                 self.request_redraw();
             }
@@ -1469,7 +1493,10 @@ impl WaylandWindowStatePtr {
 
                 state.outputs.insert(id, output.clone());
 
+                let previous_display = state.display.as_ref().map(|(id, _)| id.clone());
                 let scale = state.primary_output_scale();
+                let display_changed =
+                    state.display.as_ref().map(|(id, _)| id) != previous_display.as_ref();
                 state.update_subpixel_layout();
 
                 // We use `PreferredBufferScale` instead to set the scale if it's available
@@ -1480,12 +1507,18 @@ impl WaylandWindowStatePtr {
                 } else {
                     drop(state);
                 }
+                if display_changed {
+                    self.report_display_changed();
+                }
                 self.request_redraw();
             }
             wl_surface::Event::Leave { output } => {
                 state.outputs.remove(&output.id());
 
+                let previous_display = state.display.as_ref().map(|(id, _)| id.clone());
                 let scale = state.primary_output_scale();
+                let display_changed =
+                    state.display.as_ref().map(|(id, _)| id) != previous_display.as_ref();
                 state.update_subpixel_layout();
 
                 // We use `PreferredBufferScale` instead to set the scale if it's available
@@ -1495,6 +1528,9 @@ impl WaylandWindowStatePtr {
                     self.rescale(scale as f32);
                 } else {
                     drop(state);
+                }
+                if display_changed {
+                    self.report_display_changed();
                 }
                 self.request_redraw();
             }
@@ -1564,7 +1600,9 @@ impl WaylandWindowStatePtr {
                 state.scale = scale;
             }
             let device_bounds = state.bounds.to_device_pixels(state.scale);
-            state.renderer.update_drawable_size(device_bounds.size);
+            if let Some(renderer) = &mut state.renderer {
+                renderer.update_drawable_size(device_bounds.size);
+            }
             (state.bounds.size, state.scale)
         };
 
@@ -1593,17 +1631,21 @@ impl WaylandWindowStatePtr {
 
     pub fn close(&self) {
         let state = self.state.borrow();
-        let client = state.client.get_client();
+        // Closing is deferred to a task, which can run after the client is dropped by a switch to
+        // headless mode. The client's window map, and so any child window, is gone with it.
+        let client = state.client.try_get_client();
         let children = state.children.keys().cloned().collect::<Vec<_>>();
         drop(state);
 
-        for child in children {
-            let mut client_state = client.borrow_mut();
-            let window = get_window(&mut client_state, &child);
-            drop(client_state);
+        if let Some(client) = client {
+            for child in children {
+                let mut client_state = client.borrow_mut();
+                let window = get_window(&mut client_state, &child);
+                drop(client_state);
 
-            if let Some(child) = window {
-                child.close();
+                if let Some(child) = window {
+                    child.close();
+                }
             }
         }
         let mut callbacks = self.callbacks.borrow_mut();
@@ -1654,6 +1696,29 @@ impl WaylandWindowStatePtr {
         if let Some(mut fun) = callback {
             fun(focus);
             self.callbacks.borrow_mut().hover_status_change = Some(fun);
+        }
+    }
+
+    fn report_display_changed(&self) {
+        let callback = self.callbacks.borrow_mut().display_changed.take();
+        if let Some(mut callback) = callback {
+            callback();
+            self.callbacks.borrow_mut().display_changed = Some(callback);
+        }
+    }
+
+    /// Updates the window's copy of an output it is on after the compositor
+    /// changes the output's properties, such as its mode.
+    pub fn handle_output_changed(&self, id: &ObjectId, output: &Output) {
+        let mut state = self.state.borrow_mut();
+        let Some(entered) = state.outputs.get_mut(id) else {
+            return;
+        };
+        *entered = output.clone();
+        if let Some((display_id, display)) = &mut state.display
+            && display_id == id
+        {
+            *display = output.clone();
         }
     }
 
@@ -1823,13 +1888,18 @@ impl PlatformWindow for WaylandWindow {
 
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         let state = self.borrow();
-        state.display.as_ref().map(|(id, display)| {
-            Rc::new(WaylandDisplay {
-                id: id.clone(),
-                name: display.name.clone(),
-                bounds: display.bounds.to_pixels(state.scale),
-            }) as Rc<dyn PlatformDisplay>
-        })
+        // The compositor only names the window's output after mapping it. With
+        // one output the window can only be there, so don't wait for `enter`.
+        let (id, display) = state
+            .display
+            .clone()
+            .or_else(|| state.client.sole_output())?;
+        Some(Rc::new(WaylandDisplay {
+            id,
+            name: display.name.clone(),
+            bounds: display.bounds.to_pixels(state.scale),
+            refresh_interval: display.refresh_interval,
+        }))
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
@@ -1996,6 +2066,10 @@ impl PlatformWindow for WaylandWindow {
         self.0.callbacks.borrow_mut().moved = Some(callback);
     }
 
+    fn on_display_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.callbacks.borrow_mut().display_changed = Some(callback);
+    }
+
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
         self.0.callbacks.borrow_mut().should_close = Some(callback);
     }
@@ -2017,8 +2091,12 @@ impl PlatformWindow for WaylandWindow {
 
     fn draw(&self, scene: &Scene) {
         let mut state = self.borrow_mut();
+        let state = &mut *state;
+        let Some(renderer) = &mut state.renderer else {
+            return;
+        };
 
-        if state.renderer.device_lost() {
+        if renderer.device_lost() {
             let raw_window = RawWindow {
                 window: state.surface.id().as_ptr().cast::<std::ffi::c_void>(),
                 display: state
@@ -2029,7 +2107,7 @@ impl PlatformWindow for WaylandWindow {
                     .display_ptr()
                     .cast::<std::ffi::c_void>(),
             };
-            match state.renderer.recover(&raw_window) {
+            match renderer.recover(&raw_window) {
                 Ok(()) => {}
                 Err(err) => {
                     log::warn!("GPU recovery failed, will retry on next frame: {err}");
@@ -2046,7 +2124,7 @@ impl PlatformWindow for WaylandWindow {
             let callback = state.surface.frame(&state.globals.qh, state.surface.id());
             state.pending_frame_callback = Some(callback);
         }
-        if state.renderer.draw(scene) {
+        if renderer.draw(scene) {
             state.presentation = PresentationState::Presented;
             self.0.frame_loop.set(FrameLoop::AwaitingCallback);
         } else {
@@ -2054,7 +2132,7 @@ impl PlatformWindow for WaylandWindow {
             self.0.frame_loop.set(FrameLoop::PresentationFailed);
         }
 
-        if state.renderer.needs_redraw() {
+        if renderer.needs_redraw() {
             state.redraw_requested = true;
         }
     }
@@ -2064,8 +2142,12 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
-        let state = self.borrow();
-        state.renderer.sprite_atlas().clone()
+        self.borrow()
+            .renderer
+            .as_ref()
+            .expect("the renderer is only taken when the window is dropped")
+            .sprite_atlas()
+            .clone()
     }
 
     fn show_window_menu(&self, position: Point<Pixels>) {
@@ -2215,7 +2297,7 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
-        self.borrow().renderer.gpu_specs()
+        self.borrow().renderer.as_ref()?.gpu_specs()
     }
 
     fn play_system_bell(&self) {
@@ -2288,7 +2370,9 @@ impl accesskit::DeactivationHandler for TrivialDeactivationHandler {
 fn update_window(mut state: RefMut<WaylandWindowState>) {
     let opaque = !state.is_transparent();
 
-    state.renderer.update_transparency(!opaque);
+    if let Some(renderer) = &mut state.renderer {
+        renderer.update_transparency(!opaque);
+    }
     let opaque_area = state.window_bounds.map(|v| f32::from(v) as i32);
     opaque_area.inset(f32::from(state.inset()) as i32);
 
