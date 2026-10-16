@@ -10,34 +10,36 @@ use crate::{
     Capslock, Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
     DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
     EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
-    Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
-    KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
-    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
-    Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage,
-    RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
+    Hsla, InputHandler, InputPreference, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
+    Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent,
+    MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
+    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
+    PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
+    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
     SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
     StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
     SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextInputConfiguration,
     TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
     TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
+    WindowBounds, WindowControls, WindowDecorations, WindowInsets, WindowOptions, WindowParams,
+    WindowTextSystem, WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
 use crate::interactive::TouchEvent;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
-#[cfg(target_os = "macos")]
-use core_video::pixel_buffer::CVPixelBuffer;
 use derive_more::{Deref, DerefMut};
 use futures::channel::oneshot;
 use gpui_util::post_inc;
 use gpui_util::{ResultExt, measure};
 use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
-use parking_lot::RwLock;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use objc2_core_foundation::CFRetained;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use objc2_core_video::CVPixelBuffer;
+use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle};
 use refineable::Refineable;
 use scheduler::Instant;
@@ -58,6 +60,7 @@ use std::{
         Arc, Weak,
         atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
     },
+    thread::AccessError,
     time::Duration,
 };
 use uuid::Uuid;
@@ -139,6 +142,15 @@ struct WindowInvalidatorInner {
 struct FrameDirtyAccumulator {
     dirty_at: Option<Instant>,
     invalidations: u64,
+}
+
+/// Why GPUI capped a window's frame rate.
+#[derive(Clone, Copy)]
+enum FrameRateLimit {
+    /// The window isn't focused.
+    Inactive,
+    /// The system is under thermal pressure.
+    Thermal,
 }
 
 #[derive(Clone)]
@@ -354,17 +366,16 @@ fn draw_in_progress() -> bool {
 
 /// Allocates an element in the current arena. Uses the app-specific arena if one
 /// is active (during draw), otherwise falls back to the thread-local ELEMENT_ARENA.
-pub(crate) fn with_element_arena<R>(f: impl FnOnce(&mut Arena) -> R) -> R {
-    CURRENT_ELEMENT_ARENA.with(|current| {
-        if let Some(arena_ptr) = current.get() {
-            // SAFETY: The pointer is valid for the duration of the draw operation
-            // that set it, and we're being called during that same draw.
-            let arena_cell = unsafe { &*arena_ptr };
-            f(&mut arena_cell.borrow_mut())
-        } else {
-            ELEMENT_ARENA.with_borrow_mut(f)
-        }
-    })
+#[inline(always)]
+pub(crate) fn with_element_arena<R>(callback: impl FnOnce(&mut Arena) -> R) -> R {
+    let mut callback = Some(callback);
+    let mut result = None;
+    let access = with_element_arena_erased(&mut |arena| {
+        result = Some(callback.take().expect("arena callback runs once")(arena));
+    });
+    drop(callback);
+    access.expect("cannot access a Thread Local Storage value during or after destruction");
+    result.expect("arena callback produces a result")
 }
 
 /// Scope guard that sets CURRENT_ELEMENT_ARENA for the duration of a draw
@@ -486,7 +497,12 @@ impl ArenaClearNeeded {
     }
 }
 
-pub(crate) type FocusMap = RwLock<SlotMap<FocusId, FocusRef>>;
+#[derive(Default)]
+pub(crate) struct FocusMap {
+    pub(crate) handles: SlotMap<FocusId, FocusRef>,
+    pub(crate) dropped_handles: Vec<FocusId>,
+}
+
 pub(crate) struct FocusRef {
     pub(crate) ref_count: AtomicUsize,
     pub(crate) tab_index: isize,
@@ -526,7 +542,7 @@ impl FocusId {
 /// A handle which can be used to track and manipulate the focused element in a window.
 pub struct FocusHandle {
     pub(crate) id: FocusId,
-    handles: Arc<FocusMap>,
+    handles: Arc<RwLock<FocusMap>>,
     /// The index of this element in the tab order.
     pub tab_index: isize,
     /// Whether this element can be focused by tab navigation.
@@ -540,8 +556,8 @@ impl std::fmt::Debug for FocusHandle {
 }
 
 impl FocusHandle {
-    pub(crate) fn new(handles: &Arc<FocusMap>) -> Self {
-        let id = handles.write().insert(FocusRef {
+    pub(crate) fn new(handles: &Arc<RwLock<FocusMap>>) -> Self {
+        let id = handles.write().handles.insert(FocusRef {
             ref_count: AtomicUsize::new(1),
             tab_index: 0,
             tab_stop: false,
@@ -555,9 +571,9 @@ impl FocusHandle {
         }
     }
 
-    pub(crate) fn for_id(id: FocusId, handles: &Arc<FocusMap>) -> Option<Self> {
+    pub(crate) fn for_id(id: FocusId, handles: &Arc<RwLock<FocusMap>>) -> Option<Self> {
         let lock = handles.read();
-        let focus = lock.get(id)?;
+        let focus = lock.handles.get(id)?;
         if atomic_incr_if_not_zero(&focus.ref_count) == 0 {
             return None;
         }
@@ -572,7 +588,7 @@ impl FocusHandle {
     /// Sets the tab index of the element associated with this handle.
     pub fn tab_index(mut self, index: isize) -> Self {
         self.tab_index = index;
-        if let Some(focus) = self.handles.write().get_mut(self.id) {
+        if let Some(focus) = self.handles.write().handles.get_mut(self.id) {
             focus.tab_index = index;
         }
         self
@@ -583,7 +599,7 @@ impl FocusHandle {
     /// When `false`, the element will not be included in the tab order.
     pub fn tab_stop(mut self, tab_stop: bool) -> Self {
         self.tab_stop = tab_stop;
-        if let Some(focus) = self.handles.write().get_mut(self.id) {
+        if let Some(focus) = self.handles.write().handles.get_mut(self.id) {
             focus.tab_stop = tab_stop;
         }
         self
@@ -652,12 +668,15 @@ impl Eq for FocusHandle {}
 
 impl Drop for FocusHandle {
     fn drop(&mut self) {
-        self.handles
-            .read()
-            .get(self.id)
-            .unwrap()
-            .ref_count
-            .fetch_sub(1, SeqCst);
+        let handles = self.handles.upgradable_read();
+        let focus = handles.handles.get(self.id).expect("focus handle missing");
+        let previous_count = focus.ref_count.fetch_sub(1, SeqCst);
+        assert_ne!(previous_count, 0, "over-released focus handle");
+        if previous_count == 1 {
+            RwLockUpgradableReadGuard::upgrade(handles)
+                .dropped_handles
+                .push(self.id);
+        }
     }
 }
 
@@ -665,7 +684,7 @@ impl Drop for FocusHandle {
 #[derive(Clone, Debug)]
 pub struct WeakFocusHandle {
     pub(crate) id: FocusId,
-    pub(crate) handles: Weak<FocusMap>,
+    pub(crate) handles: Weak<RwLock<FocusMap>>,
 }
 
 impl WeakFocusHandle {
@@ -961,11 +980,59 @@ pub(crate) struct TooltipRequest {
     tooltip: AnyTooltip,
 }
 
+/// The ids of the elements being drawn, root first, with the hash of every
+/// prefix alongside: a [`GlobalElementId`] for the current element is then
+/// the ids cloned out and the hash on top of the stack, without walking the
+/// path — the ids of every ancestor, string names byte by byte — for each
+/// element on every frame.
+#[derive(Clone, Default)]
+pub(crate) struct ElementIdStack {
+    ids: SmallVec<[ElementId; 32]>,
+    hashes: SmallVec<[u64; 32]>,
+}
+
+impl ElementIdStack {
+    pub(crate) fn push(&mut self, id: ElementId) {
+        self.hashes.push(crate::extend_path_hash(self.hash(), &id));
+        self.ids.push(id);
+    }
+
+    pub(crate) fn pop(&mut self) -> Option<ElementId> {
+        self.hashes.pop();
+        self.ids.pop()
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.ids.clear();
+        self.hashes.clear();
+    }
+
+    /// The hash of the whole path on the stack.
+    fn hash(&self) -> u64 {
+        self.hashes
+            .last()
+            .copied()
+            .unwrap_or(crate::EMPTY_PATH_HASH)
+    }
+
+    pub(crate) fn global_id(&self) -> GlobalElementId {
+        GlobalElementId::with_hash(&self.ids, self.hash())
+    }
+}
+
+impl std::ops::Deref for ElementIdStack {
+    type Target = [ElementId];
+
+    fn deref(&self) -> &Self::Target {
+        &self.ids
+    }
+}
+
 pub(crate) struct DeferredDraw {
     current_view: EntityId,
     priority: usize,
     parent_node: DispatchNodeId,
-    element_id_stack: SmallVec<[ElementId; 32]>,
+    element_id_stack: ElementIdStack,
     text_style_stack: Vec<TextStyleRefinement>,
     content_mask: Option<ContentMask<Pixels>>,
     rem_size: Pixels,
@@ -991,6 +1058,8 @@ pub(crate) struct Frame {
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
+    #[cfg(any(test, feature = "test-support"))]
+    debug_bounds_records: Vec<(String, Bounds<Pixels>)>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) next_inspector_instance_ids: FxHashMap<Rc<crate::InspectorElementPath>, usize>,
     #[cfg(any(feature = "inspector", debug_assertions))]
@@ -1011,6 +1080,8 @@ pub(crate) struct PrepaintStateIndex {
 #[derive(Clone, Default)]
 pub(crate) struct PaintIndex {
     scene_index: usize,
+    #[cfg(any(test, feature = "test-support"))]
+    debug_bounds_index: usize,
     mouse_listeners_index: usize,
     input_handlers_index: usize,
     cursor_styles_index: usize,
@@ -1020,6 +1091,12 @@ pub(crate) struct PaintIndex {
 }
 
 impl Frame {
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn record_debug_bounds(&mut self, selector: String, bounds: Bounds<Pixels>) {
+        self.debug_bounds.insert(selector.clone(), bounds);
+        self.debug_bounds_records.push((selector, bounds));
+    }
+
     pub(crate) fn new(dispatch_tree: DispatchTree) -> Self {
         Frame {
             focus: None,
@@ -1038,6 +1115,8 @@ impl Frame {
 
             #[cfg(any(test, feature = "test-support"))]
             debug_bounds: FxHashMap::default(),
+            #[cfg(any(test, feature = "test-support"))]
+            debug_bounds_records: Vec::new(),
 
             #[cfg(any(feature = "inspector", debug_assertions))]
             next_inspector_instance_ids: FxHashMap::default(),
@@ -1066,6 +1145,7 @@ impl Frame {
         #[cfg(any(test, feature = "test-support"))]
         {
             self.debug_bounds.clear();
+            self.debug_bounds_records.clear();
         }
 
         #[cfg(any(feature = "inspector", debug_assertions))]
@@ -1146,7 +1226,8 @@ pub struct Window {
     pub(crate) invalidator: WindowInvalidator,
     pub(crate) removed: bool,
     pub(crate) platform_window: Box<dyn PlatformWindow>,
-    display_id: Option<DisplayId>,
+    pub(crate) display_id: Option<DisplayId>,
+    pub(crate) display_observers: SubscriberSet<(), AnyObserver>,
     is_resizable: bool,
     is_minimizable: bool,
     sprite_atlas: Arc<dyn PlatformAtlas>,
@@ -1161,7 +1242,7 @@ pub struct Window {
     pub(crate) viewport_size: Size<Pixels>,
     layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root: Option<AnyView>,
-    pub(crate) element_id_stack: SmallVec<[ElementId; 32]>,
+    pub(crate) element_id_stack: ElementIdStack,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
@@ -1172,7 +1253,7 @@ pub struct Window {
     /// window, so that only actual changes are forwarded (reconfiguring a live
     /// input session can restart the IME connection).
     last_text_input_configuration: Option<TextInputConfiguration>,
-    focused_text_input_active: bool,
+    focused_text_input: Option<FocusId>,
     pub(crate) image_cache_stack: Vec<AnyImageCache>,
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
@@ -1204,7 +1285,7 @@ pub struct Window {
     /// Used to selectively enable VRR optimization only when input rate exceeds 60fps.
     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
     #[cfg(feature = "profiler")]
-    window_profiler: profiler::WindowProfiler,
+    pub(crate) window_profiler: profiler::WindowProfiler,
     last_input_modality: InputModality,
     touch_gestures: TouchGestureRecognizer,
     touch_prediction_enabled: bool,
@@ -1572,6 +1653,8 @@ impl Window {
         let invalidator = WindowInvalidator::new(handle.window_id());
         let active = Rc::new(Cell::new(platform_window.is_active()));
         let visibility = platform_window.visibility();
+        #[cfg(feature = "profiler")]
+        profiler::journal::record_window_visibility(handle.window_id(), visibility);
         let hovered = Rc::new(Cell::new(platform_window.is_hovered()));
         let needs_present = Rc::new(Cell::new(false));
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
@@ -1692,8 +1775,18 @@ impl Window {
             let mut deferred_force_render = false;
             move |request_frame_options| {
                 #[cfg(feature = "profiler")]
-                let _foreground_turn = profiler::journal::foreground_turn();
-                // This must be checked before anything else: if this request
+                let (_foreground_turn, window_id) = {
+                    let foreground_turn = profiler::journal::foreground_turn();
+                    let window_id = handle.window_id();
+                    profiler::journal::record_platform_signal(profiler::journal::PlatformSignal {
+                        window_id,
+                        signal_at: request_frame_options.signal_at,
+                        handled_at: Instant::now(),
+                        source: request_frame_options.signal_source,
+                    });
+                    (foreground_turn, window_id)
+                };
+                // This must be checked before accessing App: if this request
                 // arrived re-entrantly while a draw is on this thread's stack
                 // (e.g. via a nested message pump in the Windows window
                 // procedure), drawing would nest draws, and even touching the
@@ -1711,6 +1804,8 @@ impl Window {
                 if draw_in_progress() {
                     log::debug!("deferring re-entrant window draw request");
                     deferred_force_render |= request_frame_options.force_render;
+                    #[cfg(feature = "profiler")]
+                    profiler::journal::record_reentrant_frame_skipped(window_id, Instant::now());
                     return;
                 }
                 // Take the deferred flag first: `||` short-circuits, and leaving
@@ -1732,15 +1827,16 @@ impl Window {
                 {
                     None
                 } else if !active.get() && !input_rate_tracker.borrow_mut().is_high_rate() {
-                    inactive_frame_interval
+                    inactive_frame_interval.map(|interval| (interval, FrameRateLimit::Inactive))
                 } else if let Some(ThermalState::Critical | ThermalState::Serious) = thermal_state {
-                    Some(Duration::from_micros(16667))
+                    Some((Duration::from_micros(16667), FrameRateLimit::Thermal))
                 } else {
                     None
                 };
 
                 let now = Instant::now();
-                if let Some(min_interval) = min_frame_interval {
+                #[cfg_attr(not(feature = "profiler"), expect(unused_variables))]
+                if let Some((min_interval, limit)) = min_frame_interval {
                     if let Some(last_frame) = last_frame_time.get()
                         && now.duration_since(last_frame) < min_interval
                     {
@@ -1757,6 +1853,19 @@ impl Window {
                         // unserved; platforms that stop requesting frames for
                         // idle windows need a wakeup to deliver the retry.
                         invalidator.wake_platform();
+                        #[cfg(feature = "profiler")]
+                        profiler::journal::record_frame_skipped(
+                            window_id,
+                            Instant::now(),
+                            match limit {
+                                FrameRateLimit::Inactive => {
+                                    profiler::journal::FrameSkipReason::InactiveFrameRateLimit
+                                }
+                                FrameRateLimit::Thermal => {
+                                    profiler::journal::FrameSkipReason::ThermalFrameRateLimit
+                                }
+                            },
+                        );
                         return;
                     }
                 }
@@ -1780,10 +1889,15 @@ impl Window {
                     || needs_present.get()
                     || input_rate_tracker.borrow_mut().is_high_rate();
 
-                if invalidator.is_dirty() || force_render {
+                let should_draw = invalidator.is_dirty() || force_render;
+                if should_draw {
                     measure("frame duration", || {
                         handle
                             .update(&mut cx, |_, window, cx| {
+                                #[cfg(feature = "profiler")]
+                                window
+                                    .window_profiler
+                                    .record_frame_signal(request_frame_options.signal_at);
                                 if force_render {
                                     // Bypass cached view reuse so we don't replay stale
                                     // atlas tile references after a GPU device recovery.
@@ -1819,6 +1933,14 @@ impl Window {
                 if invalidator.is_dirty() || !next_frame_callbacks.borrow().is_empty() {
                     invalidator.wake_platform();
                 }
+                #[cfg(feature = "profiler")]
+                if !should_draw {
+                    profiler::journal::record_frame_skipped(
+                        window_id,
+                        Instant::now(),
+                        profiler::journal::FrameSkipReason::NoRenderNeeded,
+                    );
+                }
             }
         }));
         invalidator.set_platform_waker(platform_window.frame_waker());
@@ -1853,6 +1975,10 @@ impl Window {
                     .update(&mut cx, |_, window, cx| window.bounds_changed(cx))
                     .log_err();
             }
+        }));
+        platform_window.on_display_changed(Box::new({
+            let cx = cx.to_async();
+            move || cx.update(|cx| Window::display_changed(handle, cx))
         }));
         platform_window.on_appearance_changed(Box::new({
             let cx = cx.to_async();
@@ -1901,17 +2027,10 @@ impl Window {
         }));
         platform_window.on_visibility_change(Box::new({
             let mut cx = cx.to_async();
-            move |visibility| {
+            move |_| {
                 handle
                     .update(&mut cx, |_, window, cx| {
-                        if window.visibility == visibility {
-                            return;
-                        }
-                        window.visibility = visibility;
-                        window
-                            .visibility_observers
-                            .clone()
-                            .retain(&(), |callback| callback(visibility, window, cx));
+                        window.refresh_visibility(cx);
                     })
                     .log_err();
             }
@@ -2016,6 +2135,7 @@ impl Window {
             removed: false,
             platform_window,
             display_id,
+            display_observers: SubscriberSet::new(),
             is_resizable,
             is_minimizable,
             sprite_atlas,
@@ -2026,7 +2146,7 @@ impl Window {
             viewport_size: content_size,
             layout_engine: Some(TaffyLayoutEngine::new()),
             root: None,
-            element_id_stack: SmallVec::default(),
+            element_id_stack: ElementIdStack::default(),
             text_style_stack: Vec::new(),
             rendered_entity_stack: Vec::new(),
             element_offset_stack: Vec::new(),
@@ -2034,7 +2154,7 @@ impl Window {
             element_opacity: 1.0,
             requested_autoscroll: None,
             last_text_input_configuration: None,
-            focused_text_input_active: false,
+            focused_text_input: None,
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame_callbacks,
@@ -2148,6 +2268,22 @@ impl Window {
             if !self.dirty_views.insert(view_id) {
                 break;
             }
+        }
+    }
+
+    pub(crate) fn refresh_visibility(&mut self, cx: &mut App) {
+        let visibility = self.platform_window.visibility();
+        if self.visibility != visibility {
+            self.visibility = visibility;
+            #[cfg(feature = "profiler")]
+            profiler::journal::record_window_visibility(self.handle.window_id(), visibility);
+            self.visibility_observers
+                .clone()
+                .retain(&(), |callback| callback(visibility, self, cx));
+        }
+        #[cfg(feature = "profiler")]
+        if self.invalidator.is_dirty() || self.needs_present.get() {
+            profiler::journal::record_frame_pending(self.handle.window_id(), Instant::now());
         }
     }
 
@@ -2431,20 +2567,18 @@ impl Window {
 
     pub(crate) fn dispatch_keystroke_observers(
         &mut self,
-        event: &dyn Any,
-        action: Option<Box<dyn Action>>,
+        keystroke: &Keystroke,
+        input_preference: InputPreference,
+        action: Option<&dyn Action>,
         context_stack: Vec<KeyContext>,
         cx: &mut App,
     ) {
-        let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() else {
-            return;
-        };
-
         cx.keystroke_observers.clone().retain(&(), move |callback| {
             (callback)(
                 &KeystrokeEvent {
-                    keystroke: key_down_event.keystroke.clone(),
-                    action: action.as_ref().map(|action| action.boxed_clone()),
+                    keystroke: keystroke.clone(),
+                    input_preference,
+                    action: action.map(|action| action.boxed_clone()),
                     context_stack: context_stack.clone(),
                 },
                 self,
@@ -2455,20 +2589,18 @@ impl Window {
 
     pub(crate) fn dispatch_keystroke_interceptors(
         &mut self,
-        event: &dyn Any,
+        keystroke: &Keystroke,
+        input_preference: InputPreference,
         context_stack: Vec<KeyContext>,
         cx: &mut App,
     ) {
-        let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() else {
-            return;
-        };
-
         cx.keystroke_interceptors
             .clone()
             .retain(&(), move |callback| {
                 (callback)(
                     &KeystrokeEvent {
-                        keystroke: key_down_event.keystroke.clone(),
+                        keystroke: keystroke.clone(),
+                        input_preference,
                         action: None,
                         context_stack: context_stack.clone(),
                     },
@@ -2667,7 +2799,6 @@ impl Window {
     pub fn bounds_changed(&mut self, cx: &mut App) {
         self.scale_factor = self.platform_window.scale_factor();
         self.viewport_size = self.platform_window.content_size();
-        self.display_id = self.platform_window.display().map(|display| display.id());
         self.mouse_position = self.platform_window.mouse_position();
 
         self.refresh();
@@ -2677,9 +2808,73 @@ impl Window {
             .retain(&(), |callback| callback(self, cx));
     }
 
+    fn display_changed(handle: AnyWindowHandle, cx: &mut App) {
+        let moved_to = handle
+            .update(cx, |_, window, _| {
+                let display_id = window.platform_window.display().map(|display| display.id());
+                let moved = display_id != window.display_id;
+                window.display_id = display_id;
+                moved.then_some(display_id)
+            })
+            .log_err()
+            .flatten();
+        let Some(display_id) = moved_to else {
+            return;
+        };
+        // The platform's notifications about the window and about displays
+        // arrive in no guaranteed order, so make sure App knows the display
+        // before the window's observers read its state.
+        if let Some(display_id) = display_id
+            && !cx.knows_display(display_id)
+        {
+            cx.displays_changed();
+        }
+        handle
+            .update(cx, |_, window, cx| window.notify_display_observers(cx))
+            .log_err();
+    }
+
+    pub(crate) fn notify_display_observers(&mut self, cx: &mut App) {
+        self.display_observers
+            .clone()
+            .retain(&(), |callback| callback(self, cx));
+    }
+
+    /// The time between refreshes of the display the window is on, as of the
+    /// platform's last display change notification. Variable refresh rate
+    /// displays report their maximum rate. Returns `None` when the platform
+    /// doesn't report it.
+    pub fn refresh_interval(&self, cx: &App) -> Option<Duration> {
+        cx.display_refresh_interval(self.display_id?)
+    }
+
+    /// Registers a callback invoked when the window moves to another display
+    /// or its display's properties change, for example its refresh
+    /// interval. [`Self::refresh_interval`] already returns the new value
+    /// when the callback runs.
+    pub fn observe_window_display(
+        &self,
+        mut callback: impl FnMut(&mut Window, &mut App) + 'static,
+    ) -> Subscription {
+        let (subscription, activate) = self.display_observers.insert(
+            (),
+            Box::new(move |window, cx| {
+                callback(window, cx);
+                true
+            }),
+        );
+        activate();
+        subscription
+    }
+
     /// Returns the bounds of the current window in the global coordinate space, which could span across multiple displays.
     pub fn bounds(&self) -> Bounds<Pixels> {
         self.platform_window.bounds()
+    }
+
+    /// Returns the regions of this window obscured by system UI and the keyboard.
+    pub fn insets(&self) -> WindowInsets {
+        self.platform_window.insets()
     }
 
     /// Renders the current frame's scene to a texture and returns the pixel data as an RGBA image.
@@ -2698,6 +2893,12 @@ impl Window {
     #[cfg(any(test, feature = "test-support"))]
     pub fn painted_quads(&self) -> Vec<Quad> {
         self.rendered_frame.scene.quads.clone()
+    }
+
+    /// Returns the underlines in the most recently rendered frame's scene.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn painted_underlines(&self) -> Vec<Underline> {
+        self.rendered_frame.scene.underlines.clone()
     }
 
     /// Set the content size of the window.
@@ -2934,7 +3135,7 @@ impl Window {
         f: impl FnOnce(&GlobalElementId, &mut Self) -> R,
     ) -> R {
         self.with_id(element_id, |this| {
-            let global_id = GlobalElementId(Arc::from(&*this.element_id_stack));
+            let global_id = this.element_id_stack.global_id();
 
             f(&global_id, this)
         })
@@ -3003,6 +3204,98 @@ impl Window {
     #[inline]
     pub fn pixel_snap_point(&self, position: Point<Pixels>) -> Point<Pixels> {
         position.map(|c| self.pixel_snap(c))
+    }
+
+    /// Returns the snapped device-space bounds used to paint an underline.
+    pub fn underline_bounds(
+        &self,
+        origin: Point<Pixels>,
+        width: Pixels,
+        style: &UnderlineStyle,
+    ) -> Bounds<ScaledPixels> {
+        let scale_factor = self.scale_factor();
+        let thickness = self.snap_stroke(style.thickness);
+        let height = if style.wavy {
+            ScaledPixels(thickness.0 * 3.)
+        } else {
+            thickness
+        };
+        Bounds {
+            origin: origin.map(|c| ScaledPixels(round_to_device_pixel(c.0, scale_factor))),
+            size: size(self.snap_stroke(width), height),
+        }
+    }
+
+    /// Paints an underline excluding absolute device-space horizontal spans.
+    pub fn paint_underline_with_exclusions(
+        &mut self,
+        origin: Point<Pixels>,
+        width: Pixels,
+        style: &UnderlineStyle,
+        exclusions: &[Range<ScaledPixels>],
+    ) {
+        self.invalidator.debug_assert_paint();
+        let underline = self.underline(origin, width, style);
+        if exclusions.is_empty() {
+            self.next_frame.scene.insert_primitive(underline);
+            return;
+        }
+
+        let bounds = underline.bounds.intersect(&underline.content_mask.bounds);
+        if bounds.is_empty() {
+            return;
+        }
+
+        let mut exclusions = exclusions
+            .iter()
+            .filter_map(|span| {
+                let start = span.start.max(bounds.left());
+                let end = span.end.min(bounds.right());
+                (start < end).then_some(start..end)
+            })
+            .collect::<SmallVec<[_; 4]>>();
+        if exclusions.is_empty() {
+            self.next_frame.scene.insert_primitive(underline);
+            return;
+        }
+        exclusions.sort_unstable_by_key(|span| span.start);
+
+        let mut paint_span = |start, end| {
+            self.next_frame.scene.insert_primitive(Underline {
+                content_mask: ContentMask {
+                    bounds: Bounds::from_corners(
+                        point(start, bounds.top()),
+                        point(end, bounds.bottom()),
+                    ),
+                },
+                ..underline
+            });
+        };
+        let mut start = bounds.left();
+        for exclusion in exclusions {
+            if start < exclusion.start {
+                paint_span(start, exclusion.start);
+            }
+            start = start.max(exclusion.end);
+        }
+        if start < bounds.right() {
+            paint_span(start, bounds.right());
+        }
+    }
+
+    fn underline(&self, origin: Point<Pixels>, width: Pixels, style: &UnderlineStyle) -> Underline {
+        Underline {
+            order: 0,
+            pad: 0,
+            bounds: self.underline_bounds(origin, width, style),
+            content_mask: self.snapped_content_mask(),
+            color: style
+                .color
+                .unwrap_or_default()
+                .opacity(self.element_opacity()),
+            thickness: self.snap_stroke(style.thickness),
+            wavy: style.wavy.into(),
+        }
     }
 
     #[inline]
@@ -3128,7 +3421,8 @@ impl Window {
         self.last_input_modality == InputModality::Keyboard
     }
 
-    pub(crate) fn last_input_was_touch(&self) -> bool {
+    /// Returns whether the last input event came from a touch screen.
+    pub fn last_input_was_touch(&self) -> bool {
         self.last_input_modality == InputModality::Touch
     }
 
@@ -3199,7 +3493,7 @@ impl Window {
         // paint_range indices remain valid for reuse_paint on the next frame.
         // Search backwards to find the last Some entry, since reuse_paint may
         // have copied None slots from the previous frame. (Fixes #50456)
-        let focused_text_input_active = if let Some(mut input_handler) = self
+        let focused_text_input = if let Some(mut input_handler) = self
             .next_frame
             .input_handlers
             .iter_mut()
@@ -3208,15 +3502,15 @@ impl Window {
         {
             let accepts_text_input = input_handler.accepts_text_input(self, cx);
             self.platform_window.set_input_handler(input_handler);
-            accepts_text_input
+            self.focus.filter(|_| accepts_text_input)
         } else {
-            false
+            None
         };
         self.apply_text_input_configuration(cx);
-        if focused_text_input_active != self.focused_text_input_active {
-            self.focused_text_input_active = focused_text_input_active;
+        let previous = mem::replace(&mut self.focused_text_input, focused_text_input);
+        if previous.is_some() != focused_text_input.is_some() {
             self.platform_window
-                .text_input_state_changed(if focused_text_input_active {
+                .text_input_state_changed(if focused_text_input.is_some() {
                     TextInputStateChange::FocusGained
                 } else {
                     TextInputStateChange::FocusLost
@@ -3285,6 +3579,8 @@ impl Window {
 
         #[cfg(feature = "profiler")]
         {
+            self.window_profiler
+                .set_refresh_interval(self.refresh_interval(cx));
             let draw_duration = self
                 .window_profiler
                 .end_draw(frame_dirty.dirty_at, frame_dirty.invalidations);
@@ -3415,8 +3711,12 @@ impl Window {
         // stretches to fill the viewport unless explicitly sized, window roots
         // fill the window when their size is `auto`.
         let scale_factor = self.scale_factor();
+        #[cfg(feature = "profiler")]
+        let request_layout_start = Instant::now();
         let mut root_element = self.root.as_ref().unwrap().clone().into_any_element();
         let root_layout_id = root_element.request_layout(self, cx);
+        #[cfg(feature = "profiler")]
+        let prepaint_start = Instant::now();
         self.layout_engine
             .as_mut()
             .unwrap()
@@ -3454,6 +3754,8 @@ impl Window {
         self.mouse_hit_test = self.next_frame.hit_test(self.mouse_position);
 
         // Now actually paint the elements.
+        #[cfg(feature = "profiler")]
+        let paint_start = Instant::now();
         self.invalidator.set_phase(DrawPhase::Paint);
         root_element.paint(self, cx);
 
@@ -3472,6 +3774,14 @@ impl Window {
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         self.paint_inspector_hitbox(cx);
+
+        #[cfg(feature = "profiler")]
+        self.window_profiler
+            .record_draw_phases(profiler::DrawPhases {
+                request_layout: prepaint_start.duration_since(request_layout_start),
+                prepaint: paint_start.duration_since(prepaint_start),
+                paint: Instant::now().duration_since(paint_start),
+            });
 
         // a11y may have been activated/deactivated halfway through the frame
         let a11y_active_start_of_frame = self.a11y.is_active();
@@ -3751,6 +4061,8 @@ impl Window {
     pub(crate) fn paint_index(&self) -> PaintIndex {
         PaintIndex {
             scene_index: self.next_frame.scene.len(),
+            #[cfg(any(test, feature = "test-support"))]
+            debug_bounds_index: self.next_frame.debug_bounds_records.len(),
             mouse_listeners_index: self.next_frame.mouse_listeners.len(),
             input_handlers_index: self.next_frame.input_handlers.len(),
             cursor_styles_index: self.next_frame.cursor_styles.len(),
@@ -3761,6 +4073,14 @@ impl Window {
     }
 
     pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) {
+        // Cached elements still exist in the frame even when their paint methods don't run.
+        #[cfg(any(test, feature = "test-support"))]
+        for (selector, bounds) in &self.rendered_frame.debug_bounds_records
+            [range.start.debug_bounds_index..range.end.debug_bounds_index]
+        {
+            self.next_frame
+                .record_debug_bounds(selector.clone(), *bounds);
+        }
         self.next_frame.cursor_styles.extend(
             self.rendered_frame.cursor_styles
                 [range.start.cursor_styles_index..range.end.cursor_styles_index]
@@ -4042,10 +4362,7 @@ impl Window {
                     (state.clone(), state)
                 } else {
                     let new_state = cx.new(|cx| init(window, cx));
-                    cx.observe(&new_state, move |_, cx| {
-                        cx.notify(current_view);
-                    })
-                    .detach();
+                    Self::observe_keyed_state(&new_state, current_view, cx);
                     (new_state.clone(), new_state)
                 }
             })
@@ -4074,6 +4391,7 @@ impl Window {
     /// frames. If an element with this ID existed in the rendered frame, its state will be passed
     /// to the given closure. The state returned by the closure will be stored so it can be referenced
     /// when drawing the next frame. This method should only be called as part of element drawing.
+    #[inline(always)]
     pub fn with_element_state<S, R>(
         &mut self,
         global_id: &GlobalElementId,
@@ -4084,15 +4402,9 @@ impl Window {
     {
         self.invalidator.debug_assert_paint_or_prepaint();
 
-        let key = (global_id.clone(), TypeId::of::<S>());
-        self.next_frame.accessed_element_states.push(key.clone());
+        let (key, state) = self.take_element_state(global_id, TypeId::of::<S>());
 
-        if let Some(any) = self
-            .next_frame
-            .element_states
-            .remove(&key)
-            .or_else(|| self.rendered_frame.element_states.remove(&key))
-        {
+        if let Some(any) = state {
             let ElementStateBox {
                 inner,
                 #[cfg(debug_assertions)]
@@ -4126,7 +4438,7 @@ impl Window {
             );
             let (result, state) = f(Some(state), self);
             state_box.replace(state);
-            self.next_frame.element_states.insert(
+            self.insert_element_state(
                 key,
                 ElementStateBox {
                     inner: state_box,
@@ -4137,7 +4449,7 @@ impl Window {
             result
         } else {
             let (result, state) = f(None, self);
-            self.next_frame.element_states.insert(
+            self.insert_element_state(
                 key,
                 ElementStateBox {
                     inner: Box::new(Some(state)),
@@ -4478,29 +4790,8 @@ impl Window {
         style: &UnderlineStyle,
     ) {
         self.invalidator.debug_assert_paint();
-
-        let scale_factor = self.scale_factor();
-        let thickness = self.snap_stroke(style.thickness);
-        let height = if style.wavy {
-            ScaledPixels(thickness.0 * 3.)
-        } else {
-            thickness
-        };
-        let bounds = Bounds {
-            origin: origin.map(|c| ScaledPixels(round_to_device_pixel(c.0, scale_factor))),
-            size: size(self.snap_stroke(width), height),
-        };
-        let element_opacity = self.element_opacity();
-
-        self.next_frame.scene.insert_primitive(Underline {
-            order: 0,
-            pad: 0,
-            bounds,
-            content_mask: self.snapped_content_mask(),
-            color: style.color.unwrap_or_default().opacity(element_opacity),
-            thickness,
-            wavy: style.wavy.into(),
-        });
+        let underline = self.underline(origin, width, style);
+        self.next_frame.scene.insert_primitive(underline);
     }
 
     /// Paint a strikethrough into the scene for the next frame at the current z-index.
@@ -4583,7 +4874,7 @@ impl Window {
         if !raster_bounds.is_zero() {
             let tile = self
                 .sprite_atlas
-                .get_or_insert_with(&params.clone().into(), &mut || {
+                .get_or_insert_with(params.clone().into(), &mut || {
                     let (size, bytes) = self.text_system().rasterize_glyph(&params)?;
                     Ok(Some((size, Cow::Owned(bytes))))
                 })?
@@ -4673,7 +4964,7 @@ impl Window {
         if !raster_bounds.is_zero() {
             let tile = self
                 .sprite_atlas
-                .get_or_insert_with(&params.clone().into(), &mut || {
+                .get_or_insert_with(params.clone().into(), &mut || {
                     let (size, bytes) = self.text_system().rasterize_glyph(&params)?;
                     Ok(Some((size, Cow::Owned(bytes))))
                 })?
@@ -4726,7 +5017,7 @@ impl Window {
 
         let Some(tile) =
             self.sprite_atlas
-                .get_or_insert_with(&params.clone().into(), &mut || {
+                .get_or_insert_with(params.clone().into(), &mut || {
                     let Some((size, bytes)) = cx.svg_renderer.render_alpha_mask(&params, data)?
                     else {
                         return Ok(None);
@@ -4799,7 +5090,7 @@ impl Window {
 
         let tile = self
             .sprite_atlas
-            .get_or_insert_with(&params.into(), &mut || {
+            .get_or_insert_with(params.into(), &mut || {
                 Ok(Some((
                     data.size(frame_index),
                     Cow::Borrowed(
@@ -4874,8 +5165,12 @@ impl Window {
     /// Paint a surface into the scene for the next frame at the current z-index.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
-    #[cfg(target_os = "macos")]
-    pub fn paint_surface(&mut self, bounds: Bounds<Pixels>, image_buffer: CVPixelBuffer) {
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub fn paint_surface(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        image_buffer: CFRetained<CVPixelBuffer>,
+    ) {
         use crate::PaintSurface;
 
         self.invalidator.debug_assert_paint();
@@ -5117,9 +5412,31 @@ impl Window {
 
         if focus_handle.is_focused(self) {
             let cx = self.to_async(cx);
-            self.next_frame
-                .input_handlers
-                .push(Some(PlatformInputHandler::new(cx, Box::new(input_handler))));
+            self.next_frame.input_handlers.push(Some(
+                PlatformInputHandler::new(cx, Box::new(input_handler)).with_focus(focus_handle.id),
+            ));
+        }
+    }
+
+    /// Notifies native text services that the focused component's text changed.
+    ///
+    /// Text components should call this after application-driven edits, in addition
+    /// to notifying GPUI to redraw. Unfocused or unregistered components are ignored.
+    pub fn notify_text_input_changed(&self, focus_handle: &FocusHandle) {
+        if self.focused_text_input == Some(focus_handle.id) && focus_handle.is_focused(self) {
+            self.platform_window
+                .text_input_state_changed(TextInputStateChange::ContentChanged);
+        }
+    }
+
+    /// Notifies native text services that the focused component's selection changed.
+    ///
+    /// Text components should call this after application-driven selection changes,
+    /// in addition to notifying GPUI to redraw.
+    pub fn notify_text_selection_changed(&self, focus_handle: &FocusHandle) {
+        if self.focused_text_input == Some(focus_handle.id) && focus_handle.is_focused(self) {
+            self.platform_window
+                .text_input_state_changed(TextInputStateChange::SelectionChanged);
         }
     }
 
@@ -5704,6 +6021,27 @@ impl Window {
         }
     }
 
+    // If modifiers are not excessive (e.g. AltGr), and the input handler is accepting text input,
+    // we prefer the text input over bindings.
+    fn input_preference(&mut self, event: &dyn Any, cx: &mut App) -> InputPreference {
+        let prefer_character_input = event
+            .downcast_ref::<KeyDownEvent>()
+            .is_some_and(|key_down_event| key_down_event.prefer_character_input);
+        if !prefer_character_input {
+            return InputPreference::KeyBindings;
+        }
+        let Some(mut input_handler) = self.platform_window.take_input_handler() else {
+            return InputPreference::KeyBindings;
+        };
+        let accepts_text_input = input_handler.accepts_text_input(self, cx);
+        self.platform_window.set_input_handler(input_handler);
+        if accepts_text_input {
+            InputPreference::CharacterInput
+        } else {
+            InputPreference::KeyBindings
+        }
+    }
+
     fn dispatch_key_event(&mut self, event: &dyn Any, cx: &mut App) {
         if self.invalidator.is_dirty() {
             self.draw(cx).clear(cx);
@@ -5758,14 +6096,35 @@ impl Window {
         }
 
         let Some(keystroke) = keystroke else {
-            self.finish_dispatch_key_event(event, dispatch_path, self.context_stack(), cx);
+            self.finish_dispatch_key_event(
+                event,
+                None,
+                InputPreference::KeyBindings,
+                dispatch_path,
+                self.context_stack(),
+                cx,
+            );
             return;
         };
 
+        let input_preference = self.input_preference(event, cx);
+
         cx.propagate_event = true;
-        self.dispatch_keystroke_interceptors(event, self.context_stack(), cx);
+        self.dispatch_keystroke_interceptors(
+            &keystroke,
+            input_preference,
+            self.context_stack(),
+            cx,
+        );
         if !cx.propagate_event {
-            self.finish_dispatch_key_event(event, dispatch_path, self.context_stack(), cx);
+            self.finish_dispatch_key_event(
+                event,
+                Some(&keystroke),
+                input_preference,
+                dispatch_path,
+                self.context_stack(),
+                cx,
+            );
             return;
         }
 
@@ -5776,7 +6135,7 @@ impl Window {
 
         let match_result = self.rendered_frame.dispatch_tree.dispatch_key(
             currently_pending.keystrokes,
-            keystroke,
+            keystroke.clone(),
             &dispatch_path,
         );
 
@@ -5823,29 +6182,16 @@ impl Window {
             return;
         }
 
-        let skip_bindings = event
-            .downcast_ref::<KeyDownEvent>()
-            .filter(|key_down_event| key_down_event.prefer_character_input)
-            .map(|_| {
-                self.platform_window
-                    .take_input_handler()
-                    .map_or(false, |mut input_handler| {
-                        let accepts = input_handler.accepts_text_input(self, cx);
-                        self.platform_window.set_input_handler(input_handler);
-                        // If modifiers are not excessive (e.g. AltGr), and the input handler is accepting text input,
-                        // we prefer the text input over bindings.
-                        accepts
-                    })
-            })
-            .unwrap_or(false);
-
-        if !skip_bindings {
+        // Interceptors or replayed actions may have changed whether the input handler accepts text.
+        let input_preference = self.input_preference(event, cx);
+        if input_preference == InputPreference::KeyBindings {
             for binding in match_result.bindings {
                 self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
                 if !cx.propagate_event {
                     self.dispatch_keystroke_observers(
-                        event,
-                        Some(binding.action),
+                        &keystroke,
+                        input_preference,
+                        Some(binding.action.as_ref()),
                         match_result.context_stack,
                         cx,
                     );
@@ -5855,7 +6201,14 @@ impl Window {
             }
         }
 
-        self.finish_dispatch_key_event(event, dispatch_path, match_result.context_stack, cx);
+        self.finish_dispatch_key_event(
+            event,
+            Some(&keystroke),
+            input_preference,
+            dispatch_path,
+            match_result.context_stack,
+            cx,
+        );
         self.pending_input_changed(cx);
     }
 
@@ -5900,6 +6253,8 @@ impl Window {
     fn finish_dispatch_key_event(
         &mut self,
         event: &dyn Any,
+        recognized_keystroke: Option<&Keystroke>,
+        input_preference: InputPreference,
         dispatch_path: SmallVec<[DispatchNodeId; 32]>,
         context_stack: Vec<KeyContext>,
         cx: &mut App,
@@ -5914,7 +6269,9 @@ impl Window {
             return;
         }
 
-        self.dispatch_keystroke_observers(event, None, context_stack, cx);
+        if let Some(keystroke) = recognized_keystroke {
+            self.dispatch_keystroke_observers(keystroke, input_preference, None, context_stack, cx);
+        }
     }
 
     pub(crate) fn pending_input_changed(&mut self, cx: &mut App) {
@@ -6116,8 +6473,9 @@ impl Window {
                 self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
                 if !cx.propagate_event {
                     self.dispatch_keystroke_observers(
-                        &event,
-                        Some(binding.action),
+                        &replay.keystroke,
+                        InputPreference::KeyBindings,
+                        Some(binding.action.as_ref()),
                         Vec::default(),
                         cx,
                     );
@@ -6661,6 +7019,16 @@ impl Window {
         self.platform_window.play_system_bell()
     }
 
+    /// Returns whether accessibility support is enabled for this window.
+    ///
+    /// This is false when the app was created with [`crate::Application::new_inaccessible`].
+    /// Unlike [`Self::is_a11y_active`], this does not depend on whether assistive
+    /// technology is currently connected, so it can be used to gate subscriptions
+    /// that are only needed for accessibility.
+    pub fn is_a11y_enabled(&self) -> bool {
+        self.a11y.is_enabled()
+    }
+
     /// Returns whether accessibility features are active for this frame,
     /// i.e. whether assistive technology (such as a screen reader) is
     /// connected and an accessibility tree is being built.
@@ -6766,7 +7134,13 @@ impl Window {
     pub fn toggle_inspector(&mut self, cx: &mut App) {
         self.inspector = match self.inspector {
             None => Some(cx.new(|_| Inspector::new())),
-            Some(_) => None,
+            Some(_) => {
+                self.rendered_frame.next_inspector_instance_ids = FxHashMap::default();
+                self.rendered_frame.inspector_hitboxes = FxHashMap::default();
+                self.next_frame.next_inspector_instance_ids = FxHashMap::default();
+                self.next_frame.inspector_hitboxes = FxHashMap::default();
+                None
+            }
         };
         self.refresh();
     }
@@ -6786,22 +7160,24 @@ impl Window {
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub fn with_inspector_state<T: 'static, R>(
         &mut self,
-        _inspector_id: Option<&crate::InspectorElementId>,
+        inspector_id: Option<&crate::InspectorElementId>,
         cx: &mut App,
         f: impl FnOnce(&mut Option<T>, &mut Self) -> R,
-    ) -> R {
-        if let Some(inspector_id) = _inspector_id
-            && let Some(inspector) = &self.inspector
-        {
-            let inspector = inspector.clone();
-            let active_element_id = inspector.read(cx).active_element_id();
-            if Some(inspector_id) == active_element_id {
-                return inspector.update(cx, |inspector, _cx| {
-                    inspector.with_active_element_state(self, f)
-                });
-            }
+    ) -> Option<R> {
+        let inspector_id = inspector_id?;
+        let inspector = self.inspector.as_ref()?;
+        if inspector.read(cx).active_element_id() != Some(inspector_id) {
+            return None;
         }
-        f(&mut None, self)
+        let inspector = inspector.clone();
+        Some(inspector.update(cx, |inspector, _cx| {
+            inspector.with_active_element_state(self, f)
+        }))
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub(crate) fn inspector_enabled(&self) -> bool {
+        self.inspector.is_some()
     }
 
     #[cfg(any(feature = "inspector", debug_assertions))]
@@ -6968,6 +7344,39 @@ impl Window {
             pressed_button: None,
         });
         let _ = self.dispatch_event(event, cx);
+    }
+
+    #[inline(never)]
+    fn take_element_state(
+        &mut self,
+        global_id: &GlobalElementId,
+        state_type: TypeId,
+    ) -> ((GlobalElementId, TypeId), Option<ElementStateBox>) {
+        let key = (global_id.clone(), state_type);
+        self.next_frame.accessed_element_states.push(key.clone());
+        let state = self
+            .next_frame
+            .element_states
+            .remove(&key)
+            .or_else(|| self.rendered_frame.element_states.remove(&key));
+        (key, state)
+    }
+
+    #[inline(never)]
+    fn insert_element_state(
+        &mut self,
+        key: (GlobalElementId, TypeId),
+        state: ElementStateBox,
+    ) -> Option<ElementStateBox> {
+        self.next_frame.element_states.insert(key, state)
+    }
+
+    #[inline(never)]
+    fn observe_keyed_state<S: 'static>(state: &Entity<S>, current_view: EntityId, cx: &mut App) {
+        cx.observe(state, move |_, cx| {
+            cx.notify(current_view);
+        })
+        .detach();
     }
 }
 
@@ -7276,6 +7685,12 @@ impl TryInto<SharedString> for ElementId {
     }
 }
 
+impl From<u64> for ElementId {
+    fn from(id: u64) -> Self {
+        ElementId::Integer(id)
+    }
+}
+
 impl From<usize> for ElementId {
     fn from(id: usize) -> Self {
         ElementId::Integer(id as u64)
@@ -7477,6 +7892,19 @@ pub fn outline(
     }
 }
 
+#[inline(never)]
+fn with_element_arena_erased(callback: &mut dyn FnMut(&mut Arena)) -> Result<(), AccessError> {
+    if let Some(arena_pointer) = CURRENT_ELEMENT_ARENA.try_with(Cell::get)? {
+        // SAFETY: The pointer is valid for the duration of the draw operation
+        // that set it, and we're being called during that same draw.
+        let arena_cell = unsafe { &*arena_pointer };
+        callback(&mut arena_cell.borrow_mut());
+        Ok(())
+    } else {
+        ELEMENT_ARENA.try_with(|arena| callback(&mut arena.borrow_mut()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -7487,14 +7915,261 @@ mod tests {
     };
 
     use crate::{
-        AnyWindowHandle, AppContext as _, Bounds, Context, DispatchPhase, DragMoveEvent, Empty,
-        ExternalDragPayload, ExternalPaths, FileDragPaths, FileDropEvent, FocusHandle,
-        InputEvent as _, InteractiveElement as _, IntoElement, KeyDownEvent, Keystroke,
-        LongPressEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels,
-        PlatformInput, Point, Render, RequestFrameOptions, StatefulInteractiveElement as _, Styled,
-        TestAppContext, TouchDragEvent, TouchEvent, TouchId, TouchPhase, Window, WindowAppearance,
-        WindowOptions, canvas, div, point, px, size,
+        AnyWindowHandle, AppContext as _, Bounds, ContentMask, Context, DispatchPhase,
+        DragMoveEvent, Empty, ExternalDragPayload, ExternalPaths, FileDragPaths, FileDropEvent,
+        FocusHandle, InputEvent as _, InteractiveElement as _, IntoElement, KeyDownEvent,
+        Keystroke, LongPressEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement,
+        Pixels, PlatformInput, Point, Render, RequestFrameOptions, ScaledPixels,
+        StatefulInteractiveElement as _, Styled, TestAppContext, TouchDragEvent, TouchEvent,
+        TouchId, TouchPhase, Underline, UnderlineStyle, Window, WindowAppearance, WindowOptions,
+        canvas, div, hsla, point, px, size,
     };
+
+    #[gpui::test]
+    async fn test_focus_handle_release(cx: &mut TestAppContext) {
+        let (handle, survivor) = cx.update(|cx| (cx.focus_handle(), cx.focus_handle()));
+        let handle_id = handle.id;
+        let weak_handle = handle.downgrade();
+        let retained = handle.clone();
+        drop(handle);
+
+        cx.update(|_| {});
+        cx.read(|cx| {
+            let handles = cx.focus_handles.read();
+            assert_eq!(handles.handles.len(), 2);
+            assert!(handles.dropped_handles.is_empty());
+        });
+        assert_eq!(weak_handle.upgrade().as_ref(), Some(&retained));
+
+        cx.background_spawn(async move { drop(retained) }).await;
+        assert_eq!(weak_handle.upgrade(), None);
+        cx.read(|cx| {
+            assert_eq!(cx.focus_handles.read().dropped_handles, [handle_id]);
+        });
+        cx.update(|_| {});
+        cx.read(|cx| {
+            let handles = cx.focus_handles.read();
+            assert_eq!(handles.handles.keys().collect::<Vec<_>>(), [survivor.id]);
+            assert!(handles.dropped_handles.is_empty());
+        });
+
+        let replacements = cx.update(|cx| [cx.focus_handle(), cx.focus_handle()]);
+        assert_eq!(weak_handle.upgrade(), None);
+        cx.update(|cx| {
+            drop(replacements);
+            cx.defer(move |_| drop(survivor));
+        });
+        cx.read(|cx| {
+            let handles = cx.focus_handles.read();
+            assert_eq!(handles.handles.len(), 0);
+            assert!(handles.dropped_handles.is_empty());
+        });
+    }
+
+    #[gpui::test]
+    fn test_dropped_focus_handle_blurs_only_its_windows(cx: &mut TestAppContext) {
+        let windows = [
+            cx.add_window(|_, _| EmptyView),
+            cx.add_window(|_, _| EmptyView),
+            cx.add_window(|_, _| EmptyView),
+            cx.add_window(|_, _| EmptyView),
+            cx.add_window(|_, _| EmptyView),
+        ];
+        let (handle, other_handle, survivor) =
+            cx.update(|cx| (cx.focus_handle(), cx.focus_handle(), cx.focus_handle()));
+        for window in &windows[..2] {
+            window
+                .update(cx, |_, window, cx| window.focus(&handle, cx))
+                .expect("window exists");
+        }
+        windows[2]
+            .update(cx, |_, window, cx| window.focus(&other_handle, cx))
+            .expect("window exists");
+        windows[3]
+            .update(cx, |_, window, cx| window.focus(&survivor, cx))
+            .expect("window exists");
+
+        cx.update(|cx| {
+            for _ in 0..1_000 {
+                drop(cx.focus_handle());
+            }
+            drop((handle, other_handle));
+        });
+        for window in &windows[..3] {
+            window
+                .update(cx, |_, window, _| assert_eq!(window.focus, None))
+                .expect("window exists");
+        }
+        windows[3]
+            .update(cx, |_, window, cx| {
+                assert_eq!(window.focused(cx).as_ref(), Some(&survivor));
+                assert_eq!(window.focus_generation, 1);
+            })
+            .expect("window exists");
+        windows[4]
+            .update(cx, |_, window, _| {
+                assert_eq!(window.focus, None);
+                assert_eq!(window.focus_generation, 0);
+            })
+            .expect("window exists");
+    }
+
+    #[cfg(feature = "profiler")]
+    #[gpui::test]
+    fn test_frame_requests_and_skips_are_journaled(cx: &mut TestAppContext) {
+        use crate::FrameRequestSource;
+        use crate::profiler::journal::{
+            self, ForegroundJournalEntry, FrameSkipReason, IntervalBoundary,
+        };
+        use scheduler::Instant;
+
+        cx.app.borrow_mut().mode = crate::app::GpuiMode::Production;
+        let window = cx.add_window(|_, _| EmptyView);
+        let platform_window = cx.test_window(window.into());
+        platform_window.simulate_frame_request(RequestFrameOptions::default());
+        let (journal, _guard) = journal::install_test_foreground_journal(64, 4);
+        let mut collector = journal.collector();
+
+        for (signal_at, source) in [
+            (Some(Instant::now()), FrameRequestSource::NativeCallback),
+            (Some(Instant::now()), FrameRequestSource::LocalSchedule),
+            (None, FrameRequestSource::NativeCallback),
+        ] {
+            platform_window.simulate_frame_request(RequestFrameOptions {
+                signal_at,
+                signal_source: source,
+                require_presentation: true,
+                ..Default::default()
+            });
+            let entries = collector.collect_unseen().entries;
+            let signal_index = entries
+                .iter()
+                .position(|entry| {
+                    matches!(
+                        entry,
+                        ForegroundJournalEntry::PlatformSignal(signal)
+                            if signal.window_id == window.window_id()
+                                && signal.signal_at == signal_at
+                                && signal.source == source
+                                && signal_at.is_none_or(|at| signal.handled_at >= at)
+                    )
+                })
+                .expect("frame request metadata");
+            let skip_index = entries
+                .iter()
+                .position(|entry| {
+                    matches!(
+                        entry,
+                        ForegroundJournalEntry::Boundary(IntervalBoundary::FrameSkipped(skipped))
+                            if skipped.window_id == window.window_id()
+                                && skipped.reason == FrameSkipReason::NoRenderNeeded
+                    )
+                })
+                .expect("completed no-render boundary");
+            assert!(signal_index < skip_index);
+        }
+    }
+
+    #[cfg(feature = "profiler")]
+    #[gpui::test]
+    fn test_frame_demand_survives_throttling(cx: &mut TestAppContext) {
+        use crate::profiler::journal::{
+            self, ForegroundJournalEntry, FrameSkipReason, IntervalBoundary,
+        };
+        use scheduler::Instant;
+
+        // Test mode draws during effect flushing, bypassing platform frame throttling.
+        cx.app.borrow_mut().mode = crate::app::GpuiMode::Production;
+        let (journal, _guard) = journal::install_test_foreground_journal(256, 4);
+        let mut collector = journal.collector();
+        for initially_dirty in [true, false] {
+            // Keep the throttle closed without depending on short wall-clock deadlines.
+            let window = cx
+                .app
+                .borrow_mut()
+                .open_window(
+                    WindowOptions {
+                        inactive_frame_interval: Some(Duration::from_secs(3600)),
+                        ..Default::default()
+                    },
+                    |_, cx| cx.new(|_| EmptyView),
+                )
+                .expect("open inactive test window");
+            let platform_window = cx.test_window(window.into());
+            platform_window.simulate_active_status_change(false);
+            platform_window.simulate_frame_request(RequestFrameOptions::default());
+            let callback_ran = Rc::new(Cell::new(false));
+            let draws_before = window
+                .update(cx, |_, window, _| {
+                    let draws_before = window
+                        .frame_duration_snapshot()
+                        .draw_duration_histogram
+                        .len();
+                    if initially_dirty {
+                        window.refresh();
+                    }
+                    window.on_next_frame({
+                        let callback_ran = callback_ran.clone();
+                        move |window, _| {
+                            callback_ran.set(true);
+                            window.refresh();
+                        }
+                    });
+                    draws_before
+                })
+                .expect("schedule throttled frame");
+            // Skips only seal retained work, so give the throttled skip some.
+            let input_at = Instant::now();
+            journal::record_input(journal::InputTiming {
+                kind: "test",
+                start: input_at,
+                end: input_at,
+                caused_invalidation: false,
+            });
+            collector.collect_unseen();
+            platform_window.simulate_frame_request(RequestFrameOptions {
+                signal_at: Some(Instant::now()),
+                ..Default::default()
+            });
+            window
+                .update(cx, |_, window, _| {
+                    assert_eq!(
+                        window
+                            .frame_duration_snapshot()
+                            .draw_duration_histogram
+                            .len(),
+                        draws_before,
+                    );
+                })
+                .expect("inspect deferred frame");
+            assert!(!callback_ran.get());
+            assert!(collector.collect_unseen().entries.iter().any(|entry| {
+                matches!(
+                    entry,
+                    ForegroundJournalEntry::Boundary(IntervalBoundary::FrameSkipped(skipped))
+                        if skipped.window_id == window.window_id()
+                            && skipped.reason == FrameSkipReason::InactiveFrameRateLimit
+                )
+            }));
+            platform_window.simulate_frame_request(RequestFrameOptions {
+                signal_at: Some(Instant::now()),
+                require_presentation: true,
+                ..Default::default()
+            });
+            window
+                .update(cx, |_, window, _| {
+                    assert_eq!(
+                        window
+                            .frame_duration_snapshot()
+                            .draw_duration_histogram
+                            .len(),
+                        draws_before + 1,
+                    );
+                })
+                .expect("inspect presented frame");
+            assert!(callback_ran.get());
+        }
+    }
 
     /// Visibility transitions reach observers exactly once each, with the new
     /// state already stored on the window, and never wake the platform for a
@@ -7542,6 +8217,118 @@ mod tests {
         assert_eq!(test_window.frame_wake_count(), frame_wake_count);
     }
 
+    /// App learns display state from the platform's display notifications,
+    /// and a window from the platform's report of which display it is on.
+    #[gpui::test]
+    fn test_display_tracking(cx: &mut TestAppContext) {
+        use crate::{DisplayChanges, DisplayEvent, DisplayId, Subscription};
+
+        let sixty_hertz = Duration::from_secs(1) / 60;
+        let one_hundred_twenty_hertz = Duration::from_secs(1) / 120;
+        let one_hundred_forty_four_hertz = Duration::from_secs(1) / 144;
+
+        let display_events = Rc::new(RefCell::new(Vec::new()));
+        let _display_subscription = cx.update({
+            let display_events = display_events.clone();
+            move |cx| cx.observe_displays(move |event, _| display_events.borrow_mut().push(event))
+        });
+
+        let window = cx.add_window(|window, cx| DisplayTracker {
+            refresh_intervals: Vec::new(),
+            _subscription: cx.observe_window_display(
+                window,
+                |tracker: &mut DisplayTracker, window, cx| {
+                    tracker.refresh_intervals.push(window.refresh_interval(cx));
+                },
+            ),
+        });
+        let window_notifications = Rc::new(RefCell::new(Vec::new()));
+        let _window_subscription = window
+            .update(cx, {
+                let window_notifications = window_notifications.clone();
+                move |_, window, cx| {
+                    assert_eq!(window.refresh_interval(cx), Some(sixty_hertz));
+                    window.observe_window_display(move |window, cx| {
+                        window_notifications
+                            .borrow_mut()
+                            .push((window.display_id, window.refresh_interval(cx)));
+                    })
+                }
+            })
+            .unwrap();
+        let test_window = cx.test_window(window.into());
+
+        // The window may hear that it moved before App hears the display was
+        // connected. App learns about the display before the window's
+        // observers run, and the platform's later notification changes
+        // nothing.
+        cx.test_platform()
+            .connect_display(DisplayId(2), Some(one_hundred_twenty_hertz));
+        test_window.simulate_move_to_display(DisplayId(2));
+        assert_eq!(
+            window_notifications.take(),
+            [(Some(DisplayId(2)), Some(one_hundred_twenty_hertz))]
+        );
+        assert_eq!(display_events.take(), [DisplayEvent::Added(DisplayId(2))]);
+        cx.simulate_display_refresh_interval_change(DisplayId(2), Some(one_hundred_twenty_hertz));
+        assert!(window_notifications.borrow().is_empty());
+
+        // Platforms may report a move that isn't one.
+        test_window.simulate_move_to_display(DisplayId(2));
+        assert!(window_notifications.borrow().is_empty());
+
+        cx.simulate_display_refresh_interval_change(
+            DisplayId(2),
+            Some(one_hundred_forty_four_hertz),
+        );
+        assert_eq!(
+            window_notifications.take(),
+            [(Some(DisplayId(2)), Some(one_hundred_forty_four_hertz))]
+        );
+
+        // Changes to a display the window isn't on don't notify it.
+        cx.simulate_display_refresh_interval_change(DisplayId(1), Some(one_hundred_twenty_hertz));
+        cx.simulate_display_removed(DisplayId(1));
+        assert!(window_notifications.borrow().is_empty());
+
+        assert_eq!(
+            display_events.take(),
+            [
+                DisplayEvent::Changed {
+                    id: DisplayId(2),
+                    changes: DisplayChanges::REFRESH_INTERVAL,
+                },
+                DisplayEvent::Changed {
+                    id: DisplayId(1),
+                    changes: DisplayChanges::REFRESH_INTERVAL,
+                },
+                DisplayEvent::Removed(DisplayId(1)),
+            ]
+        );
+        window
+            .update(cx, |tracker, _, _| {
+                assert_eq!(
+                    tracker.refresh_intervals,
+                    [
+                        Some(one_hundred_twenty_hertz),
+                        Some(one_hundred_forty_four_hertz)
+                    ]
+                );
+            })
+            .unwrap();
+
+        struct DisplayTracker {
+            refresh_intervals: Vec<Option<Duration>>,
+            _subscription: Subscription,
+        }
+
+        impl Render for DisplayTracker {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                Empty
+            }
+        }
+    }
+
     #[gpui::test]
     fn test_fully_visible_bounds_preserve_layout_viewport(cx: &mut TestAppContext) {
         let window = cx.add_window(|_, _| EmptyView);
@@ -7567,7 +8354,7 @@ mod tests {
         assert!(platform_window.frame_wake_count() > wakes);
         platform_window.simulate_frame_request(RequestFrameOptions::default());
         let wakes = platform_window.frame_wake_count();
-        platform_window.simulate_insets_change(crate::WindowInsets {
+        let insets = crate::WindowInsets {
             safe_area: crate::Edges {
                 top: px(60.),
                 right: px(20.),
@@ -7578,10 +8365,14 @@ mod tests {
                 bottom: px(350.),
                 ..Default::default()
             },
-        });
+        };
+        platform_window.simulate_insets_change(insets.clone());
         assert!(platform_window.frame_wake_count() > wakes);
         window
-            .update(cx, |_, window, _| {
+            .update(cx, |_, window, cx| {
+                let focus = cx.focus_handle();
+                window.focus(&focus, cx);
+                assert_eq!(window.insets(), insets);
                 assert_eq!(window.viewport_size(), size(px(400.), px(800.)));
                 assert_eq!(window.visual_viewport_bounds(), visual_bounds);
                 assert_eq!(
@@ -7590,6 +8381,7 @@ mod tests {
                 );
                 window.request_virtual_keyboard();
                 window.dismiss_virtual_keyboard();
+                assert!(focus.is_focused(window));
                 assert_eq!(window.viewport_size(), size(px(400.), px(800.)));
             })
             .unwrap();
@@ -7610,6 +8402,16 @@ mod tests {
                     window.fully_visible_bounds().size,
                     size(Pixels::ZERO, Pixels::ZERO)
                 );
+            })
+            .unwrap();
+
+        // Some backends update geometry snapshots without delivering inset callbacks.
+        use crate::PlatformWindow as _;
+        platform_window.on_insets_changed(Box::new(|_| {}));
+        platform_window.simulate_insets_change(crate::WindowInsets::default());
+        window
+            .update(cx, |_, window, _| {
+                assert_eq!(window.insets(), crate::WindowInsets::default());
             })
             .unwrap();
     }
@@ -8579,6 +9381,258 @@ mod tests {
         assert_eq!(phases.borrow().as_slice(), [TouchPhase::Started]);
     }
 
+    #[gpui::test]
+    fn test_underline_exclusions_preserve_device_geometry(cx: &mut TestAppContext) {
+        test_underline_paint_at_scales(cx, |window| {
+            let (numerator, denominator) = match window.scale_factor() {
+                1.0 => (1, 1),
+                1.25 => (5, 4),
+                1.5 => (3, 2),
+                2.0 => (2, 1),
+                3.0 => (3, 1),
+                scale => panic!("unexpected scale {scale}"),
+            };
+            let snap = |quarters: i32| {
+                let scaled = quarters * numerator;
+                let divisor = 4 * denominator;
+                let rounded =
+                    scaled.abs() / divisor + i32::from(2 * (scaled.abs() % divisor) > divisor);
+                ScaledPixels((scaled.signum() * rounded) as f32)
+            };
+            let stroke = |quarters| {
+                if quarters == 0 {
+                    ScaledPixels(0.)
+                } else {
+                    snap(quarters).max(ScaledPixels(1.))
+                }
+            };
+
+            for origin in [-101, -3, -2, -1, 0, 1, 2, 3, 101] {
+                for width in [0, 1, 3, 84] {
+                    for thickness in [0, 1, 4, 7] {
+                        for wavy in [false, true] {
+                            let style = UnderlineStyle {
+                                thickness: px(thickness as f32 / 4.),
+                                color: Some(hsla(0.25, 0.5, 0.75, 0.5)),
+                                wavy,
+                            };
+                            let bounds = Bounds::new(
+                                point(snap(origin), snap(-origin)),
+                                size(
+                                    stroke(width),
+                                    stroke(thickness) * if wavy { 3. } else { 1. },
+                                ),
+                            );
+                            let origin = point(px(origin as f32 / 4.), px(-origin as f32 / 4.));
+                            let width = px(width as f32 / 4.);
+                            assert_eq!(window.underline_bounds(origin, width, &style), bounds);
+                            let original = paint_test_underlines(window, |window| {
+                                window.paint_underline(origin, width, &style);
+                            })
+                            .to_vec();
+                            assert_eq!(original.len(), usize::from(!bounds.is_empty()));
+                            if let Some(underline) = original.first() {
+                                assert_eq!(underline.bounds, bounds);
+                                assert_eq!(underline.thickness, stroke(thickness));
+                                assert_eq!(underline.wavy, wavy.into());
+                                assert_eq!(underline.color, hsla(0.25, 0.5, 0.75, 0.5));
+                            }
+
+                            let underlines = paint_test_underlines(window, |window| {
+                                window.paint_underline_with_exclusions(origin, width, &style, &[]);
+                            });
+                            assert_eq!(underlines.len(), original.len());
+                            for (actual, original) in underlines.iter().zip(&original) {
+                                assert_same_underline_geometry(actual, original);
+                                assert_eq!(actual.content_mask, original.content_mask);
+                            }
+
+                            let left = bounds.left().0 as i32;
+                            let right = bounds.right().0 as i32;
+                            let exclusions = [
+                                (15, 25),
+                                (3, 7),
+                                (5, 10),
+                                (10, 12),
+                                (0, 0),
+                                (4, 2),
+                                (-50, -1),
+                                (70, 100),
+                            ]
+                            .map(|(start, end)| {
+                                ScaledPixels((left + start) as f32)
+                                    ..ScaledPixels((left + end) as f32)
+                            });
+                            let underlines = paint_test_underlines(window, |window| {
+                                window.paint_underline_with_exclusions(
+                                    origin,
+                                    width,
+                                    &style,
+                                    &exclusions,
+                                );
+                            });
+                            let expected = (left..right)
+                                .filter(|column| {
+                                    !bounds.is_empty()
+                                        && !exclusions.iter().any(|span| {
+                                            span.contains(&ScaledPixels(*column as f32))
+                                        })
+                                })
+                                .collect::<Vec<_>>();
+                            assert_eq!(underline_device_columns(underlines), expected);
+                            for underline in underlines {
+                                assert_same_underline_geometry(underline, &original[0]);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    #[gpui::test]
+    fn test_underline_exclusions_preserve_helvetica_warning_edge(cx: &mut TestAppContext) {
+        test_underline_paint_at_scales(cx, |window| {
+            if window.scale_factor() != 2.0 {
+                return;
+            }
+            let style = UnderlineStyle {
+                thickness: px(1.),
+                color: None,
+                wavy: true,
+            };
+            let origin = point(px(2.888_183_8), px(15.357_917));
+            let width = px(23.848_145) - origin.x;
+            let original = paint_test_underlines(window, |window| {
+                window.paint_underline(origin, width, &style);
+            })[0];
+            assert_eq!(original.bounds.left(), ScaledPixels(6.));
+            assert_eq!(original.bounds.right(), ScaledPixels(48.));
+            let point_bounds = window.underline_bounds(origin, px(10.829_102), &style);
+            assert_eq!(point_bounds.left(), ScaledPixels(6.));
+            assert_eq!(point_bounds.right(), ScaledPixels(28.));
+
+            let underlines = paint_test_underlines(window, |window| {
+                window.paint_underline_with_exclusions(
+                    origin,
+                    width,
+                    &style,
+                    &[point_bounds.left()..point_bounds.right()],
+                );
+            });
+            assert_eq!(underlines.len(), 1);
+            assert_same_underline_geometry(&underlines[0], &original);
+            assert_eq!(
+                underline_device_columns(underlines),
+                (28..48).collect::<Vec<_>>()
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_underline_exclusions_preserve_content_mask_and_opacity(cx: &mut TestAppContext) {
+        test_underline_paint_at_scales(cx, |window| {
+            let scale = window.scale_factor();
+            let original_mask = window.content_mask();
+            let original_opacity = window.element_opacity();
+            let mask = ContentMask {
+                bounds: Bounds::from_corners(point(px(4.), px(10.)), point(px(16.), px(12.))),
+            };
+            let style = UnderlineStyle {
+                thickness: px(2.),
+                color: Some(hsla(0.25, 0.5, 0.75, 0.5)),
+                wavy: true,
+            };
+            let origin = point(px(-1.25), px(9.25));
+            let width = px(24.);
+            window.with_content_mask(Some(mask), |window| {
+                window.with_element_opacity(Some(0.5), |window| {
+                    window.with_element_opacity(Some(0.5), |window| {
+                        let original = paint_test_underlines(window, |window| {
+                            window.paint_underline(origin, width, &style);
+                        })[0];
+                        assert_eq!(original.color, hsla(0.25, 0.5, 0.75, 0.125));
+                        let underlines = paint_test_underlines(window, |window| {
+                            window.paint_underline_with_exclusions(
+                                origin,
+                                width,
+                                &style,
+                                &[ScaledPixels(6. * scale)..ScaledPixels(8. * scale)],
+                            );
+                        });
+                        assert_eq!(underlines.len(), 2);
+                        let expected = [(4. * scale, 6. * scale), (8. * scale, 16. * scale)].map(
+                            |(left, right)| {
+                                Bounds::from_corners(
+                                    point(ScaledPixels(left), ScaledPixels((10. * scale).floor())),
+                                    point(ScaledPixels(right), ScaledPixels((12. * scale).ceil())),
+                                )
+                            },
+                        );
+                        assert_eq!(
+                            underlines
+                                .iter()
+                                .map(|underline| underline.content_mask.bounds)
+                                .collect::<Vec<_>>(),
+                            expected
+                        );
+                        for underline in underlines {
+                            assert_same_underline_geometry(underline, &original);
+                        }
+                    });
+                });
+            });
+            assert_eq!(window.content_mask(), original_mask);
+            assert_eq!(window.element_opacity(), original_opacity);
+        });
+    }
+
+    #[gpui::test]
+    fn test_underline_exclusions_adversarial_permutations(cx: &mut TestAppContext) {
+        test_underline_paint_at_scales(cx, |window| {
+            let style = UnderlineStyle {
+                thickness: px(1.),
+                color: None,
+                wavy: true,
+            };
+            let origin = point(px(-4.), px(-1.));
+            let width = px(8.);
+            let left = (-4. * window.scale_factor()) as i32;
+            let right = (4. * window.scale_factor()) as i32;
+            let endpoints = [-16, -8, -1, 0, 1, 8, 16];
+            for first_start in endpoints {
+                for first_end in endpoints {
+                    for second_start in endpoints {
+                        for second_end in endpoints {
+                            let exclusions = [first_start..first_end, second_start..second_end];
+                            let expected = (left..right)
+                                .filter(|column| {
+                                    !exclusions.iter().any(|span| span.contains(column))
+                                })
+                                .collect::<Vec<_>>();
+                            let exclusions = exclusions.map(|span| {
+                                ScaledPixels(span.start as f32)..ScaledPixels(span.end as f32)
+                            });
+                            let underlines = paint_test_underlines(window, |window| {
+                                window.paint_underline_with_exclusions(
+                                    origin,
+                                    width,
+                                    &style,
+                                    &exclusions,
+                                );
+                            });
+                            assert_eq!(
+                                underline_device_columns(underlines),
+                                expected,
+                                "{exclusions:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     #[derive(Clone, Copy, PartialEq)]
     enum LongPressResponse {
         PreventDefault,
@@ -8618,6 +9672,64 @@ mod tests {
         }
     }
 
+    struct UnderlineTestView(Rc<dyn Fn(&mut Window)>);
+
+    impl Render for UnderlineTestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let paint = self.0.clone();
+            canvas(
+                |_, _, _| {},
+                move |_, _, window, _| {
+                    window.content_mask_stack.push(ContentMask {
+                        bounds: Bounds::from_corners(
+                            point(px(-1000.), px(-1000.)),
+                            point(px(1000.), px(1000.)),
+                        ),
+                    });
+                    paint(window);
+                    window.content_mask_stack.pop();
+                },
+            )
+            .size_full()
+        }
+    }
+
+    fn test_underline_paint_at_scales(
+        cx: &mut TestAppContext,
+        paint: impl Fn(&mut Window) + 'static,
+    ) {
+        let window = cx.add_window(move |_, _| UnderlineTestView(Rc::new(paint)));
+        for scale in [1., 1.25, 1.5, 2., 3.] {
+            cx.simulate_window_scale_factor_change(window.into(), scale);
+            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+                .unwrap();
+        }
+    }
+
+    fn paint_test_underlines(window: &mut Window, paint: impl FnOnce(&mut Window)) -> &[Underline] {
+        window.next_frame.scene.clear();
+        paint(window);
+        &window.next_frame.scene.underlines
+    }
+
+    fn assert_same_underline_geometry(actual: &Underline, expected: &Underline) {
+        assert_eq!(actual.bounds, expected.bounds);
+        assert_eq!(actual.thickness, expected.thickness);
+        assert_eq!(actual.wavy, expected.wavy);
+        assert_eq!(actual.color, expected.color);
+        assert_eq!(actual.pad, expected.pad);
+    }
+
+    fn underline_device_columns(underlines: &[Underline]) -> Vec<i32> {
+        underlines
+            .iter()
+            .flat_map(|underline| {
+                let bounds = underline.bounds.intersect(&underline.content_mask.bounds);
+                bounds.left().0 as i32..bounds.right().0 as i32
+            })
+            .collect()
+    }
+
     fn dispatch_touch<T: 'static>(
         window: crate::WindowHandle<T>,
         cx: &mut TestAppContext,
@@ -8640,5 +9752,167 @@ mod tests {
                 );
             })
             .unwrap();
+    }
+}
+
+#[cfg(all(test, any(feature = "inspector", debug_assertions)))]
+mod inspector_tests {
+    use super::*;
+    use crate::{
+        DivInspectorState, InspectorElementId, MouseDownEvent, StyleRefinement, TestAppContext, div,
+    };
+
+    #[gpui::test]
+    fn inspector_only_tracks_its_open_window(cx: &mut TestAppContext) {
+        let windows = [
+            cx.add_window(|_, cx| InspectorTestRoot {
+                child: cx.new(|_| InspectorTestView::default()),
+            }),
+            cx.add_window(|_, cx| InspectorTestRoot {
+                child: cx.new(|_| InspectorTestView::default()),
+            }),
+        ];
+        for window in windows {
+            assert_closed_inspector(window.into(), cx);
+        }
+        for _ in 0..2 {
+            cx.update_window(windows[0].into(), |root, window, cx| {
+                let root = root.downcast::<InspectorTestRoot>().expect("test root");
+                let child_widths = root.read(cx).child.read(cx).child_widths.clone();
+                window.toggle_inspector(cx);
+                window.draw(cx).clear(cx);
+                assert_eq!(child_widths.borrow().as_slice(), &[px(10.); 3]);
+                let path = window
+                    .rendered_frame
+                    .next_inspector_instance_ids
+                    .iter()
+                    .find_map(|(path, count)| (*count == 3).then(|| path.clone()))
+                    .expect("anonymous siblings share an inspector path");
+                let selected_id = InspectorElementId {
+                    path,
+                    instance_id: 1,
+                };
+                let position = window
+                    .rendered_frame
+                    .hitboxes
+                    .iter()
+                    .find(|hitbox| {
+                        window.rendered_frame.inspector_hitboxes.get(&hitbox.id)
+                            == Some(&selected_id)
+                    })
+                    .expect("middle sibling is pickable")
+                    .bounds
+                    .center();
+                window.simulate_mouse_move(position, cx);
+                window.dispatch_event(
+                    PlatformInput::MouseDown(MouseDownEvent {
+                        position,
+                        button: MouseButton::Left,
+                        modifiers: Modifiers::default(),
+                        click_count: 1,
+                        first_mouse: false,
+                    }),
+                    cx,
+                );
+                window.dispatch_event(
+                    PlatformInput::MouseUp(MouseUpEvent {
+                        position,
+                        button: MouseButton::Left,
+                        modifiers: Modifiers::default(),
+                        click_count: 1,
+                    }),
+                    cx,
+                );
+                assert!(!window.is_inspector_picking(cx));
+                assert_eq!(
+                    window
+                        .inspector
+                        .as_ref()
+                        .expect("open inspector")
+                        .read(cx)
+                        .active_element_id(),
+                    Some(&selected_id)
+                );
+                window.draw(cx).clear(cx);
+                window.with_inspector_state::<DivInspectorState, _>(
+                    Some(&selected_id),
+                    cx,
+                    |state, _| {
+                        let state = state.as_mut().expect("selected div has style state");
+                        assert_eq!(
+                            state.base_style.size.width,
+                            Some(crate::Length::from(px(10.)))
+                        );
+                        state.base_style.size.width = Some(crate::Length::from(px(25.)));
+                    },
+                );
+                window.refresh();
+                window.draw(cx).clear(cx);
+                assert_eq!(
+                    child_widths.borrow().as_slice(),
+                    &[px(10.), px(25.), px(10.)]
+                );
+            })
+            .expect("pick and edit a cached child");
+            assert_closed_inspector(windows[1].into(), cx);
+            windows[0]
+                .update(cx, |_, window, cx| window.toggle_inspector(cx))
+                .expect("close inspector");
+            assert_closed_inspector(windows[0].into(), cx);
+        }
+    }
+
+    struct InspectorTestRoot {
+        child: Entity<InspectorTestView>,
+    }
+
+    impl Render for InspectorTestRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            self.child
+                .clone()
+                .cached(StyleRefinement::default().size(px(100.)))
+        }
+    }
+
+    #[derive(Default)]
+    struct InspectorTestView {
+        child_widths: Rc<RefCell<Vec<Pixels>>>,
+    }
+
+    impl Render for InspectorTestView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let child_widths = self.child_widths.clone();
+            div()
+                .on_children_prepainted(move |bounds, _, _| {
+                    *child_widths.borrow_mut() =
+                        bounds.iter().map(|bounds| bounds.size.width).collect();
+                })
+                .with_dynamic_prepaint_order(|_, _| SmallVec::from_iter([2, 0, 1]))
+                .id("inspector-root")
+                .flex()
+                .children((0..3).map(|_| div().size(px(10.)).flex_shrink_0()))
+        }
+    }
+
+    fn assert_closed_inspector(window: AnyWindowHandle, cx: &mut TestAppContext) {
+        cx.update_window(window, |root, window, cx| {
+            window.draw(cx).clear(cx);
+            window.draw(cx).clear(cx);
+            let root = root.downcast::<InspectorTestRoot>().expect("test root");
+            assert_eq!(
+                root.read(cx)
+                    .child
+                    .read(cx)
+                    .child_widths
+                    .borrow()
+                    .as_slice(),
+                &[px(10.); 3]
+            );
+            for frame in [&window.rendered_frame, &window.next_frame] {
+                assert_eq!(frame.next_inspector_instance_ids.capacity(), 0);
+                assert_eq!(frame.inspector_hitboxes.capacity(), 0);
+            }
+        })
+        .expect("closed inspector has no bookkeeping and no style overrides");
     }
 }

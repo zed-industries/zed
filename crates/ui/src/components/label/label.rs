@@ -3,7 +3,7 @@ use std::ops::Range;
 
 use crate::utils::replace_control_characters;
 use crate::{LabelLike, prelude::*};
-use gpui::{HighlightStyle, StyleRefinement, StyledText};
+use gpui::{HighlightStyle, StyleRefinement, StyledText, TextAlign};
 
 /// A struct representing a label element in the UI.
 ///
@@ -99,6 +99,11 @@ impl Label {
     gpui::margin_style_methods!({
         visibility: pub
     });
+
+    pub fn text_center(mut self) -> Self {
+        self.style().text.text_align = Some(TextAlign::Center);
+        self
+    }
 
     pub fn flex_1(mut self) -> Self {
         self.style().flex_grow = Some(1.);

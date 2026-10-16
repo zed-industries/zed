@@ -1,10 +1,11 @@
-use crate::commit_view::CommitView;
+use crate::{commit_view::CommitView, create_tag_at_commit};
 use git::Oid;
 use gpui::{Action, ClipboardItem, Entity, FocusHandle, SharedString, WeakEntity, Window, actions};
 use project::{GIT_COMMAND_TASK_TAG, git_store::Repository};
 
 use task::{TaskContext, TaskVariables, VariableName};
 use ui::{Color, ContextMenu, ContextMenuEntry, IconName, IconPosition, prelude::*};
+use util::ResultExt as _;
 use workspace::Workspace;
 
 actions!(
@@ -20,7 +21,7 @@ actions!(
 );
 
 const COMMIT_TAG_LIST_WIDTH_IN_REMS: Rems = rems(10.);
-const CUSTOM_GIT_COMMANDS_DOCS_SLUG: &str = "tasks#custom-git-commands";
+pub(crate) const CUSTOM_GIT_COMMANDS_DOCS_SLUG: &str = "tasks#custom-git-commands";
 
 pub(crate) struct CommitContextMenuData {
     pub(crate) sha: Oid,
@@ -129,6 +130,20 @@ pub(crate) fn commit_context_menu(
                     }
                 })
             })
+            .entry("Create Tag…", None, {
+                let repository = repository.clone();
+                let workspace = workspace.clone();
+                move |window, cx| {
+                    let Some(repository) = repository.as_ref().and_then(WeakEntity::upgrade) else {
+                        return;
+                    };
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            create_tag_at_commit(sha, false, repository, workspace, window, cx);
+                        })
+                        .log_err();
+                }
+            })
             .when(source == CommitContextMenuSource::GitPanel, |menu| {
                 menu.entry("Show in Git Graph", None, move |window, cx| {
                     window.dispatch_action(
@@ -179,7 +194,7 @@ pub(crate) fn commit_context_menu(
     })
 }
 
-fn git_task_context(
+pub(crate) fn git_task_context(
     repository: &Option<WeakEntity<Repository>>,
     commit_sha: git::Oid,
     ref_name: Option<&str>,
@@ -218,7 +233,7 @@ fn git_task_context(
     })
 }
 
-fn git_context_menu_tasks(
+pub(crate) fn git_context_menu_tasks(
     task_context: Option<TaskContext>,
     workspace: &WeakEntity<Workspace>,
     cx: &App,

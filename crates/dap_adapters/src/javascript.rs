@@ -19,6 +19,8 @@ impl JsDebugAdapter {
     const ADAPTER_NAME: &'static str = "JavaScript";
     const ADAPTER_NPM_NAME: &'static str = "vscode-js-debug";
     const ADAPTER_PATH: &'static str = "js-debug/src/dapDebugServer.js";
+    const DWARF_DEBUGGING_PACKAGE_NAME: &'static str = "@vscode/dwarf-debugging";
+    const DWARF_DEBUGGING_PACKAGE_VERSION: &'static str = "0.0.2";
 
     async fn fetch_latest_adapter_version(
         &self,
@@ -44,6 +46,44 @@ impl JsDebugAdapter {
                 .browser_download_url
                 .clone(),
         })
+    }
+
+    async fn installed_version_directory(&self) -> Result<PathBuf> {
+        let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
+
+        let file_name_prefix = format!("{}_", self.name());
+
+        util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {
+            file_name.starts_with(&file_name_prefix)
+        })
+        .await
+        .context("Couldn't find JavaScript dap directory")
+    }
+
+    async fn install_dwarf_debugging(&self, delegate: &Arc<dyn DapDelegate>) -> Result<()> {
+        let js_debug_directory = self.installed_version_directory().await?.join("js-debug");
+        let node_runtime = delegate.node_runtime();
+        let installed_version = node_runtime
+            .npm_package_installed_version(&js_debug_directory, Self::DWARF_DEBUGGING_PACKAGE_NAME)
+            .await?
+            .map(|version| version.to_string());
+        if installed_version.as_deref() == Some(Self::DWARF_DEBUGGING_PACKAGE_VERSION) {
+            return Ok(());
+        }
+
+        delegate.output_to_console(format!(
+            "Installing {} for WebAssembly debugging...",
+            Self::DWARF_DEBUGGING_PACKAGE_NAME
+        ));
+        node_runtime
+            .npm_install_packages(
+                &js_debug_directory,
+                &[(
+                    Self::DWARF_DEBUGGING_PACKAGE_NAME,
+                    Self::DWARF_DEBUGGING_PACKAGE_VERSION,
+                )],
+            )
+            .await
     }
 
     async fn get_installed_binary(
@@ -133,16 +173,9 @@ impl JsDebugAdapter {
         let adapter_path = if let Some(user_installed_path) = user_installed_path {
             user_installed_path
         } else {
-            let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
-
-            let file_name_prefix = format!("{}_", self.name());
-
-            util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {
-                file_name.starts_with(&file_name_prefix)
-            })
-            .await
-            .context("Couldn't find JavaScript dap directory")?
-            .join(Self::ADAPTER_PATH)
+            self.installed_version_directory()
+                .await?
+                .join(Self::ADAPTER_PATH)
         };
 
         let arguments = if let Some(mut args) = user_args {
@@ -520,6 +553,21 @@ impl DebugAdapter for JsDebugAdapter {
                 .await?;
             } else {
                 delegate.output_to_console(format!("{} debug adapter is up to date", self.name()));
+            }
+
+            // Don't install the DWARF debugging if the user has specified their own debugger path
+            // we don't want to mess up their install.
+            if user_installed_path.is_none()
+                && let Err(error) = self.install_dwarf_debugging(delegate).await
+            {
+                delegate.output_to_console(format!(
+                    "Failed to install {}: {error:#}",
+                    Self::DWARF_DEBUGGING_PACKAGE_NAME
+                ));
+                log::error!(
+                    "failed to install {}: {error:#}",
+                    Self::DWARF_DEBUGGING_PACKAGE_NAME
+                );
             }
         }
 

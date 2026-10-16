@@ -1,4 +1,4 @@
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use editor::{EditorStyle, MultiBuffer, display_map::*};
 use gpui::{AppContext as _, HighlightStyle, Hsla, TestDispatcher, font, px};
 use itertools::Itertools;
@@ -6,6 +6,7 @@ use multi_buffer::MultiBufferOffset;
 use project::project_settings::DiagnosticSeverity;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use settings::SettingsStore;
+use std::hint::black_box;
 use std::{num::NonZeroU32, time::Duration};
 use text::Bias;
 use util::RandomCharIter;
