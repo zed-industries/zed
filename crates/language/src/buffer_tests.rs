@@ -16,6 +16,7 @@ use settings::{AllLanguageSettingsContent, LanguageSettingsContent};
 use std::collections::BTreeSet;
 use std::{
     env,
+    num::NonZeroU32,
     ops::Range,
     sync::LazyLock,
     time::{Duration, Instant},
@@ -2564,7 +2565,10 @@ fn test_autoindent_edit_before_insertion(cx: &mut App) {
 
 #[gpui::test]
 fn test_autoindent_block_mode(cx: &mut App) {
-    init_settings(cx, |_| {});
+    init_settings(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4);
+        settings.defaults.hard_tabs = Some(false);
+    });
 
     cx.new(|cx| {
         let text = r#"
@@ -2647,7 +2651,10 @@ fn test_autoindent_block_mode(cx: &mut App) {
 
 #[gpui::test]
 fn test_autoindent_block_mode_with_newline(cx: &mut App) {
-    init_settings(cx, |_| {});
+    init_settings(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4);
+        settings.defaults.hard_tabs = Some(false);
+    });
 
     cx.new(|cx| {
         let text = r#"
@@ -2697,7 +2704,10 @@ fn test_autoindent_block_mode_with_newline(cx: &mut App) {
 
 #[gpui::test]
 fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut App) {
-    init_settings(cx, |_| {});
+    init_settings(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4);
+        settings.defaults.hard_tabs = Some(false);
+    });
 
     cx.new(|cx| {
         let text = r#"
@@ -2777,6 +2787,7 @@ fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut App) {
 #[gpui::test]
 fn test_autoindent_block_mode_with_hard_tabs(cx: &mut App) {
     init_settings(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4);
         settings.defaults.hard_tabs = Some(true);
     });
 
@@ -2808,7 +2819,10 @@ fn test_autoindent_block_mode_with_hard_tabs(cx: &mut App) {
 
 #[gpui::test]
 fn test_autoindent_block_mode_multiple_adjacent_ranges(cx: &mut App) {
-    init_settings(cx, |_| {});
+    init_settings(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4);
+        settings.defaults.hard_tabs = Some(false);
+    });
 
     cx.new(|cx| {
         let (text, ranges_to_replace) = marked_text_ranges(
@@ -2863,6 +2877,106 @@ fn test_autoindent_block_mode_multiple_adjacent_ranges(cx: &mut App) {
             }
             "
             .unindent()
+        );
+
+        buffer
+    });
+}
+
+#[gpui::test]
+fn test_autoindent_block_mode_mixed_tabs_and_spaces(cx: &mut App) {
+    init_settings(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4);
+        settings.defaults.hard_tabs = Some(true);
+    });
+
+    cx.new(|cx| {
+        let text = "fn a() {\n\tb();\n}";
+        let mut buffer = Buffer::local(text, cx).with_language(rust_lang(), cx);
+
+        // Insert a block with mixed indentation:
+        // Row 0: 0 block indent (indented to visual column 4 = 1 tab in body)
+        // Row 1: 1 space + 1 tab (visual column 4) + code -> delta +4 shifts to column 8 (2 tabs: \t\t)
+        // Row 2: 1 tab + 2 spaces (visual column 6) + code -> delta +4 shifts to column 10 (2 tabs + 2 spaces: \t\t  )
+        let original_indent_columns = vec![Some(0)];
+        let inserted_text = "if true {\n \tc();\n\t  d();\n}\n";
+        buffer.edit(
+            [(Point::new(2, 0)..Point::new(2, 0), inserted_text)],
+            Some(AutoindentMode::Block {
+                original_indent_columns,
+            }),
+            cx,
+        );
+
+        assert_eq!(
+            buffer.text(),
+            "fn a() {\n\tb();\n\tif true {\n\t\tc();\n\t\t  d();\n\t}\n}"
+        );
+
+        buffer
+    });
+}
+
+#[gpui::test]
+fn test_autoindent_block_mode_outdent_saturates_at_zero(cx: &mut App) {
+    init_settings(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4);
+        settings.defaults.hard_tabs = Some(false);
+    });
+
+    cx.new(|cx| {
+        let text = "fn a() {\n}";
+        let mut buffer = Buffer::local(text, cx).with_language(rust_lang(), cx);
+
+        // Block copied from a deeply nested scope:
+        // Row 0: 8 spaces -> moves to column 4 (delta = -4)
+        // Row 1: 2 spaces -> 2 - 4 = -2, saturates at column 0 (no underflow)
+        // Row 2: 6 spaces -> 6 - 4 = 2, moves to column 2
+        let original_indent_columns = vec![Some(8)];
+        let inserted_text = "        b();\n  c();\n      d();\n";
+        buffer.edit(
+            [(Point::new(1, 0)..Point::new(1, 0), inserted_text)],
+            Some(AutoindentMode::Block {
+                original_indent_columns,
+            }),
+            cx,
+        );
+
+        assert_eq!(
+            buffer.text(),
+            "fn a() {\n    b();\nc();\n  d();\n}"
+        );
+
+        buffer
+    });
+}
+
+#[gpui::test]
+fn test_autoindent_block_mode_preserves_empty_lines(cx: &mut App) {
+    init_settings(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4);
+        settings.defaults.hard_tabs = Some(false);
+    });
+
+    cx.new(|cx| {
+        let text = "fn a() {\n}";
+        let mut buffer = Buffer::local(text, cx).with_language(rust_lang(), cx);
+
+        // In Block mode, lines with code are shifted by the delta,
+        // while empty lines receive the block mode indentation.
+        let original_indent_columns = vec![Some(0)];
+        let inserted_text = "b();\n\nc();\n";
+        buffer.edit(
+            [(Point::new(1, 0)..Point::new(1, 0), inserted_text)],
+            Some(AutoindentMode::Block {
+                original_indent_columns,
+            }),
+            cx,
+        );
+
+        assert_eq!(
+            buffer.text(),
+            "fn a() {\n    b();\n    \n    c();\n}"
         );
 
         buffer
