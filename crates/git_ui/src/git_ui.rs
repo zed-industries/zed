@@ -547,7 +547,7 @@ impl Render for RenameBranchModal {
                     .gap_2()
                     .child(self.editor.clone())
                     .child(
-                        Label::new(format!("{new_name}"))
+                        Label::new(new_name)
                             .size(LabelSize::Small)
                             .color(Color::Muted)
                             .single_line()
