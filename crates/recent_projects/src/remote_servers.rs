@@ -2948,7 +2948,6 @@ impl RemoteServerProjects {
         _cx: &mut Context<Self>,
     ) -> impl IntoElement {
         v_flex()
-            .min_h(rems(20.))
             .size_full()
             .child(self.default_picker.clone())
             .into_any_element()
