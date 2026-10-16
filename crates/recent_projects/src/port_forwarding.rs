@@ -1172,7 +1172,7 @@ mod tests {
         let fs = app_state.fs.as_fake();
         let project = Project::test(fs.clone(), [], cx).await;
 
-        cx.update(|_, cx| {
+        cx.update(|cx| {
             cx.bind_keys([
                 KeyBinding::new("tab", menu::SelectNext, None),
                 KeyBinding::new("shift-tab", menu::SelectPrevious, None),
@@ -1414,7 +1414,7 @@ mod tests {
 
         let identity = SshConnectionIdentity::from(&options);
         assert_eq!(
-            cx.update(|cx| read_forwards(&identity, cx))
+            cx.update(|_, cx| read_forwards(&identity, cx))
                 .expect("updated SSH settings should be readable"),
             vec![replacement]
         );
