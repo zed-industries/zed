@@ -101,6 +101,7 @@ pub enum IconName {
     DebugStepInto,
     DebugStepOut,
     DebugStepOver,
+    Delete,
     Diff,
     DiffSplit,
     DiffSplitAuto,

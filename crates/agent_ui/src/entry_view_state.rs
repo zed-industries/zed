@@ -2,7 +2,7 @@ use std::{ops::Range, sync::Arc};
 
 use acp_thread::{AcpThread, AgentThreadEntry, AssistantMessageChunk, ToolCall};
 use agent::ThreadStore;
-use agent_client_protocol::schema::v1 as acp_v1;
+use agent_client_protocol::schema::v2 as acp_v2;
 use agent_settings::AgentSettings;
 use collections::{HashMap, HashSet};
 use editor::{
@@ -24,6 +24,10 @@ use ui::{Context, TextSize};
 use workspace::Workspace;
 
 use crate::message_editor::{MessageEditor, MessageEditorEvent, SharedSessionCapabilities};
+
+/// Top padding, in rems, inside agent terminals. The tool card adds it to the
+/// scrollable terminal's height so the number of visible rows doesn't change.
+pub(crate) const TERMINAL_CONTENT_TOP_PADDING: f32 = 0.5;
 
 /// Maps an entry index through the removal of `removed` (a contiguous range of
 /// entries), returning `None` if the index referred to a removed entry.
@@ -48,7 +52,7 @@ pub struct EntryViewState {
     auto_expanded_thinking_block: Option<(usize, usize)>,
     user_toggled_thinking_blocks: HashSet<(usize, usize)>,
     expanded_compactions: HashSet<usize>,
-    expanded_tool_calls: HashSet<acp_v1::ToolCallId>,
+    expanded_tool_calls: HashSet<acp_v2::ToolCallId>,
 }
 
 impl EntryViewState {
@@ -74,23 +78,23 @@ impl EntryViewState {
         }
     }
 
-    pub(crate) fn is_tool_call_expanded(&self, tool_call_id: &acp_v1::ToolCallId) -> bool {
+    pub(crate) fn is_tool_call_expanded(&self, tool_call_id: &acp_v2::ToolCallId) -> bool {
         self.expanded_tool_calls.contains(tool_call_id)
     }
 
     pub(crate) fn is_tool_call_content_visible(&self, tool_call: &ToolCall) -> bool {
-        self.is_tool_call_expanded(&tool_call.id) || tool_call.authorization().is_some()
+        self.is_tool_call_expanded(&tool_call.id) || tool_call.authorization_id().is_some()
     }
 
-    pub(crate) fn expand_tool_call(&mut self, tool_call_id: acp_v1::ToolCallId) {
+    pub(crate) fn expand_tool_call(&mut self, tool_call_id: acp_v2::ToolCallId) {
         self.expanded_tool_calls.insert(tool_call_id);
     }
 
-    pub(crate) fn collapse_tool_call(&mut self, tool_call_id: &acp_v1::ToolCallId) {
+    pub(crate) fn collapse_tool_call(&mut self, tool_call_id: &acp_v2::ToolCallId) {
         self.expanded_tool_calls.remove(tool_call_id);
     }
 
-    pub(crate) fn toggle_tool_call_expansion(&mut self, tool_call_id: &acp_v1::ToolCallId) {
+    pub(crate) fn toggle_tool_call_expansion(&mut self, tool_call_id: &acp_v2::ToolCallId) {
         if !self.expanded_tool_calls.remove(tool_call_id) {
             self.expanded_tool_calls.insert(tool_call_id.clone());
         }
@@ -242,16 +246,15 @@ impl EntryViewState {
 
         match thread_entry {
             AgentThreadEntry::UserMessage(message) => {
-                let can_rewind = thread.read(cx).supports_truncate(cx);
-                let has_client_id = message.client_id.is_some();
-                let is_subagent = thread.read(cx).parent_session_id().is_some();
+                let can_rewind = thread
+                    .read(cx)
+                    .can_rewind_to(message.client_id.as_ref(), cx);
                 let source_blocks = message.content.source_blocks();
                 let source_version = message.content.source_version();
                 let source_is_representable = source_blocks
                     .iter()
                     .all(acp_thread::content::can_convert_to_v1);
-                let is_editable =
-                    can_rewind && has_client_id && !is_subagent && source_is_representable;
+                let is_editable = can_rewind && source_is_representable;
                 if let Some(Entry::UserMessage {
                     editor,
                     synced_source_version,
@@ -554,9 +557,9 @@ pub struct EntryViewEvent {
 }
 
 pub enum ViewEvent {
-    NewDiff(acp_v1::ToolCallId),
-    NewTerminal(acp_v1::ToolCallId),
-    TerminalMovedToBackground(acp_v1::ToolCallId),
+    NewDiff(acp_v2::ToolCallId),
+    NewTerminal(acp_v2::ToolCallId),
+    TerminalMovedToBackground(acp_v2::ToolCallId),
     MessageEditorEvent(Entity<MessageEditor>, MessageEditorEvent),
     OpenDiffLocation {
         path: String,
@@ -740,6 +743,7 @@ fn create_terminal(
             cx,
         );
 
+        view.set_content_top_padding(gpui::rems(TERMINAL_CONTENT_TOP_PADDING), cx);
         view.set_embedded_mode(Some(1000), cx);
         view
     })
@@ -811,7 +815,7 @@ mod tests {
     use std::sync::Arc;
 
     use acp_thread::{AgentConnection, StubAgentConnection};
-    use agent_client_protocol::schema::v1 as acp_v1;
+    use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
     use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
     use editor::RowInfo;
     use fs::FakeFs;
@@ -846,7 +850,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_diff_sync(cx: &mut TestAppContext) {
+    async fn test_legacy_diff_sync(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
@@ -978,10 +982,10 @@ mod tests {
         let _response_task = thread.update(cx, |thread, cx| {
             thread
                 .request_elicitation(
-                    acp_v1::CreateElicitationRequest::new(
-                        acp_v1::ElicitationFormMode::new(
-                            acp_v1::ElicitationSessionScope::new(session_id.clone()),
-                            acp_v1::ElicitationSchema::new().string("name", true),
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationFormMode::new(
+                            acp_v2::ElicitationSessionScope::new(session_id.clone()),
+                            acp_v2::ElicitationSchema::new().string("name", true),
                         ),
                         "Provide a name",
                     ),
@@ -989,14 +993,14 @@ mod tests {
                 )
                 .unwrap()
         });
-        cx.update(|_, cx| {
-            connection.send_update(
-                session_id,
-                acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new(
-                    acp_v1::ContentBlock::Text(acp_v1::TextContent::new("hello")),
-                )),
-                cx,
-            );
+        thread.update(cx, |thread, cx| {
+            thread
+                .append_message_chunk(
+                    acp_thread::MessageKind::Assistant,
+                    acp_v2::ContentChunk::new("hello".into(), "after-elicitation"),
+                    cx,
+                )
+                .expect("append current message after elicitation");
         });
 
         let view_state = cx.new(|_cx| {
