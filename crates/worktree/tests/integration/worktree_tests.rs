@@ -5350,8 +5350,18 @@ async fn test_noisy_dot_git_events_do_not_emit_git_repo_update(
         path!("/main_repo/.git/info/refs"),
         path!("/main_repo/.git/info/refs_lzOf51"),
         path!("/main_repo/.git/gc.pid"),
+        path!("/main_repo/.git/fsmonitor--daemon/cookies/1234-1"),
+        path!("/main_repo/.git/lfs/tmp/abc123"),
         // Linked-worktree specific skipped paths
         path!("/main_repo/.git/worktrees/feature/index.lock"),
+        path!("/main_repo/.git/worktrees/feature/fsmonitor--daemon/cookies/1234-1"),
+        path!("/main_repo/.git/worktrees/feature/fsmonitor--daemon/cookies"),
+        path!("/main_repo/.git/worktrees/feature/logs/HEAD"),
+        path!("/main_repo/.git/worktrees/feature/ORIG_HEAD"),
+        path!("/main_repo/.git/worktrees/feature/rebase-merge/done"),
+        path!("/main_repo/.git/worktrees/feature/index.new"),
+        // Linked worktrees that are not open in Zed still share the common dir.
+        path!("/main_repo/.git/worktrees/other/fsmonitor--daemon/cookies/5678-2"),
     ];
     for path in skipped_paths {
         fs.emit_fs_event(path, Some(PathEventKind::Changed));
