@@ -7,7 +7,10 @@ use crate::{
         PromptCompletionProviderDelegate, PromptContextAction, PromptContextType,
         PromptLocalCommand, SlashCommandCompletion,
     },
-    mention_set::{Mention, MentionImage, MentionSet, insert_crease_for_mention},
+    mention_set::{
+        Mention, MentionImage, MentionSet, insert_crease_for_mention,
+        show_images_not_supported_toast,
+    },
 };
 use acp_thread::MentionUri;
 use agent::ThreadStore;
@@ -324,9 +327,10 @@ async fn resolve_pasted_context_items(
     supports_images: bool,
     entries: Vec<ClipboardEntry>,
     cx: &mut gpui::AsyncWindowContext,
-) -> (Vec<ResolvedPastedContextItem>, Vec<Entity<Worktree>>) {
+) -> (Vec<ResolvedPastedContextItem>, Vec<Entity<Worktree>>, bool) {
     let mut items = Vec::new();
     let mut added_worktrees = Vec::new();
+    let mut skipped_images = false;
     let default_image_name: SharedString = "Image".into();
 
     for entry in entries {
@@ -338,6 +342,8 @@ async fn resolve_pasted_context_items(
                         image,
                         default_image_name.clone(),
                     ));
+                } else {
+                    skipped_images = true;
                 }
             }
             ClipboardEntry::ExternalPaths(paths) => {
@@ -357,6 +363,8 @@ async fn resolve_pasted_context_items(
                     {
                         if supports_images {
                             items.push(ResolvedPastedContextItem::Image(image, name));
+                        } else {
+                            skipped_images = true;
                         }
                         continue;
                     }
@@ -382,7 +390,7 @@ async fn resolve_pasted_context_items(
         }
     }
 
-    (items, added_worktrees)
+    (items, added_worktrees, skipped_images)
 }
 
 fn insert_project_path_as_context(
@@ -1383,6 +1391,13 @@ impl MessageEditor {
         let project_is_local = project.read(cx).is_local();
         let supports_images = self.session_capabilities.read().supports_images();
         if !project_is_local && !supports_images {
+            if clipboard
+                .entries()
+                .iter()
+                .any(|entry| matches!(entry, ClipboardEntry::Image(_)))
+            {
+                show_images_not_supported_toast(&self.workspace, cx);
+            }
             return false;
         }
         let editor = self.editor.clone();
@@ -1392,7 +1407,7 @@ impl MessageEditor {
 
         window
             .spawn(cx, async move |mut cx| {
-                let (items, added_worktrees) = resolve_pasted_context_items(
+                let (items, added_worktrees, skipped_images) = resolve_pasted_context_items(
                     project,
                     project_is_local,
                     supports_images,
@@ -1400,6 +1415,10 @@ impl MessageEditor {
                     &mut cx,
                 )
                 .await;
+                if skipped_images {
+                    cx.update(|_, cx| show_images_not_supported_toast(&workspace, cx))
+                        .ok();
+                }
                 insert_resolved_pasted_context_items(
                     items,
                     added_worktrees,
@@ -5428,6 +5447,46 @@ mod tests {
                 } if content == "content"
             )
         }));
+    }
+
+    #[gpui::test]
+    async fn test_paste_image_without_image_support_shows_toast(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (message_editor, editor, mut cx) =
+            setup_paste_test_message_editor(json!({"file.txt": "content"}), cx).await;
+
+        // Sessions don't support images unless the agent advertises it.
+        message_editor.read_with(&cx, |message_editor, _cx| {
+            assert!(!message_editor.session_capabilities.read().supports_images());
+        });
+
+        let png_bytes = base64::prelude::BASE64_STANDARD
+            .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
+            .expect("decode png");
+        cx.write_to_clipboard(ClipboardItem {
+            entries: vec![ClipboardEntry::Image(gpui::Image::from_bytes(
+                gpui::ImageFormat::Png,
+                png_bytes,
+            ))],
+        });
+        message_editor.update_in(&mut cx, |message_editor, window, cx| {
+            message_editor.paste(&Paste, window, cx);
+        });
+        cx.run_until_parked();
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "");
+        });
+        let workspace = message_editor.read_with(&cx, |message_editor, _cx| {
+            message_editor.workspace.upgrade().unwrap()
+        });
+        workspace.read_with(&cx, |workspace, _cx| {
+            assert!(workspace.has_notification(
+                &workspace::notifications::NotificationId::unique::<
+                    crate::mention_set::ImagesNotSupportedToast,
+                >()
+            ));
+        });
     }
 
     async fn setup_paste_test_message_editor(
