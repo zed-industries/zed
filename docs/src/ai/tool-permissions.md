@@ -56,7 +56,7 @@ The `tool_permissions` setting lets you customize tool permissions by specifying
 | `search_web`       | The search query                                 |
 | `skill`            | The absolute path to the skill's `SKILL.md` file |
 
-For MCP tools, use the format `mcp:<server>:<tool_name>`.
+For [MCP tools](./mcp.md), use the format `mcp:<server>:<tool_name>`.
 For example, a tool called `create_issue` on a server called `github` would be `mcp:github:create_issue`.
 
 For model-invoked [Skills](./skills.md), use the `skill` tool. A user-invoked `/skill-name` slash command does not prompt again because you explicitly invoked the skill.

@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use fs::Fs;
-use gpui::{App, Global, ReadGlobal, SharedString, Task};
+use gpui::{App, EntityId, Global, ReadGlobal, SharedString, Task};
 use language::{BinaryStatus, LanguageLoader, LanguageMatcher, LanguageName};
 use lsp::LanguageServerName;
 use parking_lot::RwLock;
@@ -301,6 +301,7 @@ pub trait ExtensionLanguageServerProxy: Send + Sync + 'static {
 
     fn update_language_server_status(
         &self,
+        source: Option<EntityId>,
         language_server_id: LanguageServerName,
         status: BinaryStatus,
     );
@@ -335,6 +336,7 @@ impl ExtensionLanguageServerProxy for ExtensionHostProxy {
 
     fn update_language_server_status(
         &self,
+        source: Option<EntityId>,
         language_server_id: LanguageServerName,
         status: BinaryStatus,
     ) {
@@ -342,7 +344,7 @@ impl ExtensionLanguageServerProxy for ExtensionHostProxy {
             return;
         };
 
-        proxy.update_language_server_status(language_server_id, status)
+        proxy.update_language_server_status(source, language_server_id, status)
     }
 }
 

@@ -1,29 +1,27 @@
 use anyhow::Result;
-use collections::HashMap;
+
 use credentials_provider::CredentialsProvider;
-use futures::{FutureExt, Stream, StreamExt, future::BoxFuture};
+use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
 use http_client::{CustomHeaders, HttpClient};
+use language_model::chat_completion::ChatCompletionEventMapper;
 use language_model::{
     ApiKeyConfiguration, ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel,
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
-    ProviderSettingsView, RateLimiter, Role, StopReason, TokenUsage, env_var,
+    LanguageModelClient, LanguageModelCompletionError, LanguageModelCompletionStream,
+    LanguageModelEffortLevel, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolChoiceSupport,
+    LanguageModelToolResultContent, MessageContent, ModelRateLimiters, ProviderSettingsView, Role,
+    env_var, unavailable_error,
 };
-use open_ai::completion::ReasoningDetailsAccumulator;
 use open_router::{
     Model, ModelMode as OpenRouterModelMode, OPEN_ROUTER_API_URL, ReasoningEffort,
     ResponseStreamEvent, list_models,
 };
 use settings::{OpenRouterAvailableModel as AvailableModel, Settings, SettingsStore};
 use sha2::{Digest as _, Sha256};
-use std::pin::Pin;
 use std::sync::{Arc, LazyLock};
 use ui::IconName;
-
-use language_model::util::{fix_streamed_json, parse_tool_arguments};
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("openrouter");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("OpenRouter");
@@ -42,6 +40,7 @@ pub struct OpenRouterSettings {
 pub struct OpenRouterLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
     state: Entity<State>,
+    request_limiters: ModelRateLimiters,
 }
 
 pub struct State {
@@ -162,7 +161,11 @@ impl OpenRouterLanguageModelProvider {
             }
         });
 
-        Self { http_client, state }
+        Self {
+            http_client,
+            state,
+            request_limiters: ModelRateLimiters::default(),
+        }
     }
 
     fn settings(cx: &App) -> &OpenRouterSettings {
@@ -178,47 +181,9 @@ impl OpenRouterLanguageModelProvider {
         }
     }
 
-    fn create_language_model(&self, model: open_router::Model) -> Arc<dyn LanguageModel> {
-        Arc::new(OpenRouterLanguageModel {
-            id: LanguageModelId::from(model.id().to_string()),
-            model,
-            state: self.state.clone(),
-            http_client: self.http_client.clone(),
-            request_limiter: RateLimiter::new(4),
-        })
-    }
-}
-
-impl LanguageModelProviderState for OpenRouterLanguageModelProvider {
-    type ObservableEntity = State;
-
-    fn observable_entity(&self) -> Option<Entity<Self::ObservableEntity>> {
-        Some(self.state.clone())
-    }
-}
-
-impl LanguageModelProvider for OpenRouterLanguageModelProvider {
-    fn id(&self) -> LanguageModelProviderId {
-        PROVIDER_ID
-    }
-
-    fn name(&self) -> LanguageModelProviderName {
-        PROVIDER_NAME
-    }
-
-    fn icon(&self) -> IconOrSvg {
-        IconOrSvg::Icon(IconName::AiOpenRouter)
-    }
-
-    fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        Some(self.create_language_model(open_router::Model::default()))
-    }
-
-    fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        None
-    }
-
-    fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+    /// Every model this provider lists, in order: the fetched list, with
+    /// settings entries replacing fetched ones of the same name or appended.
+    fn open_router_models(&self, cx: &App) -> Vec<open_router::Model> {
         let mut models_from_api = self.state.read(cx).available_models.clone();
         let mut settings_models = Vec::new();
 
@@ -260,45 +225,31 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
         }
 
         models_from_api
+    }
+
+    /// The listed model with `id`, or the built-in default model when `id`
+    /// names it, even if the fetched list doesn't include it.
+    fn open_router_model(&self, id: &str, cx: &App) -> Option<open_router::Model> {
+        self.open_router_models(cx)
             .into_iter()
-            .map(|model| self.create_language_model(model))
-            .collect()
+            .find(|listed| listed.id() == id)
+            .or_else(|| {
+                let default = open_router::Model::default();
+                (default.id() == id).then_some(default)
+            })
     }
 
-    fn is_authenticated(&self, cx: &App) -> bool {
-        self.state.read(cx).is_authenticated()
+    /// The current configuration of `model`, if this provider still offers it.
+    fn config(
+        &self,
+        model: &LanguageModel,
+        cx: &App,
+    ) -> Result<open_router::Model, LanguageModelCompletionError> {
+        self.open_router_model(model.id.0.as_ref(), cx)
+            .ok_or_else(|| unavailable_error(model))
     }
 
-    fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
-        self.state.update(cx, |state, cx| state.authenticate(cx))
-    }
-
-    fn settings_view(&self, cx: &mut App) -> Option<ProviderSettingsView> {
-        let state = self.state.read(cx);
-        Some(ProviderSettingsView::ApiKey(ApiKeyConfiguration::new(
-            state.api_key_state.has_key(),
-            state.api_key_state.is_from_env_var(),
-            state.api_key_state.env_var_name().clone(),
-            "https://openrouter.ai/keys".into(),
-        )))
-    }
-
-    fn set_api_key(&self, api_key: Option<String>, cx: &mut App) -> Task<Result<()>> {
-        self.state
-            .update(cx, |state, cx| state.set_api_key(api_key, cx))
-    }
-}
-
-pub struct OpenRouterLanguageModel {
-    id: LanguageModelId,
-    model: open_router::Model,
-    state: Entity<State>,
-    http_client: Arc<dyn HttpClient>,
-    request_limiter: RateLimiter,
-}
-
-impl OpenRouterLanguageModel {
-    fn stream_completion(
+    fn stream_open_router_request(
         &self,
         request: open_router::Request,
         cx: &AsyncApp,
@@ -340,113 +291,91 @@ impl OpenRouterLanguageModel {
     }
 }
 
-impl LanguageModel for OpenRouterLanguageModel {
-    fn id(&self) -> LanguageModelId {
-        self.id.clone()
-    }
+impl LanguageModelProviderState for OpenRouterLanguageModelProvider {
+    type ObservableEntity = State;
 
-    fn name(&self) -> LanguageModelName {
-        LanguageModelName::from(self.model.display_name().to_string())
+    fn observable_entity(&self) -> Option<Entity<Self::ObservableEntity>> {
+        Some(self.state.clone())
     }
+}
 
-    fn provider_id(&self) -> LanguageModelProviderId {
+impl LanguageModelProvider for OpenRouterLanguageModelProvider {
+    fn id(&self) -> LanguageModelProviderId {
         PROVIDER_ID
     }
 
-    fn provider_name(&self) -> LanguageModelProviderName {
+    fn name(&self) -> LanguageModelProviderName {
         PROVIDER_NAME
     }
 
-    fn supports_tools(&self) -> bool {
-        self.model.supports_tool_calls()
+    fn icon(&self) -> IconOrSvg {
+        IconOrSvg::Icon(IconName::AiOpenRouter)
     }
 
-    fn supports_streaming_tools(&self) -> bool {
-        true
+    fn default_model(&self, cx: &App) -> Option<LanguageModel> {
+        let default = open_router::Model::default();
+        self.open_router_model(default.id(), cx)
+            .map(|model| language_model(&model))
     }
 
-    fn supports_thinking(&self) -> bool {
-        matches!(
-            self.model.mode,
-            OpenRouterModelMode::Thinking { .. } | OpenRouterModelMode::Adaptive
-        )
+    fn default_fast_model(&self, _cx: &App) -> Option<LanguageModel> {
+        None
     }
 
-    fn supports_disabling_thinking(&self) -> bool {
-        !self.model.mandatory_reasoning
-    }
-
-    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
-        let efforts: &[ReasoningEffort] = if !self.model.supported_efforts.is_empty() {
-            &self.model.supported_efforts
-        } else if self.model.supports_max_tokens {
-            &ReasoningEffort::OPENAI_COMPATIBLE_SELECTABLE
-        } else {
-            return Vec::new();
-        };
-        let default_effort = self.model.default_effort.or_else(|| {
-            self.model
-                .supports_max_tokens
-                .then_some(ReasoningEffort::Medium)
-        });
-        efforts
+    fn provided_models(&self, cx: &App) -> Vec<LanguageModel> {
+        self.open_router_models(cx)
             .iter()
-            .map(|&effort| LanguageModelEffortLevel {
-                name: effort.label().into(),
-                value: effort.value().into(),
-                is_default: Some(effort) == default_effort,
-            })
+            .map(language_model)
             .collect()
     }
 
-    fn telemetry_id(&self) -> String {
-        format!("openrouter/{}", self.model.id())
+    fn is_authenticated(&self, cx: &App) -> bool {
+        self.state.read(cx).is_authenticated()
     }
 
-    fn max_token_count(&self) -> u64 {
-        self.model.max_token_count()
+    fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
+        self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn max_output_tokens(&self) -> Option<u64> {
-        self.model.max_output_tokens()
+    fn settings_view(&self, cx: &mut App) -> Option<ProviderSettingsView> {
+        let state = self.state.read(cx);
+        Some(ProviderSettingsView::ApiKey(ApiKeyConfiguration::new(
+            state.api_key_state.has_key(),
+            state.api_key_state.is_from_env_var(),
+            state.api_key_state.env_var_name().clone(),
+            "https://openrouter.ai/keys".into(),
+        )))
     }
 
-    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
-        match choice {
-            LanguageModelToolChoice::Auto => true,
-            LanguageModelToolChoice::Any => true,
-            LanguageModelToolChoice::None => true,
-        }
+    fn set_api_key(&self, api_key: Option<String>, cx: &mut App) -> Task<Result<()>> {
+        self.state
+            .update(cx, |state, cx| state.set_api_key(api_key, cx))
     }
+}
 
-    fn supports_images(&self) -> bool {
-        self.model.supports_images.unwrap_or(false)
-    }
-
+impl LanguageModelClient for OpenRouterLanguageModelProvider {
     fn stream_completion(
         &self,
+        model: &LanguageModel,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<
-            futures::stream::BoxStream<
-                'static,
-                Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
-            >,
-            LanguageModelCompletionError,
-        >,
-    > {
+    ) -> BoxFuture<'static, Result<LanguageModelCompletionStream, LanguageModelCompletionError>>
+    {
+        let config = match cx.update(|cx| self.config(model, cx)) {
+            Ok(config) => config,
+            Err(error) => return async move { Err(error) }.boxed(),
+        };
+        let request_limiter = self.request_limiters.for_model(&model.id);
         let openrouter_request =
-            match into_open_router(request, &self.model, self.max_output_tokens()) {
+            match into_open_router(request, &config, config.max_output_tokens()) {
                 Ok(request) => request,
                 Err(error) => return async move { Err(error.into()) }.boxed(),
             };
-        let request = self.stream_completion(openrouter_request, cx);
+        let request = self.stream_open_router_request(openrouter_request, cx);
         let executor = cx.background_executor().clone();
-        let future = self.request_limiter.stream(async move {
+        let future = request_limiter.stream(async move {
             let response = request.await?;
-            let events = OpenRouterEventMapper::new().map_stream(response);
+            let events = ChatCompletionEventMapper::new().map_stream(response);
             Ok(language_model::stream_in_background(
                 events.boxed(),
                 executor,
@@ -456,11 +385,54 @@ impl LanguageModel for OpenRouterLanguageModel {
     }
 }
 
+fn language_model(model: &open_router::Model) -> LanguageModel {
+    let efforts: &[ReasoningEffort] = if !model.supported_efforts.is_empty() {
+        &model.supported_efforts
+    } else if model.supports_max_tokens {
+        &ReasoningEffort::OPENAI_COMPATIBLE_SELECTABLE
+    } else {
+        &[]
+    };
+    let default_effort = model
+        .default_effort
+        .or_else(|| model.supports_max_tokens.then_some(ReasoningEffort::Medium));
+    let supported_effort_levels = efforts
+        .iter()
+        .map(|&effort| LanguageModelEffortLevel {
+            name: effort.label().into(),
+            value: effort.value().into(),
+            is_default: Some(effort) == default_effort,
+        })
+        .collect();
+    LanguageModel {
+        supports_tools: model.supports_tool_calls(),
+        supports_streaming_tools: true,
+        supports_thinking: matches!(
+            model.mode,
+            OpenRouterModelMode::Thinking { .. } | OpenRouterModelMode::Adaptive
+        ),
+        supports_disabling_thinking: !model.mandatory_reasoning,
+        supported_effort_levels,
+        max_output_tokens: model.max_output_tokens(),
+        tool_choice_support: LanguageModelToolChoiceSupport::ALL,
+        supports_images: model.supports_images.unwrap_or(false),
+        ..LanguageModel::new(
+            LanguageModelId::from(model.id().to_string()),
+            LanguageModelName::from(model.display_name().to_string()),
+            PROVIDER_ID,
+            PROVIDER_NAME,
+            format!("openrouter/{}", model.id()),
+            model.max_token_count(),
+        )
+    }
+}
+
 pub fn into_open_router(
     request: LanguageModelRequest,
     model: &Model,
     max_output_tokens: Option<u64>,
 ) -> Result<open_router::Request> {
+    let max_output_tokens = request.effective_max_output_tokens(max_output_tokens);
     if request.contains_custom_tool_input() {
         anyhow::bail!("OpenRouter does not support custom tools");
     }
@@ -774,372 +746,9 @@ fn add_message_content_part(
     }
 }
 
-pub struct OpenRouterEventMapper {
-    tool_calls_by_index: HashMap<usize, RawToolCall>,
-    reasoning_details: ReasoningDetailsAccumulator,
-}
-
-impl OpenRouterEventMapper {
-    pub fn new() -> Self {
-        Self {
-            tool_calls_by_index: HashMap::default(),
-            reasoning_details: ReasoningDetailsAccumulator::default(),
-        }
-    }
-
-    pub fn map_stream(
-        mut self,
-        events: Pin<
-            Box<
-                dyn Send + Stream<Item = Result<ResponseStreamEvent, open_router::OpenRouterError>>,
-            >,
-        >,
-    ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
-    {
-        events.flat_map(move |event| {
-            futures::stream::iter(match event {
-                Ok(event) => self.map_event(event),
-                Err(error) => vec![Err(error.into())],
-            })
-        })
-    }
-
-    pub fn map_event(
-        &mut self,
-        event: ResponseStreamEvent,
-    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
-        let mut events = Vec::new();
-
-        if let Some(usage) = event.usage {
-            let cache_creation_input_tokens = usage
-                .prompt_tokens_details
-                .as_ref()
-                .map_or(0, |details| details.cache_write_tokens);
-            let cache_read_input_tokens = usage
-                .prompt_tokens_details
-                .as_ref()
-                .map_or(0, |details| details.cached_tokens);
-            let input_tokens = usage.prompt_tokens.saturating_sub(
-                cache_creation_input_tokens.saturating_add(cache_read_input_tokens),
-            );
-
-            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
-                input_tokens,
-                output_tokens: usage.completion_tokens,
-                cache_creation_input_tokens,
-                cache_read_input_tokens,
-            })));
-        }
-
-        let Some(choice) = event.choices.first() else {
-            return events;
-        };
-
-        if let Some(details) = choice.delta.reasoning_details.clone()
-            && let Some(details) = self.reasoning_details.push(details)
-        {
-            events.push(Ok(LanguageModelCompletionEvent::ReasoningDetails(details)));
-        }
-
-        if let Some(reasoning) = choice.delta.reasoning.clone() {
-            events.push(Ok(LanguageModelCompletionEvent::Thinking {
-                text: reasoning,
-                signature: None,
-            }));
-        }
-
-        if let Some(content) = choice.delta.content.clone() {
-            // OpenRouter send empty content string with the reasoning content
-            // This is a workaround for the OpenRouter API bug
-            if !content.is_empty() {
-                events.push(Ok(LanguageModelCompletionEvent::Text(content)));
-            }
-        }
-
-        if let Some(tool_calls) = choice.delta.tool_calls.as_ref() {
-            for tool_call in tool_calls {
-                let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
-
-                if let Some(tool_id) = tool_call.id.clone() {
-                    entry.id = tool_id;
-                }
-
-                if let Some(function) = tool_call.function.as_ref() {
-                    if let Some(name) = function.name.clone() {
-                        entry.name = name;
-                    }
-
-                    if let Some(arguments) = function.arguments.clone() {
-                        entry.arguments.push_str(&arguments);
-                    }
-
-                    if let Some(signature) = function.thought_signature.clone() {
-                        entry.thought_signature = Some(signature);
-                    }
-                }
-
-                if !entry.id.is_empty() && !entry.name.is_empty() {
-                    if let Ok(input) = serde_json::from_str::<serde_json::Value>(
-                        &fix_streamed_json(&entry.arguments),
-                    ) {
-                        events.push(Ok(LanguageModelCompletionEvent::ToolUse(
-                            LanguageModelToolUse {
-                                id: entry.id.clone().into(),
-                                name: entry.name.as_str().into(),
-                                is_input_complete: false,
-                                input: language_model::LanguageModelToolUseInput::Json(input),
-                                raw_input: entry.arguments.clone(),
-                                thought_signature: entry.thought_signature.clone(),
-                            },
-                        )));
-                    }
-                }
-            }
-        }
-
-        match choice.finish_reason.as_deref() {
-            Some("stop") => {
-                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
-            }
-            Some("tool_calls") => {
-                events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
-                    match parse_tool_arguments(&tool_call.arguments) {
-                        Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
-                            LanguageModelToolUse {
-                                id: tool_call.id.clone().into(),
-                                name: tool_call.name.as_str().into(),
-                                is_input_complete: true,
-                                input: language_model::LanguageModelToolUseInput::Json(input),
-                                raw_input: tool_call.arguments.clone(),
-                                thought_signature: tool_call.thought_signature.clone(),
-                            },
-                        )),
-                        Err(error) => Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
-                            id: tool_call.id.clone().into(),
-                            tool_name: tool_call.name.as_str().into(),
-                            raw_input: tool_call.arguments.clone().into(),
-                            json_parse_error: error.to_string(),
-                        }),
-                    }
-                }));
-
-                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
-            }
-            Some(stop_reason) => {
-                log::error!("Unexpected OpenRouter stop_reason: {stop_reason:?}",);
-                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
-            }
-            None => {}
-        }
-
-        events
-    }
-}
-
-#[derive(Default)]
-struct RawToolCall {
-    id: String,
-    name: String,
-    arguments: String,
-    thought_signature: Option<String>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use open_router::{ChoiceDelta, FunctionChunk, ResponseMessageDelta, ToolCallChunk};
-
-    #[gpui::test]
-    async fn test_reasoning_details_preservation_with_tool_calls() {
-        // This test verifies that reasoning_details are properly captured and preserved
-        // when a model uses tool calling with reasoning/thinking tokens.
-        //
-        // The key regression this prevents:
-        // - OpenRouter sends multiple reasoning_details updates during streaming
-        // - First with actual content (encrypted reasoning data)
-        // - Then with empty array on completion
-        // - We must NOT overwrite the real data with the empty array
-
-        let mut mapper = OpenRouterEventMapper::new();
-
-        // Simulate the streaming events as they come from OpenRouter/Gemini
-        let events = vec![
-            // Event 1: Initial reasoning details with text
-            ResponseStreamEvent {
-                id: Some("response_123".into()),
-                created: 1234567890,
-                model: "google/gemini-3.1-pro-preview".into(),
-                choices: vec![ChoiceDelta {
-                    index: 0,
-                    delta: ResponseMessageDelta {
-                        role: None,
-                        content: None,
-                        reasoning: None,
-                        tool_calls: None,
-                        reasoning_details: Some(serde_json::json!([
-                            {
-                                "type": "reasoning.text",
-                                "text": "Let me analyze this request...",
-                                "format": "google-gemini-v1",
-                                "index": 0
-                            }
-                        ])),
-                    },
-                    finish_reason: None,
-                }],
-                usage: None,
-            },
-            // Event 2: More reasoning details
-            ResponseStreamEvent {
-                id: Some("response_123".into()),
-                created: 1234567890,
-                model: "google/gemini-3.1-pro-preview".into(),
-                choices: vec![ChoiceDelta {
-                    index: 0,
-                    delta: ResponseMessageDelta {
-                        role: None,
-                        content: None,
-                        reasoning: None,
-                        tool_calls: None,
-                        reasoning_details: Some(serde_json::json!([
-                            {
-                                "type": "reasoning.encrypted",
-                                "data": "EtgDCtUDAdHtim9OF5jm4aeZSBAtl/randomized123",
-                                "format": "google-gemini-v1",
-                                "index": 0,
-                                "id": "tool_call_abc123"
-                            }
-                        ])),
-                    },
-                    finish_reason: None,
-                }],
-                usage: None,
-            },
-            // Event 3: Tool call starts
-            ResponseStreamEvent {
-                id: Some("response_123".into()),
-                created: 1234567890,
-                model: "google/gemini-3.1-pro-preview".into(),
-                choices: vec![ChoiceDelta {
-                    index: 0,
-                    delta: ResponseMessageDelta {
-                        role: None,
-                        content: None,
-                        reasoning: None,
-                        tool_calls: Some(vec![ToolCallChunk {
-                            index: 0,
-                            id: Some("tool_call_abc123".into()),
-                            function: Some(FunctionChunk {
-                                name: Some("list_directory".into()),
-                                arguments: Some("{\"path\":\"test\"}".into()),
-                                thought_signature: Some("sha256:test_signature_xyz789".into()),
-                            }),
-                        }]),
-                        reasoning_details: None,
-                    },
-                    finish_reason: None,
-                }],
-                usage: None,
-            },
-            // Event 4: Empty reasoning_details on tool_calls finish
-            // This is the critical event - we must not overwrite with this empty array!
-            ResponseStreamEvent {
-                id: Some("response_123".into()),
-                created: 1234567890,
-                model: "google/gemini-3.1-pro-preview".into(),
-                choices: vec![ChoiceDelta {
-                    index: 0,
-                    delta: ResponseMessageDelta {
-                        role: None,
-                        content: None,
-                        reasoning: None,
-                        tool_calls: None,
-                        reasoning_details: Some(serde_json::json!([])),
-                    },
-                    finish_reason: Some("tool_calls".into()),
-                }],
-                usage: None,
-            },
-        ];
-
-        // Process all events
-        let mut collected_events = Vec::new();
-        for event in events {
-            let mapped = mapper.map_event(event);
-            collected_events.extend(mapped);
-        }
-
-        // Verify we got the expected events
-        let mut has_tool_use = false;
-        let mut reasoning_details_events = Vec::new();
-        let mut thought_signature_value = None;
-
-        for event_result in collected_events {
-            match event_result {
-                Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) => {
-                    has_tool_use = true;
-                    assert_eq!(tool_use.id.to_string(), "tool_call_abc123");
-                    assert_eq!(tool_use.name.as_ref(), "list_directory");
-                    thought_signature_value = tool_use.thought_signature.clone();
-                }
-                Ok(LanguageModelCompletionEvent::ReasoningDetails(details)) => {
-                    reasoning_details_events.push(details);
-                }
-                _ => {}
-            }
-        }
-
-        assert!(has_tool_use, "Should have emitted ToolUse event");
-        assert_eq!(reasoning_details_events.len(), 2);
-        let final_details = reasoning_details_events
-            .last()
-            .and_then(serde_json::Value::as_array)
-            .and_then(|details| details.first())
-            .expect("accumulated reasoning details");
-        assert_eq!(final_details["text"], "Let me analyze this request...");
-        assert_eq!(
-            final_details["data"],
-            "EtgDCtUDAdHtim9OF5jm4aeZSBAtl/randomized123"
-        );
-        assert_eq!(
-            thought_signature_value.as_deref(),
-            Some("sha256:test_signature_xyz789")
-        );
-    }
-
-    #[gpui::test]
-    async fn test_usage_only_chunk_with_empty_choices_does_not_error() {
-        let mut mapper = OpenRouterEventMapper::new();
-
-        let events = mapper.map_event(ResponseStreamEvent {
-            id: Some("response_123".into()),
-            created: 1234567890,
-            model: "google/gemini-3-flash-preview".into(),
-            choices: Vec::new(),
-            usage: Some(open_router::Usage {
-                prompt_tokens: 12,
-                completion_tokens: 7,
-                total_tokens: 19,
-                prompt_tokens_details: Some(open_router::PromptTokensDetails {
-                    cached_tokens: 5,
-                    cache_write_tokens: 3,
-                }),
-            }),
-        });
-
-        assert_eq!(events.len(), 1);
-        match events.into_iter().next() {
-            Some(Ok(LanguageModelCompletionEvent::UsageUpdate(usage))) => {
-                assert_eq!(usage.input_tokens, 4);
-                assert_eq!(usage.output_tokens, 7);
-                assert_eq!(usage.cache_creation_input_tokens, 3);
-                assert_eq!(usage.cache_read_input_tokens, 5);
-                assert_eq!(usage.total_tokens(), 19);
-            }
-            other => panic!("Expected usage update event, got: {other:?}"),
-        }
-    }
 
     #[gpui::test]
     async fn test_session_id_is_stable_without_exposing_thread_id() {
@@ -1156,8 +765,9 @@ mod tests {
             None,
         );
         let thread_id = "internal-thread-id";
-        let request = LanguageModelRequest {
+        let request = |max_output_tokens| LanguageModelRequest {
             thread_id: Some(thread_id.to_string()),
+            max_output_tokens,
             messages: vec![language_model::LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec![MessageContent::Text("Hello".to_string())],
@@ -1167,17 +777,27 @@ mod tests {
             ..Default::default()
         };
 
-        let result = into_open_router(request, &model, None).unwrap();
-
-        assert_eq!(
-            result.session_id,
-            open_router_session_id(Some(thread_id.into()))
-        );
-        assert_ne!(result.session_id.as_deref(), Some(thread_id));
-        assert_ne!(
-            result.session_id,
-            open_router_session_id(Some("another-thread-id".into()))
-        );
+        for (requested, maximum, expected) in [
+            (None, None, None),
+            (None, Some(4096), Some(4096)),
+            (Some(1024), Some(4096), Some(1024)),
+            (Some(8192), Some(4096), Some(4096)),
+        ] {
+            let result = into_open_router(request(requested), &model, maximum).unwrap();
+            assert_eq!(
+                result.session_id,
+                open_router_session_id(Some(thread_id.into()))
+            );
+            assert_ne!(result.session_id.as_deref(), Some(thread_id));
+            assert_ne!(
+                result.session_id,
+                open_router_session_id(Some("another-thread-id".into()))
+            );
+            assert_eq!(
+                serde_json::to_value(result).unwrap()["max_tokens"].as_u64(),
+                expected
+            );
+        }
     }
 
     #[gpui::test]
@@ -1230,9 +850,11 @@ mod tests {
             thinking_effort: None,
             speed: None,
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let result = into_open_router(request, &model, None).unwrap();
@@ -1372,9 +994,11 @@ mod tests {
             thinking_effort: None,
             speed: None,
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let result = into_open_router(request, &model, None).unwrap();
@@ -1438,9 +1062,11 @@ mod tests {
             thinking_effort: None,
             speed: None,
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let result = into_open_router(request, &model, None).unwrap();

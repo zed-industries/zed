@@ -14,10 +14,11 @@ workspace = true
 
 [lib]
 path = "src/anthropic.rs"
+doctest = false
 
 [dependencies]
 anyhow.workspace = true
-chrono.workspace = true
+chrono = { workspace = true, default-features = true }
 collections.workspace = true
 futures.workspace = true
 http_client.workspace = true

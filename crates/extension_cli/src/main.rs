@@ -16,6 +16,7 @@ use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{ExtensionManifest, ExtensionSnippets};
 use http_client::Url;
 use language::LanguageConfig;
+use language::QueryFile;
 use reqwest_client::ReqwestClient;
 use settings_content::SemanticTokenRules;
 use snippet_provider::file_to_snippets;
@@ -23,6 +24,28 @@ use snippet_provider::format::VsSnippetsFile;
 use task::TaskTemplates;
 use tokio::process::Command;
 use tree_sitter::{Language, Query, WasmStore};
+
+struct TestingContext {
+    known_resources: BTreeSet<PathBuf>,
+}
+
+impl TestingContext {
+    fn new(manifest: &ExtensionManifest, extension_path: &Path) -> Self {
+        let known_resources = manifest
+            .snippets
+            .as_ref()
+            .map(ExtensionSnippets::paths)
+            .into_iter()
+            .flatten()
+            .map(|relative_path| extension_path.join(relative_path))
+            .collect();
+        Self { known_resources }
+    }
+
+    fn is_known_resource(&self, path: &Path) -> bool {
+        self.known_resources.contains(path)
+    }
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "zed-extension")]
@@ -43,7 +66,7 @@ async fn main() -> Result<()> {
     env_logger::init();
 
     let args = Args::parse();
-    let fs = Arc::new(RealFs::new(None, gpui_platform::background_executor()));
+    let fs = RealFs::new(None, gpui_platform::background_executor());
     let engine = wasmtime::Engine::default();
     let mut wasm_store = WasmStore::new(&engine)?;
 
@@ -97,8 +120,9 @@ async fn main() -> Result<()> {
     let extension_provides = manifest.provides();
     validate_extension_features(&extension_provides)?;
 
+    let cx = TestingContext::new(&manifest, &extension_path);
     let grammars = test_grammars(&manifest, &extension_path, &mut wasm_store)?;
-    test_languages(&manifest, &extension_path, &grammars)?;
+    test_languages(&manifest, &extension_path, &grammars, &cx)?;
     test_themes(&manifest, &extension_path, fs.clone()).await?;
     test_snippets(&manifest, &extension_path, fs.clone()).await?;
     test_debug_adapter_schemas(&manifest, &extension_path, fs.clone()).await?;
@@ -432,6 +456,14 @@ enum ExtensionManifestValidationError {
         as these are currently unsupported"
     )]
     LanguageModelProvidersUnsupported,
+    #[error(
+        "language server `{language_server}` lists `{language}` in `opt_in_languages`, \
+        but `{language}` is not listed in its `languages`"
+    )]
+    OptInLanguageNotInLanguages {
+        language_server: String,
+        language: String,
+    },
 }
 
 fn validate_extension_manifest(
@@ -486,6 +518,18 @@ fn validate_extension_manifest(
         return Err(ExtensionManifestValidationError::LanguageModelProvidersUnsupported);
     }
 
+    for (language_server, entry) in &manifest.language_servers {
+        let languages = entry.languages().into_iter().collect::<BTreeSet<_>>();
+        if let Some(language) = entry.opt_in_languages().difference(&languages).next() {
+            return Err(
+                ExtensionManifestValidationError::OptInLanguageNotInLanguages {
+                    language_server: language_server.to_string(),
+                    language: language.to_string(),
+                },
+            );
+        }
+    }
+
     Ok(())
 }
 
@@ -514,6 +558,7 @@ fn test_languages(
     manifest: &ExtensionManifest,
     extension_path: &Path,
     grammars: &HashMap<String, Language>,
+    context: &TestingContext,
 ) -> Result<()> {
     for relative_language_dir in &manifest.languages {
         let language_dir = extension_path.join(relative_language_dir);
@@ -561,19 +606,26 @@ fn test_languages(
                                 )
                             })?;
                 }
-                _ if file_name.ends_with(".scm") => {
-                    let grammar = grammar.with_context(|| {
-                        format! {
-                            "language {} provides query {} but no grammar",
-                            config.name,
-                            file_path.display()
-                        }
-                    })?;
+                _ => {
+                    if let Ok(_query) = file_name.parse::<QueryFile>() {
+                        let grammar = grammar.with_context(|| {
+                            format! {
+                                "language {} provides query {} but no grammar",
+                                config.name,
+                                file_path.display()
+                            }
+                        })?;
 
-                    let query_source = fs::read_to_string(&file_path)?;
-                    let _query = Query::new(grammar, &query_source)?;
+                        let query_source = fs::read_to_string(&file_path)?;
+                        let _query = Query::new(grammar, &query_source)?;
+                    } else if file_name.ends_with(".scm") {
+                        bail!("query {file_name} is not supported by Zed and should be removed")
+                    } else if !context.is_known_resource(&file_path) {
+                        bail!(
+                            "'{file_name}' is not a supported file in a language directory and should be removed"
+                        )
+                    }
                 }
-                _ => {}
             }
         }
 
@@ -862,6 +914,41 @@ mod tests {
         assert_eq!(
             validate_extension_manifest(&manifest),
             Err(ExtensionManifestValidationError::LanguageModelProvidersUnsupported),
+        );
+    }
+
+    #[test]
+    fn test_validate_manifest_opt_in_languages() {
+        let manifest_with_language_server = |language_server: &str| -> ExtensionManifest {
+            let language_server = toml::from_str(language_server).unwrap();
+            ExtensionManifest {
+                language_servers: BTreeMap::from_iter([("my-server".into(), language_server)]),
+                ..valid_manifest()
+            }
+        };
+
+        let manifest = manifest_with_language_server(
+            r#"
+            languages = ["Julia", "Markdown"]
+            opt_in_languages = ["Julia"]
+            "#,
+        );
+        assert_eq!(validate_extension_manifest(&manifest), Ok(()));
+
+        let manifest = manifest_with_language_server(
+            r#"
+            languages = ["Markdown"]
+            opt_in_languages = ["Julia"]
+            "#,
+        );
+        assert_eq!(
+            validate_extension_manifest(&manifest),
+            Err(
+                ExtensionManifestValidationError::OptInLanguageNotInLanguages {
+                    language_server: "my-server".to_string(),
+                    language: "Julia".to_string(),
+                }
+            ),
         );
     }
 

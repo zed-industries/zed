@@ -2,12 +2,15 @@ use std::borrow::Cow;
 
 use anyhow::Context as _;
 use language_core::{LanguageConfig, LanguageQueries, QueryFile, QueryFileContents};
-use rust_embed::RustEmbed;
 
-#[derive(RustEmbed)]
-#[folder = "src/"]
-#[exclude = "*.rs"]
-struct GrammarDir;
+// Dev builds read the checkout's query files at runtime instead of embedding
+// them; see the `assets` crate for the rationale.
+util::fs_embed! {
+    struct GrammarDir,
+    crate_relative = "src/",
+    root_relative = "crates/grammars/src",
+    exclude = ["*.rs"],
+}
 
 /// Register all built-in native tree-sitter grammars with the provided registration function.
 ///
@@ -52,7 +55,7 @@ pub fn load_config(name: &str) -> LanguageConfig {
     )
     .unwrap();
 
-    let config: LanguageConfig = ::toml::from_str(&config_toml)
+    let config = LanguageConfig::from_toml(&config_toml)
         .with_context(|| format!("failed to load config.toml for language {name:?}"))
         .unwrap();
 

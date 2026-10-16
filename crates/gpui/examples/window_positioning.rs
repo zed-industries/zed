@@ -1,5 +1,8 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
+#[path = "example_support/fonts.rs"]
+mod example_support;
+
 use gpui::{
     App, Bounds, Context, DisplayId, Hsla, Pixels, SharedString, Size, Window,
     WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, div, point, prelude::*,
@@ -72,6 +75,9 @@ fn build_window_options(display_id: DisplayId, bounds: Bounds<Pixels>) -> Window
 
 fn run_example() {
     application().run(|cx: &mut App| {
+        if !example_support::load_fonts(cx) {
+            return;
+        }
         // Create several new windows, positioned in the top right corner of each screen
         let size = Size {
             width: px(350.),

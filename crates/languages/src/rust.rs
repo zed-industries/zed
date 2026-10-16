@@ -381,8 +381,9 @@ impl LspAdapter for RustLspAdapter {
                 let text = format!("{name}: {signature}");
                 let prefix = "struct S { ";
                 let source = Rope::from_iter([prefix, &text, " }"]);
-                let runs =
-                    language.highlight_text(&source, prefix.len()..prefix.len() + text.len());
+                let runs = language
+                    .highlight_text(&source, prefix.len()..prefix.len() + text.len())
+                    .collect();
                 mk_label(text, &|| 0..completion.label.len(), runs)
             }
             (
@@ -393,8 +394,9 @@ impl LspAdapter for RustLspAdapter {
                 let text = format!("{name}: {signature}",);
                 let prefix = "let ";
                 let source = Rope::from_iter([prefix, &text, " = ();"]);
-                let runs =
-                    language.highlight_text(&source, prefix.len()..prefix.len() + text.len());
+                let runs = language
+                    .highlight_text(&source, prefix.len()..prefix.len() + text.len())
+                    .collect();
                 mk_label(text, &|| 0..completion.label.len(), runs)
             }
             (
@@ -430,8 +432,9 @@ impl LspAdapter for RustLspAdapter {
                     .filter(|it| it.contains(&label))
                     .and_then(|it| Some((it, FULL_SIGNATURE_REGEX.find(it)?)))
                 {
-                    let source = Rope::from(function_signature);
-                    let runs = language.highlight_text(&source, 0..function_signature.len());
+                    let runs = language
+                        .highlight_text(function_signature, 0..function_signature.len())
+                        .collect();
                     mk_label(
                         function_signature.to_owned(),
                         &|| match_.range().start + 3..match_.range().end - 1,
@@ -441,17 +444,14 @@ impl LspAdapter for RustLspAdapter {
                     let text = format!("{label}{suffix}");
                     let source = Rope::from_iter([prefix, " ", &text, " {}"]);
                     let run_start = prefix.len() + 1;
-                    let runs = language.highlight_text(&source, run_start..run_start + text.len());
+                    let runs = language
+                        .highlight_text(&source, run_start..run_start + text.len())
+                        .collect();
                     mk_label(text, &|| 0..label.len(), runs)
-                } else if completion
-                    .detail
-                    .as_ref()
-                    .is_some_and(|detail| detail.starts_with("macro_rules! "))
-                {
+                } else if detail_right.is_some_and(|detail| detail.starts_with("macro_rules! ")) {
                     let text = completion.label.clone();
                     let len = text.len();
-                    let source = Rope::from(text.as_str());
-                    let runs = language.highlight_text(&source, 0..len);
+                    let runs = language.highlight_text(text.as_str(), 0..len).collect();
                     mk_label(text, &|| 0..completion.label.len(), runs)
                 } else if detail_left.is_none() {
                     return None;
@@ -548,7 +548,7 @@ impl LspAdapter for RustLspAdapter {
                         detail_left.take();
                     }
 
-                    runs.extend(language.highlight_text(&Rope::from(&label), 0..label.len()));
+                    runs.extend(language.highlight_text(label.as_str(), 0..label.len()));
                 } else {
                     let highlight_name = kind.and_then(|kind| match kind {
                         lsp::CompletionItemKind::STRUCT
@@ -667,10 +667,12 @@ impl LspAdapter for RustLspAdapter {
                 return Some(CodeLabel::new(
                     name.to_string(),
                     0..name.len(),
-                    language.highlight_text(
-                        &Rope::from_iter([prefix, name, "}"]),
-                        prefix.len()..prefix.len() + name.len(),
-                    ),
+                    language
+                        .highlight_text(
+                            &Rope::from_iter([prefix, name, "}"]),
+                            prefix.len()..prefix.len() + name.len(),
+                        )
+                        .collect(),
                 ));
             }
             _ => return None,
@@ -681,7 +683,9 @@ impl LspAdapter for RustLspAdapter {
         Some(CodeLabel::new(
             format!("{prefix}{name}"),
             filter_range,
-            language.highlight_text(&Rope::from_iter([prefix, name, suffix]), display_range),
+            language
+                .highlight_text(&Rope::from_iter([prefix, name, suffix]), display_range)
+                .collect(),
         ))
     }
 
@@ -1575,6 +1579,58 @@ mod tests {
         let highlight_keyword = grammar.highlight_id_for_name("keyword").unwrap();
         let highlight_field = grammar.highlight_id_for_name("property").unwrap();
 
+        let macro_detail_label = adapter
+            .label_for_completion(
+                &lsp::CompletionItem {
+                    kind: Some(lsp::CompletionItemKind::FUNCTION),
+                    label: "println!".to_string(),
+                    detail: Some("macro_rules! println".to_string()),
+                    ..Default::default()
+                },
+                &language,
+            )
+            .await;
+
+        let macro_description_label = adapter
+            .label_for_completion(
+                &lsp::CompletionItem {
+                    kind: Some(lsp::CompletionItemKind::FUNCTION),
+                    label: "println!".to_string(),
+                    label_details: Some(CompletionItemLabelDetails {
+                        detail: None,
+                        description: Some("macro_rules! println".to_string()),
+                    }),
+                    ..Default::default()
+                },
+                &language,
+            )
+            .await;
+
+        assert_eq!(macro_detail_label, macro_description_label);
+
+        let macro_label = macro_detail_label.unwrap();
+        assert_eq!(macro_label.text, "println!");
+        assert_eq!(macro_label.filter_range, 0..8);
+
+        let macro_import_label = adapter
+            .label_for_completion(
+                &lsp::CompletionItem {
+                    kind: Some(lsp::CompletionItemKind::FUNCTION),
+                    label: "println!".to_string(),
+                    label_details: Some(CompletionItemLabelDetails {
+                        detail: Some("(use std::println)".to_string()),
+                        description: Some("macro_rules! println".to_string()),
+                    }),
+                    ..Default::default()
+                },
+                &language,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(macro_import_label.text, "println! (use std::println)");
+        assert_eq!(macro_import_label.filter_range, 0..8);
+
         assert_eq!(
             adapter
                 .label_for_completion(
@@ -1842,8 +1898,7 @@ mod tests {
                 vec![
                     (10..13, HighlightId::TABSTOP_INSERT_ID),
                     (16..19, HighlightId::TABSTOP_INSERT_ID),
-                    (0..7, HighlightId::new(2)),
-                    (7..8, HighlightId::new(2)),
+                    (0..8, HighlightId::new(2)),
                 ],
             ))
         );
@@ -1870,8 +1925,7 @@ mod tests {
                 0..4,
                 vec![
                     (5..9, HighlightId::TABSTOP_REPLACE_ID),
-                    (0..3, HighlightId::new(2)),
-                    (3..4, HighlightId::new(2)),
+                    (0..4, HighlightId::new(2)),
                 ],
             ))
         );
@@ -1956,8 +2010,7 @@ mod tests {
                 vec![
                     (15..20, HighlightId::TABSTOP_REPLACE_ID),
                     (16..19, HighlightId::TABSTOP_INSERT_ID),
-                    (0..13, HighlightId::new(2)),
-                    (13..14, HighlightId::new(2)),
+                    (0..14, HighlightId::new(2)),
                 ],
             ))
         );

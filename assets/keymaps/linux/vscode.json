@@ -13,6 +13,8 @@
       "alt-z": "editor::ToggleSoftWrap", // Toggle Word Wrap
       "ctrl-shift-space": "editor::ShowSignatureHelp", // Trigger Parameter Hints
       "ctrl-shift-a": "editor::ToggleBlockComments", // Toggle Block Comment
+      "ctrl-k ctrl-c": ["editor::ToggleComments", { "advance_downwards": false, "comment_empty_lines": false }], // Add Line Comment
+      "ctrl-/": ["editor::ToggleComments", { "advance_downwards": false, "comment_empty_lines": false }],
       "ctrl-k f12": "editor::GoToDefinitionSplit", // Open Definition to the Side
     },
   },
