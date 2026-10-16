@@ -380,6 +380,7 @@ fn supported_thinking_effort_levels(model: &x_ai::Model) -> Vec<LanguageModelEff
                 name: name.into(),
                 value: value.into(),
                 is_default: Some(effort) == default_effort,
+                supports_disabling_thinking: None,
             })
         })
         .collect()

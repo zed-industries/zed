@@ -5213,7 +5213,7 @@ impl Workspace {
         let project_is_local = project.read(cx).is_local();
 
         // If it's an absolute path, open it directly
-        if path_style.is_absolute(url_or_path) {
+        if path_style.has_root(Path::new(url_or_path)) {
             open_abs_path(self, PathBuf::from(url_or_path), cx);
             return;
         }
@@ -9089,8 +9089,20 @@ impl Workspace {
                     .remote_connection_options(cx)
                     .map(RemoteHostLocation::from);
                 let worktree_store = project.worktree_store().downgrade();
+                let home_dir_task = if project.is_local() {
+                    Task::ready(std::env::home_dir())
+                } else {
+                    let resolve_task = project.resolve_abs_path("~", cx);
+                    cx.spawn(async |_, _| {
+                        let resolved_path = resolve_task
+                            .await
+                            .and_then(|path| path.into_abs_path())
+                            .map(PathBuf::from);
+                        resolved_path
+                    })
+                };
                 self.toggle_modal(window, cx, |window, cx| {
-                    SecurityModal::new(worktree_store, remote_host, window, cx)
+                    SecurityModal::new(worktree_store, remote_host, home_dir_task, window, cx)
                 });
             }
         }
@@ -10934,6 +10946,8 @@ pub async fn find_existing_workspace(
                             let abs_path = worktree.abs_path();
                             path_style
                                 .strip_prefix(path.as_ref(), abs_path.as_ref())
+                                .ok()
+                                .and_then(|path| RelPath::new(path, path_style).ok())
                                 .and_then(|rel| worktree.entry_for_path(&rel))
                                 .is_some_and(|e| e.is_dir())
                         })

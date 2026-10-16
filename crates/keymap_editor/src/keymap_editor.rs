@@ -2425,13 +2425,12 @@ impl RenderOnce for SyntaxHighlightedText {
 
         let text = self.text.clone();
 
-        let highlights = self
-            .language
-            .highlight_text(&text.as_ref().into(), 0..text.len());
-        let mut runs = Vec::with_capacity(highlights.len());
+        let mut runs = Vec::new();
         let mut offset = 0;
 
-        for (highlight_range, highlight_id) in highlights {
+        for (highlight_range, highlight_id) in
+            self.language.highlight_text(text.as_str(), 0..text.len())
+        {
             // Add un-highlighted text before the current highlight
             if highlight_range.start > offset {
                 runs.push(text_style.to_run(highlight_range.start - offset));
