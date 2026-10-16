@@ -139,6 +139,26 @@ TBD: Improve Julia REPL instructions
   - `brew install coursier/formulas/coursier && cs setup`
   - `coursier launch --use-bootstrap almond -- --install`
 
+### Clojure (nREPL) {#clojure-nrepl}
+
+Clojure code runs on an [nREPL](https://nrepl.org) server instead of a Jupyter kernel.
+
+- Start a server in your project, for example:
+  - `clj -Sdeps '{:deps {nrepl/nrepl {:mvn/version "1.3.1"}}}' -M -m nrepl.cmdline`
+  - `lein repl :headless`
+- The server writes a `.nrepl-port` file (shadow-cljs uses `.shadow-cljs/nrepl.port`). Zed detects it when you open a Clojure file; run `repl: refresh kernelspecs` if the server started later.
+- To connect to a server that doesn't write a port file, add it to your settings:
+
+```json [settings]
+{
+  "jupyter": {
+    "nrepl_servers": [{ "name": "my-app", "host": "127.0.0.1", "port": 7888 }]
+  }
+}
+```
+
+Use `;; %%` to separate cells.
+
 ## Changing which kernel is used per language {#changing-kernels}
 
 Zed automatically detects available kernels and organizes them in the kernel picker:

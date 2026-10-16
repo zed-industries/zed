@@ -2828,6 +2828,9 @@
     //    "python": "conda-base"
     //    "typescript": "deno"
     // }
+    // nREPL servers to offer as kernels, besides those found via `.nrepl-port`.
+    // "nrepl_servers": [{ "name": "my-app", "host": "127.0.0.1", "port": 7888, "language": "clojure" }]
+    "nrepl_servers": [],
   },
   // REPL settings.
   "repl": {

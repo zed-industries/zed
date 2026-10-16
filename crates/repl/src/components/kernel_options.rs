@@ -60,7 +60,9 @@ fn build_grouped_entries(store: &ReplStore, worktree_id: WorktreeId) -> Vec<Kern
                     is_recommended,
                 });
             }
-            KernelSpecification::JupyterServer(_) | KernelSpecification::SshRemote(_) => {
+            KernelSpecification::JupyterServer(_)
+            | KernelSpecification::SshRemote(_)
+            | KernelSpecification::Nrepl(_) => {
                 remote_kernels.push(KernelPickerEntry::Kernel {
                     spec: spec.clone(),
                     is_recommended,
@@ -343,7 +345,8 @@ impl PickerDelegate for KernelPickerDelegate {
                     KernelSpecification::WslRemote(_) => Some(spec.path().to_string()),
                     KernelSpecification::PythonEnv(_)
                     | KernelSpecification::JupyterServer(_)
-                    | KernelSpecification::SshRemote(_) => {
+                    | KernelSpecification::SshRemote(_)
+                    | KernelSpecification::Nrepl(_) => {
                         let env_kind = spec.environment_kind_label();
                         let path = spec.path();
                         match env_kind {

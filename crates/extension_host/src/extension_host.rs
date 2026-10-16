@@ -15,9 +15,12 @@ use collections::{BTreeMap, BTreeSet, FxHashSet, HashMap, HashSet, btree_map};
 pub use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{
+    ExtensionCommandContext, ExtensionCommandDispatcher, ExtensionConsoleInputDispatcher,
     ExtensionContextServerProxy, ExtensionDebugAdapterProviderProxy, ExtensionEvents,
-    ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy,
-    ExtensionLanguageServerProxy, ExtensionSnippetProxy, ExtensionThemeProxy,
+    ExtensionEventsDispatcher, ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy,
+    ExtensionLanguageServerProxy, ExtensionPanelAction, ExtensionPanelActionProxy,
+    ExtensionProcessDispatcher, ExtensionSnippetProxy, ExtensionTcpDispatcher, ExtensionThemeProxy,
+    ExtensionUiResponseDispatcher,
 };
 use fs::{Fs, RemoveOptions, RenameOptions};
 use futures::future::{Shared, join_all};
@@ -324,11 +327,14 @@ pub fn init(
     node_runtime: NodeRuntime,
     cx: &mut App,
 ) {
+    ExtensionSettings::register(cx);
+
+    let store_proxy = extension_host_proxy.clone();
     let store = cx.new(move |cx| {
         ExtensionStore::new(
             paths::extensions_dir().clone(),
             None,
-            extension_host_proxy,
+            store_proxy,
             fs,
             client.http_client(),
             client.http_client(),
@@ -336,6 +342,28 @@ pub fn init(
             node_runtime,
             cx,
         )
+    });
+
+    extension_host_proxy.register_panel_action_proxy(ExtensionPanelActionDispatcher {
+        store: store.downgrade(),
+    });
+    extension_host_proxy.register_command_dispatcher(ExtensionCommandStoreDispatcher {
+        store: store.downgrade(),
+    });
+    extension_host_proxy.register_ui_response_dispatcher(ExtensionUiResponseStoreDispatcher {
+        store: store.downgrade(),
+    });
+    extension_host_proxy.register_console_input_dispatcher(ExtensionConsoleInputStoreDispatcher {
+        store: store.downgrade(),
+    });
+    extension_host_proxy.register_events_dispatcher(ExtensionEventsStoreDispatcher {
+        store: store.downgrade(),
+    });
+    extension_host_proxy.register_process_dispatcher(ExtensionProcessStoreDispatcher {
+        store: store.downgrade(),
+    });
+    extension_host_proxy.register_tcp_dispatcher(ExtensionTcpStoreDispatcher {
+        store: store.downgrade(),
     });
 
     cx.on_action(|_: &ReloadExtensions, cx| {
@@ -354,6 +382,265 @@ pub fn init(
         }
     })
     .detach();
+}
+
+/// Routes a host-rendered panel action back into the Wasm extension that owns
+/// the panel. The weak store prevents the process-global proxy from keeping an
+/// extension host alive after application shutdown.
+struct ExtensionPanelActionDispatcher {
+    store: WeakEntity<ExtensionStore>,
+}
+
+impl ExtensionPanelActionProxy for ExtensionPanelActionDispatcher {
+    fn dispatch_panel_action(
+        &self,
+        action: ExtensionPanelAction,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        let Some(store) = self.store.upgrade() else {
+            return Task::ready(Err(anyhow!("the extension host is no longer available")));
+        };
+        let Some(extension) = store
+            .read(cx)
+            .wasm_extensions
+            .iter()
+            .find(|(manifest, _)| manifest.id == action.panel.extension_id)
+            .map(|(_, extension)| extension.clone())
+        else {
+            return Task::ready(Err(anyhow!(
+                "extension {} is not loaded",
+                action.panel.extension_id
+            )));
+        };
+
+        cx.spawn(async move |_| {
+            extension
+                .panel_action(
+                    action.panel.panel_id.to_string(),
+                    action.action.to_string(),
+                    action.payload,
+                )
+                .await
+        })
+    }
+}
+
+struct ExtensionCommandStoreDispatcher {
+    store: WeakEntity<ExtensionStore>,
+}
+
+impl ExtensionCommandDispatcher for ExtensionCommandStoreDispatcher {
+    fn run_command(
+        &self,
+        extension_id: Arc<str>,
+        command_id: &str,
+        context: ExtensionCommandContext,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        let Some(store) = self.store.upgrade() else {
+            return Task::ready(Err(anyhow!("the extension host is no longer available")));
+        };
+        let Some(extension) = store
+            .read(cx)
+            .wasm_extensions
+            .iter()
+            .find(|(manifest, _)| manifest.id == extension_id)
+            .map(|(_, extension)| extension.clone())
+        else {
+            return Task::ready(Err(anyhow!("extension {} is not loaded", extension_id)));
+        };
+        let command_id = command_id.to_string();
+        cx.spawn(async move |_| extension.run_command(command_id, context).await)
+    }
+}
+
+struct ExtensionUiResponseStoreDispatcher {
+    store: WeakEntity<ExtensionStore>,
+}
+
+impl ExtensionUiResponseDispatcher for ExtensionUiResponseStoreDispatcher {
+    fn ui_response(
+        &self,
+        extension_id: Arc<str>,
+        request_id: u64,
+        selected: Option<String>,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        let Some(store) = self.store.upgrade() else {
+            return Task::ready(Err(anyhow!("the extension host is no longer available")));
+        };
+        let Some(extension) = store
+            .read(cx)
+            .wasm_extensions
+            .iter()
+            .find(|(manifest, _)| manifest.id == extension_id)
+            .map(|(_, extension)| extension.clone())
+        else {
+            return Task::ready(Err(anyhow!("extension {} is not loaded", extension_id)));
+        };
+        cx.spawn(async move |_| extension.ui_response(request_id, selected).await)
+    }
+}
+
+struct ExtensionConsoleInputStoreDispatcher {
+    store: WeakEntity<ExtensionStore>,
+}
+
+impl ExtensionConsoleInputDispatcher for ExtensionConsoleInputStoreDispatcher {
+    fn console_input(
+        &self,
+        extension_id: Arc<str>,
+        id: &str,
+        text: &str,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        let Some(store) = self.store.upgrade() else {
+            return Task::ready(Err(anyhow!("the extension host is no longer available")));
+        };
+        let Some(extension) = store
+            .read(cx)
+            .wasm_extensions
+            .iter()
+            .find(|(manifest, _)| manifest.id == extension_id)
+            .map(|(_, extension)| extension.clone())
+        else {
+            return Task::ready(Err(anyhow!("extension {} is not loaded", extension_id)));
+        };
+        let id = id.to_string();
+        let text = text.to_string();
+        cx.spawn(async move |_| extension.console_input(id, text).await)
+    }
+}
+
+struct ExtensionEventsStoreDispatcher {
+    store: WeakEntity<ExtensionStore>,
+}
+
+impl ExtensionEventsDispatcher for ExtensionEventsStoreDispatcher {
+    fn dispatch_event(&self, kind: &str, payload_json: &str, cx: &mut App) -> Task<Result<()>> {
+        let Some(store) = self.store.upgrade() else {
+            return Task::ready(Ok(()));
+        };
+        let extensions: Vec<crate::wasm_host::WasmExtension> = store
+            .read(cx)
+            .wasm_extensions
+            .iter()
+            .filter(|(manifest, _)| manifest.events.iter().any(|e| e == kind))
+            .map(|(_, extension)| extension.clone())
+            .collect();
+        let kind = kind.to_string();
+        let payload_json = payload_json.to_string();
+        cx.spawn(async move |_| {
+            for extension in extensions {
+                extension
+                    .on_event(kind.clone(), payload_json.clone())
+                    .await
+                    .log_err();
+            }
+            Ok(())
+        })
+    }
+}
+
+struct ExtensionProcessStoreDispatcher {
+    store: WeakEntity<ExtensionStore>,
+}
+
+impl ExtensionProcessDispatcher for ExtensionProcessStoreDispatcher {
+    fn process_output(
+        &self,
+        extension_id: Arc<str>,
+        handle: u64,
+        is_stderr: bool,
+        text: String,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        let Some(store) = self.store.upgrade() else {
+            return Task::ready(Err(anyhow!("the extension host is no longer available")));
+        };
+        let Some(extension) = store
+            .read(cx)
+            .wasm_extensions
+            .iter()
+            .find(|(manifest, _)| manifest.id == extension_id)
+            .map(|(_, extension)| extension.clone())
+        else {
+            return Task::ready(Err(anyhow!("extension {} is not loaded", extension_id)));
+        };
+        cx.spawn(async move |_| extension.process_output(handle, is_stderr, text).await)
+    }
+
+    fn process_exit(
+        &self,
+        extension_id: Arc<str>,
+        handle: u64,
+        code: Option<i32>,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        let Some(store) = self.store.upgrade() else {
+            return Task::ready(Err(anyhow!("the extension host is no longer available")));
+        };
+        let Some(extension) = store
+            .read(cx)
+            .wasm_extensions
+            .iter()
+            .find(|(manifest, _)| manifest.id == extension_id)
+            .map(|(_, extension)| extension.clone())
+        else {
+            return Task::ready(Err(anyhow!("extension {} is not loaded", extension_id)));
+        };
+        cx.spawn(async move |_| extension.process_exit(handle, code).await)
+    }
+}
+
+struct ExtensionTcpStoreDispatcher {
+    store: WeakEntity<ExtensionStore>,
+}
+
+impl ExtensionTcpDispatcher for ExtensionTcpStoreDispatcher {
+    fn tcp_data(
+        &self,
+        extension_id: Arc<str>,
+        stream_id: u64,
+        data: Vec<u8>,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        let Some(store) = self.store.upgrade() else {
+            return Task::ready(Err(anyhow!("the extension host is no longer available")));
+        };
+        let Some(extension) = store
+            .read(cx)
+            .wasm_extensions
+            .iter()
+            .find(|(manifest, _)| manifest.id == extension_id)
+            .map(|(_, extension)| extension.clone())
+        else {
+            return Task::ready(Err(anyhow!("extension {} is not loaded", extension_id)));
+        };
+        cx.spawn(async move |_| extension.tcp_data(stream_id, data).await)
+    }
+
+    fn tcp_closed(
+        &self,
+        extension_id: Arc<str>,
+        stream_id: u64,
+        error: Option<String>,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        let Some(store) = self.store.upgrade() else {
+            return Task::ready(Err(anyhow!("the extension host is no longer available")));
+        };
+        let Some(extension) = store
+            .read(cx)
+            .wasm_extensions
+            .iter()
+            .find(|(manifest, _)| manifest.id == extension_id)
+            .map(|(_, extension)| extension.clone())
+        else {
+            return Task::ready(Err(anyhow!("extension {} is not loaded", extension_id)));
+        };
+        cx.spawn(async move |_| extension.tcp_closed(stream_id, error).await)
+    }
 }
 
 impl ExtensionStore {

@@ -54,3 +54,8 @@ fn get_settings<T: serde::de::DeserializeOwned>(
     let settings: T = serde_json::from_str(&settings_json).map_err(|err| err.to_string())?;
     Ok(settings)
 }
+
+/// Returns the extension's configuration settings from Zed as a JSON string.
+pub fn extension_settings() -> Result<String> {
+    wit::extension_settings()
+}

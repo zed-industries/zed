@@ -1,10 +1,11 @@
 use crate::components::KernelListItem;
+use crate::repl_output_panel::ReplOutputPanel;
 use crate::setup_editor_session_actions;
 use crate::{
     KernelStatus,
     kernels::{
-        Kernel, KernelSession, KernelSpecification, NativeRunningKernel, RemoteRunningKernel,
-        SshRunningKernel, WslRunningKernel,
+        Kernel, KernelSession, KernelSpecification, NativeRunningKernel, NreplRunningKernel,
+        RemoteRunningKernel, SshRunningKernel, WslRunningKernel,
     },
     outputs::{
         ExecutionStatus, ExecutionView, ExecutionViewFinishedEmpty, ExecutionViewFinishedSmall,
@@ -53,6 +54,7 @@ pub struct Session {
     blocks: HashMap<String, EditorBlock>,
     result_inlays: HashMap<String, (InlayId, Range<Anchor>, usize)>,
     next_inlay_id: usize,
+    output_panel_views: HashMap<String, Entity<ExecutionView>>,
 
     _subscriptions: Vec<Subscription>,
 }
@@ -257,6 +259,7 @@ impl Session {
             blocks: HashMap::default(),
             result_inlays: HashMap::default(),
             next_inlay_id: 0,
+            output_panel_views: HashMap::default(),
             kernel_specification,
             _subscriptions: vec![subscription],
         };
@@ -357,6 +360,14 @@ impl Session {
                 entity_id,
                 working_directory,
                 self.fs.clone(),
+                session_view,
+                window,
+                cx,
+            ),
+            KernelSpecification::Nrepl(spec) => NreplRunningKernel::new(
+                spec.host,
+                spec.port,
+                working_directory,
                 session_view,
                 window,
                 cx,
@@ -616,6 +627,39 @@ impl Session {
         cx.notify();
     }
 
+    fn push_to_output_panel(
+        &mut self,
+        message_id: &str,
+        code: SharedString,
+        status: ExecutionStatus,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self
+            .editor
+            .upgrade()
+            .and_then(|editor| editor.read(cx).workspace())
+        else {
+            return;
+        };
+        let execution_view =
+            cx.new(|cx| ExecutionView::new(status, workspace.downgrade(), cx));
+        self.output_panel_views
+            .insert(message_id.to_string(), execution_view.clone());
+        let kernel_name = self.kernel_specification.name();
+
+        // The workspace may be mid-update when an execution starts from an action.
+        window.defer(cx, move |window, cx| {
+            workspace.update(cx, |workspace, cx| {
+                let panel = ReplOutputPanel::ensure(workspace, window, cx);
+                panel.update(cx, |panel, cx| {
+                    panel.push(kernel_name, code, execution_view, cx)
+                });
+                workspace.open_panel::<ReplOutputPanel>(window, cx);
+            });
+        });
+    }
+
     pub fn execute(
         &mut self,
         code: String,
@@ -633,6 +677,7 @@ impl Session {
             return;
         }
 
+        let panel_code = SharedString::from(code.trim().to_string());
         let execute_request = ExecuteRequest {
             code,
             allow_stdin: true,
@@ -689,6 +734,7 @@ impl Session {
             Kernel::Shutdown => ExecutionStatus::Shutdown,
         };
 
+        let status_for_panel = status.clone();
         let parent_message_id = message.header.msg_id.clone();
         let session_view = cx.entity().downgrade();
         let weak_editor = self.editor.clone();
@@ -771,6 +817,7 @@ impl Session {
 
         self.blocks
             .insert(message.header.msg_id.clone(), editor_block);
+        self.push_to_output_panel(&message.header.msg_id, panel_code, status_for_panel, window, cx);
 
         match &self.kernel {
             Kernel::RunningKernel(_) => {
@@ -1018,6 +1065,12 @@ impl KernelSession for Session {
 
         if let Some(block) = self.blocks.get_mut(parent_message_id) {
             block.handle_message(message, window, cx);
+        }
+        // Stdin prompts are answered from the inline block only.
+        if !matches!(&message.content, JupyterMessageContent::InputRequest(_))
+            && let Some(view) = self.output_panel_views.get(parent_message_id)
+        {
+            view.update(cx, |view, cx| view.push_message(&message.content, window, cx));
         }
     }
 

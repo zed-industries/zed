@@ -8,16 +8,29 @@ world extension {
     import platform;
     import process;
     import nodejs;
+    import panel;
+    import tcp;
+    import editor;
+    import ui;
+    import console;
 
     use common.{env-vars, range};
     use context-server.{context-server-configuration};
     use dap.{attach-request, build-task-template, debug-config, debug-adapter-binary, debug-task-definition, debug-request, debug-scenario, launch-request, resolved-task, start-debugging-request-arguments-request};
+    use editor.{editor-state};
     use lsp.{completion, symbol};
     use process.{command};
     use slash-command.{slash-command, slash-command-argument-completion, slash-command-output};
 
+    record command-context {
+        editor: option<editor-state>,
+    }
+
     /// Initializes the extension.
     export init-extension: func();
+
+    /// Delivers a user action from a persistent extension panel.
+    export panel-action: func(panel-id: string, action: string, payload: string) -> result<_, string>;
 
     /// The type of a downloaded file.
     enum downloaded-file-type {
@@ -49,6 +62,7 @@ world extension {
     }
 
     import get-settings: func(path: option<settings-location>, category: string, key: option<string>) -> result<string, string>;
+    import extension-settings: func() -> result<string, string>;
 
     /// Downloads a file from the given URL and saves it to the given path within the extension's
     /// working directory.
@@ -176,4 +190,13 @@ world extension {
     export dap-config-to-scenario: func(config: debug-config) -> result<debug-scenario, string>;
     export dap-locator-create-scenario: func(locator-name: string, build-config-template: build-task-template, resolved-label: string, debug-adapter-name: string) -> option<debug-scenario>;
     export run-dap-locator: func(locator-name: string, config: resolved-task) -> result<debug-request, string>;
+
+    export run-command: func(command-id: string, context: command-context) -> result<_, string>;
+    export ui-response: func(request-id: u64, selected: option<string>) -> result<_, string>;
+    export console-input: func(id: string, text: string) -> result<_, string>;
+    export process-output: func(handle: u64, is-stderr: bool, text: string) -> result<_, string>;
+    export process-exit: func(handle: u64, code: option<s32>) -> result<_, string>;
+    export tcp-data: func(stream-id: u64, data: list<u8>) -> result<_, string>;
+    export tcp-closed: func(stream-id: u64, error: option<string>) -> result<_, string>;
+    export on-event: func(kind: string, payload-json: string) -> result<_, string>;
 }

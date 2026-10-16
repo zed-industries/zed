@@ -6081,6 +6081,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-compression",
+ "async-net",
  "async-tar",
  "async-trait",
  "client",
@@ -21933,6 +21934,7 @@ dependencies = [
  "component",
  "db",
  "dirs",
+ "extension",
  "fs",
  "futures 0.3.34",
  "futures-lite 2.6.1",
@@ -22463,6 +22465,7 @@ dependencies = [
  "collab_ui",
  "collections",
  "command_palette",
+ "command_palette_hooks",
  "component_preview",
  "copilot",
  "copilot_chat",

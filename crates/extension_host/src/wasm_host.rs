@@ -57,6 +57,9 @@ pub struct WasmHost {
     pub(crate) granted_capabilities: Vec<ExtensionCapability>,
     _main_thread_message_task: Task<()>,
     main_thread_message_tx: mpsc::UnboundedSender<MainThreadCall>,
+    pub(crate) background_processes: Arc<
+        std::sync::Mutex<std::collections::HashMap<u64, futures::channel::oneshot::Sender<()>>>,
+    >,
 }
 
 #[derive(Clone, Debug)]
@@ -67,12 +70,6 @@ pub struct WasmExtension {
     #[allow(unused)]
     pub zed_api_version: Version,
     _task: Arc<Task<Result<(), gpui_tokio::JoinError>>>,
-}
-
-impl Drop for WasmExtension {
-    fn drop(&mut self) {
-        self.tx.close_channel();
-    }
 }
 
 #[async_trait]
@@ -637,6 +634,9 @@ impl WasmHost {
             granted_capabilities: extension_settings.granted_capabilities.clone(),
             _main_thread_message_task: task,
             main_thread_message_tx: tx,
+            background_processes: Arc::new(std::sync::Mutex::new(
+                std::collections::HashMap::default(),
+            )),
         })
     }
 
@@ -856,6 +856,142 @@ fn parse_wasm_extension_version_custom_section(data: &[u8]) -> Option<Version> {
 }
 
 impl WasmExtension {
+    pub async fn panel_action(
+        &self,
+        panel_id: String,
+        action: String,
+        payload: serde_json::Value,
+    ) -> Result<()> {
+        let payload = serde_json::to_string(&payload)?;
+        self.call(|extension, store| {
+            async move {
+                extension
+                    .call_panel_action(store, &panel_id, &action, &payload)
+                    .await?
+                    .map_err(|error| store.data().extension_error(error))?;
+                Ok(())
+            }
+            .boxed()
+        })
+        .await?
+    }
+
+    pub async fn run_command(
+        &self,
+        command_id: String,
+        context: extension::ExtensionCommandContext,
+    ) -> Result<()> {
+        self.call(move |extension, store| {
+            async move {
+                extension
+                    .call_run_command(store, &command_id, context)
+                    .await?
+                    .map_err(|error| store.data().extension_error(error))?;
+                Ok(())
+            }
+            .boxed()
+        })
+        .await?
+    }
+
+    pub async fn ui_response(&self, request_id: u64, selected: Option<String>) -> Result<()> {
+        self.call(move |extension, store| {
+            async move {
+                extension
+                    .call_ui_response(store, request_id, selected.as_deref())
+                    .await?
+                    .map_err(|error| store.data().extension_error(error))?;
+                Ok(())
+            }
+            .boxed()
+        })
+        .await?
+    }
+
+    pub async fn console_input(&self, id: String, text: String) -> Result<()> {
+        self.call(move |extension, store| {
+            async move {
+                extension
+                    .call_console_input(store, &id, &text)
+                    .await?
+                    .map_err(|error| store.data().extension_error(error))?;
+                Ok(())
+            }
+            .boxed()
+        })
+        .await?
+    }
+
+    pub async fn process_output(&self, handle: u64, is_stderr: bool, text: String) -> Result<()> {
+        self.call(move |extension, store| {
+            async move {
+                extension
+                    .call_process_output(store, handle, is_stderr, &text)
+                    .await?
+                    .map_err(|error| store.data().extension_error(error))?;
+                Ok(())
+            }
+            .boxed()
+        })
+        .await?
+    }
+
+    pub async fn process_exit(&self, handle: u64, code: Option<i32>) -> Result<()> {
+        self.call(move |extension, store| {
+            async move {
+                extension
+                    .call_process_exit(store, handle, code)
+                    .await?
+                    .map_err(|error| store.data().extension_error(error))?;
+                Ok(())
+            }
+            .boxed()
+        })
+        .await?
+    }
+
+    pub async fn tcp_data(&self, stream_id: u64, data: Vec<u8>) -> Result<()> {
+        self.call(move |extension, store| {
+            async move {
+                extension
+                    .call_tcp_data(store, stream_id, &data)
+                    .await?
+                    .map_err(|error| store.data().extension_error(error))?;
+                Ok(())
+            }
+            .boxed()
+        })
+        .await?
+    }
+
+    pub async fn tcp_closed(&self, stream_id: u64, error: Option<String>) -> Result<()> {
+        self.call(move |extension, store| {
+            async move {
+                extension
+                    .call_tcp_closed(store, stream_id, error.as_deref())
+                    .await?
+                    .map_err(|error| store.data().extension_error(error))?;
+                Ok(())
+            }
+            .boxed()
+        })
+        .await?
+    }
+
+    pub async fn on_event(&self, kind: String, payload_json: String) -> Result<()> {
+        self.call(move |extension, store| {
+            async move {
+                extension
+                    .call_on_event(store, &kind, &payload_json)
+                    .await?
+                    .map_err(|error| store.data().extension_error(error))?;
+                Ok(())
+            }
+            .boxed()
+        })
+        .await?
+    }
+
     pub async fn load(
         extension_dir: &Path,
         manifest: &Arc<ExtensionManifest>,
@@ -938,6 +1074,15 @@ impl WasmExtension {
                 self.manifest.name, self.manifest.id,
             )
         })
+    }
+}
+
+impl WasmHost {
+    pub(crate) fn dispatch_on_main_thread(
+        &self,
+        f: impl 'static + Send + for<'a> FnOnce(&'a mut AsyncApp) -> LocalBoxFuture<'a, ()>,
+    ) {
+        let _ = self.main_thread_message_tx.unbounded_send(Box::new(f));
     }
 }
 

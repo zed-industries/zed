@@ -1,4 +1,6 @@
+mod bencode;
 mod native_kernel;
+mod nrepl_kernel;
 use std::{fmt::Debug, future::Future, path::PathBuf};
 
 use futures::{channel::mpsc, future::Shared};
@@ -6,6 +8,7 @@ use gpui::{App, Entity, Task, Window};
 use language::LanguageName;
 use log;
 pub use native_kernel::*;
+pub use nrepl_kernel::*;
 
 mod remote_kernels;
 use project::{Project, ProjectPath, Toolchains, WorktreeId};
@@ -243,12 +246,21 @@ impl PythonEnvKernelSpecification {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NreplKernelSpecification {
+    pub name: String,
+    pub host: String,
+    pub port: u16,
+    pub language: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KernelSpecification {
     JupyterServer(RemoteKernelSpecification),
     Jupyter(LocalKernelSpecification),
     PythonEnv(PythonEnvKernelSpecification),
     SshRemote(SshRemoteKernelSpecification),
     WslRemote(WslKernelSpecification),
+    Nrepl(NreplKernelSpecification),
 }
 
 #[derive(Debug, Clone)]
@@ -303,6 +315,7 @@ impl KernelSpecification {
             Self::JupyterServer(spec) => spec.name.clone().into(),
             Self::SshRemote(spec) => spec.name.clone().into(),
             Self::WslRemote(spec) => spec.kernelspec.display_name.clone().into(),
+            Self::Nrepl(spec) => spec.name.clone().into(),
         }
     }
 
@@ -317,6 +330,7 @@ impl KernelSpecification {
             Self::JupyterServer(_) => "Jupyter Server".into(),
             Self::SshRemote(_) => "SSH Remote".into(),
             Self::WslRemote(_) => "WSL Remote".into(),
+            Self::Nrepl(_) => "nREPL".into(),
         }
     }
 
@@ -327,6 +341,7 @@ impl KernelSpecification {
             Self::JupyterServer(spec) => spec.url.to_string(),
             Self::SshRemote(spec) => spec.path.to_string(),
             Self::WslRemote(spec) => spec.distro.clone(),
+            Self::Nrepl(spec) => format!("{}:{}", spec.host, spec.port),
         })
     }
 
@@ -337,14 +352,17 @@ impl KernelSpecification {
             Self::JupyterServer(spec) => spec.kernelspec.language.clone(),
             Self::SshRemote(spec) => spec.kernelspec.language.clone(),
             Self::WslRemote(spec) => spec.kernelspec.language.clone(),
+            Self::Nrepl(spec) => spec.language.clone(),
         })
     }
 
     pub fn has_ipykernel(&self) -> bool {
         match self {
-            Self::Jupyter(_) | Self::JupyterServer(_) | Self::SshRemote(_) | Self::WslRemote(_) => {
-                true
-            }
+            Self::Jupyter(_)
+            | Self::JupyterServer(_)
+            | Self::SshRemote(_)
+            | Self::WslRemote(_)
+            | Self::Nrepl(_) => true,
             Self::PythonEnv(spec) => spec.has_ipykernel,
         }
     }
@@ -359,6 +377,7 @@ impl KernelSpecification {
             Self::JupyterServer(_) => Some("Jupyter Server".into()),
             Self::SshRemote(_) => Some("SSH Remote".into()),
             Self::WslRemote(_) => Some("WSL Remote".into()),
+            Self::Nrepl(_) => Some("nREPL".into()),
         }
     }
 
@@ -369,6 +388,7 @@ impl KernelSpecification {
             Self::JupyterServer(spec) => spec.kernelspec.language.clone(),
             Self::SshRemote(spec) => spec.kernelspec.language.clone(),
             Self::WslRemote(spec) => spec.kernelspec.language.clone(),
+            Self::Nrepl(spec) => spec.language.clone(),
         };
 
         file_icons::FileIcons::get(cx)

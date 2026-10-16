@@ -13,10 +13,11 @@ use project::{Fs, Project, ProjectPath, WorktreeId};
 use remote::RemoteConnectionOptions;
 use settings::{Settings, SettingsStore};
 use util::rel_path::RelPath;
+use util::ResultExt as _;
 
 use crate::kernels::{
-    Kernel, PythonEnvKernelSpecification, list_remote_kernelspecs, local_kernel_specifications,
-    python_env_kernel_specifications, wsl_kernel_specifications,
+    Kernel, NreplKernelSpecification, PythonEnvKernelSpecification, list_remote_kernelspecs,
+    local_kernel_specifications, python_env_kernel_specifications, wsl_kernel_specifications,
 };
 use crate::{JupyterSettings, KernelSpecification, Session};
 
@@ -175,6 +176,13 @@ impl ReplStore {
                 matches!(opts, RemoteConnectionOptions::Wsl(_))
             });
         let kernel_specifications_task = python_env_kernel_specifications(project, worktree_id, cx);
+        let nrepl_kernel_specifications_task = project
+            .read(cx)
+            .worktree_for_id(worktree_id, cx)
+            .filter(|_| !is_remote)
+            .map(|worktree| {
+                nrepl_kernel_specifications(self.fs.clone(), worktree.read(cx).abs_path())
+            });
         let active_toolchain = project.read(cx).active_toolchain(
             ProjectPath {
                 worktree_id,
@@ -192,8 +200,14 @@ impl ReplStore {
             })
             .ok();
 
-            let kernel_specifications =
-                kernel_specifications_res.context("getting python kernelspecs")?;
+            // A failure to list Python environments shouldn't hide nREPL servers.
+            let mut kernel_specifications = kernel_specifications_res
+                .context("getting python kernelspecs")
+                .log_err()
+                .unwrap_or_default();
+            if let Some(nrepl_task) = nrepl_kernel_specifications_task {
+                kernel_specifications.extend(nrepl_task.await);
+            }
 
             let active_toolchain_path = active_toolchain.await.map(|toolchain| toolchain.path);
 
@@ -275,11 +289,24 @@ impl ReplStore {
 
             anyhow::Ok(all_specs)
         });
+        let configured_nrepl_specifications = JupyterSettings::get_global(cx)
+            .nrepl_servers
+            .iter()
+            .map(|server| {
+                KernelSpecification::Nrepl(NreplKernelSpecification {
+                    name: server.name.clone(),
+                    host: server.host.clone(),
+                    port: server.port,
+                    language: server.language.clone(),
+                })
+            })
+            .collect::<Vec<_>>();
 
         cx.spawn(async move |this, cx| {
             let all_specs = all_specs.await;
 
-            if let Ok(specs) = all_specs {
+            if let Ok(mut specs) = all_specs {
+                specs.extend(configured_nrepl_specifications);
                 this.update(cx, |this, cx| {
                     this.kernel_specifications = specs;
                     cx.notify();
@@ -437,5 +464,35 @@ impl ReplStore {
     ) {
         self.kernel_specifications = specs;
         cx.notify();
+    }
+}
+
+/// Servers started by nREPL-based tooling advertise their port in these files.
+const NREPL_PORT_FILES: [(&str, &str); 2] = [
+    (".nrepl-port", "nREPL"),
+    (".shadow-cljs/nrepl.port", "shadow-cljs nREPL"),
+];
+
+fn nrepl_kernel_specifications(
+    fs: Arc<dyn Fs>,
+    worktree_root: Arc<std::path::Path>,
+) -> impl std::future::Future<Output = Vec<KernelSpecification>> {
+    async move {
+        let mut specifications = Vec::new();
+        for (relative_path, label) in NREPL_PORT_FILES {
+            let Ok(contents) = fs.load(&worktree_root.join(relative_path)).await else {
+                continue;
+            };
+            let Ok(port) = contents.trim().parse::<u16>() else {
+                continue;
+            };
+            specifications.push(KernelSpecification::Nrepl(NreplKernelSpecification {
+                name: format!("{label} {port}"),
+                host: "127.0.0.1".to_string(),
+                port,
+                language: "clojure".to_string(),
+            }));
+        }
+        specifications
     }
 }

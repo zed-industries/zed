@@ -206,6 +206,7 @@
 - [Snippets Extensions](./extensions/snippets.md)
 - [MCP Server Extensions](./extensions/mcp-extensions.md)
 - [Agent Server Extensions](./extensions/agent-servers.md)
+- [Editor & UI API](./extensions/editor-api.md)
 
 # Coming From…
 

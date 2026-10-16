@@ -11,25 +11,34 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use extension::{
-    ExtensionLanguageServerProxy, KeyValueStoreDelegate, ProjectDelegate, WorktreeDelegate,
+    ExtensionConsoleOutputKind, ExtensionConsoleProxy, ExtensionDecoration,
+    ExtensionDecorationStyle, ExtensionEditorProxy, ExtensionLanguageServerProxy,
+    ExtensionNotificationLevel, ExtensionPanelActionDescriptor, ExtensionPanelDescriptor,
+    ExtensionPanelEvent, ExtensionPanelId, ExtensionPanelLocation, ExtensionPanelUiProxy,
+    ExtensionProcessDispatcher, ExtensionQuickPickItem, ExtensionTcpDispatcher, ExtensionTextEdit,
+    ExtensionUiProxy, KeyValueStoreDelegate, ProjectDelegate, WorktreeDelegate,
 };
-use futures::{AsyncReadExt, lock::Mutex};
+use futures::{AsyncReadExt, AsyncWriteExt, lock::Mutex};
 use futures::{FutureExt as _, io::BufReader};
-use gpui::{BackgroundExecutor, SharedString};
+use gpui::{BackgroundExecutor, SharedString, TaskExt as _};
 use language::{BinaryStatus, LanguageName, language_settings::AllLanguageSettings};
 use project::project_settings::ProjectSettings;
 use semver::Version;
 use std::{
     env,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     path::{Path, PathBuf},
     str::FromStr,
-    sync::{Arc, OnceLock},
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 use task::{SpawnInTerminal, ZedDebugConfig};
 use url::Url;
 use util::{
-    archive::extract_zip, fs::make_file_executable, maybe, paths::PathStyle, rel_path::RelPath,
+    ResultExt as _, archive::extract_zip, fs::make_file_executable, maybe, paths::PathStyle,
+    rel_path::RelPath,
 };
 use wasmtime::component::{Linker, Resource};
 
@@ -48,7 +57,8 @@ wasmtime::component::bindgen!({
          "worktree": ExtensionWorktree,
          "project": ExtensionProject,
          "key-value-store": ExtensionKeyValueStore,
-         "zed:extension/http-client.http-response-stream": ExtensionHttpResponseStream
+         "zed:extension/http-client.http-response-stream": ExtensionHttpResponseStream,
+         "zed:extension/tcp.tcp-stream": ExtensionTcpStream
     },
 });
 
@@ -63,6 +73,7 @@ pub type ExtensionWorktree = Arc<dyn WorktreeDelegate>;
 pub type ExtensionProject = Arc<dyn ProjectDelegate>;
 pub type ExtensionKeyValueStore = Arc<dyn KeyValueStoreDelegate>;
 pub type ExtensionHttpResponseStream = Arc<Mutex<::http_client::Response<AsyncBody>>>;
+pub type ExtensionTcpStream = Arc<Mutex<async_net::TcpStream>>;
 
 pub fn linker(executor: &BackgroundExecutor) -> &'static Linker<WasmState> {
     static LINKER: OnceLock<Linker<WasmState>> = OnceLock::new();
@@ -630,6 +641,247 @@ impl HostWorktree for WasmState {
 
 impl common::Host for WasmState {}
 
+impl panel::Host for WasmState {
+    async fn open_panel(
+        &mut self,
+        descriptor: panel::PanelDescriptor,
+    ) -> wasmtime::Result<Result<(), String>> {
+        let location = match descriptor.location {
+            panel::PanelLocation::Right => ExtensionPanelLocation::Right,
+            panel::PanelLocation::Bottom => ExtensionPanelLocation::Bottom,
+        };
+        let descriptor = ExtensionPanelDescriptor {
+            id: ExtensionPanelId {
+                extension_id: self.manifest.id.clone(),
+                panel_id: descriptor.panel_id.into(),
+            },
+            title: descriptor.title,
+            location,
+            actions: descriptor
+                .actions
+                .into_iter()
+                .map(|action| ExtensionPanelActionDescriptor {
+                    id: action.id.into(),
+                    label: action.label,
+                    requires_input: action.requires_input,
+                })
+                .collect(),
+        };
+
+        let proxy = self.host.proxy.clone();
+        let result = self
+            .on_main_thread(move |cx| {
+                async move { cx.update(|cx| proxy.open_panel(descriptor, cx)) }.boxed_local()
+            })
+            .await;
+        Ok(result.map_err(|error| error.to_string()))
+    }
+
+    async fn send_event(
+        &mut self,
+        panel_id: String,
+        kind: String,
+        payload: String,
+    ) -> wasmtime::Result<Result<(), String>> {
+        let payload = match serde_json::from_str::<serde_json::Value>(&payload) {
+            Ok(payload) if payload.is_object() => payload,
+            Ok(_) => {
+                return Ok(Err(
+                    "extension panel event payload must be a JSON object".into()
+                ));
+            }
+            Err(error) => {
+                return Ok(Err(format!(
+                    "invalid extension panel event payload: {error}"
+                )));
+            }
+        };
+        let panel = ExtensionPanelId {
+            extension_id: self.manifest.id.clone(),
+            panel_id: panel_id.into(),
+        };
+        let event = ExtensionPanelEvent {
+            kind: kind.into(),
+            payload,
+        };
+
+        let proxy = self.host.proxy.clone();
+        let result = self
+            .on_main_thread(move |cx| {
+                async move { cx.update(|cx| proxy.send_panel_event(panel, event, cx)) }
+                    .boxed_local()
+            })
+            .await;
+        Ok(result.map_err(|error| error.to_string()))
+    }
+
+    async fn active_worktree_root(&mut self) -> wasmtime::Result<Result<String, String>> {
+        let proxy = self.host.proxy.clone();
+        let result = self
+            .on_main_thread(move |cx| {
+                async move { cx.update(|cx| proxy.active_worktree_root(cx)) }.boxed_local()
+            })
+            .await;
+        Ok(result.map_err(|error| error.to_string()))
+    }
+
+    async fn read_active_worktree_file(
+        &mut self,
+        path: String,
+    ) -> wasmtime::Result<Result<String, String>> {
+        let proxy = self.host.proxy.clone();
+        let result = self
+            .on_main_thread(move |cx| {
+                async move { cx.update(|cx| proxy.read_active_worktree_file(&path, cx)) }
+                    .boxed_local()
+            })
+            .await;
+        Ok(result.map_err(|error| error.to_string()))
+    }
+}
+
+impl tcp::Host for WasmState {
+    async fn connect(
+        &mut self,
+        host: String,
+        port: u16,
+    ) -> wasmtime::Result<Result<Resource<ExtensionTcpStream>, String>> {
+        maybe!(async {
+            self.capability_granter.grant_tcp_connect(&host, port)?;
+
+            let address = match host.as_str() {
+                "localhost" | "127.0.0.1" => SocketAddr::from(([127, 0, 0, 1], port)),
+                "::1" => SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], port)),
+                _ => bail!("network:tcp-local only permits loopback hosts"),
+            };
+            let stream = Arc::new(Mutex::new(async_net::TcpStream::connect(address).await?));
+            Ok(self.table.push(stream)?)
+        })
+        .await
+        .to_wasmtime_result()
+    }
+}
+
+impl tcp::HostTcpStream for WasmState {
+    async fn read(
+        &mut self,
+        stream: Resource<ExtensionTcpStream>,
+        max_bytes: u32,
+    ) -> wasmtime::Result<Result<Vec<u8>, String>> {
+        let stream = self.table.get(&stream)?.clone();
+        maybe!(async move {
+            let mut buffer = vec![0; max_bytes.min(1024 * 1024) as usize];
+            let bytes_read = stream.lock().await.read(&mut buffer).await?;
+            buffer.truncate(bytes_read);
+            Ok(buffer)
+        })
+        .await
+        .to_wasmtime_result()
+    }
+
+    async fn write(
+        &mut self,
+        stream: Resource<ExtensionTcpStream>,
+        data: Vec<u8>,
+    ) -> wasmtime::Result<Result<(), String>> {
+        let stream = self.table.get(&stream)?.clone();
+        maybe!(async move {
+            let mut stream = stream.lock().await;
+            stream.write_all(&data).await?;
+            stream.flush().await?;
+            Ok(())
+        })
+        .await
+        .to_wasmtime_result()
+    }
+
+    async fn subscribe(
+        &mut self,
+        stream: Resource<ExtensionTcpStream>,
+    ) -> wasmtime::Result<Result<u64, String>> {
+        static NEXT_STREAM_ID: AtomicU64 = AtomicU64::new(1);
+        let stream = self.table.get(&stream)?.clone();
+        let stream_id = NEXT_STREAM_ID.fetch_add(1, Ordering::SeqCst);
+        let proxy = self.host.proxy.clone();
+        let host = self.host.clone();
+        let host_for_task = self.host.clone();
+        let extension_id = self.manifest.id.clone();
+
+        host.dispatch_on_main_thread(move |cx| {
+            let task = cx.background_executor().spawn(async move {
+                use futures::AsyncReadExt;
+                let mut buffer = vec![0u8; 8192];
+                loop {
+                    let mut locked = stream.lock().await;
+                    let read_result = locked.read(&mut buffer).await;
+                    drop(locked);
+                    match read_result {
+                        Ok(0) => {
+                            let proxy = proxy.clone();
+                            let extension_id = extension_id.clone();
+                            host_for_task.dispatch_on_main_thread(move |cx| {
+                                async move {
+                                    cx.update(|cx| {
+                                        proxy
+                                            .tcp_closed(extension_id, stream_id, None, cx)
+                                            .detach_and_log_err(cx);
+                                    });
+                                }
+                                .boxed_local()
+                            });
+                            break;
+                        }
+                        Ok(bytes_read) => {
+                            let data = buffer[..bytes_read].to_vec();
+                            let proxy = proxy.clone();
+                            let extension_id = extension_id.clone();
+                            host_for_task.dispatch_on_main_thread(move |cx| {
+                                async move {
+                                    cx.update(|cx| {
+                                        proxy
+                                            .tcp_data(extension_id, stream_id, data, cx)
+                                            .detach_and_log_err(cx);
+                                    });
+                                }
+                                .boxed_local()
+                            });
+                        }
+                        Err(error) => {
+                            let proxy = proxy.clone();
+                            let extension_id = extension_id.clone();
+                            host_for_task.dispatch_on_main_thread(move |cx| {
+                                async move {
+                                    cx.update(|cx| {
+                                        proxy
+                                            .tcp_closed(
+                                                extension_id,
+                                                stream_id,
+                                                Some(error.to_string()),
+                                                cx,
+                                            )
+                                            .detach_and_log_err(cx);
+                                    });
+                                }
+                                .boxed_local()
+                            });
+                            break;
+                        }
+                    }
+                }
+            });
+            task.detach();
+            async {}.boxed_local()
+        });
+
+        Ok(Ok(stream_id))
+    }
+
+    async fn drop(&mut self, stream: Resource<ExtensionTcpStream>) -> wasmtime::Result<()> {
+        self.table.delete(stream)?;
+        Ok(())
+    }
+}
+
 impl http_client::Host for WasmState {
     async fn fetch(
         &mut self,
@@ -917,6 +1169,179 @@ impl process::Host for WasmState {
         .await
         .to_wasmtime_result()
     }
+
+    async fn spawn(
+        &mut self,
+        command: String,
+        args: Vec<String>,
+        env: Vec<(String, String)>,
+        cwd: Option<String>,
+    ) -> wasmtime::Result<Result<u64, String>> {
+        maybe!(async {
+            self.capability_granter.grant_exec(&command, &args)?;
+
+            static NEXT_PROCESS_HANDLE: AtomicU64 = AtomicU64::new(1);
+            let handle = NEXT_PROCESS_HANDLE.fetch_add(1, Ordering::SeqCst);
+
+            let mut cmd = util::command::new_command(&command);
+            cmd.args(&args);
+            cmd.envs(env);
+            if let Some(ref cwd) = cwd {
+                cmd.current_dir(cwd);
+            }
+            cmd.stdout(util::command::Stdio::piped());
+            cmd.stderr(util::command::Stdio::piped());
+
+            let mut child = cmd.spawn()?;
+            let stdout = child.stdout.take();
+            let stderr = child.stderr.take();
+
+            let (kill_tx, mut kill_rx) = futures::channel::oneshot::channel::<()>();
+            self.host
+                .background_processes
+                .lock()
+                .unwrap()
+                .insert(handle, kill_tx);
+
+            let host = self.host.clone();
+            let proxy = self.host.proxy.clone();
+            let extension_id = self.manifest.id.clone();
+
+            if let Some(mut stdout) = stdout {
+                let host_task = host.clone();
+                let proxy = proxy.clone();
+                let extension_id = extension_id.clone();
+                host.dispatch_on_main_thread(move |cx| {
+                    let task = cx.background_executor().spawn(async move {
+                        let mut buffer = [0u8; 4096];
+                        loop {
+                            match stdout.read(&mut buffer).await {
+                                Ok(0) => break,
+                                Ok(bytes_read) => {
+                                    let text =
+                                        String::from_utf8_lossy(&buffer[..bytes_read]).to_string();
+                                    let proxy = proxy.clone();
+                                    let extension_id = extension_id.clone();
+                                    host_task.dispatch_on_main_thread(move |cx| {
+                                        async move {
+                                            cx.update(|cx| {
+                                                proxy
+                                                    .process_output(
+                                                        extension_id,
+                                                        handle,
+                                                        false,
+                                                        text,
+                                                        cx,
+                                                    )
+                                                    .detach_and_log_err(cx);
+                                            });
+                                        }
+                                        .boxed_local()
+                                    });
+                                }
+                                Err(_) => break,
+                            }
+                        }
+                    });
+                    task.detach();
+                    async {}.boxed_local()
+                });
+            }
+
+            if let Some(mut stderr) = stderr {
+                let host_task = host.clone();
+                let proxy = proxy.clone();
+                let extension_id = extension_id.clone();
+                host.dispatch_on_main_thread(move |cx| {
+                    let task = cx.background_executor().spawn(async move {
+                        let mut buffer = [0u8; 4096];
+                        loop {
+                            match stderr.read(&mut buffer).await {
+                                Ok(0) => break,
+                                Ok(bytes_read) => {
+                                    let text =
+                                        String::from_utf8_lossy(&buffer[..bytes_read]).to_string();
+                                    let proxy = proxy.clone();
+                                    let extension_id = extension_id.clone();
+                                    host_task.dispatch_on_main_thread(move |cx| {
+                                        async move {
+                                            cx.update(|cx| {
+                                                proxy
+                                                    .process_output(
+                                                        extension_id,
+                                                        handle,
+                                                        true,
+                                                        text,
+                                                        cx,
+                                                    )
+                                                    .detach_and_log_err(cx);
+                                            });
+                                        }
+                                        .boxed_local()
+                                    });
+                                }
+                                Err(_) => break,
+                            }
+                        }
+                    });
+                    task.detach();
+                    async {}.boxed_local()
+                });
+            }
+
+            let host_exit = host.clone();
+            let proxy_exit = proxy;
+            let extension_id_exit = extension_id;
+            host.dispatch_on_main_thread(move |cx| {
+                let task = cx.background_executor().spawn(async move {
+                    use futures::FutureExt as _;
+                    let status = futures::select_biased! {
+                        _ = kill_rx => {
+                            let _ = child.kill();
+                            child.status().await.ok()
+                        }
+                        status = child.status().fuse() => {
+                            status.ok()
+                        }
+                    };
+                    host_exit
+                        .background_processes
+                        .lock()
+                        .unwrap()
+                        .remove(&handle);
+                    let code = status.and_then(|s| s.code());
+                    host_exit.dispatch_on_main_thread(move |cx| {
+                        async move {
+                            cx.update(|cx| {
+                                proxy_exit
+                                    .process_exit(extension_id_exit, handle, code, cx)
+                                    .detach_and_log_err(cx);
+                            });
+                        }
+                        .boxed_local()
+                    });
+                });
+                task.detach();
+                async {}.boxed_local()
+            });
+
+            Ok(handle)
+        })
+        .await
+        .to_wasmtime_result()
+    }
+
+    async fn kill(&mut self, handle: u64) -> wasmtime::Result<Result<(), String>> {
+        maybe!(async {
+            let mut guard = self.host.background_processes.lock().unwrap();
+            if let Some(kill_tx) = guard.remove(&handle) {
+                let _ = kill_tx.send(());
+            }
+            Ok(())
+        })
+        .await
+        .to_wasmtime_result()
+    }
 }
 
 #[async_trait]
@@ -1159,5 +1584,356 @@ impl ExtensionImports for WasmState {
             .await
             .with_context(|| format!("setting permissions for path {path:?}"))
             .to_wasmtime_result()
+    }
+
+    async fn extension_settings(&mut self) -> wasmtime::Result<Result<String, String>> {
+        let extension_id = self.manifest.id.clone();
+        let result = self
+            .on_main_thread(move |cx| {
+                async move {
+                    cx.update(|cx| {
+                        let settings = crate::extension_settings::ExtensionSettings::get_global(cx);
+                        let value = settings
+                            .extensions_settings
+                            .get(&extension_id)
+                            .cloned()
+                            .unwrap_or_else(|| {
+                                serde_json::Value::Object(serde_json::Map::default())
+                            });
+                        serde_json::to_string(&value).map_err(|error| error.to_string())
+                    })
+                }
+                .boxed_local()
+            })
+            .await;
+        Ok(result)
+    }
+}
+
+impl editor::Host for WasmState {
+    async fn active_editor(&mut self) -> wasmtime::Result<Option<editor::EditorState>> {
+        let proxy = self.host.proxy.clone();
+        let state = self
+            .on_main_thread(move |cx| {
+                async move { cx.update(|cx| proxy.active_editor(cx)) }.boxed_local()
+            })
+            .await
+            .map_err(|error| wasmtime::Error::msg(error.to_string()))?;
+        Ok(state.map(|state| editor::EditorState {
+            path: state.path,
+            language: state.language,
+            text: state.text,
+            selections: state
+                .selections
+                .into_iter()
+                .map(|range| Range {
+                    start: range.start,
+                    end: range.end,
+                })
+                .collect(),
+            version: state.version,
+        }))
+    }
+
+    async fn apply_edits(
+        &mut self,
+        path: String,
+        edits: Vec<editor::TextEdit>,
+    ) -> wasmtime::Result<Result<(), String>> {
+        let proxy = self.host.proxy.clone();
+        let edits = edits
+            .into_iter()
+            .map(|edit| ExtensionTextEdit {
+                start: edit.start,
+                end: edit.end,
+                text: edit.text,
+            })
+            .collect();
+        let result = self
+            .on_main_thread(move |cx| {
+                async move { cx.update(|cx| proxy.apply_edits(&path, edits, cx)) }.boxed_local()
+            })
+            .await;
+        Ok(result.map_err(|error| error.to_string()))
+    }
+
+    async fn set_selections(
+        &mut self,
+        path: String,
+        selections: Vec<Range>,
+    ) -> wasmtime::Result<Result<(), String>> {
+        let proxy = self.host.proxy.clone();
+        let selections = selections
+            .into_iter()
+            .map(|range| range.start..range.end)
+            .collect();
+        let result = self
+            .on_main_thread(move |cx| {
+                async move { cx.update(|cx| proxy.set_selections(&path, selections, cx)) }
+                    .boxed_local()
+            })
+            .await;
+        Ok(result.map_err(|error| error.to_string()))
+    }
+
+    async fn set_decorations(
+        &mut self,
+        path: String,
+        key: String,
+        decorations: Vec<editor::Decoration>,
+    ) -> wasmtime::Result<Result<(), String>> {
+        let proxy = self.host.proxy.clone();
+        let decorations: Vec<ExtensionDecoration> = decorations
+            .into_iter()
+            .map(|decoration| match decoration {
+                editor::Decoration::InlineAfter(inline) => ExtensionDecoration::InlineAfter {
+                    range: inline.range.start..inline.range.end,
+                    text: inline.text,
+                    style: match inline.style {
+                        editor::DecorationStyle::Info => ExtensionDecorationStyle::Info,
+                        editor::DecorationStyle::Success => ExtensionDecorationStyle::Success,
+                        editor::DecorationStyle::Error => ExtensionDecorationStyle::Error,
+                        editor::DecorationStyle::Warning => ExtensionDecorationStyle::Warning,
+                        editor::DecorationStyle::Muted => ExtensionDecorationStyle::Muted,
+                    },
+                },
+                editor::Decoration::Block(block) => ExtensionDecoration::Block {
+                    row: block.row,
+                    text: block.text,
+                    style: match block.style {
+                        editor::DecorationStyle::Info => ExtensionDecorationStyle::Info,
+                        editor::DecorationStyle::Success => ExtensionDecorationStyle::Success,
+                        editor::DecorationStyle::Error => ExtensionDecorationStyle::Error,
+                        editor::DecorationStyle::Warning => ExtensionDecorationStyle::Warning,
+                        editor::DecorationStyle::Muted => ExtensionDecorationStyle::Muted,
+                    },
+                },
+                editor::Decoration::Highlight(highlight) => ExtensionDecoration::Highlight {
+                    range: highlight.range.start..highlight.range.end,
+                    style: match highlight.style {
+                        editor::DecorationStyle::Info => ExtensionDecorationStyle::Info,
+                        editor::DecorationStyle::Success => ExtensionDecorationStyle::Success,
+                        editor::DecorationStyle::Error => ExtensionDecorationStyle::Error,
+                        editor::DecorationStyle::Warning => ExtensionDecorationStyle::Warning,
+                        editor::DecorationStyle::Muted => ExtensionDecorationStyle::Muted,
+                    },
+                },
+                editor::Decoration::Gutter(gutter) => ExtensionDecoration::Gutter {
+                    row: gutter.row,
+                    style: match gutter.style {
+                        editor::DecorationStyle::Info => ExtensionDecorationStyle::Info,
+                        editor::DecorationStyle::Success => ExtensionDecorationStyle::Success,
+                        editor::DecorationStyle::Error => ExtensionDecorationStyle::Error,
+                        editor::DecorationStyle::Warning => ExtensionDecorationStyle::Warning,
+                        editor::DecorationStyle::Muted => ExtensionDecorationStyle::Muted,
+                    },
+                },
+            })
+            .collect();
+        let result = self
+            .on_main_thread(move |cx| {
+                async move { cx.update(|cx| proxy.set_decorations(&path, &key, decorations, cx)) }
+                    .boxed_local()
+            })
+            .await;
+        Ok(result.map_err(|error| error.to_string()))
+    }
+
+    async fn clear_decorations(
+        &mut self,
+        path: Option<String>,
+        key: String,
+    ) -> wasmtime::Result<Result<(), String>> {
+        let proxy = self.host.proxy.clone();
+        let result = self
+            .on_main_thread(move |cx| {
+                async move { cx.update(|cx| proxy.clear_decorations(path.as_deref(), &key, cx)) }
+                    .boxed_local()
+            })
+            .await;
+        Ok(result.map_err(|error| error.to_string()))
+    }
+}
+
+impl ui::Host for WasmState {
+    async fn notify(
+        &mut self,
+        level: ui::NotificationLevel,
+        message: String,
+    ) -> wasmtime::Result<()> {
+        let proxy = self.host.proxy.clone();
+        let level = match level {
+            ui::NotificationLevel::Info => ExtensionNotificationLevel::Info,
+            ui::NotificationLevel::Warning => ExtensionNotificationLevel::Warning,
+            ui::NotificationLevel::Error => ExtensionNotificationLevel::Error,
+        };
+        self.on_main_thread(move |cx| {
+            async move {
+                cx.update(|cx| {
+                    proxy.notify(level, &message, cx).log_err();
+                })
+            }
+            .boxed_local()
+        })
+        .await;
+        Ok(())
+    }
+
+    async fn quick_pick(
+        &mut self,
+        request_id: u64,
+        items: Vec<ui::QuickPickItem>,
+        placeholder: Option<String>,
+    ) -> wasmtime::Result<Result<(), String>> {
+        let proxy = self.host.proxy.clone();
+        let extension_id = self.manifest.id.clone();
+        let items = items
+            .into_iter()
+            .map(|item| ExtensionQuickPickItem {
+                label: item.label,
+                detail: item.detail,
+            })
+            .collect();
+        let result = self
+            .on_main_thread(move |cx| {
+                async move {
+                    cx.update(|cx| {
+                        proxy.quick_pick(extension_id, request_id, items, placeholder, cx)
+                    })
+                }
+                .boxed_local()
+            })
+            .await;
+        Ok(result.map_err(|error| error.to_string()))
+    }
+
+    async fn input_box(
+        &mut self,
+        request_id: u64,
+        prompt: String,
+        default_value: Option<String>,
+    ) -> wasmtime::Result<Result<(), String>> {
+        let proxy = self.host.proxy.clone();
+        let extension_id = self.manifest.id.clone();
+        let result = self
+            .on_main_thread(move |cx| {
+                async move {
+                    cx.update(|cx| {
+                        proxy.input_box(extension_id, request_id, &prompt, default_value, cx)
+                    })
+                }
+                .boxed_local()
+            })
+            .await;
+        Ok(result.map_err(|error| error.to_string()))
+    }
+
+    async fn set_status(
+        &mut self,
+        id: String,
+        text: Option<String>,
+    ) -> wasmtime::Result<Result<(), String>> {
+        let proxy = self.host.proxy.clone();
+        let extension_id = self.manifest.id.clone();
+        let result = self
+            .on_main_thread(move |cx| {
+                async move { cx.update(|cx| proxy.set_status(extension_id, &id, text, cx)) }
+                    .boxed_local()
+            })
+            .await;
+        Ok(result.map_err(|error| error.to_string()))
+    }
+
+    async fn write_clipboard(&mut self, text: String) -> wasmtime::Result<Result<(), String>> {
+        let proxy = self.host.proxy.clone();
+        let result = self
+            .on_main_thread(move |cx| {
+                async move { cx.update(|cx| proxy.write_clipboard(&text, cx)) }.boxed_local()
+            })
+            .await;
+        Ok(result.map_err(|error| error.to_string()))
+    }
+
+    async fn open_path(
+        &mut self,
+        path: String,
+        row: Option<u32>,
+        column: Option<u32>,
+    ) -> wasmtime::Result<Result<(), String>> {
+        let proxy = self.host.proxy.clone();
+        let result = self
+            .on_main_thread(move |cx| {
+                async move { cx.update(|cx| proxy.open_path(&path, row, column, cx)) }.boxed_local()
+            })
+            .await;
+        Ok(result.map_err(|error| error.to_string()))
+    }
+}
+
+impl console::Host for WasmState {
+    async fn open_console(
+        &mut self,
+        id: String,
+        title: String,
+    ) -> wasmtime::Result<Result<(), String>> {
+        let proxy = self.host.proxy.clone();
+        let extension_id = self.manifest.id.clone();
+        let result = self
+            .on_main_thread(move |cx| {
+                async move { cx.update(|cx| proxy.open_console(extension_id, &id, &title, cx)) }
+                    .boxed_local()
+            })
+            .await;
+        Ok(result.map_err(|error| error.to_string()))
+    }
+
+    async fn append(
+        &mut self,
+        id: String,
+        text: String,
+        kind: console::ConsoleOutputKind,
+    ) -> wasmtime::Result<Result<(), String>> {
+        let proxy = self.host.proxy.clone();
+        let extension_id = self.manifest.id.clone();
+        let kind = match kind {
+            console::ConsoleOutputKind::Output => ExtensionConsoleOutputKind::Output,
+            console::ConsoleOutputKind::Error => ExtensionConsoleOutputKind::Error,
+            console::ConsoleOutputKind::Result => ExtensionConsoleOutputKind::Result,
+            console::ConsoleOutputKind::Input => ExtensionConsoleOutputKind::Input,
+        };
+        let result = self
+            .on_main_thread(move |cx| {
+                async move { cx.update(|cx| proxy.append(extension_id, &id, &text, kind, cx)) }
+                    .boxed_local()
+            })
+            .await;
+        Ok(result.map_err(|error| error.to_string()))
+    }
+
+    async fn clear(&mut self, id: String) -> wasmtime::Result<Result<(), String>> {
+        let proxy = self.host.proxy.clone();
+        let extension_id = self.manifest.id.clone();
+        let result = self
+            .on_main_thread(move |cx| {
+                async move { cx.update(|cx| proxy.clear(extension_id, &id, cx)) }.boxed_local()
+            })
+            .await;
+        Ok(result.map_err(|error| error.to_string()))
+    }
+
+    async fn set_prompt(
+        &mut self,
+        id: String,
+        text: String,
+    ) -> wasmtime::Result<Result<(), String>> {
+        let proxy = self.host.proxy.clone();
+        let extension_id = self.manifest.id.clone();
+        let result = self
+            .on_main_thread(move |cx| {
+                async move { cx.update(|cx| proxy.set_prompt(extension_id, &id, &text, cx)) }
+                    .boxed_local()
+            })
+            .await;
+        Ok(result.map_err(|error| error.to_string()))
     }
 }

@@ -26,6 +26,9 @@ pub struct ExtensionSettingsContent {
     pub suggest_extensions: bool,
     /// The capabilities granted to extensions.
     pub granted_extension_capabilities: Option<Vec<ExtensionCapabilityContent>>,
+    /// Settings for individual extensions, keyed by extension ID.
+    #[serde(default)]
+    pub extensions_settings: HashMap<Arc<str>, serde_json::Value>,
 }
 
 impl Default for ExtensionSettingsContent {
@@ -35,6 +38,7 @@ impl Default for ExtensionSettingsContent {
             auto_update_extensions: HashMap::default(),
             suggest_extensions: true,
             granted_extension_capabilities: None,
+            extensions_settings: HashMap::default(),
         }
     }
 }
@@ -58,5 +62,13 @@ pub enum ExtensionCapabilityContent {
     #[serde(rename = "npm:install")]
     NpmInstallPackage {
         package: String,
+    },
+    #[serde(rename = "network:tcp-local")]
+    TcpConnect {
+        /// A loopback host: `localhost`, `127.0.0.1`, or `::1`.
+        host: String,
+        /// An optional exact TCP port. Omit this to grant access to any port on
+        /// the named loopback host.
+        port: Option<u16>,
     },
 }
