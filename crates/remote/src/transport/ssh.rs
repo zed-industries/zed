@@ -2161,7 +2161,7 @@ fn ssh_command_template(
 fn build_command_windows(
     input_program: Option<String>,
     input_args: &[String],
-    _input_env: &HashMap<String, String>,
+    input_env: &HashMap<String, String>,
     working_dir: Option<String>,
     port_forward: Option<(u16, String, u16)>,
     ssh_env: HashMap<String, String>,
@@ -2188,6 +2188,18 @@ fn build_command_windows(
                 .try_quote(&working_dir)
                 .context("shell quoting")?,
             shell_kind.sequential_and_commands_separator()
+        )?;
+    }
+
+    // The remote server matches this marker to find the shell it belongs to.
+    // A single short assignment stays far below the command-line limit that
+    // keeps the rest of the environment from being sent.
+    if let Some(terminal_id) = input_env.get("ZED_TERMINAL_ID") {
+        write!(
+            exec,
+            "$env:ZED_TERMINAL_ID={} {}",
+            shell_kind.try_quote(terminal_id).context("shell quoting")?,
+            shell_kind.sequential_and_commands_separator(),
         )?;
     }
 
