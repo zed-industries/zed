@@ -542,8 +542,7 @@ fn validate_trust_scope(
         (Some(rest), Some(home_dir)) => path_style
             .join_path(
                 home_dir,
-                rest.strip_prefix(path_style.primary_separator())
-                    .unwrap_or(rest),
+                rest.trim_start_matches(path_style.separators_ch()),
             )
             .map_err(|error| SharedString::from(error.to_string()))?,
         _ => PathBuf::from(trimmed),
