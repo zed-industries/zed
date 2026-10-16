@@ -17,7 +17,7 @@ trap 'rm -f "$build_output"' EXIT
 
 # Corgi does not currently support iOS targets. Extra arguments are passed to Cargo.
 IPHONEOS_DEPLOYMENT_TARGET=15.0 \
-    cargo build -p gpui_ios_example --target aarch64-apple-ios-sim \
+    cargo build -p gpui_ios --example ios --target aarch64-apple-ios-sim \
     --message-format=json-render-diagnostics "$@" > "$build_output"
 
 executable="$(python3 - "$build_output" <<'PY'
@@ -29,11 +29,12 @@ with open(sys.argv[1]) as output:
         event["executable"]
         for event in map(json.loads, output)
         if event.get("reason") == "compiler-artifact"
-        and event.get("target", {}).get("name") == "gpui_ios_example"
+        and event.get("target", {}).get("name") == "ios"
+        and "example" in event.get("target", {}).get("kind", [])
         and event.get("executable")
     ]
 if len(executables) != 1:
-    sys.exit("Expected one gpui_ios_example executable in Cargo's build output")
+    sys.exit("Expected one ios example executable in Cargo's build output")
 print(executables[0])
 PY
 )"

@@ -34,7 +34,7 @@ use gpui::{
     TextStyle, WeakEntity, Window, WindowHandle, div, ease_in_out, img, linear_color_stop,
     linear_gradient, list, pulsating_between,
 };
-use language::{Buffer, Language, Rope};
+use language::{Buffer, Language};
 use language_model::{
     LanguageModelCompletionError, ProviderErrorCategory, ZED_CLOUD_PROVIDER_NAME,
 };
@@ -5145,6 +5145,46 @@ pub(crate) mod tests {
         assert!(thread.read_with(cx, |thread, _| thread.submission(first_id).is_none()));
         assert!(cx.debug_bounds(first_copy).is_none());
         assert!(cx.debug_bounds(second_copy).is_some());
+    }
+
+    #[gpui::test]
+    async fn test_receipt_disconnect_preserves_draft_without_restore_or_resend(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let connection = StubAgentConnection::new().with_receipt_submissions(true);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        let editor = message_editor(&conversation_view, cx);
+        let _pending_sender = connection.defer_next_receipt_response();
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("unknown content", window, cx);
+        });
+        thread_view.update_in(cx, |view, window, cx| view.send(window, cx));
+        cx.run_until_parked();
+        let pending_id = thread.read_with(cx, |thread, _| {
+            thread.latest_submission_id().expect("pending")
+        });
+        assert!(connection.take_receipt_prompt().is_some());
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("keep my draft", window, cx);
+        });
+        thread.update(cx, |thread, cx| thread.disconnect_submissions(cx));
+        cx.run_until_parked();
+        assert_eq!(
+            editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "keep my draft"
+        );
+        let copy: &'static str =
+            Box::leak(format!("copy-submission-{}", pending_id.as_u64()).into_boxed_str());
+        let restore: &'static str =
+            Box::leak(format!("restore-submission-{}", pending_id.as_u64()).into_boxed_str());
+        assert!(cx.debug_bounds(copy).is_some());
+        assert!(cx.debug_bounds(restore).is_none());
+        assert!(connection.take_receipt_prompt().is_none());
     }
 
     #[gpui::test]

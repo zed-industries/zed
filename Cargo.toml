@@ -95,7 +95,6 @@ members = [
     "crates/gpui",
     "crates/gpui_apple",
     "crates/gpui_ios",
-    "crates/gpui_ios/examples/ios",
     "crates/gpui_linux",
     "crates/gpui_macos",
     "crates/gpui_macros",
@@ -982,7 +981,8 @@ web-sys = "0.3"
 web-time = "1.1.0"
 webpki-roots = "1.0.8"
 webrtc-sys = "0.3.23"
-wgpu = { version = "29.0", default-features = false }
+# 30.0.1 lacks the Vulkan surface-drop panic fix: https://github.com/gfx-rs/wgpu/pull/10230.
+wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "3b3506ea31154edc04de64debda0e780cba2639c", default-features = false }
 which = "8"
 windows-core = "0.62"
 windows-registry = "0.6.0"

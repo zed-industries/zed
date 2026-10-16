@@ -1,6 +1,9 @@
 use crate::ReceiptSessionSubmissions;
 use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
-use futures::{channel::oneshot, future::BoxFuture};
+use futures::{
+    channel::oneshot,
+    future::{BoxFuture, LocalBoxFuture},
+};
 use gpui::{SharedString, Task};
 use std::collections::BTreeMap;
 use std::{
@@ -28,6 +31,37 @@ pub enum SubmissionResponse {
     Accepted(acp_v2::PromptResponse),
 }
 
+/// The transport response and, for ordered transports, acknowledgement of model application.
+/// The shared tracker applies the outcome before acknowledging; transports must not
+/// wait for that acknowledgement before producing their response.
+pub struct ReceiptSubmission {
+    pub(crate) response: LocalBoxFuture<'static, anyhow::Result<acp_v2::PromptResponse>>,
+    pub(crate) applied: Option<oneshot::Sender<bool>>,
+}
+
+impl ReceiptSubmission {
+    /// The acknowledgement reports successful or failed model application.
+    /// Dropping it instead means application was abandoned.
+    pub fn ordered(
+        response: LocalBoxFuture<'static, anyhow::Result<acp_v2::PromptResponse>>,
+        applied: oneshot::Sender<bool>,
+    ) -> Self {
+        Self {
+            response,
+            applied: Some(applied),
+        }
+    }
+}
+
+impl From<Task<anyhow::Result<acp_v2::PromptResponse>>> for ReceiptSubmission {
+    fn from(response: Task<anyhow::Result<acp_v2::PromptResponse>>) -> Self {
+        Self {
+            response: Box::pin(response),
+            applied: None,
+        }
+    }
+}
+
 /// A local receipt withdrawn by cancellation before the message was accepted.
 #[derive(Debug)]
 pub struct SubmissionCancelled;
@@ -39,6 +73,18 @@ impl fmt::Display for SubmissionCancelled {
 }
 
 impl std::error::Error for SubmissionCancelled {}
+
+/// Local loss of a receipt waiter does not establish that the agent rejected the message.
+#[derive(Debug)]
+pub struct SubmissionDisconnected;
+
+impl fmt::Display for SubmissionDisconnected {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("Agent connection lost before submission acceptance was confirmed")
+    }
+}
+
+impl std::error::Error for SubmissionDisconnected {}
 
 pub struct Submission {
     pub id: SubmissionId,
@@ -69,6 +115,10 @@ pub enum SubmissionState {
         receipt: acp_v2::PromptResponse,
         echoed: bool,
     },
+    Disconnected {
+        /// Absence means acceptance is unknown, not that insertion failed.
+        receipt: Option<acp_v2::PromptResponse>,
+    },
     Completed,
     Failed(SharedString),
     Cancelled,
@@ -78,6 +128,7 @@ pub struct SubmissionRecord {
     pub content: Arc<[acp_v2::ContentBlock]>,
     pub state: SubmissionState,
     task: Option<Task<()>>,
+    disconnect_sender: Option<oneshot::Sender<()>>,
 }
 
 impl fmt::Debug for SubmissionRecord {
@@ -102,7 +153,9 @@ impl SubmissionRecord {
         self.is_unsettled()
             || matches!(
                 self.state,
-                SubmissionState::Failed(_) | SubmissionState::Cancelled
+                SubmissionState::Failed(_)
+                    | SubmissionState::Cancelled
+                    | SubmissionState::Disconnected { .. }
             )
     }
 }
@@ -157,22 +210,74 @@ impl SessionSubmissions {
                 content,
                 state: SubmissionState::Pending,
                 task: None,
+                disconnect_sender: None,
             },
         );
         id
     }
 
-    pub(crate) fn track(&mut self, id: SubmissionId, task: Task<()>) {
+    pub(crate) fn track(
+        &mut self,
+        id: SubmissionId,
+        task: Task<()>,
+        disconnect_sender: Option<oneshot::Sender<()>>,
+    ) {
         if let Some(record) = self.records.get_mut(&id) {
             record.task = Some(task);
+            record.disconnect_sender = disconnect_sender;
         }
     }
 
-    pub(crate) fn settle(&mut self, id: SubmissionId, state: SubmissionState) {
-        if let Some(record) = self.records.get_mut(&id) {
-            record.state = state;
-        }
+    pub(crate) fn settle(&mut self, id: SubmissionId, state: SubmissionState) -> bool {
+        let changed = self.records.get_mut(&id).is_some_and(|record| {
+            drop(record.disconnect_sender.take());
+            match &mut record.state {
+                SubmissionState::Disconnected { receipt } => {
+                    // A ready receipt can race with disconnect cleanup. Retain its
+                    // acceptance evidence without reopening the disconnected record.
+                    if receipt.is_none()
+                        && let SubmissionState::Accepted {
+                            receipt: accepted, ..
+                        } = state
+                    {
+                        *receipt = Some(accepted);
+                        return true;
+                    }
+                    false
+                }
+                _ => {
+                    record.state = state;
+                    true
+                }
+            }
+        });
         self.prune();
+        changed
+    }
+
+    pub(crate) fn disconnect(&mut self) -> Vec<SubmissionId> {
+        if self.receipt_transport.is_none() {
+            return Vec::new();
+        }
+        let mut changed = Vec::new();
+        for (id, record) in &mut self.records {
+            let receipt = match &record.state {
+                SubmissionState::Pending => None,
+                SubmissionState::Accepted {
+                    receipt,
+                    echoed: false,
+                } => Some(receipt.clone()),
+                _ => continue,
+            };
+            record.state = SubmissionState::Disconnected { receipt };
+            if let Some(sender) = record.disconnect_sender.take()
+                && sender.send(()).is_err()
+            {
+                log::debug!("Submission already finished before disconnect notification");
+            }
+            changed.push(*id);
+        }
+        changed
     }
 
     pub(crate) fn observe_echo(&mut self, message_id: &acp_v2::MessageId) -> Vec<SubmissionId> {

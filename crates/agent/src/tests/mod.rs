@@ -4505,9 +4505,8 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     let result = cx
         .update(|cx| {
             connection
-                .receipt_submissions(&session_id, cx)
-                .expect("native receipts")
-                .prompt(vec!["ghi".into()], cx)
+                .submit_native(session_id.clone(), Some(vec!["ghi".into()]), cx)
+                .0
         })
         .await;
     assert_eq!(
