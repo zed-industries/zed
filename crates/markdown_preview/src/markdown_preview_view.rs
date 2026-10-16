@@ -1669,12 +1669,11 @@ impl Item for MarkdownPreviewView {
             .into_any_element()
     }
 
-    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
+    fn tab_content_text(&self, detail: usize, cx: &App) -> SharedString {
         self.active_editor
             .as_ref()
             .map(|editor_state| {
-                let buffer = editor_state.editor.read(cx).buffer().read(cx);
-                let title = buffer.title(cx);
+                let title = editor_state.editor.read(cx).tab_content_text(detail, cx);
                 format!("Preview {}", title).into()
             })
             .unwrap_or_else(|| SharedString::from("Markdown Preview"))
