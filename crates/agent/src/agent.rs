@@ -2211,7 +2211,7 @@ impl NativeAgent {
 
             for message in prompt.messages {
                 let context_server::types::PromptMessage { role, content } = message;
-                let block = mcp_message_content_to_acp_content_block(content);
+                let block = mcp_message_content_to_acp_content_block(&thread, cx, content).await?;
                 let display_block = block.clone();
 
                 match role {
@@ -6871,22 +6871,17 @@ mod internal_tests {
 
     #[test]
     fn test_mcp_prompt_content_preserves_annotations() {
-        let content = json!({
-            "type": "resource",
-            "resource": {"uri": "file:///raw%20path.md", "mimeType": "text/markdown"},
-            "annotations": {"audience": ["user", "assistant"], "priority": 0.75}
-        });
-        let block = mcp_message_content_to_acp_content_block(
-            serde_json::from_value(content).expect("MCP resource should deserialize"),
-        );
+        let annotations = serde_json::from_value(json!({
+            "audience": ["user", "assistant"],
+            "priority": 0.75
+        }))
+        .expect("MCP annotations should deserialize");
         assert_eq!(
-            serde_json::to_value(block).expect("v2 resource link should serialize"),
+            serde_json::to_value(mcp_annotations_to_acp(Some(annotations)))
+                .expect("v2 annotations should serialize"),
             json!({
-                "type": "resource_link",
-                "name": "file:///raw%20path.md",
-                "uri": "file:///raw%20path.md",
-                "mimeType": "text/markdown",
-                "annotations": {"audience": ["user", "assistant"], "priority": 0.75}
+                "audience": ["user", "assistant"],
+                "priority": 0.75
             }),
         );
     }
@@ -10246,42 +10241,43 @@ mod internal_tests {
     }
 }
 
-fn mcp_message_content_to_acp_content_block(
+/// Converts an MCP prompt message's content into an ACP content block.
+/// Resources embedded in the message are downloaded to the thread's downloads
+/// directory and the block is the download summary.
+async fn mcp_message_content_to_acp_content_block(
+    thread: &Entity<Thread>,
+    cx: &mut AsyncApp,
     content: context_server::types::MessageContent,
-) -> acp_v2::ContentBlock {
+) -> Result<acp_v2::ContentBlock> {
     match content {
         context_server::types::MessageContent::Text { text, annotations } => {
-            acp_v2::ContentBlock::Text(
+            Ok(acp_v2::ContentBlock::Text(
                 acp_v2::TextContent::new(text).annotations(mcp_annotations_to_acp(annotations)),
-            )
+            ))
         }
         context_server::types::MessageContent::Image {
             data,
             mime_type,
             annotations,
-        } => acp_v2::ContentBlock::Image(
+        } => Ok(acp_v2::ContentBlock::Image(
             acp_v2::ImageContent::new(data, mime_type)
                 .annotations(mcp_annotations_to_acp(annotations)),
-        ),
+        )),
         context_server::types::MessageContent::Audio {
             data,
             mime_type,
             annotations,
-        } => acp_v2::ContentBlock::Audio(
+        } => Ok(acp_v2::ContentBlock::Audio(
             acp_v2::AudioContent::new(data, mime_type)
                 .annotations(mcp_annotations_to_acp(annotations)),
-        ),
-        context_server::types::MessageContent::Resource {
-            resource,
-            annotations,
-        } => {
-            let mut link =
-                acp_v2::ResourceLink::new(resource.uri.to_string(), resource.uri.to_string())
-                    .annotations(mcp_annotations_to_acp(annotations));
-            if let Some(mime_type) = resource.mime_type {
-                link = link.mime_type(acp_v2::MediaType::new(mime_type));
-            }
-            acp_v2::ContentBlock::ResourceLink(link)
+        )),
+        context_server::types::MessageContent::Resource { resource, .. } => {
+            let downloads_dir = thread.update(cx, |thread, cx| thread.mcp_downloads_dir(cx))?;
+            let summary =
+                crate::tools::save_mcp_resource_contents(&downloads_dir, resource, cx).await?;
+            Ok(acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
+                summary,
+            )))
         }
     }
 }

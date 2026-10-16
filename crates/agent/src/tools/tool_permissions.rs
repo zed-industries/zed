@@ -178,6 +178,28 @@ async fn is_in_linked_global_skill_dir(
             .await
 }
 
+/// If `path` resolves inside `downloads_dir`, return the canonicalized
+/// absolute path. Returns `None` for any path that resolves outside it —
+/// including `..` traversal and symlink escapes — or that can't be
+/// canonicalized (fail closed: better to refuse access than to compare
+/// against a non-canonical path).
+///
+/// This is the gate that lets `read_file` reach into a thread's MCP
+/// downloads directory — which lives outside any worktree — without also
+/// opening up arbitrary external paths. The directory is created by the
+/// thread itself and only ever contains files the thread wrote there.
+pub async fn resolve_mcp_downloads_path(
+    path: &Path,
+    downloads_dir: &Path,
+    fs: &dyn Fs,
+) -> Option<PathBuf> {
+    let canonical_path = fs.canonicalize(path).await.ok()?;
+    let canonical_downloads_dir = fs.canonicalize(downloads_dir).await.ok()?;
+    canonical_path
+        .starts_with(&canonical_downloads_dir)
+        .then_some(canonical_path)
+}
+
 fn expand_home_prefix(path: &Path) -> Option<PathBuf> {
     if path.is_absolute() {
         return Some(path.to_path_buf());
@@ -1184,6 +1206,94 @@ mod tests {
                 .await
                 .is_none(),
             "creatable absolute paths outside the lexical global skills tree should not resolve",
+        );
+    }
+
+    #[gpui::test]
+    async fn test_resolve_mcp_downloads_path_allows_files_inside(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let downloads_dir = PathBuf::from(path!("/tmp/zed-agent-mcp-test"));
+        fs.insert_tree(
+            &downloads_dir,
+            json!({ "report.md": "# Report", "logo.png": "fake-png-bytes" }),
+        )
+        .await;
+
+        let resolved = resolve_mcp_downloads_path(
+            &downloads_dir.join("report.md"),
+            &downloads_dir,
+            fs.as_ref(),
+        )
+        .await
+        .expect("file inside the downloads dir should resolve");
+        assert_eq!(resolved, downloads_dir.join("report.md"));
+    }
+
+    #[gpui::test]
+    async fn test_resolve_mcp_downloads_path_rejects_files_outside(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let downloads_dir = PathBuf::from(path!("/tmp/zed-agent-mcp-test"));
+        fs.insert_tree(&downloads_dir, json!({})).await;
+        let secret_path = PathBuf::from(path!("/tmp/secret.txt"));
+        fs.insert_file(&secret_path, b"secret".to_vec()).await;
+
+        assert!(
+            resolve_mcp_downloads_path(&secret_path, &downloads_dir, fs.as_ref())
+                .await
+                .is_none(),
+            "files outside the downloads dir must not resolve",
+        );
+    }
+
+    #[gpui::test]
+    async fn test_resolve_mcp_downloads_path_rejects_parent_traversal(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let downloads_dir = PathBuf::from(path!("/tmp/zed-agent-mcp-test"));
+        fs.insert_tree(&downloads_dir, json!({ "report.md": "# Report" }))
+            .await;
+        let secret_path = PathBuf::from(path!("/tmp/secret.txt"));
+        fs.insert_file(&secret_path, b"secret".to_vec()).await;
+
+        // `..` in the requested path normalizes outside the downloads dir.
+        let traversal = downloads_dir.join("..").join("secret.txt");
+        assert!(
+            resolve_mcp_downloads_path(&traversal, &downloads_dir, fs.as_ref())
+                .await
+                .is_none(),
+            "parent traversal must not resolve",
+        );
+    }
+
+    #[gpui::test]
+    async fn test_resolve_mcp_downloads_path_rejects_symlink_escape(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let downloads_dir = PathBuf::from(path!("/tmp/zed-agent-mcp-test"));
+        fs.insert_tree(&downloads_dir, json!({})).await;
+        let secret_path = PathBuf::from(path!("/tmp/secret.txt"));
+        fs.insert_file(&secret_path, b"secret".to_vec()).await;
+        fs.insert_symlink(
+            downloads_dir.join("leak.txt"),
+            PathBuf::from(path!("/tmp/secret.txt")),
+        )
+        .await;
+
+        assert!(
+            resolve_mcp_downloads_path(
+                &downloads_dir.join("leak.txt"),
+                &downloads_dir,
+                fs.as_ref()
+            )
+            .await
+            .is_none(),
+            "a symlink inside the downloads dir must not escape it",
         );
     }
 
