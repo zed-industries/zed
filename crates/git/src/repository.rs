@@ -1,5 +1,5 @@
 use crate::commit::{CommitDiffObject, CommitDiffObjectKind, parse_git_diff_raw};
-use crate::parent_branch::{ParentBranchDistances, ParentBranchGraph};
+use crate::parent_branch::{ParentBranchDistances, ParentBranchGraph, child_branches_from_reflog};
 use crate::stash::GitStash;
 use crate::status::{
     DiffTreeType, FileStatus, GitStatus, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus,
@@ -3356,7 +3356,7 @@ impl GitRepository for RealGitRepository {
                         return Ok(None);
                     };
                     let head_sha = &current_commit.sha;
-                    let candidates = branches_scan
+                    let mut candidates = branches_scan
                         .branches
                         .iter()
                         .filter_map(|branch| {
@@ -3380,6 +3380,32 @@ impl GitRepository for RealGitRepository {
                                 .map(|commit| (branch, &commit.sha))
                         })
                         .collect::<Vec<_>>();
+                    if candidates.is_empty() {
+                        return Ok(None);
+                    }
+
+                    let reflog = git
+                        .run(&[
+                            "reflog",
+                            "show",
+                            "HEAD",
+                            "--glob=refs/heads/*",
+                            "--date=unix",
+                            "--no-color",
+                            "--no-notes",
+                            "--format=%gD%x00%H%x00%gs",
+                        ])
+                        .await?;
+                    let child_branches =
+                        child_branches_from_reflog(&reflog, current_branch.name())?;
+                    candidates.retain(|(branch, _)| {
+                        let name = branch
+                            .ref_name
+                            .strip_prefix("refs/remotes/")
+                            .and_then(|name| name.split_once('/'))
+                            .map_or_else(|| branch.name(), |(_, name)| name);
+                        !child_branches.contains(name)
+                    });
                     if candidates.is_empty() {
                         return Ok(None);
                     }
@@ -7342,6 +7368,125 @@ mod tests {
                 .await
                 .expect("resolve worktree parent"),
             Some("feature/child".into())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_parent_branch_excludes_empty_child_after_rebase(cx: &mut TestAppContext) {
+        // Before and after rebasing new-child (oldest commits at the top):
+        //
+        // o (main)                     o (main)
+        // |                            |
+        // o (new-child)                 o
+        // |                            |
+        // o (git-branch-diff-parent)    o (git-branch-diff-parent, new-child)
+        disable_git_global_config();
+        cx.executor().allow_parking();
+        let repository_directory = tempfile::tempdir().expect("create repository directory");
+        let directory = repository_directory.path();
+        git_init_repo(directory);
+        git_command(directory, ["commit", "--allow-empty", "-m", "main"]);
+        git_command(directory, ["switch", "-c", "git-branch-diff-parent"]);
+        git_command(directory, ["commit", "--allow-empty", "-m", "feature"]);
+        let repository = RealGitRepository::new(
+            &directory.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .expect("open repository");
+        git_command(directory, ["switch", "-c", "new-child"]);
+        assert_eq!(
+            repository
+                .parent_branch()
+                .await
+                .expect("resolve genuine same-tip parent"),
+            Some("git-branch-diff-parent".into())
+        );
+        git_command(directory, ["switch", "git-branch-diff-parent"]);
+        assert_eq!(
+            repository
+                .parent_branch()
+                .await
+                .expect("ignore empty child"),
+            Some("main".into())
+        );
+        git_command(
+            directory,
+            ["commit", "--allow-empty", "-m", "advance parent"],
+        );
+        assert_eq!(
+            repository
+                .parent_branch()
+                .await
+                .expect("ignore child behind HEAD"),
+            Some("main".into())
+        );
+        git_command(directory, ["switch", "new-child"]);
+        git_command(directory, ["rebase", "git-branch-diff-parent"]);
+        git_command(directory, ["switch", "git-branch-diff-parent"]);
+        assert_eq!(
+            git_command_output(
+                directory,
+                ["rev-list", "--left-right", "--count", "new-child...HEAD"]
+            ),
+            "0\t0"
+        );
+        assert_eq!(
+            repository
+                .parent_branch()
+                .await
+                .expect("ignore rebased empty child"),
+            Some("main".into())
+        );
+        git_command(
+            directory,
+            ["update-ref", "refs/remotes/origin/new-child", "new-child"],
+        );
+        assert_eq!(
+            repository
+                .parent_branch()
+                .await
+                .expect("ignore published child"),
+            Some("main".into())
+        );
+        git_command(directory, ["switch", "new-child"]);
+        git_command(directory, ["switch", "-c", "grandchild"]);
+        git_command(directory, ["switch", "git-branch-diff-parent"]);
+        assert_eq!(
+            repository
+                .parent_branch()
+                .await
+                .expect("ignore empty grandchild"),
+            Some("main".into())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_parent_branch_without_reflogs_uses_merge_base(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+        let repository_directory = tempfile::tempdir().expect("create repository directory");
+        let directory = repository_directory.path();
+        git_init_repo(directory);
+        git_command(directory, ["config", "core.logAllRefUpdates", "false"]);
+        git_command(directory, ["commit", "--allow-empty", "-m", "main"]);
+        git_command(directory, ["switch", "-c", "feature"]);
+        git_command(directory, ["commit", "--allow-empty", "-m", "feature"]);
+        git_command(directory, ["branch", "other"]);
+        let repository = RealGitRepository::new(
+            &directory.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .expect("open repository");
+        assert_eq!(
+            repository
+                .parent_branch()
+                .await
+                .expect("resolve without reflogs"),
+            Some("other".into())
         );
     }
 
