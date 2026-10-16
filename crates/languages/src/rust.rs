@@ -1277,17 +1277,8 @@ async fn target_info_from_abs_path(
     let directory = abs_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("failed to get parent directory"))?;
-    let resolved_directory = fs::canonicalize(directory).await?;
-    let mut ancestors = resolved_directory.ancestors();
-    loop {
-        let Some(ancestor) = ancestors.next() else {
-            return Ok(None);
-        };
-        match fs::metadata(ancestor.join("Cargo.toml")).await {
-            Ok(_) => break,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
-        }
+    if !has_cargo_manifest(directory).await? {
+        return Ok(None);
     }
 
     let mut command = util::command::new_command("cargo");
@@ -1310,6 +1301,18 @@ async fn target_info_from_abs_path(
 
     let metadata: CargoMetadata = serde_json::from_slice(&output.stdout)?;
     Ok(target_info_from_metadata(metadata, abs_path))
+}
+
+async fn has_cargo_manifest(directory: &Path) -> Result<bool> {
+    let resolved_directory = fs::canonicalize(directory).await?;
+    for ancestor in resolved_directory.ancestors() {
+        match fs::metadata(ancestor.join("Cargo.toml")).await {
+            Ok(_) => return Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(false)
 }
 
 fn target_info_from_metadata(
