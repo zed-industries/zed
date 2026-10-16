@@ -3,8 +3,8 @@ use editor::Editor;
 use futures::channel::oneshot;
 use gpui::{
     App, Context, DismissEvent, Div, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    ParentElement, PromptLevel, Render, SharedString, Styled, Subscription, WeakEntity, Window,
-    div, px,
+    ParentElement, PromptLevel, Render, Role, SharedString, Styled, Subscription, WeakEntity,
+    Window, div, px,
 };
 use project::Fs;
 use remote::{SshConnectionOptions, SshPortForwardOption};
@@ -51,9 +51,31 @@ struct ForwardEditor {
     remote: Entity<Editor>,
 }
 
-fn port_forward_endpoint_input(editor: &Entity<Editor>, cx: &App) -> Div {
+fn port_forward_endpoint_input(
+    editor: &Entity<Editor>,
+    element_id: &'static str,
+    accessible_name: &'static str,
+    is_narrow: bool,
+    cx: &App,
+) -> impl IntoElement {
+    let unfocused_border_color = cx.theme().colors().panel_background;
+    let focused_border_color = cx.theme().colors().border_focused;
+    let value = editor.read(cx).text(cx);
+
     div()
+        .when(is_narrow, |this| this.w_full())
+        .when(!is_narrow, |this| this.flex_1())
+        .min_w_0()
+        .id(element_id)
+        .role(Role::TextInput)
         .track_focus(&editor.focus_handle(cx).tab_stop(true))
+        .aria_label(accessible_name)
+        .aria_value(value)
+        .aria_placeholder("localhost:port")
+        .rounded_sm()
+        .border_1()
+        .border_color(unfocused_border_color)
+        .focus_visible(|this| this.border_color(focused_border_color))
         .child(editor.clone())
 }
 
@@ -427,6 +449,8 @@ impl EventEmitter<DismissEvent> for PortForwardingPopover {}
 
 impl Render for PortForwardingPopover {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let max_width = (window.viewport_size().width - px(16.)).max(px(0.));
+        let is_narrow = max_width < px(360.);
         let mut list = v_flex().gap_1();
         if self.forwards.is_empty() && self.editor.is_none() {
             list = list.child(
@@ -445,7 +469,7 @@ impl Render for PortForwardingPopover {
                 && !editor_rendered
             {
                 if let Some(editor) = &self.editor {
-                    list = list.child(self.render_editor(editor, window, cx));
+                    list = list.child(self.render_editor(editor, is_narrow, cx));
                     editor_rendered = true;
                 }
             } else {
@@ -455,7 +479,7 @@ impl Render for PortForwardingPopover {
 
         if !editor_rendered {
             if let Some(editor) = &self.editor {
-                list = list.child(self.render_editor(editor, window, cx));
+                list = list.child(self.render_editor(editor, is_narrow, cx));
             }
         }
 
@@ -464,6 +488,7 @@ impl Render for PortForwardingPopover {
             .track_focus(&self.focus_handle)
             .tab_group()
             .w(px(384.))
+            .max_w(max_width)
             .max_h(px(480.))
             .gap_2()
             .p_2()
@@ -503,9 +528,11 @@ impl Render for PortForwardingPopover {
             })
             .when_some(self.message.clone(), |this, message| {
                 this.child(
-                    Label::new(message)
-                        .size(LabelSize::Small)
-                        .color(Color::Error),
+                    div().id("port-forward-error").child(
+                        Label::new(message)
+                            .size(LabelSize::Small)
+                            .color(Color::Error),
+                    ),
                 )
             })
             .child(
@@ -577,49 +604,83 @@ impl PortForwardingPopover {
     fn render_editor(
         &self,
         editor: &ForwardEditor,
-        _window: &mut Window,
+        is_narrow: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        h_flex()
-            .id("port-forward-editor")
-            .w_full()
-            .gap_1()
-            .child(
-                port_forward_endpoint_input(&editor.local, cx)
-                    .flex_1()
-                    .min_w_0(),
-            )
-            .child(Icon::new(IconName::ArrowRight).color(Color::Muted))
-            .child(
-                port_forward_endpoint_input(&editor.remote, cx)
-                    .flex_1()
-                    .min_w_0(),
-            )
-            .child(
-                IconButton::new("save-port-forward", IconName::Check)
-                    .shape(IconButtonShape::Square)
-                    .icon_size(IconSize::Small)
-                    .aria_label("Save port forward")
-                    .tooltip(Tooltip::text("Save Port Forward"))
-                    .disabled(self.is_saving)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.save_edit(window, cx);
-                    })),
-            )
-            .child(
-                IconButton::new("cancel-port-forward", IconName::Close)
-                    .shape(IconButtonShape::Square)
-                    .icon_size(IconSize::Small)
-                    .aria_label("Cancel port forward edit")
-                    .tooltip(Tooltip::text("Cancel"))
-                    .disabled(self.is_saving)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.cancel_edit(cx);
-                    })),
-            )
-            .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+        let local_endpoint = port_forward_endpoint_input(
+            &editor.local,
+            "port-forward-local-endpoint",
+            "Local endpoint",
+            is_narrow,
+            cx,
+        );
+        let remote_endpoint = port_forward_endpoint_input(
+            &editor.remote,
+            "port-forward-remote-endpoint",
+            "Remote endpoint",
+            is_narrow,
+            cx,
+        );
+        let direction = if is_narrow {
+            IconName::ArrowDown
+        } else {
+            IconName::ArrowRight
+        };
+        let save_button = IconButton::new("save-port-forward", IconName::Check)
+            .shape(IconButtonShape::Square)
+            .icon_size(IconSize::Small)
+            .aria_label("Save port forward")
+            .tooltip(Tooltip::text("Save Port Forward"))
+            .disabled(self.is_saving)
+            .on_click(cx.listener(|this, _, window, cx| {
                 this.save_edit(window, cx);
-            }))
+            }));
+        let cancel_button = IconButton::new("cancel-port-forward", IconName::Close)
+            .shape(IconButtonShape::Square)
+            .icon_size(IconSize::Small)
+            .aria_label("Cancel port forward edit")
+            .tooltip(Tooltip::text("Cancel"))
+            .disabled(self.is_saving)
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.cancel_edit(cx);
+            }));
+
+        let editor = if is_narrow {
+            v_flex()
+                .id("port-forward-editor")
+                .w_full()
+                .gap_1()
+                .child(local_endpoint)
+                .child(
+                    h_flex()
+                        .w_full()
+                        .justify_center()
+                        .child(Icon::new(direction).color(Color::Muted)),
+                )
+                .child(remote_endpoint)
+                .child(
+                    h_flex()
+                        .w_full()
+                        .justify_end()
+                        .gap_1()
+                        .child(save_button)
+                        .child(cancel_button),
+                )
+        } else {
+            h_flex()
+                .id("port-forward-editor")
+                .w_full()
+                .gap_1()
+                .child(local_endpoint)
+                .child(Icon::new(direction).color(Color::Muted))
+                .child(remote_endpoint)
+                .child(save_button)
+                .child(cancel_button)
+        };
+
+        editor.on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+            this.save_edit(window, cx);
+        }))
     }
 }
 
@@ -835,26 +896,19 @@ fn format_forward(forward: &SshPortForwardOption) -> String {
 mod tests {
     use super::*;
     use gpui::{KeyBinding, TestAppContext};
+    use project::Project;
+    use std::{cell::Cell, ops::Deref, rc::Rc};
+    use workspace::AppState;
 
-    struct EndpointFocusFixture {
-        focus_handle: FocusHandle,
-        local_editor: Entity<Editor>,
-        remote_editor: Entity<Editor>,
+    struct PortForwardingTestRoot {
+        _workspace: Entity<Workspace>,
+        popover: Entity<PortForwardingPopover>,
+        _dismiss_subscription: Option<Subscription>,
     }
 
-    impl Render for EndpointFocusFixture {
-        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            v_flex()
-                .id("port-forward-endpoint-focus-test")
-                .track_focus(&self.focus_handle)
-                .tab_group()
-                .on_action(|_: &menu::SelectNext, window, cx| window.focus_next(cx))
-                .on_action(|_: &menu::SelectPrevious, window, cx| window.focus_prev(cx))
-                .on_action(|_: &editor::actions::Tab, window, cx| window.focus_next(cx))
-                .on_action(|_: &editor::actions::Backtab, window, cx| window.focus_prev(cx))
-                .child(Button::new("existing-forward-action", "Existing forward").tab_index(0))
-                .child(port_forward_endpoint_input(&self.local_editor, cx))
-                .child(port_forward_endpoint_input(&self.remote_editor, cx))
+    impl Render for PortForwardingTestRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().child(self.popover.clone())
         }
     }
 
@@ -1065,8 +1119,59 @@ mod tests {
         assert_eq!(settings_content.ssh_connections, original_settings);
     }
 
+    #[test]
+    fn duplicate_connection_and_forward_entries_are_rejected_as_ambiguous() {
+        let identity = SshConnectionIdentity {
+            host: "example.com".to_owned(),
+            username: None,
+            port: None,
+        };
+        let mut settings_content = settings::RemoteSettingsContent {
+            ssh_connections: Some(vec![
+                SshConnection {
+                    host: identity.host.clone(),
+                    ..Default::default()
+                },
+                SshConnection {
+                    host: identity.host.clone(),
+                    ..Default::default()
+                },
+            ]),
+            ..Default::default()
+        };
+        assert_eq!(
+            apply_settings_change(
+                &mut settings_content,
+                &identity,
+                ForwardChange::Upsert {
+                    original: None,
+                    replacement: forward(None, 8080, None, 80),
+                },
+            ),
+            Err(ForwardUpdateError::AmbiguousConnection.message().to_owned())
+        );
+
+        let existing = forward(None, 8080, None, 80);
+        assert_eq!(
+            apply_forward_change(
+                vec![existing.clone(), existing.clone()],
+                ForwardChange::Delete { original: existing },
+            ),
+            Err(ForwardUpdateError::AmbiguousForward)
+        );
+    }
+
     #[gpui::test]
-    fn tab_moves_between_port_forward_endpoint_inputs(cx: &mut TestAppContext) {
+    async fn tab_moves_between_port_forward_endpoint_inputs(cx: &mut TestAppContext) {
+        let app_state = cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            crate::init(cx);
+            editor::init(cx);
+            app_state
+        });
+        let fs = app_state.fs.as_fake();
+        let project = Project::test(fs.clone(), [], cx).await;
+
         cx.update(|_, cx| {
             cx.bind_keys([
                 KeyBinding::new("tab", menu::SelectNext, None),
@@ -1076,27 +1181,405 @@ mod tests {
             ]);
         });
 
-        let (fixture, cx) = cx.add_window_view(|window, cx| EndpointFocusFixture {
-            focus_handle: cx.focus_handle(),
-            local_editor: cx.new(|cx| Editor::single_line(window, cx)),
-            remote_editor: cx.new(|cx| Editor::single_line(window, cx)),
+        let options = SshConnectionOptions {
+            host: "for-testing-only".to_owned().into(),
+            nickname: Some("for-testing-only".to_owned()),
+            ..Default::default()
+        };
+        let (root, cx) = cx.add_window_view(move |window, cx| {
+            let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
+            let popover = cx.new(|cx| {
+                PortForwardingPopover::new(options, workspace.downgrade(), fs, true, window, cx)
+            });
+            PortForwardingTestRoot {
+                _workspace: workspace,
+                popover,
+                _dismiss_subscription: None,
+            }
         });
-        let (local_focus, remote_focus) = fixture.read_with(cx, |fixture, cx| {
-            (
-                fixture.local_editor.focus_handle(cx),
-                fixture.remote_editor.focus_handle(cx),
-            )
-        });
-        cx.update(|window, cx| window.focus(&local_focus, cx));
+        let popover = root.read_with(cx, |root, _| root.popover.clone());
 
+        let Some(add_bounds) = cx.debug_bounds("add-port-forward") else {
+            panic!("add port forward button was not rendered");
+        };
+        cx.simulate_click(add_bounds.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert_tab_moves_between_endpoint_fields(&popover, cx);
+
+        let Some(cancel_bounds) = cx.debug_bounds("cancel-port-forward") else {
+            panic!("cancel port forward button was not rendered");
+        };
+        cx.simulate_click(cancel_bounds.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert_eq!(
+            popover.read_with(cx, |popover, _| popover.forwards.clone()),
+            vec![forward(None, 80, None, 80)]
+        );
+
+        let Some(edit_bounds) = cx.debug_bounds("edit-port-forward-0") else {
+            panic!("existing port forward edit button was not rendered");
+        };
+        cx.simulate_click(edit_bounds.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert_tab_moves_between_endpoint_fields(&popover, cx);
+    }
+
+    #[gpui::test]
+    async fn port_forwarding_popover_adapts_to_narrow_windows(cx: &mut TestAppContext) {
+        let app_state = cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            crate::init(cx);
+            editor::init(cx);
+            app_state
+        });
+        let fs = app_state.fs.as_fake();
+        let project = Project::test(fs.clone(), [], cx).await;
+        let options = SshConnectionOptions {
+            host: "for-testing-only".to_owned().into(),
+            nickname: Some("for-testing-only".to_owned()),
+            ..Default::default()
+        };
+
+        let window_handle = cx.open_window(
+            gpui::size(gpui::px(350.), gpui::px(600.)),
+            move |window, cx| {
+                let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
+                let popover = cx.new(|cx| {
+                    PortForwardingPopover::new(options, workspace.downgrade(), fs, true, window, cx)
+                });
+                PortForwardingTestRoot {
+                    _workspace: workspace,
+                    popover,
+                    _dismiss_subscription: None,
+                }
+            },
+        );
+        let mut visual_cx = gpui::VisualTestContext::from_window(*window_handle.deref(), cx);
+        visual_cx.run_until_parked();
+
+        let Some(popover_bounds) = visual_cx.debug_bounds("port-forwarding-popover") else {
+            panic!("port forwarding popover was not rendered");
+        };
+        assert!(
+            popover_bounds.size.width <= gpui::px(334.),
+            "popover width should respect the narrow window's side margins"
+        );
+
+        let Some(add_bounds) = visual_cx.debug_bounds("add-port-forward") else {
+            panic!("add port forward button was not rendered");
+        };
+        visual_cx.simulate_click(add_bounds.center(), gpui::Modifiers::default());
+        visual_cx.run_until_parked();
+
+        let Some(local_bounds) = visual_cx.debug_bounds("port-forward-local-endpoint") else {
+            panic!("local endpoint field was not rendered");
+        };
+        let Some(remote_bounds) = visual_cx.debug_bounds("port-forward-remote-endpoint") else {
+            panic!("remote endpoint field was not rendered");
+        };
+        assert!(
+            remote_bounds.origin.y >= local_bounds.bottom(),
+            "narrow layout should stack the remote endpoint below the local endpoint"
+        );
+    }
+
+    #[gpui::test]
+    async fn add_edit_and_validate_port_forward_inputs(cx: &mut TestAppContext) {
+        let app_state = cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            crate::init(cx);
+            editor::init(cx);
+            app_state
+        });
+        let fs = app_state.fs.as_fake();
+        let project = Project::test(fs.clone(), [], cx).await;
+        let options = SshConnectionOptions {
+            host: "for-testing-only".to_owned().into(),
+            nickname: Some("for-testing-only".to_owned()),
+            ..Default::default()
+        };
+        let (root, cx) = cx.add_window_view(move |window, cx| {
+            let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
+            let popover = cx.new(|cx| {
+                PortForwardingPopover::new(options, workspace.downgrade(), fs, true, window, cx)
+            });
+            PortForwardingTestRoot {
+                _workspace: workspace,
+                popover,
+                _dismiss_subscription: None,
+            }
+        });
+        let popover = root.read_with(cx, |root, _| root.popover.clone());
+        let added = forward(Some("localhost"), 8080, Some("service"), 9000);
+        let edited = forward(Some("localhost"), 8081, Some("service"), 9001);
+
+        click_port_forwarding_button(cx, "add-port-forward");
+        set_endpoint_values(&popover, "localhost:8080", "service:9000", cx);
+        click_port_forwarding_button(cx, "save-port-forward");
+        assert_eq!(
+            popover.read_with(cx, |popover, _| popover.forwards.clone()),
+            vec![forward(None, 80, None, 80), added.clone()]
+        );
+        assert!(
+            popover.read_with(cx, |popover, _| popover.editor.is_none()),
+            "saving a valid forward should close the editor"
+        );
+
+        click_port_forwarding_button(cx, "edit-port-forward-1");
+        set_endpoint_values(&popover, "localhost:8081", "service:9001", cx);
+        click_port_forwarding_button(cx, "save-port-forward");
+        assert_eq!(
+            popover.read_with(cx, |popover, _| popover.forwards.clone()),
+            vec![forward(None, 80, None, 80), edited]
+        );
+
+        click_port_forwarding_button(cx, "add-port-forward");
+        set_endpoint_values(&popover, "invalid input", "80", cx);
+        click_port_forwarding_button(cx, "save-port-forward");
+        assert_eq!(
+            popover.read_with(cx, |popover, _| {
+                popover.message.as_deref().map(str::to_owned)
+            }),
+            Some(INVALID_FORWARD_MESSAGE.to_owned())
+        );
+        assert!(
+            popover.read_with(cx, |popover, _| popover.editor.is_some()),
+            "invalid input should remain editable"
+        );
+        assert!(
+            cx.debug_bounds("port-forward-error").is_some(),
+            "invalid input should render an inline error"
+        );
+
+        click_port_forwarding_button(cx, "cancel-port-forward");
+        assert_eq!(
+            popover.read_with(cx, |popover, _| popover.forwards.clone()),
+            vec![
+                forward(None, 80, None, 80),
+                forward(Some("localhost"), 8081, Some("service"), 9001)
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn saving_a_port_forward_updates_ssh_settings(cx: &mut TestAppContext) {
+        let app_state = cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            crate::init(cx);
+            editor::init(cx);
+            app_state
+        });
+        let fs = app_state.fs.as_fake();
+        let initial_forward = forward(None, 8080, None, 80);
+        let initial_settings_write = cx.update(|cx| {
+            update_settings_file_with_completion(fs.clone(), cx, move |settings, _| {
+                settings.remote.ssh_connections = Some(vec![SshConnection {
+                    host: "example.com".to_owned(),
+                    port_forwards: Some(vec![initial_forward]),
+                    ..Default::default()
+                }]);
+            })
+        });
+        initial_settings_write
+            .await
+            .expect("initial settings update should complete")
+            .expect("initial settings should be written");
+        let project = Project::test(fs.clone(), [], cx).await;
+        let options = SshConnectionOptions {
+            host: "example.com".to_owned().into(),
+            nickname: Some("example.com".to_owned()),
+            ..Default::default()
+        };
+        let (root, cx) = cx.add_window_view(move |window, cx| {
+            let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
+            let popover = cx.new(|cx| {
+                PortForwardingPopover::new(options, workspace.downgrade(), fs, false, window, cx)
+            });
+            PortForwardingTestRoot {
+                _workspace: workspace,
+                popover,
+                _dismiss_subscription: None,
+            }
+        });
+        let popover = root.read_with(cx, |root, _| root.popover.clone());
+        let replacement = forward(Some("localhost"), 8081, Some("service"), 9001);
+
+        click_port_forwarding_button(cx, "edit-port-forward-0");
+        set_endpoint_values(&popover, "localhost:8081", "service:9001", cx);
+        click_port_forwarding_button(cx, "save-port-forward");
+        assert_eq!(
+            popover.read_with(cx, |popover, _| popover.forwards.clone()),
+            vec![replacement.clone()]
+        );
+
+        let identity = SshConnectionIdentity::from(&options);
+        assert_eq!(
+            cx.update(|cx| read_forwards(&identity, cx))
+                .expect("updated SSH settings should be readable"),
+            vec![replacement]
+        );
+    }
+
+    #[gpui::test]
+    async fn deleting_a_port_forward_requires_confirmation(cx: &mut TestAppContext) {
+        let app_state = cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            crate::init(cx);
+            editor::init(cx);
+            app_state
+        });
+        let fs = app_state.fs.as_fake();
+        let project = Project::test(fs.clone(), [], cx).await;
+        let options = SshConnectionOptions {
+            host: "for-testing-only".to_owned().into(),
+            nickname: Some("for-testing-only".to_owned()),
+            ..Default::default()
+        };
+        let (root, cx) = cx.add_window_view(move |window, cx| {
+            let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
+            let popover = cx.new(|cx| {
+                PortForwardingPopover::new(options, workspace.downgrade(), fs, true, window, cx)
+            });
+            PortForwardingTestRoot {
+                _workspace: workspace,
+                popover,
+                _dismiss_subscription: None,
+            }
+        });
+        let popover = root.read_with(cx, |root, _| root.popover.clone());
+
+        assert!(cx.debug_bounds("edit-port-forward-0").is_some());
+        assert!(cx.debug_bounds("delete-port-forward-0").is_some());
+        click_port_forwarding_button(cx, "delete-port-forward-0");
+        assert!(cx.has_pending_prompt());
+        cx.simulate_prompt_answer("No, keep it");
+        cx.run_until_parked();
+        assert_eq!(
+            popover.read_with(cx, |popover, _| popover.forwards.len()),
+            1,
+            "declining confirmation should keep the forward"
+        );
+
+        click_port_forwarding_button(cx, "delete-port-forward-0");
+        assert!(cx.has_pending_prompt());
+        cx.simulate_prompt_answer("Yes, remove it");
+        cx.run_until_parked();
+        assert!(popover.read_with(cx, |popover, _| popover.forwards.is_empty()));
+    }
+
+    #[gpui::test]
+    async fn clicking_outside_the_port_forwarding_popover_emits_dismiss(cx: &mut TestAppContext) {
+        let app_state = cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            crate::init(cx);
+            editor::init(cx);
+            app_state
+        });
+        let fs = app_state.fs.as_fake();
+        let project = Project::test(fs.clone(), [], cx).await;
+        let options = SshConnectionOptions {
+            host: "for-testing-only".to_owned().into(),
+            nickname: Some("for-testing-only".to_owned()),
+            ..Default::default()
+        };
+        let dismiss_event_received = Rc::new(Cell::new(false));
+        let dismiss_event_for_subscription = dismiss_event_received.clone();
+        let (_root, cx) = cx.add_window_view(move |window, cx| {
+            let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
+            let popover = cx.new(|cx| {
+                PortForwardingPopover::new(options, workspace.downgrade(), fs, true, window, cx)
+            });
+            let dismiss_subscription = cx.subscribe(&popover, move |_, _, _: &DismissEvent, _| {
+                dismiss_event_for_subscription.set(true);
+            });
+            PortForwardingTestRoot {
+                _workspace: workspace,
+                popover,
+                _dismiss_subscription: Some(dismiss_subscription),
+            }
+        });
+        let Some(popover_bounds) = cx.debug_bounds("port-forwarding-popover") else {
+            panic!("port forwarding popover was not rendered");
+        };
+
+        cx.simulate_click(
+            gpui::point(
+                popover_bounds.right() + gpui::px(20.),
+                popover_bounds.bottom() + gpui::px(20.),
+            ),
+            gpui::Modifiers::default(),
+        );
+        cx.run_until_parked();
+        assert!(dismiss_event_received.get());
+    }
+
+    fn click_port_forwarding_button(cx: &mut gpui::VisualTestContext, button_id: &'static str) {
+        let Some(bounds) = cx.debug_bounds(button_id) else {
+            panic!("port forwarding button {button_id:?} was not rendered");
+        };
+        cx.simulate_click(bounds.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+    }
+
+    fn set_endpoint_values(
+        popover: &Entity<PortForwardingPopover>,
+        local_text: &str,
+        remote_text: &str,
+        cx: &mut gpui::VisualTestContext,
+    ) {
+        let editors = popover.read_with(cx, |popover, _| {
+            popover
+                .editor
+                .as_ref()
+                .map(|editor| (editor.local.clone(), editor.remote.clone()))
+        });
+        let Some((local_editor, remote_editor)) = editors else {
+            panic!("port forward endpoint editors were not rendered");
+        };
+        let local_text = local_text.to_owned();
+        let remote_text = remote_text.to_owned();
+
+        cx.update(|window, cx| {
+            local_editor.update(cx, |editor, cx| {
+                editor.set_text(local_text, window, cx);
+            });
+            remote_editor.update(cx, |editor, cx| {
+                editor.set_text(remote_text, window, cx);
+            });
+        });
+        cx.run_until_parked();
+    }
+
+    fn assert_tab_moves_between_endpoint_fields(
+        popover: &Entity<PortForwardingPopover>,
+        cx: &mut gpui::VisualTestContext,
+    ) {
+        let focus_handles = popover.read_with(cx, |popover, cx| {
+            popover.editor.as_ref().map(|editor| {
+                (
+                    editor.local.focus_handle(cx),
+                    editor.remote.focus_handle(cx),
+                )
+            })
+        });
+        let Some((local_focus, remote_focus)) = focus_handles else {
+            panic!("port forward endpoint editors were not rendered");
+        };
+        let Some(local_bounds) = cx.debug_bounds("port-forward-local-endpoint") else {
+            panic!("local endpoint field was not rendered");
+        };
+        let Some(remote_bounds) = cx.debug_bounds("port-forward-remote-endpoint") else {
+            panic!("remote endpoint field was not rendered");
+        };
+        assert_eq!(
+            local_bounds.origin.y, remote_bounds.origin.y,
+            "wide layout should keep the endpoint fields on one row"
+        );
+
+        cx.update(|window, _| assert!(local_focus.is_focused(window)));
         cx.simulate_keystrokes("tab");
-        cx.update(|window, _| {
-            assert!(remote_focus.is_focused(window));
-        });
-
+        cx.update(|window, _| assert!(remote_focus.is_focused(window)));
         cx.simulate_keystrokes("shift-tab");
-        cx.update(|window, _| {
-            assert!(local_focus.is_focused(window));
-        });
+        cx.update(|window, _| assert!(local_focus.is_focused(window)));
     }
 }

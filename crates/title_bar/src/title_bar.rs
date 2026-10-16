@@ -1510,7 +1510,71 @@ impl TitleBar {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fs::Fs as _;
+    use gpui::TestAppContext;
     use util::paths::PathStyle;
+    use workspace::AppState;
+
+    struct TitleBarTestRoot {
+        _workspace: Entity<Workspace>,
+        title_bar: Entity<TitleBar>,
+    }
+
+    impl Render for TitleBarTestRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            self.title_bar.clone()
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    #[gpui::test]
+    async fn port_forwarding_button_follows_worktree_and_branch_controls(cx: &mut TestAppContext) {
+        let app_state = cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
+            platform_title_bar::PlatformTitleBar::init(cx);
+            app_state
+        });
+        let fs = app_state.fs.as_fake();
+        fs.create_dir(Path::new("/project"))
+            .await
+            .expect("project directory should be created");
+        fs.create_dir(Path::new("/project/.git"))
+            .await
+            .expect("git directory should be created");
+        fs.with_git_state(Path::new("/project/.git"), true, |state| {
+            state.current_branch_name = Some("main".to_owned());
+            state.branches.insert("main".to_owned());
+        })
+        .expect("fake repository state should be created");
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let (_root, cx) = cx.add_window_view(move |window, cx| {
+            let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
+            let title_bar = workspace.update(cx, |workspace, cx| {
+                cx.new(|cx| TitleBar::new("title-bar-test", workspace, None, window, cx))
+            });
+            TitleBarTestRoot {
+                _workspace: workspace,
+                title_bar,
+            }
+        });
+
+        let Some(worktree_bounds) = cx.debug_bounds("worktree_picker_trigger") else {
+            panic!("worktree picker was not rendered");
+        };
+        let Some(branch_bounds) = cx.debug_bounds("project_branch_trigger") else {
+            panic!("branch picker was not rendered");
+        };
+        let Some(port_forwarding_bounds) = cx.debug_bounds("ssh-port-forwarding-trigger") else {
+            panic!("port forwarding trigger was not rendered");
+        };
+        assert!(worktree_bounds.right() <= branch_bounds.left());
+        assert!(branch_bounds.right() <= port_forwarding_bounds.left());
+    }
 
     #[test]
     fn test_foreign_path_style_does_not_use_repository_identity_as_name_anchor() {
