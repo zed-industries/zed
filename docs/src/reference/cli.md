@@ -104,6 +104,18 @@ zed --diff file1.txt file2.txt
 zed --diff old.rs new.rs --diff old2.rs new2.rs
 ```
 
+### `--ssh-args <ARGS>`
+
+Pass extra SSH options to the connection an `ssh://` URL opens, without adding the host to the `ssh_connections` in your settings. This suits tools that launch Zed against a host they generate, such as a VM with its own `ssh_config`:
+
+```sh
+zed --ssh-args='-F /path/to/ssh_config' ssh://my-vm/home/me/project
+```
+
+The options are quoted like a shell command line and appended to the `args` of the host's `ssh_connections` entry, if it has one. They accept the [supported SSH options](../remote-development.md#supported-ssh-options) except `-l`, `-p` and `-L`, which belong in the URL or the settings. Paths given to `-F` and `-i` must be absolute.
+
+Zed stores the options with the workspace, so reopening it from recent projects or restoring it in a later session connects the same way. Opening the same host with other options opens a separate workspace.
+
 ### `--foreground`
 
 Run Zed in the foreground, keeping the terminal attached. Useful for debugging:

@@ -143,6 +143,10 @@ pub struct SshConnectionOptions {
     pub port: Option<u16>,
     pub password: Option<String>,
     pub args: Option<Vec<String>>,
+    /// Options for this connection alone, appended after `args`, such as the CLI's
+    /// `--ssh-args`. Unlike `args`, they never come from the settings.
+    #[serde(default)]
+    pub extra_args: Vec<String>,
     pub port_forwards: Option<Vec<SshPortForwardOption>>,
     pub connection_timeout: Option<u16>,
 
@@ -158,6 +162,7 @@ impl From<settings_content::SshConnection> for SshConnectionOptions {
             port: val.port,
             password: None,
             args: Some(val.args),
+            extra_args: Vec::new(),
             nickname: val.nickname,
             upload_binary_over_ssh: val.upload_binary_over_ssh.unwrap_or_default(),
             port_forwards: val.port_forwards,
@@ -1855,14 +1860,100 @@ fn parse_port_forward_spec(spec: &str) -> Result<SshPortForwardOption> {
     }
 }
 
+/// The parts of an ssh command line, before deciding whether it needs a destination.
+struct ParsedSshArgs {
+    hostname: Option<String>,
+    username: Option<String>,
+    port: Option<u16>,
+    args: Vec<String>,
+    port_forwards: Vec<SshPortForwardOption>,
+    /// Whether `-l`, `-p` or `-L` appeared, even with a value that did not parse.
+    has_destination_options: bool,
+}
+
 impl SshConnectionOptions {
     pub fn parse_command_line(input: &str) -> Result<Self> {
+        let ParsedSshArgs {
+            hostname,
+            username,
+            port,
+            args,
+            port_forwards,
+            has_destination_options: _,
+        } = Self::parse_args(input)?;
+
+        let Some(hostname) = hostname else {
+            anyhow::bail!("missing hostname");
+        };
+
+        let port_forwards = match port_forwards.len() {
+            0 => None,
+            _ => Some(port_forwards),
+        };
+
+        Ok(Self {
+            host: hostname.into(),
+            username,
+            port,
+            port_forwards,
+            args: Some(args),
+            extra_args: Vec::new(),
+            password: None,
+            nickname: None,
+            upload_binary_over_ssh: false,
+            connection_timeout: None,
+        })
+    }
+
+    /// Parses ssh options given without a destination, such as the CLI's `--ssh-args`,
+    /// accepting the same options as [`Self::parse_command_line`]. The destination, user,
+    /// port and port forwards come from elsewhere, so `-l`, `-p` and `-L` are refused.
+    ///
+    /// The `-F` and `-i` paths must be absolute: ssh runs in Zed's working directory, which
+    /// is not the caller's. This is a syntactic check, not a security boundary: `-o` passes
+    /// any option through.
+    pub fn parse_extra_args(input: &str) -> Result<Vec<String>> {
+        let ParsedSshArgs {
+            hostname,
+            args,
+            has_destination_options,
+            ..
+        } = Self::parse_args(input)?;
+        if let Some(hostname) = hostname {
+            anyhow::bail!("unexpected destination: {hostname:?}");
+        }
+        anyhow::ensure!(
+            !has_destination_options,
+            "-l, -p and -L are not supported here"
+        );
+        let mut args_iter = args.iter();
+        while let Some(arg) = args_iter.next() {
+            for opt in ["-F", "-i"] {
+                let path = if arg == opt {
+                    args_iter.next().map(String::as_str)
+                } else {
+                    arg.strip_prefix(opt)
+                };
+                if let Some(path) = path {
+                    anyhow::ensure!(
+                        Path::new(path).is_absolute(),
+                        "the path given to {opt} must be absolute: {path:?}"
+                    );
+                    break;
+                }
+            }
+        }
+        Ok(args)
+    }
+
+    fn parse_args(input: &str) -> Result<ParsedSshArgs> {
         let input = input.trim_start_matches("ssh ");
         let mut hostname: Option<String> = None;
         let mut username: Option<String> = None;
         let mut port: Option<u16> = None;
         let mut args = Vec::new();
         let mut port_forwards: Vec<SshPortForwardOption> = Vec::new();
+        let mut has_destination_options = false;
 
         // disallowed: -E, -e, -F, -f, -G, -g, -M, -N, -n, -O, -q, -S, -s, -T, -t, -V, -v, -W
         const ALLOWED_OPTS: &[&str] = &[
@@ -1882,6 +1973,9 @@ impl SshConnectionOptions {
             if ALLOWED_OPTS.contains(&(&arg as &str)) {
                 args.push(arg.to_string());
                 continue;
+            }
+            if ["-p", "-l", "-L"].iter().any(|opt| arg.starts_with(opt)) {
+                has_destination_options = true;
             }
             if arg == "-p" {
                 port = tokens.next().and_then(|arg| arg.parse().ok());
@@ -1913,10 +2007,11 @@ impl SshConnectionOptions {
 
             for a in ALLOWED_ARGS {
                 if arg == *a {
+                    let value = tokens
+                        .next()
+                        .with_context(|| format!("missing value for {arg}"))?;
                     args.push(arg);
-                    if let Some(next) = tokens.next() {
-                        args.push(next);
-                    }
+                    args.push(value);
                     continue 'outer;
                 } else if arg.starts_with(a) {
                     args.push(arg);
@@ -1953,25 +2048,13 @@ impl SshConnectionOptions {
             hostname = Some(input.to_string())
         }
 
-        let Some(hostname) = hostname else {
-            anyhow::bail!("missing hostname");
-        };
-
-        let port_forwards = match port_forwards.len() {
-            0 => None,
-            _ => Some(port_forwards),
-        };
-
-        Ok(Self {
-            host: hostname.into(),
+        Ok(ParsedSshArgs {
+            hostname,
             username,
             port,
+            args,
             port_forwards,
-            args: Some(args),
-            password: None,
-            nickname: None,
-            upload_binary_over_ssh: false,
-            connection_timeout: None,
+            has_destination_options,
         })
     }
 
@@ -1991,7 +2074,12 @@ impl SshConnectionOptions {
     }
 
     pub fn additional_args_for_scp(&self) -> Vec<String> {
-        self.args.iter().flatten().cloned().collect::<Vec<String>>()
+        self.args
+            .iter()
+            .flatten()
+            .chain(&self.extra_args)
+            .cloned()
+            .collect::<Vec<String>>()
     }
 
     pub fn additional_args(&self) -> Vec<String> {
@@ -3045,6 +3133,33 @@ mod tests {
         assert_eq!(opts.username, Some("user".to_string()));
         assert_eq!(opts.port, Some(2222));
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_extra_args() -> Result<()> {
+        assert_eq!(
+            SshConnectionOptions::parse_extra_args(
+                "-F '/run/my vm/ssh_config' -A -oBatchMode=yes"
+            )?,
+            vec!["-F", "/run/my vm/ssh_config", "-A", "-oBatchMode=yes"]
+        );
+        assert!(SshConnectionOptions::parse_extra_args("")?.is_empty());
+
+        assert!(SshConnectionOptions::parse_extra_args("-F config host").is_err());
+        assert!(SshConnectionOptions::parse_extra_args("-p 2222").is_err());
+        assert!(SshConnectionOptions::parse_extra_args("-l user").is_err());
+        assert!(SshConnectionOptions::parse_extra_args("-p").is_err());
+        assert!(SshConnectionOptions::parse_extra_args("-p garbage").is_err());
+        assert!(SshConnectionOptions::parse_extra_args("-l").is_err());
+        assert!(SshConnectionOptions::parse_extra_args("-F").is_err());
+        assert!(SshConnectionOptions::parse_extra_args("-E log").is_err());
+        assert!(SshConnectionOptions::parse_extra_args("-F ssh_config").is_err());
+        assert!(SshConnectionOptions::parse_extra_args("-i./id_ed25519").is_err());
+        assert_eq!(
+            SshConnectionOptions::parse_extra_args("-J jump -i /keys/id")?,
+            vec!["-J", "jump", "-i", "/keys/id"]
+        );
         Ok(())
     }
 

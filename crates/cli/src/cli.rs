@@ -68,6 +68,9 @@ pub enum CliRequest {
         dev_container: bool,
         #[serde(default)]
         cwd: Option<PathBuf>,
+        /// Extra ssh options for the connection an `ssh://` URL in `urls` opens.
+        #[serde(default)]
+        ssh_args: Option<String>,
     },
     SetOpenBehavior {
         behavior: CliBehaviorSetting,

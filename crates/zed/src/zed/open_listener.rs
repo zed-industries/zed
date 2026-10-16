@@ -19,7 +19,7 @@ use gpui::{App, AsyncApp, Global, TaskExt, WindowHandle};
 use onboarding::FIRST_OPEN;
 use onboarding::show_onboarding_view;
 use recent_projects::{RemoteSettings, navigate_to_positions, open_remote_project};
-use remote::{RemoteConnectionOptions, WslConnectionOptions};
+use remote::{RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions};
 use settings::Settings;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -154,6 +154,7 @@ impl OpenRequest {
             }));
         }
 
+        let ssh_args = request.ssh_args;
         for url in request.urls {
             if let Some(server_name) = url.strip_prefix("zed-cli://") {
                 this.kind = Some(OpenRequestKind::CliConnection(connect_to_cli(server_name)?));
@@ -209,6 +210,10 @@ impl OpenRequest {
             } else {
                 log::error!("unhandled url: {}", url);
             }
+        }
+
+        if let Some(ssh_args) = ssh_args {
+            this.add_ssh_args(&ssh_args)?;
         }
 
         Ok(this)
@@ -279,6 +284,17 @@ impl OpenRequest {
             sha: sha.to_string(),
         });
 
+        Ok(())
+    }
+
+    /// Appends ssh options given on the command line to the connection an `ssh://` URL opened.
+    fn add_ssh_args(&mut self, ssh_args: &str) -> Result<()> {
+        let Some(RemoteConnectionOptions::Ssh(options)) = &mut self.remote_connection else {
+            anyhow::bail!("--ssh-args needs an ssh:// URL to open");
+        };
+        options
+            .extra_args
+            .extend(SshConnectionOptions::parse_extra_args(ssh_args)?);
         Ok(())
     }
 
@@ -387,6 +403,9 @@ pub struct RawOpenRequest {
     pub dev_container: bool,
     pub wsl: Option<String>,
     pub open_behavior: Option<cli::OpenBehavior>,
+    /// Extra ssh options for the `ssh://` URL in `urls`, from the command line. URLs cannot
+    /// carry these themselves, since any page can open them.
+    pub ssh_args: Option<String>,
 }
 
 impl Global for OpenListener {}
@@ -594,6 +613,7 @@ pub async fn handle_cli_connection(
                 user_data_dir: _,
                 dev_container,
                 cwd,
+                ssh_args,
             } => {
                 if !urls.is_empty() {
                     cx.update(|cx| {
@@ -605,6 +625,7 @@ pub async fn handle_cli_connection(
                                 dev_container,
                                 wsl,
                                 open_behavior: Some(open_behavior),
+                                ssh_args,
                             },
                             cx,
                         ) {
@@ -623,6 +644,16 @@ pub async fn handle_cli_connection(
                             }
                         };
                     });
+                    return;
+                }
+
+                if ssh_args.is_some() {
+                    responses
+                        .send(CliResponse::Stderr {
+                            message: "--ssh-args needs an ssh:// URL to open".to_string(),
+                        })
+                        .log_err();
+                    responses.send(CliResponse::Exit { status: 1 }).log_err();
                     return;
                 }
 
@@ -1131,7 +1162,6 @@ mod tests {
     use futures::poll;
     use gpui::{AppContext as _, TestAppContext, UpdateGlobal as _};
     use language::LineEnding;
-    use remote::SshConnectionOptions;
     use rope::Rope;
     use serde_json::json;
     use session::Session;
@@ -1384,6 +1414,58 @@ mod tests {
         });
 
         assert_eq!(request.open_behavior, Some(cli::OpenBehavior::AlwaysNew));
+    }
+
+    #[gpui::test]
+    fn test_parse_ssh_url_with_ssh_args(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.remote.ssh_connections = Some(vec![settings::SshConnection {
+                        host: "configured".into(),
+                        args: vec!["-A".into()],
+                        ..Default::default()
+                    }]);
+                });
+            });
+        });
+
+        let parse = |url: &str, ssh_args: &str, cx: &mut TestAppContext| {
+            cx.update(|cx| {
+                OpenRequest::parse(
+                    RawOpenRequest {
+                        urls: vec![url.into()],
+                        ssh_args: Some(ssh_args.into()),
+                        ..Default::default()
+                    },
+                    cx,
+                )
+            })
+        };
+        let ssh_args_of = |request: OpenRequest| match request.remote_connection {
+            Some(RemoteConnectionOptions::Ssh(options)) => (options.args, options.extra_args),
+            _ => panic!("expected an ssh connection"),
+        };
+
+        let request = parse("ssh://host/project", "-F '/tmp/my vm/ssh_config'", cx).unwrap();
+        assert_eq!(
+            ssh_args_of(request),
+            (None, vec!["-F".into(), "/tmp/my vm/ssh_config".into()])
+        );
+
+        let request = parse("ssh://configured/project", "-F /tmp/ssh_config", cx).unwrap();
+        assert_eq!(
+            ssh_args_of(request),
+            (
+                Some(vec!["-A".into()]),
+                vec!["-F".into(), "/tmp/ssh_config".into()]
+            )
+        );
+
+        assert!(parse("ssh://host/project", "-p 2222", cx).is_err());
+        assert!(parse("ssh://host/project", "-F ssh_config", cx).is_err());
+        assert!(parse("file:///tmp/project", "-F /tmp/ssh_config", cx).is_err());
     }
 
     #[gpui::test]
@@ -2453,6 +2535,7 @@ mod tests {
             user_data_dir: None,
             dev_container: false,
             cwd: None,
+            ssh_args: None,
         }
     }
 
@@ -2472,6 +2555,7 @@ mod tests {
             user_data_dir: None,
             dev_container: false,
             cwd: None,
+            ssh_args: None,
         }
     }
 
@@ -3009,6 +3093,27 @@ mod tests {
         assert_eq!(status, 0);
         assert!(!prompt_shown, "no prompt should be shown with -n flag");
         assert_eq!(cx.windows().len(), 2);
+    }
+
+    #[gpui::test]
+    async fn test_e2e_ssh_args_without_ssh_url(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/project"), json!({ "file.txt": "" }))
+            .await;
+
+        let mut request =
+            make_cli_open_request(vec![path!("/project").into()], cli::OpenBehavior::AlwaysNew);
+        if let CliRequest::Open { ssh_args, .. } = &mut request {
+            *ssh_args = Some("-F /tmp/ssh_config".into());
+        }
+        let (status, _) = run_cli_with_zed_handler(cx, app_state, request, None);
+
+        assert_eq!(status, 1);
+        assert_eq!(cx.windows().len(), 0);
     }
 
     #[gpui::test]

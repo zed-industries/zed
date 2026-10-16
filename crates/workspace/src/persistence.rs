@@ -1065,6 +1065,9 @@ impl Domain for WorkspaceDb {
         sql!(
             ALTER TABLE workspaces ADD COLUMN native_window_state BLOB;
         ),
+        sql!(
+            ALTER TABLE remote_connections ADD COLUMN ssh_extra_args TEXT;
+        ),
     ];
 
     // Allow recovering from bad migration that was initially shipped to nightly
@@ -1711,17 +1714,22 @@ impl WorkspaceDb {
         let mut container_id = None;
         let mut use_podman = None;
         let mut remote_env = None;
+        let mut ssh_extra_args = None;
 
         match identity {
             RemoteConnectionIdentity::Ssh {
                 host: identity_host,
                 username,
                 port: identity_port,
+                extra_args,
             } => {
                 kind = RemoteConnectionKind::Ssh;
                 host = Some(identity_host);
                 port = identity_port;
                 user = username;
+                if !extra_args.is_empty() {
+                    ssh_extra_args = serde_json::to_string(&extra_args).ok();
+                }
             }
             RemoteConnectionIdentity::Wsl {
                 distro_name,
@@ -1765,6 +1773,7 @@ impl WorkspaceDb {
             container_id,
             use_podman,
             remote_env,
+            ssh_extra_args,
         )
     }
 
@@ -1779,6 +1788,7 @@ impl WorkspaceDb {
         container_id: Option<String>,
         use_podman: Option<bool>,
         remote_env: Option<String>,
+        ssh_extra_args: Option<String>,
     ) -> Result<RemoteConnectionId> {
         if let Some(id) = this.select_row_bound(sql!(
             SELECT id
@@ -1790,7 +1800,8 @@ impl WorkspaceDb {
                 user IS ? AND
                 distro IS ? AND
                 name IS ? AND
-                container_id IS ?
+                container_id IS ? AND
+                ssh_extra_args IS ?
             LIMIT 1
         ))?((
             kind.serialize(),
@@ -1800,6 +1811,7 @@ impl WorkspaceDb {
             distro.clone(),
             name.clone(),
             container_id.clone(),
+            ssh_extra_args.clone(),
         ))? {
             Ok(RemoteConnectionId(id))
         } else {
@@ -1813,8 +1825,9 @@ impl WorkspaceDb {
                     name,
                     container_id,
                     use_podman,
-                    remote_env
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                    remote_env,
+                    ssh_extra_args
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
                 RETURNING id
             ))?((
                 kind.serialize(),
@@ -1826,6 +1839,7 @@ impl WorkspaceDb {
                 container_id,
                 use_podman,
                 remote_env,
+                ssh_extra_args,
             ))?
             .context("failed to insert remote project")?;
             Ok(RemoteConnectionId(id))
@@ -1947,13 +1961,19 @@ impl WorkspaceDb {
     fn remote_connections(&self) -> Result<HashMap<RemoteConnectionId, RemoteConnectionOptions>> {
         Ok(self.select(sql!(
             SELECT
-                id, kind, host, port, user, distro, container_id, name, use_podman, remote_env
+                id,
+                kind, host, port, user, distro, container_id, name, use_podman, remote_env,
+                ssh_extra_args
             FROM
                 remote_connections
         ))?()?
         .into_iter()
         .filter_map(
-            |(id, kind, host, port, user, distro, container_id, name, use_podman, remote_env)| {
+            |(
+                id,
+                (kind, host, port, user, distro, container_id, name, use_podman, remote_env),
+                ssh_extra_args,
+            )| {
                 Some((
                     RemoteConnectionId(id),
                     Self::remote_connection_from_row(
@@ -1966,6 +1986,7 @@ impl WorkspaceDb {
                         name,
                         use_podman,
                         remote_env,
+                        ssh_extra_args,
                     )?,
                 ))
             },
@@ -1977,13 +1998,25 @@ impl WorkspaceDb {
         &self,
         id: RemoteConnectionId,
     ) -> Result<RemoteConnectionOptions> {
-        let (kind, host, port, user, distro, container_id, name, use_podman, remote_env) =
-            self.select_row_bound(sql!(
-                SELECT kind, host, port, user, distro, container_id, name, use_podman, remote_env
-                FROM remote_connections
-                WHERE id = ?
-            ))?(id.0)?
-            .context("no such remote connection")?;
+        let (
+            kind,
+            host,
+            port,
+            user,
+            distro,
+            container_id,
+            name,
+            use_podman,
+            remote_env,
+            ssh_extra_args,
+        ) = self.select_row_bound(sql!(
+            SELECT
+                kind, host, port, user, distro, container_id, name, use_podman, remote_env,
+                ssh_extra_args
+            FROM remote_connections
+            WHERE id = ?
+        ))?(id.0)?
+        .context("no such remote connection")?;
         Self::remote_connection_from_row(
             kind,
             host,
@@ -1994,6 +2027,7 @@ impl WorkspaceDb {
             name,
             use_podman,
             remote_env,
+            ssh_extra_args,
         )
         .context("invalid remote_connection row")
     }
@@ -2008,6 +2042,7 @@ impl WorkspaceDb {
         name: Option<String>,
         use_podman: Option<bool>,
         remote_env: Option<String>,
+        ssh_extra_args: Option<String>,
     ) -> Option<RemoteConnectionOptions> {
         match RemoteConnectionKind::deserialize(&kind)? {
             RemoteConnectionKind::Wsl => Some(RemoteConnectionOptions::Wsl(WslConnectionOptions {
@@ -2018,6 +2053,9 @@ impl WorkspaceDb {
                 host: host?.into(),
                 port,
                 username: user,
+                extra_args: ssh_extra_args
+                    .and_then(|args| serde_json::from_str(&args).ok())
+                    .unwrap_or_default(),
                 ..Default::default()
             })),
             RemoteConnectionKind::Docker => {
@@ -4412,6 +4450,50 @@ mod tests {
             ]
             .into_iter()
             .collect::<HashMap<_, _>>(),
+        );
+    }
+
+    #[gpui::test]
+    async fn test_remote_connection_ssh_extra_args() {
+        let db = WorkspaceDb::open_test_db("test_remote_connection_ssh_extra_args").await;
+
+        let options = |extra_args: &[&str]| {
+            RemoteConnectionOptions::Ssh(SshConnectionOptions {
+                host: "vm".into(),
+                // Settings args are not persisted: they come back from the settings.
+                args: Some(vec!["-A".into()]),
+                extra_args: extra_args.iter().map(|arg| arg.to_string()).collect(),
+                ..Default::default()
+            })
+        };
+        let without_extra = db
+            .get_or_create_remote_connection(options(&[]))
+            .await
+            .unwrap();
+        let with_extra = db
+            .get_or_create_remote_connection(options(&["-F", "/vm-1/ssh_config"]))
+            .await
+            .unwrap();
+        let with_other_extra = db
+            .get_or_create_remote_connection(options(&["-F", "/vm-2/ssh_config"]))
+            .await
+            .unwrap();
+
+        assert_ne!(without_extra, with_extra);
+        assert_ne!(with_extra, with_other_extra);
+        assert_eq!(
+            db.get_or_create_remote_connection(options(&["-F", "/vm-1/ssh_config"]))
+                .await
+                .unwrap(),
+            with_extra
+        );
+        assert_eq!(
+            db.remote_connection(with_extra).unwrap(),
+            RemoteConnectionOptions::Ssh(SshConnectionOptions {
+                host: "vm".into(),
+                extra_args: vec!["-F".into(), "/vm-1/ssh_config".into()],
+                ..Default::default()
+            })
         );
     }
 

@@ -138,6 +138,13 @@ struct Args {
     /// When directories are provided, recurses into them and shows all changed files in a single multi-diff view.
     #[arg(long, action = clap::ArgAction::Append, num_args = 2, value_names = ["OLD_PATH", "NEW_PATH"], value_hint = clap::ValueHint::AnyPath)]
     diff: Vec<String>,
+    /// Extra ssh options for the `ssh://` URL being opened, appended to the `args`
+    /// of its `ssh_connections` entry in the settings, if any. Paths given to `-F`
+    /// and `-i` must be absolute.
+    ///
+    /// Example: `zed --ssh-args='-F /path/to/ssh_config' ssh://myhost/project`.
+    #[arg(long, value_name = "ARGS", allow_hyphen_values = true)]
+    ssh_args: Option<String>,
     /// Generate shell completions for Zed
     #[arg(long, value_names = ["SHELL"])]
     completions: Option<Shell>,
@@ -729,6 +736,7 @@ fn run() -> Result<()> {
                     user_data_dir: user_data_dir_for_thread,
                     dev_container: args.dev_container,
                     cwd: env::current_dir().ok(),
+                    ssh_args: args.ssh_args,
                 };
 
                 tx.send(open_request)?;

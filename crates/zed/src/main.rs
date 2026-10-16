@@ -905,13 +905,14 @@ fn main() {
         #[cfg(not(target_os = "windows"))]
         let wsl = None;
 
-        if !urls.is_empty() || !diff_paths.is_empty() {
+        if !urls.is_empty() || !diff_paths.is_empty() || args.ssh_args.is_some() {
             open_listener.open(RawOpenRequest {
                 urls,
                 diff_paths,
                 wsl,
                 diff_all: diff_all_mode,
                 dev_container: args.dev_container,
+                ssh_args: args.ssh_args,
                 ..Default::default()
             })
         }
@@ -1731,6 +1732,14 @@ struct Args {
     /// configuration is found in the project directory.
     #[arg(long)]
     dev_container: bool,
+
+    /// Extra ssh options for the `ssh://` URL being opened, appended to the `args` of its
+    /// `ssh_connections` entry in the settings, if any. Paths given to `-F` and `-i` must
+    /// be absolute.
+    ///
+    /// Example: `--ssh-args='-F /path/to/ssh_config'`.
+    #[arg(long, value_name = "ARGS", allow_hyphen_values = true)]
+    ssh_args: Option<String>,
 
     /// Instructs zed to run as a dev server on this machine. (not implemented)
     #[arg(long)]

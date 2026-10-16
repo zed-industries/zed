@@ -11051,28 +11051,39 @@ fn workspace_is_at_location(
         (
             SerializedWorkspaceLocation::Remote(workspace_remote),
             SerializedWorkspaceLocation::Remote(remote),
-        ) => match (workspace_remote, remote) {
-            (RemoteConnectionOptions::Ssh(_), RemoteConnectionOptions::Ssh(_)) => {
-                same_remote_connection_identity(Some(workspace_remote), Some(remote))
+        ) => workspace_remote_matches_location(workspace_remote, remote),
+        _ => false,
+    }
+}
+
+fn workspace_remote_matches_location(
+    workspace_remote: &RemoteConnectionOptions,
+    requested_remote: &RemoteConnectionOptions,
+) -> bool {
+    match (workspace_remote, requested_remote) {
+        (RemoteConnectionOptions::Ssh(_), RemoteConnectionOptions::Ssh(ssh)) => {
+            let mut workspace_identity = remote_connection_identity(workspace_remote);
+            // A request without extra ssh args reuses a workspace opened with any.
+            if ssh.extra_args.is_empty()
+                && let RemoteConnectionIdentity::Ssh { extra_args, .. } = &mut workspace_identity
+            {
+                extra_args.clear();
             }
-            (
-                RemoteConnectionOptions::Wsl(workspace_remote),
-                RemoteConnectionOptions::Wsl(remote),
-            ) => {
-                // The WSL username is not consistently populated in the workspace location, so ignore it for now.
-                workspace_remote.distro_name == remote.distro_name
-            }
-            (
-                RemoteConnectionOptions::Docker(workspace_remote),
-                RemoteConnectionOptions::Docker(remote),
-            ) => workspace_remote.container_id == remote.container_id,
-            #[cfg(any(test, feature = "test-support"))]
-            (
-                RemoteConnectionOptions::Mock(workspace_remote),
-                RemoteConnectionOptions::Mock(remote),
-            ) => workspace_remote.id == remote.id,
-            _ => false,
-        },
+            workspace_identity == remote_connection_identity(requested_remote)
+        }
+        (RemoteConnectionOptions::Wsl(workspace_remote), RemoteConnectionOptions::Wsl(remote)) => {
+            // The WSL username is not consistently populated in the workspace location, so ignore it for now.
+            workspace_remote.distro_name == remote.distro_name
+        }
+        (
+            RemoteConnectionOptions::Docker(workspace_remote),
+            RemoteConnectionOptions::Docker(remote),
+        ) => workspace_remote.container_id == remote.container_id,
+        #[cfg(any(test, feature = "test-support"))]
+        (
+            RemoteConnectionOptions::Mock(workspace_remote),
+            RemoteConnectionOptions::Mock(remote),
+        ) => workspace_remote.id == remote.id,
         _ => false,
     }
 }
@@ -12731,6 +12742,59 @@ mod tests {
     use settings::{SettingsStore, SplicingVec};
     use util::path;
     use util::rel_path::rel_path;
+
+    #[test]
+    fn test_workspace_remote_matches_location_ssh() {
+        let ssh = |host: &str, username: Option<&str>, port: Option<u16>, extra_args: &[&str]| {
+            RemoteConnectionOptions::Ssh(remote::SshConnectionOptions {
+                host: host.into(),
+                username: username.map(str::to_string),
+                port,
+                extra_args: extra_args
+                    .iter()
+                    .map(|argument| argument.to_string())
+                    .collect(),
+                ..Default::default()
+            })
+        };
+        let first_config = ["-F", "/vm-1/ssh_config"];
+        let second_config = ["-F", "/vm-2/ssh_config"];
+        let no_args: [&str; 0] = [];
+
+        for (workspace_args, requested_args, expected) in [
+            (&first_config[..], &first_config[..], true),
+            (&first_config[..], &second_config[..], false),
+            (&first_config[..], &no_args[..], true),
+            (&no_args[..], &first_config[..], false),
+            (&no_args[..], &no_args[..], true),
+        ] {
+            assert_eq!(
+                workspace_remote_matches_location(
+                    &ssh("vm", None, None, workspace_args),
+                    &ssh("vm", None, None, requested_args),
+                ),
+                expected,
+                "workspace args: {workspace_args:?}, requested args: {requested_args:?}",
+            );
+        }
+
+        let workspace_remote = ssh("vm", Some("user"), Some(22), &first_config);
+        for (host, username, port, expected) in [
+            ("vm", "user", 22, true),
+            ("other", "user", 22, false),
+            ("vm", "root", 22, false),
+            ("vm", "user", 2222, false),
+        ] {
+            assert_eq!(
+                workspace_remote_matches_location(
+                    &workspace_remote,
+                    &ssh(host, Some(username), Some(port), &[]),
+                ),
+                expected,
+                "requested remote: {username}@{host}:{port}",
+            );
+        }
+    }
 
     #[test]
     fn test_render_window_title_format_omits_empty_segments() {

@@ -12,6 +12,8 @@ pub enum RemoteConnectionIdentity {
         host: String,
         username: Option<String>,
         port: Option<u16>,
+        /// Another `-F` config can reach another machine under the same host name.
+        extra_args: Vec<String>,
     },
     Wsl {
         distro_name: String,
@@ -35,12 +37,24 @@ impl RemoteConnectionIdentity {
                 host,
                 username,
                 port,
-            } => format!(
-                "ssh:{}@{}:{}",
-                username.as_deref().unwrap_or_default(),
-                host,
-                port.map(|port| port.to_string()).unwrap_or_default()
-            ),
+                extra_args,
+            } => {
+                let key = format!(
+                    "ssh:{}@{}:{}",
+                    username.as_deref().unwrap_or_default(),
+                    host,
+                    port.map(|port| port.to_string()).unwrap_or_default()
+                );
+                // Keeps the keys of connections without extra args unchanged.
+                if extra_args.is_empty() {
+                    key
+                } else {
+                    format!(
+                        "{key}:{}",
+                        serde_json::to_string(extra_args).unwrap_or_default()
+                    )
+                }
+            }
             Self::Wsl { distro_name, user } => format!(
                 "wsl:{}@{}",
                 user.as_deref().unwrap_or_default(),
@@ -64,6 +78,7 @@ impl From<&RemoteConnectionOptions> for RemoteConnectionIdentity {
                 host: options.host.to_string(),
                 username: options.username.clone(),
                 port: options.port,
+                extra_args: options.extra_args.clone(),
             },
             RemoteConnectionOptions::Wsl(options) => Self::Wsl {
                 distro_name: options.distro_name.clone(),
@@ -148,6 +163,32 @@ mod tests {
         });
 
         assert!(!same_remote_connection_identity(Some(&left), Some(&right),));
+
+        let with_extra_args = |extra_args: &[&str]| {
+            RemoteConnectionOptions::Ssh(SshConnectionOptions {
+                host: "example.com".into(),
+                extra_args: extra_args.iter().map(|arg| arg.to_string()).collect(),
+                ..Default::default()
+            })
+        };
+        let first = with_extra_args(&["-F", "/vm-1/ssh_config"]);
+        let second = with_extra_args(&["-F", "/vm-2/ssh_config"]);
+        assert!(!same_remote_connection_identity(
+            Some(&first),
+            Some(&second)
+        ));
+        assert!(!same_remote_connection_identity(
+            Some(&first),
+            Some(&with_extra_args(&[]))
+        ));
+        assert_ne!(
+            remote_connection_identity(&first).persistence_key(),
+            remote_connection_identity(&second).persistence_key()
+        );
+        assert_eq!(
+            remote_connection_identity(&with_extra_args(&[])).persistence_key(),
+            "ssh:@example.com:"
+        );
     }
 
     #[test]
