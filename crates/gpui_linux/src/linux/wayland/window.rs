@@ -1124,6 +1124,9 @@ impl WaylandWindowStatePtr {
                     // Limit interactive resizes to once per vblank
                     let throttled = configure.resizing && state.resize_throttle;
                     if !throttled {
+                        // This configure is acked now, so an older deferred one must never be
+                        // acked after it.
+                        state.deferred_configure = None;
                         if configure.resizing {
                             state.resize_throttle = true;
                         }
