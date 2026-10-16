@@ -11,7 +11,8 @@ use anyhow::{Context as _, Result};
 use editor::items::open_resolved_target;
 use editor::scroll::Autoscroll;
 use editor::{
-    Editor, EditorEvent, EditorSettingsScrollbarProxy, MultiBufferOffset, SelectionEffects,
+    Editor, EditorEvent, EditorSettingsScrollbarProxy, MAX_TAB_TITLE_LEN, MultiBufferOffset,
+    SelectionEffects,
 };
 use gpui::{
     Action, AnyElement, App, ClipboardItem, Context, Entity, EntityId, EventEmitter, FocusHandle,
@@ -1652,8 +1653,20 @@ impl Item for MarkdownPreviewView {
 
     fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
         let preview = self.self_handle.clone();
+        let description = params.detail.and_then(|detail| {
+            let editor = self.active_editor.as_ref()?.editor.read(cx);
+            let description = editor.tab_description(detail, cx)?;
+            Some(util::truncate_and_trailoff(
+                &description,
+                params.max_title_len.unwrap_or(MAX_TAB_TITLE_LEN),
+            ))
+        });
         h_flex()
+            .gap_1()
             .when(!params.selected, |tab| tab.track_focus(&self.focus_handle))
+            .when(params.truncate_title_middle, |this| {
+                this.w_full().min_w_0().overflow_hidden()
+            })
             .on_action(move |action: &CloseAndReturnToEditor, window, cx| {
                 preview
                     .update(cx, |preview, cx| {
@@ -1661,21 +1674,36 @@ impl Item for MarkdownPreviewView {
                     })
                     .ok();
             })
+            // Like editor tabs, the directories needed to tell apart files with the same name are
+            // shown in the description rather than in the title.
             .child(
-                Label::new(self.tab_content_text(params.detail.unwrap_or_default(), cx))
+                Label::new(self.tab_content_text(0, cx))
                     .single_line()
-                    .color(params.text_color()),
+                    .color(params.text_color())
+                    .when(params.truncate_title_middle, |this| {
+                        this.truncate_middle().flex_1()
+                    }),
             )
+            .when_some(description, |this, description| {
+                this.child(
+                    Label::new(description)
+                        .single_line()
+                        .size(LabelSize::XSmall)
+                        .when(params.truncate_title_middle, |this| {
+                            this.truncate_start().flex_shrink()
+                        })
+                        .color(Color::Muted),
+                )
+            })
             .into_any_element()
     }
 
-    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
+    fn tab_content_text(&self, detail: usize, cx: &App) -> SharedString {
         self.active_editor
             .as_ref()
             .map(|editor_state| {
-                let buffer = editor_state.editor.read(cx).buffer().read(cx);
-                let title = buffer.title(cx);
-                format!("Preview {}", title).into()
+                let title = editor_state.editor.read(cx).tab_content_text(detail, cx);
+                format!("Preview {title}").into()
             })
             .unwrap_or_else(|| SharedString::from("Markdown Preview"))
     }
@@ -2373,6 +2401,68 @@ mod tests {
         assert_eq!(
             preview.read_with(cx, |preview, cx| preview.tab_tooltip_text(cx)),
             source_tooltip
+        );
+    }
+
+    #[gpui::test]
+    async fn preview_tabs_for_files_with_the_same_name_show_their_directory(
+        cx: &mut TestAppContext,
+    ) {
+        let (project, _, multi_workspace) = markdown_workspace(
+            cx,
+            json!({
+                "docs": { "README.md": "# Docs\n" },
+                "guide": { "README.md": "# Guide\n" },
+            }),
+            false,
+        )
+        .await;
+        open_project_file(cx, &project, &multi_workspace, "docs/README.md", None, true).await;
+        let docs_preview = open_preview_for_active_editor(cx, &multi_workspace);
+        open_project_file(
+            cx,
+            &project,
+            &multi_workspace,
+            "guide/README.md",
+            None,
+            true,
+        )
+        .await;
+        open_preview_for_active_editor(cx, &multi_workspace);
+        cx.run_until_parked();
+
+        assert_eq!(
+            docs_preview.read_with(cx, |preview, cx| preview.tab_content_text(0, cx)),
+            "Preview README.md"
+        );
+
+        let mut preview_titles = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                let items = multi_workspace
+                    .workspace()
+                    .read(cx)
+                    .active_pane()
+                    .read(cx)
+                    .items()
+                    .map(|item| item.boxed_clone())
+                    .collect::<Vec<_>>();
+                let details = workspace::tab_details(&items, window, cx);
+                items
+                    .iter()
+                    .zip(details)
+                    .filter(|(item, _)| item.downcast::<MarkdownPreviewView>().is_some())
+                    .map(|(item, detail)| item.tab_content_text(detail, cx).to_string())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap();
+        preview_titles.sort();
+
+        assert_eq!(
+            preview_titles,
+            [
+                format!("Preview {}", path!("docs/README.md")),
+                format!("Preview {}", path!("guide/README.md")),
+            ]
         );
     }
 
