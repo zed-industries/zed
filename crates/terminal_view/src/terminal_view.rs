@@ -1330,7 +1330,11 @@ fn subscribe_for_terminal_events(
                         cx,
                     ),
                 },
-                Event::BreadcrumbsChanged => cx.emit(ItemEvent::UpdateBreadcrumbs),
+                Event::BreadcrumbsChanged => {
+                    // The breadcrumb text is the program-set title, which is also shown in the tab.
+                    cx.emit(ItemEvent::UpdateBreadcrumbs);
+                    cx.emit(ItemEvent::UpdateTab);
+                }
                 Event::CloseTerminal => cx.emit(ItemEvent::CloseItem),
                 Event::SelectionsChanged => {
                     window.invalidate_character_coordinates();
