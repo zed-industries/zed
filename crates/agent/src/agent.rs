@@ -3309,24 +3309,26 @@ struct NativeSessionSubmissions {
 }
 
 impl acp_thread::ReceiptSessionSubmissions for NativeSessionSubmissions {
-    fn prompt(
+    fn submit(
         &self,
         content: Vec<acp_v2::ContentBlock>,
-        cx: &mut App,
-    ) -> Task<Result<acp_v2::PromptResponse>> {
+        cx: &mut Context<acp_thread::AcpThread>,
+    ) -> acp_thread::ReceiptSubmission {
         self.connection
             .submit_native(self.session_id.clone(), Some(content), cx)
             .0
+            .into()
     }
 
     fn supports_retry(&self) -> bool {
         true
     }
 
-    fn retry(&self, cx: &mut App) -> Task<Result<acp_v2::PromptResponse>> {
+    fn retry(&self, cx: &mut Context<acp_thread::AcpThread>) -> acp_thread::ReceiptSubmission {
         self.connection
             .submit_native(self.session_id.clone(), None, cx)
             .0
+            .into()
     }
 }
 
@@ -3399,11 +3401,12 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             .try_for_each(UserMessageContent::validate_content_block)
     }
 
-    fn cancel(&self, session_id: &acp_v2::SessionId, cx: &mut App) {
+    fn cancel(&self, session_id: &acp_v2::SessionId, cx: &mut App) -> Result<()> {
         log::info!("Cancelling on session: {}", session_id);
         self.0.update(cx, |agent, _cx| {
             agent.cancel_session(session_id);
         });
+        Ok(())
     }
 
     fn truncate(
@@ -3658,7 +3661,7 @@ impl acp_thread::AgentSessionTruncate for NativeAgentSessionTruncate {
         let acp_thread = self.acp_thread.clone();
         cx.spawn(async move |cx| {
             // Preparation is session-owned and may precede the model turn.
-            cancellation.await;
+            cancellation.await?;
             let usage = thread.update(cx, |thread, cx| {
                 thread.truncate(client_user_message_id, cx)?;
                 anyhow::Ok(thread.latest_token_usage())
@@ -4833,7 +4836,8 @@ mod internal_tests {
                 );
             });
 
-            cx.update(|cx| connection.cancel(&session_id, cx));
+            cx.update(|cx| connection.cancel(&session_id, cx))
+                .expect("cancellation succeeds");
             cx.run_until_parked();
             assert_eq!(
                 completion
@@ -4976,7 +4980,7 @@ mod internal_tests {
         });
         let submission_id = submission.id;
         cx.run_until_parked();
-        cancellation.await;
+        cancellation.await.expect("cancellation succeeds");
         assert!(
             submission
                 .await
@@ -5015,7 +5019,7 @@ mod internal_tests {
         cx.run_until_parked();
         assert_eq!(fake.pending_completions_for(&model).len(), 1);
         let cancellation = acp_thread.update(cx, |thread, cx| thread.cancel(cx));
-        cancellation.await;
+        cancellation.await.expect("cancellation succeeds");
         assert_eq!(
             accepted.await.expect("accepted execution cancelled"),
             acp_v2::StopReason::Cancelled
@@ -5131,14 +5135,10 @@ mod internal_tests {
             "_future",
             Default::default(),
         ));
-        cx.update(|cx| {
-            connection
-                .receipt_submissions(&session_id, cx)
-                .expect("native receipts")
-                .prompt(vec![invalid], cx)
-        })
-        .await
-        .expect_err("invalid follow-up must not cancel accepted work");
+        acp_thread
+            .update(cx, |thread, cx| thread.send(vec![invalid], cx))
+            .await
+            .expect_err("invalid follow-up must not cancel accepted work");
         fake.send_text(&model, &request, "done");
         fake.end_stream(&model, &request);
         cx.run_until_parked();
@@ -5178,7 +5178,8 @@ mod internal_tests {
         );
         assert!(second_completion.peek().is_none());
         cx.run_until_parked();
-        cx.update(|cx| connection.cancel(&session_id, cx));
+        cx.update(|cx| connection.cancel(&session_id, cx))
+            .expect("cancellation succeeds");
         assert_eq!(
             second_completion
                 .await
@@ -5186,15 +5187,13 @@ mod internal_tests {
                 .expect("cancelled"),
             acp_v2::StopReason::Cancelled
         );
-        let submissions = cx.update(|cx| {
-            connection
-                .receipt_submissions(&session_id, cx)
-                .expect("native receipts")
-        });
-        let retry_receipt = cx
-            .update(|cx| submissions.retry(cx))
+        let retry_receipt = acp_thread
+            .update(cx, |thread, cx| thread.retry(cx))
             .await
             .expect("retry accepted");
+        let Some(acp_thread::SubmissionResponse::Accepted(retry_receipt)) = retry_receipt else {
+            panic!("retry returns acceptance");
+        };
         assert_eq!(retry_receipt.message_id, second_receipt.message_id);
         cx.run_until_parked();
         let saved = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
@@ -5402,7 +5401,8 @@ mod internal_tests {
                     .any(|text| text.contains(command)),
                 "reload retry must not send an unprepared command to the model"
             );
-            cx.update(|cx| connection.cancel(&session_id, cx));
+            cx.update(|cx| connection.cancel(&session_id, cx))
+                .expect("cancellation succeeds");
             completion
                 .await
                 .expect("retry driver completed")
@@ -5735,7 +5735,8 @@ mod internal_tests {
                 .any(|text| text.contains("restored instructions") && text.contains("do work"))
         );
         assert!(!texts.iter().any(|text| text.contains("/:retry-skill")));
-        cx.update(|cx| connection.cancel(&session_id, cx));
+        cx.update(|cx| connection.cancel(&session_id, cx))
+            .expect("cancellation succeeds");
         assert_eq!(
             completion
                 .await
@@ -5819,7 +5820,8 @@ mod internal_tests {
             request.intent,
             Some(CompletionIntent::ThreadContextSummarization)
         );
-        cx.update(|cx| connection.cancel(&session_id, cx));
+        cx.update(|cx| connection.cancel(&session_id, cx))
+            .expect("cancellation succeeds");
         assert_eq!(
             completion
                 .await
@@ -5994,13 +5996,8 @@ mod internal_tests {
         for text in ["ordinary prompt", "/compact"] {
             let content = vec![text.into(), unknown.clone()];
             assert!(connection.validate_prompt_content(&content).is_err());
-            let error = cx
-                .update(|cx| {
-                    connection
-                        .receipt_submissions(&session_id, cx)
-                        .expect("native receipts")
-                        .prompt(content, cx)
-                })
+            let error = acp_thread
+                .update(cx, |thread, cx| thread.send(content, cx))
                 .await
                 .expect_err("unsupported content must not reach command dispatch or the model");
             assert!(error.to_string().contains("Native agent does not support"));
@@ -9683,7 +9680,8 @@ mod internal_tests {
         cx.run_until_parked();
         turn.acp_thread
             .update(cx, |thread, cx| thread.cancel(cx))
-            .await;
+            .await
+            .expect("cancellation succeeds");
         send.await.unwrap();
         cx.run_until_parked();
         assert_eq!(
@@ -9810,7 +9808,8 @@ mod internal_tests {
 
         turn.acp_thread
             .update(cx, |thread, cx| thread.cancel(cx))
-            .await;
+            .await
+            .expect("cancellation succeeds");
         send.await.unwrap();
         cx.run_until_parked();
         assert_eq!(

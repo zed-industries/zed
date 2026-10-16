@@ -537,6 +537,7 @@ pub fn language_model(model: &cloud_llm_client::LanguageModel) -> LanguageModel 
                 name: effort_level.name.clone().into(),
                 value: effort_level.value.clone().into(),
                 is_default: effort_level.is_default.unwrap_or(false),
+                supports_disabling_thinking: effort_level.supports_disabling_thinking,
             })
             .collect(),
         supports_streaming_tools: model.supports_streaming_tools,
@@ -2524,6 +2525,32 @@ mod tests {
     ) -> (CloudModelProvider<TestTokenProvider>, LanguageModel) {
         let model = language_model(&config);
         (test_provider(http_client, vec![config]), model)
+    }
+
+    #[test]
+    fn test_disabling_thinking_support_uses_effort_level_override() {
+        let mut config = cloud_anthropic_test_config();
+        config.supports_disabling_thinking = false;
+        config.supported_effort_levels = vec![
+            cloud_llm_client::SupportedEffortLevel {
+                name: Arc::from("High"),
+                value: Arc::from("high"),
+                is_default: Some(true),
+                supports_disabling_thinking: Some(true),
+            },
+            cloud_llm_client::SupportedEffortLevel {
+                name: Arc::from("Max"),
+                value: Arc::from("max"),
+                is_default: None,
+                supports_disabling_thinking: None,
+            },
+        ];
+        let model = language_model(&config);
+
+        assert!(model.supports_disabling_thinking_at_effort(None));
+        assert!(model.supports_disabling_thinking_at_effort(Some("high")));
+        assert!(!model.supports_disabling_thinking_at_effort(Some("max")));
+        assert!(!model.supports_disabling_thinking_at_effort(Some("unknown")));
     }
 
     fn cloud_anthropic_test_config() -> cloud_llm_client::LanguageModel {

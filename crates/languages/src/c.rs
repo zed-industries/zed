@@ -211,8 +211,10 @@ impl super::LspAdapter for CLspAdapter {
             Some(lsp::CompletionItemKind::FIELD) if completion.detail.is_some() => {
                 let detail = completion.detail.as_ref().unwrap();
                 let text = format!("{} {}", detail, label);
-                let source = Rope::from(format!("struct S {{ {} }}", text).as_str());
-                let runs = language.highlight_text(&source, 11..11 + text.len());
+                let source = format!("struct S {{ {} }}", text);
+                let runs = language
+                    .highlight_text(source.as_str(), 11..11 + text.len())
+                    .collect();
                 let filter_range = completion
                     .filter_text
                     .as_deref()
@@ -228,7 +230,9 @@ impl super::LspAdapter for CLspAdapter {
             {
                 let detail = completion.detail.as_ref().unwrap();
                 let text = format!("{} {}", detail, label);
-                let runs = language.highlight_text(&Rope::from(text.as_str()), 0..text.len());
+                let runs = language
+                    .highlight_text(text.as_str(), 0..text.len())
+                    .collect();
                 let filter_range = completion
                     .filter_text
                     .as_deref()
@@ -244,7 +248,9 @@ impl super::LspAdapter for CLspAdapter {
             {
                 let detail = completion.detail.as_ref().unwrap();
                 let text = format!("{} {}", detail, label);
-                let runs = language.highlight_text(&Rope::from(text.as_str()), 0..text.len());
+                let runs = language
+                    .highlight_text(text.as_str(), 0..text.len())
+                    .collect();
                 let filter_range = completion
                     .filter_text
                     .as_deref()
@@ -348,7 +354,9 @@ impl super::LspAdapter for CLspAdapter {
         Some(CodeLabel::new(
             text[display_range.clone()].to_string(),
             filter_range,
-            language.highlight_text(&text.as_str().into(), display_range),
+            language
+                .highlight_text(text.as_str(), display_range)
+                .collect(),
         ))
     }
 

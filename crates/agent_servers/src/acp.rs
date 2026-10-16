@@ -31,10 +31,11 @@ use gpui::{App, AsyncApp, Entity, SharedString, Subscription, Task, WeakEntity};
 use project::agent_server_store::{AgentServerCommand, AgentServerStore};
 use project::context_server_store::ContextServerConfiguration;
 use project::{AgentId, Project};
-use std::{cell::RefCell, process::ExitStatus, rc::Rc, sync::Arc};
+use std::{cell::RefCell, path::PathBuf, process::ExitStatus, rc::Rc, sync::Arc};
 use task::SpawnInTerminal;
 use thiserror::Error;
 use util::ResultExt as _;
+use util::path_list::PathList;
 
 const EXIT_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(250);
 
@@ -60,6 +61,22 @@ fn mcp_configurations_for_project(
             }
         })
         .collect()
+}
+
+fn work_dirs_from_session_info(cwd: PathBuf, additional_directories: Vec<PathBuf>) -> PathList {
+    let mut seen_paths = HashSet::default();
+    let mut paths = Vec::with_capacity(1 + additional_directories.len());
+
+    seen_paths.insert(cwd.clone());
+    paths.push(cwd);
+
+    for path in additional_directories {
+        if seen_paths.insert(path.clone()) {
+            paths.push(path);
+        }
+    }
+
+    PathList::new(&paths)
 }
 
 async fn exited_load_error_after_drain(
@@ -172,7 +189,7 @@ impl ForegroundWorkItem for ClientDisconnectWork {
             if let Some(thread) = thread.upgrade() {
                 thread.update(cx, |thread, cx| {
                     thread.cancel_outstanding_elicitations(cx);
-                    thread.disconnect_submissions(cx);
+                    thread.handle_connection_lost(cx);
                     cx.notify();
                 });
             }

@@ -1,6 +1,9 @@
 use crate::ReceiptSessionSubmissions;
 use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
-use futures::{channel::oneshot, future::BoxFuture};
+use futures::{
+    channel::oneshot,
+    future::{BoxFuture, LocalBoxFuture},
+};
 use gpui::{SharedString, Task};
 use std::collections::BTreeMap;
 use std::{
@@ -26,6 +29,37 @@ impl SubmissionId {
 pub enum SubmissionResponse {
     LegacyCompleted(acp_v1::PromptResponse),
     Accepted(acp_v2::PromptResponse),
+}
+
+/// The transport response and, for ordered transports, acknowledgement of model application.
+/// The shared tracker applies the outcome before acknowledging; transports must not
+/// wait for that acknowledgement before producing their response.
+pub struct ReceiptSubmission {
+    pub(crate) response: LocalBoxFuture<'static, anyhow::Result<acp_v2::PromptResponse>>,
+    pub(crate) applied: Option<oneshot::Sender<bool>>,
+}
+
+impl ReceiptSubmission {
+    /// The acknowledgement reports successful or failed model application.
+    /// Dropping it instead means application was abandoned.
+    pub fn ordered(
+        response: LocalBoxFuture<'static, anyhow::Result<acp_v2::PromptResponse>>,
+        applied: oneshot::Sender<bool>,
+    ) -> Self {
+        Self {
+            response,
+            applied: Some(applied),
+        }
+    }
+}
+
+impl From<Task<anyhow::Result<acp_v2::PromptResponse>>> for ReceiptSubmission {
+    fn from(response: Task<anyhow::Result<acp_v2::PromptResponse>>) -> Self {
+        Self {
+            response: Box::pin(response),
+            applied: None,
+        }
+    }
 }
 
 /// A local receipt withdrawn by cancellation before the message was accepted.
@@ -301,6 +335,7 @@ pub(crate) struct SessionActivity {
     duration: Option<Duration>,
     first_entry_index: usize,
     cancel_waiters: Vec<oneshot::Sender<()>>,
+    observation_closed: bool,
 }
 
 impl Default for SessionActivity {
@@ -312,6 +347,7 @@ impl Default for SessionActivity {
             duration: None,
             first_entry_index: 0,
             cancel_waiters: Vec::new(),
+            observation_closed: false,
         }
     }
 }
@@ -368,12 +404,26 @@ impl SessionActivity {
         }
     }
 
-    pub(crate) fn wait_for_idle(&mut self) -> Option<oneshot::Receiver<()>> {
+    pub(crate) fn ensure_observable(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.observation_closed,
+            "Agent connection lost before cancellation was confirmed"
+        );
+        Ok(())
+    }
+
+    pub(crate) fn close_observation(&mut self) {
+        self.observation_closed = true;
+        self.cancel_waiters.clear();
+    }
+
+    pub(crate) fn wait_for_idle(&mut self) -> anyhow::Result<Option<oneshot::Receiver<()>>> {
+        self.ensure_observable()?;
         if self.phase() == ForegroundActivity::Idle {
-            return None;
+            return Ok(None);
         }
         let (sender, receiver) = oneshot::channel();
         self.cancel_waiters.push(sender);
-        Some(receiver)
+        Ok(Some(receiver))
     }
 }
