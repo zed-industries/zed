@@ -40,6 +40,9 @@ pub struct Settings {
     sidebar_size_range: Range<Pixels>,
     sidebar_style: StyleRefinement,
     default_selected_index: SelectIndex,
+    /// A request to show page `page_ix`, as `(request_number, page_ix)`:
+    /// applied once per request number, so the sidebar still works afterwards.
+    page_request: Option<(usize, usize)>,
     header_style: StyleRefinement,
 }
 
@@ -56,6 +59,7 @@ impl Settings {
             sidebar_style: StyleRefinement::default(),
             default_selected_index: SelectIndex::default(),
             header_style: StyleRefinement::default(),
+            page_request: None,
         }
     }
 
@@ -100,6 +104,13 @@ impl Settings {
     /// Set the default index of the page to be selected.
     pub fn default_selected_index(mut self, index: SelectIndex) -> Self {
         self.default_selected_index = index;
+        self
+    }
+    /// Shows page `page_ix` when `request` carries a request number not
+    /// applied before. Pass the same request again on every render: it is
+    /// applied once, and the sidebar keeps working afterwards.
+    pub fn select_page(mut self, request: Option<(usize, usize)>) -> Self {
+        self.page_request = request;
         self
     }
 
@@ -253,6 +264,8 @@ pub(super) struct SettingsState {
     /// If set, defer scrolling to this group index after rendering.
     pub(super) deferred_scroll_group_ix: Option<usize>,
     pub(super) search_input: Entity<InputState>,
+    /// The request number of the last `select_page` request applied.
+    pub(super) applied_page_request: Option<usize>,
 }
 
 /// Options for rendering setting item.
@@ -397,8 +410,21 @@ impl RenderOnce for Settings {
                 search_input,
                 selected_index: self.default_selected_index,
                 deferred_scroll_group_ix: None,
+                applied_page_request: None,
             }
         });
+
+        if let Some((request, page_ix)) = self.page_request {
+            state.update(cx, |state, _cx| {
+                if state.applied_page_request != Some(request) {
+                    state.applied_page_request = Some(request);
+                    state.selected_index = SelectIndex {
+                        page_ix,
+                        group_ix: None,
+                    };
+                }
+            });
+        }
 
         let query = state.read(cx).search_input.read(cx).value();
         let filtered_pages = self.filtered_pages(&query, cx);

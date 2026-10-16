@@ -17,6 +17,7 @@ use std::process::{Command, Stdio};
 use semver::{Version, VersionReq};
 
 mod engines;
+mod imports;
 mod package_manager;
 mod path_env;
 
@@ -24,6 +25,7 @@ pub use engines::{
     EngineCompat, NodeRequirement, RequirementCheck, Verdict, engine_compat, node_requirement,
     npm_range_matches,
 };
+pub use imports::{package_at, package_from_specifier};
 pub use package_manager::{Detected, Detection, PackageManager, Source, detect, is_available};
 
 #[cfg(target_os = "windows")]
