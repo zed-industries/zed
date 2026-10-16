@@ -5105,6 +5105,141 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_usage_events_from_previous_interval_do_not_enter_next_interval(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (conversation, cx) = setup_conversation_view(
+            StubAgentServer::new(StubAgentConnection::new().with_receipt_submissions(true)),
+            cx,
+        )
+        .await;
+        let view = active_thread(&conversation, cx);
+        let thread = view.read_with(cx, |view, _| view.thread.clone());
+        thread.update(cx, |thread, cx| {
+            for output_tokens in [3, 5] {
+                thread
+                    .update_session_state(
+                        acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                        cx,
+                    )
+                    .expect("running");
+                thread.update_token_usage(
+                    Some(acp_thread::TokenUsage {
+                        output_tokens,
+                        ..Default::default()
+                    }),
+                    cx,
+                );
+                if output_tokens == 3 {
+                    thread
+                        .update_session_state(
+                            acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new()),
+                            cx,
+                        )
+                        .expect("first interval ends");
+                }
+            }
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            view.read_with(cx, |view, _| view.turn_fields.turn_tokens),
+            Some(5)
+        );
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new()),
+                    cx,
+                )
+                .expect("cleanup");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_reported_usage_survives_thread_view_recreation(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (conversation, cx) = setup_conversation_view(
+            StubAgentServer::new(StubAgentConnection::new().with_receipt_submissions(true)),
+            cx,
+        )
+        .await;
+        let view = active_thread(&conversation, cx);
+        let thread = view.read_with(cx, |view, _| view.thread.clone());
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                    cx,
+                )
+                .expect("running");
+            let idle: acp_v2::StateUpdate = serde_json::from_value(serde_json::json!({
+                "state": "idle", "stopReason": "end_turn",
+                "usage": {"totalTokens": 12, "inputTokens": 5, "outputTokens": 7}
+            }))
+            .expect("usage");
+            thread.update_session_state(idle, cx).expect("idle");
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new()),
+                    cx,
+                )
+                .expect("snapshot without new usage");
+        });
+        cx.run_until_parked();
+        let restored = conversation.update_in(cx, |view, window, cx| {
+            let history = view.as_connected().expect("connected").conversation.clone();
+            view.new_thread_view(thread.clone(), history, false, None, window, cx)
+        });
+        restored.read_with(cx, |view, _| {
+            assert_eq!(view.turn_fields.last_turn_tokens, Some(7));
+            assert!(view.turn_fields.turn_started_at.is_none());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_legacy_usage_updates_preserve_additive_presentation(cx: &mut TestAppContext) {
+        init_test(cx);
+        let connection = StubAgentConnection::new();
+        let complete = connection.defer_next_prompt_response();
+        let (conversation, cx) =
+            setup_conversation_view(StubAgentServer::new(connection), cx).await;
+        let view = active_thread(&conversation, cx);
+        let thread = view.read_with(cx, |view, _| view.thread.clone());
+        message_editor(&conversation, cx).update_in(cx, |editor, window, cx| {
+            editor.set_text("legacy prompt", window, cx);
+        });
+        view.update_in(cx, |view, window, cx| view.send(window, cx));
+        cx.run_until_parked();
+        thread.update(cx, |thread, cx| {
+            assert!(!thread.uses_reported_activity());
+            for output_tokens in [3, 5] {
+                thread.update_token_usage(
+                    Some(acp_thread::TokenUsage {
+                        output_tokens,
+                        ..Default::default()
+                    }),
+                    cx,
+                );
+            }
+            thread.update_usage(acp_v2::UsageUpdate::new(10, 100), cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            view.read_with(cx, |view, _| view.turn_fields.turn_tokens),
+            Some(8)
+        );
+        complete
+            .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
+            .expect("legacy completion");
+        cx.run_until_parked();
+        assert_eq!(
+            view.read_with(cx, |view, _| view.turn_fields.last_turn_tokens),
+            Some(8)
+        );
+    }
+
+    #[gpui::test]
     async fn test_authentication_keeps_receipt_submission_recoverable(cx: &mut TestAppContext) {
         init_test(cx);
         let connection = StubAgentConnection::new().with_receipt_submissions(true);

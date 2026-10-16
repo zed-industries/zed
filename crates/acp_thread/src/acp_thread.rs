@@ -3447,7 +3447,7 @@ pub struct AcpThread {
     submissions: SessionSubmissions,
     activity: SessionActivity,
     received_session_state: bool,
-    reported_usage_generation: Option<u64>,
+    reported_usage: Option<ReportedTokenUsage>,
     token_usage: Option<TokenUsage>,
     cost: Option<SessionCost>,
     prompt_capabilities: acp_v2::PromptCapabilities,
@@ -3568,9 +3568,20 @@ impl From<&AcpThread> for ActionLogTelemetry {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ReportedTokenUsage {
+    activity_generation: u64,
+    input_tokens: u64,
+    output_tokens: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OutputTokensUpdate {
     Unchanged,
-    Add(u64),
+    /// Preserve additive presentation for legacy/native usage notifications.
+    LegacyAdd {
+        activity_generation: u64,
+        output_tokens: u64,
+    },
     Snapshot {
         activity_generation: u64,
         output_tokens: u64,
@@ -3796,7 +3807,7 @@ impl AcpThread {
             submissions: SessionSubmissions::new(receipt_submissions),
             activity: SessionActivity::default(),
             received_session_state: false,
-            reported_usage_generation: None,
+            reported_usage: None,
             connection,
             token_usage: None,
             cost: None,
@@ -4025,6 +4036,12 @@ impl AcpThread {
 
     pub fn activity_generation(&self) -> u64 {
         self.activity.generation()
+    }
+
+    pub fn reported_activity_output_tokens(&self) -> Option<u64> {
+        self.reported_usage
+            .filter(|usage| usage.activity_generation == self.activity.generation())
+            .map(|usage| usage.output_tokens)
     }
 
     pub fn activity_started_at(&self) -> Option<Instant> {
@@ -4325,20 +4342,20 @@ impl AcpThread {
         if let acp_v2::StateUpdate::Idle(idle) = self.activity.state() {
             let stop_reason = idle.stop_reason.clone();
             if let Some(usage) = &idle.usage {
-                let generation = self.activity.generation();
-                let changed = self.reported_usage_generation != Some(generation)
-                    || self.token_usage.as_ref().is_none_or(|stored| {
-                        stored.input_tokens != usage.input_tokens
-                            || stored.output_tokens != usage.output_tokens
-                    });
+                let reported = ReportedTokenUsage {
+                    activity_generation: self.activity.generation(),
+                    input_tokens: usage.input_tokens,
+                    output_tokens: usage.output_tokens,
+                };
+                let changed = self.reported_usage != Some(reported);
                 let stored = self.token_usage.get_or_insert_with(Default::default);
                 stored.input_tokens = usage.input_tokens;
                 stored.output_tokens = usage.output_tokens;
-                self.reported_usage_generation = Some(generation);
+                self.reported_usage = Some(reported);
                 if changed {
                     cx.emit(AcpThreadEvent::TokenUsageUpdated(
                         OutputTokensUpdate::Snapshot {
-                            activity_generation: generation,
+                            activity_generation: reported.activity_generation,
                             output_tokens: usage.output_tokens,
                         },
                     ));
@@ -5396,7 +5413,10 @@ impl AcpThread {
         let output = usage
             .as_ref()
             .map_or(OutputTokensUpdate::Unchanged, |usage| {
-                OutputTokensUpdate::Add(usage.output_tokens)
+                OutputTokensUpdate::LegacyAdd {
+                    activity_generation: self.activity.generation(),
+                    output_tokens: usage.output_tokens,
+                }
             });
         self.token_usage = usage;
         cx.emit(AcpThreadEvent::TokenUsageUpdated(output));
@@ -6819,9 +6839,12 @@ impl AcpThread {
                             let usage = this.token_usage.get_or_insert_with(Default::default);
                             usage.input_tokens = response_usage.input_tokens;
                             usage.output_tokens = response_usage.output_tokens;
-                            cx.emit(AcpThreadEvent::TokenUsageUpdated(OutputTokensUpdate::Add(
-                                usage.output_tokens,
-                            )));
+                            cx.emit(AcpThreadEvent::TokenUsageUpdated(
+                                OutputTokensUpdate::LegacyAdd {
+                                    activity_generation: this.activity.generation(),
+                                    output_tokens: usage.output_tokens,
+                                },
+                            ));
                         }
 
                         if is_same_turn {

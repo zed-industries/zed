@@ -3095,6 +3095,19 @@ done
                 .expect("owner")
                 .thread
                 .clone();
+            let input = cx.background_spawn(
+                harness
+                    .agent
+                    .send_request(acp::CreateElicitationRequest::new(
+                        acp::ElicitationFormMode::new(
+                            acp::ElicitationRequestScope::new(responder.id().clone()),
+                            acp::ElicitationSchema::new(),
+                        ),
+                        "Resume setup input",
+                    ))
+                    .block_task(),
+            );
+            cx.run_until_parked();
             if replay_history {
                 harness
                     .agent
@@ -3121,6 +3134,13 @@ done
                     .to_string()
                     .contains("without reporting its current foreground state"),
                 "{error:#}"
+            );
+            assert_eq!(
+                bounded(input, cx)
+                    .await
+                    .expect("failed resume input cleanup")
+                    .action,
+                acp::ElicitationAction::Cancel,
             );
             cx.run_until_parked();
             assert!(old_owner.upgrade().is_none());
