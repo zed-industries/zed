@@ -61,6 +61,37 @@ use util::path_list::PathList;
 use util::{ResultExt, get_default_system_shell_preferring_bash, paths::PathStyle};
 use uuid::Uuid;
 
+pub(crate) enum MetadataUpdate {
+    V1(MaybeUndefined<acp_v2::Meta>),
+    V2(MaybeUndefined<acp_v2::Meta>),
+}
+
+impl MetadataUpdate {
+    pub(crate) fn apply(self, stored: &mut Option<acp_v2::Meta>) -> bool {
+        if matches!(
+            &self,
+            Self::V1(MaybeUndefined::Undefined) | Self::V2(MaybeUndefined::Undefined)
+        ) {
+            return false;
+        }
+        let previous = stored.clone();
+        match self {
+            Self::V1(update) => {
+                *stored = update.take();
+            }
+            Self::V2(update) => {
+                let mut metadata = stored.take().map(MaybeUndefined::Value).unwrap_or_default();
+                acp_v2::apply_meta_update(&mut metadata, update);
+                *stored = metadata.take();
+                // Empty entity metadata and absent metadata have the same meaning in v2.
+                return stored.as_ref().filter(|metadata| !metadata.is_empty())
+                    != previous.as_ref().filter(|metadata| !metadata.is_empty());
+            }
+        }
+        *stored != previous
+    }
+}
+
 /// Returned when the model stops because it exhausted its output token budget.
 #[derive(Debug)]
 pub struct MaxOutputTokensError;
@@ -894,6 +925,7 @@ impl ContextCompaction {
     fn apply_update(
         &mut self,
         update: acp_v2::CompactionUpdate,
+        metadata: MetadataUpdate,
         language_registry: &Arc<LanguageRegistry>,
         cx: &mut App,
     ) {
@@ -919,11 +951,7 @@ impl ContextCompaction {
                 }
             }
         }
-        match update.meta {
-            MaybeUndefined::Undefined => {}
-            MaybeUndefined::Null => self.meta = None,
-            MaybeUndefined::Value(meta) => self.meta = Some(meta),
-        }
+        metadata.apply(&mut self.meta);
     }
 
     fn append_summary(
@@ -1326,7 +1354,11 @@ impl ToolCall {
             .and_then(|input| markdown_for_raw_output(input, &language_registry, cx));
         let meta = match patch.meta {
             ToolMetadataPatch::Legacy(meta) => meta,
-            ToolMetadataPatch::Protocol(meta) => meta.take(),
+            ToolMetadataPatch::Protocol(meta) => {
+                let mut stored = None;
+                MetadataUpdate::V2(meta).apply(&mut stored);
+                stored
+            }
         };
         let tool_name = name.clone().or_else(|| tool_name_from_meta(&meta));
         let subagent_session_info = subagent_session_info_from_meta(&meta);
@@ -1522,9 +1554,9 @@ impl ToolCall {
                 }
             }
             ToolMetadataPatch::Protocol(meta) => {
-                let meta_changed = !meta.is_undefined();
+                let cleared = matches!(&meta, MaybeUndefined::Null);
+                let meta_changed = MetadataUpdate::V2(meta).apply(&mut self.meta) || cleared;
                 if meta_changed {
-                    self.meta = meta.take();
                     self.subagent_session_info = subagent_session_info_from_meta(&self.meta);
                     self.sandbox_authorization_details =
                         sandbox_authorization_details_from_meta(&self.meta);
@@ -4472,10 +4504,10 @@ impl AcpThread {
                 self.update_tool_call(tool_call_update, cx)?;
             }
             acp_v1::SessionUpdate::CompactionUpdate(compaction_update) => {
-                self.upsert_context_compaction_update(
-                    compaction::update_from_v1(compaction_update).map_err(acp_v1::Error::from)?,
-                    cx,
-                );
+                let mut update =
+                    compaction::update_from_v1(compaction_update).map_err(acp_v1::Error::from)?;
+                let metadata = MetadataUpdate::V1(mem::take(&mut update.meta));
+                self.upsert_context_compaction_update_inner(update, metadata, cx);
             }
             acp_v1::SessionUpdate::CompactionSummaryChunk(summary_chunk) => {
                 self.append_context_compaction_summary(
@@ -4490,7 +4522,7 @@ impl AcpThread {
                 self.push_notice(notices::from_v1(notice).map_err(acp_v1::Error::from)?, cx);
             }
             acp_v1::SessionUpdate::SessionInfoUpdate(info_update) => {
-                self.update_session_info(session_info_update_from_v1(info_update), cx);
+                self.update_session_info(info_update, cx);
             }
             acp_v1::SessionUpdate::AvailableCommandsUpdate(acp_v1::AvailableCommandsUpdate {
                 available_commands,
@@ -4608,11 +4640,7 @@ impl AcpThread {
                 message_content.replace(replacement, &language_registry, path_style, cx);
             }
         }
-        match meta {
-            MaybeUndefined::Undefined => {}
-            MaybeUndefined::Null => *message_meta = None,
-            MaybeUndefined::Value(meta) => *message_meta = Some(meta),
-        }
+        MetadataUpdate::V2(meta).apply(message_meta);
         self.emit_message_update(location, previous_entry_count, cx);
         Ok(())
     }
@@ -5202,7 +5230,17 @@ impl AcpThread {
 
     pub fn upsert_context_compaction_update(
         &mut self,
+        mut update: acp_v2::CompactionUpdate,
+        cx: &mut Context<Self>,
+    ) {
+        let metadata = MetadataUpdate::V2(mem::take(&mut update.meta));
+        self.upsert_context_compaction_update_inner(update, metadata, cx);
+    }
+
+    fn upsert_context_compaction_update_inner(
+        &mut self,
         update: acp_v2::CompactionUpdate,
+        metadata: MetadataUpdate,
         cx: &mut Context<Self>,
     ) {
         let id = ContextCompactionId(update.compaction_id.0.clone());
@@ -5220,7 +5258,7 @@ impl AcpThread {
                     _ => None,
                 })
         {
-            compaction.apply_update(update, &language_registry, cx);
+            compaction.apply_update(update, metadata, &language_registry, cx);
             cx.emit(AcpThreadEvent::EntryUpdated(entry_index));
             return;
         }
@@ -5232,7 +5270,7 @@ impl AcpThread {
             summary: MessageContent::default(),
             meta: None,
         };
-        compaction.apply_update(update, &language_registry, cx);
+        compaction.apply_update(update, metadata, &language_registry, cx);
         self.push_entry(AgentThreadEntry::ContextCompaction(compaction), cx);
     }
 
@@ -5308,12 +5346,12 @@ impl AcpThread {
 
     pub fn update_session_info(
         &mut self,
-        update: acp_v2::SessionInfoUpdate,
+        update: impl Into<AgentSessionInfoUpdate>,
         cx: &mut Context<Self>,
     ) {
+        let update = update.into();
         let previous_title = self.session_info.title.clone();
-        let had_provisional =
-            !update.title.is_undefined() && self.provisional_title.take().is_some();
+        let had_provisional = update.has_title() && self.provisional_title.take().is_some();
         let changed = self.session_info.apply_update(update);
         if self.session_info.title != previous_title || had_provisional {
             cx.emit(AcpThreadEvent::TitleUpdated);
@@ -12710,6 +12748,240 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_v2_entity_metadata_patches_by_key(cx: &mut TestAppContext) {
+        init_test(cx);
+        let mut messages = Vec::new();
+        for kind in [
+            MessageKind::User,
+            MessageKind::Assistant,
+            MessageKind::Thought,
+        ] {
+            messages.push((kind, new_test_thread(cx).await));
+        }
+        let thread = new_test_thread(cx).await;
+        let snapshot_meta: acp_v2::Meta =
+            serde_json::from_value(json!({"literal": null})).expect("snapshot metadata");
+        let block = acp_v2::ContentBlock::Text(
+            acp_v2::TextContent::new("snapshot").meta(snapshot_meta.clone()),
+        );
+        for (patch, expected) in [
+            (None, json!(null)),
+            (
+                Some(
+                    json!({"keep": 1, "remove": true, "absent": null, "nested": {"old": 1, "literal": null}}),
+                ),
+                json!({"keep": 1, "remove": true, "nested": {"old": 1, "literal": null}}),
+            ),
+            (
+                Some(json!({"remove": null, "added": [], "nested": {"new": 2, "literal": null}})),
+                json!({"keep": 1, "added": [], "nested": {"new": 2, "literal": null}}),
+            ),
+            (
+                Some(json!({})),
+                json!({"keep": 1, "added": [], "nested": {"new": 2, "literal": null}}),
+            ),
+            (
+                None,
+                json!({"keep": 1, "added": [], "nested": {"new": 2, "literal": null}}),
+            ),
+            (
+                Some(json!({"keep": null, "nested": null})),
+                json!({"added": []}),
+            ),
+            (Some(json!(null)), json!(null)),
+            (
+                Some(json!({"gone": null, "last": {"literal": null}})),
+                json!({"last": {"literal": null}}),
+            ),
+        ] {
+            let metadata = patch.map_or(MaybeUndefined::Undefined, |patch| {
+                serde_json::from_value::<MaybeUndefined<acp_v2::Meta>>(patch)
+                    .expect("metadata patch")
+            });
+            let expected: Option<acp_v2::Meta> =
+                serde_json::from_value(expected).expect("expected stored metadata");
+            for (kind, message) in &messages {
+                message.update(cx, |thread, cx| {
+                    match kind {
+                        MessageKind::User => thread.upsert_user_message(
+                            acp_v2::UserMessage::new("metadata")
+                                .content(vec![block.clone()])
+                                .meta(metadata.clone()),
+                            cx,
+                        ),
+                        MessageKind::Assistant => thread.upsert_assistant_message(
+                            acp_v2::AgentMessage::new("metadata")
+                                .content(vec![block.clone()])
+                                .meta(metadata.clone()),
+                            cx,
+                        ),
+                        MessageKind::Thought => thread.upsert_thought(
+                            acp_v2::AgentThought::new("metadata")
+                                .content(vec![block.clone()])
+                                .meta(metadata.clone()),
+                            cx,
+                        ),
+                    }
+                    .expect("message upsert");
+                    let (_, content, stored) = only_keyed_message(thread);
+                    assert_eq!(stored, &expected, "{kind:?}");
+                    assert_eq!(content.source_blocks(), std::slice::from_ref(&block));
+                    thread
+                        .append_message_chunk(
+                            *kind,
+                            acp_v2::ContentChunk::new("chunk".into(), "metadata")
+                                .meta(snapshot_meta.clone()),
+                            cx,
+                        )
+                        .expect("message chunk");
+                    assert_eq!(only_keyed_message(thread).2, &expected);
+                });
+            }
+            thread.update(cx, |thread, cx| {
+                thread
+                    .upsert_wire_tool_call(
+                        acp_v2::ToolCallUpdate::new("metadata").meta(metadata.clone()),
+                        cx,
+                    )
+                    .expect("tool upsert");
+                assert_eq!(
+                    thread.tool_call(&"metadata".into()).expect("tool").1.meta,
+                    expected
+                );
+                thread
+                    .upsert_display_terminal(
+                        "metadata".into(),
+                        DisplayTerminalPatch {
+                            meta: metadata.clone(),
+                            output: MaybeUndefined::Value(DisplayTerminalOutput {
+                                data: b"snapshot".to_vec(),
+                                meta: Some(snapshot_meta.clone()),
+                            }),
+                            exit_status: MaybeUndefined::Value(
+                                acp_v2::TerminalExitStatus::new().meta(snapshot_meta.clone()),
+                            ),
+                            ..Default::default()
+                        },
+                        cx,
+                    )
+                    .expect("terminal upsert");
+                let terminal = thread.terminal("metadata".into()).expect("terminal");
+                let terminal = terminal.read(cx);
+                let display = terminal.display_state().expect("display");
+                assert_eq!(display.meta, expected);
+                assert_eq!(display.output_meta.as_ref(), Some(&snapshot_meta));
+                assert_eq!(
+                    terminal
+                        .output()
+                        .expect("exit snapshot")
+                        .exit_status
+                        .meta
+                        .as_ref(),
+                    Some(&snapshot_meta)
+                );
+                thread.upsert_context_compaction_update(
+                    acp_v2::CompactionUpdate::new("metadata", acp_v2::CompactionStatus::InProgress)
+                        .summary(vec![block.clone()])
+                        .meta(metadata.clone()),
+                    cx,
+                );
+                let compaction = thread
+                    .entries
+                    .iter()
+                    .find_map(|entry| match entry {
+                        AgentThreadEntry::ContextCompaction(compaction) => Some(compaction),
+                        _ => None,
+                    })
+                    .expect("compaction");
+                assert_eq!(compaction.meta, expected);
+                assert_eq!(
+                    compaction.summary.source_blocks(),
+                    std::slice::from_ref(&block)
+                );
+                thread.append_context_compaction_summary(
+                    acp_v2::CompactionSummaryChunk::new("metadata", "chunk".into())
+                        .meta(snapshot_meta.clone()),
+                    cx,
+                );
+                thread.update_session_info(acp_v2::SessionInfoUpdate::new().meta(metadata), cx);
+                assert_eq!(thread.session_info().meta, expected);
+            });
+        }
+        let permission = thread.update(cx, |thread, cx| {
+            let permission = thread
+                .request_tool_call_update_authorization_with_id(
+                    acp_v2::ToolCallUpdate::new("metadata").meta(
+                        serde_json::from_value::<acp_v2::Meta>(json!({"permission": true}))
+                            .expect("permission metadata"),
+                    ),
+                    PermissionOptions::Flat(vec![acp_v2::PermissionOption::new(
+                        "allow",
+                        "Allow",
+                        acp_v2::PermissionOptionKind::AllowOnce,
+                    )]),
+                    AuthorizationKind::PermissionGrant,
+                    cx,
+                )
+                .expect("permission subject");
+            assert_eq!(
+                thread.tool_call(&"metadata".into()).expect("tool").1.meta,
+                Some(
+                    serde_json::from_value(json!({"last": {"literal": null}, "permission": true}))
+                        .expect("merged permission metadata")
+                )
+            );
+            thread.cancel_permission_request(permission.0, cx);
+            permission.1
+        });
+        assert!(matches!(
+            permission.await,
+            RequestPermissionOutcome::Cancelled
+        ));
+    }
+
+    #[gpui::test]
+    async fn test_v1_compaction_metadata_keeps_replacement_semantics(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        for (patch, expected) in [
+            (
+                json!({"_meta": {"first": 1, "literal": null}}),
+                json!({"first": 1, "literal": null}),
+            ),
+            (
+                json!({"_meta": {"replacement": 2}}),
+                json!({"replacement": 2}),
+            ),
+            (json!({"_meta": {}}), json!({})),
+            (json!({}), json!({})),
+            (json!({"_meta": null}), json!(null)),
+        ] {
+            thread.update(cx, |thread, cx| {
+                let mut patch = patch;
+                let fields = patch.as_object_mut().expect("update object");
+                fields.insert("compactionId".into(), json!("legacy"));
+                fields.insert("status".into(), json!("in_progress"));
+                thread
+                    .handle_session_update(
+                        acp_v1::SessionUpdate::CompactionUpdate(
+                            serde_json::from_value(patch).expect("v1 compaction"),
+                        ),
+                        cx,
+                    )
+                    .expect("legacy update");
+                let Some(AgentThreadEntry::ContextCompaction(compaction)) = thread.entries.first()
+                else {
+                    panic!("compaction");
+                };
+                assert_eq!(
+                    serde_json::to_value(&compaction.meta).expect("metadata JSON"),
+                    expected
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
     async fn test_keyed_snapshots_supersede_only_their_own_buffered_text(cx: &mut TestAppContext) {
         init_test(cx);
         let thread = new_test_thread(cx).await;
@@ -14462,6 +14734,8 @@ mod tests {
             "compaction".into(),
             serde_json::json!({"nested": [1, "retained"]}),
         )]);
+        let mut expected_metadata = metadata.clone();
+        expected_metadata.insert("original".into(), json!(true));
         thread.update(cx, |thread, cx| {
             thread.upsert_context_compaction_update(
                 acp_v2::CompactionUpdate::new("first", acp_v2::CompactionStatus::Completed)
@@ -14491,7 +14765,7 @@ mod tests {
                 ContextCompactionStatus::Other("_future".into())
             );
             assert_eq!(first.summary.source_blocks(), source);
-            assert_eq!(first.meta.as_ref(), Some(&metadata));
+            assert_eq!(first.meta.as_ref(), Some(&expected_metadata));
             assert!(!thread.is_compacting());
         });
         assert_eq!(
@@ -14523,7 +14797,7 @@ mod tests {
                 panic!("the original compaction must remain");
             };
             assert_eq!(first.summary.source_blocks(), source);
-            assert_eq!(first.meta, Some(acp_v2::Meta::new()));
+            assert_eq!(first.meta, Some(expected_metadata.clone()));
             assert_eq!(
                 first
                     .error
@@ -15314,7 +15588,10 @@ mod tests {
             }
             assert_eq!(
                 thread.tool_call(&id).expect("tool").1.meta,
-                Some(acp_v2::Meta::new())
+                Some(
+                    serde_json::from_value(json!({"opaque": {"nested": [1, 2]}}))
+                        .expect("retained metadata")
+                )
             );
             thread
                 .upsert_wire_tool_call(acp_v2::ToolCallUpdate::new("patch").title("  "), cx)
@@ -15609,9 +15886,19 @@ mod tests {
                     acp_v2::ToolCallUpdate::new("metadata").meta(acp_v2::Meta::new()),
                     cx,
                 )
-                .expect("authoritative metadata replacement");
+                .expect("empty metadata patch");
             let (_, call) = thread.tool_call(&id).expect("tool");
-            assert_eq!(call.meta, Some(acp_v2::Meta::new()));
+            assert_eq!(call.meta.as_ref(), Some(&newer_meta));
+            assert_eq!(call.tool_name.as_deref(), Some("legacy_name"));
+            assert!(call.subagent_session_info.is_some());
+            thread
+                .upsert_wire_tool_call(
+                    acp_v2::ToolCallUpdate::new("metadata").meta(None::<acp_v2::Meta>),
+                    cx,
+                )
+                .expect("explicit metadata clear");
+            let (_, call) = thread.tool_call(&id).expect("tool");
+            assert_eq!(call.meta, None);
             assert_eq!(call.tool_name, None);
             assert!(call.subagent_session_info.is_none());
             assert_eq!(call.label.read(cx).source(), "Tool call");
