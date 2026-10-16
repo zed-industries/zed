@@ -1,8 +1,8 @@
 use crate::{
     AnyView, AnyWindowHandle, AppContext, AsyncApp, DispatchPhase, Effect, EntityId, EventEmitter,
     FocusHandle, FocusOutEvent, Focusable, Global, KeystrokeObserver, Priority, Reservation,
-    SubscriberSet, Subscription, Task, WeakEntity, WeakFocusHandle, Window, WindowHandle,
-    WindowVisibility,
+    ScrollDelta, ScrollWheelEvent, SubscriberSet, Subscription, Task, WeakEntity, WeakFocusHandle,
+    Window, WindowHandle, WindowVisibility,
 };
 use anyhow::Result;
 use futures::FutureExt;
@@ -252,6 +252,21 @@ impl<'a, T: 'static> Context<'a, T> {
             invoke_listener(&view, window, cx, &|view, window, cx| {
                 listener(view, event, window, cx);
             });
+        }
+    }
+
+    /// The [`Self::listener`] equivalent for scroll wheel listeners, which return the part of
+    /// the delta that they did not use.
+    #[inline(always)]
+    pub fn scroll_listener(
+        &self,
+        listener: impl Fn(&mut T, &ScrollWheelEvent, &mut Window, &mut Context<T>) -> ScrollDelta
+        + 'static,
+    ) -> impl Fn(&ScrollWheelEvent, &mut Window, &mut App) -> ScrollDelta + 'static {
+        let view = self.entity().downgrade();
+        move |event, window, cx| {
+            view.update(cx, |view, cx| listener(view, event, window, cx))
+                .unwrap_or(event.delta)
         }
     }
 

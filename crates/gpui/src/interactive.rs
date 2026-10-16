@@ -539,7 +539,6 @@ impl InputEvent for ScrollWheelEvent {
         PlatformInput::ScrollWheel(self)
     }
 }
-impl MouseEvent for ScrollWheelEvent {}
 
 impl Deref for ScrollWheelEvent {
     type Target = Modifiers;

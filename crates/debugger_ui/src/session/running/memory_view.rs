@@ -10,7 +10,7 @@ use std::{
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
     Action, Along, AppContext, Axis, DismissEvent, DragMoveEvent, Empty, Entity, FocusHandle,
-    Focusable, ListHorizontalSizingBehavior, MouseButton, Point, ScrollStrategy, ScrollWheelEvent,
+    Focusable, ListHorizontalSizingBehavior, MouseButton, Point, ScrollDelta, ScrollStrategy,
     Subscription, Task, TextStyle, UniformList, UniformListScrollHandle, WeakEntity, actions,
     anchored, deferred, uniform_list,
 };
@@ -231,12 +231,13 @@ impl MemoryView {
         )
         .track_scroll(&view_state.scroll_handle)
         .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
-        .on_scroll_wheel(cx.listener(|this, evt: &ScrollWheelEvent, window, _| {
+        .on_scroll_wheel(cx.scroll_listener(|this, evt, window, _| {
             let mut view_state = this.view_state();
             let delta = evt.delta.pixel_delta(window.line_height());
             let current_offset = view_state.scroll_handle.offset();
             view_state
                 .set_offset(current_offset.apply_along(Axis::Vertical, |offset| offset + delta.y));
+            ScrollDelta::default()
         }))
     }
     fn render_query_bar(&self, cx: &Context<Self>) -> impl IntoElement {

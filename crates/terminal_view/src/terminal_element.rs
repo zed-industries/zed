@@ -1063,16 +1063,22 @@ impl TerminalElement {
             self.interactivity.on_scroll_wheel({
                 let terminal_view = self.terminal_view.downgrade();
                 move |e, window, cx| {
-                    terminal_view
+                    let scrolled = terminal_view
                         .update(cx, |terminal_view, cx| {
-                            if matches!(terminal_view.mode, TerminalMode::Standalone)
-                                || terminal_view.focus_handle.is_focused(window)
-                            {
+                            let scrolls = matches!(terminal_view.mode, TerminalMode::Standalone)
+                                || terminal_view.focus_handle.is_focused(window);
+                            if scrolls {
                                 terminal_view.scroll_wheel(e, cx);
                                 cx.notify();
                             }
+                            scrolls
                         })
-                        .ok();
+                        .unwrap_or(false);
+                    if scrolled {
+                        gpui::ScrollDelta::default()
+                    } else {
+                        e.delta
+                    }
                 }
             });
         }
