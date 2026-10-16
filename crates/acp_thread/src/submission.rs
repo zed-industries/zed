@@ -335,6 +335,7 @@ pub(crate) struct SessionActivity {
     duration: Option<Duration>,
     first_entry_index: usize,
     cancel_waiters: Vec<oneshot::Sender<()>>,
+    observation_closed: bool,
 }
 
 impl Default for SessionActivity {
@@ -346,6 +347,7 @@ impl Default for SessionActivity {
             duration: None,
             first_entry_index: 0,
             cancel_waiters: Vec::new(),
+            observation_closed: false,
         }
     }
 }
@@ -402,12 +404,26 @@ impl SessionActivity {
         }
     }
 
-    pub(crate) fn wait_for_idle(&mut self) -> Option<oneshot::Receiver<()>> {
+    pub(crate) fn ensure_observable(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.observation_closed,
+            "Agent connection lost before cancellation was confirmed"
+        );
+        Ok(())
+    }
+
+    pub(crate) fn close_observation(&mut self) {
+        self.observation_closed = true;
+        self.cancel_waiters.clear();
+    }
+
+    pub(crate) fn wait_for_idle(&mut self) -> anyhow::Result<Option<oneshot::Receiver<()>>> {
+        self.ensure_observable()?;
         if self.phase() == ForegroundActivity::Idle {
-            return None;
+            return Ok(None);
         }
         let (sender, receiver) = oneshot::channel();
         self.cancel_waiters.push(sender);
-        Some(receiver)
+        Ok(Some(receiver))
     }
 }

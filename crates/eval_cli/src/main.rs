@@ -859,12 +859,16 @@ async fn run_agent(
         },
         _ = sigterm_future.fuse() => {
             eprintln!("[eval-cli] received SIGTERM, cancelling...");
-            acp_thread.update(cx, |t: &mut acp_thread::AcpThread, cx| t.cancel(cx)).await;
-            Ok(AgentOutcome::Interrupted)
+            acp_thread.update(cx, |thread: &mut acp_thread::AcpThread, cx| thread.cancel(cx))
+                .await
+                .context("cancelling agent after SIGTERM")
+                .map(|()| AgentOutcome::Interrupted)
         },
         _ = timeout_future.fuse() => {
-            acp_thread.update(cx, |t: &mut acp_thread::AcpThread, cx| t.cancel(cx)).await;
-            Ok(AgentOutcome::Timeout { seconds: timeout.unwrap_or(0) })
+            acp_thread.update(cx, |thread: &mut acp_thread::AcpThread, cx| thread.cancel(cx))
+                .await
+                .context("cancelling agent after timeout")
+                .map(|()| AgentOutcome::Timeout { seconds: timeout.unwrap_or(0) })
         }
     };
 

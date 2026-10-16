@@ -125,12 +125,20 @@ pub trait AgentConnection {
         Task::ready(Err(anyhow::Error::msg("Loading sessions is not supported")))
     }
 
-    /// Whether this agent supports closing existing sessions.
+    /// Whether this agent supports explicitly closing existing sessions.
     fn supports_close_session(&self) -> bool {
         false
     }
 
-    /// Close an existing session. Allows the agent to free the session from memory.
+    /// Whether conversation teardown should invoke `close_session`.
+    /// The default preserves existing UI cleanup; backend-owned release hooks are separate.
+    /// Autonomous backends can opt out without disabling explicit close support.
+    fn should_close_sessions_on_release(&self) -> bool {
+        self.supports_close_session()
+    }
+
+    /// Close an existing session and free its resources. This may cancel remote work;
+    /// automatic cleanup must also respect `should_close_sessions_on_release`.
     fn close_session(
         self: Rc<Self>,
         _session_id: &acp_v2::SessionId,
@@ -232,7 +240,8 @@ pub trait AgentConnection {
         None
     }
 
-    fn cancel(&self, session_id: &acp_v2::SessionId, cx: &mut App);
+    /// Requests cancellation; success does not establish that execution stopped.
+    fn cancel(&self, session_id: &acp_v2::SessionId, cx: &mut App) -> Result<()>;
 
     /// Request-scoped elicitations are connection-level because they can arrive before a session
     /// thread exists. Session-scoped elicitations stay in the thread timeline, but use
@@ -866,7 +875,7 @@ mod test_support {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use action_log::ActionLog;
-    use collections::HashMap;
+    use collections::{HashMap, VecDeque};
     use futures::{channel::oneshot, future::try_join_all};
     use gpui::{AppContext as _, WeakEntity};
     use parking_lot::Mutex;
@@ -928,11 +937,16 @@ mod test_support {
             Arc<Mutex<Option<oneshot::Receiver<Result<acp_v2::PromptResponse>>>>>,
         receipt_prompt: Arc<Mutex<Option<Vec<acp_v2::ContentBlock>>>>,
         next_truncate: Arc<Mutex<Option<oneshot::Receiver<()>>>>,
+        close_session_calls: Arc<Mutex<Vec<acp_v2::SessionId>>>,
+        next_close_responses: Arc<Mutex<VecDeque<oneshot::Receiver<Result<()>>>>>,
         set_title_calls: Arc<Mutex<Vec<(acp_v2::SessionId, SharedString)>>>,
         cancel_calls: Arc<Mutex<Vec<acp_v2::SessionId>>>,
+        next_cancel_error: Arc<Mutex<Option<anyhow::Error>>>,
         supports_receipt_submissions: bool,
         supports_retry: bool,
         supports_load_session: bool,
+        supports_close_session: bool,
+        close_sessions_on_release: bool,
         supports_session_additional_directories: bool,
         supports_set_title: bool,
         agent_id: AgentId,
@@ -966,13 +980,18 @@ mod test_support {
                 next_receipt_response: Default::default(),
                 receipt_prompt: Default::default(),
                 next_truncate: Default::default(),
+                close_session_calls: Default::default(),
+                next_close_responses: Default::default(),
                 set_title_calls: Default::default(),
                 cancel_calls: Default::default(),
+                next_cancel_error: Default::default(),
                 permission_requests: HashMap::default(),
                 sessions: Arc::default(),
                 supports_receipt_submissions: false,
                 supports_retry: false,
                 supports_load_session: false,
+                supports_close_session: false,
+                close_sessions_on_release: true,
                 supports_session_additional_directories: false,
                 supports_set_title: true,
                 agent_id: AgentId::new("stub"),
@@ -1032,8 +1051,22 @@ mod test_support {
             std::mem::take(&mut *self.set_title_calls.lock())
         }
 
+        pub fn take_close_session_calls(&self) -> Vec<acp_v2::SessionId> {
+            std::mem::take(&mut *self.close_session_calls.lock())
+        }
+
+        pub fn defer_next_close_response(&self) -> oneshot::Sender<Result<()>> {
+            let (sender, receiver) = oneshot::channel();
+            self.next_close_responses.lock().push_back(receiver);
+            sender
+        }
+
         pub fn take_cancel_calls(&self) -> Vec<acp_v2::SessionId> {
             std::mem::take(&mut *self.cancel_calls.lock())
+        }
+
+        pub fn set_next_cancel_error(&self, error: anyhow::Error) {
+            assert!(self.next_cancel_error.lock().replace(error).is_none());
         }
 
         pub fn defer_next_truncate(&self) -> oneshot::Sender<()> {
@@ -1052,6 +1085,16 @@ mod test_support {
 
         pub fn with_supports_load_session(mut self, supports_load_session: bool) -> Self {
             self.supports_load_session = supports_load_session;
+            self
+        }
+
+        pub fn with_supports_close_session(mut self, supports_close_session: bool) -> Self {
+            self.supports_close_session = supports_close_session;
+            self
+        }
+
+        pub fn with_close_sessions_on_release(mut self, close_sessions_on_release: bool) -> Self {
+            self.close_sessions_on_release = close_sessions_on_release;
             self
         }
 
@@ -1198,6 +1241,29 @@ mod test_support {
             self.supports_load_session
         }
 
+        fn supports_close_session(&self) -> bool {
+            self.supports_close_session
+        }
+
+        fn should_close_sessions_on_release(&self) -> bool {
+            self.supports_close_session && self.close_sessions_on_release
+        }
+
+        fn close_session(
+            self: Rc<Self>,
+            session_id: &acp_v2::SessionId,
+            cx: &mut App,
+        ) -> Task<Result<()>> {
+            if !self.supports_close_session {
+                return Task::ready(Err(anyhow::Error::msg("Closing sessions is not supported")));
+            }
+            self.close_session_calls.lock().push(session_id.clone());
+            match self.next_close_responses.lock().pop_front() {
+                Some(response) => cx.spawn(async move |_| response.await?),
+                None => Task::ready(Ok(())),
+            }
+        }
+
         fn supports_session_additional_directories(&self) -> bool {
             self.supports_session_additional_directories
         }
@@ -1331,18 +1397,24 @@ mod test_support {
                 .then(|| Rc::new(StubAgentSessionRetry) as Rc<dyn AgentSessionRetry>)
         }
 
-        fn cancel(&self, session_id: &acp_v2::SessionId, _cx: &mut App) {
+        fn cancel(&self, session_id: &acp_v2::SessionId, _cx: &mut App) -> Result<()> {
             self.cancel_calls.lock().push(session_id.clone());
+            if let Some(error) = self.next_cancel_error.lock().take() {
+                return Err(error);
+            }
             if let Some(end_turn_tx) = self
                 .sessions
                 .lock()
                 .get_mut(session_id)
-                .unwrap()
+                .ok_or_else(|| anyhow::anyhow!("Session not found"))?
                 .response_tx
                 .take()
             {
-                end_turn_tx.send(acp_v1::StopReason::Cancelled).unwrap();
+                end_turn_tx
+                    .send(acp_v1::StopReason::Cancelled)
+                    .map_err(|_| anyhow::anyhow!("Prompt observer was released"))?;
             }
+            Ok(())
         }
 
         fn set_title(

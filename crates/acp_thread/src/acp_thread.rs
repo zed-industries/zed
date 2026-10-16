@@ -4146,8 +4146,9 @@ impl AcpThread {
         }
     }
 
-    /// Settles receipt observations without declaring that remote execution stopped.
-    pub fn disconnect_submissions(&mut self, cx: &mut Context<Self>) {
+    /// Ends receipt and cancellation observations without declaring remote execution stopped.
+    pub fn handle_connection_lost(&mut self, cx: &mut Context<Self>) {
+        self.activity.close_observation();
         let changed = self.submissions.disconnect();
         if !changed.is_empty() {
             for id in changed {
@@ -4217,7 +4218,7 @@ impl AcpThread {
                                 .is_some_and(agent_client_protocol::is_incoming_transport_closed)
                     })
                 {
-                    this.disconnect_submissions(cx);
+                    this.handle_connection_lost(cx);
                 }
                 let state = match &response {
                     Ok(Some(SubmissionResponse::Accepted(receipt))) => {
@@ -6650,12 +6651,17 @@ impl AcpThread {
         cx: &mut Context<Self>,
         f: impl 'static + AsyncFnOnce(WeakEntity<Self>, &mut AsyncApp) -> Result<acp_v1::PromptResponse>,
     ) -> Submission {
+        let cancel_task = match self
+            .request_cancellation(RequestPermissionOutcome::InterruptedByFollowUp, cx)
+        {
+            Ok(task) => task,
+            Err(error) => return self.track_submission(id, None, cx, async move |_, _| Err(error)),
+        };
         self.clear_completed_plan_entries(cx);
         self.had_error = false;
         self.local_execution_error = None;
 
         let (tx, rx) = oneshot::channel();
-        let cancel_task = self.cancel_inner(RequestPermissionOutcome::InterruptedByFollowUp, cx);
 
         self.turn_id += 1;
         let turn_id = self.turn_id;
@@ -6665,8 +6671,13 @@ impl AcpThread {
             id: turn_id,
             first_entry_index,
             send_task: cx.spawn(async move |this, cx| {
-                cancel_task.await;
-                tx.send(f(this, cx).await).ok();
+                let response = match cancel_task.await {
+                    Ok(()) => f(this, cx).await,
+                    Err(error) => Err(error),
+                };
+                if let Err(Err(error)) = tx.send(response) {
+                    log::debug!("Legacy submission observer was released: {error:#}");
+                }
             }),
         });
         self.set_foreground_state(
@@ -6818,30 +6829,40 @@ impl AcpThread {
         })
     }
 
-    pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<()> {
-        self.cancel_inner(RequestPermissionOutcome::Cancelled, cx)
+    /// Receipt sessions wait for reported Idle without withdrawing pending prompt RPCs.
+    pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        match self.request_cancellation(RequestPermissionOutcome::Cancelled, cx) {
+            Ok(task) => task,
+            Err(error) => Task::ready(Err(error)),
+        }
     }
 
-    fn cancel_inner(
+    fn request_cancellation(
         &mut self,
         permission_outcome: RequestPermissionOutcome,
         cx: &mut Context<Self>,
-    ) -> Task<()> {
+    ) -> Result<Task<Result<()>>> {
         self.flush_streaming_text(cx);
         if self.uses_reported_activity() {
-            self.cancel_generic_permission_requests(cx);
-            let receiver = self.activity.wait_for_idle();
-            if receiver.is_some() || self.has_unsettled_submissions() {
-                self.connection.cancel(self.session_id(), cx);
+            self.activity.ensure_observable()?;
+            if self.foreground_activity() != ForegroundActivity::Idle
+                || self.has_unsettled_submissions()
+            {
+                self.connection.cancel(self.session_id(), cx)?;
             }
+            self.cancel_generic_permission_requests(cx);
+            let receiver = self.activity.wait_for_idle()?;
             let Some(receiver) = receiver else {
-                return Task::ready(());
+                return Ok(Task::ready(Ok(())));
             };
-            return cx.spawn(async move |_, _| {
-                if receiver.await.is_err() {
-                    log::debug!("Session released before foreground cancellation completed");
-                }
-            });
+            return Ok(cx.spawn(async move |_, _| {
+                receiver
+                    .await
+                    .context("Agent connection lost before cancellation was confirmed")
+            }));
+        }
+        if self.running_turn.is_some() {
+            self.connection.cancel(self.session_id(), cx)?;
         }
         self.cancel_outstanding_elicitations(cx);
 
@@ -6850,11 +6871,10 @@ impl AcpThread {
             for id in request_ids {
                 self.cancel_permission_request_with_outcome(id, permission_outcome.clone(), cx);
             }
-            return Task::ready(());
+            return Ok(Task::ready(Ok(())));
         };
         self.shrink_message_source_capacity(turn.first_entry_index);
         self.mark_pending_entries_as_canceled(permission_outcome, cx);
-        self.connection.cancel(self.session_id(), cx);
         self.set_foreground_state(
             acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new()),
             cx,
@@ -6862,7 +6882,10 @@ impl AcpThread {
         cx.emit(AcpThreadEvent::StatusChanged);
 
         // Wait for the send task to complete
-        cx.background_spawn(turn.send_task)
+        Ok(cx.background_spawn(async move {
+            turn.send_task.await;
+            Ok(())
+        }))
     }
 
     fn update_idle_sleep_prevention(&mut self, cx: &mut Context<Self>) {
@@ -7019,12 +7042,12 @@ impl AcpThread {
 
         // Cancel any in-progress generation before restoring
         let cancel_task = self.cancel(cx);
-        let rewind = self.rewind(client_id.clone(), cx);
         let git_store = self.project.read(cx).git_store().clone();
 
-        cx.spawn(async move |_, cx| {
-            cancel_task.await;
-            rewind.await?;
+        cx.spawn(async move |this, cx| {
+            cancel_task.await?;
+            this.update(cx, |this, cx| this.rewind(client_id, cx))?
+                .await?;
             if let Some(checkpoint) = checkpoint {
                 git_store
                     .update(cx, |git, cx| git.restore_checkpoint(checkpoint, cx))
@@ -7867,7 +7890,7 @@ mod tests {
     use futures::stream::StreamExt as _;
     use futures::{channel::mpsc, future::LocalBoxFuture, select};
     use gpui::UpdateGlobal as _;
-    use gpui::{App, AsyncApp, TestAppContext, WeakEntity};
+    use gpui::{App, AsyncApp, TaskExt as _, TestAppContext, WeakEntity};
     use indoc::indoc;
     use project::{AgentId, FakeFs, Fs, RemoveOptions};
     use rand::{distr, prelude::*};
@@ -7951,7 +7974,7 @@ mod tests {
                 .streaming_content_target(None, false, false)
                 .expect("streaming target");
             assert_eq!(target.markdown.read(cx).source(), "before");
-            thread.cancel(cx).detach();
+            thread.cancel(cx).detach_and_log_err(cx);
             assert_eq!(target.markdown.read(cx).source(), "before buffered");
             assert!(thread.streaming_text_buffer.is_none());
             target.markdown
@@ -11105,6 +11128,57 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_cancel_send_failure_preserves_legacy_turn(cx: &mut TestAppContext) {
+        init_test(cx);
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let connection = Rc::new(StubAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.clone().new_session(
+                    project,
+                    PathList::new(&[Path::new(path!("/test"))]),
+                    cx,
+                )
+            })
+            .await
+            .expect("legacy session");
+        let complete = connection.defer_next_prompt_response();
+        let running = thread.update(cx, |thread, cx| thread.send(vec!["original".into()], cx));
+        cx.run_until_parked();
+        let before = thread.read_with(cx, |thread, _| {
+            (
+                thread.turn_id,
+                thread.entries.len(),
+                thread.activity_generation(),
+            )
+        });
+        connection.set_next_cancel_error(anyhow!("cancel send failed"));
+        let rejected = thread.update(cx, |thread, cx| thread.send(vec!["follow-up".into()], cx));
+        assert_eq!(
+            rejected
+                .await
+                .expect_err("failed cancellation prevents follow-up")
+                .to_string(),
+            "cancel send failed"
+        );
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(
+                (
+                    thread.turn_id,
+                    thread.entries.len(),
+                    thread.activity_generation()
+                ),
+                before
+            );
+            assert_eq!(thread.status(), ThreadStatus::Generating);
+        });
+        complete
+            .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
+            .expect("original request remains live");
+        running.await.expect("original turn completes");
+    }
+
+    #[gpui::test]
     async fn test_receipt_disconnect_settles_waiters_and_preserves_recovery(
         cx: &mut TestAppContext,
     ) {
@@ -11145,8 +11219,8 @@ mod tests {
                     cx,
                 )
                 .expect("confirmed echo");
-            thread.disconnect_submissions(cx);
-            thread.disconnect_submissions(cx);
+            thread.handle_connection_lost(cx);
+            thread.handle_connection_lost(cx);
             assert!(!thread.has_unsettled_submissions());
             assert!(!thread.is_idle_for_retention());
             assert!(
@@ -11208,7 +11282,7 @@ mod tests {
                     .expect("reported activity");
                 let submission =
                     thread.submit_receipt(vec!["ready".into()], Task::ready(response), cx);
-                thread.disconnect_submissions(cx);
+                thread.handle_connection_lost(cx);
                 submission
             });
             let id = submission.id;
@@ -11275,7 +11349,7 @@ mod tests {
         let id = submission.id;
         cx.run_until_parked();
         thread.update(cx, |thread, cx| {
-            thread.disconnect_submissions(cx);
+            thread.handle_connection_lost(cx);
             assert!(matches!(
                 thread.submission(id).expect("still pending").state,
                 SubmissionState::Pending
@@ -11713,7 +11787,10 @@ mod tests {
         let response = connection.defer_next_receipt_response();
         let submission = thread.update(cx, |thread, cx| thread.send(vec!["pending".into()], cx));
         let id = submission.id;
-        thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+        thread
+            .update(cx, |thread, cx| thread.cancel(cx))
+            .await
+            .expect("cancellation succeeds");
         assert_eq!(
             connection.take_cancel_calls(),
             [thread.read_with(cx, |thread, _| thread.session_id().clone())]
@@ -11739,7 +11816,10 @@ mod tests {
             assert!(!thread.had_error());
             assert!(thread.entries().is_empty());
         });
-        thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+        thread
+            .update(cx, |thread, cx| thread.cancel(cx))
+            .await
+            .expect("cancellation succeeds");
         assert!(connection.take_cancel_calls().is_empty());
     }
 
@@ -12245,7 +12325,7 @@ mod tests {
             cx.spawn({
                 let cancelled = cancelled.clone();
                 async move |_| {
-                    cancel.await;
+                    cancel.await.expect("cancellation succeeds");
                     cancelled.set(true);
                 }
             })
@@ -12829,7 +12909,7 @@ mod tests {
                     cx,
                 )
                 .expect("buffer before cancellation");
-            thread.cancel(cx).detach();
+            thread.cancel(cx).detach_and_log_err(cx);
             assert!(thread.streaming_text_buffer.is_none());
             current
         });
@@ -13882,7 +13962,10 @@ mod tests {
             ));
         });
 
-        thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+        thread
+            .update(cx, |thread, cx| thread.cancel(cx))
+            .await
+            .expect("cancellation succeeds");
 
         thread.read_with(cx, |thread, _| {
             assert!(matches!(
@@ -18401,7 +18484,7 @@ mod tests {
         ));
 
         thread.update(cx, |thread, cx| {
-            thread.cancel(cx).detach();
+            thread.cancel(cx).detach_and_log_err(cx);
         });
         thread.read_with(cx, |thread, _| {
             let Some((_, elicitation)) = thread.elicitation(&entry_id) else {
@@ -18470,7 +18553,7 @@ mod tests {
         });
 
         thread.update(cx, |thread, cx| {
-            thread.cancel(cx).detach();
+            thread.cancel(cx).detach_and_log_err(cx);
         });
         thread.read_with(cx, |thread, _| {
             let Some((_, elicitation)) = thread.elicitation(&entry_id) else {
@@ -18805,7 +18888,7 @@ mod tests {
         });
 
         thread.update(cx, |thread, cx| {
-            thread.cancel(cx).detach();
+            thread.cancel(cx).detach_and_log_err(cx);
         });
 
         assert_eq!(
@@ -19425,7 +19508,7 @@ mod tests {
                 acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Decline),
                 cx,
             );
-            thread.cancel(cx).detach();
+            thread.cancel(cx).detach_and_log_err(cx);
         });
 
         assert_eq!(
@@ -19755,7 +19838,9 @@ mod tests {
             })
         }
 
-        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}
+        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) -> anyhow::Result<()> {
+            Ok(())
+        }
 
         fn truncate(
             &self,
@@ -21643,7 +21728,7 @@ mod tests {
                 acp_v1::StopReason::Cancelled,
             )))
             .expect("parent backend should still be running");
-        parent_cancel.await;
+        parent_cancel.await.expect("cancellation succeeds");
         parent_request.await.expect("parent turn should complete");
         assert_eq!(cx.active_idle_sleep_preventions(), 2);
 
@@ -21704,7 +21789,7 @@ mod tests {
             complete
                 .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
                 .expect("backend should still be running");
-            cancel.await;
+            cancel.await.expect("cancellation succeeds");
             request.await.expect("turn should complete");
             assert_eq!(cx.active_idle_sleep_preventions(), 0);
         }
@@ -21918,7 +22003,7 @@ mod tests {
                 .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
                 .expect("backend should still be running");
             if let Some(cancel) = cancel {
-                cancel.await;
+                cancel.await.expect("cancellation succeeds");
             }
             request.await.expect("turn should complete");
             thread.read_with(cx, |thread, _| {
@@ -22359,7 +22444,7 @@ mod tests {
                 acp_v1::StopReason::Cancelled,
             )))
             .expect("backend should still be running");
-        cancel.await;
+        cancel.await.expect("cancellation succeeds");
         request.await.expect("turn should complete");
         assert_eq!(cx.active_idle_sleep_preventions(), 0);
     }
@@ -22532,7 +22617,7 @@ mod tests {
                 acp_v1::StopReason::Cancelled,
             )))
             .expect("backend should still be running");
-        cancel.await;
+        cancel.await.expect("cancellation succeeds");
         request.await.expect("turn should complete");
     }
 
@@ -22803,12 +22888,15 @@ mod tests {
             assert!(thread.is_idle_for_retention());
             cancellation
         });
-        cancellation.await;
+        cancellation.await.expect("cancellation succeeds");
         assert!(matches!(
             response.await,
             RequestPermissionOutcome::Cancelled
         ));
-        thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+        thread
+            .update(cx, |thread, cx| thread.cancel(cx))
+            .await
+            .expect("cancellation succeeds");
         assert_eq!(*events.borrow(), [(true, id), (false, id)]);
     }
 
@@ -23856,7 +23944,7 @@ mod tests {
                     complete
                         .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
                         .expect("backend still running after local cancellation");
-                    cancellation.await;
+                    cancellation.await.expect("cancellation succeeds");
                 }
                 turn.await.expect("turn settles");
             } else if matches!(lifecycle, "local refusal" | "local refusal after tool") {
@@ -23894,9 +23982,12 @@ mod tests {
                         )
                         .expect("reported cancellation completion");
                 });
-                cancellation.await;
+                cancellation.await.expect("cancellation succeeds");
             } else {
-                thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+                thread
+                    .update(cx, |thread, cx| thread.cancel(cx))
+                    .await
+                    .expect("cancellation succeeds");
             }
             thread.update(cx, |thread, cx| {
                 assert_eq!(
