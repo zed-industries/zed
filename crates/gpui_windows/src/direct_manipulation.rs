@@ -25,11 +25,13 @@ pub(crate) struct DirectManipulationHandler {
     _handler_cookie: u32,
     window: HWND,
     scale_factor: Rc<Cell<f32>>,
+    native_touch: bool,
+    touch_position: Rc<Cell<Option<Point<Pixels>>>>,
     pending_events: Rc<RefCell<Vec<PlatformInput>>>,
 }
 
 impl DirectManipulationHandler {
-    pub fn new(window: HWND, scale_factor: f32) -> Result<Self> {
+    pub fn new(window: HWND, scale_factor: f32, native_touch: bool) -> Result<Self> {
         unsafe {
             let manager: IDirectManipulationManager =
                 CoCreateInstance(&DirectManipulationManager, None, CLSCTX_INPROC_SERVER)?;
@@ -64,12 +66,14 @@ impl DirectManipulationHandler {
             viewport.Enable()?;
 
             let scale_factor = Rc::new(Cell::new(scale_factor));
+            let touch_position = Rc::new(Cell::new(None));
             let pending_events = Rc::new(RefCell::new(Vec::new()));
 
             let event_handler: IDirectManipulationViewportEventHandler =
                 DirectManipulationEventHandler::new(
                     window,
                     Rc::clone(&scale_factor),
+                    Rc::clone(&touch_position),
                     Rc::clone(&pending_events),
                 )
                 .into();
@@ -85,6 +89,8 @@ impl DirectManipulationHandler {
                 _handler_cookie: handler_cookie,
                 window,
                 scale_factor,
+                native_touch,
+                touch_position,
                 pending_events,
             })
         }
@@ -94,12 +100,50 @@ impl DirectManipulationHandler {
         self.scale_factor.set(scale_factor);
     }
 
+    pub fn on_pointer_down(&self, wparam: WPARAM) {
+        if !self.native_touch {
+            return;
+        }
+
+        unsafe {
+            let pointer_id = wparam.loword() as u32;
+            let mut pointer_type = POINTER_INPUT_TYPE::default();
+            if GetPointerType(pointer_id, &mut pointer_type).is_err() || pointer_type != PT_TOUCH {
+                return;
+            }
+
+            let mut pointer_info = POINTER_INFO::default();
+            if GetPointerInfo(pointer_id, &mut pointer_info).is_ok() {
+                let mut position = pointer_info.ptPixelLocation;
+                if ScreenToClient(self.window, &mut position).as_bool() {
+                    self.touch_position.set(Some(logical_point(
+                        position.x as f32,
+                        position.y as f32,
+                        self.scale_factor.get(),
+                    )));
+                }
+            }
+            self.viewport.SetContact(pointer_id).log_err();
+        }
+    }
+
     pub fn on_pointer_hit_test(&self, wparam: WPARAM) {
         unsafe {
             let pointer_id = wparam.loword() as u32;
             let mut pointer_type = POINTER_INPUT_TYPE::default();
             if GetPointerType(pointer_id, &mut pointer_type).is_ok() && pointer_type == PT_TOUCHPAD
             {
+                let mut pointer_info = POINTER_INFO::default();
+                if GetPointerInfo(pointer_id, &mut pointer_info).is_ok() {
+                    let mut point = pointer_info.ptPixelLocation;
+                    if ScreenToClient(self.window, &mut point).as_bool() {
+                        self.touch_position.set(Some(logical_point(
+                            point.x as f32,
+                            point.y as f32,
+                            self.scale_factor.get(),
+                        )));
+                    }
+                }
                 self.viewport.SetContact(pointer_id).log_err();
             }
         }
@@ -137,6 +181,7 @@ enum GestureKind {
 struct DirectManipulationEventHandler {
     window: HWND,
     scale_factor: Rc<Cell<f32>>,
+    touch_position: Rc<Cell<Option<Point<Pixels>>>>,
     gesture_kind: Cell<GestureKind>,
     last_scale: Cell<f32>,
     last_x_offset: Cell<f32>,
@@ -149,11 +194,13 @@ impl DirectManipulationEventHandler {
     fn new(
         window: HWND,
         scale_factor: Rc<Cell<f32>>,
+        touch_position: Rc<Cell<Option<Point<Pixels>>>>,
         pending_events: Rc<RefCell<Vec<PlatformInput>>>,
     ) -> Self {
         Self {
             window,
             scale_factor,
+            touch_position,
             gesture_kind: Cell::new(GestureKind::None),
             last_scale: Cell::new(1.0),
             last_x_offset: Cell::new(0.0),
@@ -164,7 +211,7 @@ impl DirectManipulationEventHandler {
     }
 
     fn end_gesture(&self) {
-        let position = self.mouse_position();
+        let position = self.gesture_position();
         let modifiers = current_modifiers();
         match self.gesture_kind.get() {
             GestureKind::Scroll => {
@@ -192,7 +239,10 @@ impl DirectManipulationEventHandler {
         self.gesture_kind.set(GestureKind::None);
     }
 
-    fn mouse_position(&self) -> Point<Pixels> {
+    fn gesture_position(&self) -> Point<Pixels> {
+        if let Some(position) = self.touch_position.get() {
+            return position;
+        }
         let scale_factor = self.scale_factor.get();
         unsafe {
             let mut point: POINT = std::mem::zeroed();
@@ -221,6 +271,10 @@ impl IDirectManipulationViewportEventHandler_Impl for DirectManipulationEventHan
 
         if current == DIRECTMANIPULATION_READY {
             self.end_gesture();
+            // INERTIA が新しい接触で中断される場合、RUNNING への遷移は新しい pointer
+            // position を既に記録している。そこで消すと次の scroll が cursor 位置へ
+            // 再 hit-test されるため、viewport が完全に idle になった時だけ消す。
+            self.touch_position.set(None);
 
             // Reset the content transform so the viewport is ready for the next gesture.
             // ZoomToRect triggers a second RUNNING -> READY cycle, so prevent an infinite loop here.
@@ -291,7 +345,7 @@ impl IDirectManipulationViewportEventHandler_Impl for DirectManipulationEventHan
             return Ok(());
         }
 
-        let position = self.mouse_position();
+        let position = self.gesture_position();
         let modifiers = current_modifiers();
 
         // Direct Manipulation reports both translation and scale in every content update.
