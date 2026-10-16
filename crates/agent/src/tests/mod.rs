@@ -4496,7 +4496,8 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     });
 
     // Test cancel
-    cx.update(|cx| connection.cancel(&session_id, cx));
+    cx.update(|cx| connection.cancel(&session_id, cx))
+        .expect("cancellation succeeds");
     request.await.expect("prompt should fail gracefully");
 
     // Explicitly close the session and drop the ACP thread.
@@ -6406,7 +6407,10 @@ async fn test_subagent_tool_call_cancellation_during_task_prompt(cx: &mut TestAp
 
     // cx.run_until_parked();
 
-    acp_thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+    acp_thread
+        .update(cx, |thread, cx| thread.cancel(cx))
+        .await
+        .expect("cancellation succeeds");
 
     cx.run_until_parked();
 

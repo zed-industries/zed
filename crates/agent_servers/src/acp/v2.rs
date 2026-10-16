@@ -753,8 +753,21 @@ impl AgentConnection for AcpV2Connection {
         })
     }
 
-    fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {
-        log::warn!("Session cancellation is not yet implemented by the inactive ACP v2 backend");
+    fn cancel(&self, session_id: &acp::SessionId, _cx: &mut App) -> Result<()> {
+        anyhow::ensure!(
+            self.sessions
+                .borrow()
+                .get(session_id)
+                .is_some_and(|session| session.thread.upgrade().is_some()),
+            "Session has been released"
+        );
+        anyhow::ensure!(
+            !self.connection.is_incoming_closed(),
+            "Agent connection is closed"
+        );
+        self.connection
+            .send_notification(acp::CancelSessionNotification::new(session_id.clone()))
+            .map_err(map_acp_error)
     }
 
     fn request_elicitations(&self) -> Option<Entity<ElicitationStore>> {
@@ -1007,6 +1020,7 @@ mod tests {
         client: Rc<AcpV2Connection>,
         project: Entity<Project>,
         prompts: async_channel::Receiver<(acp::PromptRequest, Responder<acp::PromptResponse>)>,
+        cancellations: async_channel::Receiver<acp::CancelSessionNotification>,
         new_requests: async_channel::Receiver<(acp::NewSessionRequest, acp::RequestId)>,
         new_responses:
             async_channel::Sender<Result<acp::NewSessionResponse, agent_client_protocol::Error>>,
@@ -1045,6 +1059,7 @@ mod tests {
             >();
             let (close_sender, closes) = async_channel::unbounded();
             let (prompt_sender, prompts) = async_channel::unbounded();
+            let (cancel_sender, cancellations) = async_channel::unbounded();
             let (sender, received) = futures::channel::oneshot::channel();
             let (client_transport, agent_transport) = agent_client_protocol::Channel::duplex();
             let agent_task = cx.background_spawn(
@@ -1134,6 +1149,15 @@ mod tests {
                         },
                         agent_client_protocol::on_receive_request!(),
                     )
+                    .on_receive_notification(
+                        async move |notification: acp::CancelSessionNotification, _| {
+                            cancel_sender
+                                .try_send(notification)
+                                .expect("cancel receiver");
+                            Ok(())
+                        },
+                        agent_client_protocol::on_receive_notification!(),
+                    )
                     .connect_with(agent_transport, async move |agent| {
                         assert!(sender.send(agent).is_ok());
                         futures::future::pending::<Result<(), agent_client_protocol::Error>>().await
@@ -1157,6 +1181,7 @@ mod tests {
                 client: Rc::new(client),
                 project,
                 prompts,
+                cancellations,
                 new_requests,
                 new_responses,
                 config_requests,
@@ -1222,6 +1247,103 @@ mod tests {
                     .meta(meta("initial-command")),
             ])
             .meta(meta("delivery-not-session"))
+    }
+
+    #[gpui::test]
+    async fn v2_cancel_sdk_preserves_receipt_and_waits_for_reported_idle(cx: &mut TestAppContext) {
+        use acp_thread::{ForegroundActivity, SubmissionResponse, SubmissionState};
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let thread = harness.thread(cx).await;
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+        harness
+            .agent
+            .send_notification(acp::UpdateSessionNotification::new(
+                session_id.clone(),
+                acp::SessionUpdate::StateUpdate(acp::StateUpdate::Running(
+                    acp::RunningStateUpdate::new(),
+                )),
+            ))
+            .expect("reported running");
+        cx.run_until_parked();
+        let submission = thread.update(cx, |thread, cx| thread.send(vec!["question".into()], cx));
+        let id = submission.id;
+        let (_, responder) = bounded(harness.prompts.recv(), cx)
+            .await
+            .expect("pending prompt");
+        let request_cancellation = responder.cancellation();
+        let mut cancellation = thread.update(cx, |thread, cx| thread.cancel(cx));
+        let notification = bounded(harness.cancellations.recv(), cx)
+            .await
+            .expect("session cancel");
+        assert_eq!(notification.session_id, session_id);
+        assert!(
+            !request_cancellation.is_cancelled(),
+            "session cancel is not RPC withdrawal"
+        );
+        responder
+            .respond(acp::PromptResponse::new("accepted"))
+            .expect("accepted during cancellation");
+        assert!(matches!(bounded(submission, cx).await.expect("acceptance"),
+            Some(SubmissionResponse::Accepted(receipt)) if receipt.message_id == "accepted".into()));
+        assert!((&mut cancellation).now_or_never().is_none());
+        assert_eq!(
+            thread.read_with(cx, |thread, _| thread.foreground_activity()),
+            ForegroundActivity::Running
+        );
+        harness
+            .agent
+            .send_notification(acp::UpdateSessionNotification::new(
+                session_id,
+                acp::SessionUpdate::StateUpdate(acp::StateUpdate::Idle(
+                    acp::IdleStateUpdate::new().stop_reason(acp::StopReason::Cancelled),
+                )),
+            ))
+            .expect("confirmed idle");
+        bounded(cancellation, cx)
+            .await
+            .expect("cancellation succeeds");
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.foreground_activity(), ForegroundActivity::Idle);
+            assert!(matches!(
+                thread.submission(id).expect("receipt retained").state,
+                SubmissionState::Accepted { echoed: false, .. }
+            ));
+        });
+    }
+
+    #[gpui::test]
+    async fn v2_cancel_sdk_eof_fails_observation_without_inventing_idle(cx: &mut TestAppContext) {
+        use acp_thread::ForegroundActivity;
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let thread = harness.thread(cx).await;
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+        harness
+            .agent
+            .send_notification(acp::UpdateSessionNotification::new(
+                session_id,
+                acp::SessionUpdate::StateUpdate(acp::StateUpdate::Running(
+                    acp::RunningStateUpdate::new(),
+                )),
+            ))
+            .expect("reported running");
+        cx.run_until_parked();
+        let mut cancellation = thread.update(cx, |thread, cx| thread.cancel(cx));
+        bounded(harness.cancellations.recv(), cx)
+            .await
+            .expect("session cancel");
+        assert!((&mut cancellation).now_or_never().is_none());
+        drop(harness._agent_task);
+        drop(harness.agent);
+        bounded(cancellation, cx)
+            .await
+            .expect_err("EOF cannot confirm cancellation");
+        bounded(thread.update(cx, |thread, cx| thread.cancel(cx)), cx)
+            .await
+            .expect_err("new observers must not wait on a disconnected session");
+        assert_eq!(
+            thread.read_with(cx, |thread, _| thread.foreground_activity()),
+            ForegroundActivity::Running
+        );
     }
 
     #[gpui::test]

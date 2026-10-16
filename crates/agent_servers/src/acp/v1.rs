@@ -1644,12 +1644,15 @@ impl AgentConnection for AcpConnection {
         })
     }
 
-    fn cancel(&self, session_id: &acp_v2::SessionId, _cx: &mut App) {
+    fn cancel(&self, session_id: &acp_v2::SessionId, _cx: &mut App) -> Result<()> {
+        let params = acp::CancelNotification::new(acp::SessionId::new(session_id.0.clone()));
+        self.connection
+            .send_notification(params)
+            .map_err(map_acp_error)?;
         if let Some(session) = self.sessions.borrow_mut().get_mut(session_id) {
             session.suppress_abort_err = true;
         }
-        let params = acp::CancelNotification::new(acp::SessionId::new(session_id.0.clone()));
-        self.connection.send_notification(params).log_err();
+        Ok(())
     }
 
     fn request_elicitations(&self) -> Option<Entity<ElicitationStore>> {
@@ -1968,7 +1971,7 @@ pub mod test_support {
             self.inner.retry(session_id, cx)
         }
 
-        fn cancel(&self, session_id: &acp_v2::SessionId, cx: &mut App) {
+        fn cancel(&self, session_id: &acp_v2::SessionId, cx: &mut App) -> Result<()> {
             self.inner.cancel(session_id, cx)
         }
 
@@ -2427,7 +2430,8 @@ mod tests {
             )
             .data(data);
             *response_error.lock().expect("response error") = original.clone();
-            cx.update(|cx| harness.connection.cancel(&session_id, cx));
+            cx.update(|cx| harness.connection.cancel(&session_id, cx))
+                .expect("cancellation succeeds");
             assert!(
                 harness
                     .connection

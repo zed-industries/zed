@@ -172,7 +172,7 @@ impl ForegroundWorkItem for ClientDisconnectWork {
             if let Some(thread) = thread.upgrade() {
                 thread.update(cx, |thread, cx| {
                     thread.cancel_outstanding_elicitations(cx);
-                    thread.disconnect_submissions(cx);
+                    thread.handle_connection_lost(cx);
                     cx.notify();
                 });
             }
