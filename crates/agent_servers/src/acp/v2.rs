@@ -1365,11 +1365,11 @@ mod tests {
         config_responses: async_channel::Sender<
             Result<acp::SetSessionConfigOptionResponse, agent_client_protocol::Error>,
         >,
+        closes: async_channel::Receiver<acp::SessionId>,
         resume_requests: async_channel::Receiver<(
             acp::ResumeSessionRequest,
             Responder<acp::ResumeSessionResponse>,
         )>,
-        closes: async_channel::Receiver<acp::SessionId>,
         agent: V2ConnectionTo<Client>,
         _agent_task: Task<Result<(), agent_client_protocol::Error>>,
     }
@@ -1394,12 +1394,12 @@ mod tests {
             let (new_responses, new_received) = async_channel::unbounded::<
                 Result<acp::NewSessionResponse, agent_client_protocol::Error>,
             >();
-            let (resume_sender, resume_requests) = async_channel::unbounded();
             let (config_sender, config_requests) = async_channel::unbounded();
             let (config_responses, config_received) = async_channel::unbounded::<
                 Result<acp::SetSessionConfigOptionResponse, agent_client_protocol::Error>,
             >();
             let (close_sender, closes) = async_channel::unbounded();
+            let (resume_sender, resume_requests) = async_channel::unbounded();
             let (prompt_sender, prompts) = async_channel::unbounded();
             let (sender, received) = futures::channel::oneshot::channel();
             let (client_transport, agent_transport) = agent_client_protocol::Channel::duplex();
@@ -1417,15 +1417,6 @@ mod tests {
                                 )
                                 .capabilities(capabilities.clone()),
                             )
-                        },
-                        agent_client_protocol::on_receive_request!(),
-                    )
-                    .on_receive_request(
-                        async move |request: acp::ResumeSessionRequest, responder, _| {
-                            resume_sender
-                                .try_send((request, responder))
-                                .expect("resume receiver");
-                            Ok(())
                         },
                         agent_client_protocol::on_receive_request!(),
                     )
@@ -1491,6 +1482,15 @@ mod tests {
                         agent_client_protocol::on_receive_request!(),
                     )
                     .on_receive_request(
+                        async move |request: acp::ResumeSessionRequest, responder, _| {
+                            resume_sender
+                                .try_send((request, responder))
+                                .expect("resume receiver");
+                            Ok(())
+                        },
+                        agent_client_protocol::on_receive_request!(),
+                    )
+                    .on_receive_request(
                         async move |request: acp::PromptRequest, responder, _| {
                             prompt_sender
                                 .try_send((request, responder))
@@ -1526,8 +1526,8 @@ mod tests {
                 new_responses,
                 config_requests,
                 config_responses,
-                resume_requests,
                 closes,
+                resume_requests,
                 agent: received.await.expect("agent"),
                 _agent_task: agent_task,
             }
@@ -2102,6 +2102,8 @@ done
     ) {
         let unsupported =
             SessionHarness::new(acp::AgentCapabilities::new(), Vec::new(), Vec::new(), cx).await;
+        assert!(bounded(unsupported.create(cx), cx).await.is_err());
+        assert!(unsupported.new_requests.is_empty());
         assert!(!unsupported.client.supports_load_session());
         assert!(!unsupported.client.supports_resume_session());
         for replay_history in [false, true] {
@@ -2111,8 +2113,6 @@ done
         }
         assert!(unsupported.resume_requests.is_empty());
         assert!(unsupported.client.session_owners.borrow().is_empty());
-        assert!(bounded(unsupported.create(cx), cx).await.is_err());
-        assert!(unsupported.new_requests.is_empty());
         let harness = SessionHarness::new(session_capabilities(), Vec::new(), Vec::new(), cx).await;
         let thread = harness.thread(cx).await;
         let replacement = harness.create(cx);
