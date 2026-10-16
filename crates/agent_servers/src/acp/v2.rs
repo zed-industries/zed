@@ -713,6 +713,11 @@ impl AgentConnection for AcpV2Connection {
         validate_prompt_content(&session.prompt.clone().unwrap_or_default(), content)
     }
 
+    fn should_close_sessions_on_release(&self) -> bool {
+        // V2 close cancels agent-owned work; disposing a view must only detach.
+        false
+    }
+
     fn supports_session_additional_directories(&self) -> bool {
         self.initialize_response
             .capabilities
@@ -1610,6 +1615,7 @@ done
             assert!(
                 !harness.client.supports_load_session() && !harness.client.supports_close_session()
             );
+            assert!(!harness.client.should_close_sessions_on_release());
         });
         assert_eq!(thread.read_with(cx, |thread, _| thread.entries().len()), 1);
         drop(thread);
