@@ -595,7 +595,6 @@ ciborium = "0.2"
 clap = { version = "4.4", features = ["derive", "wrap_help"] }
 clap_complete = "4.4"
 clap_complete_nushell = "4.4"
-cocoa = "=0.26.0"
 console = "0.16"
 console_error_panic_hook = "0.1.7"
 const_format = "0.2"
@@ -702,7 +701,6 @@ nbformat = "1.2.0"
 nix = "0.30"
 notify-rust = "4"
 nucleo = { package = "nucleo-matcher", version = "0.3" }
-objc = "0.2"
 objc2 = "0.6"
 objc2-ui-kit = { version = "0.3.2", default-features = false, features = [
     "std",
@@ -744,9 +742,11 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "NSApplication",
     "NSButton",
     "NSCell",
+    "NSColor",
     "NSControl",
     "NSCursor",
     "NSDocumentController",
+    "NSDragging",
     "NSDraggingItem",
     "NSEvent",
     "NSGraphics",
@@ -763,6 +763,7 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "NSScroller",
     "NSTrackingArea",
     "NSView",
+    "NSVisualEffectView",
     "NSWindow",
     "NSWorkspace",
     "block2",
