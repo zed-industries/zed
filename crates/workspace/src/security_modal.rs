@@ -7,7 +7,9 @@ use std::{
 };
 
 use collections::{HashMap, HashSet};
-use gpui::{DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ScrollHandle, WeakEntity};
+use gpui::{
+    DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ScrollHandle, Task, WeakEntity,
+};
 
 use project::{
     WorktreeId,
@@ -22,13 +24,14 @@ use ui::{
 };
 use ui_input::InputField;
 
-use util::paths::PathStyle;
+use util::{ResultExt, paths::PathStyle};
 
 use crate::{DismissDecision, ModalView, ToggleWorktreeSecurity};
 
 pub struct SecurityModal {
     restricted_paths: HashMap<WorktreeId, RestrictedPath>,
     home_dir: Option<PathBuf>,
+    _home_dir_task: Task<()>,
     trust_parents: bool,
     worktree_store: WeakEntity<WorktreeStore>,
     remote_host: Option<RemoteHostLocation>,
@@ -310,10 +313,19 @@ impl SecurityModal {
     pub fn new(
         worktree_store: WeakEntity<WorktreeStore>,
         remote_host: Option<impl Into<RemoteHostLocation>>,
+        home_dir_task: Task<Option<PathBuf>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let trust_path_input = cx.new(|cx| InputField::new(window, cx, "Folder to trust"));
+        let task = cx.spawn(async |this, cx| {
+            let home_dir = home_dir_task.await;
+            this.update(cx, |this, cx| {
+                this.home_dir = home_dir;
+                cx.notify();
+            })
+            .log_err();
+        });
         let mut this = Self {
             worktree_store,
             remote_host: remote_host.map(|host| host.into()),
@@ -321,7 +333,8 @@ impl SecurityModal {
             focus_handle: cx.focus_handle(),
             project_list_scroll_handle: ScrollHandle::new(),
             trust_parents: false,
-            home_dir: std::env::home_dir(),
+            home_dir: None,
+            _home_dir_task: task,
             trusted: None,
             trust_path_input,
         };
@@ -384,8 +397,9 @@ impl SecurityModal {
         match &self.home_dir {
             Some(home_dir) => path_style
                 .strip_prefix(path, home_dir)
-                .map(|stripped| Path::new("~").join(stripped))
-                .map(Cow::Owned)
+                .ok()
+                .and_then(|stripped| path_style.join("~", stripped))
+                .map(|joined| Cow::Owned(PathBuf::from(joined)))
                 .unwrap_or(Cow::Borrowed(path)),
             None => Cow::Borrowed(path),
         }
@@ -520,6 +534,9 @@ fn validate_trust_scope(
     let trimmed = typed.trim();
     if trimmed.is_empty() {
         return Err("Enter a folder to trust".into());
+    }
+    if home_dir.is_none() && trimmed.starts_with('~') {
+        return Err("Home directory not available".into());
     }
     let expanded = match (trimmed.strip_prefix('~'), home_dir) {
         (Some(rest), Some(home_dir)) => path_style
