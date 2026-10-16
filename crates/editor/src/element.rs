@@ -11384,12 +11384,16 @@ mod tests {
     use crate::{
         Editor, FoldPlaceholder, HighlightKey, Inlay, MultiBuffer, NavigationOverlayKey,
         NavigationOverlayLabel, NavigationTargetOverlay, SelectionEffects,
-        display_map::{BlockPlacement, BlockProperties, DisplayMap},
+        display_map::{
+            BlockPlacement, BlockProperties, DisplayMap, HighlightStyleInterner,
+            SemanticTokenHighlight,
+        },
         editor_tests::{init_test, update_test_language_settings},
     };
     use buffer_diff::BufferDiff;
     use gpui::{
-        Render, TestAppContext, Underline, UpdateGlobal, VisualTestContext, WindowHandle, font,
+        EntityInputHandler, HighlightStyle, Render, TestAppContext, Underline, UpdateGlobal,
+        VisualTestContext, WindowHandle, font,
     };
     use language::{
         Buffer, Capability, Diagnostic, DiagnosticEntry, DiagnosticSet, SelectionGoal,
@@ -11402,6 +11406,159 @@ mod tests {
     use std::num::NonZeroU32;
     use text::PointUtf16;
     use util::test::sample_text;
+
+    // Regression test for https://github.com/zed-industries/zed/issues/65453.
+    #[gpui::test]
+    fn test_ime_underlines_with_diagnostics_disabled(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        for mode in [
+            EditorMode::SingleLine,
+            EditorMode::AutoHeight {
+                min_lines: 1,
+                max_lines: None,
+            },
+            EditorMode::full(),
+        ] {
+            for commit_text in [false, true] {
+                let buffer = point_diagnostic_buffer(
+                    "file-.rs",
+                    [(PointUtf16::new(0, 0)..PointUtf16::new(0, 4), WARNING)],
+                    cx,
+                );
+                let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+                let window = cx.open_window(size(px(500.), px(100.)), |window, cx| {
+                    let mut editor = Editor::new(mode.clone(), buffer, None, window, cx);
+                    editor.disable_diagnostics(cx);
+                    editor
+                });
+                let painted_underlines = |cx: &mut TestAppContext| {
+                    cx.update_window(window.into(), |_, window, cx| {
+                        window.draw(cx).clear(cx);
+                        window.painted_underlines()
+                    })
+                    .expect("completed editor scene")
+                };
+
+                assert!(painted_underlines(cx).is_empty());
+                for text in ["ni", "你好"] {
+                    window
+                        .update(cx, |editor, window, cx| {
+                            let end = text.encode_utf16().count();
+                            let replacement_range = editor
+                                .marked_text_range(window, cx)
+                                .is_none()
+                                .then_some(5..5);
+                            editor.replace_and_mark_text_in_range(
+                                replacement_range,
+                                text,
+                                Some(end..end),
+                                window,
+                                cx,
+                            );
+                            assert_eq!(editor.text(cx), format!("file-{text}.rs"));
+                            assert_eq!(editor.marked_text_range(window, cx), Some(5..5 + end));
+                        })
+                        .expect("updated preedit text");
+
+                    let underlines = painted_underlines(cx);
+                    assert_eq!(underlines.len(), 1, "preedit text: {text}");
+                    let underline = underlines.first().expect("preedit underline");
+                    assert!(
+                        !underline
+                            .bounds
+                            .intersect(&underline.content_mask.bounds)
+                            .is_empty()
+                    );
+                    assert_eq!(underline.wavy, false.into());
+                }
+
+                window
+                    .update(cx, |editor, window, cx| {
+                        if commit_text {
+                            editor.replace_text_in_range(None, "你好", window, cx);
+                        } else {
+                            editor.unmark_text(window, cx);
+                        }
+                        assert_eq!(editor.text(cx), "file-你好.rs");
+                        assert_eq!(editor.marked_text_range(window, cx), None);
+                    })
+                    .expect("finished preedit text");
+                assert!(painted_underlines(cx).is_empty());
+            }
+        }
+    }
+
+    // Regression test for https://github.com/zed-industries/zed/pull/48510.
+    #[gpui::test]
+    fn test_minimap_filters_semantic_token_underlines(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let buffer = cx.new(|cx| Buffer::local("mutable", cx));
+        let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let window = cx.open_window(size(px(500.), px(100.)), |window, cx| {
+            Editor::new(EditorMode::full(), buffer, None, window, cx)
+        });
+        window
+            .update(cx, |editor, window, cx| {
+                let color = gpui::Hsla::green();
+                let mut interner = HighlightStyleInterner::default();
+                let style = interner.intern(HighlightStyle {
+                    color: Some(color),
+                    underline: Some(UnderlineStyle {
+                        thickness: px(1.),
+                        color: None,
+                        wavy: false,
+                    }),
+                    ..Default::default()
+                });
+                let snapshot = editor.buffer.read(cx).snapshot(cx);
+                let token = SemanticTokenHighlight {
+                    range: snapshot.anchor_after(MultiBufferOffset(0))
+                        ..snapshot.anchor_before(snapshot.len()),
+                    style,
+                    token_type: project::lsp_store::TokenType(0),
+                    token_modifiers: 0,
+                    server_id: lsp::LanguageServerId(0),
+                    precedence: 0,
+                };
+                editor.display_map.update(cx, |display_map, _| {
+                    Arc::make_mut(&mut display_map.semantic_token_highlights)
+                        .insert(buffer_id, (Arc::from([token]), Arc::new(interner)));
+                });
+                let minimap = editor.initialize_new_minimap(
+                    EditorSettings::get_global(cx).minimap,
+                    window,
+                    cx,
+                );
+                let editor_style = editor.create_style(cx);
+                let minimap_style = minimap.update(cx, |minimap, cx| minimap.create_style(cx));
+                let snapshot = editor.display_snapshot(cx);
+                for (style, show_underlines) in [(editor_style, true), (minimap_style, false)] {
+                    let chunks = snapshot
+                        .highlighted_chunks(
+                            DisplayRow(0)..DisplayRow(1),
+                            LanguageAwareStyling {
+                                tree_sitter: false,
+                                diagnostics: false,
+                            },
+                            &style,
+                        )
+                        .collect::<Vec<_>>();
+                    assert_eq!(
+                        chunks.iter().map(|chunk| chunk.text).collect::<String>(),
+                        "mutable"
+                    );
+                    for chunk in chunks {
+                        let highlight = chunk.style.expect("semantic token style");
+                        assert_eq!(highlight.color, Some(color));
+                        assert_eq!(highlight.underline.is_some(), show_underlines);
+                    }
+                }
+            })
+            .expect("checked editor and minimap highlights");
+    }
 
     struct MinimapGeometry {
         document_lines: f64,
