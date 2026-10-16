@@ -42,6 +42,7 @@ impl MarkdownElement {
         block: &ParsedHtmlBlock,
         builder: &mut MarkdownElementBuilder,
         markdown_end: usize,
+        window: &mut Window,
         cx: &mut App,
     ) {
         let mut source_allocator = HtmlSourceAllocator::new(block.source_range.clone());
@@ -50,6 +51,7 @@ impl MarkdownElement {
             &mut source_allocator,
             builder,
             markdown_end,
+            window,
             cx,
         );
     }
@@ -60,10 +62,11 @@ impl MarkdownElement {
         source_allocator: &mut HtmlSourceAllocator,
         builder: &mut MarkdownElementBuilder,
         markdown_end: usize,
+        window: &mut Window,
         cx: &mut App,
     ) {
         for element in elements {
-            self.render_html_element(element, source_allocator, builder, markdown_end, cx);
+            self.render_html_element(element, source_allocator, builder, markdown_end, window, cx);
         }
     }
 
@@ -73,6 +76,7 @@ impl MarkdownElement {
         source_allocator: &mut HtmlSourceAllocator,
         builder: &mut MarkdownElementBuilder,
         markdown_end: usize,
+        window: &mut Window,
         cx: &mut App,
     ) {
         let Some(source_range) = element.source_range() else {
@@ -91,6 +95,7 @@ impl MarkdownElement {
                     &paragraph.contents,
                     source_allocator,
                     builder,
+                    window,
                     cx,
                     markdown_end,
                 );
@@ -108,13 +113,14 @@ impl MarkdownElement {
                     &heading.contents,
                     source_allocator,
                     builder,
+                    window,
                     cx,
                     markdown_end,
                 );
                 self.pop_markdown_heading(builder);
             }
             ParsedHtmlElement::List(list) => {
-                self.render_html_list(list, source_allocator, builder, markdown_end, cx);
+                self.render_html_list(list, source_allocator, builder, markdown_end, window, cx);
             }
             ParsedHtmlElement::BlockQuote(block_quote) => {
                 self.push_markdown_block_quote(
@@ -128,15 +134,16 @@ impl MarkdownElement {
                     source_allocator,
                     builder,
                     markdown_end,
+                    window,
                     cx,
                 );
                 self.pop_markdown_block_quote(builder);
             }
             ParsedHtmlElement::Table(table) => {
-                self.render_html_table(table, source_allocator, builder, markdown_end, cx);
+                self.render_html_table(table, source_allocator, builder, markdown_end, window, cx);
             }
             ParsedHtmlElement::Image(image) => {
-                self.render_html_image(image, builder, cx);
+                self.render_html_image(image, builder, window, cx);
             }
         }
     }
@@ -147,6 +154,7 @@ impl MarkdownElement {
         source_allocator: &mut HtmlSourceAllocator,
         builder: &mut MarkdownElementBuilder,
         markdown_end: usize,
+        window: &mut Window,
         cx: &mut App,
     ) {
         builder.push_div(div().pl_2p5(), &list.source_range, markdown_end);
@@ -174,6 +182,7 @@ impl MarkdownElement {
                 source_allocator,
                 builder,
                 markdown_end,
+                window,
                 cx,
             );
             self.pop_markdown_list_item(builder);
@@ -188,6 +197,7 @@ impl MarkdownElement {
         source_allocator: &mut HtmlSourceAllocator,
         builder: &mut MarkdownElementBuilder,
         markdown_end: usize,
+        window: &mut Window,
         cx: &mut App,
     ) {
         if let Some(caption) = &table.caption {
@@ -198,7 +208,14 @@ impl MarkdownElement {
                 &table.source_range,
                 markdown_end,
             );
-            self.render_html_paragraph(caption, source_allocator, builder, cx, markdown_end);
+            self.render_html_paragraph(
+                caption,
+                source_allocator,
+                builder,
+                window,
+                cx,
+                markdown_end,
+            );
             builder.pop_div();
         }
 
@@ -298,6 +315,7 @@ impl MarkdownElement {
                     &cell.children,
                     source_allocator,
                     builder,
+                    window,
                     cx,
                     markdown_end,
                 );
@@ -350,6 +368,7 @@ impl MarkdownElement {
         paragraph: &HtmlParagraph,
         source_allocator: &mut HtmlSourceAllocator,
         builder: &mut MarkdownElementBuilder,
+        window: &mut Window,
         cx: &mut App,
         _markdown_end: usize,
     ) {
@@ -359,7 +378,7 @@ impl MarkdownElement {
                     self.render_html_text(text, source_allocator, builder, cx);
                 }
                 HtmlParagraphChunk::Image(image) => {
-                    self.render_html_image(image, builder, cx);
+                    self.render_html_image(image, builder, window, cx);
                 }
             }
         }
@@ -448,11 +467,17 @@ impl MarkdownElement {
         }
     }
 
-    fn render_html_image(&self, image: &HtmlImage, builder: &mut MarkdownElementBuilder, cx: &App) {
+    fn render_html_image(
+        &self,
+        image: &HtmlImage,
+        builder: &mut MarkdownElementBuilder,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         let Some(source) = self
             .image_resolver
             .as_ref()
-            .and_then(|resolve| resolve(image.dest_url.as_ref(), cx))
+            .and_then(|resolve| resolve(image.dest_url.as_ref(), window, cx))
         else {
             return;
         };

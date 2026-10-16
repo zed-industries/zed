@@ -2,7 +2,7 @@ use crate::{
     DEFAULT_THREAD_TITLE, SelectPermissionGranularity,
     conversation_view::thread_search_bar::{ThreadSearchBar, ThreadSearchBarEvent},
     entry_view_state::TERMINAL_CONTENT_TOP_PADDING,
-    open_abs_path_at_point, project_path_for_file_link,
+    open_abs_path_at_point,
     thread_metadata_store::{ThreadId, ThreadMetadataStore},
 };
 use agent_client_protocol::schema::v2 as acp_v2;
@@ -13469,15 +13469,14 @@ pub(crate) fn open_link(
                 .map(|(row, column)| Point::new(row, column));
             let candidates = file_link_candidates(path, fragment_point, path_style);
             let project = workspace.read(cx).project().downgrade();
-            let Ok((roots, root_names)) = project.read_with(cx, |project, cx| {
+            let Ok(roots) = project.read_with(cx, |project, cx| {
                 project
                     .visible_worktrees(cx)
                     .filter_map(|worktree| {
                         let worktree = worktree.read(cx);
-                        (!worktree.is_single_file())
-                            .then(|| (worktree.abs_path(), worktree.root_name().to_owned()))
+                        (!worktree.is_single_file()).then(|| worktree.abs_path())
                     })
-                    .unzip::<_, _, Vec<_>, Vec<_>>()
+                    .collect::<Vec<_>>()
             }) else {
                 return;
             };
@@ -13488,7 +13487,7 @@ pub(crate) fn open_link(
                     let mut failures = Vec::new();
                     'resolve: for (path, point) in candidates {
                         let Ok(project_path) = project.read_with(cx, |project, cx| {
-                            project_path_for_file_link(project, &path, cx)
+                            project.project_path_for_file_link(&path, cx)
                         }) else {
                             return Ok(());
                         };
@@ -13502,26 +13501,10 @@ pub(crate) fn open_link(
                             ));
                             break;
                         }
-                        let paths = if path_style.has_root(&path)
-                            || path.starts_with("~")
-                        {
-                            vec![path]
-                        } else {
-                            roots
-                                .iter()
-                                .zip(&root_names)
-                                .flat_map(|(root, root_name)| {
-                                    [
-                                        path.strip_prefix(root_name.as_std_path()).ok(),
-                                        Some(path.as_path()),
-                                    ]
-                                    .into_iter()
-                                    .flatten()
-                                    .filter_map(move |path| {
-                                        path_style.join_path_preserving_components(root, path).ok()
-                                    })
-                                })
-                                .collect::<Vec<_>>()
+                        let Ok(paths) = project.read_with(cx, |project, cx| {
+                            project.abs_paths_for_file_link(&path, cx)
+                        }) else {
+                            return Ok(());
                         };
                         for path in paths {
                             let Some(path_string) = path.to_str() else {
@@ -14403,7 +14386,7 @@ mod tests {
                 path!("/two/src/../file.rs"),
             ] {
                 assert_eq!(
-                    project_path_for_file_link(project, Path::new(path), cx),
+                    project.project_path_for_file_link(Path::new(path), cx),
                     Some(expected.clone()),
                     "{path}",
                 );

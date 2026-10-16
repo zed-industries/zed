@@ -41,6 +41,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use ::ui::IconName;
+use acp_thread::decode_path_escapes;
 use agent_client_protocol::schema::v2 as acp_v2;
 use agent_settings::{AgentProfileId, AgentSettings};
 use anyhow::Context as _;
@@ -50,7 +51,7 @@ use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
 use gpui::{
     Action, App, Context, Entity, ImageSource, ReadGlobal as _, Resource, SharedString, SharedUri,
-    TaskExt, Window, actions,
+    TaskExt, WeakEntity, Window, actions,
 };
 use language::{
     LanguageRegistry,
@@ -59,7 +60,10 @@ use language::{
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
 };
-use project::{AgentId, DisableAiSettings, Project, ProjectPath};
+use project::{
+    AgentId, DisableAiSettings, Project,
+    image_store::{self, ImageLocation},
+};
 use prompt_store::{self, PromptBuilder, rules_to_skills_migration};
 use rope::Point;
 use schemars::JsonSchema;
@@ -67,10 +71,7 @@ use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, Settings as _, SettingsStore, SidebarSide};
 use std::any::TypeId;
 use std::path::{Path, PathBuf};
-use util::{
-    paths::SanitizedPath,
-    rel_path::{RelPath, RelPathBuf},
-};
+use util::paths::{PathStyle, UrlExt};
 use workspace::Workspace;
 
 use crate::agent_configuration::ManageProfilesModal;
@@ -98,95 +99,86 @@ pub use zed_actions::{CreateWorktree, NewWorktreeBranchTarget, SwitchWorktree};
 
 pub(crate) fn resolve_agent_image(
     dest_url: &str,
-    worktree_roots: &[PathBuf],
+    project: &WeakEntity<Project>,
+    window: &mut Window,
+    cx: &mut App,
 ) -> Option<ImageSource> {
-    if dest_url.starts_with("http://") || dest_url.starts_with("https://") {
-        return Some(ImageSource::Resource(Resource::Uri(SharedUri::from(
-            dest_url.to_string(),
-        ))));
-    }
-
-    let path = Path::new(dest_url);
-    if path.is_absolute() && path.exists() {
-        return Some(ImageSource::Resource(Resource::Path(Arc::from(path))));
-    }
-
-    for root in worktree_roots {
-        let absolute_path = root.join(dest_url);
-        if absolute_path.exists() {
-            return Some(ImageSource::Resource(Resource::Path(Arc::from(
-                absolute_path.as_path(),
-            ))));
-        }
-    }
-
-    None
-}
-
-pub(crate) fn project_path_for_file_link(
-    project: &Project,
-    path: &Path,
-    cx: &App,
-) -> Option<ProjectPath> {
-    let path_style = project.path_style(cx);
-    let validate_path = |project_path: ProjectPath, relative_path: &str| {
-        if project.get_open_buffer(&project_path, cx).is_none()
-            && !project.entry_for_path(&project_path, cx)?.is_file()
-        {
-            return None;
-        }
-        let worktree = project.worktree_for_id(project_path.worktree_id, cx)?;
-        let worktree = worktree.read(cx);
-        let mut prefix = RelPathBuf::new();
-        for component in relative_path.split(path_style.separators_ch()) {
-            match component {
-                "" | "." => {}
-                ".." => {
-                    let entry = worktree.entry_for_path(&prefix)?;
-                    if !entry.is_dir() || entry.canonical_path.is_some() || !prefix.pop() {
-                        return None;
-                    }
+    let project = project.upgrade();
+    let lookup = agent_image_lookup(dest_url, project.as_ref(), cx)?;
+    match lookup {
+        AgentImageLookup::Source(source) => Some(source),
+        AgentImageLookup::Disk(paths) => {
+            let project = project?.downgrade();
+            match image_store::use_image_location(project.clone(), paths, window, cx)? {
+                ImageLocation::Local(path) => Some(ImageSource::Resource(Resource::Path(path))),
+                ImageLocation::Project(path) => {
+                    Some(image_store::project_image_source(project, path))
                 }
-                component => prefix.push_component(component).ok()?,
             }
         }
-        Some(project_path)
-    };
-    let path = SanitizedPath::new(path).as_path();
-    if path_style.is_absolute(path) {
-        let project_path = project.project_path_for_absolute_path(path, cx)?;
-        let worktree = project.worktree_for_id(project_path.worktree_id, cx)?;
-        let root = worktree.read(cx).abs_path();
-        let root_length = root
-            .to_str()?
-            .trim_end_matches(path_style.separators_ch())
-            .len();
-        let relative_path = path
-            .to_str()?
-            .get(root_length..)?
-            .trim_start_matches(path_style.separators_ch());
-        validate_path(project_path, relative_path)
-    } else {
-        project.visible_worktrees(cx).find_map(|worktree| {
-            let worktree = worktree.read(cx);
-            [
-                path.strip_prefix(worktree.root_name().as_std_path()).ok(),
-                Some(path),
-            ]
-            .into_iter()
-            .flatten()
-            .find_map(|relative_path| {
-                let path = RelPath::new(relative_path, path_style).ok()?.into_arc();
-                validate_path(
-                    ProjectPath {
-                        worktree_id: worktree.id(),
-                        path,
-                    },
-                    relative_path.to_str()?,
-                )
-            })
-        })
     }
+}
+
+enum AgentImageLookup {
+    Source(ImageSource),
+    Disk(Vec<String>),
+}
+
+fn agent_image_lookup(
+    dest_url: &str,
+    project: Option<&Entity<Project>>,
+    cx: &App,
+) -> Option<AgentImageLookup> {
+    if dest_url.starts_with("http://") || dest_url.starts_with("https://") {
+        return Some(AgentImageLookup::Source(ImageSource::Resource(
+            Resource::Uri(SharedUri::from(dest_url.to_string())),
+        )));
+    }
+
+    let project_entity = project?;
+    let project = project_entity.read(cx);
+    let path_style = project.path_style(cx);
+    let candidates = image_path_candidates(dest_url, path_style);
+
+    for candidate in &candidates {
+        let Some(project_path) = project.project_path_for_file_link(Path::new(candidate), cx)
+        else {
+            continue;
+        };
+        let worktree = project.worktree_for_id(project_path.worktree_id, cx)?;
+        let source = if worktree.read(cx).is_local() {
+            let path = project.absolute_path(&project_path, cx)?;
+            ImageSource::Resource(Resource::Path(Arc::from(path.as_path())))
+        } else {
+            image_store::project_image_source(project_entity.downgrade(), project_path)
+        };
+        return Some(AgentImageLookup::Source(source));
+    }
+
+    let paths: Vec<String> = candidates
+        .iter()
+        .flat_map(|candidate| project.abs_paths_for_file_link(Path::new(candidate), cx))
+        .filter_map(|path| path.to_str().map(str::to_owned))
+        .collect();
+    (!paths.is_empty()).then_some(AgentImageLookup::Disk(paths))
+}
+
+// Percent escapes in bare paths are ambiguous: prefer the decoded interpretation and
+// keep the literal one (e.g. a file actually named `a%20b.png`) as a later candidate.
+fn image_path_candidates(dest_url: &str, path_style: PathStyle) -> Vec<String> {
+    if dest_url.starts_with("file:") {
+        return url::Url::parse(dest_url)
+            .ok()
+            .and_then(|url| url.to_file_path_ext(path_style).ok())
+            .map(|path| path.to_string_lossy().into_owned())
+            .into_iter()
+            .collect();
+    }
+    let decoded = decode_path_escapes(dest_url);
+    let literal_fallback = (decoded != dest_url).then(|| dest_url.to_owned());
+    std::iter::once(decoded.into_owned())
+        .chain(literal_fallback)
+        .collect()
 }
 
 /// Opens `abs_path` in the workspace, moving the cursor to `point` when one
@@ -200,7 +192,7 @@ pub(crate) fn open_abs_path_at_point(
     cx: &mut Context<Workspace>,
 ) {
     let project_path = workspace.project().read_with(cx, |project, cx| {
-        project_path_for_file_link(project, &abs_path, cx)
+        project.project_path_for_file_link(&abs_path, cx)
     });
     let project = workspace.project().downgrade();
     let workspace = cx.weak_entity();
@@ -1046,11 +1038,300 @@ mod tests {
     use command_palette_hooks::CommandPaletteFilter;
     use db::kvp::KeyValueStore;
     use editor::actions::AcceptEditPrediction;
-    use gpui::{BorrowAppContext, TestAppContext, px};
+    use gpui::{
+        BorrowAppContext, IntoElement, Render, TestAppContext, VisualTestContext, px, size,
+    };
     use project::DisableAiSettings;
+    use serde_json::json;
     use settings::{
         DockPosition, NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, Settings, SettingsStore,
     };
+    use util::path;
+
+    fn image_path(lookup: Option<AgentImageLookup>) -> Option<Arc<Path>> {
+        match lookup {
+            Some(AgentImageLookup::Source(ImageSource::Resource(Resource::Path(path)))) => {
+                Some(path)
+            }
+            _ => None,
+        }
+    }
+
+    fn disk_paths(lookup: Option<AgentImageLookup>) -> Option<Vec<PathBuf>> {
+        match lookup {
+            Some(AgentImageLookup::Disk(paths)) => {
+                Some(paths.into_iter().map(PathBuf::from).collect())
+            }
+            _ => None,
+        }
+    }
+
+    fn file_url(path: &Path) -> String {
+        url::Url::from_file_path(path)
+            .expect("test paths are absolute")
+            .to_string()
+    }
+
+    async fn image_test_project(
+        tree: serde_json::Value,
+        cx: &mut TestAppContext,
+    ) -> Entity<Project> {
+        crate::test_support::init_test(cx);
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), tree).await;
+        Project::test(fs, [path!("/project").as_ref()], cx).await
+    }
+
+    fn lookup(
+        dest_url: &str,
+        project: &Entity<Project>,
+        cx: &mut TestAppContext,
+    ) -> Option<AgentImageLookup> {
+        cx.update(|cx| agent_image_lookup(dest_url, Some(project), cx))
+    }
+
+    #[gpui::test]
+    fn test_agent_image_lookup_passes_remote_urls_through(cx: &mut TestAppContext) {
+        let lookup = cx.update(|cx| agent_image_lookup("https://example.com/a.png", None, cx));
+        assert!(matches!(
+            lookup,
+            Some(AgentImageLookup::Source(ImageSource::Resource(Resource::Uri(uri))))
+                if uri.to_string() == "https://example.com/a.png"
+        ));
+    }
+
+    #[gpui::test]
+    async fn test_agent_image_lookup_resolves_worktree_files_synchronously(
+        cx: &mut TestAppContext,
+    ) {
+        let project = image_test_project(json!({"shots": {"my shot.png": ""}}), cx).await;
+        let expected: Arc<Path> = Arc::from(Path::new(path!("/project/shots/my shot.png")));
+        let shot_url = file_url(Path::new(path!("/project/shots/my shot.png")));
+        assert!(shot_url.contains("%20"));
+
+        for dest_url in [
+            "shots/my shot.png",
+            "shots/my%20shot.png",
+            "project/shots/my shot.png",
+            path!("/project/shots/my shot.png"),
+            &shot_url,
+        ] {
+            assert_eq!(
+                image_path(lookup(dest_url, &project, cx)),
+                Some(expected.clone()),
+                "{dest_url}"
+            );
+        }
+        assert_eq!(
+            disk_paths(lookup("shots/nope.png", &project, cx)),
+            Some(vec![PathBuf::from(path!("/project/shots/nope.png"))])
+        );
+        assert_eq!(
+            disk_paths(lookup("shots", &project, cx)),
+            Some(vec![PathBuf::from(path!("/project/shots"))])
+        );
+    }
+
+    #[gpui::test]
+    async fn test_agent_image_lookup_prefers_decoded_path_over_literal(cx: &mut TestAppContext) {
+        let project =
+            image_test_project(json!({"a%20b.png": "", "a b.png": "", "e%20f.png": ""}), cx).await;
+
+        assert_eq!(
+            image_path(lookup("a%20b.png", &project, cx)),
+            Some(Arc::from(Path::new(path!("/project/a b.png"))))
+        );
+        assert_eq!(
+            image_path(lookup("e%20f.png", &project, cx)),
+            Some(Arc::from(Path::new(path!("/project/e%20f.png"))))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_agent_image_lookup_defers_unindexed_paths_to_disk(cx: &mut TestAppContext) {
+        let project = image_test_project(
+            json!({".gitignore": "screenshots\n", "screenshots": {"shot.png": ""}}),
+            cx,
+        )
+        .await;
+        let outside_url = file_url(Path::new(path!("/outside/shot.png")));
+
+        for (dest_url, expected) in [
+            (
+                "screenshots/shot.png",
+                vec![path!("/project/screenshots/shot.png")],
+            ),
+            (
+                "project/screenshots/shot.png",
+                vec![
+                    path!("/project/screenshots/shot.png"),
+                    path!("/project/project/screenshots/shot.png"),
+                ],
+            ),
+            (
+                "shots/my%20shot.png",
+                vec![
+                    path!("/project/shots/my shot.png"),
+                    path!("/project/shots/my%20shot.png"),
+                ],
+            ),
+            (
+                "../outside/shot.png",
+                vec![path!("/project/../outside/shot.png")],
+            ),
+            (path!("/outside/shot.png"), vec![path!("/outside/shot.png")]),
+            (&outside_url, vec![path!("/outside/shot.png")]),
+            ("~/shot.png", vec!["~/shot.png"]),
+        ] {
+            assert_eq!(
+                disk_paths(lookup(dest_url, &project, cx)),
+                Some(expected.into_iter().map(PathBuf::from).collect()),
+                "{dest_url}"
+            );
+        }
+        assert!(lookup("file://not a url", &project, cx).is_none());
+
+        let project = Project::test(fs::FakeFs::new(cx.executor()), [], cx).await;
+        assert!(lookup("screenshots/shot.png", &project, cx).is_none());
+    }
+
+    #[gpui::test]
+    async fn test_agent_image_lookup_uses_remote_worktree_entries(cx: &mut TestAppContext) {
+        crate::test_support::init_test(cx);
+        let project = Project::test(fs::FakeFs::new(cx.executor()), [], cx).await;
+        let worktree = project.update(cx, |project, cx| {
+            project.add_test_remote_worktree("/remote/project", cx)
+        });
+        let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id().to_proto());
+        let entry = |id: u64, path: &str, is_dir: bool| proto::Entry {
+            id,
+            is_dir,
+            path: path.to_string(),
+            inode: id,
+            mtime: Some(proto::Timestamp {
+                seconds: 0,
+                nanos: 0,
+            }),
+            is_ignored: false,
+            is_hidden: false,
+            is_external: false,
+            is_fifo: false,
+            size: None,
+            canonical_path: None,
+            is_unloaded: false,
+        };
+        worktree.update(cx, |worktree, _cx| {
+            worktree
+                .as_remote()
+                .unwrap()
+                .update_from_remote(proto::UpdateWorktree {
+                    project_id: 0,
+                    worktree_id,
+                    abs_path: "/remote/project".to_string(),
+                    root_name: "project".to_string(),
+                    updated_entries: vec![
+                        entry(1, "", true),
+                        entry(2, "docs", true),
+                        entry(3, "docs/shot.png", false),
+                    ],
+                    removed_entries: vec![],
+                    scan_id: 1,
+                    is_last_update: true,
+                    updated_repositories: vec![],
+                    removed_repositories: vec![],
+                    root_repo_common_dir: None,
+                    root_repo_is_linked_worktree: false,
+                });
+        });
+        cx.run_until_parked();
+
+        assert!(matches!(
+            lookup("docs/shot.png", &project, cx),
+            Some(AgentImageLookup::Source(ImageSource::Custom(_)))
+        ));
+        assert_eq!(
+            disk_paths(lookup("docs/missing.png", &project, cx)),
+            Some(vec![PathBuf::from("/remote/project/docs/missing.png")])
+        );
+    }
+
+    struct AgentImageTestView {
+        project: WeakEntity<Project>,
+        dest_url: &'static str,
+        resolved: Option<ImageSource>,
+    }
+
+    impl Render for AgentImageTestView {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            self.resolved = resolve_agent_image(self.dest_url, &self.project, window, cx);
+            gpui::Empty
+        }
+    }
+
+    #[gpui::test]
+    async fn test_resolve_agent_image_returns_none_until_file_exists(cx: &mut TestAppContext) {
+        crate::test_support::init_test(cx);
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({})).await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (view, cx) = cx.add_window_view(|_, _| AgentImageTestView {
+            project: project.downgrade(),
+            dest_url: path!("/outside/shot.png"),
+            resolved: None,
+        });
+        let draw = |cx: &mut VisualTestContext| {
+            cx.draw(Default::default(), size(px(10.), px(10.)), {
+                let view = view.clone();
+                move |_, _| view.into_any_element()
+            });
+            view.read_with(cx, |view, _| view.resolved.clone())
+        };
+
+        assert!(draw(cx).is_none());
+        cx.run_until_parked();
+        assert!(draw(cx).is_none());
+
+        fs.insert_tree(path!("/outside"), json!({"shot.png": ""}))
+            .await;
+        cx.run_until_parked();
+        assert!(draw(cx).is_none());
+
+        cx.executor()
+            .advance_clock(image_store::MISSING_IMAGE_RETRY_DELAY);
+        assert!(draw(cx).is_none());
+        cx.run_until_parked();
+        assert!(matches!(
+            draw(cx),
+            Some(ImageSource::Resource(Resource::Path(path)))
+                if path.as_ref() == Path::new(path!("/outside/shot.png"))
+        ));
+    }
+
+    #[test]
+    fn test_image_path_candidates_follow_project_path_style() {
+        assert_eq!(
+            image_path_candidates("file:///C:/shots/my%20shot.png", PathStyle::Windows),
+            vec![r"C:\shots\my shot.png"]
+        );
+        assert_eq!(
+            image_path_candidates("file:///remote/my%20shot.png", PathStyle::Unix),
+            vec!["/remote/my shot.png"]
+        );
+        assert!(image_path_candidates("file://host/share/x.png", PathStyle::Unix).is_empty());
+        assert_eq!(
+            image_path_candidates("file://host/share/x.png", PathStyle::Windows),
+            vec![r"\\host\share\x.png"]
+        );
+        assert_eq!(
+            image_path_candidates("shots/my%20shot.png", PathStyle::Unix),
+            vec!["shots/my shot.png", "shots/my%20shot.png"]
+        );
+        assert_eq!(
+            image_path_candidates("shots/my shot.png", PathStyle::Unix),
+            vec!["shots/my shot.png"]
+        );
+        assert!(image_path_candidates("file://not a url", PathStyle::Unix).is_empty());
+    }
 
     #[gpui::test]
     fn test_agent_command_palette_visibility(cx: &mut TestAppContext) {

@@ -10596,6 +10596,7 @@ dependencies = [
  "theme",
  "theme_settings",
  "ui",
+ "url",
  "urlencoding",
  "util",
  "workspace",

@@ -25,7 +25,7 @@ use markdown::{
     MarkdownOptions, MarkdownStyle,
 };
 use project::search::SearchQuery;
-use project::{Project, ProjectPath, image_store};
+use project::{Project, ProjectPath, Worktree, image_store};
 use settings::{SeedQuerySetting, Settings, update_settings_file};
 use theme::{SystemAppearance, Theme, ThemeRegistry};
 use theme_settings::ThemeSettings;
@@ -36,7 +36,7 @@ use ui::{
 use util::{
     ResultExt,
     markdown::{source_position_from_fragment, split_local_url_fragment},
-    paths::{PathStyle, PathWithPosition},
+    paths::{PathStyle, PathWithPosition, UrlExt},
     rel_path::RelPath,
 };
 use workspace::item::{
@@ -1117,7 +1117,7 @@ impl MarkdownPreviewView {
             .show_root_block_markers()
             .image_resolver({
                 let base_directory = self.base_directory.clone();
-                move |dest_url, cx| {
+                move |dest_url, _window, cx| {
                     resolve_preview_image(
                         dest_url,
                         base_directory.as_deref(),
@@ -1532,21 +1532,45 @@ fn resolve_preview_image(
         ))));
     }
 
-    let decoded = urlencoding::decode(dest_url)
-        .map(|decoded| decoded.into_owned())
-        .unwrap_or_else(|_| dest_url.to_string());
-    let workspace_relative_path = ['/', '\\']
-        .iter()
-        .find_map(|prefix| decoded.strip_prefix(*prefix));
+    let lookup_worktree =
+        project.and_then(|project| preview_lookup_worktree(source_project_path, project, cx));
+    let is_file_url = dest_url.starts_with("file:");
+    let decoded = if is_file_url {
+        let path_style = lookup_worktree
+            .as_ref()
+            .map(|worktree| worktree.read(cx).path_style())
+            .unwrap_or(client_path_style);
+        url::Url::parse(dest_url)
+            .ok()?
+            .to_file_path_ext(path_style)
+            .ok()?
+            .to_string_lossy()
+            .into_owned()
+    } else {
+        urlencoding::decode(dest_url)
+            .map(|decoded| decoded.into_owned())
+            .unwrap_or_else(|_| dest_url.to_string())
+    };
+    // A file URL's leading `/` is part of the absolute path, not the workspace-root shorthand.
+    let workspace_relative_path = if is_file_url {
+        None
+    } else {
+        ['/', '\\']
+            .iter()
+            .find_map(|prefix| decoded.strip_prefix(*prefix))
+    };
 
-    if let (Some(project), Some(source_project_path)) = (project, source_project_path) {
-        let project_path = resolve_project_path_for_preview_image(
-            &decoded,
-            workspace_relative_path,
-            source_project_path,
-            project,
-            cx,
-        );
+    if let Some(project) = project {
+        let project_path = lookup_worktree.as_ref().and_then(|worktree| {
+            resolve_project_path_for_preview_image(
+                &decoded,
+                workspace_relative_path,
+                source_project_path,
+                worktree,
+                project,
+                cx,
+            )
+        });
         if let Some(project_path) = project_path {
             let is_remote = project
                 .read(cx)
@@ -1563,7 +1587,9 @@ fn resolve_preview_image(
             return path
                 .exists()
                 .then(|| ImageSource::Resource(Resource::Path(Arc::from(path.as_path()))));
-        } else if project.read(cx).is_remote() {
+        } else if project.read(cx).is_remote()
+            || lookup_worktree.is_some_and(|worktree| !worktree.read(cx).is_local())
+        {
             return None;
         }
     }
@@ -1581,16 +1607,26 @@ fn resolve_preview_image(
         .then(|| ImageSource::Resource(Resource::Path(Arc::from(path.as_path()))))
 }
 
+fn preview_lookup_worktree(
+    source_project_path: Option<&ProjectPath>,
+    project: &Entity<Project>,
+    cx: &App,
+) -> Option<Entity<Worktree>> {
+    let project = project.read(cx);
+    match source_project_path {
+        Some(source) => project.worktree_for_id(source.worktree_id, cx),
+        None => project.worktrees(cx).next(),
+    }
+}
+
 fn resolve_project_path_for_preview_image(
     decoded_path: &str,
     workspace_relative_path: Option<&str>,
-    source_project_path: &ProjectPath,
+    source_project_path: Option<&ProjectPath>,
+    worktree: &Entity<Worktree>,
     project: &Entity<Project>,
     cx: &App,
 ) -> Option<ProjectPath> {
-    let worktree = project
-        .read(cx)
-        .worktree_for_id(source_project_path.worktree_id, cx)?;
     let path_style = worktree.read(cx).path_style();
 
     if workspace_relative_path.is_none() && path_style.is_absolute(Path::new(decoded_path)) {
@@ -1599,7 +1635,7 @@ fn resolve_project_path_for_preview_image(
             .project_path_for_absolute_path(Path::new(decoded_path), cx);
     }
 
-    let source_directory = source_project_path.path.parent()?;
+    let source_directory = source_project_path?.path.parent()?;
     let path = if let Some(workspace_relative_path) = workspace_relative_path {
         RelPath::new(Path::new(workspace_relative_path), path_style)
             .ok()?
@@ -1612,7 +1648,7 @@ fn resolve_project_path_for_preview_image(
     };
 
     Some(ProjectPath {
-        worktree_id: source_project_path.worktree_id,
+        worktree_id: worktree.read(cx).id(),
         path: path.into(),
     })
 }
@@ -2316,7 +2352,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
     use util::path;
-    use util::paths::{PathStyle, PathWithPosition};
+    use util::paths::{PathStyle, PathWithPosition, SanitizedPath};
     use util::rel_path::{RelPath, rel_path};
     use util::test::TempTree;
     use workspace::item::{Item, ItemHandle, SerializableItem};
@@ -2438,6 +2474,54 @@ mod tests {
     }
 
     #[gpui::test]
+    fn resolves_file_url_preview_image_and_rejects_missing(cx: &mut App) {
+        let tree = TempTree::new(json!({
+            "docs": {},
+            "test image.png": "mock data"
+        }));
+        let workspace_directory = tree.path();
+        let base_directory = markdown_fixture_directory(&tree);
+        let image_file = workspace_directory.join("test image.png");
+
+        let file_url = url::Url::from_file_path(&image_file).unwrap();
+        assert!(
+            file_url.as_str().contains("%20"),
+            "fixture must exercise percent-encoded file URLs"
+        );
+        let resolved = resolve_preview_image(
+            file_url.as_str(),
+            Some(&base_directory),
+            Some(workspace_directory),
+            None,
+            None,
+            PathStyle::local(),
+            cx,
+        );
+        // On Windows `TempTree` yields a verbatim `\\?\` path, while the URL
+        // round-trip yields the plain form of the same path.
+        match resolved {
+            Some(ImageSource::Resource(Resource::Path(path))) => assert_eq!(
+                std::fs::canonicalize(path.as_ref()).unwrap(),
+                std::fs::canonicalize(&image_file).unwrap()
+            ),
+            _ => panic!("Expected preview image to resolve to a local path"),
+        }
+
+        let missing_url =
+            url::Url::from_file_path(workspace_directory.join("missing.png")).unwrap();
+        let missing = resolve_preview_image(
+            missing_url.as_str(),
+            Some(&base_directory),
+            Some(workspace_directory),
+            None,
+            None,
+            PathStyle::local(),
+            cx,
+        );
+        assert!(missing.is_none());
+    }
+
+    #[gpui::test]
     async fn resolves_remote_preview_image_through_project(cx: &mut TestAppContext) {
         init_test(cx);
         let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
@@ -2477,6 +2561,82 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn resolves_file_url_preview_image_through_remote_project(cx: &mut TestAppContext) {
+        init_test(cx);
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let worktree = project.update(cx, |project, cx| {
+            project.add_test_remote_worktree("/remote/project", cx)
+        });
+        let source_project_path = ProjectPath {
+            worktree_id: worktree.read_with(cx, |worktree, _cx| worktree.id()),
+            path: rel_path("docs/readme.md").into(),
+        };
+
+        let cases = [Some(&source_project_path), None]
+            .into_iter()
+            .flat_map(|source| [PathStyle::Unix, PathStyle::Windows].map(|style| (source, style)));
+        for (source_project_path, client_path_style) in cases {
+            let resolve = |dest_url: &str, cx: &mut TestAppContext| {
+                cx.update(|cx| {
+                    resolve_preview_image(
+                        dest_url,
+                        Some(Path::new("/remote/project/docs")),
+                        Some(Path::new("/remote/project")),
+                        Some(&project),
+                        source_project_path,
+                        client_path_style,
+                        cx,
+                    )
+                })
+            };
+            assert!(
+                matches!(
+                    resolve("file:///remote/project/docs/images/example.png", cx),
+                    Some(ImageSource::Custom(_))
+                ),
+                "{source_project_path:?} {client_path_style:?}"
+            );
+            assert!(
+                resolve("file:///remote/outside/example.png", cx).is_none(),
+                "{source_project_path:?} {client_path_style:?}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn does_not_resolve_client_file_for_unsaved_buffer_in_remote_project(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        project.update(cx, |project, cx| {
+            project.add_test_remote_worktree("/remote/project", cx);
+        });
+        let tree = TempTree::new(json!({"shot.png": "data"}));
+        let client_image = SanitizedPath::new(tree.path()).as_path().join("shot.png");
+        let client_image = client_image.to_str().unwrap();
+
+        let resolve = |project: Option<&Entity<Project>>, cx: &mut TestAppContext| {
+            cx.update(|cx| {
+                resolve_preview_image(
+                    client_image,
+                    None,
+                    None,
+                    project,
+                    None,
+                    PathStyle::local(),
+                    cx,
+                )
+            })
+        };
+        assert!(resolve(Some(&project), cx).is_none());
+        assert!(matches!(
+            resolve(None, cx),
+            Some(ImageSource::Resource(Resource::Path(_)))
+        ));
+    }
+
+    #[gpui::test]
     async fn resolves_remote_preview_image_with_different_client_path_style(
         cx: &mut TestAppContext,
     ) {
@@ -2507,7 +2667,8 @@ mod tests {
             resolve_project_path_for_preview_image(
                 "images/example.png",
                 None,
-                &source_project_path,
+                Some(&source_project_path),
+                &worktree,
                 &project,
                 cx,
             )
@@ -2515,6 +2676,23 @@ mod tests {
         assert_eq!(
             project_path
                 .expect("image should resolve within the remote worktree")
+                .path,
+            rel_path("docs/images/example.png").into()
+        );
+
+        let absolute_project_path = cx.update(|cx| {
+            resolve_project_path_for_preview_image(
+                "/remote/project/docs/images/example.png",
+                None,
+                Some(&source_project_path),
+                &worktree,
+                &project,
+                cx,
+            )
+        });
+        assert_eq!(
+            absolute_project_path
+                .expect("absolute image path should resolve within the remote worktree")
                 .path,
             rel_path("docs/images/example.png").into()
         );
@@ -2550,7 +2728,8 @@ mod tests {
             resolve_project_path_for_preview_image(
                 "/images/root.png",
                 Some("images/root.png"),
-                &source_project_path,
+                Some(&source_project_path),
+                &source_worktree,
                 &project,
                 cx,
             )

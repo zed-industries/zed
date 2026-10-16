@@ -478,8 +478,12 @@ async fn test_remote_project_image_source(cx: &mut TestAppContext, server_cx: &m
         path!("/code"),
         json!({
             "project": {
+                ".gitignore": "screenshots\n",
                 "docs": {
                     "image.ppm": "P3\n1 1\n255\n255 0 0\n"
+                },
+                "screenshots": {
+                    "shot.ppm": "P3\n1 1\n255\n255 0 0\n"
                 }
             }
         }),
@@ -494,47 +498,226 @@ async fn test_remote_project_image_source(cx: &mut TestAppContext, server_cx: &m
         .await
         .expect("remote worktree should open");
     let worktree_id = worktree.read_with(cx, |worktree, _cx| worktree.id());
-    let source = image_store::project_image_source(
-        project.downgrade(),
-        ProjectPath {
-            worktree_id,
-            path: rel_path("docs/image.ppm").into(),
-        },
-    );
-    let ImageSource::Custom(load_image) = source else {
-        panic!("expected a project-backed image source");
-    };
-    let loaded_bytes = Arc::new(std::sync::Mutex::new(None));
-    let observed_source = ImageSource::from({
-        let loaded_bytes = loaded_bytes.clone();
-        move |window: &mut gpui::Window, cx: &mut gpui::App| {
-            let result = load_image(window, cx);
-            if let Some(Ok(image)) = &result {
-                *loaded_bytes.lock().expect("loaded image mutex poisoned") =
-                    image.as_bytes(0).map(ToOwned::to_owned);
-            }
-            result
-        }
+    cx.run_until_parked();
+    project.read_with(cx, |project, cx| {
+        assert_eq!(
+            project.project_path_for_file_link(Path::new("screenshots/shot.ppm"), cx),
+            None
+        );
     });
 
-    let (view, cx) = cx.add_window_view(|_window, _cx| RemoteImageTestView {
-        source: observed_source,
+    for path in ["docs/image.ppm", "screenshots/shot.ppm"] {
+        let source = image_store::project_image_source(
+            project.downgrade(),
+            ProjectPath {
+                worktree_id,
+                path: rel_path(path).into(),
+            },
+        );
+        let ImageSource::Custom(load_image) = source else {
+            panic!("expected a project-backed image source");
+        };
+        let loaded_bytes = Arc::new(std::sync::Mutex::new(None));
+        let observed_source = ImageSource::from({
+            let loaded_bytes = loaded_bytes.clone();
+            move |window: &mut gpui::Window, cx: &mut gpui::App| {
+                let result = load_image(window, cx);
+                if let Some(Ok(image)) = &result {
+                    *loaded_bytes.lock().expect("loaded image mutex poisoned") =
+                        image.as_bytes(0).map(ToOwned::to_owned);
+                }
+                result
+            }
+        });
+
+        let (view, cx) = cx.add_window_view(|_window, _cx| RemoteImageTestView {
+            source: observed_source,
+        });
+        cx.draw(Default::default(), size(px(10.), px(10.)), {
+            let view = view.clone();
+            move |_, _| view.into_any_element()
+        });
+        cx.run_until_parked();
+        cx.draw(Default::default(), size(px(10.), px(10.)), move |_, _| {
+            view.into_any_element()
+        });
+
+        assert_eq!(
+            loaded_bytes
+                .lock()
+                .expect("loaded image mutex poisoned")
+                .as_deref(),
+            Some([0, 0, 255, 255].as_slice()),
+            "{path}"
+        );
+    }
+}
+
+#[gpui::test]
+async fn test_resolve_image_at_abs_path_over_remote(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let red_pixel = "P3\n1 1\n255\n255 0 0\n";
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project": {
+                ".gitignore": "screenshots\n",
+                "docs": {
+                    "image.ppm": red_pixel
+                },
+                "screenshots": {
+                    "shot.ppm": red_pixel
+                }
+            },
+            "outside.ppm": red_pixel
+        }),
+    )
+    .await;
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project"), true, cx)
+        })
+        .await
+        .expect("remote worktree should open");
+    let worktree_id = worktree.read_with(cx, |worktree, _cx| worktree.id());
+    project
+        .read_with(cx, |project, _cx| project.fs().clone())
+        .as_fake()
+        .insert_tree(
+            path!("/code"),
+            json!({
+                "project": {
+                    "docs": {
+                        "image.ppm": red_pixel,
+                        "missing.ppm": red_pixel
+                    },
+                    "screenshots": {
+                        "shot.ppm": red_pixel
+                    }
+                },
+                "outside.ppm": red_pixel
+            }),
+        )
+        .await;
+    cx.run_until_parked();
+    project.read_with(cx, |project, cx| {
+        assert_eq!(
+            project.project_path_for_file_link(Path::new("screenshots/shot.ppm"), cx),
+            None
+        );
     });
+
+    for (abs_path, path) in [
+        (path!("/code/project/docs/image.ppm"), "docs/image.ppm"),
+        (
+            path!("/code/project/screenshots/shot.ppm"),
+            "screenshots/shot.ppm",
+        ),
+    ] {
+        let location = project
+            .update(cx, |project, cx| {
+                project.resolve_image_at_abs_path(abs_path, cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            location,
+            Some(image_store::ImageLocation::Project(ProjectPath {
+                worktree_id,
+                path: rel_path(path).into(),
+            })),
+            "{abs_path}"
+        );
+    }
+
+    let missing = project
+        .update(cx, |project, cx| {
+            project.resolve_image_at_abs_path(path!("/code/project/docs/missing.ppm"), cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(missing, None);
+
+    let outside = project
+        .update(cx, |project, cx| {
+            project.resolve_image_at_abs_path(path!("/code/outside.ppm"), cx)
+        })
+        .await;
+    assert!(outside.is_err());
+}
+
+struct RemoteImageLocationTestView {
+    project: gpui::WeakEntity<Project>,
+    paths: Vec<String>,
+    location: Option<image_store::ImageLocation>,
+}
+
+impl gpui::Render for RemoteImageLocationTestView {
+    fn render(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl gpui::IntoElement {
+        self.location =
+            image_store::use_image_location(self.project.clone(), self.paths.clone(), window, cx);
+        gpui::Empty
+    }
+}
+
+#[gpui::test]
+async fn test_use_image_location_skips_failing_candidates_over_remote(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let red_pixel = "P3\n1 1\n255\n255 0 0\n";
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project": {
+                "docs": {
+                    "image.ppm": red_pixel
+                }
+            },
+            "outside.ppm": red_pixel
+        }),
+    )
+    .await;
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project"), true, cx)
+        })
+        .await
+        .expect("remote worktree should open");
+    let worktree_id = worktree.read_with(cx, |worktree, _cx| worktree.id());
+
+    let (view, cx) = cx.add_window_view(|_window, _cx| RemoteImageLocationTestView {
+        project: project.downgrade(),
+        paths: vec![
+            path!("/code/outside.ppm").to_string(),
+            path!("/code/project/docs/image.ppm").to_string(),
+        ],
+        location: None,
+    });
+    cx.run_until_parked();
     cx.draw(Default::default(), size(px(10.), px(10.)), {
         let view = view.clone();
         move |_, _| view.into_any_element()
     });
-    cx.run_until_parked();
-    cx.draw(Default::default(), size(px(10.), px(10.)), move |_, _| {
-        view.into_any_element()
-    });
 
     assert_eq!(
-        loaded_bytes
-            .lock()
-            .expect("loaded image mutex poisoned")
-            .as_deref(),
-        Some([0, 0, 255, 255].as_slice())
+        view.read_with(cx, |view, _cx| view.location.clone()),
+        Some(image_store::ImageLocation::Project(ProjectPath {
+            worktree_id,
+            path: rel_path("docs/image.ppm").into(),
+        }))
     );
 }
 
