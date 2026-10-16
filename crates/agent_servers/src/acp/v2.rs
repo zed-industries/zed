@@ -760,6 +760,10 @@ impl AcpV2Connection {
                     let this = this.upgrade().context("Connection was released")?;
                     let thread = thread.upgrade().context("Session was released")?;
                     cx.update(|cx| {
+                        anyhow::ensure!(
+                            thread.read(cx).has_received_session_state(),
+                            "Agent resumed the session without reporting its current foreground state"
+                        );
                         this.apply_initial_state(
                             &thread,
                             response.config_options,
@@ -1670,6 +1674,15 @@ mod tests {
                     cx,
                 )
             })
+        }
+
+        fn resume_state(&self, state: acp::StateUpdate) {
+            self.agent
+                .send_notification(acp::UpdateSessionNotification::new(
+                    "saved",
+                    acp::SessionUpdate::StateUpdate(state),
+                ))
+                .expect("current resume state");
         }
 
         fn reopen(
@@ -2852,6 +2865,285 @@ done
     }
 
     #[gpui::test]
+    async fn v2_state_sdk_separates_preinsertion_work_and_local_command_completion(
+        cx: &mut TestAppContext,
+    ) {
+        use acp_thread::{
+            AcpThreadEvent, AgentThreadEntry, ForegroundActivity, SubmissionResponse,
+        };
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let thread = harness.thread(cx).await;
+        let session_id = thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.foreground_activity(), ForegroundActivity::Idle);
+            assert!(!thread.has_received_session_state());
+            thread.session_id().clone()
+        });
+        let stops = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&thread, {
+                let stops = stops.clone();
+                move |_, event, _| {
+                    if let AcpThreadEvent::Stopped { stop_reason, .. } = event {
+                        stops.borrow_mut().push(stop_reason.clone());
+                    }
+                }
+            })
+        });
+        let rejected = thread.update(cx, |thread, cx| thread.send(vec!["/rejected".into()], cx));
+        let (_, responder) = bounded(harness.prompts.recv(), cx).await.expect("prompt");
+        harness
+            .agent
+            .send_notification(acp::UpdateSessionNotification::new(
+                session_id.clone(),
+                acp::SessionUpdate::StateUpdate(acp::StateUpdate::Running(
+                    acp::RunningStateUpdate::new(),
+                )),
+            ))
+            .expect("foreground hook before insertion");
+        responder
+            .respond_with_error(agent_client_protocol::Error::invalid_params())
+            .expect("rejection");
+        bounded(rejected, cx).await.expect_err("not inserted");
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.foreground_activity(), ForegroundActivity::Running);
+            assert!(thread.entries().is_empty());
+        });
+        assert!(stops.borrow().is_empty());
+        harness
+            .agent
+            .send_notification(acp::UpdateSessionNotification::new(
+                session_id.clone(),
+                acp::SessionUpdate::StateUpdate(
+                    acp::StateUpdate::Idle(acp::IdleStateUpdate::new()),
+                ),
+            ))
+            .expect("hook work ends separately");
+        cx.run_until_parked();
+        assert_eq!(*stops.borrow(), [None]);
+        let command = thread.update(cx, |thread, cx| thread.send(vec!["/local".into()], cx));
+        let (_, responder) = bounded(harness.prompts.recv(), cx)
+            .await
+            .expect("local command");
+        for update in [
+            acp::SessionUpdate::UserMessage(
+                acp::UserMessage::new("local-command").content(vec!["/local".into()]),
+            ),
+            acp::SessionUpdate::StateUpdate(acp::StateUpdate::Running(
+                acp::RunningStateUpdate::new(),
+            )),
+        ] {
+            harness
+                .agent
+                .send_notification(acp::UpdateSessionNotification::new(
+                    session_id.clone(),
+                    update,
+                ))
+                .expect("local command handling");
+        }
+        responder
+            .respond(acp::PromptResponse::new("local-command"))
+            .expect("insertion receipt");
+        assert!(matches!(
+            bounded(command, cx).await.expect("accepted"),
+            Some(SubmissionResponse::Accepted(_))
+        ));
+        assert_eq!(
+            thread.read_with(cx, |thread, _| thread.foreground_activity()),
+            ForegroundActivity::Running
+        );
+        harness
+            .agent
+            .send_notification(acp::UpdateSessionNotification::new(
+                session_id,
+                acp::SessionUpdate::StateUpdate(acp::StateUpdate::Idle(
+                    acp::IdleStateUpdate::new().stop_reason(acp::StopReason::EndTurn),
+                )),
+            ))
+            .expect("local completion without model output");
+        cx.run_until_parked();
+        assert_eq!(*stops.borrow(), [None, Some(acp::StopReason::EndTurn)]);
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.foreground_activity(), ForegroundActivity::Idle);
+            assert!(matches!(
+                thread.entries(),
+                [AgentThreadEntry::UserMessage(_)]
+            ));
+        });
+    }
+
+    #[gpui::test]
+    async fn v2_resume_sdk_synchronizes_current_state_without_inventing_completions(
+        cx: &mut TestAppContext,
+    ) {
+        use acp_thread::{AcpThreadEvent, ForegroundActivity};
+        for replay_history in [false, true] {
+            for snapshot in [
+                json!({"state": "idle", "stopReason": "cancelled"}),
+                json!({"state": "running"}),
+                json!({"state": "requires_action"}),
+            ] {
+                let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+                let mut loading = harness.reopen(replay_history, cx);
+                let (_, responder) = bounded(harness.resume_requests.recv(), cx)
+                    .await
+                    .expect("resume");
+                let opening = harness
+                    .client
+                    .sessions
+                    .borrow()
+                    .get(&"saved".into())
+                    .expect("registered before replay")
+                    .thread
+                    .upgrade()
+                    .expect("owner");
+                let stops = Rc::new(RefCell::new(Vec::new()));
+                let _subscription = cx.update(|cx| {
+                    cx.subscribe(&opening, {
+                        let stops = stops.clone();
+                        move |_, event, _| {
+                            if let AcpThreadEvent::Stopped {
+                                activity_generation,
+                                ..
+                            } = event
+                            {
+                                stops.borrow_mut().push(*activity_generation);
+                            }
+                        }
+                    })
+                });
+                if replay_history {
+                    harness
+                        .agent
+                        .send_notification(acp::UpdateSessionNotification::new(
+                            "saved",
+                            acp::SessionUpdate::UserMessage(
+                                acp::UserMessage::new("history")
+                                    .content(vec!["retained history".into()]),
+                            ),
+                        ))
+                        .expect("history");
+                }
+                let snapshot: acp::StateUpdate = serde_json::from_value(snapshot).expect("state");
+                harness.resume_state(snapshot.clone());
+                cx.run_until_parked();
+                assert!((&mut loading).now_or_never().is_none());
+                opening.read_with(cx, |thread, _| {
+                    assert_eq!(thread.foreground_state(), &snapshot);
+                    assert!(thread.has_received_session_state());
+                    assert_eq!(thread.entries().len(), usize::from(replay_history));
+                });
+                assert!(
+                    stops.borrow().is_empty(),
+                    "resume snapshot is not a completion"
+                );
+                let latest = acp::StateUpdate::RequiresAction(
+                    acp::RequiresActionStateUpdate::new().meta(meta("latest")),
+                );
+                harness.resume_state(latest.clone());
+                responder
+                    .respond(acp::ResumeSessionResponse::new())
+                    .expect("resume response");
+                let thread = bounded(loading, cx).await.expect("synchronized owner");
+                assert_eq!(
+                    thread.read_with(cx, |thread, _| thread.foreground_state().clone()),
+                    latest
+                );
+                harness.resume_state(latest.clone());
+                cx.run_until_parked();
+                thread.read_with(cx, |thread, _| {
+                    assert_eq!(thread.foreground_state(), &latest);
+                    assert_eq!(
+                        thread.foreground_activity(),
+                        ForegroundActivity::RequiresAction
+                    );
+                    assert_eq!(thread.activity_generation(), 1);
+                });
+                assert!(stops.borrow().is_empty());
+                let idle = acp::StateUpdate::Idle(
+                    acp::IdleStateUpdate::new().stop_reason(acp::StopReason::EndTurn),
+                );
+                harness.resume_state(idle.clone());
+                harness.resume_state(idle);
+                cx.run_until_parked();
+                assert_eq!(*stops.borrow(), [1]);
+                assert_eq!(
+                    thread.read_with(cx, |thread, _| thread.foreground_activity()),
+                    ForegroundActivity::Idle
+                );
+                assert!(harness.closes.is_empty());
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn v2_resume_sdk_rejects_missing_state_snapshot_and_releases_reservation(
+        cx: &mut TestAppContext,
+    ) {
+        for (replay_history, late_snapshot) in
+            [(false, false), (true, false), (false, true), (true, true)]
+        {
+            let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+            let loading = harness.reopen(replay_history, cx);
+            let (_, responder) = bounded(harness.resume_requests.recv(), cx)
+                .await
+                .expect("resume");
+            let old_owner = harness
+                .client
+                .sessions
+                .borrow()
+                .get(&"saved".into())
+                .expect("owner")
+                .thread
+                .clone();
+            if replay_history {
+                harness
+                    .agent
+                    .send_notification(acp::UpdateSessionNotification::new(
+                        "saved",
+                        acp::SessionUpdate::UserMessage(
+                            acp::UserMessage::new("discarded")
+                                .content(vec!["partial history".into()]),
+                        ),
+                    ))
+                    .expect("replay without state");
+            }
+            responder
+                .respond(acp::ResumeSessionResponse::new())
+                .expect("missing snapshot response");
+            if late_snapshot {
+                harness.resume_state(acp::StateUpdate::Idle(acp::IdleStateUpdate::new()));
+            }
+            let error = bounded(loading, cx)
+                .await
+                .expect_err("default Idle is not synchronization");
+            assert!(
+                error
+                    .to_string()
+                    .contains("without reporting its current foreground state"),
+                "{error:#}"
+            );
+            cx.run_until_parked();
+            assert!(old_owner.upgrade().is_none());
+            assert!(harness.client.sessions.borrow().is_empty());
+            assert!(harness.client.session_owners.borrow().is_empty());
+            let retry = harness.reopen(replay_history, cx);
+            let (_, responder) = bounded(harness.resume_requests.recv(), cx)
+                .await
+                .expect("explicit retry");
+            harness.resume_state(acp::StateUpdate::Idle(acp::IdleStateUpdate::new()));
+            responder
+                .respond(acp::ResumeSessionResponse::new())
+                .expect("snapshot precedes response");
+            let thread = bounded(retry, cx).await.expect("fresh synchronized owner");
+            thread.read_with(cx, |thread, _| {
+                assert!(thread.has_received_session_state());
+                assert!(thread.entries().is_empty());
+            });
+            assert!(harness.closes.is_empty());
+        }
+    }
+
+    #[gpui::test]
     async fn v2_resume_sdk_applies_replay_before_reply_and_keeps_receipt_transport(
         cx: &mut TestAppContext,
     ) {
@@ -2892,9 +3184,6 @@ done
             acp::SessionUpdate::UserMessage(
                 acp::UserMessage::new("history").content(vec!["old question".into()]),
             ),
-            acp::SessionUpdate::StateUpdate(acp::StateUpdate::Running(
-                acp::RunningStateUpdate::new(),
-            )),
             acp::SessionUpdate::SessionInfoUpdate(
                 acp::SessionInfoUpdate::new().title("Agent title"),
             ),
@@ -2907,6 +3196,7 @@ done
                 .send_notification(acp::UpdateSessionNotification::new("saved", update))
                 .expect("replay notification");
         }
+        harness.resume_state(acp::StateUpdate::Running(acp::RunningStateUpdate::new()));
         cx.run_until_parked();
         assert!(
             (&mut loading).now_or_never().is_none(),
@@ -3017,6 +3307,7 @@ done
                     .await
                     .expect_err("cannot promise missing history");
             }
+            harness.resume_state(acp::StateUpdate::Idle(acp::IdleStateUpdate::new()));
             responder
                 .respond(acp::ResumeSessionResponse::new())
                 .expect("resumed");
@@ -3112,6 +3403,7 @@ done
                 ),
             ))
             .expect("late old replay");
+        harness.resume_state(acp::StateUpdate::Idle(acp::IdleStateUpdate::new()));
         responder
             .respond(acp::ResumeSessionResponse::new())
             .expect("old RPC settles");
@@ -3127,6 +3419,7 @@ done
                 ),
             ))
             .expect("replacement replay");
+        harness.resume_state(acp::StateUpdate::Idle(acp::IdleStateUpdate::new()));
         responder
             .respond(acp::ResumeSessionResponse::new())
             .expect("replacement response");
@@ -3201,6 +3494,7 @@ done
         let (_, responder) = bounded(harness.resume_requests.recv(), cx)
             .await
             .expect("explicit retry");
+        harness.resume_state(acp::StateUpdate::Idle(acp::IdleStateUpdate::new()));
         responder
             .respond(acp::ResumeSessionResponse::new())
             .expect("retry response");
