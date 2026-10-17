@@ -355,6 +355,8 @@ impl MultiWorkspace {
                 let multi_workspace_enabled = this.multi_workspace_enabled(cx);
                 if previous_multi_workspace_enabled && !multi_workspace_enabled {
                     this.collapse_to_single_workspace(window, cx);
+                } else if !previous_multi_workspace_enabled && multi_workspace_enabled {
+                    cx.notify();
                 }
                 previous_multi_workspace_enabled = multi_workspace_enabled;
             }
