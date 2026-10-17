@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+feature_tree=$(cargo tree --locked -p editor_benchmarks -e normal,build,dev,features)
+if [[ "$feature_tree" == *'feature "test-support"'* ]]; then
+  echo "Error: editor_benchmarks feature graph enables test-support." >&2
+  exit 1
+fi

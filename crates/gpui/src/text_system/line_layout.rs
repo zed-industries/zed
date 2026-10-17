@@ -29,6 +29,8 @@ pub struct LineLayout {
     pub runs: Vec<ShapedRun>,
     /// The length of the line in utf-8 bytes
     pub len: usize,
+    #[expect(missing_docs)]
+    pub caret_positions: Vec<(usize, f64)>,
 }
 
 /// A run of text that has been shaped .
@@ -62,58 +64,19 @@ impl LineLayout {
         if x >= self.width {
             None
         } else {
-            for run in self.runs.iter().rev() {
-                for glyph in run.glyphs.iter().rev() {
-                    if glyph.position.x <= x {
-                        return Some(glyph.index);
-                    }
-                }
-            }
-            Some(0)
+            self.index_for_x_with_origin(f64::from(x), 0.)
         }
     }
 
     /// closest_index_for_x returns the character boundary closest to the given x coordinate
     /// (e.g. to handle aligning up/down arrow keys)
     pub fn closest_index_for_x(&self, x: Pixels) -> usize {
-        let mut prev_index = 0;
-        let mut prev_x = px(0.);
-
-        for run in self.runs.iter() {
-            for glyph in run.glyphs.iter() {
-                if glyph.position.x >= x {
-                    if glyph.position.x - x < x - prev_x {
-                        return glyph.index;
-                    } else {
-                        return prev_index;
-                    }
-                }
-                prev_index = glyph.index;
-                prev_x = glyph.position.x;
-            }
-        }
-
-        if self.len == 1 {
-            if x > self.width / 2. {
-                return 1;
-            } else {
-                return 0;
-            }
-        }
-
-        self.len
+        self.closest_index_for_x_with_origin(f64::from(x), 0.)
     }
 
     /// The x position of the character at the given index
     pub fn x_for_index(&self, index: usize) -> Pixels {
-        for run in &self.runs {
-            for glyph in &run.glyphs {
-                if glyph.index >= index {
-                    return glyph.position.x;
-                }
-            }
-        }
-        self.width
+        Pixels::from(self.caret_x_for_index(index))
     }
 
     /// The corresponding Font at the given index
@@ -132,36 +95,40 @@ impl LineLayout {
     ///
     /// - `prefix` contains glyphs for bytes `[0, byte_index)` with original positions.
     ///   Its width equals the x-advance up to the split point.
-    /// - `suffix` contains glyphs for bytes `[byte_index, len)` with positions
-    ///   shifted left so the first glyph starts at x=0, and byte indices rebased to 0.
     /// - `font_size`, `ascent`, and `descent` are copied to both halves.
     pub fn split_at(&self, byte_index: usize) -> (LineLayout, LineLayout) {
-        let x_offset = self.x_for_index(byte_index);
+        let caret_offset = self.caret_x_for_index(byte_index);
+        let x_offset = Pixels::from(caret_offset);
 
         // Partition glyph runs. A single run may contribute glyphs to both halves.
         let mut left_runs = Vec::new();
         let mut right_runs = Vec::new();
 
         for run in &self.runs {
-            let split_pos = run.glyphs.partition_point(|g| g.index < byte_index);
-
-            if split_pos > 0 {
+            let mut left_glyphs = Vec::new();
+            let mut right_glyphs = Vec::new();
+            for glyph in &run.glyphs {
+                if glyph.index < byte_index {
+                    left_glyphs.push(glyph.clone());
+                } else {
+                    right_glyphs.push(ShapedGlyph {
+                        id: glyph.id,
+                        position: point(
+                            Pixels::from(f64::from(glyph.position.x) - caret_offset),
+                            glyph.position.y,
+                        ),
+                        index: glyph.index - byte_index,
+                        is_emoji: glyph.is_emoji,
+                    });
+                }
+            }
+            if !left_glyphs.is_empty() {
                 left_runs.push(ShapedRun {
                     font_id: run.font_id,
-                    glyphs: run.glyphs[..split_pos].to_vec(),
+                    glyphs: left_glyphs,
                 });
             }
-
-            if split_pos < run.glyphs.len() {
-                let right_glyphs = run.glyphs[split_pos..]
-                    .iter()
-                    .map(|g| ShapedGlyph {
-                        id: g.id,
-                        position: point(g.position.x - x_offset, g.position.y),
-                        index: g.index - byte_index,
-                        is_emoji: g.is_emoji,
-                    })
-                    .collect();
+            if !right_glyphs.is_empty() {
                 right_runs.push(ShapedRun {
                     font_id: run.font_id,
                     glyphs: right_glyphs,
@@ -176,18 +143,143 @@ impl LineLayout {
             descent: self.descent,
             runs: left_runs,
             len: byte_index,
+            caret_positions: self.slice_caret_positions(0..byte_index, 0.),
         };
 
         let right = LineLayout {
             font_size: self.font_size,
-            width: self.width - x_offset,
+            width: Pixels::from(self.caret_x_for_index(self.len) - caret_offset),
             ascent: self.ascent,
             descent: self.descent,
             runs: right_runs,
             len: self.len - byte_index,
+            caret_positions: self.slice_caret_positions(byte_index..self.len, caret_offset),
         };
 
         (left, right)
+    }
+
+    #[expect(missing_docs)]
+    pub fn caret_x_for_index(&self, index: usize) -> f64 {
+        if !self.caret_positions.is_empty() {
+            let position = self
+                .caret_positions
+                .partition_point(|(boundary, _)| *boundary < index);
+            return self
+                .caret_positions
+                .get(position)
+                .filter(|(boundary, _)| *boundary <= self.len)
+                .map_or_else(|| self.caret_width(), |(_, position)| *position);
+        }
+        self.caret_boundaries()
+            .find(|(boundary, _)| *boundary >= index)
+            .map_or(f64::from(self.width), |(_, position)| position)
+    }
+
+    #[expect(missing_docs)]
+    pub fn slice_caret_positions(&self, range: Range<usize>, origin: f64) -> Vec<(usize, f64)> {
+        if self.caret_positions.is_empty() || range.is_empty() {
+            return Vec::new();
+        }
+        let start = self
+            .caret_positions
+            .partition_point(|(index, _)| *index < range.start);
+        let end = self
+            .caret_positions
+            .partition_point(|(index, _)| *index < range.end);
+        let mut positions = Vec::new();
+        if self
+            .caret_positions
+            .get(start)
+            .is_none_or(|(index, _)| *index != range.start)
+        {
+            positions.push((0, 0.));
+        }
+        positions.extend(
+            self.caret_positions[start..end]
+                .iter()
+                .map(|(index, position)| (index - range.start, position - origin)),
+        );
+        positions.push((range.len(), self.caret_x_for_index(range.end) - origin));
+        positions
+    }
+
+    #[expect(missing_docs)]
+    pub fn cluster_start_for_index(&self, index: usize) -> (usize, f64) {
+        if self.caret_positions.is_empty() {
+            return (index, self.caret_x_for_index(index));
+        }
+        self.caret_positions
+            .partition_point(|(boundary, _)| *boundary <= index)
+            .checked_sub(1)
+            .and_then(|position| self.caret_positions.get(position))
+            .copied()
+            .unwrap_or((0, 0.))
+    }
+
+    fn index_for_x_with_origin(&self, x: f64, origin: f64) -> Option<usize> {
+        if x >= self.caret_width() - origin {
+            None
+        } else {
+            Some(
+                self.caret_boundaries()
+                    .filter(|(_, position)| *position - origin <= x)
+                    .last()
+                    .map_or(0, |(index, _)| index),
+            )
+        }
+    }
+
+    fn closest_index_for_x_with_origin(&self, x: f64, origin: f64) -> usize {
+        let mut previous_index = 0;
+        let mut previous_x = -origin;
+        for (index, position) in self.caret_boundaries() {
+            let position = position - origin;
+            if position >= x {
+                return if position - x < x - previous_x {
+                    index
+                } else {
+                    previous_index
+                };
+            }
+            previous_index = index;
+            previous_x = position;
+        }
+        self.len
+    }
+
+    fn caret_width(&self) -> f64 {
+        self.caret_positions
+            .last()
+            .filter(|(index, _)| *index == self.len)
+            .map_or(f64::from(self.width), |(_, position)| *position)
+    }
+
+    fn caret_boundaries(&self) -> impl Iterator<Item = (usize, f64)> {
+        let fallback_runs = if self.caret_positions.is_empty() {
+            self.runs.len()
+        } else {
+            0
+        };
+        let mut previous_index = None;
+        self.caret_positions
+            .iter()
+            .copied()
+            .chain(
+                self.runs
+                    .iter()
+                    .take(fallback_runs)
+                    .flat_map(|run| &run.glyphs)
+                    .map(|glyph| (glyph.index, f64::from(glyph.position.x))),
+            )
+            .filter(move |(index, _)| {
+                if *index >= self.len || previous_index == Some(*index) {
+                    return false;
+                }
+                previous_index = Some(*index);
+                true
+            })
+            .chain([(self.len, self.caret_width())])
     }
 
     fn compute_wrap_boundaries(
@@ -199,26 +291,35 @@ impl LineLayout {
         let mut boundaries = SmallVec::new();
         let mut first_non_whitespace_ix = None;
         let mut last_candidate_ix = None;
-        let mut last_candidate_x = px(0.);
+        let mut last_candidate_x = 0.;
         let mut last_boundary = WrapBoundary {
             run_ix: 0,
             glyph_ix: 0,
         };
-        let mut last_boundary_x = px(0.);
+        let mut last_boundary_x = 0.;
         let mut prev_ch = '\0';
+        let mut previous_cluster = None;
         let mut glyphs = self
             .runs
             .iter()
             .enumerate()
-            .flat_map(move |(run_ix, run)| {
-                run.glyphs.iter().enumerate().map(move |(glyph_ix, glyph)| {
-                    let character = text[glyph.index..].chars().next().unwrap();
-                    (
-                        WrapBoundary { run_ix, glyph_ix },
-                        character,
-                        glyph.position.x,
-                    )
-                })
+            .flat_map(|(run_ix, run)| {
+                run.glyphs
+                    .iter()
+                    .enumerate()
+                    .map(move |(glyph_ix, glyph)| (WrapBoundary { run_ix, glyph_ix }, glyph))
+            })
+            .filter_map(|(boundary, glyph)| {
+                let (index, position) = if self.caret_positions.is_empty() {
+                    (glyph.index, f64::from(glyph.position.x))
+                } else {
+                    self.cluster_start_for_index(glyph.index)
+                };
+                if previous_cluster == Some(index) || index >= text.len() {
+                    return None;
+                }
+                previous_cluster = Some(index);
+                Some((boundary, text.get(index..)?.chars().next()?, position))
             })
             .peekable();
 
@@ -245,10 +346,10 @@ impl LineLayout {
                 first_non_whitespace_ix = Some(boundary);
             }
 
-            let next_x = glyphs.peek().map_or(self.width, |(_, _, x)| *x);
+            let next_x = glyphs.peek().map_or(self.caret_width(), |(_, _, x)| *x);
             let width = next_x - last_boundary_x;
 
-            if width > wrap_width && boundary > last_boundary {
+            if width > f64::from(wrap_width) && boundary > last_boundary {
                 // When used line_clamp, we should limit the number of lines.
                 if let Some(max_lines) = max_lines
                     && boundaries.len() >= max_lines.saturating_sub(1)
@@ -368,7 +469,7 @@ impl WrappedLineLayout {
 
     fn _index_for_position(
         &self,
-        mut position: Point<Pixels>,
+        position: Point<Pixels>,
         line_height: Pixels,
         closest: bool,
     ) -> Result<usize, usize> {
@@ -382,11 +483,11 @@ impl WrappedLineLayout {
             };
             let run = &self.unwrapped_layout.runs[line_start_boundary.run_ix];
             let glyph = &run.glyphs[line_start_boundary.glyph_ix];
-            wrapped_line_start_index = glyph.index;
-            wrapped_line_start_x = glyph.position.x;
+            (wrapped_line_start_index, wrapped_line_start_x) =
+                self.unwrapped_layout.cluster_start_for_index(glyph.index);
         } else {
             wrapped_line_start_index = 0;
-            wrapped_line_start_x = Pixels::ZERO;
+            wrapped_line_start_x = 0.;
         };
 
         let wrapped_line_end_index;
@@ -396,29 +497,28 @@ impl WrappedLineLayout {
             let next_wrap_boundary = self.wrap_boundaries[next_wrap_boundary_ix];
             let run = &self.unwrapped_layout.runs[next_wrap_boundary.run_ix];
             let glyph = &run.glyphs[next_wrap_boundary.glyph_ix];
-            wrapped_line_end_index = glyph.index;
-            wrapped_line_end_x = glyph.position.x;
+            (wrapped_line_end_index, wrapped_line_end_x) =
+                self.unwrapped_layout.cluster_start_for_index(glyph.index);
         } else {
             wrapped_line_end_index = self.unwrapped_layout.len;
-            wrapped_line_end_x = self.unwrapped_layout.width;
+            wrapped_line_end_x = self.unwrapped_layout.caret_width();
         };
 
-        let mut position_in_unwrapped_line = position;
-        position_in_unwrapped_line.x += wrapped_line_start_x;
-        if position_in_unwrapped_line.x < wrapped_line_start_x {
+        let x = f64::from(position.x);
+        if x < 0. {
             Err(wrapped_line_start_index)
-        } else if position_in_unwrapped_line.x >= wrapped_line_end_x {
+        } else if x >= wrapped_line_end_x - wrapped_line_start_x {
             Err(wrapped_line_end_index)
         } else {
             if closest {
                 Ok(self
                     .unwrapped_layout
-                    .closest_index_for_x(position_in_unwrapped_line.x))
+                    .closest_index_for_x_with_origin(x, wrapped_line_start_x))
             } else {
                 // The shaper can place a trailing zero-width wrap boundary glyph slightly past
                 // the line's width, so the row can extend past where `index_for_x` has glyphs.
                 self.unwrapped_layout
-                    .index_for_x(position_in_unwrapped_line.x)
+                    .index_for_x_with_origin(x, wrapped_line_start_x)
                     .ok_or(wrapped_line_end_index)
             }
         }
@@ -433,7 +533,7 @@ impl WrappedLineLayout {
             .map(|wrap_boundary| {
                 let run = &self.unwrapped_layout.runs[wrap_boundary.run_ix];
                 let glyph = &run.glyphs[wrap_boundary.glyph_ix];
-                glyph.index
+                self.unwrapped_layout.cluster_start_for_index(glyph.index).0
             })
             .chain([self.len()])
             .enumerate();
@@ -445,9 +545,9 @@ impl WrappedLineLayout {
                 line_start_ix = line_end_ix;
                 continue;
             } else {
-                let line_start_x = self.unwrapped_layout.x_for_index(line_start_ix);
-                let x = self.unwrapped_layout.x_for_index(index) - line_start_x;
-                return Some(point(x, line_y));
+                let line_start_x = self.unwrapped_layout.caret_x_for_index(line_start_ix);
+                let x = self.unwrapped_layout.caret_x_for_index(index) - line_start_x;
+                return Some(point(Pixels::from(x), line_y));
             }
         }
 
@@ -891,12 +991,8 @@ impl LineLayoutCache {
     }
 }
 
-// Combining marks (e.g. Thai vowel signs, Arabic diacritics) are shaped by
-// HarfBuzz at the same x position as their base character. The force-width
-// loop must not advance the cell counter for these zero-advance glyphs,
-// otherwise they get displaced into the next cell. We detect them by checking
-// whether shaped x has advanced by at least half a cell beyond the last base.
 fn apply_force_width_to_layout(layout: &mut LineLayout, force_width: Pixels) {
+    layout.caret_positions.clear();
     let mut glyph_pos: usize = 0;
     // NEG_INFINITY ensures the first glyph is always classified as a base.
     let mut last_base_shaped_x = px(f32::NEG_INFINITY);
@@ -1094,6 +1190,7 @@ mod tests {
                 glyphs,
             }],
             len: 0,
+            caret_positions: Vec::new(),
         }
     }
 
@@ -1103,6 +1200,239 @@ mod tests {
             .iter()
             .map(|g| f32::from(g.position.x))
             .collect()
+    }
+
+    #[test]
+    fn test_caret_boundaries_ignore_glyph_offsets() {
+        for mark_index in [1, 2] {
+            for offset in [-32., 0., 32.] {
+                let layout = LineLayout {
+                    font_size: px(16.),
+                    width: px(30.),
+                    ascent: px(12.),
+                    descent: px(4.),
+                    runs: vec![
+                        ShapedRun {
+                            font_id: FontId(3),
+                            glyphs: vec![glyph_at(offset, 0), glyph_at(5. + offset, 1)],
+                        },
+                        ShapedRun {
+                            font_id: FontId(8),
+                            glyphs: vec![
+                                glyph_at(9. + offset, mark_index),
+                                glyph_at(14. + offset, 4),
+                                glyph_at(17. + offset, 5),
+                            ],
+                        },
+                    ],
+                    len: " X\u{0301} fi".len(),
+                    caret_positions: vec![(0, 0.), (1, 4.), (4, 14.), (5, 18.)],
+                };
+                for (x, hit, closest) in [
+                    (-1., Some(0), 0),
+                    (0., Some(0), 0),
+                    (3., Some(0), 1),
+                    (4., Some(1), 1),
+                    (9., Some(1), 1),
+                    (10., Some(1), 4),
+                    (14., Some(4), 4),
+                    (16., Some(4), 4),
+                    (17., Some(4), 5),
+                    (18., Some(5), 5),
+                    (24., Some(5), 5),
+                    (25., Some(5), 7),
+                    (30., None, 7),
+                ] {
+                    assert_eq!(layout.index_for_x(px(x)), hit);
+                    assert_eq!(layout.closest_index_for_x(px(x)), closest);
+                }
+                for (index, x) in [
+                    (0, 0.),
+                    (1, 4.),
+                    (2, 14.),
+                    (4, 14.),
+                    (5, 18.),
+                    (6, 30.),
+                    (7, 30.),
+                ] {
+                    assert_eq!(layout.x_for_index(index), px(x));
+                }
+                let (left, right) = layout.split_at(4);
+                assert_eq!((left.len, right.len), (4, 3));
+                assert_eq!((left.width, right.width), (px(14.), px(16.)));
+                assert_eq!(left.caret_positions, [(0, 0.), (1, 4.), (4, 14.)]);
+                assert_eq!(right.caret_positions, [(0, 0.), (1, 4.), (3, 16.)]);
+                for part in [&left, &right] {
+                    assert_eq!(
+                        (part.font_size, part.ascent, part.descent),
+                        (px(16.), px(12.), px(4.))
+                    );
+                }
+                assert_eq!(right.runs[0].font_id, FontId(8));
+                assert_eq!(right.runs[0].glyphs[0].position.x, px(offset));
+                assert_eq!(right.runs[0].glyphs[1].position.x, px(3. + offset));
+                assert_eq!(right.closest_index_for_x(px(11.)), 3);
+                let (_, mark_and_suffix) = layout.split_at(2);
+                let (mark, _) = mark_and_suffix.split_at(2);
+                assert_eq!(mark.caret_positions, [(0, 0.), (2, 0.)]);
+                assert_eq!(mark.width, px(0.));
+                assert_eq!(mark.x_for_index(0), px(0.));
+                let boundaries = layout.compute_wrap_boundaries(" X\u{0301} fi", px(18.), None);
+                assert_eq!(
+                    boundaries.as_slice(),
+                    &[WrapBoundary {
+                        run_ix: 1,
+                        glyph_ix: 2
+                    }]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_reordered_ltr_clusters_wrap_and_split_by_source_index() {
+        let mut layout = make_layout(vec![
+            glyph_at(0., 3),
+            glyph_at(4., 0),
+            glyph_at(16., 9),
+            glyph_at(20., 6),
+            glyph_at(32., 12),
+        ]);
+        layout.len = "किकिa".len();
+        layout.width = px(40.);
+        layout.caret_positions = vec![(0, 0.), (6, 16.), (12, 32.), (13, 40.)];
+        let boundaries = layout.compute_wrap_boundaries("किकिa", px(18.), None);
+        assert_eq!(
+            boundaries.as_slice(),
+            [
+                WrapBoundary {
+                    run_ix: 0,
+                    glyph_ix: 2
+                },
+                WrapBoundary {
+                    run_ix: 0,
+                    glyph_ix: 4
+                },
+            ],
+        );
+        assert_eq!(
+            layout
+                .compute_wrap_boundaries("किकिa", px(18.), Some(2))
+                .as_slice(),
+            &boundaries[..1],
+        );
+        let (left, right) = layout.split_at(3);
+        assert_eq!(
+            left.runs[0]
+                .glyphs
+                .iter()
+                .map(|glyph| (glyph.index, glyph.position.x))
+                .collect::<Vec<_>>(),
+            [(0, px(4.))],
+        );
+        assert_eq!(
+            right.runs[0]
+                .glyphs
+                .iter()
+                .map(|glyph| (glyph.index, glyph.position.x))
+                .collect::<Vec<_>>(),
+            [(0, px(-16.)), (6, px(0.)), (3, px(4.)), (9, px(16.))],
+        );
+        assert_eq!((left.len, right.len), (3, 10));
+        let wrapped = WrappedLineLayout {
+            unwrapped_layout: Arc::new(layout),
+            wrap_boundaries: boundaries,
+            wrap_width: Some(px(18.)),
+        };
+        assert_eq!(
+            wrapped.index_for_position(point(px(0.), px(20.)), px(20.)),
+            Ok(6)
+        );
+        assert_eq!(
+            wrapped.closest_index_for_position(point(px(9.), px(20.)), px(20.)),
+            Ok(12)
+        );
+        assert_eq!(
+            wrapped.position_for_index(13, px(20.)),
+            Some(point(px(8.), px(40.)))
+        );
+    }
+
+    #[test]
+    fn test_wrapped_carets_preserve_relative_precision() {
+        let mut layout = make_layout(vec![
+            glyph_at(0., 0),
+            glyph_at(16_777_216., 1),
+            glyph_at(16_777_216., 2),
+        ]);
+        layout.len = 3;
+        layout.width = px(16_777_216.);
+        layout.caret_positions = vec![
+            (0, 0.),
+            (1, 16_777_216.5),
+            (2, 16_777_216.75),
+            (3, 16_777_217.),
+        ];
+        let boundaries = layout.compute_wrap_boundaries("abc", px(1.), None);
+        assert_eq!(
+            boundaries.as_slice(),
+            [WrapBoundary {
+                run_ix: 0,
+                glyph_ix: 1
+            }]
+        );
+        let wrapped = WrappedLineLayout {
+            unwrapped_layout: Arc::new(layout),
+            wrap_boundaries: boundaries,
+            wrap_width: Some(px(1.)),
+        };
+        assert_eq!(
+            wrapped.position_for_index(2, px(20.)),
+            Some(point(px(0.25), px(20.)))
+        );
+        assert_eq!(
+            wrapped.position_for_index(3, px(20.)),
+            Some(point(px(0.5), px(20.)))
+        );
+        for (x, floor, closest) in [
+            (0., Ok(1), Ok(1)),
+            (0.125, Ok(1), Ok(1)),
+            (0.2, Ok(1), Ok(2)),
+            (0.375, Ok(2), Ok(2)),
+            (0.4, Ok(2), Ok(3)),
+            (0.5, Err(3), Err(3)),
+        ] {
+            let position = point(px(x), px(20.));
+            assert_eq!(wrapped.index_for_position(position, px(20.)), floor);
+            assert_eq!(
+                wrapped.closest_index_for_position(position, px(20.)),
+                closest
+            );
+        }
+    }
+
+    #[test]
+    fn test_force_width_ignores_native_carets() {
+        for caret_positions in [Vec::new(), vec![(0, 0.), (6, 20.), (7, 30.), (8, 40.)]] {
+            let mut layout = make_layout(vec![
+                glyph_at(0., 0),
+                glyph_at(10., 3),
+                glyph_at(10., 3),
+                glyph_at(20., 6),
+                glyph_at(30., 7),
+            ]);
+            layout.len = "กำab".len();
+            layout.width = px(40.);
+            layout.caret_positions = caret_positions;
+
+            apply_force_width_to_layout(&mut layout, px(8.));
+
+            assert_eq!(glyph_x_positions(&layout), [0., 8., 8., 16., 24.]);
+            assert!(layout.caret_positions.is_empty());
+            assert_eq!(layout.x_for_index(3), px(8.));
+            assert_eq!(layout.x_for_index(6), px(16.));
+            assert_eq!(layout.width, px(40.));
+        }
     }
 
     #[test]

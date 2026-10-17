@@ -40,9 +40,9 @@ use crate::{
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Edges, ExternalDragPayload, Font,
     FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap,
     LineLayout, MissingGlyphSink, Pixels, PlatformGestures, PlatformInput, Point, Priority,
-    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene, ShapedGlyph,
-    ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, Window, WindowControlArea,
-    hash, point, px, size,
+    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, RetainedLineLayout, Scene,
+    ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, Window,
+    WindowControlArea, hash, point, px, size,
 };
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use anyhow::bail;
@@ -1511,6 +1511,12 @@ pub trait PlatformTextSystem: Send + Sync {
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId>;
     /// Get raster bounds for a glyph.
     fn glyph_raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>>;
+    fn glyph_raster_bounds_with_image(
+        &self,
+        params: &RenderGlyphParams,
+    ) -> Result<(Bounds<DevicePixels>, Option<Vec<u8>>)> {
+        Ok((self.glyph_raster_bounds(params)?, None))
+    }
     /// Rasterize a glyph.
     fn rasterize_glyph(
         &self,
@@ -1519,6 +1525,32 @@ pub trait PlatformTextSystem: Send + Sync {
     ) -> Result<(Size<DevicePixels>, Vec<u8>)>;
     /// Layout a line of text with the given font runs.
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout;
+    fn layout_line_for_retention(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        runs: &[FontRun],
+    ) -> RetainedLineLayout {
+        let (layout, positions, width) =
+            self.layout_line_with_precise_positions(text, font_size, runs);
+        RetainedLineLayout::Dense(layout, positions, width)
+    }
+    fn layout_line_with_precise_positions(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        runs: &[FontRun],
+    ) -> (LineLayout, Vec<f64>, f64) {
+        let layout = self.layout_line(text, font_size, runs);
+        let glyph_x_positions = layout
+            .runs
+            .iter()
+            .flat_map(|run| &run.glyphs)
+            .map(|glyph| f64::from(glyph.position.x))
+            .collect::<Vec<_>>();
+        let width = layout.caret_x_for_index(layout.len);
+        (layout, glyph_x_positions, width)
+    }
     /// Returns the recommended text rendering mode for the given font and size.
     fn recommended_rendering_mode(&self, _font_id: FontId, _font_size: Pixels)
     -> TextRenderingMode;
@@ -1536,6 +1568,96 @@ impl NoopTextSystem {
     #[allow(dead_code)]
     pub fn new() -> Self {
         Self
+    }
+
+    fn layout_line_inner(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        mut glyph_x_positions: Option<&mut Vec<f64>>,
+    ) -> (LineLayout, f64) {
+        let mut position = px(0.);
+        let mut precise_position = 0.0;
+        let metrics = self.font_metrics(FontId(0));
+        let em_width = font_size
+            * self
+                .advance(FontId(0), self.glyph_for_char(FontId(0), 'm').unwrap())
+                .unwrap()
+                .width
+            / metrics.units_per_em as f32;
+        let mut glyphs = Vec::new();
+        let mut caret_positions = Vec::new();
+        for (ix, c) in text.char_indices() {
+            if let Some(glyph) = self.glyph_for_char(FontId(0), c) {
+                let glyph_position = if let Some(positions) = glyph_x_positions.as_mut() {
+                    positions.push(precise_position);
+                    Pixels::from(precise_position)
+                } else {
+                    position
+                };
+                caret_positions.push((
+                    ix,
+                    if glyph_x_positions.is_some() {
+                        precise_position
+                    } else {
+                        f64::from(position)
+                    },
+                ));
+                glyphs.push(ShapedGlyph {
+                    id: glyph,
+                    position: point(glyph_position, px(0.)),
+                    index: ix,
+                    is_emoji: glyph.0 == 2,
+                });
+                let advance = if glyph.0 == 2 {
+                    em_width * 2.0
+                } else {
+                    em_width
+                };
+                position += advance;
+                precise_position += f64::from(advance);
+            } else {
+                position += em_width;
+                precise_position += f64::from(em_width);
+            }
+        }
+        let mut runs = Vec::new();
+        if !glyphs.is_empty() {
+            runs.push(ShapedRun {
+                font_id: FontId(0),
+                glyphs,
+            });
+        } else {
+            position = px(0.);
+            precise_position = 0.0;
+        }
+        if !text.is_empty() {
+            caret_positions.push((
+                text.len(),
+                if glyph_x_positions.is_some() {
+                    precise_position
+                } else {
+                    f64::from(position)
+                },
+            ));
+        }
+
+        (
+            LineLayout {
+                font_size,
+                width: if glyph_x_positions.is_some() {
+                    Pixels::from(precise_position)
+                } else {
+                    position
+                },
+                ascent: font_size * (metrics.ascent / metrics.units_per_em as f32),
+                descent: font_size * (metrics.descent / metrics.units_per_em as f32),
+                runs,
+                len: text.len(),
+                caret_positions,
+            },
+            precise_position,
+        )
     }
 }
 
@@ -1603,50 +1725,18 @@ impl PlatformTextSystem for NoopTextSystem {
     }
 
     fn layout_line(&self, text: &str, font_size: Pixels, _runs: &[FontRun]) -> LineLayout {
-        let mut position = px(0.);
-        let metrics = self.font_metrics(FontId(0));
-        let em_width = font_size
-            * self
-                .advance(FontId(0), self.glyph_for_char(FontId(0), 'm').unwrap())
-                .unwrap()
-                .width
-            / metrics.units_per_em as f32;
-        let mut glyphs = Vec::new();
-        for (ix, c) in text.char_indices() {
-            if let Some(glyph) = self.glyph_for_char(FontId(0), c) {
-                glyphs.push(ShapedGlyph {
-                    id: glyph,
-                    position: point(position, px(0.)),
-                    index: ix,
-                    is_emoji: glyph.0 == 2,
-                });
-                if glyph.0 == 2 {
-                    position += em_width * 2.0;
-                } else {
-                    position += em_width;
-                }
-            } else {
-                position += em_width
-            }
-        }
-        let mut runs = Vec::default();
-        if !glyphs.is_empty() {
-            runs.push(ShapedRun {
-                font_id: FontId(0),
-                glyphs,
-            });
-        } else {
-            position = px(0.);
-        }
+        self.layout_line_inner(text, font_size, None).0
+    }
 
-        LineLayout {
-            font_size,
-            width: position,
-            ascent: font_size * (metrics.ascent / metrics.units_per_em as f32),
-            descent: font_size * (metrics.descent / metrics.units_per_em as f32),
-            runs,
-            len: text.len(),
-        }
+    fn layout_line_with_precise_positions(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        _runs: &[FontRun],
+    ) -> (LineLayout, Vec<f64>, f64) {
+        let mut glyph_x_positions = Vec::new();
+        let (layout, width) = self.layout_line_inner(text, font_size, Some(&mut glyph_x_positions));
+        (layout, glyph_x_positions, width)
     }
 
     fn recommended_rendering_mode(

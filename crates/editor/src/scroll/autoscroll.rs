@@ -452,9 +452,6 @@ impl Editor {
 
                     target_left = target_left.min(candidate_left);
                     target_right = target_right.max(candidate_right);
-                    if target_right.min(scroll_width) - target_left > viewport_width {
-                        return None;
-                    }
                 }
             }
         } else {

@@ -1663,6 +1663,7 @@
   //
   // 1. Do not soft-wrap.
   //      "soft_wrap": "none",
+  //      "soft_wrap": "prefer_line", // (deprecated, same as "none")
   // 2. Soft wrap lines that overflow the editor.
   //      "soft_wrap": "editor_width",
   // 3. Soft wrap lines at the preferred line length or the editor width (whichever is smaller).

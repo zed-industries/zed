@@ -1,5 +1,4 @@
 use super::*;
-use std::cmp::Reverse;
 
 pub trait DiagnosticRenderer {
     fn render_group(
@@ -242,6 +241,15 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_input(
+            move |editor, window, cx| {
+                editor.go_to_diagnostic_at_cursor(direction, severity, window, cx)
+            },
+            window,
+            cx,
+        ) {
+            return;
+        }
         let buffer = self.buffer.read(cx).snapshot(cx);
         let selection = self
             .selections
@@ -318,6 +326,21 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.input_is_deferred(cx) {
+            let selection = selection.clone().map(|offset| buffer.anchor_before(offset));
+            self.defer_input(
+                move |editor, window, cx| {
+                    let snapshot = editor.buffer.read(cx).snapshot(cx);
+                    let selection = selection.map(|anchor| anchor.to_offset(&snapshot));
+                    editor.go_to_diagnostic_in_direction(
+                        &snapshot, &selection, direction, severity, window, cx,
+                    );
+                },
+                window,
+                cx,
+            );
+            return;
+        }
         let mut active_group_id = None;
         if let ActiveDiagnostic::Group(active_group) = &self.active_diagnostics
             && active_group.active_range.start.to_offset(&buffer) == selection.start
@@ -778,7 +801,6 @@ fn precedes(entries: &[(Anchor, InlineDiagnostic)], left: usize, right: usize) -
         let diagnostic = &entries[index].1;
         (
             diagnostic.severity,
-            Reverse(diagnostic.is_primary),
             diagnostic.start.row,
             diagnostic.start.column,
             index,
@@ -870,6 +892,80 @@ mod tests {
                 1,
                 "inline diagnostics should appear after the language server publishes them"
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_captured_input_direct_diagnostic_navigation(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.set_state("aˇb\ncd\ntarget\ntail");
+        let lsp_store = cx.update_editor(|editor, _, cx| {
+            editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
+            editor.project().expect("project").read(cx).lsp_store()
+        });
+        cx.update(|_, cx| {
+            lsp_store.update(cx, |store, cx| {
+                store
+                    .update_diagnostics(
+                        LanguageServerId(0),
+                        lsp::PublishDiagnosticsParams {
+                            uri: lsp::Uri::from_file_path(path!("/root/file")).expect("file URI"),
+                            version: None,
+                            diagnostics: vec![lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(2, 0),
+                                    lsp::Position::new(2, 6),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                message: lsp::DiagnosticMessage::from("target"),
+                                ..lsp::Diagnostic::default()
+                            }],
+                        },
+                        None,
+                        DiagnosticSourceKind::Pushed,
+                        &[],
+                        cx,
+                    )
+                    .expect("publish diagnostic");
+            });
+        });
+        cx.run_until_parked();
+        let completion = cx.update_editor(|editor, window, cx| {
+            editor.buffer().update(cx, |buffer, cx| {
+                buffer.edit(
+                    [(Point::new(1, 0)..Point::new(1, 2), "x".repeat(2_000))],
+                    None,
+                    cx,
+                );
+            });
+            editor.move_down(&crate::MoveDown, window, cx);
+            assert!(editor.input_is_deferred(cx));
+            editor.go_to_diagnostic_at_cursor(
+                crate::Direction::Next,
+                crate::GoToDiagnosticSeverityFilter::default(),
+                window,
+                cx,
+            );
+            assert_eq!(
+                editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx))
+                    .head(),
+                Point::new(0, 1)
+            );
+            editor.input_completion(cx)
+        });
+        completion.await.expect("diagnostic input completed");
+        cx.editor(|editor, _, cx| {
+            assert_eq!(
+                editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx))
+                    .head(),
+                Point::new(2, 0)
+            );
+            assert_eq!(editor.active_diagnostic_message(), Some("target"));
         });
     }
 

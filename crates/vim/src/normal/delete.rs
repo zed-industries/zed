@@ -22,77 +22,91 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.stop_recording(cx);
-        self.update_editor(cx, |vim, editor, cx| {
-            let text_layout_details = editor.text_layout_details(window, cx);
-            editor.transact(window, cx, |editor, window, cx| {
-                editor.set_clip_at_line_ends(false, cx);
-                let mut original_columns: HashMap<_, _> = Default::default();
-                let mut motion_kind = None;
-                let mut ranges_to_copy = Vec::new();
-                editor.change_selections(Default::default(), window, cx, |s| {
-                    s.move_with(&mut |map, selection| {
-                        let original_head = selection.head();
-                        original_columns.insert(selection.id, original_head.column());
-                        let kind = motion.expand_selection(
-                            map,
-                            selection,
-                            times,
-                            &text_layout_details,
-                            forced_motion,
-                        );
-                        ranges_to_copy
-                            .push(selection.start.to_point(map)..selection.end.to_point(map));
+        self.with_geometry(
+            move |vim, window, cx| {
+                vim.plan_delete_motion(motion.clone(), times, forced_motion, window, cx)
+            },
+            window,
+            cx,
+        );
+    }
 
-                        // When deleting line-wise, we always want to delete a newline.
-                        // If there is one after the current line, it goes; otherwise we
-                        // pick the one before.
-                        if kind == Some(MotionKind::Linewise) {
-                            let start = selection.start.to_point(map);
-                            let end = selection.end.to_point(map);
-                            if end.row < map.buffer_snapshot().max_point().row {
-                                selection.end = Point::new(end.row + 1, 0).to_display_point(map)
-                            } else if start.row > 0 {
-                                selection.start = Point::new(
-                                    start.row - 1,
-                                    map.buffer_snapshot()
-                                        .line_len(MultiBufferRow(start.row - 1)),
-                                )
-                                .to_display_point(map)
+    pub(crate) fn plan_delete_motion(
+        &mut self,
+        motion: Motion,
+        times: Option<usize>,
+        forced_motion: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<crate::GeometryCommit, editor::display_map::PendingRowGeometry> {
+        let planned =
+            self.expanded_motion(&motion, times, forced_motion, Some(false), window, cx)?;
+        Ok(Box::new(move |vim, window, cx| {
+            vim.stop_recording(cx);
+            vim.update_editor(cx, |vim, editor, cx| {
+                editor.transact(window, cx, |editor, window, cx| {
+                    editor.set_clip_at_line_ends(false, cx);
+                    let mut original_columns: HashMap<_, _> = Default::default();
+                    let mut motion_kind = None;
+                    let mut ranges_to_copy = Vec::new();
+                    editor.change_selections(Default::default(), window, cx, |s| {
+                        s.move_with(&mut |map, selection| {
+                            let original_head = selection.head();
+                            original_columns.insert(selection.id, original_head.column());
+                            let kind = planned.apply(selection);
+                            ranges_to_copy
+                                .push(selection.start.to_point(map)..selection.end.to_point(map));
+
+                            // When deleting line-wise, we always want to delete a newline.
+                            // If there is one after the current line, it goes; otherwise we
+                            // pick the one before.
+                            if kind == Some(MotionKind::Linewise) {
+                                let start = selection.start.to_point(map);
+                                let end = selection.end.to_point(map);
+                                if end.row < map.buffer_snapshot().max_point().row {
+                                    selection.end = Point::new(end.row + 1, 0).to_display_point(map)
+                                } else if start.row > 0 {
+                                    selection.start = Point::new(
+                                        start.row - 1,
+                                        map.buffer_snapshot()
+                                            .line_len(MultiBufferRow(start.row - 1)),
+                                    )
+                                    .to_display_point(map)
+                                }
                             }
-                        }
-                        if let Some(kind) = kind {
-                            motion_kind.get_or_insert(kind);
-                        }
+                            if let Some(kind) = kind {
+                                motion_kind.get_or_insert(kind);
+                            }
+                        });
                     });
-                });
-                let Some(kind) = motion_kind else { return };
-                vim.copy_ranges(editor, kind, false, ranges_to_copy, window, cx);
-                editor.delete_selections_with_linked_edits(window, cx);
+                    let Some(kind) = motion_kind else { return };
+                    vim.copy_ranges(editor, kind, false, ranges_to_copy, window, cx);
+                    editor.delete_selections_with_linked_edits(window, cx);
 
-                // Fixup cursor position after the deletion
-                editor.set_clip_at_line_ends(true, cx);
-                editor.change_selections(Default::default(), window, cx, |s| {
-                    s.move_with(&mut |map, selection| {
-                        let mut cursor = selection.head();
-                        if kind.linewise()
-                            && let Some(column) = original_columns.get(&selection.id)
-                        {
-                            *cursor.column_mut() = *column
-                        }
-                        cursor = map.clip_point(cursor, Bias::Left);
-                        selection.collapse_to(cursor, selection.goal)
+                    // Fixup cursor position after the deletion
+                    editor.set_clip_at_line_ends(true, cx);
+                    editor.change_selections(Default::default(), window, cx, |s| {
+                        s.move_with(&mut |map, selection| {
+                            let mut cursor = selection.head();
+                            if kind.linewise()
+                                && let Some(column) = original_columns.get(&selection.id)
+                            {
+                                *cursor.column_mut() = *column
+                            }
+                            cursor = map.clip_point(cursor, Bias::Left);
+                            selection.collapse_to(cursor, selection.goal)
+                        });
                     });
+                    editor.refresh_edit_prediction(
+                        true,
+                        false,
+                        EditPredictionRequestTrigger::BufferEdit,
+                        window,
+                        cx,
+                    );
                 });
-                editor.refresh_edit_prediction(
-                    true,
-                    false,
-                    EditPredictionRequestTrigger::BufferEdit,
-                    window,
-                    cx,
-                );
             });
-        });
+        }))
     }
 
     pub fn delete_object(

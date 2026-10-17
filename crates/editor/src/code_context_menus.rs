@@ -256,7 +256,7 @@ pub struct CompletionsMenu {
     match_candidates: Arc<[(Option<text::Anchor>, Vec<StringMatchCandidate>)]>,
     label_match_state: LabelMatchState,
     /// Entries displayed in the menu, which is a filtered and sorted subset of `match_candidates`.
-    pub entries: Rc<RefCell<Box<[CompletionMenuEntry]>>>,
+    pub entries: Rc<[CompletionMenuEntry]>,
     pub selected_item: usize,
     filter_task: Task<()>,
     cancel_filter: Arc<AtomicBool>,
@@ -387,7 +387,7 @@ impl CompletionsMenu {
             completions: RefCell::new(completions).into(),
             match_candidates,
             label_match_state,
-            entries: Rc::new(RefCell::new(Box::new([]))),
+            entries: Rc::default(),
             selected_item: 0,
             filter_task: Task::ready(()),
             cancel_filter: Arc::new(AtomicBool::new(false)),
@@ -455,7 +455,7 @@ impl CompletionsMenu {
                     string: completion.clone(),
                 })
             })
-            .collect();
+            .collect::<Rc<[_]>>();
         Self {
             id,
             source: CompletionsMenuSource::SnippetChoices,
@@ -467,7 +467,7 @@ impl CompletionsMenu {
             completions: RefCell::new(completions).into(),
             match_candidates,
             label_match_state,
-            entries: RefCell::new(entries).into(),
+            entries,
             selected_item: 0,
             filter_task: Task::ready(()),
             cancel_filter: Arc::new(AtomicBool::new(false)),
@@ -490,7 +490,7 @@ impl CompletionsMenu {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        let entries = self.entries.borrow();
+        let entries = self.entries.as_ref();
         if entries.is_empty() {
             return;
         }
@@ -499,7 +499,6 @@ impl CompletionsMenu {
         } else {
             0
         };
-        drop(entries);
         let index = self.find_selectable_entry(start, !self.scroll_handle.y_flipped());
         if let Some(index) = index {
             self.update_selection_index(index, provider, window, cx);
@@ -512,7 +511,7 @@ impl CompletionsMenu {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        let entries = self.entries.borrow();
+        let entries = self.entries.as_ref();
         if entries.is_empty() {
             return;
         }
@@ -521,7 +520,6 @@ impl CompletionsMenu {
         } else {
             entries.len() - 1
         };
-        drop(entries);
         let index = self.find_selectable_entry(start, self.scroll_handle.y_flipped());
         if let Some(index) = index {
             self.update_selection_index(index, provider, window, cx);
@@ -570,7 +568,7 @@ impl CompletionsMenu {
     }
 
     fn prev_match_index(&self) -> usize {
-        let entries = self.entries.borrow();
+        let entries = self.entries.as_ref();
         let len = entries.len();
         if len == 0 {
             return 0;
@@ -593,7 +591,7 @@ impl CompletionsMenu {
     }
 
     fn next_match_index(&self) -> usize {
-        let entries = self.entries.borrow();
+        let entries = self.entries.as_ref();
         let len = entries.len();
         if len == 0 {
             return 0;
@@ -616,7 +614,7 @@ impl CompletionsMenu {
     }
 
     fn find_selectable_entry(&self, start: usize, forward: bool) -> Option<usize> {
-        let entries = self.entries.borrow();
+        let entries = self.entries.as_ref();
         let len = entries.len();
         if len == 0 {
             return None;
@@ -646,7 +644,7 @@ impl CompletionsMenu {
         self.scroll_handle
             .scroll_to_item(self.selected_item, ScrollStrategy::Nearest);
         if let Some(provider) = provider {
-            let entries = self.entries.borrow();
+            let entries = self.entries.as_ref();
             let entry = if self.selected_item < entries.len() {
                 entries[self.selected_item].as_match()
             } else {
@@ -671,7 +669,7 @@ impl CompletionsMenu {
             return;
         };
 
-        let entries = self.entries.borrow();
+        let entries = self.entries.as_ref();
         if entries.is_empty() {
             return;
         }
@@ -727,14 +725,12 @@ impl CompletionsMenu {
             .as_match()
             .map(|m| m.candidate_id)
         else {
-            drop(entries);
             drop(completions);
             return;
         };
         let candidate_ids = iter::once(selected_candidate_id)
             .chain(candidate_ids.filter(|id| *id != selected_candidate_id))
             .collect::<Vec<usize>>();
-        drop(entries);
 
         if candidate_ids.is_empty() {
             return;
@@ -776,7 +772,7 @@ impl CompletionsMenu {
             self.selected_item,
             MARKDOWN_CACHE_BEFORE_ITEMS,
             MARKDOWN_CACHE_AFTER_ITEMS,
-            self.entries.borrow().len(),
+            self.entries.as_ref().len(),
         );
 
         for index in entry_indices {
@@ -789,7 +785,7 @@ impl CompletionsMenu {
         index: usize,
         cx: &mut Context<Editor>,
     ) -> Option<Entity<Markdown>> {
-        let entries = self.entries.borrow();
+        let entries = self.entries.as_ref();
         if index >= entries.len() {
             return None;
         }
@@ -902,7 +898,7 @@ impl CompletionsMenu {
     }
 
     pub fn visible(&self) -> bool {
-        self.entries.borrow().iter().any(|e| e.as_match().is_some())
+        self.entries.as_ref().iter().any(|e| e.as_match().is_some())
     }
 
     fn origin(&self) -> ContextMenuOrigin {
@@ -924,7 +920,7 @@ impl CompletionsMenu {
             let completions = self.completions.borrow();
             let widest_completion_ix = self
                 .entries
-                .borrow()
+                .as_ref()
                 .iter()
                 .enumerate()
                 .filter_map(|(ix, entry)| entry.as_match().map(|m| (ix, m)))
@@ -965,14 +961,14 @@ impl CompletionsMenu {
         let style = style.clone();
         let list = uniform_list(
             "completions",
-            self.entries.borrow().len(),
+            self.entries.as_ref().len(),
             cx.processor(move |_editor, range: Range<usize>, _window, cx| {
                 last_rendered_range.borrow_mut().replace(range.clone());
                 let start_ix = range.start;
                 let completions_guard = completions.borrow_mut();
                 let label_matches_guard = label_matches.borrow();
 
-                entries.borrow()[range]
+                entries[range]
                     .iter()
                     .enumerate()
                     .map(|(ix, entry)| {
@@ -1241,7 +1237,7 @@ impl CompletionsMenu {
             return None;
         }
 
-        let entries = self.entries.borrow();
+        let entries = self.entries.as_ref();
         let Some(mat) = entries[self.selected_item].as_match() else {
             return None;
         };
@@ -1508,8 +1504,34 @@ impl CompletionsMenu {
         }
         drop(completions);
         *self.label_match_state.label_matches.borrow_mut() = label_matches;
-        *self.entries.borrow_mut() = entries.into_boxed_slice();
-        self.selected_item = self.find_selectable_entry(0, true).unwrap_or(0);
+        let selected_item = entries
+            .iter()
+            .position(CompletionMenuEntry::is_selectable)
+            .unwrap_or(0);
+        let unchanged = self.selected_item == selected_item
+            && self.entries.len() == entries.len()
+            && self
+                .entries
+                .iter()
+                .zip(&entries)
+                .all(|(current, next)| match (current, next) {
+                    (CompletionMenuEntry::Match(current), CompletionMenuEntry::Match(next)) => {
+                        current.candidate_id == next.candidate_id
+                            && current.score.to_bits() == next.score.to_bits()
+                            && current.positions == next.positions
+                            && current.string == next.string
+                    }
+                    (CompletionMenuEntry::Divider, CompletionMenuEntry::Divider) => true,
+                    (
+                        CompletionMenuEntry::GroupHeader(current),
+                        CompletionMenuEntry::GroupHeader(next),
+                    ) => current == next,
+                    _ => false,
+                });
+        if !unchanged {
+            self.entries = Rc::from(entries);
+        }
+        self.selected_item = selected_item;
         self.handle_selection_changed(provider.as_deref(), window, cx);
     }
 

@@ -2218,6 +2218,14 @@ impl BufferDiff {
                 secondary_diff: None,
             }
         });
+        let base_text = self.base_text_buffer.read(cx);
+        if base_text.remote_id() == snapshot.base_text.remote_id()
+            && base_text.version() == *snapshot.base_text.version()
+            && base_text.non_text_state_update_count()
+                != snapshot.base_text.non_text_state_update_count()
+        {
+            snapshot.base_text = base_text.snapshot();
+        }
         snapshot.secondary_diff = self.secondary_diff.as_ref().map(|diff| {
             debug_assert!(diff.read(cx).secondary_diff.is_none());
             Arc::new(diff.read(cx).snapshot(cx))

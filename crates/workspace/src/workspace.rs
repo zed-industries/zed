@@ -70,6 +70,7 @@ use gpui::{
     transparent_black,
 };
 pub use history_manager::*;
+use item::complete_pending_input;
 pub use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
     ProjectItem, SerializableItem, SerializableItemHandle, WeakItemHandle,
@@ -3630,8 +3631,13 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Task<Result<bool>> {
         let active_call = self.active_global_call();
+        let items = self.items(cx).cloned().collect::<Vec<_>>();
+        let pending_input = complete_pending_input(items, cx);
 
         cx.spawn_in(window, async move |this, cx| {
+            if let Some(pending_input) = pending_input {
+                pending_input.await?;
+            }
             this.update(cx, |this, _| {
                 if close_intent == CloseIntent::CloseWindow {
                     this.removing = true;
@@ -3867,26 +3873,28 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<bool>> {
-        if self.project.read(cx).is_disconnected(cx) {
-            return Task::ready(Ok(true));
-        }
-        let dirty_items = self
-            .panes
-            .iter()
-            .flat_map(|pane| {
-                pane.read(cx).items().filter_map(|item| {
-                    if item.is_dirty(cx) {
-                        item.tab_content_text(0, cx);
-                        Some((pane.clone(), item.boxed_clone()))
-                    } else {
-                        None
-                    }
-                })
-            })
-            .collect::<Vec<_>>();
-
+        let items = self.items(cx).cloned().collect::<Vec<_>>();
+        let pending_input = complete_pending_input(items, cx);
         let project = self.project.clone();
         cx.spawn_in(window, async move |workspace, cx| {
+            if let Some(pending_input) = pending_input {
+                pending_input.await?;
+            }
+            if project.read_with(cx, |project, cx| project.is_disconnected(cx)) {
+                return Ok(true);
+            }
+            let dirty_items = workspace.read_with(cx, |workspace, cx| {
+                workspace
+                    .panes
+                    .iter()
+                    .flat_map(|pane| {
+                        pane.read(cx)
+                            .items()
+                            .filter(|item| item.is_dirty(cx))
+                            .map(|item| (pane.clone(), item.boxed_clone()))
+                    })
+                    .collect::<Vec<_>>()
+            })?;
             let dirty_items = if save_intent == SaveIntent::Close && !dirty_items.is_empty() {
                 let mut serialize_tasks = Vec::new();
                 let mut remaining_dirty_items = Vec::new();
@@ -3958,6 +3966,7 @@ impl Workspace {
                     return Ok(false);
                 }
             }
+
             Ok(true)
         })
     }
@@ -4361,8 +4370,12 @@ impl Workspace {
         let project = self.project.clone();
         let pane = self.active_pane().clone();
         let item = pane.read(cx).active_item();
+        let pending_input = complete_pending_input(item.iter().cloned(), cx);
 
         window.spawn(cx, async move |cx| {
+            if let Some(pending_input) = pending_input {
+                pending_input.await?;
+            }
             if let Some(item) = item {
                 Pane::save_item(project, pane, item.as_ref(), save_intent, cx)
                     .await
@@ -11763,6 +11776,7 @@ pub fn reload(cx: &mut App) {
     // If multiple windows have unsaved changes, and need a save prompt,
     // prompt in the active window before switching to a different window.
     workspace_windows.sort_by_key(|window| window.is_active(cx) == Some(false));
+    let prepare_to_quit = prepare_windows_to_quit_from_app(&workspace_windows, cx);
 
     let mut prompt = None;
     if let (true, Some(window)) = (should_confirm, workspace_windows.first()) {
@@ -11787,7 +11801,7 @@ pub fn reload(cx: &mut App) {
             }
         }
 
-        if !prepare_windows_to_quit(&workspace_windows, cx).await {
+        if !prepare_to_quit.await {
             return anyhow::Ok(());
         }
         cx.update(|cx| cx.restart());
@@ -11796,48 +11810,72 @@ pub fn reload(cx: &mut App) {
     .detach_and_log_err(cx);
 }
 
-pub async fn prepare_windows_to_quit(
+pub fn prepare_windows_to_quit(
     workspace_windows: &[WindowHandle<MultiWorkspace>],
     cx: &mut AsyncApp,
-) -> bool {
-    // If the user cancels any save prompt, then keep the app open.
-    let mut prepared_windows = Vec::new();
-    let mut cancelled = false;
-    for window in workspace_windows {
-        match prepare_window_to_close(*window, CloseIntent::Quit, cx).await {
-            Ok(true) => prepared_windows.push(*window),
-            Ok(false) => {
-                cancelled = true;
-                break;
-            }
-            Err(error) => {
-                log::error!(
-                    "failed to prepare window {:?} to close before quitting: {error:#}",
-                    window.window_id()
-                );
-                cancelled = true;
-                break;
+) -> impl Future<Output = bool> + use<> {
+    cx.update(|cx| prepare_windows_to_quit_from_app(workspace_windows, cx))
+}
+
+pub fn prepare_windows_to_quit_from_app(
+    workspace_windows: &[WindowHandle<MultiWorkspace>],
+    cx: &mut App,
+) -> impl Future<Output = bool> + use<> {
+    let items = workspace_windows
+        .iter()
+        .filter_map(|window| window.read(cx).ok())
+        .flat_map(|multi_workspace| multi_workspace.workspaces())
+        .flat_map(|workspace| workspace.read(cx).items(cx).cloned())
+        .collect::<Vec<_>>();
+    let pending_input = complete_pending_input(items, cx);
+    let workspace_windows = workspace_windows.to_vec();
+    let mut cx = cx.to_async();
+    async move {
+        if let Some(pending_input) = pending_input
+            && pending_input.await.log_err().is_none()
+        {
+            return false;
+        }
+
+        // If the user cancels any save prompt, then keep the app open.
+        let mut prepared_windows = Vec::new();
+        let mut cancelled = false;
+        for window in &workspace_windows {
+            match prepare_window_to_close(*window, CloseIntent::Quit, &mut cx).await {
+                Ok(true) => prepared_windows.push(*window),
+                Ok(false) => {
+                    cancelled = true;
+                    break;
+                }
+                Err(error) => {
+                    log::error!(
+                        "failed to prepare window {:?} to close before quitting: {error:#}",
+                        window.window_id()
+                    );
+                    cancelled = true;
+                    break;
+                }
             }
         }
-    }
 
-    if cancelled {
-        flush_windows_serialization(&prepared_windows, cx).await;
-        for window in prepared_windows {
-            window
-                .update(cx, |_, window, _cx| {
-                    window.remove_window();
-                })
-                .log_err();
+        if cancelled {
+            flush_windows_serialization(&prepared_windows, &mut cx).await;
+            for window in prepared_windows {
+                window
+                    .update(&mut cx, |_, window, _cx| {
+                        window.remove_window();
+                    })
+                    .log_err();
+            }
+            return false;
         }
-        return false;
+
+        // Flush all pending workspace serialization before quitting so that
+        // session_id/window_id are up-to-date in the database.
+        flush_windows_serialization(&workspace_windows, &mut cx).await;
+
+        true
     }
-
-    // Flush all pending workspace serialization before quitting so that
-    // session_id/window_id are up-to-date in the database.
-    flush_windows_serialization(workspace_windows, cx).await;
-
-    true
 }
 
 pub(crate) async fn prepare_window_to_close(
@@ -12174,6 +12212,36 @@ fn resize_edge(
     }
 }
 
+pub(crate) fn run_item_transfer(
+    destination: &Entity<Pane>,
+    items: Vec<Box<dyn ItemHandle>>,
+    window: &mut Window,
+    cx: &mut App,
+    operation: impl FnOnce(&mut Window, &mut App) -> Result<()> + 'static,
+) -> Task<Result<()>> {
+    let input_items = items
+        .iter()
+        .flat_map(|item| destination.read(cx).items_for_transfer(item.as_ref(), cx))
+        .collect::<Vec<_>>();
+    let Some(pending_input) = complete_pending_input(input_items, cx) else {
+        return Task::ready(operation(window, cx));
+    };
+    let destination = destination.clone();
+    window.spawn(cx, async move |cx| {
+        pending_input.await?;
+        cx.update(move |window, cx| {
+            anyhow::ensure!(
+                !items
+                    .iter()
+                    .flat_map(|item| destination.read(cx).items_for_transfer(item.as_ref(), cx))
+                    .any(|item| item.has_pending_input(cx)),
+                "New input arrived while replacing the item; try again"
+            );
+            operation(window, cx)
+        })?
+    })
+}
+
 fn join_pane_into_active(
     active_pane: &Entity<Pane>,
     pane: &Entity<Pane>,
@@ -12198,30 +12266,43 @@ fn move_all_items(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let destination_is_different = from_pane != to_pane;
-    let mut moved_items = 0;
-    for (item_ix, item_handle) in from_pane
-        .read(cx)
-        .items()
-        .enumerate()
-        .map(|(ix, item)| (ix, item.clone()))
-        .collect::<Vec<_>>()
-    {
-        let ix = item_ix - moved_items;
-        if destination_is_different {
-            // Close item from previous pane
-            from_pane.update(cx, |source, cx| {
-                source.remove_item_and_focus_on_pane(ix, false, to_pane.clone(), window, cx);
-            });
-            moved_items += 1;
-        }
+    let items = from_pane.read(cx).items().cloned().collect::<Vec<_>>();
+    let from_pane = from_pane.clone();
+    let to_pane = to_pane.clone();
+    run_item_transfer(
+        &to_pane.clone(),
+        items.clone(),
+        window,
+        cx,
+        move |window, cx| {
+            for item_handle in items {
+                let Some(item_index) = from_pane.read(cx).index_for_item(item_handle.as_ref())
+                else {
+                    continue;
+                };
+                if from_pane != to_pane {
+                    // Close item from previous pane
+                    from_pane.update(cx, |source, cx| {
+                        source.remove_item_and_focus_on_pane(
+                            item_index,
+                            false,
+                            to_pane.clone(),
+                            window,
+                            cx,
+                        );
+                    });
+                }
 
-        // This automatically removes duplicate items in the pane
-        to_pane.update(cx, |destination, cx| {
-            destination.add_item(item_handle, true, true, None, window, cx);
-            window.focus(&destination.focus_handle(cx), cx)
-        });
-    }
+                // This automatically removes duplicate items in the pane
+                to_pane.update(cx, |destination, cx| {
+                    destination.add_item(item_handle, true, true, None, window, cx);
+                    window.focus(&destination.focus_handle(cx), cx)
+                });
+            }
+            Ok(())
+        },
+    )
+    .detach_and_prompt_err("Unable to move items", window, cx, |_, _, _| None);
 }
 
 pub fn move_item(
@@ -12233,39 +12314,63 @@ pub fn move_item(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let Some((item_ix, item_handle)) = source
+    let Some(item_handle) = source
         .read(cx)
         .items()
-        .enumerate()
-        .find(|(_, item_handle)| item_handle.item_id() == item_id_to_move)
-        .map(|(ix, item)| (ix, item.clone()))
+        .find(|item_handle| item_handle.item_id() == item_id_to_move)
+        .cloned()
     else {
         // Tab was closed during drag
         return;
     };
+    let destination_item = destination.read(cx).items().nth(destination_index).cloned();
+    let source = source.clone();
+    let destination = destination.clone();
+    run_item_transfer(
+        &destination.clone(),
+        vec![item_handle.boxed_clone()],
+        window,
+        cx,
+        move |window, cx| {
+            let Some(item_index) = source.read(cx).index_for_item(item_handle.as_ref()) else {
+                return Ok(());
+            };
+            let destination_index = destination_item
+                .as_ref()
+                .and_then(|item| destination.read(cx).index_for_item(item.as_ref()))
+                .unwrap_or(destination_index);
+            if source != destination {
+                // Close item from previous pane
+                source.update(cx, |source, cx| {
+                    source.remove_item_and_focus_on_pane(
+                        item_index,
+                        false,
+                        destination.clone(),
+                        window,
+                        cx,
+                    );
+                });
+            }
 
-    if source != destination {
-        // Close item from previous pane
-        source.update(cx, |source, cx| {
-            source.remove_item_and_focus_on_pane(item_ix, false, destination.clone(), window, cx);
-        });
-    }
-
-    // This automatically removes duplicate items in the pane
-    destination.update(cx, |destination, cx| {
-        destination.add_item_inner(
-            item_handle,
-            activate,
-            activate,
-            activate,
-            Some(destination_index),
-            window,
-            cx,
-        );
-        if activate {
-            window.focus(&destination.focus_handle(cx), cx)
-        }
-    });
+            // This automatically removes duplicate items in the pane
+            destination.update(cx, |destination, cx| {
+                destination.add_item_inner(
+                    item_handle,
+                    activate,
+                    activate,
+                    activate,
+                    Some(destination_index),
+                    window,
+                    cx,
+                );
+                if activate {
+                    window.focus(&destination.focus_handle(cx), cx)
+                }
+            });
+            Ok(())
+        },
+    )
+    .detach_and_prompt_err("Unable to move item", window, cx, |_, _, _| None);
 }
 
 pub fn move_active_item(
@@ -12282,20 +12387,39 @@ pub fn move_active_item(
     let Some(active_item) = source.read(cx).active_item() else {
         return;
     };
-    source.update(cx, |source_pane, cx| {
-        let item_id = active_item.item_id();
-        source_pane.remove_item(item_id, false, close_if_empty, window, cx);
-        destination.update(cx, |target_pane, cx| {
-            target_pane.add_item(
-                active_item,
-                focus_destination,
-                focus_destination,
-                Some(target_pane.items_len()),
-                window,
-                cx,
-            );
-        });
-    });
+    let source = source.clone();
+    let destination = destination.clone();
+    run_item_transfer(
+        &destination.clone(),
+        vec![active_item.boxed_clone()],
+        window,
+        cx,
+        move |window, cx| {
+            if source
+                .read(cx)
+                .index_for_item(active_item.as_ref())
+                .is_none()
+            {
+                return Ok(());
+            }
+            source.update(cx, |source_pane, cx| {
+                let item_id = active_item.item_id();
+                source_pane.remove_item(item_id, false, close_if_empty, window, cx);
+                destination.update(cx, |target_pane, cx| {
+                    target_pane.add_item(
+                        active_item,
+                        focus_destination,
+                        focus_destination,
+                        Some(target_pane.items_len()),
+                        window,
+                        cx,
+                    );
+                });
+            });
+            Ok(())
+        },
+    )
+    .detach_and_prompt_err("Unable to move item", window, cx, |_, _, _| None);
 }
 
 pub fn clone_active_item(

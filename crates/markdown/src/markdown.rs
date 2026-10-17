@@ -4570,12 +4570,16 @@ impl RenderedLine {
                 .map(|wrap_boundary| {
                     let glyph =
                         &unwrapped_layout.runs[wrap_boundary.run_ix].glyphs[wrap_boundary.glyph_ix];
-                    (wrapped_line_start + glyph.index, glyph.position.x)
+                    let (index, x) = unwrapped_layout.cluster_start_for_index(glyph.index);
+                    (wrapped_line_start + index, x)
                 })
-                .chain([(wrapped_line_end, unwrapped_layout.width)]);
+                .chain([(
+                    wrapped_line_end,
+                    unwrapped_layout.caret_x_for_index(unwrapped_layout.len),
+                )]);
 
             let mut row_start = wrapped_line_start;
-            let mut row_start_x = Pixels::ZERO;
+            let mut row_start_x = 0.;
 
             for (row_end, row_end_x) in row_ends {
                 let selection_start = rendered_start.max(row_start);
@@ -4584,14 +4588,16 @@ impl RenderedLine {
                 if selection_start < selection_end {
                     let alignment_offset = self.alignment_offset_for_segment(
                         line_bounds.size.width,
-                        row_start_x,
-                        row_end_x,
+                        Pixels::ZERO,
+                        Pixels::from(row_end_x - row_start_x),
                     );
                     let x_for_index = |index| {
                         line_bounds.left()
                             + alignment_offset
-                            + unwrapped_layout.x_for_index(index - wrapped_line_start)
-                            - row_start_x
+                            + Pixels::from(
+                                unwrapped_layout.caret_x_for_index(index - wrapped_line_start)
+                                    - row_start_x,
+                            )
                     };
                     f(Bounds::from_corners(
                         point(x_for_index(selection_start), row_top),
@@ -7803,56 +7809,69 @@ mod tests {
         let highlight_start = source
             .find("struck")
             .expect("highlighted text should be present");
-        let highlight_range = highlight_start..highlight_start + "struck".len();
         let run_background_color = gpui::red();
 
-        let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
-        markdown.update(cx, |markdown, cx| {
-            markdown.set_search_highlights(vec![highlight_range], None, cx);
-        });
-        let (_, cx) = cx.add_window_view(move |_, _| MarkdownTestView {
-            markdown,
-            style: MarkdownStyle {
-                link: TextStyleRefinement {
-                    background_color: Some(run_background_color),
-                    ..Default::default()
+        for (highlight_range, expected_stroke_count) in [
+            (highlight_start..highlight_start + "struck".len(), 1),
+            (highlight_start..source.len() - "~~".len(), 2),
+        ] {
+            let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+            markdown.update(cx, |markdown, cx| {
+                markdown.set_search_highlights(vec![highlight_range], None, cx);
+            });
+            let (_, cx) = cx.add_window_view(move |_, _| MarkdownTestView {
+                markdown,
+                style: MarkdownStyle {
+                    link: TextStyleRefinement {
+                        background_color: Some(run_background_color),
+                        ..Default::default()
+                    },
+                    ..MarkdownStyle::default()
                 },
-                ..MarkdownStyle::default()
-            },
-            code_span_link: None,
-            rendered_text: Rc::new(RefCell::new(None)),
-        });
-        cx.run_until_parked();
+                code_span_link: None,
+                rendered_text: Rc::new(RefCell::new(None)),
+            });
+            cx.run_until_parked();
 
-        let highlight_color = cx.update(|_, cx| cx.theme().colors().search_match_background);
-        cx.update(|window, _| {
-            let quads = window.painted_quads();
-            let order_of_quad_with = |color: Hsla| {
-                quads
+            let highlight_color = cx.update(|_, cx| cx.theme().colors().search_match_background);
+            cx.update(|window, _| {
+                let quads = window.painted_quads();
+                let quad_with = |color: Hsla| {
+                    quads
+                        .iter()
+                        .find(|quad| quad.background == color.into())
+                };
+                let run_background =
+                    quad_with(run_background_color).expect("link background should be painted");
+                let highlight =
+                    quad_with(highlight_color).expect("search highlight should be painted");
+                let highlight_bounds = highlight.bounds.intersect(&highlight.content_mask.bounds);
+                let underlines = window.painted_underlines();
+                let highlighted_strokes = underlines
                     .iter()
-                    .find(|quad| quad.background == color.into())
-                    .map(|quad| quad.order)
-            };
-            let run_background_order =
-                order_of_quad_with(run_background_color).expect("link background should be painted");
-            let highlight_order =
-                order_of_quad_with(highlight_color).expect("search highlight should be painted");
-            // Strikethroughs are painted in the same layer as the glyphs
-            let text_order = window
-                .painted_underlines()
-                .iter()
-                .map(|underline| underline.order)
-                .min()
-                .expect("strikethrough should be painted");
-            assert!(
-                run_background_order < highlight_order,
-                "text run backgrounds must not cover search highlights"
-            );
-            assert!(
-                highlight_order < text_order,
-                "search highlight must be drawn below the text, otherwise opaque theme colors hide it"
-            );
-        });
+                    .filter(|underline| {
+                        underline
+                            .bounds
+                            .intersect(&underline.content_mask.bounds)
+                            .intersects(&highlight_bounds)
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(highlighted_strokes.len(), expected_stroke_count);
+                let run_background_order = run_background.order;
+                let highlight_order = highlight.order;
+                assert!(
+                    run_background_order < highlight_order,
+                    "text run backgrounds must not cover search highlights: background={run_background_order}, highlight={highlight_order}"
+                );
+                for stroke in highlighted_strokes {
+                    let text_order = stroke.order;
+                    assert!(
+                        highlight_order < text_order,
+                        "search highlight must be drawn below the text, otherwise opaque theme colors hide it: highlight={highlight_order}, text={text_order}"
+                    );
+                }
+            });
+        }
     }
 
     #[test]

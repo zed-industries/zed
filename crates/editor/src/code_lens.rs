@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use collections::{HashMap, HashSet};
 use futures::{StreamExt as _, future::join_all, stream::FuturesUnordered};
-use gpui::{FontId, MouseButton, SharedString, Task, TaskExt, TextSystem, WeakEntity};
+use gpui::{MouseButton, SharedString, Task, TaskExt, WeakEntity};
 use itertools::Itertools;
 use language::{BufferId, ClientCommand};
 use multi_buffer::{Anchor, BufferOffset, MultiBufferRow, MultiBufferSnapshot, ToPoint as _};
@@ -22,7 +22,6 @@ use crate::{
 
 static EMPTY_LENS_FALLBACK_TITLE: SharedString = SharedString::new_static("0 references");
 const CODE_LENS_SEPARATOR: &str = " | ";
-const CODE_LENS_FONT_SCALE: f32 = 0.9;
 
 #[derive(Clone, Debug)]
 struct CodeLensLine {
@@ -357,7 +356,7 @@ impl Editor {
                 kept_blocks.push(old);
                 continue;
             }
-            if rendered_text_matches(&old.line, &new_line) {
+            if lens_line_matches(&old.line, &new_line) {
                 kept_blocks.push(old);
             } else {
                 let mut updated = old;
@@ -470,9 +469,6 @@ impl Editor {
             return;
         };
 
-        let Some(max_items_per_row) = self.max_visible_code_lens_items(cx) else {
-            return;
-        };
         let lsp_store = project.read(cx).lsp_store();
 
         let mut pending_resolves = Vec::new();
@@ -488,19 +484,17 @@ impl Editor {
             else {
                 continue;
             };
-            let mut items_per_row = HashMap::<u32, usize>::default();
-            for (lens_id, action) in actions.iter().sorted_by_key(|(id, _)| **id) {
-                let project::LspAction::CodeLens(lens) = &action.lsp_action else {
-                    continue;
-                };
-                let action_offset = action.range.start.to_offset(&buffer_snapshot);
-                if action_offset < visible_range.start.0 || action_offset > visible_range.end.0 {
+            for (lens_id, action) in actions {
+                if action.resolved {
                     continue;
                 }
-                let row = buffer_snapshot.offset_to_point(action_offset).row;
-                let row_items = items_per_row.entry(row).or_default();
-                *row_items += 1;
-                if *row_items > max_items_per_row || action.resolved || lens.command.is_some() {
+                if let project::LspAction::CodeLens(lens) = &action.lsp_action {
+                    if lens.command.is_some() {
+                        continue;
+                    }
+                }
+                let action_offset = action.range.start.to_offset(&buffer_snapshot);
+                if action_offset < visible_range.start.0 || action_offset > visible_range.end.0 {
                     continue;
                 }
                 let resolve_task = lsp_store.update(cx, |lsp_store, cx| {
@@ -544,21 +538,6 @@ impl Editor {
         });
     }
 
-    fn max_visible_code_lens_items(&mut self, cx: &mut Context<Self>) -> Option<usize> {
-        let visible_columns = self.visible_column_count()?;
-        let font = self.style(cx).text.font();
-        let text_system = cx.text_system();
-        let font_id = text_system.resolve_font(&font);
-        let font_size = px(16.);
-        let em_advance = text_system.em_advance(font_id, font_size).ok()?;
-        let separator_width =
-            code_lens_separator_width(text_system, font_id, font_size * CODE_LENS_FONT_SCALE)?;
-        Some(max_code_lens_items(
-            em_advance * visible_columns as f32,
-            separator_width,
-        ))
-    }
-
     pub(super) fn clear_code_lenses(&mut self, cx: &mut Context<Self>) {
         if let Some(code_lens) = self.code_lens.take() {
             let all_blocks = code_lens
@@ -574,20 +553,47 @@ impl Editor {
         }
         self.refresh_code_lens_task = Task::ready(());
     }
+
+    fn activate_code_lens(
+        &mut self,
+        position: Anchor,
+        action: CodeAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.input_is_deferred(cx) {
+            self.defer_input(
+                move |editor, window, cx| editor.activate_code_lens(position, action, window, cx),
+                window,
+                cx,
+            );
+            return;
+        }
+        self.change_selections(SelectionEffects::default(), window, cx, |selections| {
+            selections.select_anchor_ranges([position..position]);
+        });
+        if let Some(workspace) = self.workspace() {
+            if try_handle_client_command(&action, self, &workspace, window, cx) {
+                return;
+            }
+            let project = workspace.read(cx).project().clone();
+            if let Some(buffer) = self.buffer().read(cx).buffer(action.range.start.buffer_id) {
+                project
+                    .update(cx, |project, cx| {
+                        project.apply_code_action(buffer, action, true, cx)
+                    })
+                    .detach_and_log_err(cx);
+            }
+        }
+    }
 }
 
-/// Whether two lens lines would render the same on screen — same indent
-/// and same titles in the same order. Used to skip recreating a renderer
-/// (and thus a click handler) when nothing about the displayed line
-/// changed; the captured [`CodeAction`] inside the existing renderer keeps
-/// pointing at the right spot because its anchors track buffer edits.
-fn rendered_text_matches(a: &CodeLensLine, b: &CodeLensLine) -> bool {
-    a.indent_column == b.indent_column
-        && a.items.len() == b.items.len()
-        && a.items
-            .iter()
-            .zip(&b.items)
-            .all(|(x, y)| displayed_title(x) == displayed_title(y))
+fn lens_line_matches(left: &CodeLensLine, right: &CodeLensLine) -> bool {
+    left.indent_column == right.indent_column
+        && left.items.len() == right.items.len()
+        && left.items.iter().zip(&right.items).all(|(left, right)| {
+            displayed_title(left) == displayed_title(right) && left.action == right.action
+        })
 }
 
 /// Text rendered for a code lens item, or `None` if it should not render
@@ -622,39 +628,8 @@ fn group_lenses_by_row(
         })
 }
 
-fn code_lens_separator_width(
-    text_system: &TextSystem,
-    font_id: FontId,
-    font_size: Pixels,
-) -> Option<Pixels> {
-    CODE_LENS_SEPARATOR
-        .chars()
-        .try_fold(Pixels::ZERO, |width, character| {
-            Some(
-                width
-                    + text_system
-                        .advance(font_id, font_size, character)
-                        .ok()?
-                        .width,
-            )
-        })
-        .filter(|width| *width > Pixels::ZERO)
-}
-
-fn max_code_lens_items(available_width: Pixels, separator_width: Pixels) -> usize {
-    (available_width / separator_width).max(0.).floor() as usize + 1
-}
-
 fn build_code_lens_renderer(line: CodeLensLine, editor: WeakEntity<Editor>) -> RenderBlock {
     Arc::new(move |cx| {
-        let text_style = &cx.editor_style.text;
-        let font = text_style.font();
-        let font_size = text_style.font_size.to_pixels(cx.window.rem_size()) * CODE_LENS_FONT_SCALE;
-        let font_id = cx.window.text_system().resolve_font(&font);
-        let max_items = code_lens_separator_width(cx.window.text_system(), font_id, font_size)
-            .map_or(line.items.len(), |separator_width| {
-                max_code_lens_items(cx.max_width, separator_width)
-            });
         let resolved_items = line
             .items
             .iter()
@@ -663,9 +638,11 @@ fn build_code_lens_renderer(line: CodeLensLine, editor: WeakEntity<Editor>) -> R
                 let action = item.title.is_some().then(|| item.action.clone());
                 Some((title, action))
             })
-            .take(max_items)
             .collect::<Vec<_>>();
         let mut children = Vec::with_capacity((2 * resolved_items.len()).saturating_sub(1));
+        let text_style = &cx.editor_style.text;
+        let font = text_style.font();
+        let font_size = text_style.font_size.to_pixels(cx.window.rem_size()) * 0.9;
         let colors = cx.app.theme().colors();
         let code_lens_color = colors
             .editor_code_lens_foreground
@@ -707,38 +684,12 @@ fn build_code_lens_renderer(line: CodeLensLine, editor: WeakEntity<Editor>) -> R
                                 move |_event, window, cx| {
                                     if let Some(editor) = editor_handle.upgrade() {
                                         editor.update(cx, |editor, cx| {
-                                            editor.change_selections(
-                                                SelectionEffects::default(),
+                                            editor.activate_code_lens(
+                                                position,
+                                                action.clone(),
                                                 window,
                                                 cx,
-                                                |s| {
-                                                    s.select_anchor_ranges([position..position]);
-                                                },
                                             );
-
-                                            let action = action.clone();
-                                            if let Some(workspace) = editor.workspace() {
-                                                if try_handle_client_command(
-                                                    &action, editor, &workspace, window, cx,
-                                                ) {
-                                                    return;
-                                                }
-
-                                                let project = workspace.read(cx).project().clone();
-                                                if let Some(buffer) = editor
-                                                    .buffer()
-                                                    .read(cx)
-                                                    .buffer(action.range.start.buffer_id)
-                                                {
-                                                    project
-                                                        .update(cx, |project, cx| {
-                                                            project.apply_code_action(
-                                                                buffer, action, true, cx,
-                                                            )
-                                                        })
-                                                        .detach_and_log_err(cx);
-                                                }
-                                            }
                                         });
                                     }
                                 }
@@ -771,6 +722,7 @@ mod tests {
     use futures::StreamExt;
     use gpui::TestAppContext;
     use indoc::indoc;
+    use language::language_settings::SoftWrap;
     use settings::CodeLens;
     use util::path;
 
@@ -781,8 +733,69 @@ mod tests {
     use crate::{
         Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT,
         editor_tests::{init_test, update_test_editor_settings},
-        test::editor_lsp_test_context::EditorLspTestContext,
+        test::{
+            editor_lsp_test_context::EditorLspTestContext, editor_test_context::EditorTestContext,
+        },
     };
+
+    #[gpui::test]
+    async fn test_captured_input_code_lens_ordering(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorTestContext::new(cx).await;
+        let completion = cx.update_editor(|editor, window, cx| {
+            editor.set_soft_wrap_mode(SoftWrap::None, cx);
+            editor.set_text(
+                format!("ab\n{}\ntarget\ntail", "x".repeat(2_000)),
+                window,
+                cx,
+            );
+            editor.change_selections(
+                crate::SelectionEffects::no_scroll(),
+                window,
+                cx,
+                |selections| {
+                    selections.select_ranges([Point::new(0, 1)..Point::new(0, 1)]);
+                },
+            );
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let position = snapshot.anchor_after(Point::new(2, 0));
+            let buffer_position = snapshot
+                .anchor_to_buffer_anchor(position)
+                .expect("lens position")
+                .0;
+            let action = project::CodeAction {
+                server_id: lsp::LanguageServerId(0),
+                range: buffer_position..buffer_position,
+                lsp_action: project::LspAction::Command(lsp::Command {
+                    title: String::from("lens"),
+                    command: String::from("lens"),
+                    arguments: None,
+                }),
+                resolved: true,
+            };
+            editor.move_down(&crate::MoveDown, window, cx);
+            assert!(editor.input_is_deferred(cx));
+            editor.activate_code_lens(position, action, window, cx);
+            assert_eq!(
+                editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx))
+                    .head(),
+                Point::new(0, 1)
+            );
+            editor.input_completion(cx)
+        });
+        completion.await.expect("lens input completed");
+        cx.editor(|editor, _, cx| {
+            assert_eq!(
+                editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx))
+                    .head(),
+                Point::new(2, 0)
+            );
+        });
+    }
 
     #[gpui::test]
     async fn test_code_lens_blocks(cx: &mut TestAppContext) {
@@ -1047,17 +1060,27 @@ mod tests {
         )
         .await;
 
+        let command_argument = Arc::new(Mutex::new("A"));
         let mut code_lens_request =
-            cx.set_request_handler::<lsp::request::CodeLensRequest, _, _>(move |_, _, _| async {
-                Ok(Some(vec![lsp::CodeLens {
-                    range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 19)),
-                    command: Some(lsp::Command {
-                        title: "1 reference".to_owned(),
-                        command: "lens_cmd".to_owned(),
-                        arguments: None,
-                    }),
-                    data: None,
-                }]))
+            cx.set_request_handler::<lsp::request::CodeLensRequest, _, _>({
+                let command_argument = command_argument.clone();
+                move |_, _, _| {
+                    let argument = String::from(*command_argument.lock().unwrap());
+                    async move {
+                        Ok(Some(vec![lsp::CodeLens {
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 0),
+                                lsp::Position::new(0, 19),
+                            ),
+                            command: Some(lsp::Command {
+                                title: "1 reference".to_owned(),
+                                command: "lens_cmd".to_owned(),
+                                arguments: Some(vec![serde_json::Value::String(argument)]),
+                            }),
+                            data: None,
+                        }]))
+                    }
+                }
             });
 
         cx.set_state("ˇfunction hello() {}\nfunction world() {}");
@@ -1090,6 +1113,7 @@ mod tests {
                 .unwrap_or_default()
         });
 
+        *command_argument.lock().unwrap() = "B";
         cx.update_editor(|editor, window, cx| {
             editor.move_to_end(&crate::actions::MoveToEnd, window, cx);
             editor.handle_input("\n// trailing comment", window, cx);
@@ -1103,6 +1127,20 @@ mod tests {
         cx.run_until_parked();
 
         let refreshed_block_ids = cx.editor(|editor, _, cx| {
+            let arguments = editor
+                .code_lens
+                .as_ref()
+                .into_iter()
+                .flat_map(|state| state.blocks.values().flatten())
+                .flat_map(|block| &block.line.items)
+                .filter_map(|item| item.action.lsp_action.command())
+                .flat_map(|command| command.arguments.as_deref().unwrap_or_default())
+                .cloned()
+                .collect::<Vec<_>>();
+            assert_eq!(
+                arguments,
+                vec![serde_json::Value::String(String::from("B"))]
+            );
             assert_eq!(
                 code_lens_assertion_text(editor, cx),
                 indoc! {r#"
@@ -1886,65 +1924,13 @@ mod tests {
 
     #[gpui::test]
     async fn test_code_lens_resolve_on_horizontally_hidden_column(cx: &mut TestAppContext) {
-        let lens_column = 1_500;
-        let text = format!(
-            "/*{}*/function f() {{}}\n",
-            "x".repeat(lens_column as usize - 4)
-        );
-        let (resolved, _) = resolve_single_row_code_lenses(text, vec![lens_column], cx).await;
-        assert_eq!(resolved, 1);
-    }
-
-    #[gpui::test]
-    async fn test_code_lens_resolve_is_bounded_by_visible_items(cx: &mut TestAppContext) {
-        let lens_columns = (0..2_000).map(|index| index * 2).collect::<Vec<_>>();
-        let text = format!("{}\n", "x".repeat(5_000));
-        let (resolved, visible_columns) =
-            resolve_single_row_code_lenses(text, lens_columns, cx).await;
-        let separator_columns = CODE_LENS_SEPARATOR.len() as f64 * 0.9;
-        assert_eq!(
-            resolved,
-            (visible_columns / separator_columns).floor() as usize + 1
-        );
-    }
-
-    async fn resolve_single_row_code_lenses(
-        text: String,
-        lens_columns: Vec<u32>,
-        cx: &mut TestAppContext,
-    ) -> (usize, f64) {
         init_test(cx, |_| {});
         update_test_editor_settings(cx, &|settings| {
-            settings.code_lens = Some(CodeLens::On);
+            settings.code_lens = Some(CodeLens::Off);
         });
-        let resolved = Arc::new(Mutex::new(0));
-
-        let fs = project::FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/dir"), serde_json::json!({ "main.ts": text }))
-            .await;
-
-        let project = project::Project::test(fs, [path!("/dir").as_ref()], cx).await;
-        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
-            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
-        });
-        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
-
-        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-        language_registry.add(Arc::new(language::Language::new(
-            language::LanguageConfig {
-                name: "TypeScript".into(),
-                matcher: (language::LanguageMatcher {
-                    path_suffixes: vec!["ts".into()],
-                    ..language::LanguageMatcher::default()
-                })
-                .into(),
-                ..language::LanguageConfig::default()
-            },
-            Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
-        )));
-
-        let mut fake_servers = language_registry.register_fake_lsp(
-            "TypeScript",
+        let resolved_columns = Arc::new(Mutex::new(Vec::new()));
+        let mut cx = EditorLspTestContext::new_with_adapter(
+            Arc::into_inner(language::rust_lang()).expect("Rust language has a single owner"),
             language::FakeLspAdapter {
                 capabilities: lsp::ServerCapabilities {
                     code_lens_provider: Some(lsp::CodeLensOptions {
@@ -1952,69 +1938,58 @@ mod tests {
                     }),
                     ..lsp::ServerCapabilities::default()
                 },
+                initializer: Some(Box::new({
+                    let resolved_columns = resolved_columns.clone();
+                    move |server| {
+                        server.set_request_handler::<lsp::request::CodeLensRequest, _, _>(
+                            |_, _| async {
+                                Ok(Some(vec![lsp::CodeLens {
+                                    range: lsp::Range::new(
+                                        lsp::Position::new(0, 1_500),
+                                        lsp::Position::new(0, 1_501),
+                                    ),
+                                    command: None,
+                                    data: None,
+                                }]))
+                            },
+                        );
+                        let resolved_columns = resolved_columns.clone();
+                        server.set_request_handler::<lsp::request::CodeLensResolve, _, _>(
+                            move |lens, _| {
+                                resolved_columns
+                                    .lock()
+                                    .expect("resolve log")
+                                    .push(lens.range.start.character);
+                                async move {
+                                    Ok(lsp::CodeLens {
+                                        command: Some(lsp::Command {
+                                            title: String::from("1 reference"),
+                                            command: String::from("show_refs"),
+                                            arguments: None,
+                                        }),
+                                        ..lens
+                                    })
+                                }
+                            },
+                        );
+                    }
+                })),
                 ..language::FakeLspAdapter::default()
             },
-        );
-
-        workspace
-            .update_in(cx, |workspace, window, cx| {
-                workspace.open_abs_path(
-                    std::path::PathBuf::from(path!("/dir/main.ts")),
-                    workspace::OpenOptions::default(),
-                    window,
-                    cx,
-                )
-            })
-            .await
-            .unwrap();
-        let fake_server = fake_servers.next().await.unwrap();
-
-        fake_server.set_request_handler::<lsp::request::CodeLensRequest, _, _>(move |_, _| {
-            let lens_columns = lens_columns.clone();
-            async move {
-                Ok(Some(
-                    lens_columns
-                        .into_iter()
-                        .map(|column| lsp::CodeLens {
-                            range: lsp::Range::new(
-                                lsp::Position::new(0, column),
-                                lsp::Position::new(0, column + 1),
-                            ),
-                            command: None,
-                            data: Some(serde_json::json!({ "column": column })),
-                        })
-                        .collect(),
-                ))
-            }
+            cx,
+        )
+        .await;
+        cx.set_state(&format!("ˇ{}\n", "x".repeat(2_000)));
+        cx.update_editor(|editor, window, cx| {
+            editor.set_soft_wrap_mode(SoftWrap::None, cx);
+            editor.toggle_code_lens(true, window, cx);
         });
-        {
-            let resolved = resolved.clone();
-            fake_server.set_request_handler::<lsp::request::CodeLensResolve, _, _>(
-                move |lens, _| {
-                    *resolved.lock().unwrap() += 1;
-                    async move {
-                        Ok(lsp::CodeLens {
-                            command: Some(lsp::Command {
-                                title: "1 reference".to_string(),
-                                command: "show_refs".to_string(),
-                                arguments: None,
-                            }),
-                            ..lens
-                        })
-                    }
-                },
-            );
-        }
-
         cx.executor().advance_clock(Duration::from_millis(500));
         cx.run_until_parked();
-
-        let visible_columns = workspace
-            .update(cx, |workspace, cx| workspace.active_item_as::<Editor>(cx))
-            .and_then(|editor| editor.read_with(cx, |editor, _| editor.visible_column_count()))
-            .expect("a rendered editor");
-        let resolved = *resolved.lock().unwrap();
-        (resolved, visible_columns)
+        cx.editor(|editor, _, _| {
+            assert!(editor.visible_column_count().expect("rendered editor") < 1_500.);
+        });
+        assert_eq!(*resolved_columns.lock().expect("resolve log"), vec![1_500]);
     }
 
     fn code_lens_assertion_text(editor: &Editor, cx: &ui::App) -> String {

@@ -1,4 +1,7 @@
-use crate::code_context_menus::CompletionsMenu;
+use crate::{
+    CodeContextMenu, ConfirmCompletion, DisplayRow, code_context_menus::CompletionsMenu,
+    editor_tests::init_test, test::editor_test_context::EditorTestContext,
+};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::TestAppContext;
 use language::CodeLabel;
@@ -390,6 +393,105 @@ async fn test_semver_label_sort_by_latest_version(cx: &mut TestAppContext) {
     ];
     for (match_item, expected) in matches.iter().zip(expected_versions.iter()) {
         assert_eq!(match_item.string.as_ref() as &str, *expected);
+    }
+}
+
+#[gpui::test]
+async fn test_captured_completion_refilter(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    for (query, selected_item, expected) in
+        [("al", 0, "alphaˇ"), ("al", 1, "alˇ"), ("alpine", 0, "alˇ")]
+    {
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.set_state("alˇ");
+        let matches = cx
+            .update_editor(|editor, _, cx| {
+                let buffer = editor
+                    .buffer
+                    .read(cx)
+                    .as_singleton()
+                    .expect("singleton buffer");
+                let selection = Anchor::min_max_range_for_buffer(buffer.read(cx).remote_id());
+                let menu = CompletionsMenu::new_snippet_choices(
+                    0,
+                    true,
+                    &vec![String::from("alpha"), String::from("alpine")],
+                    editor.selections.newest_anchor().head(),
+                    selection,
+                    buffer.clone(),
+                    None,
+                    SnippetSortOrder::default(),
+                );
+                let matches = menu.do_async_filtering(
+                    Arc::new(String::from("al")),
+                    buffer.read(cx).anchor_before(2),
+                    &buffer,
+                    cx,
+                );
+                *editor.context_menu.borrow_mut() = Some(CodeContextMenu::Completions(menu));
+                matches
+            })
+            .await;
+        let matches = cx
+            .update_editor(|editor, window, cx| {
+                let mut context_menu = editor.context_menu.borrow_mut();
+                let Some(CodeContextMenu::Completions(menu)) = context_menu.as_mut() else {
+                    panic!("completion menu");
+                };
+                menu.set_filter_results(matches, None, window, cx);
+                assert_eq!(
+                    menu.entries
+                        .iter()
+                        .filter_map(|entry| entry.as_match())
+                        .map(|candidate| candidate.candidate_id)
+                        .collect::<Vec<_>>(),
+                    [0, 1],
+                );
+                menu.do_async_filtering(
+                    Arc::new(String::from(query)),
+                    menu.buffer.read(cx).anchor_before(2),
+                    &menu.buffer,
+                    cx,
+                )
+            })
+            .await;
+        let (completion, input) = cx.update_editor(|editor, window, cx| {
+            editor.set_placeholder_text(&"x".repeat(2_000), window, cx);
+            let pending = editor
+                .placeholder_display_map
+                .as_ref()
+                .expect("placeholder map")
+                .update(cx, |map, cx| {
+                    map.snapshot(cx)
+                        .long_row(DisplayRow(0))
+                        .err()
+                        .expect("cold geometry")
+                });
+            editor.defer_geometry(pending, |_, _, _| {}, window, cx);
+            assert!(editor.input_is_deferred(cx));
+            {
+                let mut context_menu = editor.context_menu.borrow_mut();
+                let Some(CodeContextMenu::Completions(menu)) = context_menu.as_mut() else {
+                    panic!("completion menu");
+                };
+                menu.selected_item = selected_item;
+            }
+            let completion = editor
+                .confirm_completion(&ConfirmCompletion { item_ix: None }, window, cx)
+                .expect("queued completion");
+            {
+                let mut context_menu = editor.context_menu.borrow_mut();
+                let Some(CodeContextMenu::Completions(menu)) = context_menu.as_mut() else {
+                    panic!("completion menu");
+                };
+                menu.set_filter_results(matches, None, window, cx);
+                assert_eq!(menu.selected_item, 0);
+            }
+            (completion, editor.input_completion(cx))
+        });
+        input.await.expect("input completed");
+        completion.await.expect("completion completed");
+        cx.assert_editor_state(expected);
     }
 }
 

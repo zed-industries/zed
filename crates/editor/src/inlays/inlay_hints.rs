@@ -5967,7 +5967,9 @@ let c = 3;"#
             .lines()
             .position(|line| line == "fn second() { let b: u64: u64 = 2; }")
             .expect("second excerpt with the hint rendered") as u32;
-        let hint_point = cx.pixel_position_for(DisplayPoint::new(DisplayRow(hint_row), 20));
+        let hint_point = cx
+            .pixel_position_for(DisplayPoint::new(DisplayRow(hint_row), 20))
+            .await;
         cx.simulate_mouse_move(hint_point, None, Modifiers::none());
         cx.simulate_click(hint_point, Modifiers::none());
         cx.simulate_event(MouseDownEvent {

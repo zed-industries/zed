@@ -18,5 +18,20 @@ settings.workspace = true
 theme.workspace = true
 workspace.workspace = true
 
+[dev-dependencies]
+assets.workspace = true
+criterion.workspace = true
+gpui = { workspace = true, features = ["bench-support"] }
+gpui_platform = { workspace = true, features = ["bench-support", "font-kit"] }
+theme_settings.workspace = true
+zed_actions.workspace = true
+
+[package.metadata.cargo-shear]
+ignored = ["criterion"]
+
+[[bench]]
+name = "long_rows"
+harness = false
+
 [lints]
 workspace = true

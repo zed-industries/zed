@@ -530,7 +530,7 @@ impl Session {
             let inlay_id = self.next_inlay_id;
             self.next_inlay_id += 1;
 
-            let inlay = Inlay::repl_result(inlay_id, inlay_position, format!("    {}", text));
+            let inlay = Inlay::repl_result(inlay_id, inlay_position, text.to_string());
 
             editor.splice_inlays(&[], vec![inlay], cx);
             self.result_inlays.insert(

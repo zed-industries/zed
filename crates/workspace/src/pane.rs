@@ -7,10 +7,11 @@ use crate::{
     item::{
         ActivateOnClose, ClosePosition, Item, ItemBufferKind, ItemHandle, ItemSettings,
         PreviewTabsSettings, ProjectItemKind, SaveOptions, ShowCloseButton, ShowDiagnostics,
-        TabContentParams, TabTooltipContent, WeakItemHandle,
+        TabContentParams, TabTooltipContent, WeakItemHandle, complete_pending_input,
     },
     move_item,
-    notifications::NotifyResultExt,
+    notifications::{DetachAndPromptErr, NotifyResultExt},
+    run_item_transfer,
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, FocusFollowsMouse, TabBarSettings, WorkspaceSettings},
 };
@@ -1207,6 +1208,15 @@ impl Pane {
     ) -> Option<usize> {
         let item_idx = self.preview_item_idx()?;
         let id = self.preview_item_id()?;
+        if self
+            .items
+            .get(item_idx)
+            .is_some_and(|item| item.has_pending_input(cx))
+        {
+            self.unpreview_item_if_preview(id);
+            cx.notify();
+            return None;
+        }
         self.preview_item_id = None;
 
         let prev_active_item_index = self.active_item_index;
@@ -1234,6 +1244,40 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(pending_input) =
+            complete_pending_input(self.items_for_transfer(item.as_ref(), cx), cx)
+        {
+            let destination_item_id = destination_index
+                .and_then(|index| self.items.get(index))
+                .map(|item| item.item_id());
+            cx.spawn_in(window, async move |pane, cx| {
+                pending_input.await?;
+                pane.update_in(cx, |pane, window, cx| {
+                    anyhow::ensure!(
+                        !pane
+                            .items_for_transfer(item.as_ref(), cx)
+                            .iter()
+                            .any(|item| item.has_pending_input(cx)),
+                        "New input arrived while adding the item; try again"
+                    );
+                    let destination_index = destination_item_id
+                        .and_then(|item_id| pane.index_for_item_id(item_id))
+                        .or(destination_index);
+                    pane.add_item_inner(
+                        item,
+                        activate_pane,
+                        focus_item,
+                        activate,
+                        destination_index,
+                        window,
+                        cx,
+                    );
+                    Ok(())
+                })?
+            })
+            .detach_and_prompt_err("Unable to add item", window, cx, |_, _, _| None);
+            return;
+        }
         let item_already_exists = self
             .items
             .iter()
@@ -1430,6 +1474,25 @@ impl Pane {
 
     pub fn index_for_item(&self, item: &dyn ItemHandle) -> Option<usize> {
         self.index_for_item_id(item.item_id())
+    }
+
+    pub(crate) fn items_for_transfer(
+        &self,
+        item: &dyn ItemHandle,
+        cx: &App,
+    ) -> Vec<Box<dyn ItemHandle>> {
+        if self.index_for_item(item).is_some() {
+            return Vec::new();
+        }
+        if item.buffer_kind(cx) == ItemBufferKind::Singleton
+            && let Some(entry_id) = item.project_entry_ids(cx).first()
+            && let Some(existing) = self.item_for_entry(*entry_id, cx)
+            && existing.item_id() != item.item_id()
+        {
+            vec![item.boxed_clone(), existing]
+        } else {
+            Vec::new()
+        }
     }
 
     fn index_for_item_id(&self, item_id: EntityId) -> Option<usize> {
@@ -1876,7 +1939,11 @@ impl Pane {
                 continue;
             }
 
-            if let Some(true) = self.items.get(index).map(|item| item.is_dirty(cx)) {
+            if self
+                .items
+                .get(index)
+                .is_some_and(|item| item.is_dirty(cx) || item.has_pending_input(cx))
+            {
                 continue;
             }
 
@@ -1982,7 +2049,11 @@ impl Pane {
         let Some(project) = self.project.upgrade() else {
             return Task::ready(Ok(()));
         };
+        let pending_input = complete_pending_input(items_to_close.iter().cloned(), cx);
         cx.spawn_in(window, async move |pane, cx| {
+            if let Some(pending_input) = pending_input {
+                pending_input.await?;
+            }
             let dirty_items = workspace.update(cx, |workspace, cx| {
                 items_to_close
                     .iter()
@@ -2013,6 +2084,11 @@ impl Pane {
             }
 
             for item_to_close in items_to_close {
+                if let Some(pending_input) =
+                    cx.update(|_, cx| complete_pending_input([item_to_close.boxed_clone()], cx))?
+                {
+                    pending_input.await?;
+                }
                 let mut should_close = true;
                 let mut should_save = true;
                 if save_intent == SaveIntent::Close {
@@ -2036,11 +2112,7 @@ impl Pane {
                     )
                     .await
                     {
-                        Ok(success) => {
-                            if !success {
-                                should_close = false;
-                            }
-                        }
+                        Ok(success) => should_close = success,
                         Err(err) => {
                             let answer = pane.update_in(cx, |_, window, cx| {
                                 let detail = Self::file_names_for_prompt(
@@ -2066,6 +2138,10 @@ impl Pane {
                 // Remove the item from the pane.
                 if should_close {
                     pane.update_in(cx, |pane, window, cx| {
+                        anyhow::ensure!(
+                            !item_to_close.has_pending_input(cx),
+                            "New input arrived while closing the item; try again"
+                        );
                         pane.remove_item(
                             item_to_close.item_id(),
                             false,
@@ -2073,8 +2149,8 @@ impl Pane {
                             window,
                             cx,
                         );
-                    })
-                    .ok();
+                        anyhow::Ok(())
+                    })??;
                 }
             }
 
@@ -2254,6 +2330,11 @@ impl Pane {
 
         const DELETED_MESSAGE: &str = "This file has been deleted on disk since you started editing it. Do you want to recreate it?";
 
+        if let Some(pending_input) =
+            cx.update(|_, cx| complete_pending_input([item.boxed_clone()], cx))?
+        {
+            pending_input.await?;
+        }
         let path_style = project.read_with(cx, |project, cx| project.path_style(cx));
         if save_intent == SaveIntent::Skip {
             let is_saveable_singleton = cx.update(|_window, cx| {
@@ -2261,14 +2342,16 @@ impl Pane {
             })?;
             if is_saveable_singleton {
                 pane.update_in(cx, |_, window, cx| item.reload(project, window, cx))?
-                    .await
-                    .log_err();
+                    .await?;
             }
             return Ok(true);
         };
-        let Some(item_ix) = pane.read_with(cx, |pane, _| pane.index_for_item(item)) else {
+        if pane
+            .read_with(cx, |pane, _| pane.index_for_item(item))
+            .is_none()
+        {
             return Ok(true);
-        };
+        }
 
         if (save_intent == SaveIntent::Save
             || save_intent == SaveIntent::FormatAndSave
@@ -2320,7 +2403,9 @@ impl Pane {
         if has_conflict && can_save {
             if has_deleted_file && is_singleton {
                 let answer = pane.update_in(cx, |pane, window, cx| {
-                    pane.activate_item(item_ix, true, true, window, cx);
+                    if let Some(item_index) = pane.index_for_item(item) {
+                        pane.activate_item(item_index, true, true, window, cx);
+                    }
                     window.prompt(
                         PromptLevel::Warning,
                         DELETED_MESSAGE,
@@ -2347,15 +2432,22 @@ impl Pane {
                     }
                     Ok(1) => {
                         pane.update_in(cx, |pane, window, cx| {
-                            pane.remove_item(item.item_id(), false, true, window, cx)
-                        })?;
+                            anyhow::ensure!(
+                                !item.has_pending_input(cx),
+                                "New input arrived while closing the item; try again"
+                            );
+                            pane.remove_item(item.item_id(), false, true, window, cx);
+                            anyhow::Ok(())
+                        })??;
                     }
                     _ => return Ok(false),
                 }
                 return Ok(true);
             } else {
                 let answer = pane.update_in(cx, |pane, window, cx| {
-                    pane.activate_item(item_ix, true, true, window, cx);
+                    if let Some(item_index) = pane.index_for_item(item) {
+                        pane.activate_item(item_index, true, true, window, cx);
+                    }
                     window.prompt(
                         PromptLevel::Warning,
                         CONFLICT_MESSAGE,
@@ -2397,7 +2489,9 @@ impl Pane {
                     let item_id = item.item_id();
                     let answer_task = pane.update_in(cx, |pane, window, cx| {
                         if pane.save_modals_spawned.insert(item_id) {
-                            pane.activate_item(item_ix, true, true, window, cx);
+                            if let Some(item_index) = pane.index_for_item(item) {
+                                pane.activate_item(item_index, true, true, window, cx);
+                            }
                             let prompt = dirty_message_for(item.project_path(cx), path_style);
                             Some(window.prompt(
                                 PromptLevel::Warning,
@@ -2424,17 +2518,19 @@ impl Pane {
                             Ok(1) => {
                                 // Don't save this file - reload from disk to discard changes
                                 pane.update_in(cx, |pane, _, cx| {
-                                    if pane.is_tab_pinned(item_ix) && !item.can_save(cx) {
+                                    if pane
+                                        .index_for_item(item)
+                                        .is_some_and(|item_index| pane.is_tab_pinned(item_index))
+                                        && !item.can_save(cx)
+                                    {
                                         pane.pinned_tab_count -= 1;
                                     }
-                                })
-                                .log_err();
+                                })?;
                                 if can_save && is_singleton {
                                     pane.update_in(cx, |_, window, cx| {
                                         item.reload(project.clone(), window, cx)
                                     })?
-                                    .await
-                                    .log_err();
+                                    .await?;
                                 }
                                 return Ok(true);
                             }
@@ -2465,7 +2561,9 @@ impl Pane {
                 let suggested_name =
                     cx.update(|_window, cx| item.suggested_filename(cx).to_string())?;
                 let new_path = pane.update_in(cx, |pane, window, cx| {
-                    pane.activate_item(item_ix, true, true, window, cx);
+                    if let Some(item_index) = pane.index_for_item(item) {
+                        pane.activate_item(item_index, true, true, window, cx);
+                    }
                     pane.workspace.update(cx, |workspace, cx| {
                         let lister = if workspace.project().read(cx).is_local() {
                             DirectoryLister::Local(
@@ -2495,13 +2593,23 @@ impl Pane {
                     let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
                     let new_path = ProjectPath { worktree_id, path };
 
+                    let pending_input = pane.update(cx, |pane, cx| {
+                        complete_pending_input(pane.item_for_path(new_path.clone(), cx), cx)
+                    });
+                    if let Some(pending_input) = pending_input {
+                        pending_input.await?;
+                    }
                     pane.update_in(cx, |pane, window, cx| {
-                        if let Some(item) = pane.item_for_path(new_path.clone(), cx) {
-                            pane.remove_item(item.item_id(), false, false, window, cx);
+                        if let Some(destination) = pane.item_for_path(new_path.clone(), cx) {
+                            anyhow::ensure!(
+                                !destination.has_pending_input(cx),
+                                "New input arrived in the destination while saving; try again"
+                            );
+                            pane.remove_item(destination.item_id(), false, false, window, cx);
                         }
 
-                        item.save_as(project.clone(), new_path, window, cx)
-                    })?
+                        Ok(item.save_as(project.clone(), new_path, window, cx))
+                    })??
                 } else {
                     return Ok(false);
                 };
@@ -2542,23 +2650,35 @@ impl Pane {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        let format = !matches!(
-            item.workspace_settings(cx).autosave,
-            AutosaveSetting::AfterDelay { .. }
-        );
-        if item.can_autosave(cx) {
-            item.save(
-                SaveOptions {
-                    format,
-                    force_format: false,
-                    autosave: true,
-                },
-                project,
-                window,
-                cx,
-            )
+        let pending_input = complete_pending_input([item.boxed_clone()], cx);
+        let item = item.boxed_clone();
+        let autosave = move |window: &mut Window, cx: &mut App| {
+            let format = !matches!(
+                item.workspace_settings(cx).autosave,
+                AutosaveSetting::AfterDelay { .. }
+            );
+            if item.can_autosave(cx) {
+                item.save(
+                    SaveOptions {
+                        format,
+                        force_format: false,
+                        autosave: true,
+                    },
+                    project,
+                    window,
+                    cx,
+                )
+            } else {
+                Task::ready(Ok(()))
+            }
+        };
+        if let Some(pending_input) = pending_input {
+            window.spawn(cx, async move |cx| {
+                pending_input.await?;
+                cx.update(autosave)?.await
+            })
         } else {
-            Task::ready(Ok(()))
+            autosave(window, cx)
         }
     }
 
@@ -3866,6 +3986,27 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.handle_tab_drop_inner(dragged_tab, ix, is_pane_target, false, window, cx);
+    }
+
+    fn handle_pinned_tab_bar_drop(
+        &mut self,
+        dragged_tab: &DraggedTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.handle_tab_drop_inner(dragged_tab, self.pinned_tab_count, false, true, window, cx);
+    }
+
+    fn handle_tab_drop_inner(
+        &mut self,
+        dragged_tab: &DraggedTab,
+        ix: usize,
+        is_pane_target: bool,
+        pin_after_move: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if is_pane_target
             && ix == self.active_item_index
             && let Some(active_item) = self.active_item()
@@ -3883,32 +4024,41 @@ impl Pane {
             || cfg!(not(target_os = "macos")) && window.modifiers().control;
 
         let from_pane = dragged_tab.pane.clone();
+        let item = dragged_tab.item.clone();
+        let workspace = self.workspace.clone();
+        let destination_item_id = self.items.get(ix).map(|item| item.item_id());
 
-        self.workspace
-            .update(cx, |_, cx| {
-                cx.defer_in(window, move |workspace, window, cx| {
-                    if let Some(split_direction) = split_direction {
-                        to_pane = workspace.split_pane(to_pane, split_direction, window, cx);
-                    }
-                    let database_id = workspace.database_id();
-                    let was_pinned_in_from_pane = from_pane.read_with(cx, |pane, _| {
-                        pane.index_for_item_id(item_id)
-                            .is_some_and(|ix| pane.is_tab_pinned(ix))
-                    });
-                    let to_pane_old_length = to_pane.read(cx).items.len();
-                    if is_clone {
-                        let Some(item) = from_pane
-                            .read(cx)
-                            .items()
-                            .find(|item| item.item_id() == item_id)
-                            .cloned()
-                        else {
-                            return;
-                        };
-                        if item.can_split(cx) {
-                            let task = item.clone_on_split(database_id, window, cx);
-                            let to_pane = to_pane.downgrade();
-                            cx.spawn_in(window, async move |_, cx| {
+        window.defer(cx, move |window, cx| {
+            let items = if split_direction.is_some() {
+                Vec::new()
+            } else {
+                vec![item.boxed_clone()]
+            };
+            run_item_transfer(&to_pane.clone(), items, window, cx, move |window, cx| {
+                if from_pane.read(cx).index_for_item(item.as_ref()).is_none() {
+                    return Ok(());
+                }
+                if let Some(split_direction) = split_direction {
+                    to_pane = workspace.update(cx, |workspace, cx| {
+                        workspace.split_pane(to_pane, split_direction, window, cx)
+                    })?;
+                }
+                let ix = destination_item_id
+                    .and_then(|item_id| to_pane.read(cx).index_for_item_id(item_id))
+                    .unwrap_or_else(|| ix.min(to_pane.read(cx).items_len()));
+                let database_id =
+                    workspace.read_with(cx, |workspace, _| workspace.database_id())?;
+                let was_pinned_in_from_pane = from_pane.read_with(cx, |pane, _| {
+                    pane.index_for_item_id(item_id)
+                        .is_some_and(|ix| pane.is_tab_pinned(ix))
+                });
+                let to_pane_old_length = to_pane.read(cx).items.len();
+                if is_clone {
+                    if item.can_split(cx) {
+                        let task = item.clone_on_split(database_id, window, cx);
+                        let to_pane = to_pane.downgrade();
+                        window
+                            .spawn(cx, async move |cx| {
                                 if let Some(item) = task.await {
                                     to_pane
                                         .update_in(cx, |pane, window, cx| {
@@ -3918,61 +4068,41 @@ impl Pane {
                                 }
                             })
                             .detach();
-                        } else {
-                            move_item(&from_pane, &to_pane, item_id, ix, true, window, cx);
-                        }
                     } else {
                         move_item(&from_pane, &to_pane, item_id, ix, true, window, cx);
                     }
-                    to_pane.update(cx, |this, _| {
-                        if to_pane == from_pane {
-                            let actual_ix = this
-                                .items
-                                .iter()
-                                .position(|item| item.item_id() == item_id)
-                                .unwrap_or(0);
+                } else {
+                    move_item(&from_pane, &to_pane, item_id, ix, true, window, cx);
+                }
+                to_pane.update(cx, |this, _| {
+                    if to_pane == from_pane {
+                        let actual_ix = this
+                            .items
+                            .iter()
+                            .position(|item| item.item_id() == item_id)
+                            .unwrap_or(0);
 
-                            let is_pinned_in_to_pane = this.is_tab_pinned(actual_ix);
+                        let is_pinned_in_to_pane = this.is_tab_pinned(actual_ix);
 
-                            if !was_pinned_in_from_pane && is_pinned_in_to_pane {
-                                this.pinned_tab_count += 1;
-                            } else if was_pinned_in_from_pane && !is_pinned_in_to_pane {
-                                this.pinned_tab_count -= 1;
-                            }
-                        } else if this.items.len() >= to_pane_old_length {
-                            let is_pinned_in_to_pane = this.is_tab_pinned(ix);
-                            let item_created_pane = to_pane_old_length == 0;
-                            let is_first_position = ix == 0;
-                            let was_dropped_at_beginning = item_created_pane || is_first_position;
-                            let should_remain_pinned = is_pinned_in_to_pane
-                                || (was_pinned_in_from_pane && was_dropped_at_beginning);
-
-                            if should_remain_pinned {
-                                this.pinned_tab_count += 1;
-                            }
+                        if !was_pinned_in_from_pane && is_pinned_in_to_pane {
+                            this.pinned_tab_count += 1;
+                        } else if was_pinned_in_from_pane && !is_pinned_in_to_pane {
+                            this.pinned_tab_count -= 1;
                         }
-                    });
+                    } else if this.items.len() >= to_pane_old_length {
+                        let is_pinned_in_to_pane = this.is_tab_pinned(ix);
+                        let item_created_pane = to_pane_old_length == 0;
+                        let is_first_position = ix == 0;
+                        let was_dropped_at_beginning = item_created_pane || is_first_position;
+                        let should_remain_pinned = is_pinned_in_to_pane
+                            || (was_pinned_in_from_pane && was_dropped_at_beginning);
+
+                        if should_remain_pinned {
+                            this.pinned_tab_count += 1;
+                        }
+                    }
                 });
-            })
-            .log_err();
-    }
-
-    fn handle_pinned_tab_bar_drop(
-        &mut self,
-        dragged_tab: &DraggedTab,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let item_id = dragged_tab.item.item_id();
-        let pinned_count = self.pinned_tab_count;
-
-        self.handle_tab_drop(dragged_tab, pinned_count, false, window, cx);
-
-        let to_pane = cx.entity();
-
-        self.workspace
-            .update(cx, |_, cx| {
-                cx.defer_in(window, move |_, _, cx| {
+                if pin_after_move {
                     to_pane.update(cx, |this, cx| {
                         if let Some(actual_ix) = this.index_for_item_id(item_id) {
                             // If the tab ended up at or after pinned_tab_count, it's not pinned
@@ -4006,9 +4136,11 @@ impl Pane {
                             }
                         }
                     });
-                });
+                }
+                Ok(())
             })
-            .log_err();
+            .detach_and_prompt_err("Unable to move item", window, cx, |_, _, _| None);
+        });
     }
 
     fn handle_dragged_selection_drop(
@@ -4267,7 +4399,7 @@ impl Pane {
     fn clean_item_ids(&self, cx: &mut Context<Pane>) -> Vec<EntityId> {
         self.items()
             .filter_map(|item| {
-                if !item.is_dirty(cx) {
+                if !item.is_dirty(cx) && !item.has_pending_input(cx) {
                     return Some(item.item_id());
                 }
 

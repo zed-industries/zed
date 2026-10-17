@@ -31,7 +31,19 @@ impl Editor {
         let accents = accent_data.colors.0.clone();
         let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
 
-        let visible_excerpts = self.visible_text_buffer_ranges(cx);
+        let visible_excerpts = match self.visible_text_buffer_ranges(cx) {
+            Ok(ranges) => ranges,
+            Err(pending) => {
+                self.request_row_geometry(pending.clone(), cx);
+                self.colorize_brackets_task = cx.spawn(async move |editor, cx| {
+                    pending.wait().await;
+                    editor
+                        .update(cx, |editor, cx| editor.colorize_brackets(invalidate, cx))
+                        .ok();
+                });
+                return;
+            }
+        };
         let excerpt_data: Vec<(
             BufferSnapshot,
             Range<BufferOffset>,

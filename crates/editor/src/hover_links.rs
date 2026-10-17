@@ -1466,7 +1466,7 @@ mod tests {
         });
 
         cx.run_until_parked();
-        let screen_coord = cx.pixel_position(indoc! {"struct fiˇle;"});
+        let screen_coord = cx.pixel_position(indoc! {"struct fiˇle;"}).await;
         cx.run_until_parked();
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
         cx.run_until_parked();
@@ -1523,7 +1523,7 @@ mod tests {
 
         cx.run_until_parked();
 
-        let screen_coord = cx.pixel_position(indoc! {"// see fileˇ2.rs"});
+        let screen_coord = cx.pixel_position(indoc! {"// see fileˇ2.rs"}).await;
         cx.run_until_parked();
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
         cx.run_until_parked();
@@ -1585,18 +1585,24 @@ mod tests {
             }
         });
 
-        let symbol_start = cx.pixel_position(indoc! {"
+        let symbol_start = cx
+            .pixel_position(indoc! {"
             fn test() { ˇdo_work(); }
             fn do_work() { test(); }
-        "});
-        let symbol_end = cx.pixel_position(indoc! {"
+        "})
+            .await;
+        let symbol_end = cx
+            .pixel_position(indoc! {"
             fn test() { do_worˇk(); }
             fn do_work() { test(); }
-        "});
-        let other_symbol = cx.pixel_position(indoc! {"
+        "})
+            .await;
+        let other_symbol = cx
+            .pixel_position(indoc! {"
             fn test() { do_work(); }
             fn do_work() { teˇst(); }
-        "});
+        "})
+            .await;
 
         cx.simulate_mouse_move(symbol_start, None, Modifiers::secondary_key());
         cx.run_until_parked();
@@ -1646,14 +1652,18 @@ mod tests {
             }
         });
 
-        let first_point = cx.pixel_position(indoc! {"
+        let first_point = cx
+            .pixel_position(indoc! {"
             fn test() { do_wˇork(); }
             fn do_work() { test(); }
-        "});
-        let second_point = cx.pixel_position(indoc! {"
+        "})
+            .await;
+        let second_point = cx
+            .pixel_position(indoc! {"
             fn test() { do_woˇrk(); }
             fn do_work() { test(); }
-        "});
+        "})
+            .await;
 
         cx.simulate_mouse_move(first_point, None, Modifiers::secondary_key());
         cx.run_until_parked();
@@ -1694,10 +1704,12 @@ mod tests {
             "});
 
         // Basic hold cmd, expect highlight in region if response contains definition
-        let hover_point = cx.pixel_position(indoc! {"
+        let hover_point = cx
+            .pixel_position(indoc! {"
                 fn test() { do_wˇork(); }
                 fn do_work() { test(); }
-            "});
+            "})
+            .await;
         let symbol_range = cx.lsp_range(indoc! {"
                 fn test() { «do_work»(); }
                 fn do_work() { test(); }
@@ -1764,10 +1776,12 @@ mod tests {
         );
 
         // Moving mouse to location with no response dismisses highlight
-        let hover_point = cx.pixel_position(indoc! {"
+        let hover_point = cx
+            .pixel_position(indoc! {"
                 fˇn test() { do_work(); }
                 fn do_work() { test(); }
-            "});
+            "})
+            .await;
         let mut requests =
             cx.lsp
                 .set_request_handler::<GotoDefinition, _, _>(move |_, _| async move {
@@ -1789,10 +1803,12 @@ mod tests {
         );
 
         // // Move mouse without cmd and then pressing cmd triggers highlight
-        let hover_point = cx.pixel_position(indoc! {"
+        let hover_point = cx
+            .pixel_position(indoc! {"
                 fn test() { do_work(); }
                 fn do_work() { teˇst(); }
-            "});
+            "})
+            .await;
         cx.simulate_mouse_move(hover_point, None, Modifiers::none());
 
         // Assert no link highlights
@@ -1858,10 +1874,12 @@ mod tests {
         );
 
         // Moving again within the same symbol range doesn't re-request
-        let hover_point = cx.pixel_position(indoc! {"
+        let hover_point = cx
+            .pixel_position(indoc! {"
                 fn test() { do_work(); }
                 fn do_work() { tesˇt(); }
-            "});
+            "})
+            .await;
         cx.simulate_mouse_move(hover_point, None, Modifiers::secondary_key());
         cx.background_executor.run_until_parked();
         cx.assert_editor_text_highlights(
@@ -1896,10 +1914,12 @@ mod tests {
         );
 
         // Cmd click without existing definition requests and jumps
-        let hover_point = cx.pixel_position(indoc! {"
+        let hover_point = cx
+            .pixel_position(indoc! {"
                 fn test() { do_wˇork(); }
                 fn do_work() { test(); }
-            "});
+            "})
+            .await;
         let target_range = cx.lsp_range(indoc! {"
                 fn test() { do_work(); }
                 fn «do_work»() { test(); }
@@ -1926,10 +1946,12 @@ mod tests {
 
         // 1. We have a pending selection, mouse point is over a symbol that we have a response for, hitting cmd and nothing happens
         // 2. Selection is completed, hovering
-        let hover_point = cx.pixel_position(indoc! {"
+        let hover_point = cx
+            .pixel_position(indoc! {"
                 fn test() { do_wˇork(); }
                 fn do_work() { test(); }
-            "});
+            "})
+            .await;
         let target_range = cx.lsp_range(indoc! {"
                 fn test() { do_work(); }
                 fn «do_work»() { test(); }
@@ -2352,9 +2374,12 @@ mod tests {
         *hints.lock() = Some(vec![type_hint(21, "u32", HintEdits::InResponse)]);
         cx.set_state(source);
         cx.run_until_parked();
-        let hint_start = cx.pixel_position_for(DisplayPoint::new(DisplayRow(0), 21));
+        let hint_start = cx
+            .pixel_position_for(DisplayPoint::new(DisplayRow(0), 21))
+            .await;
         let glyph_width = cx
             .pixel_position_for(DisplayPoint::new(DisplayRow(0), 22))
+            .await
             .x
             - hint_start.x;
         let line_height = cx.update_editor(|editor, window, cx| {
@@ -2458,7 +2483,9 @@ mod tests {
             cx.set_state("fn main() { let aˇ = 1; let b = 2; }\n");
             cx.run_until_parked();
             if hover_second_first {
-                let second_hint_point = cx.pixel_position_for(DisplayPoint::new(DisplayRow(0), 34));
+                let second_hint_point = cx
+                    .pixel_position_for(DisplayPoint::new(DisplayRow(0), 34))
+                    .await;
                 cx.simulate_mouse_move(second_hint_point, None, Modifiers::none());
                 cx.update_editor(|editor, _, cx| {
                     let buffer_id = editor
@@ -2532,7 +2559,9 @@ mod tests {
         cx.run_until_parked();
         cx.dispatch_action(AcceptInlayHint);
         cx.assert_editor_state(source);
-        let point = cx.pixel_position_for(DisplayPoint::new(DisplayRow(0), 23));
+        let point = cx
+            .pixel_position_for(DisplayPoint::new(DisplayRow(0), 23))
+            .await;
         cx.simulate_click(point, Modifiers::none());
         simulate_double_click(&mut cx, point);
         cx.assert_editor_state("fn main() { let «valueˇ» = 1; }\n");
@@ -2564,7 +2593,9 @@ mod tests {
         cx.run_until_parked();
         let (release_resolve, gate) = oneshot::channel();
         *resolve_gate.lock() = Some(gate);
-        let word_start = cx.pixel_position_for(DisplayPoint::new(DisplayRow(0), 18));
+        let word_start = cx
+            .pixel_position_for(DisplayPoint::new(DisplayRow(0), 18))
+            .await;
         cx.simulate_mouse_move(word_start, None, Modifiers::none());
         cx.simulate_click(word_start, Modifiers::none());
         cx.simulate_event(MouseDownEvent {
@@ -2574,7 +2605,9 @@ mod tests {
             click_count: 2,
             first_mouse: false,
         });
-        let drag_end = cx.pixel_position_for(DisplayPoint::new(DisplayRow(0), 30));
+        let drag_end = cx
+            .pixel_position_for(DisplayPoint::new(DisplayRow(0), 30))
+            .await;
         cx.simulate_event(MouseMoveEvent {
             position: drag_end,
             pressed_button: Some(MouseButton::Left),
@@ -2947,8 +2980,12 @@ mod tests {
         );
 
         *hints.lock() = Some(vec![repeated_hints[2].clone()]);
-        let hint_start = cx.pixel_position_for(DisplayPoint::new(DisplayRow(3), 11));
-        let next_column = cx.pixel_position_for(DisplayPoint::new(DisplayRow(3), 12));
+        let hint_start = cx
+            .pixel_position_for(DisplayPoint::new(DisplayRow(3), 11))
+            .await;
+        let next_column = cx
+            .pixel_position_for(DisplayPoint::new(DisplayRow(3), 12))
+            .await;
         let point = gpui::point((hint_start.x + next_column.x) / 2., hint_start.y);
         cx.simulate_mouse_move(point, None, Modifiers::none());
         cx.simulate_click(point, Modifiers::none());
@@ -3165,7 +3202,7 @@ mod tests {
             )
         });
         // Press cmd to trigger highlight
-        let hover_point = cx.pixel_position_for(midpoint);
+        let hover_point = cx.pixel_position_for(midpoint).await;
         cx.simulate_mouse_move(hover_point, None, Modifiers::secondary_key());
         cx.background_executor.run_until_parked();
         cx.update_editor(|editor, window, cx| {
@@ -3269,8 +3306,8 @@ mod tests {
         cx.assert_editor_state(destination);
 
         let source = cx.buffer_text().replace("= TestStruct", "= TeˇstStruct");
-        let click_point = cx.pixel_position(&source);
-        let hover_point = cx.pixel_position_for(midpoint);
+        let click_point = cx.pixel_position(&source).await;
+        let hover_point = cx.pixel_position_for(midpoint).await;
         let mut definitions =
             cx.set_request_handler::<GotoDefinition, _, _>(move |uri, params, _| async move {
                 let params = params.text_document_position_params;
@@ -3327,9 +3364,11 @@ mod tests {
             Let's test a [complex](https://zed.dev/channel/had-(oops)) caseˇ.
         "});
 
-        let screen_coord = cx.pixel_position(indoc! {"
+        let screen_coord = cx
+            .pixel_position(indoc! {"
             Let's test a [complex](https://zed.dev/channel/had-(ˇoops)) case.
-            "});
+            "})
+            .await;
 
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
         cx.assert_editor_text_highlights(
@@ -3458,7 +3497,7 @@ mod tests {
                     });
                     Ok(Some(lsp::GotoDefinitionResponse::Array(locations.to_vec())))
                 });
-            let position = cx.pixel_position(&source);
+            let position = cx.pixel_position(&source).await;
             cx.simulate_mouse_move(position, None, Modifiers::secondary_key());
             assert_eq!(symbols.next().await, Some(()));
             cx.run_until_parked();
@@ -3533,16 +3572,20 @@ mod tests {
         assert_no_highlight!(cx);
 
         // No modifier
-        let screen_coord = cx.pixel_position(indoc! {"
+        let screen_coord = cx
+            .pixel_position(indoc! {"
             Let's test a [complex](https://zed.dev/channel/ˇ) case.
-            "});
+            "})
+            .await;
         cx.simulate_mouse_move(screen_coord, None, Modifiers::none());
         assert_no_highlight!(cx);
 
         // Modifier active
-        let screen_coord = cx.pixel_position(indoc! {"
+        let screen_coord = cx
+            .pixel_position(indoc! {"
             Let's test a [complex](https://zed.dev/channeˇl/) case.
-            "});
+            "})
+            .await;
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
         cx.assert_editor_text_highlights(
             HighlightKey::HoveredLinkState,
@@ -3565,8 +3608,9 @@ mod tests {
 
         cx.set_state(indoc! {"https://zed.dev/releases is a cool ˇwebpage."});
 
-        let screen_coord =
-            cx.pixel_position(indoc! {"https://zed.dev/relˇeases is a cool webpage."});
+        let screen_coord = cx
+            .pixel_position(indoc! {"https://zed.dev/relˇeases is a cool webpage."})
+            .await;
 
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
         cx.assert_editor_text_highlights(
@@ -3591,8 +3635,9 @@ mod tests {
 
         cx.set_state(indoc! {"A cool ˇwebpage is https://zed.dev/releases"});
 
-        let screen_coord =
-            cx.pixel_position(indoc! {"A cool webpage is https://zed.dev/releˇases"});
+        let screen_coord = cx
+            .pixel_position(indoc! {"A cool webpage is https://zed.dev/releˇases"})
+            .await;
 
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
         cx.assert_editor_text_highlights(
@@ -3900,7 +3945,7 @@ Sentence ending file2.rs.
 
         for (original, cursor_version, highlight_version) in test_cases {
             let position_text = base.replace(original, cursor_version);
-            let screen_coord = cx.pixel_position(&position_text);
+            let screen_coord = cx.pixel_position(&position_text).await;
             cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
 
             if let Some(highlight) = highlight_version {
@@ -3928,7 +3973,7 @@ Sentence ending file2.rs.
             "Or [link](file2.rs) markdown",
             "Or [link](fiˇle2.rs) markdown",
         );
-        let screen_coord = cx.pixel_position(&position_text);
+        let screen_coord = cx.pixel_position(&position_text).await;
         cx.simulate_click(screen_coord, Modifiers::secondary_key());
 
         cx.update_workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 2));
@@ -3980,9 +4025,11 @@ Sentence ending file2.rs.
             Go to file2.rs:5:3 for the fix.ˇ
         "});
 
-        let screen_coord = cx.pixel_position(indoc! {"
+        let screen_coord = cx
+            .pixel_position(indoc! {"
             Go to filˇe2.rs:5:3 for the fix.
-        "});
+        "})
+            .await;
 
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
         cx.assert_editor_text_highlights(
@@ -4057,9 +4104,11 @@ Sentence ending file2.rs.
             Go to file2.rs:3 please.ˇ
         "});
 
-        let screen_coord = cx.pixel_position(indoc! {"
+        let screen_coord = cx
+            .pixel_position(indoc! {"
             Go to filˇe2.rs:3 please.
-        "});
+        "})
+            .await;
 
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
         cx.assert_editor_text_highlights(
@@ -4115,9 +4164,11 @@ Sentence ending file2.rs.
             Error at file2.rs:2:in 'method'ˇ
         "});
 
-        let screen_coord = cx.pixel_position(indoc! {"
+        let screen_coord = cx
+            .pixel_position(indoc! {"
             Error at filˇe2.rs:2:in 'method'
-        "});
+        "})
+            .await;
 
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
         cx.assert_editor_text_highlights(
@@ -4175,9 +4226,11 @@ Sentence ending file2.rs.
             See [here](file2.rs:3:2) for details.ˇ
         "});
 
-        let screen_coord = cx.pixel_position(indoc! {"
+        let screen_coord = cx
+            .pixel_position(indoc! {"
             See [here](filˇe2.rs:3:2) for details.
-        "});
+        "})
+            .await;
 
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
         cx.assert_editor_text_highlights(
@@ -4246,9 +4299,11 @@ Sentence ending file2.rs.
         "});
 
         // File does not exist
-        let screen_coord = cx.pixel_position(indoc! {"
+        let screen_coord = cx
+            .pixel_position(indoc! {"
             You can't open ../diˇr because it's a directory.
-        "});
+        "})
+            .await;
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
 
         // No highlight
@@ -4284,9 +4339,11 @@ Sentence ending file2.rs.
         "});
 
         // File does not exist
-        let screen_coord = cx.pixel_position(indoc! {"
+        let screen_coord = cx
+            .pixel_position(indoc! {"
             You can't open ˇ\"🤩\" because it's an emoji.
-        "});
+        "})
+            .await;
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
 
         // No highlight, does not panic...
@@ -4326,10 +4383,12 @@ Sentence ending file2.rs.
                 "});
 
         // Position the mouse over a symbol that has a definition
-        let hover_point = cx.pixel_position(indoc! {"
+        let hover_point = cx
+            .pixel_position(indoc! {"
                     fn test() { do_wˇork(); }
                     fn do_work() { test(); }
-                "});
+                "})
+            .await;
         let symbol_range = cx.lsp_range(indoc! {"
                     fn test() { «do_work»(); }
                     fn do_work() { test(); }
@@ -4430,12 +4489,14 @@ Sentence ending file2.rs.
         cx.run_until_parked();
 
         // Cmd-hover over "LICENSE" should highlight it as a link
-        let screen_coord = cx.pixel_position(indoc! {"
+        let screen_coord = cx
+            .pixel_position(indoc! {"
             // See LICˇENSE for details
             fn main() {
                 println!(\"hello\");
             }
-        "});
+        "})
+            .await;
 
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
         cx.run_until_parked();
@@ -4503,9 +4564,11 @@ Sentence ending file2.rs.
         requests.next().await;
         cx.run_until_parked();
 
-        let screen_coord = cx.pixel_position(indoc! {"
+        let screen_coord = cx
+            .pixel_position(indoc! {"
             // See https://examˇple.com for more info
-        "});
+        "})
+            .await;
 
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
         cx.run_until_parked();
@@ -4593,10 +4656,12 @@ Sentence ending file2.rs.
         document_link_requests.next().await;
         cx.run_until_parked();
 
-        let screen_coord = cx.pixel_position(indoc! {"
+        let screen_coord = cx
+            .pixel_position(indoc! {"
             // See LICˇENSE for details
             fn definition() {}
-        "});
+        "})
+            .await;
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
         definition_requests.next().await;
         cx.run_until_parked();
@@ -4679,9 +4744,11 @@ Sentence ending file2.rs.
         requests.next().await;
         cx.run_until_parked();
 
-        let screen_coord = cx.pixel_position(indoc! {"
+        let screen_coord = cx
+            .pixel_position(indoc! {"
             // See LICˇENSE for details
-        "});
+        "})
+            .await;
         // Plain hover (no modifier) is enough; the doc-link tooltip stacks
         // alongside the regular LSP hover popovers.
         cx.simulate_mouse_move(screen_coord, None, Modifiers::none());
@@ -4706,9 +4773,11 @@ Sentence ending file2.rs.
 
         // Move the mouse off the link; `show_hover` re-fires for the new
         // position and rebuilds `info_popovers` without the tooltip.
-        let off_link = cx.pixel_position(indoc! {"
+        let off_link = cx
+            .pixel_position(indoc! {"
             // ˇSee LICENSE for details
-        "});
+        "})
+            .await;
         cx.simulate_mouse_move(off_link, None, Modifiers::none());
         cx.background_executor
             .advance_clock(std::time::Duration::from_millis(delay_ms + 100));
@@ -4788,9 +4857,11 @@ Sentence ending file2.rs.
         document_link_requests.next().await;
         cx.run_until_parked();
 
-        let screen_coord = cx.pixel_position(indoc! {"
+        let screen_coord = cx
+            .pixel_position(indoc! {"
             // See LICˇENSE for details
-        "});
+        "})
+            .await;
         cx.simulate_mouse_move(screen_coord, None, Modifiers::none());
         let delay_ms = cx.update(|_, cx| EditorSettings::get_global(cx).hover_popover_delay.0);
         cx.background_executor
@@ -4869,9 +4940,11 @@ Sentence ending file2.rs.
         requests.next().await;
         cx.run_until_parked();
 
-        let screen_coord = cx.pixel_position(indoc! {"
+        let screen_coord = cx
+            .pixel_position(indoc! {"
             // See LICˇENSE for details
-        "});
+        "})
+            .await;
         cx.simulate_mouse_move(screen_coord, None, Modifiers::none());
         cx.background_executor
             .advance_clock(std::time::Duration::from_millis(2000));

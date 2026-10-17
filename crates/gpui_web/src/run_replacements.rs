@@ -97,10 +97,11 @@ pub(crate) fn collect_candidates(
 }
 
 pub(crate) struct Replacement {
+    pub(crate) source: Range<usize>,
     pub(crate) glyph_range: Range<usize>,
     pub(crate) font_id: FontId,
     pub(crate) glyph: ShapedGlyph,
-    pub(crate) width_delta: Pixels,
+    pub(crate) width_delta: f64,
 }
 
 struct Segment {
@@ -115,10 +116,27 @@ pub(crate) fn apply_replacements(layout: &mut LineLayout, replacements: Vec<Repl
         return;
     }
 
+    let width = layout.caret_x_for_index(layout.len);
+    let mut caret_replacements = replacements.iter().peekable();
+    let mut caret_shift = 0.0;
+    layout.caret_positions.retain_mut(|(index, position)| {
+        while let Some(replacement) =
+            caret_replacements.next_if(|replacement| replacement.source.end <= *index)
+        {
+            caret_shift += replacement.width_delta;
+        }
+        if caret_replacements.peek().is_some_and(|replacement| {
+            replacement.source.start < *index && *index < replacement.source.end
+        }) {
+            return false;
+        }
+        *position += caret_shift;
+        true
+    });
     let mut replacements = replacements.into_iter().peekable();
     let mut original_index = 0;
     let mut consumed_end = 0;
-    let mut shift = Pixels::ZERO;
+    let mut shift = 0.0;
     let mut segments_by_run: SmallVec<[SmallVec<[Segment; 4]>; 4]> = SmallVec::new();
     let mut spare_buffers: SmallVec<[Vec<ShapedGlyph>; 4]> = SmallVec::new();
     let mut final_run_count = 0;
@@ -137,11 +155,11 @@ pub(crate) fn apply_replacements(layout: &mut LineLayout, replacements: Vec<Repl
             {
                 consumed_end = replacement.glyph_range.end;
                 *glyph = replacement.glyph;
-                glyph.position.x += shift;
+                glyph.position.x = Pixels::from(f64::from(glyph.position.x) + shift);
                 shift += replacement.width_delta;
                 replacement.font_id
             } else {
-                glyph.position.x += shift;
+                glyph.position.x = Pixels::from(f64::from(glyph.position.x) + shift);
                 run.font_id
             };
 
@@ -162,7 +180,7 @@ pub(crate) fn apply_replacements(layout: &mut LineLayout, replacements: Vec<Repl
             true
         }
     });
-    layout.width += shift;
+    layout.width = Pixels::from(width + shift);
 
     let source_run_count = layout.runs.len();
     layout.runs.resize_with(final_run_count, || ShapedRun {
@@ -386,6 +404,7 @@ mod tests {
             ascent: px(11.0),
             descent: px(3.0),
             len: index * 2,
+            caret_positions: Vec::new(),
         }
     }
 
@@ -396,17 +415,18 @@ mod tests {
         glyph.position.y = px(7.0);
         glyph.is_emoji = true;
         Replacement {
+            source: range.start * 2..range.end * 2,
             glyph_range: range,
             font_id: FontId(font_id),
             glyph,
-            width_delta: px(delta),
+            width_delta: f64::from(delta),
         }
     }
 
     fn reference(layout: &mut LineLayout, replacements: Vec<Replacement>) {
         let original = std::mem::take(&mut layout.runs);
         let mut replacements = replacements.into_iter().peekable();
-        let mut shift = Pixels::ZERO;
+        let mut shift = 0.0;
         let mut consumed_end = 0;
         for (index, (font_id, mut glyph)) in original
             .into_iter()
@@ -426,12 +446,12 @@ mod tests {
             {
                 let replacement = replacements.next().expect("peeked replacement");
                 glyph = replacement.glyph;
-                glyph.position.x += shift;
+                glyph.position.x = Pixels::from(f64::from(glyph.position.x) + shift);
                 shift += replacement.width_delta;
                 consumed_end = replacement.glyph_range.end;
                 replacement.font_id
             } else {
-                glyph.position.x += shift;
+                glyph.position.x = Pixels::from(f64::from(glyph.position.x) + shift);
                 font_id
             };
             if let Some(run) = layout.runs.last_mut().filter(|run| run.font_id == font_id) {
@@ -443,7 +463,7 @@ mod tests {
                 });
             }
         }
-        layout.width += shift;
+        layout.width = Pixels::from(f64::from(layout.width) + shift);
     }
 
     fn assert_equal(actual: &LineLayout, expected: &LineLayout) {
@@ -553,6 +573,30 @@ mod tests {
         reference(&mut expected, replacements());
         assert_equal(&actual, &expected);
         assert_eq!(actual.runs.as_ptr(), outer);
+    }
+
+    #[test]
+    fn replacements_preserve_carets_independently_of_glyph_origins() {
+        let mut layout = layout(&[2, 2]);
+        layout.width = px(32.0);
+        layout.caret_positions = vec![(0, 0.0), (2, 8.0), (4, 12.0), (6, 20.0), (8, 32.0)];
+        apply_replacements(&mut layout, vec![replacement(1..3, 9, 2.5)]);
+        assert_eq!(
+            layout.caret_positions,
+            [(0, 0.0), (2, 8.0), (6, 22.5), (8, 34.5)]
+        );
+        assert_eq!(layout.width, px(34.5));
+        assert_eq!(layout.index_for_x(px(20.0)), Some(2));
+        assert_eq!(layout.closest_index_for_x(px(20.0)), 6);
+        assert_eq!(
+            layout
+                .runs
+                .iter()
+                .flat_map(|run| &run.glyphs)
+                .map(|glyph| glyph.position.x)
+                .collect::<Vec<_>>(),
+            [px(0.0), px(11.0), px(32.5)]
+        );
     }
 
     #[test]

@@ -1644,13 +1644,17 @@ mod tests {
                 assert_eq!(
                     snapshot.tab_snapshot().text(),
                     format!(
-                        "{}{}\u{301}β\n{} \u{301}β\n{} \u{301}β\n{} \u{301}β\n{} \u{301}β",
+                        "{}{}\u{301}β\n{}{}\u{301}β\n{}{}\u{301}β\n{}{}\u{301}β\n{}{}\u{301}β",
                         prefixes[0],
                         " ".repeat(128),
                         prefixes[1],
+                        " ".repeat(127),
                         prefixes[2],
+                        " ".repeat(126),
                         prefixes[3],
-                        prefixes[4]
+                        " ".repeat(128),
+                        prefixes[4],
+                        " ".repeat(128)
                     )
                 );
             }
@@ -2466,11 +2470,7 @@ mod tests {
                     .map(|(offset, _)| ((byte + offset) as u32, column)),
             );
             if grapheme == "\t" {
-                let width = if byte < 256 {
-                    tab_size - character_column % tab_size
-                } else {
-                    1
-                };
+                let width = tab_size - character_column % tab_size;
                 boundaries.extend(text.len()..text.len() + width as usize);
                 text.extend(iter::repeat_n(' ', width as usize));
                 character_column += width;

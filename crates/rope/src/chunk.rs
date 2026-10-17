@@ -1,4 +1,4 @@
-use crate::{OffsetUtf16, Point, PointUtf16, TextSummary, Unclipped};
+use crate::{OffsetUtf16, Point, PointUtf16, TextSummary, Unclipped, WordRuns};
 use gpui_util::{debug_panic, is_utf8_char_boundary};
 use heapless::String as ArrayString;
 use std::{cmp, ops::Range};
@@ -327,6 +327,8 @@ impl<'a> ChunkSlice<'a> {
             last_line_len_utf16: self.last_line_len_utf16(),
             longest_row,
             longest_row_chars,
+            word_runs: WordRuns::of(self.text),
+            has_tabs: self.tabs != 0,
         }
     }
 

@@ -969,6 +969,7 @@ impl Editor {
                 merge_adjacent: false,
                 type_tag: Some(type_id),
                 collapsed_text: None,
+                uniform_width: true,
             };
             let creases = new_newlines
                 .into_iter()

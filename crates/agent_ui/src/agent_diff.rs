@@ -620,6 +620,15 @@ impl Item for AgentDiffPane {
         self.multibuffer.read(cx).is_dirty(cx)
     }
 
+    fn has_pending_input(&self, cx: &App) -> bool {
+        self.editor.read(cx).has_pending_input(cx)
+    }
+
+    fn pending_input(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        self.editor
+            .update(cx, |editor, cx| editor.pending_input(cx))
+    }
+
     fn has_conflict(&self, cx: &App) -> bool {
         self.multibuffer.read(cx).has_conflict(cx)
     }

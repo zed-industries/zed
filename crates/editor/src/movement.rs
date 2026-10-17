@@ -4,6 +4,7 @@
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
 use crate::{
     DisplayRow, EditorStyle, ToOffset, ToPoint,
+    display_map::{PendingRowGeometry, SyntaxStyling},
     scroll::{ScrollOffset, SharedScrollAnchor},
 };
 use gpui::{Pixels, WindowTextSystem};
@@ -25,10 +26,12 @@ pub enum FindRange {
 
 /// TextLayoutDetails encompasses everything we need to move vertically
 /// taking into account variable width characters.
+#[derive(Clone)]
 pub struct TextLayoutDetails {
     pub(crate) text_system: Arc<WindowTextSystem>,
     pub(crate) editor_style: EditorStyle,
     pub(crate) rem_size: Pixels,
+    pub(crate) syntax: SyntaxStyling,
     pub scroll_anchor: SharedScrollAnchor,
     pub visible_rows: Option<f64>,
     pub vertical_scroll_margin: ScrollOffset,
@@ -87,7 +90,7 @@ pub fn up(
     goal: SelectionGoal,
     preserve_column_at_start: bool,
     text_layout_details: &TextLayoutDetails,
-) -> (DisplayPoint, SelectionGoal) {
+) -> Result<(DisplayPoint, SelectionGoal), PendingRowGeometry> {
     up_by_rows(
         map,
         start,
@@ -105,7 +108,7 @@ pub fn down(
     goal: SelectionGoal,
     preserve_column_at_end: bool,
     text_layout_details: &TextLayoutDetails,
-) -> (DisplayPoint, SelectionGoal) {
+) -> Result<(DisplayPoint, SelectionGoal), PendingRowGeometry> {
     down_by_rows(
         map,
         start,
@@ -123,12 +126,12 @@ pub(crate) fn up_by_rows(
     goal: SelectionGoal,
     preserve_column_at_start: bool,
     text_layout_details: &TextLayoutDetails,
-) -> (DisplayPoint, SelectionGoal) {
+) -> Result<(DisplayPoint, SelectionGoal), PendingRowGeometry> {
     let goal_x = match goal {
         SelectionGoal::HorizontalPosition(x) => x,
         SelectionGoal::WrappedHorizontalPosition((_, x)) => x,
         SelectionGoal::HorizontalRange { end, .. } => end,
-        _ => map.x_for_display_point(start, text_layout_details),
+        _ => map.x_for_display_point(start, text_layout_details)?,
     };
 
     let prev_row = DisplayRow(start.row().0.saturating_sub(row_count));
@@ -137,9 +140,9 @@ pub(crate) fn up_by_rows(
         Bias::Left,
     );
     if point.row() < start.row() {
-        *point.column_mut() = map.display_column_for_x(point.row(), goal_x, text_layout_details)
+        *point.column_mut() = map.display_column_for_x(point.row(), goal_x, text_layout_details)?
     } else if preserve_column_at_start {
-        return (start, goal);
+        return Ok((start, goal));
     } else {
         point = DisplayPoint::new(DisplayRow(0), 0);
     }
@@ -148,7 +151,7 @@ pub(crate) fn up_by_rows(
     if clipped_point.row() < point.row() {
         clipped_point = map.clip_point(point, Bias::Right);
     }
-    (clipped_point, SelectionGoal::HorizontalPosition(goal_x))
+    Ok((clipped_point, SelectionGoal::HorizontalPosition(goal_x)))
 }
 
 pub(crate) fn down_by_rows(
@@ -158,20 +161,20 @@ pub(crate) fn down_by_rows(
     goal: SelectionGoal,
     preserve_column_at_end: bool,
     text_layout_details: &TextLayoutDetails,
-) -> (DisplayPoint, SelectionGoal) {
+) -> Result<(DisplayPoint, SelectionGoal), PendingRowGeometry> {
     let goal_x = match goal {
         SelectionGoal::HorizontalPosition(x) => x,
         SelectionGoal::WrappedHorizontalPosition((_, x)) => x,
         SelectionGoal::HorizontalRange { end, .. } => end,
-        _ => map.x_for_display_point(start, text_layout_details),
+        _ => map.x_for_display_point(start, text_layout_details)?,
     };
 
-    let new_row = DisplayRow(start.row().0 + row_count);
+    let new_row = DisplayRow(start.row().0.saturating_add(row_count));
     let mut point = map.clip_point(DisplayPoint::new(new_row, 0), Bias::Right);
     if point.row() > start.row() {
-        *point.column_mut() = map.display_column_for_x(point.row(), goal_x, text_layout_details)
+        *point.column_mut() = map.display_column_for_x(point.row(), goal_x, text_layout_details)?
     } else if preserve_column_at_end {
-        return (start, goal);
+        return Ok((start, goal));
     } else {
         point = map.max_point();
     }
@@ -180,7 +183,7 @@ pub(crate) fn down_by_rows(
     if clipped_point.row() > point.row() {
         clipped_point = map.clip_point(point, Bias::Left);
     }
-    (clipped_point, SelectionGoal::HorizontalPosition(goal_x))
+    Ok((clipped_point, SelectionGoal::HorizontalPosition(goal_x)))
 }
 
 /// Returns a position of the start of line.
@@ -1418,7 +1421,8 @@ mod tests {
             assert_eq!(snapshot.text(), "abc\ndefg\n\nhijkl\nmn");
 
             let col_2_x = snapshot
-                .x_for_display_point(DisplayPoint::new(DisplayRow(0), 2), &text_layout_details);
+                .x_for_display_point(DisplayPoint::new(DisplayRow(0), 2), &text_layout_details)
+                .expect("ready row geometry");
 
             // Can't move up into the first excerpt's header
             assert_eq!(
@@ -1428,7 +1432,8 @@ mod tests {
                     SelectionGoal::HorizontalPosition(col_2_x),
                     false,
                     &text_layout_details
-                ),
+                )
+                .expect("ready row geometry"),
                 (
                     DisplayPoint::new(DisplayRow(0), 0),
                     SelectionGoal::HorizontalPosition(col_2_x),
@@ -1441,7 +1446,8 @@ mod tests {
                     SelectionGoal::None,
                     false,
                     &text_layout_details
-                ),
+                )
+                .expect("ready row geometry"),
                 (
                     DisplayPoint::new(DisplayRow(0), 0),
                     SelectionGoal::HorizontalPosition(0.0),
@@ -1449,7 +1455,8 @@ mod tests {
             );
 
             let col_4_x = snapshot
-                .x_for_display_point(DisplayPoint::new(DisplayRow(1), 4), &text_layout_details);
+                .x_for_display_point(DisplayPoint::new(DisplayRow(1), 4), &text_layout_details)
+                .expect("ready row geometry");
 
             // Move up and down within first excerpt
             assert_eq!(
@@ -1459,7 +1466,8 @@ mod tests {
                     SelectionGoal::HorizontalPosition(col_4_x),
                     false,
                     &text_layout_details
-                ),
+                )
+                .expect("ready row geometry"),
                 (
                     DisplayPoint::new(DisplayRow(0), 3),
                     SelectionGoal::HorizontalPosition(col_4_x)
@@ -1472,7 +1480,8 @@ mod tests {
                     SelectionGoal::HorizontalPosition(col_4_x),
                     false,
                     &text_layout_details
-                ),
+                )
+                .expect("ready row geometry"),
                 (
                     DisplayPoint::new(DisplayRow(1), 4),
                     SelectionGoal::HorizontalPosition(col_4_x)
@@ -1480,7 +1489,8 @@ mod tests {
             );
 
             let col_5_x = snapshot
-                .x_for_display_point(DisplayPoint::new(DisplayRow(3), 5), &text_layout_details);
+                .x_for_display_point(DisplayPoint::new(DisplayRow(3), 5), &text_layout_details)
+                .expect("ready row geometry");
 
             // Move up and down across second excerpt's header
             assert_eq!(
@@ -1490,7 +1500,8 @@ mod tests {
                     SelectionGoal::HorizontalPosition(col_5_x),
                     false,
                     &text_layout_details
-                ),
+                )
+                .expect("ready row geometry"),
                 (
                     DisplayPoint::new(DisplayRow(1), 4),
                     SelectionGoal::HorizontalPosition(col_5_x)
@@ -1503,7 +1514,8 @@ mod tests {
                     SelectionGoal::HorizontalPosition(col_5_x),
                     false,
                     &text_layout_details
-                ),
+                )
+                .expect("ready row geometry"),
                 (
                     DisplayPoint::new(DisplayRow(3), 5),
                     SelectionGoal::HorizontalPosition(col_5_x)
@@ -1511,7 +1523,8 @@ mod tests {
             );
 
             let max_point_x = snapshot
-                .x_for_display_point(DisplayPoint::new(DisplayRow(4), 2), &text_layout_details);
+                .x_for_display_point(DisplayPoint::new(DisplayRow(4), 2), &text_layout_details)
+                .expect("ready row geometry");
 
             // Can't move down off the end, and attempting to do so leaves the selection goal unchanged
             assert_eq!(
@@ -1521,7 +1534,8 @@ mod tests {
                     SelectionGoal::HorizontalPosition(0.0),
                     false,
                     &text_layout_details
-                ),
+                )
+                .expect("ready row geometry"),
                 (
                     DisplayPoint::new(DisplayRow(4), 2),
                     SelectionGoal::HorizontalPosition(0.0)
@@ -1534,7 +1548,8 @@ mod tests {
                     SelectionGoal::HorizontalPosition(max_point_x),
                     false,
                     &text_layout_details
-                ),
+                )
+                .expect("ready row geometry"),
                 (
                     DisplayPoint::new(DisplayRow(4), 2),
                     SelectionGoal::HorizontalPosition(max_point_x)
