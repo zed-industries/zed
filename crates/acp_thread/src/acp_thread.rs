@@ -1600,11 +1600,8 @@ impl ToolCall {
                 ) {
                     (Some(markdown), Some(text)) => update_markdown_in_place(markdown, &text, cx),
                     (_, Some(text)) => {
-                        self.raw_input_markdown = Some(deferred_markdown(
-                            text,
-                            Some(language_registry.clone()),
-                            cx,
-                        ));
+                        self.raw_input_markdown =
+                            Some(deferred_markdown(text, Some(language_registry.clone()), cx));
                     }
                     (_, None) => self.raw_input_markdown = None,
                 }
@@ -7590,10 +7587,8 @@ impl AcpThread {
     }
 }
 
-/// Creates a markdown entity whose parsing is deferred until it is first
-/// rendered. Used for thread content that can be long and is often off-screen
-/// (message blocks, tool-call input/output), so its parsed representation is
-/// not allocated until the user views it.
+/// Creates a markdown entity that parses on first render. Used for thread
+/// content that is long and often off-screen.
 fn deferred_markdown(
     text: impl Into<SharedString>,
     language_registry: Option<Arc<LanguageRegistry>>,

@@ -517,9 +517,7 @@ pub struct Markdown {
     context_menu_selected_markdown: Option<SharedString>,
     search_highlights: Rc<[Range<usize>]>,
     active_search_highlight: Option<usize>,
-    /// When true, parsing is deferred until the markdown is first rendered
-    /// or [`Markdown::ensure_parsed`] is called. See
-    /// [`MarkdownOptions::defer_parsing`].
+    /// Set from [`MarkdownOptions::defer_parsing`]; cleared once parsing starts.
     deferred: bool,
 }
 
@@ -530,9 +528,8 @@ pub struct MarkdownOptions {
     pub render_mermaid_diagrams: bool,
     pub parse_heading_slugs: bool,
     pub render_metadata_blocks: bool,
-    /// Defer parsing until the markdown is first rendered (or
-    /// [`Markdown::ensure_parsed`] is called) instead of parsing eagerly on
-    /// construction. Use for bulk-created content that is often off-screen.
+    /// Defer parsing until the markdown is first rendered, or until
+    /// [`Markdown::ensure_parsed`] is called.
     pub defer_parsing: bool,
 }
 
@@ -1016,9 +1013,8 @@ impl Markdown {
         source_index: usize,
         cx: &mut Context<Self>,
     ) {
-        // While parsing is in flight *or still deferred* the text has not
-        // been laid out yet, so queue the request; parse completion forwards
-        // it once text positions exist.
+        // Deferred or in-flight parsing has no text positions yet, so queue
+        // the request; parse completion forwards it.
         if self.pending_parse.is_some() || self.deferred {
             self.pending_autoscroll = Some(source_index);
         } else {
@@ -1216,12 +1212,8 @@ impl Markdown {
         self.context_menu_selected_markdown.as_ref()
     }
 
-    /// Starts parsing if it was deferred (see [`MarkdownOptions::defer_parsing`]).
-    ///
-    /// Deferred parsing lets bulk-created markdown (e.g. restored thread
-    /// history) avoid allocating its parsed representation until it is actually
-    /// displayed. Rendering the markdown triggers this automatically; any other
-    /// code that needs the parsed events should call it first. Idempotent.
+    /// Starts parsing if it was deferred. Rendering the markdown does this
+    /// automatically; other code that needs the parsed events must call it.
     pub fn ensure_parsed(&mut self, cx: &mut Context<Self>) {
         if self.deferred {
             self.deferred = false;
@@ -2628,8 +2620,7 @@ impl Element for MarkdownElement {
         window: &mut Window,
         cx: &mut App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
-        // If parsing was deferred, start it now. Only laid-out (visible)
-        // markdown reaches this point, so off-screen messages never parse.
+        // Start deferred parsing here: layout means the markdown is visible.
         self.markdown
             .update(cx, |markdown, cx| markdown.ensure_parsed(cx));
 
@@ -5283,11 +5274,9 @@ mod tests {
     };
 
     #[gpui::test]
-    fn test_deferred_parsing_waits_for_layout_even_when_created_empty(
-        cx: &mut TestAppContext,
-    ) {
-        // A deferred markdown created empty must stay deferred: text appended
-        // before the first layout is parsed on layout, not on append.
+    fn test_deferred_parsing_waits_for_layout_even_when_created_empty(cx: &mut TestAppContext) {
+        // Text appended before the first layout is parsed on layout, not on
+        // append.
         let markdown = cx.new(|cx| {
             Markdown::new_with_options(
                 "".into(),
@@ -5303,7 +5292,10 @@ mod tests {
 
         markdown.update(cx, |markdown, cx| {
             markdown.append("hello **world**", cx);
-            assert!(markdown.deferred, "empty-source deferred markdown stays deferred");
+            assert!(
+                markdown.deferred,
+                "empty-source deferred markdown stays deferred"
+            );
             assert!(
                 markdown.parsed_markdown.events.is_empty(),
                 "nothing is parsed before first layout"
@@ -5319,9 +5311,8 @@ mod tests {
 
     #[gpui::test]
     fn test_autoscroll_before_first_layout_is_queued_as_pending(cx: &mut TestAppContext) {
-        // Searching a deferred block before it is ever laid out must not drop
-        // the reveal request: it has to be queued as pending so parse
-        // completion forwards it once text positions exist.
+        // A reveal request before the first layout is queued until parsing
+        // completes.
         let markdown = cx.new(|cx| {
             Markdown::new_with_options(
                 "hello".into(),

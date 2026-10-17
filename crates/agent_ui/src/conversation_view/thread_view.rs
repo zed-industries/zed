@@ -337,6 +337,31 @@ fn parse_cat_numbered_line(line: &str) -> Option<(u32, &str)> {
     Some((number.parse().ok()?, text))
 }
 
+/// Numbered `read_file` output. The language for highlighting comes from the
+/// parsed events, so displaying this renderer starts parsing.
+#[derive(IntoElement)]
+struct CatNumberedCodeBlock {
+    markdown: Entity<Markdown>,
+    parsed: ParsedCatNumberedCode,
+    markdown_style: MarkdownStyle,
+    copy_button_id: String,
+}
+
+impl RenderOnce for CatNumberedCodeBlock {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        self.markdown
+            .update(cx, |markdown, cx| markdown.ensure_parsed(cx));
+        let language = self.markdown.read(cx).first_code_block_language();
+        render_cat_numbered_code_block(
+            self.parsed,
+            language,
+            self.markdown_style,
+            self.copy_button_id,
+            cx,
+        )
+    }
+}
+
 fn render_cat_numbered_code_block(
     parsed: ParsedCatNumberedCode,
     language: Option<Arc<Language>>,
@@ -513,6 +538,80 @@ mod numbered_code_block_tests {
             )
             .is_none()
         );
+    }
+
+    #[gpui::test]
+    fn numbered_output_starts_parsing_when_rendered(cx: &mut gpui::TestAppContext) {
+        crate::test_support::init_test(cx);
+
+        let languages = Arc::new(language::LanguageRegistry::test(
+            cx.background_executor.clone(),
+        ));
+        languages.add(language::rust_lang());
+        let markdown = cx.new(|cx| {
+            Markdown::new_with_options(
+                "```rust\n     1\tfn main() {}\n```\n".into(),
+                Some(languages),
+                None,
+                markdown::MarkdownOptions {
+                    defer_parsing: true,
+                    ..Default::default()
+                },
+                cx,
+            )
+        });
+        cx.update(|cx| {
+            assert!(
+                markdown.read(cx).first_code_block_language().is_none(),
+                "deferred markdown has no parsed events yet"
+            );
+        });
+
+        struct TestWindow;
+
+        impl Render for TestWindow {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+
+        struct NumberedOutputView {
+            markdown: Entity<Markdown>,
+        }
+
+        impl Render for NumberedOutputView {
+            fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+                let parsed =
+                    parse_cat_numbered_markdown_code_block(self.markdown.read(cx).source())
+                        .expect("cat-numbered block");
+                CatNumberedCodeBlock {
+                    parsed,
+                    markdown: self.markdown.clone(),
+                    markdown_style: MarkdownStyle::default(),
+                    copy_button_id: "read-file-output-test".into(),
+                }
+            }
+        }
+
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        cx.draw(
+            Default::default(),
+            gpui::size(gpui::px(600.0), gpui::px(600.0)),
+            |_, cx| {
+                cx.new(|_| NumberedOutputView {
+                    markdown: markdown.clone(),
+                })
+                .into_any_element()
+            },
+        );
+        cx.run_until_parked();
+
+        cx.update(|_, cx| {
+            assert!(
+                markdown.read(cx).first_code_block_language().is_some(),
+                "rendering the numbered output must start parsing"
+            );
+        });
     }
 }
 
@@ -11245,16 +11344,16 @@ impl ThreadView {
             return None;
         }
 
-        let markdown = markdown.read(cx);
-        let parsed = parse_cat_numbered_markdown_code_block(markdown.source())?;
-        let language = markdown.first_code_block_language();
-        Some(render_cat_numbered_code_block(
-            parsed,
-            language,
-            markdown_style,
-            format!("copy-read-file-output-{entry_ix}-{context_ix}"),
-            cx,
-        ))
+        let parsed = parse_cat_numbered_markdown_code_block(markdown.read(cx).source())?;
+        Some(
+            CatNumberedCodeBlock {
+                markdown,
+                parsed,
+                markdown_style,
+                copy_button_id: format!("copy-read-file-output-{entry_ix}-{context_ix}"),
+            }
+            .into_any_element(),
+        )
     }
 
     fn render_image_output(
