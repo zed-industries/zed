@@ -880,7 +880,10 @@ impl DiffMultibuffer {
                             editor
                                 .insert_blocks(
                                     [BlockProperties {
-                                        placement: BlockPlacement::Below(anchor),
+                                        // The left side has no row to place its balancing block
+                                        // below, so it goes above; matching that keeps both images
+                                        // aligned.
+                                        placement: BlockPlacement::Above(anchor),
                                         height: Some(IMAGE_DIFF_BLOCK_LINES),
                                         style: BlockStyle::Sticky,
                                         render: rhs_render,
