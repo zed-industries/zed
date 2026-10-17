@@ -2364,4 +2364,71 @@ mod tests {
             assert!(!buffer.is_dirty(), "saving should leave the buffer clean");
         });
     }
+
+    /// Opening a notebook must not mark it as having unsaved changes. The cell
+    /// editors already hold the source they were built from, so nothing about
+    /// loading a notebook is an edit.
+    #[gpui::test]
+    async fn test_opening_a_notebook_leaves_it_clean(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/notebooks"),
+            json!({ "test.ipynb": NOTEBOOK_WITH_ONE_CODE_CELL }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/notebooks").as_ref()], cx).await;
+        cx.update(|cx| ReplStore::init(fs.clone(), cx));
+
+        let project_path = project.read_with(cx, |project, cx| ProjectPath {
+            worktree_id: project.worktrees(cx).next().unwrap().read(cx).id(),
+            path: rel_path("test.ipynb").into(),
+        });
+
+        let notebook_item = cx
+            .update(|cx| {
+                NotebookItem::try_open(&project, &project_path, cx)
+                    .expect("ipynb files should be openable as notebooks")
+            })
+            .await
+            .expect("notebook should parse");
+
+        // See `test_save_goes_through_the_project` for why the notebook is not rendered.
+        let cx = cx.add_empty_window();
+        let notebook_editor = cx.update(|window, cx| {
+            cx.new(|cx| NotebookEditor::new(project.clone(), notebook_item, window, cx))
+        });
+
+        let cell_editor = notebook_editor.read_with(cx, |notebook_editor, cx| {
+            assert!(
+                !notebook_editor.is_dirty(cx),
+                "a freshly opened notebook should have no unsaved changes"
+            );
+            let cell_id = notebook_editor
+                .cell_order
+                .first()
+                .expect("notebook has one cell");
+            let Some(Cell::Code(cell)) = notebook_editor.cell_map.get(cell_id) else {
+                panic!("expected a code cell");
+            };
+            cell.read(cx).editor().clone()
+        });
+
+        cell_editor.update_in(cx, |cell_editor, window, cx| {
+            cell_editor.set_text("print('goodbye')", window, cx);
+        });
+        notebook_editor.read_with(cx, |notebook_editor, cx| {
+            assert!(
+                notebook_editor.is_dirty(cx),
+                "editing a cell should mark the notebook as having unsaved changes"
+            );
+        });
+    }
 }
