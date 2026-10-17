@@ -1176,7 +1176,7 @@ impl Render for CodeCell {
                                                                 .text_color(
                                                                     cx.theme().colors().text_muted,
                                                                 )
-                                                                .child("Running..."),
+                                                                .child("Running…"),
                                                         )
                                                         .into_any_element()
                                                 } else if let Some(duration_text) =
