@@ -1631,8 +1631,9 @@ impl ToolCall {
                 ) {
                     (Some(markdown), Some(text)) => update_markdown_in_place(markdown, &text, cx),
                     (_, Some(text)) => {
-                        self.raw_input_markdown =
-                            Some(deferred_markdown(text, Some(language_registry.clone()), cx));
+                        self.raw_input_markdown = Some(cx.new(|cx| {
+                            Markdown::new_deferred(text, Some(language_registry.clone()), cx)
+                        }));
                     }
                     (_, None) => self.raw_input_markdown = None,
                 }
@@ -1683,7 +1684,8 @@ impl ToolCall {
         {
             update_markdown_in_place(markdown, &text, cx);
         } else {
-            let markdown = deferred_markdown(text, Some(language_registry.clone()), cx);
+            let markdown =
+                cx.new(|cx| Markdown::new_deferred(text, Some(language_registry.clone()), cx));
             self.raw_output_content = Some(Box::new(ToolCallContent::ContentBlock {
                 block: ContentBlock::from_markdown(markdown),
                 meta: None,
@@ -7620,32 +7622,13 @@ impl AcpThread {
 
 /// Creates a markdown entity that parses on first render. Used for thread
 /// content that is long and often off-screen.
-fn deferred_markdown(
-    text: impl Into<SharedString>,
-    language_registry: Option<Arc<LanguageRegistry>>,
-    cx: &mut App,
-) -> Entity<Markdown> {
-    cx.new(|cx| {
-        Markdown::new_with_options(
-            text.into(),
-            language_registry,
-            None,
-            MarkdownOptions {
-                defer_parsing: true,
-                ..Default::default()
-            },
-            cx,
-        )
-    })
-}
-
 fn markdown_for_raw_output(
     raw_output: &serde_json::Value,
     language_registry: &Arc<LanguageRegistry>,
     cx: &mut App,
 ) -> Option<Entity<Markdown>> {
     let text = raw_output_text(raw_output)?;
-    Some(deferred_markdown(text, Some(language_registry.clone()), cx))
+    Some(cx.new(|cx| Markdown::new_deferred(text, Some(language_registry.clone()), cx)))
 }
 
 fn raw_output_text(raw_output: &serde_json::Value) -> Option<String> {

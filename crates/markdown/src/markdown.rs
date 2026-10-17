@@ -669,6 +669,24 @@ impl Markdown {
         )
     }
 
+    /// Creates markdown that is parsed on first render instead of at construction.
+    pub fn new_deferred(
+        source: impl Into<SharedString>,
+        language_registry: Option<Arc<LanguageRegistry>>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new_with_options(
+            source.into(),
+            language_registry,
+            None,
+            MarkdownOptions {
+                defer_parsing: true,
+                ..Default::default()
+            },
+            cx,
+        )
+    }
+
     pub fn new_with_options(
         source: SharedString,
         language_registry: Option<Arc<LanguageRegistry>>,
