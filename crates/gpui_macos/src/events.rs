@@ -27,10 +27,7 @@ const TAB_KEY: u16 = 0x09;
 const SHIFT_TAB_KEY: u16 = 0x19;
 
 // Menu key equivalents use different character values than the ones NSEvent
-// reports for the same physical keys. The Backspace key's equivalent is
-// NSBackspaceCharacter (0x08) and the Forward Delete key's is NSDeleteCharacter
-// (0x7F). The cocoa crate does not export these. Note that BACKSPACE_KEY above
-// is the NSEvent character (0x7F), not the backspace key equivalent.
+// reports for the same physical keys.
 //
 // See https://developer.apple.com/documentation/appkit/nsmenuitem/keyequivalent#Discussion
 const BACKSPACE_KEY_EQUIVALENT: u16 = 0x08;
