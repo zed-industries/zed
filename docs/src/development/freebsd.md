@@ -23,8 +23,6 @@ Clone the [Zed repository](https://github.com/zed-industries/zed).
 
 ## Building from source
 
-Once the dependencies are installed, you can build Zed using [Cargo](https://doc.rust-lang.org/cargo/).
-
 For a debug build of the editor:
 
 ```sh
@@ -43,11 +41,13 @@ In release mode, the primary user interface is the `cli` crate. You can run it i
 cargo run -p cli
 ```
 
-### WebRTC Notice
+> Note: Upstream Zed needs additional patches to build on FreeBSD. The [FreeBSD port's patches](https://github.com/freebsd/freebsd-ports/tree/main/editors/zed/files) target the version packaged by the port and may not apply to another checkout. These commands assume a checkout patched for FreeBSD. To build the port's version, follow the [FreeBSD port](https://www.freshports.org/editors/zed/) instead.
 
-Building `webrtc-sys` on FreeBSD currently fails due to missing upstream support and unavailable prebuilt binaries. As a result, collaboration features that depend on WebRTC (audio calls and screen sharing) are temporarily disabled.
+### WebRTC notice
 
-See [Issue #15309: FreeBSD Support] and [Discussion #29550: Unofficial FreeBSD port for Zed] for more.
+Zed disables LiveKit/WebRTC on FreeBSD because `webrtc-sys` lacks upstream FreeBSD support and prebuilt binaries. Collaboration features that depend on it, including audio calls and screen sharing, are unavailable.
+
+See the [FreeBSD discussion](https://github.com/zed-industries/zed/discussions/29550) for updates.
 
 ## Troubleshooting
 
