@@ -523,9 +523,9 @@ fn go_test_task_template(arg: &serde_json::Value) -> Option<task::TaskTemplate> 
     let cwd = arg
         .get("URI")
         .and_then(|v| v.as_str())
-        .and_then(|uri| uri.strip_prefix("file://"))
-        .and_then(|path| std::path::Path::new(path).parent())
-        .map(|p| p.to_string_lossy().into_owned());
+        .and_then(file_uri_to_path)
+        .and_then(|path| path.parent().map(|parent| parent.to_path_buf()))
+        .map(|path| path.to_string_lossy().into_owned());
 
     Some(task::TaskTemplate {
         label,
@@ -534,6 +534,34 @@ fn go_test_task_template(arg: &serde_json::Value) -> Option<task::TaskTemplate> 
         cwd,
         ..task::TaskTemplate::default()
     })
+}
+
+fn file_uri_to_path(uri: &str) -> Option<PathBuf> {
+    if let Ok(parsed) = uri.parse::<lsp::Uri>()
+        && let Ok(path) = parsed.to_file_path()
+    {
+        return Some(normalize_windows_drive_letter(path));
+    }
+
+    let path_str = uri.strip_prefix("file://")?;
+    let decoded = url::Url::parse(uri)
+        .ok()
+        .and_then(|url| url.to_file_path().ok())
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path_str.to_owned());
+    Some(normalize_windows_drive_letter(PathBuf::from(decoded)))
+}
+
+fn normalize_windows_drive_letter(path: PathBuf) -> PathBuf {
+    let path_str = path.to_string_lossy().into_owned();
+    if let Some(stripped) = path_str.strip_prefix('/')
+        && stripped.len() >= 2
+        && stripped.as_bytes()[0].is_ascii_alphabetic()
+        && stripped.as_bytes()[1] == b':'
+    {
+        return PathBuf::from(stripped);
+    }
+    path
 }
 
 fn parse_version_output(output: &Output) -> Result<&str> {
