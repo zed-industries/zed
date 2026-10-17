@@ -7,7 +7,7 @@ use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use settings::{Settings, SettingsStore};
 use theme::ClientDecorationsExt;
 use theme_settings::ThemeSettings;
-use ui::{FluentBuilder, TintColor, prelude::*};
+use ui::{Checkbox, FluentBuilder, TintColor, ToggleState, prelude::*};
 use workspace::WorkspaceSettings;
 
 pub fn init(cx: &mut App) {
@@ -32,6 +32,7 @@ fn zed_prompt_renderer(
     level: PromptLevel,
     message: &str,
     detail: Option<&str>,
+    checkbox_label: Option<&str>,
     actions: &[PromptButton],
     handle: PromptHandle,
     window: &mut Window,
@@ -41,12 +42,14 @@ fn zed_prompt_renderer(
         |cx| ZedPromptRenderer {
             _level: level,
             message: cx.new(|cx| Markdown::new(SharedString::new(message), None, None, cx)),
-            actions: actions.iter().map(|a| a.label().to_string()).collect(),
+            actions: actions.iter().map(|a| a.display_label().to_string()).collect(),
             focus: cx.focus_handle(),
             active_action_id: 0,
             detail: detail
                 .filter(|text| !text.is_empty())
                 .map(|text| cx.new(|cx| Markdown::new(SharedString::new(text), None, None, cx))),
+            checkbox_label: checkbox_label.map(SharedString::from),
+            checkbox_checked: false,
         }
     });
 
@@ -60,16 +63,21 @@ pub struct ZedPromptRenderer {
     focus: FocusHandle,
     active_action_id: usize,
     detail: Option<Entity<Markdown>>,
+    checkbox_label: Option<SharedString>,
+    checkbox_checked: bool,
 }
 
 impl ZedPromptRenderer {
     fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
-        cx.emit(PromptResponse(self.active_action_id));
+        cx.emit(PromptResponse::new(
+            self.active_action_id,
+            self.checkbox_checked,
+        ));
     }
 
     fn cancel(&mut self, _: &menu::Cancel, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(ix) = self.actions.iter().position(|a| a == "Cancel") {
-            cx.emit(PromptResponse(ix));
+            cx.emit(PromptResponse::new(ix, self.checkbox_checked));
         }
     }
 
@@ -138,6 +146,16 @@ impl Render for ZedPromptRenderer {
                     markdown_style(false, window, cx),
                 ))
             }))
+            .children(self.checkbox_label.clone().map(|label| {
+                div().w_full().child(
+                    Checkbox::new("prompt-checkbox", self.checkbox_checked.into())
+                        .label(label)
+                        .on_click(cx.listener(|this, state: &ToggleState, _window, cx| {
+                            this.checkbox_checked = state.selected();
+                            cx.notify();
+                        })),
+                )
+            }))
             .child(
                 v_flex()
                     .gap_1()
@@ -149,8 +167,8 @@ impl Render for ZedPromptRenderer {
                                 s.style(ButtonStyle::Tinted(TintColor::Accent))
                             })
                             .tab_index(ix as isize)
-                            .on_click(cx.listener(move |_, _, _window, cx| {
-                                cx.emit(PromptResponse(ix));
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                cx.emit(PromptResponse::new(ix, this.checkbox_checked));
                             }))
                     })),
             );

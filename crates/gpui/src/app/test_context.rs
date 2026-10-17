@@ -416,6 +416,13 @@ impl TestAppContext {
         self.test_platform.simulate_prompt_answer(button);
     }
 
+    /// Simulates clicking a button and setting the checkbox in an platform-level alert dialog.
+    #[track_caller]
+    pub fn simulate_prompt_answer_with_checkbox(&self, button: &str, checkbox_checked: bool) {
+        self.test_platform
+            .simulate_prompt_answer_with_checkbox(button, checkbox_checked);
+    }
+
     /// Returns true if there's an alert dialog open.
     pub fn has_pending_prompt(&self) -> bool {
         self.test_platform.has_pending_prompt()
