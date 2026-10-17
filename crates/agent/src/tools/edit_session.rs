@@ -797,6 +797,17 @@ impl EditSession {
             return Err("Cannot finalize edits on a write session".to_string());
         };
 
+        for edit in &edits {
+            if edit.old_text.contains(crate::tools::read_file_tool::LINE_TRUNCATION_MARKER)
+                || edit.new_text.contains(crate::tools::read_file_tool::LINE_TRUNCATION_MARKER)
+            {
+                return Err(format!(
+                    "Cannot apply edit containing truncation marker '{}'. Use grep or terminal to inspect the full line before editing.",
+                    crate::tools::read_file_tool::LINE_TRUNCATION_MARKER
+                ));
+            }
+        }
+
         for event in &parser.finalize_edits(&edits) {
             edit_pipeline.process_event(
                 event,
@@ -881,6 +892,18 @@ impl EditSession {
         let Some(edits) = edits else {
             return Ok(());
         };
+
+        for edit in edits {
+            if edit.old_text.as_deref().is_some_and(|s| s.contains(crate::tools::read_file_tool::LINE_TRUNCATION_MARKER))
+                || edit.new_text.as_deref().is_some_and(|s| s.contains(crate::tools::read_file_tool::LINE_TRUNCATION_MARKER))
+            {
+                return Err(format!(
+                    "Cannot apply edit containing truncation marker '{}'. Use grep or terminal to inspect the full line before editing.",
+                    crate::tools::read_file_tool::LINE_TRUNCATION_MARKER
+                ));
+            }
+        }
+
         for event in &parser.push_edits(edits) {
             edit_pipeline.process_event(
                 event,
