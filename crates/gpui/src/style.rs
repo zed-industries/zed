@@ -739,7 +739,7 @@ impl Style {
 
         window.paint_inset_shadows(bounds, corner_radii, &self.box_shadow);
 
-        continuation(window, cx);
+        crate::rounded_clip::paint_children(self, bounds, window, cx, continuation);
 
         if self.is_border_visible() {
             let border_widths = self.border_widths.to_pixels(rem_size);

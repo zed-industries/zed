@@ -565,7 +565,7 @@ fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
 fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     // Alpha clip first, since we don't have `clip_distance`.
     if (any(input.clip_distances < vec4<f32>(0.0))) {
-        return vec4<f32>(0.0);
+        return rounded_clip_color(vec4<f32>(0.0), input.position.xy, globals.premultiplied_alpha != 0u);
     }
 
     let quad = load_quad(input.quad_id);
@@ -584,7 +584,7 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
             quad.border_widths.right == 0.0 &&
             quad.border_widths.bottom == 0.0 &&
             unrounded) {
-        return blend_color(background_color, 1.0);
+        return rounded_clip_color(blend_color(background_color, 1.0), input.position.xy, globals.premultiplied_alpha != 0u);
     }
 
     let size = quad.bounds.size;
@@ -650,7 +650,7 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     // However, that might negatively impact performance in the case of
     // reasonable sizes for rounded corners.
     if (is_within_inner_straight_border && !is_near_rounded_corner) {
-        return blend_color(background_color, 1.0);
+        return rounded_clip_color(blend_color(background_color, 1.0), input.position.xy, globals.premultiplied_alpha != 0u);
     }
 
     // Signed distance of the point to the outside edge of the quad's border. It
@@ -889,7 +889,7 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
                     saturate(antialias_threshold - inner_sdf));
     }
 
-    return blend_color(color, saturate(antialias_threshold - outer_sdf));
+    return rounded_clip_color(blend_color(color, saturate(antialias_threshold - outer_sdf)), input.position.xy, globals.premultiplied_alpha != 0u);
 }
 
 // Returns the dash velocity of a corner given the dash velocity of the two
@@ -1000,7 +1000,7 @@ fn vs_shadow(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) ins
 fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
     // Alpha clip first, since we don't have `clip_distance`.
     if (any(input.clip_distances < vec4<f32>(0.0))) {
-        return vec4<f32>(0.0);
+        return rounded_clip_color(vec4<f32>(0.0), input.position.xy, globals.premultiplied_alpha != 0u);
     }
 
     let shadow = load_shadow(input.shadow_id);
@@ -1042,7 +1042,7 @@ fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
         alpha *= saturate(0.5 - element_distance);
     }
 
-    return blend_color(input.color, alpha);
+    return rounded_clip_color(blend_color(input.color, alpha), input.position.xy, globals.premultiplied_alpha != 0u);
 }
 
 // --- path rasterization --- //
@@ -1141,7 +1141,7 @@ fn vs_path(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
 @fragment
 fn fs_path(input: PathVarying) -> @location(0) vec4<f32> {
     let sample = textureSample(t_sprite, s_sprite, input.texture_coords);
-    return sample;
+    return rounded_clip_color(sample, input.position.xy, true);
 }
 
 // --- underlines --- //
@@ -1185,13 +1185,13 @@ fn fs_underline(input: UnderlineVarying) -> @location(0) vec4<f32> {
 
     // Alpha clip first, since we don't have `clip_distance`.
     if (any(input.clip_distances < vec4<f32>(0.0))) {
-        return vec4<f32>(0.0);
+        return rounded_clip_color(vec4<f32>(0.0), input.position.xy, globals.premultiplied_alpha != 0u);
     }
 
     let underline = load_underline(input.underline_id);
     if (underline.wavy == 0u)
     {
-        return blend_color(input.color, input.color.a);
+        return rounded_clip_color(blend_color(input.color, input.color.a), input.position.xy, globals.premultiplied_alpha != 0u);
     }
 
     let half_thickness = underline.thickness * 0.5;
@@ -1207,7 +1207,7 @@ fn fs_underline(input: UnderlineVarying) -> @location(0) vec4<f32> {
     let distance_from_top_border = distance_in_pixels - half_thickness;
     let distance_from_bottom_border = distance_in_pixels + half_thickness;
     let alpha = saturate(0.5 - max(-distance_from_bottom_border, distance_from_top_border));
-    return blend_color(input.color, alpha * input.color.a);
+    return rounded_clip_color(blend_color(input.color, alpha * input.color.a), input.position.xy, globals.premultiplied_alpha != 0u);
 }
 
 // --- monochrome sprites --- //
@@ -1251,10 +1251,10 @@ fn fs_mono_sprite(input: MonoSpriteVarying) -> @location(0) vec4<f32> {
 
     // Alpha clip after using the derivatives.
     if (any(input.clip_distances < vec4<f32>(0.0))) {
-        return vec4<f32>(0.0);
+        return rounded_clip_color(vec4<f32>(0.0), input.position.xy, globals.premultiplied_alpha != 0u);
     }
 
-    return blend_color(input.color, alpha_corrected);
+    return rounded_clip_color(blend_color(input.color, alpha_corrected), input.position.xy, globals.premultiplied_alpha != 0u);
 }
 
 // --- polychrome sprites --- //
@@ -1296,7 +1296,7 @@ fn fs_poly_sprite(input: PolySpriteVarying) -> @location(0) vec4<f32> {
     let sample = textureSample(t_sprite, s_sprite, input.tile_position);
     // Alpha clip after using the derivatives.
     if (any(input.clip_distances < vec4<f32>(0.0))) {
-        return vec4<f32>(0.0);
+        return rounded_clip_color(vec4<f32>(0.0), input.position.xy, globals.premultiplied_alpha != 0u);
     }
 
     let sprite = load_poly_sprite(input.sprite_id);
@@ -1307,7 +1307,7 @@ fn fs_poly_sprite(input: PolySpriteVarying) -> @location(0) vec4<f32> {
         let grayscale = dot(color.rgb, GRAYSCALE_FACTORS);
         color = vec4<f32>(vec3<f32>(grayscale), sample.a);
     }
-    return blend_color(color, sprite.opacity * saturate(0.5 - distance));
+    return rounded_clip_color(blend_color(color, sprite.opacity * saturate(0.5 - distance)), input.position.xy, globals.premultiplied_alpha != 0u);
 }
 
 // --- surfaces --- //
@@ -1350,7 +1350,7 @@ fn vs_surface(@builtin(vertex_index) vertex_id: u32) -> SurfaceVarying {
 fn fs_surface(input: SurfaceVarying) -> @location(0) vec4<f32> {
     // Alpha clip after using the derivatives.
     if (any(input.clip_distances < vec4<f32>(0.0))) {
-        return vec4<f32>(0.0);
+        return rounded_clip_color(vec4<f32>(0.0), input.position.xy, globals.premultiplied_alpha != 0u);
     }
 
     let y_cb_cr = vec4<f32>(
@@ -1358,5 +1358,48 @@ fn fs_surface(input: SurfaceVarying) -> @location(0) vec4<f32> {
         textureSampleLevel(t_cb_cr, s_surface, input.texture_position, 0.0).rg,
         1.0);
 
-    return ycbcr_to_RGB * y_cb_cr;
+    return rounded_clip_color(ycbcr_to_RGB * y_cb_cr, input.position.xy, globals.premultiplied_alpha != 0u);
+}
+
+@group(3) @binding(0) var rounded_clip_texture: texture_2d<f32>;
+@group(3) @binding(1) var<uniform> rounded_clip_flags: vec4<u32>;
+
+fn rounded_clip_texel(index: u32) -> vec4<f32> {
+    let width = textureDimensions(rounded_clip_texture).x;
+    return textureLoad(rounded_clip_texture, vec2<i32>(i32(index % width), i32(index / width)), 0);
+}
+fn rounded_clip_shape(position: vec2<f32>, index: u32) -> f32 {
+    let bounds = rounded_clip_texel(index * 3u);
+    let horizontal = rounded_clip_texel(index * 3u + 1u);
+    let vertical = rounded_clip_texel(index * 3u + 2u);
+    let extent = bounds.zw - bounds.xy;
+    if (extent.x <= 0.0 || extent.y <= 0.0) { return 0.0; }
+    let local = position - bounds.xy;
+    var distance = max(max(-local.x, -local.y), max(local.x - extent.x, local.y - extent.y));
+    for (var corner = 0u; corner < 4u; corner++) {
+        let radius = vec2<f32>(horizontal[corner], vertical[corner]);
+        if (radius.x <= 0.0 || radius.y <= 0.0) { continue; }
+        let right = corner == 1u || corner == 2u;
+        let bottom = corner >= 2u;
+        let inward = vec2<f32>(select(local.x, extent.x - local.x, right), select(local.y, extent.y - local.y, bottom));
+        if (inward.x < radius.x && inward.y < radius.y) {
+            let q = (inward - radius) / radius;
+            let length_q = length(q);
+            let gradient = length(q / radius) / max(length_q, 0.000001);
+            distance = max(distance, (length_q - 1.0) / max(gradient, 0.000001));
+        }
+    }
+    return clamp(0.5 - distance, 0.0, 1.0);
+}
+fn rounded_clip_coverage(position: vec2<f32>) -> f32 {
+    var coverage = 1.0;
+    for (var index = 0u; index < rounded_clip_flags.x; index++) {
+        coverage = min(coverage, rounded_clip_shape(position, index + rounded_clip_flags.y));
+    }
+    return coverage;
+}
+
+fn rounded_clip_color(color: vec4<f32>, position: vec2<f32>, premultiplied: bool) -> vec4<f32> {
+    let coverage = rounded_clip_coverage(position);
+    return vec4<f32>(color.rgb * select(1.0, coverage, premultiplied), color.a * coverage);
 }

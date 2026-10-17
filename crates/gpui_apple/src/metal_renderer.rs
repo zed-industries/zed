@@ -756,7 +756,13 @@ impl MetalRenderer {
             Some(metal::MTLClearColor::new(0., 0., 0., alpha)),
         );
 
-        for batch in scene.batches() {
+        for (batch, clip_index) in scene.batches_with_clips() {
+            let clips = scene
+                .rounded_clip_stacks()
+                .get(clip_index)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            bind_rounded_clips(command_encoder, &self.device, clips);
             match batch {
                 PrimitiveBatch::Shadows(range) => {
                     self.draw_shadows(range, instance_bindings, viewport_size, command_encoder)
@@ -782,6 +788,7 @@ impl MetalRenderer {
                         None,
                     );
 
+                    bind_rounded_clips(command_encoder, &self.device, clips);
                     if did_draw {
                         if let Err(error) = self.draw_paths_from_intermediate(
                             paths,
@@ -1722,6 +1729,32 @@ impl gpui::PlatformHeadlessRenderer for MetalHeadlessRenderer {
 
     fn sprite_atlas(&self) -> Arc<dyn gpui::PlatformAtlas> {
         self.renderer.sprite_atlas().clone()
+    }
+}
+
+fn bind_rounded_clips(
+    encoder: &metal::RenderCommandEncoderRef,
+    device: &metal::DeviceRef,
+    clips: &[gpui::RoundedClip],
+) {
+    let count = clips.len() as u32;
+    encoder.set_fragment_bytes(29, 4, &count as *const u32 as *const _);
+    if clips.is_empty() {
+        let empty = [0f32; 12];
+        encoder.set_fragment_bytes(28, 48, empty.as_ptr().cast());
+        return;
+    }
+    let geometry: Vec<_> = clips.iter().map(gpui::RoundedClip::gpu_data).collect();
+    let length = std::mem::size_of_val(geometry.as_slice()) as u64;
+    if length <= 4096 {
+        encoder.set_fragment_bytes(28, length, geometry.as_ptr().cast());
+    } else {
+        let buffer = device.new_buffer_with_data(
+            geometry.as_ptr().cast(),
+            length,
+            metal::MTLResourceOptions::StorageModeShared,
+        );
+        encoder.set_fragment_buffer(28, Some(&buffer), 0);
     }
 }
 

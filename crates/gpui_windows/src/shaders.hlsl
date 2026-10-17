@@ -1,3 +1,51 @@
+
+struct RoundedClip {
+  float4 bounds;
+  float4 horizontal;
+  float4 vertical;
+};
+float rounded_clip_shape_coverage(float2 position, RoundedClip shape) {
+  float2 extent = shape.bounds.zw - shape.bounds.xy;
+  if (extent.x <= 0 || extent.y <= 0) return 0;
+  float2 local = position - shape.bounds.xy;
+  float distance = max(max(-local.x, -local.y), max(local.x - extent.x, local.y - extent.y));
+  [unroll] for (uint corner = 0; corner < 4; ++corner) {
+    float2 radius = float2(shape.horizontal[corner], shape.vertical[corner]);
+    if (radius.x <= 0 || radius.y <= 0) continue;
+    bool right = corner == 1 || corner == 2;
+    bool bottom = corner >= 2;
+    float2 inward = float2(right ? extent.x - local.x : local.x, bottom ? extent.y - local.y : local.y);
+    if (inward.x < radius.x && inward.y < radius.y) {
+      float2 q = (inward - radius) / radius;
+      float length_q = length(q);
+      float gradient = length(q / radius) / max(length_q, 0.000001f);
+      distance = max(distance, (length_q - 1) / max(gradient, 0.000001f));
+    }
+  }
+  return clamp(0.5f - distance, 0.0f, 1.0f);
+}
+Texture2D<float4> rounded_clip_shapes : register(t15);
+cbuffer RoundedClipParams : register(b2) { uint rounded_clip_enabled; uint3 rounded_clip_pad; };
+float rounded_clip_coverage(float2 position) {
+    if (rounded_clip_enabled == 0) return 1.0;
+    uint width = 0, count = 0;
+    rounded_clip_shapes.GetDimensions(width, count);
+    float coverage = 1.0;
+    [loop] for (uint index = 0; index < count; ++index) {
+        RoundedClip shape;
+        shape.bounds = rounded_clip_shapes.Load(int3(0, index, 0));
+        shape.horizontal = rounded_clip_shapes.Load(int3(1, index, 0));
+        shape.vertical = rounded_clip_shapes.Load(int3(2, index, 0));
+        coverage = min(coverage, rounded_clip_shape_coverage(position, shape));
+    }
+    return coverage;
+}
+float4 rounded_clip_color(float4 color, float2 position, bool premultiplied) {
+    float coverage = rounded_clip_coverage(position);
+    if (premultiplied) color.rgb *= coverage;
+    color.a *= coverage;
+    return color;
+}
 #include "alpha_correction.hlsl"
 
 cbuffer GlobalParams: register(b0) {
@@ -572,7 +620,7 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
         quad.border_widths.right == 0.0 &&
         quad.border_widths.bottom == 0.0 &&
         unrounded) {
-        return background_color;
+        return rounded_clip_color(background_color, input.position.xy, false);
     }
 
     float2 size = quad.bounds.size;
@@ -631,7 +679,7 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
 
     // Fast path for points that must be part of the background
     if (is_within_inner_straight_border && !is_near_rounded_corner) {
-        return background_color;
+        return rounded_clip_color(background_color, input.position.xy, false);
     }
 
     // Signed distance of the point to the outside edge of the quad's border
@@ -844,7 +892,7 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
                     saturate(antialias_threshold - inner_sdf));
     }
 
-    return color * float4(1.0, 1.0, 1.0, saturate(antialias_threshold - outer_sdf));
+    return rounded_clip_color(color * float4(1.0, 1.0, 1.0, saturate(antialias_threshold - outer_sdf)), input.position.xy, false);
 }
 
 /*
@@ -950,7 +998,7 @@ float4 shadow_fragment(ShadowFragmentInput input): SV_TARGET {
         alpha *= saturate(0.5 - element_distance);
     }
 
-    return input.color * float4(1., 1., 1., alpha);
+    return rounded_clip_color(input.color * float4(1., 1., 1., alpha), input.position.xy, false);
 }
 
 /*
@@ -1053,7 +1101,7 @@ PathSpriteVertexOutput path_sprite_vertex(uint vertex_id: SV_VertexID, uint spri
 }
 
 float4 path_sprite_fragment(PathSpriteVertexOutput input): SV_Target {
-    return t_sprite.Sample(s_sprite, input.texture_coords);
+    return rounded_clip_color(t_sprite.Sample(s_sprite, input.texture_coords), input.position.xy, true);
 }
 
 /*
@@ -1125,9 +1173,9 @@ float4 underline_fragment(UnderlineFragmentInput input): SV_Target {
         float distance_from_bottom_border = distance_in_pixels + half_thickness;
         float alpha = saturate(
             0.5 - max(-distance_from_bottom_border, distance_from_top_border));
-        return input.color * float4(1., 1., 1., alpha);
+        return rounded_clip_color(input.color * float4(1., 1., 1., alpha), input.position.xy, false);
     } else {
-        return input.color;
+        return rounded_clip_color(input.color, input.position.xy, false);
     }
 }
 
@@ -1184,7 +1232,7 @@ MonochromeSpriteVertexOutput monochrome_sprite_vertex(uint vertex_id: SV_VertexI
 float4 monochrome_sprite_fragment(MonochromeSpriteFragmentInput input): SV_Target {
     float sample = t_sprite.Sample(s_sprite, input.tile_position).r;
     float alpha_corrected = apply_contrast_and_gamma_correction(sample, input.color.rgb, grayscale_enhanced_contrast, gamma_ratios);
-    return float4(input.color.rgb, input.color.a * alpha_corrected);
+    return rounded_clip_color(float4(input.color.rgb, input.color.a * alpha_corrected), input.position.xy, false);
 }
 
 MonochromeSpriteVertexOutput subpixel_sprite_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_InstanceID) {
@@ -1201,7 +1249,7 @@ SubpixelSpriteFragmentOutput subpixel_sprite_fragment(MonochromeSpriteFragmentIn
     SubpixelSpriteFragmentOutput output;
     output.foreground = float4(input.color.rgb, 1.0f);
     output.alpha = float4(input.color.a * alpha_corrected, 1.0f);
-    return output;
+    output.alpha *= rounded_clip_coverage(input.position.xy); return output;
 }
 
 /*
@@ -1264,5 +1312,5 @@ float4 polychrome_sprite_fragment(PolychromeSpriteFragmentInput input): SV_Targe
         color = float4(grayscale, sample.a);
     }
     color.a *= sprite.opacity * saturate(0.5 - distance);
-    return color;
+    return rounded_clip_color(color, input.position.xy, false);
 }
