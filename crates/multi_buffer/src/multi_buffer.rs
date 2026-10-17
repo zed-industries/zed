@@ -53,7 +53,7 @@ use std::{
 };
 use sum_tree::{Bias, Cursor, Dimension, Dimensions, SumTree, TreeMap};
 use text::{
-    BufferId, Edit, LineIndent, TextSummary,
+    BufferId, Edit, LineIndent, TextSummary, WordRuns,
     subscription::{Subscription, Topic},
 };
 use theme::SyntaxTheme;
@@ -952,12 +952,15 @@ pub struct MBTextSummary {
     pub longest_row: u32,
     /// How many `char`s are in the longest row
     pub longest_row_chars: u32,
+    pub word_runs: WordRuns,
+    pub has_tabs: bool,
 }
 
 impl From<TextSummary> for MBTextSummary {
     fn from(summary: TextSummary) -> Self {
         MBTextSummary {
             len: MultiBufferOffset(summary.len),
+            has_tabs: summary.has_tabs,
             chars: summary.chars,
             len_utf16: summary.len_utf16,
             lines: summary.lines,
@@ -966,6 +969,7 @@ impl From<TextSummary> for MBTextSummary {
             last_line_len_utf16: summary.last_line_len_utf16,
             longest_row: summary.longest_row,
             longest_row_chars: summary.longest_row_chars,
+            word_runs: summary.word_runs,
         }
     }
 }
@@ -974,6 +978,7 @@ impl From<MBTextSummary> for TextSummary {
     fn from(summary: MBTextSummary) -> Self {
         TextSummary {
             len: summary.len.0,
+            has_tabs: summary.has_tabs,
             chars: summary.chars,
             len_utf16: summary.len_utf16,
             lines: summary.lines,
@@ -982,6 +987,7 @@ impl From<MBTextSummary> for TextSummary {
             last_line_len_utf16: summary.last_line_len_utf16,
             longest_row: summary.longest_row,
             longest_row_chars: summary.longest_row_chars,
+            word_runs: summary.word_runs,
         }
     }
 }
@@ -1036,6 +1042,8 @@ impl AddAssign for MBTextSummary {
         self.len += other.len;
         self.len_utf16 += other.len_utf16;
         self.lines += other.lines;
+        self.word_runs += &other.word_runs;
+        self.has_tabs |= other.has_tabs;
     }
 }
 
@@ -4632,6 +4640,11 @@ impl MultiBufferSnapshot {
 
     pub fn text_summary(&self) -> MBTextSummary {
         self.diff_transforms.summary().output
+    }
+
+    pub fn word_run_end(&self, offset: MultiBufferOffset) -> MultiBufferOffset {
+        let summary = self.text_summary_for_range::<MBTextSummary, _>(offset..self.len());
+        offset + summary.word_runs.leading as usize
     }
 
     pub fn text_summary_for_range<MBD, O>(&self, range: Range<O>) -> MBD

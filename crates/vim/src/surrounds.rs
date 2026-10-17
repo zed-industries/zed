@@ -90,92 +90,125 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.stop_recording(cx);
-        let count = Vim::take_count(cx);
-        let forced_motion = Vim::take_forced_motion(cx);
-        let mode = self.mode;
-        self.update_editor(cx, |_, editor, cx| {
-            let text_layout_details = editor.text_layout_details(window, cx);
-            editor.transact(window, cx, |editor, window, cx| {
-                editor.set_clip_at_line_ends(false, cx);
+        self.with_geometry(
+            move |vim, window, cx| {
+                let count = Self::peek_count(cx);
+                let forced_motion = Vim::globals(cx).forced_motion;
+                let mode = vim.mode;
+                let planned = vim
+                    .update_editor(
+                        cx,
+                        |_, editor, cx| -> Result<_, editor::display_map::PendingRowGeometry> {
+                            let text_layout_details = editor.text_layout_details(window, cx);
+                            let pair = bracket_pair_for_str_vim(&text);
+                            let surround = pair.end != surround_alias((*text).as_ref());
+                            let display_map = Self::geometry_snapshot(editor, Some(false), cx);
+                            let display_selections =
+                                editor.selections.all_adjusted_display(&display_map);
+                            let mut edits = Vec::new();
+                            let mut anchors = Vec::new();
 
-                let pair = bracket_pair_for_str_vim(&text);
-                let surround = pair.end != surround_alias((*text).as_ref());
-                let display_map = editor.display_snapshot(cx);
-                let display_selections = editor.selections.all_adjusted_display(&display_map);
-                let mut edits = Vec::new();
-                let mut anchors = Vec::new();
-
-                for selection in &display_selections {
-                    let range = match &target {
-                        SurroundsType::Object(object, around) => {
-                            object.range(&display_map, *selection, *around, None)
-                        }
-                        SurroundsType::Motion(motion) => {
-                            motion
-                                .range(
-                                    &display_map,
-                                    *selection,
-                                    count,
-                                    &text_layout_details,
-                                    forced_motion,
-                                )
-                                .map(|(mut range, _)| {
-                                    // The Motion::CurrentLine operation will contain the newline of the current line and leading/trailing whitespace
-                                    if let Motion::CurrentLine = motion {
-                                        range.start = motion::first_non_whitespace(
-                                            &display_map,
-                                            false,
-                                            range.start,
-                                        );
-                                        range.end = movement::saturating_right(
-                                            &display_map,
-                                            motion::last_non_whitespace(&display_map, range.end, 1),
-                                        );
+                            for selection in &display_selections {
+                                let range = match &target {
+                                    SurroundsType::Object(object, around) => {
+                                        object.range(&display_map, *selection, *around, None)
                                     }
-                                    range
-                                })
-                        }
-                        SurroundsType::Selection => Some(selection.range()),
-                    };
+                                    SurroundsType::Motion(motion) => {
+                                        motion
+                                            .range(
+                                                &display_map,
+                                                *selection,
+                                                count,
+                                                &text_layout_details,
+                                                forced_motion,
+                                            )?
+                                            .map(|(mut range, _)| {
+                                                // The Motion::CurrentLine operation will contain the newline of the current line and leading/trailing whitespace
+                                                if let Motion::CurrentLine = motion {
+                                                    range.start = motion::first_non_whitespace(
+                                                        &display_map,
+                                                        false,
+                                                        range.start,
+                                                    );
+                                                    range.end = movement::saturating_right(
+                                                        &display_map,
+                                                        motion::last_non_whitespace(
+                                                            &display_map,
+                                                            range.end,
+                                                            1,
+                                                        ),
+                                                    );
+                                                }
+                                                range
+                                            })
+                                    }
+                                    SurroundsType::Selection => Some(selection.range()),
+                                };
 
-                    if let Some(range) = range {
-                        let start = range.start.to_offset(&display_map, Bias::Right);
-                        let end = range.end.to_offset(&display_map, Bias::Left);
-                        let (start_cursor_str, end_cursor_str) = if mode == Mode::VisualLine {
-                            (format!("{}\n", pair.start), format!("\n{}", pair.end))
-                        } else {
-                            let maybe_space = if surround { " " } else { "" };
-                            (
-                                format!("{}{}", pair.start, maybe_space),
-                                format!("{}{}", maybe_space, pair.end),
-                            )
-                        };
-                        let start_anchor = display_map.buffer_snapshot().anchor_before(start);
+                                if let Some(range) = range {
+                                    let start = range.start.to_offset(&display_map, Bias::Right);
+                                    let end = range.end.to_offset(&display_map, Bias::Left);
+                                    let (start_cursor_str, end_cursor_str) =
+                                        if mode == Mode::VisualLine {
+                                            (format!("{}\n", pair.start), format!("\n{}", pair.end))
+                                        } else {
+                                            let maybe_space = if surround { " " } else { "" };
+                                            (
+                                                format!("{}{}", pair.start, maybe_space),
+                                                format!("{}{}", maybe_space, pair.end),
+                                            )
+                                        };
+                                    let start_anchor =
+                                        display_map.buffer_snapshot().anchor_before(start);
 
-                        edits.push((start..start, start_cursor_str));
-                        edits.push((end..end, end_cursor_str));
-                        anchors.push(start_anchor..start_anchor);
-                    } else {
-                        let start_anchor = display_map
-                            .buffer_snapshot()
-                            .anchor_before(selection.head().to_offset(&display_map, Bias::Left));
-                        anchors.push(start_anchor..start_anchor);
+                                    edits.push((start..start, start_cursor_str));
+                                    edits.push((end..end, end_cursor_str));
+                                    anchors.push(start_anchor..start_anchor);
+                                } else {
+                                    let start_anchor = display_map.buffer_snapshot().anchor_before(
+                                        selection.head().to_offset(&display_map, Bias::Left),
+                                    );
+                                    anchors.push(start_anchor..start_anchor);
+                                }
+                            }
+
+                            Ok((edits, anchors))
+                        },
+                    )
+                    .transpose()?;
+                Ok(Box::new(move |vim, window, cx| {
+                    vim.stop_recording(cx);
+                    Vim::take_count(cx);
+                    Vim::take_forced_motion(cx);
+                    if let Some((edits, anchors)) = planned {
+                        vim.update_editor(cx, |_, editor, cx| {
+                            editor.transact(window, cx, |editor, window, cx| {
+                                editor.set_clip_at_line_ends(false, cx);
+                                editor.edit(edits, cx);
+                                editor.set_clip_at_line_ends(true, cx);
+                                editor.change_selections(
+                                    Default::default(),
+                                    window,
+                                    cx,
+                                    |selections| {
+                                        if mode == Mode::VisualBlock {
+                                            selections
+                                                .select_anchor_ranges(anchors.into_iter().take(1));
+                                        } else {
+                                            selections.select_anchor_ranges(anchors);
+                                        }
+                                    },
+                                );
+                            });
+                        });
                     }
-                }
-
-                editor.edit(edits, cx);
-                editor.set_clip_at_line_ends(true, cx);
-                editor.change_selections(Default::default(), window, cx, |s| {
-                    if mode == Mode::VisualBlock {
-                        s.select_anchor_ranges(anchors.into_iter().take(1))
-                    } else {
-                        s.select_anchor_ranges(anchors)
-                    }
-                });
-            });
-        });
-        self.switch_mode(Mode::Normal, false, window, cx);
+                    vim.switch_mode(Mode::Normal, false, window, cx);
+                    vim.clear_operator(window, cx);
+                }))
+            },
+            window,
+            cx,
+        );
     }
 
     pub fn delete_surrounds(

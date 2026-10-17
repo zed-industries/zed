@@ -1,4 +1,19 @@
 use super::*;
+use crate::{code_context_menus::CompletionMenuEntry, deferred_input::CapturedInput};
+
+#[derive(Clone)]
+pub(super) struct CapturedCompletionAction {
+    editor: EntityId,
+    target: Option<CompletionTarget>,
+}
+
+#[derive(Clone)]
+struct CompletionTarget {
+    menu_id: CompletionId,
+    completions: Rc<RefCell<Box<[Completion]>>>,
+    entries: Rc<[CompletionMenuEntry]>,
+    candidate_id: Option<usize>,
+}
 
 impl Editor {
     pub fn set_completion_provider(&mut self, provider: Option<Rc<dyn CompletionProvider>>) {
@@ -14,6 +29,7 @@ impl Editor {
             text_system: window.text_system().clone(),
             editor_style: self.style.clone().unwrap_or_else(|| self.create_style(cx)),
             rem_size: window.rem_size(),
+            syntax: self.syntax_styling(),
             scroll_anchor: self.scroll_manager.shared_scroll_anchor(cx),
             visible_rows: self.visible_line_count(),
             vertical_scroll_margin: self.scroll_manager.vertical_scroll_margin,
@@ -96,6 +112,59 @@ impl Editor {
             && self.context_menu.borrow().as_ref().is_some_and(|menu| {
                 menu.visible() && matches!(menu, CodeContextMenu::Completions(_))
             })
+    }
+
+    pub(super) fn capture_completion_action(
+        &self,
+        action: &dyn Any,
+        cx: &Context<Self>,
+    ) -> Option<CapturedCompletionAction> {
+        let item_ix = if let Some(action) = action.downcast_ref::<ConfirmCompletion>() {
+            action.item_ix
+        } else if let Some(action) = action.downcast_ref::<ComposeCompletion>() {
+            action.item_ix
+        } else if action.is::<ConfirmCompletionInsert>() || action.is::<ConfirmCompletionReplace>()
+        {
+            None
+        } else {
+            return None;
+        };
+        Some(self.capture_completion_target(item_ix, cx))
+    }
+
+    pub(super) fn capture_completion_target(
+        &self,
+        item_ix: Option<usize>,
+        cx: &Context<Self>,
+    ) -> CapturedCompletionAction {
+        let mut captured = CapturedInput::current(cx)
+            .and_then(|input| input.completion.as_ref())
+            .filter(|captured| captured.editor == cx.entity_id())
+            .cloned()
+            .unwrap_or_else(|| CapturedCompletionAction {
+                editor: cx.entity_id(),
+                target: self.context_menu.borrow().as_ref().and_then(|menu| {
+                    let CodeContextMenu::Completions(menu) = menu else {
+                        return None;
+                    };
+                    Some(CompletionTarget {
+                        menu_id: menu.id,
+                        completions: menu.completions.clone(),
+                        entries: menu.entries.clone(),
+                        candidate_id: None,
+                    })
+                }),
+            });
+        if let Some(item_ix) = item_ix {
+            captured.target = captured.target.and_then(|mut target| {
+                if target.candidate_id.is_none() {
+                    target.candidate_id =
+                        Some(target.entries.get(item_ix)?.as_match()?.candidate_id);
+                }
+                Some(target)
+            });
+        }
+        captured
     }
 
     pub(super) fn trigger_completion_on_input(
@@ -185,14 +254,17 @@ impl Editor {
     pub(super) fn visible_text_buffer_ranges(
         &self,
         cx: &mut Context<Editor>,
-    ) -> Vec<(
-        BufferSnapshot,
-        Range<BufferOffset>,
-        ExcerptRange<text::Anchor>,
-    )> {
+    ) -> Result<
+        Vec<(
+            BufferSnapshot,
+            Range<BufferOffset>,
+            ExcerptRange<text::Anchor>,
+        )>,
+        PendingRowGeometry,
+    > {
         let display_snapshot = self.display_snapshot(cx);
-        let visible_ranges = self.painted_text_ranges(&display_snapshot, cx);
-        Self::buffer_ranges(&display_snapshot, visible_ranges)
+        let visible_ranges = self.visible_text_ranges(&display_snapshot, cx)?;
+        Ok(Self::buffer_ranges(&display_snapshot, visible_ranges))
     }
 
     fn buffer_ranges(
@@ -881,20 +953,55 @@ impl Editor {
     ) -> Option<Task<Result<()>>> {
         use language::ToOffset as _;
 
+        let captured = self.capture_completion_target(item_ix, cx);
+        if self.input_is_deferred() {
+            return Some(self.defer_input_task(
+                move |editor, window, cx| {
+                    CapturedInput::completion(captured).run(cx, |cx| {
+                        editor
+                            .do_completion(item_ix, intent, window, cx)
+                            .unwrap_or_else(|| Task::ready(Ok(())))
+                    })
+                },
+                window,
+                cx,
+            ));
+        }
+
+        let candidate_id = captured.target.and_then(|target| {
+            let context_menu = self.context_menu.borrow();
+            let CodeContextMenu::Completions(menu) = context_menu.as_ref()? else {
+                return None;
+            };
+            if menu.id != target.menu_id || !Rc::ptr_eq(&menu.completions, &target.completions) {
+                return None;
+            }
+            if let Some(candidate_id) = target.candidate_id {
+                menu.entries
+                    .iter()
+                    .filter_map(|entry| entry.as_match())
+                    .find(|candidate| candidate.candidate_id == candidate_id)
+                    .map(|candidate| candidate.candidate_id)
+            } else if Rc::ptr_eq(&target.entries, &menu.entries) {
+                menu.entries
+                    .get(menu.selected_item)
+                    .and_then(|entry| entry.as_match())
+                    .map(|candidate| candidate.candidate_id)
+            } else {
+                None
+            }
+        });
+        let Some(candidate_id) = candidate_id else {
+            cx.propagate();
+            return None;
+        };
         let CodeContextMenu::Completions(completions_menu) = self.hide_context_menu(window, cx)?
         else {
             return None;
         };
-
-        let candidate_id = {
-            let entries = completions_menu.entries.borrow();
-            let entry = entries.get(item_ix.unwrap_or(completions_menu.selected_item))?;
-            let mat = entry.as_match()?;
-            if self.show_edit_predictions_in_menu() {
-                self.discard_edit_prediction(EditPredictionDiscardReason::Rejected, cx);
-            }
-            mat.candidate_id
-        };
+        if self.show_edit_predictions_in_menu() {
+            self.discard_edit_prediction(EditPredictionDiscardReason::Rejected, cx);
+        }
 
         let completion = completions_menu
             .completions

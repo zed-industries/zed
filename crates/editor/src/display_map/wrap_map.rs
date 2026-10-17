@@ -1,18 +1,17 @@
 use super::{
-    ChunkRenderer, ChunkRendererId, Highlights,
+    ChunkRenderer, ChunkRendererId, Highlights, LongRowSource,
     dimensions::RowDelta,
     fold_map::{Chunk, FoldRows},
     invisibles::replacement,
-    long_rows::{LongRows, MeasureRequest, StandaloneInvisibles},
+    long_rows::{LongRows, StandaloneInvisibles},
     tab_map::{self, TabEdit, TabPoint, TabSnapshot},
 };
-use crate::MAX_LINE_LEN;
 
 use collections::HashMap;
 use futures_lite::future::yield_now;
 use gpui::{
-    App, AppContext as _, Context, Entity, Font, FontId, IndentAdjustment, LineWrapper, Pixels,
-    Task, TextSystem,
+    App, AppContext as _, Context, Entity, Font, FontId, GlyphRasterConfig, IndentAdjustment,
+    LineWrapper, Pixels, Task, TextSystem,
 };
 use language::{LanguageAwareStyling, Point, language_settings::SoftWrapIndent};
 use multi_buffer::RowInfo;
@@ -52,9 +51,9 @@ pub struct WrapMap {
     wrap_width: Option<Pixels>,
     soft_wrap_indent: SoftWrapIndent,
     background_task: Option<Task<()>>,
-    font_with_size: (Font, Pixels),
-    long_rows_task: Option<Task<()>>,
-    long_row_edits: Vec<(TabSnapshot, Vec<TabEdit>)>,
+    pub(super) font_with_size: (Font, Pixels),
+    raster_config: GlyphRasterConfig,
+    shaping_source: Option<Arc<LongRowSource>>,
 }
 
 #[derive(Clone)]
@@ -129,7 +128,7 @@ impl LineFragmentBuilder {
     ) {
         self.renderer_run = None;
         let mut prefix_start = 0;
-        for range in self.standalone_invisibles.find(text, next) {
+        for range in self.standalone_invisibles.find(text, next, false) {
             let Some(width) = text[range.clone()]
                 .chars()
                 .next()
@@ -231,6 +230,7 @@ impl WrapMap {
         let handle = cx.new(|cx| {
             let mut this = Self {
                 font_with_size: (font, font_size),
+                raster_config: GlyphRasterConfig::default(),
                 wrap_width: None,
                 soft_wrap_indent: SoftWrapIndent::default(),
                 pending_edits: Default::default(),
@@ -238,8 +238,7 @@ impl WrapMap {
                 edits_since_sync: Default::default(),
                 snapshot: WrapSnapshot::new(tab_snapshot),
                 background_task: None,
-                long_rows_task: None,
-                long_row_edits: Vec::new(),
+                shaping_source: None,
             };
             if !this.set_wrap_width(wrap_width, cx) {
                 this.rewrap(cx);
@@ -266,15 +265,24 @@ impl WrapMap {
             self.pending_edits.push_back((tab_snapshot, edits));
             self.flush_edits(cx);
         } else {
+            let buffer = tab_snapshot.buffer_snapshot();
+            let previous = self.snapshot.tab_snapshot.buffer_snapshot();
+            if (buffer.edit_count() != previous.edit_count()
+                || buffer.non_text_state_update_count() != previous.non_text_state_update_count())
+                && buffer
+                    .buffers_with_paths()
+                    .map(|(buffer, _)| (buffer.remote_id(), buffer.syntax_update_count()))
+                    .ne(previous
+                        .buffers_with_paths()
+                        .map(|(buffer, _)| (buffer.remote_id(), buffer.syntax_update_count())))
+            {
+                self.invalidate_shaping_source();
+            }
+
             self.edits_since_sync = self
                 .edits_since_sync
                 .compose(self.snapshot.interpolate(tab_snapshot, &edits));
             self.snapshot.interpolated = false;
-            if self.long_rows_task.is_some() && !edits.is_empty() {
-                self.long_row_edits
-                    .push((self.snapshot.tab_snapshot.clone(), edits));
-            }
-            self.measure_long_rows(Duration::from_millis(1), cx);
         }
 
         debug_assert!(
@@ -285,6 +293,33 @@ impl WrapMap {
              otherwise is_rewrapping never settles and frozen scrollbar ranges leak"
         );
         (self.snapshot.clone(), mem::take(&mut self.edits_since_sync))
+    }
+
+    pub(super) fn set_shaping_source(&mut self, source: Arc<LongRowSource>) {
+        if self
+            .shaping_source
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, &source))
+        {
+            return;
+        }
+        self.shaping_source = Some(source);
+        self.invalidate_shaping_source();
+    }
+
+    fn invalidate_shaping_source(&mut self) {
+        if let Some(source) = &self.shaping_source {
+            self.snapshot.long_rows.set_shaping_source(source.clone());
+        }
+    }
+
+    pub(super) fn set_raster_config(&mut self, config: GlyphRasterConfig) {
+        if self.raster_config != config {
+            self.raster_config = config;
+            if self.wrap_width.is_none() {
+                self.snapshot.long_rows.set_raster_config(config);
+            }
+        }
     }
 
     #[ztracing::instrument(skip_all)]
@@ -336,8 +371,6 @@ impl WrapMap {
         self.background_task.take();
         self.interpolated_edits.clear();
         self.pending_edits.clear();
-        self.long_rows_task.take();
-        self.long_row_edits.clear();
         self.snapshot.long_rows = LongRows::default();
 
         if let Some(wrap_width) = self.wrap_width {
@@ -413,8 +446,7 @@ impl WrapMap {
             let old_rows = self.snapshot.transforms.summary().output.lines.row + 1;
             self.snapshot.transforms = SumTree::default();
             let summary = self.snapshot.tab_snapshot.text_summary();
-            let may_have_long_rows =
-                self.snapshot.tab_snapshot.max_line_len_bound(0..u32::MAX) as usize > MAX_LINE_LEN;
+
             if !summary.lines.is_zero() {
                 self.snapshot
                     .transforms
@@ -427,52 +459,16 @@ impl WrapMap {
                 new: WrapRow(0)..WrapRow(new_rows),
             }]));
             let (font, font_size) = self.font_with_size.clone();
-            self.snapshot.long_rows = LongRows::new(cx.text_system().line_wrapper(font, font_size));
-            if !may_have_long_rows {
-                self.snapshot.long_rows.clear_pending();
-            }
-            self.measure_long_rows(Duration::from_millis(5), cx);
-        }
-    }
-
-    pub(crate) fn measure_long_row_columns(&mut self, requests: &[MeasureRequest]) -> bool {
-        match self
-            .snapshot
-            .long_rows
-            .measure(&self.snapshot.tab_snapshot, requests)
-        {
-            Some(long_rows) => {
-                self.snapshot.long_rows = long_rows;
-                true
-            }
-            None => false,
-        }
-    }
-
-    fn measure_long_rows(&mut self, timeout: Duration, cx: &mut Context<Self>) {
-        if self.long_rows_task.is_some() || !self.snapshot.long_rows.has_pending() {
-            return;
-        }
-        let (font, font_size) = self.font_with_size.clone();
-        let task = cx.background_spawn(self.snapshot.long_rows.clone().measure_pending(
-            self.snapshot.tab_snapshot.clone(),
-            cx.text_system().line_wrapper(font, font_size),
-        ));
-        match cx.foreground_executor().block_with_timeout(timeout, task) {
-            Ok(long_rows) => self.snapshot.long_rows = long_rows,
-            Err(task) => {
-                self.long_rows_task = Some(cx.spawn(async move |wrap_map, cx| {
-                    let long_rows = task.await;
-                    wrap_map
-                        .update(cx, |wrap_map, cx| {
-                            wrap_map.long_rows_task = None;
-                            wrap_map.snapshot.long_rows =
-                                long_rows.replay(mem::take(&mut wrap_map.long_row_edits));
-                            wrap_map.measure_long_rows(Duration::from_millis(1), cx);
-                            cx.notify();
-                        })
-                        .ok();
-                }));
+            self.snapshot.long_rows = LongRows::new(
+                cx.text_system().line_wrapper(font, font_size),
+                cx.text_system().clone(),
+                self.snapshot.tab_snapshot.version,
+            );
+            self.snapshot
+                .long_rows
+                .set_raster_config(self.raster_config);
+            if let Some(source) = &self.shaping_source {
+                self.snapshot.long_rows.set_shaping_source(source.clone());
             }
         }
     }
@@ -614,11 +610,16 @@ impl WrapSnapshot {
 
     #[ztracing::instrument(skip_all)]
     fn interpolate(&mut self, new_tab_snapshot: TabSnapshot, tab_edits: &[TabEdit]) -> WrapPatch {
+        if tab_edits.is_empty() && new_tab_snapshot.version == self.tab_snapshot.version {
+            self.tab_snapshot = new_tab_snapshot;
+            self.interpolated = true;
+            return WrapPatch::default();
+        }
         let mut new_transforms;
         if tab_edits.is_empty() {
             new_transforms = self.transforms.clone();
         } else if !self.transforms.summary().has_wraps()
-            && !new_tab_snapshot.text_summary().lines.is_zero()
+            && new_tab_snapshot.max_point() != TabPoint::zero()
         {
             // Fast path: without existing wraps, interpolation is a passthrough over the new tab snapshot.
             new_transforms = SumTree::default();

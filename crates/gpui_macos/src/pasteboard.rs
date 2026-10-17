@@ -2,21 +2,24 @@ use core::slice;
 use std::ffi::{CStr, c_void};
 use std::path::PathBuf;
 
+use anyhow::{Result, bail};
 use cocoa::{
     appkit::{
         NSFilenamesPboardType, NSPasteboard, NSPasteboardTypePNG, NSPasteboardTypeString,
         NSPasteboardTypeTIFF,
     },
-    base::{id, nil},
+    base::{NO, id, nil},
     foundation::{NSArray, NSData, NSFastEnumeration, NSString},
 };
+use gpui_util::ResultExt as _;
 use objc::{msg_send, rc::StrongPtr, runtime::Object, sel, sel_impl};
 use smallvec::SmallVec;
 use strum::IntoEnumIterator as _;
 
 use crate::ns_string;
 use gpui::{
-    ClipboardEntry, ClipboardItem, ClipboardString, ExternalPaths, Image, ImageFormat, hash,
+    ClipboardEntry, ClipboardItem, ClipboardReadMode, ClipboardRevision, ClipboardSnapshot,
+    ClipboardString, ExternalPaths, Image, ImageFormat, hash,
 };
 
 pub struct Pasteboard {
@@ -46,6 +49,21 @@ impl Pasteboard {
             inner: unsafe { StrongPtr::retain(inner) },
             text_hash_type: unsafe { StrongPtr::retain(ns_string("zed-text-hash")) },
             metadata_type: unsafe { StrongPtr::retain(ns_string("zed-metadata")) },
+        }
+    }
+
+    pub fn read_snapshot(&self, mode: ClipboardReadMode) -> ClipboardSnapshot {
+        let before = self.revision();
+        if mode == ClipboardReadMode::RevisionOnly {
+            return ClipboardSnapshot {
+                item: None,
+                revision: Some(before),
+            };
+        }
+        let item = self.read();
+        ClipboardSnapshot {
+            item,
+            revision: (before == self.revision()).then_some(before),
         }
     }
 
@@ -157,19 +175,23 @@ impl Pasteboard {
     }
 
     pub fn write(&self, item: ClipboardItem) {
+        self.write_with_revision(item).log_err();
+    }
+
+    pub fn write_with_revision(&self, item: ClipboardItem) -> Result<Option<ClipboardRevision>> {
         unsafe {
             match item.entries.as_slice() {
                 [] => {
                     // Writing an empty list of entries just clears the clipboard.
-                    self.inner.clearContents();
+                    Ok(Some(ClipboardRevision::Native(
+                        self.inner.clearContents() as u64
+                    )))
                 }
-                [ClipboardEntry::String(string)] => {
-                    self.write_plaintext(string);
+                [ClipboardEntry::String(string)] => self.write_plaintext(string),
+                [ClipboardEntry::Image(image)] => self.write_image(image),
+                [ClipboardEntry::ExternalPaths(_)] => {
+                    bail!("Writing file paths to the pasteboard is unsupported")
                 }
-                [ClipboardEntry::Image(image)] => {
-                    self.write_image(image);
-                }
-                [ClipboardEntry::ExternalPaths(_)] => {}
                 _ => {
                     // Agus NB: We're currently only writing string entries to the clipboard when we have more than one.
                     //
@@ -195,23 +217,33 @@ impl Pasteboard {
                         }
                     }
 
-                    self.write_plaintext(&combined);
+                    self.write_plaintext(&combined)
                 }
             }
         }
     }
 
-    fn write_plaintext(&self, string: &ClipboardString) {
+    fn revision(&self) -> ClipboardRevision {
+        let count: i64 = unsafe { msg_send![*self.inner, changeCount] };
+        ClipboardRevision::Native(count as u64)
+    }
+
+    fn write_plaintext(&self, string: &ClipboardString) -> Result<Option<ClipboardRevision>> {
         unsafe {
-            self.inner.clearContents();
+            let revision = ClipboardRevision::Native(self.inner.clearContents() as u64);
 
             let text_bytes = NSData::dataWithBytes_length_(
                 nil,
                 string.text.as_ptr() as *const c_void,
                 string.text.len() as u64,
             );
-            self.inner
-                .setData_forType(text_bytes, NSPasteboardTypeString);
+            if self
+                .inner
+                .setData_forType(text_bytes, NSPasteboardTypeString)
+                == NO
+            {
+                bail!("Failed to write text to the pasteboard");
+            }
 
             if let Some(metadata) = string.metadata.as_ref() {
                 let hash_bytes = ClipboardString::text_hash(&string.text).to_be_bytes();
@@ -220,22 +252,30 @@ impl Pasteboard {
                     hash_bytes.as_ptr() as *const c_void,
                     hash_bytes.len() as u64,
                 );
-                self.inner.setData_forType(hash_bytes, *self.text_hash_type);
+                if self.inner.setData_forType(hash_bytes, *self.text_hash_type) == NO {
+                    bail!("Failed to write the text hash to the pasteboard");
+                }
 
                 let metadata_bytes = NSData::dataWithBytes_length_(
                     nil,
                     metadata.as_ptr() as *const c_void,
                     metadata.len() as u64,
                 );
-                self.inner
-                    .setData_forType(metadata_bytes, *self.metadata_type);
+                if self
+                    .inner
+                    .setData_forType(metadata_bytes, *self.metadata_type)
+                    == NO
+                {
+                    bail!("Failed to write metadata to the pasteboard");
+                }
             }
+            Ok(Some(revision))
         }
     }
 
-    unsafe fn write_image(&self, image: &Image) {
+    unsafe fn write_image(&self, image: &Image) -> Result<Option<ClipboardRevision>> {
         unsafe {
-            self.inner.clearContents();
+            let revision = ClipboardRevision::Native(self.inner.clearContents() as u64);
 
             let bytes = NSData::dataWithBytes_length_(
                 nil,
@@ -243,8 +283,14 @@ impl Pasteboard {
                 image.bytes.len() as u64,
             );
 
-            self.inner
-                .setData_forType(bytes, Into::<UTType>::into(image.format).inner_mut());
+            if self
+                .inner
+                .setData_forType(bytes, Into::<UTType>::into(image.format).inner_mut())
+                == NO
+            {
+                bail!("Failed to write an image to the pasteboard");
+            }
+            Ok(Some(revision))
         }
     }
 }
@@ -402,6 +448,34 @@ mod tests {
             pasteboard.read(),
             Some(ClipboardItem::new_string(text_from_other_app.to_string()))
         );
+    }
+
+    #[test]
+    fn test_clipboard_snapshot_revisions() {
+        let pasteboard = Pasteboard::unique();
+        let external = unsafe { Pasteboard::new(*pasteboard.inner) };
+        let mut previous = pasteboard
+            .read_snapshot(ClipboardReadMode::RevisionOnly)
+            .revision;
+        for text in ["Z", "Z", "Y", "Z"] {
+            let item = ClipboardItem::new_string(text.to_owned());
+            let receipt = pasteboard
+                .write_with_revision(item.clone())
+                .expect("publication succeeded")
+                .expect("publication receipt");
+            let snapshot = pasteboard.read_snapshot(ClipboardReadMode::RevisionOnly);
+            assert_eq!(snapshot.item, None);
+            assert_eq!(snapshot.revision.as_ref(), Some(&receipt));
+            let snapshot = pasteboard.read_snapshot(ClipboardReadMode::Contents);
+            assert_eq!(snapshot.item, Some(item.clone()));
+            assert_eq!(snapshot.revision.as_ref(), Some(&receipt));
+            assert_ne!(snapshot.revision, previous);
+            external.write(item.clone());
+            let snapshot = pasteboard.read_snapshot(ClipboardReadMode::Contents);
+            assert_eq!(snapshot.item, Some(item));
+            assert_ne!(snapshot.revision, Some(receipt));
+            previous = snapshot.revision;
+        }
     }
 
     #[test]

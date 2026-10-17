@@ -292,3 +292,216 @@ pub fn editor_content_with_blocks_and_size(
     }
     lines.join("\n")
 }
+
+#[cfg(test)]
+pub(crate) use shaping::ShapingTextSystem;
+
+#[cfg(test)]
+mod shaping {
+    use gpui::{
+        Bounds, DevicePixels, Font, FontId, FontMetrics, FontRun, FontStyle, FontWeight, GlyphId,
+        LineLayout, NoopTextSystem, Pixels, PlatformTextSystem, RenderGlyphParams, ShapedGlyph,
+        ShapedRun, Size, TextRenderingMode, point, px,
+    };
+    use std::borrow::Cow;
+
+    pub(crate) struct ShapingTextSystem(pub(crate) NoopTextSystem);
+
+    impl ShapingTextSystem {
+        pub(crate) const ADVANCE: f32 = 0.5;
+        pub(crate) const PRE_BASE_VOWEL: char = '\u{93f}';
+        pub(crate) const KERNING: f32 = 2.;
+        pub(crate) const BOLD_EXTRA: f32 = 1.;
+        pub(crate) const REGULAR: FontId = FontId(1);
+        pub(crate) const BOLD: FontId = FontId(2);
+        pub(crate) const ITALIC: FontId = FontId(3);
+
+        fn layout_line_inner(
+            &self,
+            text: &str,
+            font_size: Pixels,
+            runs: &[FontRun],
+            mut glyph_x_positions: Option<&mut Vec<f64>>,
+        ) -> (LineLayout, f64) {
+            let advance = font_size * Self::ADVANCE;
+            let mut x = px(0.);
+            let mut precise_x = 0.0;
+            let mut shaped_runs = Vec::new();
+            let mut run_start = 0;
+            for run in runs {
+                let run_text = &text[run_start..run_start + run.len];
+                let extra = if run.font_id == Self::BOLD {
+                    px(Self::BOLD_EXTRA)
+                } else {
+                    px(0.)
+                };
+                let mut glyphs = Vec::new();
+                let mut previous = None;
+                let mut characters = run_text.char_indices().peekable();
+                while let Some((index, character)) = characters.next() {
+                    if previous == Some('A') && character == 'V' {
+                        x -= px(Self::KERNING);
+                        precise_x -= f64::from(Self::KERNING);
+                    }
+                    if let Some((vowel_index, _)) =
+                        characters.next_if(|(_, next)| *next == Self::PRE_BASE_VOWEL)
+                    {
+                        for glyph_index in [vowel_index, index] {
+                            let position = if let Some(positions) = glyph_x_positions.as_mut() {
+                                positions.push(precise_x);
+                                Pixels::from(precise_x)
+                            } else {
+                                x
+                            };
+                            glyphs.push(ShapedGlyph {
+                                id: GlyphId(3),
+                                position: point(position, px(0.)),
+                                index: run_start + glyph_index,
+                                is_emoji: false,
+                            });
+                            x += advance + extra;
+                            precise_x += f64::from(advance + extra);
+                        }
+                        previous = Some(Self::PRE_BASE_VOWEL);
+                        continue;
+                    }
+                    let ligated = match character {
+                        'f' => characters.next_if(|(_, next)| *next == 'i'),
+                        'w' => characters.next_if(|(_, next)| *next == 'w'),
+                        _ => None,
+                    };
+                    let position = if let Some(positions) = glyph_x_positions.as_mut() {
+                        positions.push(precise_x);
+                        Pixels::from(precise_x)
+                    } else {
+                        x
+                    };
+                    glyphs.push(ShapedGlyph {
+                        id: GlyphId(if ligated.is_some() { 2 } else { 1 }),
+                        position: point(position, px(0.)),
+                        index: run_start + index,
+                        is_emoji: false,
+                    });
+                    match ligated {
+                        Some((_, ligated)) => {
+                            previous = Some(ligated);
+                            x += advance * 1.5 + extra;
+                            precise_x += f64::from(advance * 1.5 + extra);
+                        }
+                        None => {
+                            previous = Some(character);
+                            x += advance + extra;
+                            precise_x += f64::from(advance + extra);
+                        }
+                    }
+                }
+                if !glyphs.is_empty() {
+                    shaped_runs.push(ShapedRun {
+                        font_id: run.font_id,
+                        glyphs,
+                    });
+                }
+                run_start += run.len;
+            }
+            let bold_ascent = if runs.iter().any(|run| run.font_id == Self::BOLD) {
+                px(Self::BOLD_EXTRA)
+            } else {
+                px(0.)
+            };
+            (
+                LineLayout {
+                    font_size,
+                    width: if glyph_x_positions.is_some() {
+                        Pixels::from(precise_x)
+                    } else {
+                        x
+                    },
+                    ascent: font_size * 0.8 + bold_ascent,
+                    descent: font_size * -0.2,
+                    runs: shaped_runs,
+                    len: text.len(),
+                },
+                precise_x,
+            )
+        }
+    }
+
+    impl PlatformTextSystem for ShapingTextSystem {
+        fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> anyhow::Result<()> {
+            self.0.add_fonts(fonts)
+        }
+
+        fn all_font_names(&self) -> Vec<String> {
+            self.0.all_font_names()
+        }
+
+        fn font_id(&self, descriptor: &Font) -> anyhow::Result<FontId> {
+            Ok(if descriptor.weight >= FontWeight::BOLD {
+                Self::BOLD
+            } else if descriptor.style == FontStyle::Italic {
+                Self::ITALIC
+            } else {
+                Self::REGULAR
+            })
+        }
+
+        fn font_metrics(&self, font_id: FontId) -> FontMetrics {
+            self.0.font_metrics(font_id)
+        }
+
+        fn typographic_bounds(
+            &self,
+            font_id: FontId,
+            glyph_id: GlyphId,
+        ) -> anyhow::Result<Bounds<f32>> {
+            self.0.typographic_bounds(font_id, glyph_id)
+        }
+
+        fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> anyhow::Result<Size<f32>> {
+            self.0.advance(font_id, glyph_id)
+        }
+
+        fn glyph_for_char(&self, font_id: FontId, character: char) -> Option<GlyphId> {
+            self.0.glyph_for_char(font_id, character)
+        }
+
+        fn glyph_raster_bounds(
+            &self,
+            params: &RenderGlyphParams,
+        ) -> anyhow::Result<Bounds<DevicePixels>> {
+            self.0.glyph_raster_bounds(params)
+        }
+
+        fn rasterize_glyph(
+            &self,
+            params: &RenderGlyphParams,
+            raster_bounds: Bounds<DevicePixels>,
+        ) -> anyhow::Result<(Size<DevicePixels>, Vec<u8>)> {
+            self.0.rasterize_glyph(params, raster_bounds)
+        }
+
+        fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
+            self.layout_line_inner(text, font_size, runs, None).0
+        }
+
+        fn layout_line_with_precise_positions(
+            &self,
+            text: &str,
+            font_size: Pixels,
+            runs: &[FontRun],
+        ) -> (LineLayout, Vec<f64>, f64) {
+            let mut glyph_x_positions = Vec::new();
+            let (layout, width) =
+                self.layout_line_inner(text, font_size, runs, Some(&mut glyph_x_positions));
+            (layout, glyph_x_positions, width)
+        }
+
+        fn recommended_rendering_mode(
+            &self,
+            font_id: FontId,
+            font_size: Pixels,
+        ) -> TextRenderingMode {
+            self.0.recommended_rendering_mode(font_id, font_size)
+        }
+    }
+}

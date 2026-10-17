@@ -1,4 +1,3 @@
-use std::any::TypeId;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -11,9 +10,9 @@ use editor::{Editor, EditorSettings, GotoDefinitionKind, OpenResultsIn};
 use file_icons::FileIcons;
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    AnyElement, App, AppContext, AsyncWindowContext, Context, DismissEvent, DispatchPhase, Entity,
-    EventEmitter, FocusHandle, Focusable, HighlightStyle, StyledText, Subscription, Task,
-    TextStyle, WeakEntity, prelude::*,
+    AnyElement, App, AppContext, AsyncWindowContext, Context, DismissEvent, Entity, EventEmitter,
+    FocusHandle, Focusable, HighlightStyle, StyledText, Subscription, Task, TextStyle, WeakEntity,
+    prelude::*,
 };
 use language::{Buffer, HighlightId, LanguageAwareStyling};
 use picker::{Picker, PickerDelegate};
@@ -42,20 +41,9 @@ fn register(editor: &mut Editor, _window: Option<&mut Window>, cx: &mut Context<
         return;
     }
     editor
-        .register_action_renderer(|editor, window, _| {
+        .register_action_renderer(|editor, window, cx| {
             if editor.lsp_data_enabled() {
-                window.on_action(
-                    TypeId::of::<OpenDefinitionLocations>(),
-                    |action, phase, window, cx| {
-                        if phase == DispatchPhase::Bubble {
-                            handle_definition_locations(
-                                action.downcast_ref().expect("definition action"),
-                                window,
-                                cx,
-                            );
-                        }
-                    },
-                );
+                editor.register_action_handler(window, cx, handle_definition_locations);
             }
         })
         .detach();

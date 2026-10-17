@@ -430,41 +430,6 @@ fn render_highlighted_editor(cx: &mut BenchAppContext) {
     });
 }
 
-#[gpui::bench(
-    inputs = pending_long_row_characters(),
-    group = "Scroll a long row while it is measured",
-    input_name = "character",
-    sample_size = 10
-)]
-fn editor_scroll_pending_long_row(character: &char, cx: &mut BenchAppContext) {
-    init_context(cx);
-
-    let text = character.to_string().repeat(PENDING_LONG_ROW_CHARACTERS);
-    let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
-    let mut window = cx.add_empty_window();
-    let editor = window.update(|window, cx| {
-        let editor = window.replace_root(cx, |window, cx| {
-            let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
-            editor.set_style(editor::EditorStyle::default(), window, cx);
-            editor
-        });
-        window.focus(&editor.focus_handle(cx), cx);
-        editor
-    });
-
-    let mut scroll_x = 1_000_000.;
-    cx.bench_renderer(editor, move |editor, window, cx| {
-        scroll_x += 200.;
-        editor.set_scroll_position(gpui::point(scroll_x, 0.), window, cx);
-    });
-}
-
-const PENDING_LONG_ROW_CHARACTERS: usize = 20_000_000;
-
-fn pending_long_row_characters() -> Vec<char> {
-    vec!['x', 'é', '漢']
-}
-
 fn init_context(cx: &mut BenchAppContext) {
     cx.update(|cx| {
         let store = SettingsStore::test(cx);
@@ -490,7 +455,6 @@ gpui::bench_group!(
     editor_render,
     editor_render_with_editorconfig,
     editor_render_highlighted,
-    editor_render_highlighted_minimap,
-    editor_scroll_pending_long_row
+    editor_render_highlighted_minimap
 );
 gpui::bench_main!(benches);

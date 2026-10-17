@@ -531,9 +531,6 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         vim.object(Object::EntireFile, window, cx)
     });
     Vim::action(editor, cx, |vim, _: &Comment, window, cx| {
-        if !matches!(vim.active_operator(), Some(Operator::Object { .. })) {
-            vim.push_operator(Operator::Object { around: true }, window, cx);
-        }
         vim.object(Object::Comment, window, cx)
     });
     Vim::action(
@@ -557,6 +554,20 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.operator_uses_clipboard(cx)
+            && self.defer_clipboard_input(
+                move |vim, window, cx| vim.object_impl(object, opening, window, cx),
+                window,
+                cx,
+            )
+        {
+            return;
+        }
+        if object == Object::Comment
+            && !matches!(self.active_operator(), Some(Operator::Object { .. }))
+        {
+            self.push_operator(Operator::Object { around: true }, window, cx);
+        }
         let count = Self::take_count(cx);
 
         match self.mode {

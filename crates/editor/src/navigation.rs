@@ -1,7 +1,11 @@
 use super::*;
 
 impl Editor {
-    pub fn move_left(&mut self, _: &MoveLeft, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn move_left(&mut self, action: &MoveLeft, window: &mut Window, cx: &mut Context<Self>) {
+        if self.defer_action(action, Self::move_left, window, cx) {
+            return;
+        }
+
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_with(&mut |map, selection| {
                 let cursor = if selection.is_empty() {
@@ -14,13 +18,26 @@ impl Editor {
         })
     }
 
-    pub fn select_left(&mut self, _: &SelectLeft, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn select_left(
+        &mut self,
+        action: &SelectLeft,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.defer_action(action, Self::select_left, window, cx) {
+            return;
+        }
+
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(&mut |map, head, _| (movement::left(map, head), SelectionGoal::None));
         })
     }
 
-    pub fn move_right(&mut self, _: &MoveRight, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn move_right(&mut self, action: &MoveRight, window: &mut Window, cx: &mut Context<Self>) {
+        if self.defer_action(action, Self::move_right, window, cx) {
+            return;
+        }
+
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_with(&mut |map, selection| {
                 let cursor = if selection.is_empty() {
@@ -33,7 +50,16 @@ impl Editor {
         })
     }
 
-    pub fn select_right(&mut self, _: &SelectRight, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn select_right(
+        &mut self,
+        action: &SelectRight,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.defer_action(action, Self::select_right, window, cx) {
+            return;
+        }
+
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(&mut |map, head, _| {
                 (movement::right(map, head), SelectionGoal::None)
@@ -41,39 +67,43 @@ impl Editor {
         });
     }
 
-    pub fn move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn move_up(&mut self, action: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
+        if self.defer_action(action, Self::move_up, window, cx) {
+            return;
+        }
+        let plan = if !self.mode.is_single_line() {
+            let plan = self.plan_vertical_movement(1, false, Some(Bias::Left), window, cx);
+            let retry = action.clone();
+            let Some(plan) = self.ready_input_plan(
+                plan,
+                move |editor, window, cx| editor.move_up(&retry, window, cx),
+                window,
+                cx,
+            ) else {
+                return;
+            };
+            Some(plan)
+        } else {
+            None
+        };
         if self.take_rename(true, window, cx).is_some() {
             return;
         }
         if self.cycle_inline_input_history(InlineInputHistoryDirection::Older, window, cx) {
             return;
         }
-
         if self.mode.is_single_line() {
             cx.propagate();
             return;
         }
-
-        let text_layout_details = &self.text_layout_details(window, cx);
+        let Some(plan) = plan else {
+            return;
+        };
         let selection_count = self.selections.count();
         let first_selection = self.selections.first_anchor();
-
-        self.change_selections(Default::default(), window, cx, |s| {
-            s.move_with(&mut |map, selection| {
-                if !selection.is_empty() {
-                    selection.goal = SelectionGoal::None;
-                }
-                let (cursor, goal) = movement::up(
-                    map,
-                    selection.start,
-                    selection.goal,
-                    false,
-                    text_layout_details,
-                );
-                selection.collapse_to(cursor, goal);
-            });
+        self.change_selections(SelectionEffects::default(), window, cx, |selections| {
+            plan.apply(selections)
         });
-
         if selection_count == 1 && first_selection.range() == self.selections.first_anchor().range()
         {
             cx.propagate();
@@ -86,33 +116,38 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::move_up_by_lines, window, cx) {
+            return;
+        }
+        let plan = if !self.mode.is_single_line() {
+            let plan =
+                self.plan_vertical_movement(action.lines, false, Some(Bias::Left), window, cx);
+            let retry = action.clone();
+            let Some(plan) = self.ready_input_plan(
+                plan,
+                move |editor, window, cx| editor.move_up_by_lines(&retry, window, cx),
+                window,
+                cx,
+            ) else {
+                return;
+            };
+            Some(plan)
+        } else {
+            None
+        };
         if self.take_rename(true, window, cx).is_some() {
             return;
         }
-
         if self.mode.is_single_line() {
             cx.propagate();
             return;
         }
-
-        let text_layout_details = &self.text_layout_details(window, cx);
-
-        self.change_selections(Default::default(), window, cx, |s| {
-            s.move_with(&mut |map, selection| {
-                if !selection.is_empty() {
-                    selection.goal = SelectionGoal::None;
-                }
-                let (cursor, goal) = movement::up_by_rows(
-                    map,
-                    selection.start,
-                    action.lines,
-                    selection.goal,
-                    false,
-                    text_layout_details,
-                );
-                selection.collapse_to(cursor, goal);
-            });
-        })
+        let Some(plan) = plan else {
+            return;
+        };
+        self.change_selections(SelectionEffects::default(), window, cx, |selections| {
+            plan.apply(selections)
+        });
     }
 
     pub fn move_down_by_lines(
@@ -121,33 +156,38 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::move_down_by_lines, window, cx) {
+            return;
+        }
+        let plan = if !self.mode.is_single_line() {
+            let plan =
+                self.plan_vertical_movement(action.lines, true, Some(Bias::Right), window, cx);
+            let retry = action.clone();
+            let Some(plan) = self.ready_input_plan(
+                plan,
+                move |editor, window, cx| editor.move_down_by_lines(&retry, window, cx),
+                window,
+                cx,
+            ) else {
+                return;
+            };
+            Some(plan)
+        } else {
+            None
+        };
         if self.take_rename(true, window, cx).is_some() {
             return;
         }
-
         if self.mode.is_single_line() {
             cx.propagate();
             return;
         }
-
-        let text_layout_details = &self.text_layout_details(window, cx);
-
-        self.change_selections(Default::default(), window, cx, |s| {
-            s.move_with(&mut |map, selection| {
-                if !selection.is_empty() {
-                    selection.goal = SelectionGoal::None;
-                }
-                let (cursor, goal) = movement::down_by_rows(
-                    map,
-                    selection.start,
-                    action.lines,
-                    selection.goal,
-                    false,
-                    text_layout_details,
-                );
-                selection.collapse_to(cursor, goal);
-            });
-        })
+        let Some(plan) = plan else {
+            return;
+        };
+        self.change_selections(SelectionEffects::default(), window, cx, |selections| {
+            plan.apply(selections)
+        });
     }
 
     pub fn select_down_by_lines(
@@ -156,12 +196,22 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let text_layout_details = &self.text_layout_details(window, cx);
-        self.change_selections(Default::default(), window, cx, |s| {
-            s.move_heads_with(&mut |map, head, goal| {
-                movement::down_by_rows(map, head, action.lines, goal, false, text_layout_details)
-            })
-        })
+        if self.defer_action(action, Self::select_down_by_lines, window, cx) {
+            return;
+        }
+        let plan = self.plan_vertical_movement(action.lines, true, None, window, cx);
+        let retry = action.clone();
+        let Some(plan) = self.ready_input_plan(
+            plan,
+            move |editor, window, cx| editor.select_down_by_lines(&retry, window, cx),
+            window,
+            cx,
+        ) else {
+            return;
+        };
+        self.change_selections(SelectionEffects::default(), window, cx, |selections| {
+            plan.apply(selections)
+        });
     }
 
     pub fn select_up_by_lines(
@@ -170,31 +220,49 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let text_layout_details = &self.text_layout_details(window, cx);
-        self.change_selections(Default::default(), window, cx, |s| {
-            s.move_heads_with(&mut |map, head, goal| {
-                movement::up_by_rows(map, head, action.lines, goal, false, text_layout_details)
-            })
-        })
+        if self.defer_action(action, Self::select_up_by_lines, window, cx) {
+            return;
+        }
+        let plan = self.plan_vertical_movement(action.lines, false, None, window, cx);
+        let retry = action.clone();
+        let Some(plan) = self.ready_input_plan(
+            plan,
+            move |editor, window, cx| editor.select_up_by_lines(&retry, window, cx),
+            window,
+            cx,
+        ) else {
+            return;
+        };
+        self.change_selections(SelectionEffects::default(), window, cx, |selections| {
+            plan.apply(selections)
+        });
     }
 
     pub fn select_page_up(
         &mut self,
-        _: &SelectPageUp,
+        action: &SelectPageUp,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::select_page_up, window, cx) {
+            return;
+        }
         let Some(row_count) = self.visible_row_count() else {
             return;
         };
-
-        let text_layout_details = &self.text_layout_details(window, cx);
-
-        self.change_selections(Default::default(), window, cx, |s| {
-            s.move_heads_with(&mut |map, head, goal| {
-                movement::up_by_rows(map, head, row_count, goal, false, text_layout_details)
-            })
-        })
+        let plan = self.plan_vertical_movement(row_count, false, None, window, cx);
+        let retry = action.clone();
+        let Some(plan) = self.ready_input_plan(
+            plan,
+            move |editor, window, cx| editor.select_page_up(&retry, window, cx),
+            window,
+            cx,
+        ) else {
+            return;
+        };
+        self.change_selections(SelectionEffects::default(), window, cx, |selections| {
+            plan.apply(selections)
+        });
     }
 
     pub fn move_page_up(
@@ -203,10 +271,30 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::move_page_up, window, cx) {
+            return;
+        }
+        let plan = if let Some(row_count) = self
+            .visible_row_count()
+            .filter(|_| !self.mode.is_single_line())
+        {
+            let plan = self.plan_vertical_movement(row_count, false, Some(Bias::Right), window, cx);
+            let retry = action.clone();
+            let Some(plan) = self.ready_input_plan(
+                plan,
+                move |editor, window, cx| editor.move_page_up(&retry, window, cx),
+                window,
+                cx,
+            ) else {
+                return;
+            };
+            Some(plan)
+        } else {
+            None
+        };
         if self.take_rename(true, window, cx).is_some() {
             return;
         }
-
         if self
             .context_menu
             .borrow_mut()
@@ -216,84 +304,81 @@ impl Editor {
         {
             return;
         }
-
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if self.mode.is_single_line() {
             cx.propagate();
             return;
         }
-
-        let Some(row_count) = self.visible_row_count() else {
+        let Some(plan) = plan else {
             return;
         };
+        self.change_selections(
+            if action.center_cursor {
+                SelectionEffects::scroll(Autoscroll::center())
+            } else {
+                SelectionEffects::default()
+            },
+            window,
+            cx,
+            |selections| plan.apply(selections),
+        );
+    }
 
-        let effects = if action.center_cursor {
-            SelectionEffects::scroll(Autoscroll::center())
-        } else {
-            SelectionEffects::default()
+    pub fn select_up(&mut self, action: &SelectUp, window: &mut Window, cx: &mut Context<Self>) {
+        if self.defer_action(action, Self::select_up, window, cx) {
+            return;
+        }
+        let plan = self.plan_vertical_movement(1, false, None, window, cx);
+        let retry = action.clone();
+        let Some(plan) = self.ready_input_plan(
+            plan,
+            move |editor, window, cx| editor.select_up(&retry, window, cx),
+            window,
+            cx,
+        ) else {
+            return;
         };
-
-        let text_layout_details = &self.text_layout_details(window, cx);
-
-        self.change_selections(effects, window, cx, |s| {
-            s.move_with(&mut |map, selection| {
-                if !selection.is_empty() {
-                    selection.goal = SelectionGoal::None;
-                }
-                let (cursor, goal) = movement::up_by_rows(
-                    map,
-                    selection.end,
-                    row_count,
-                    selection.goal,
-                    false,
-                    text_layout_details,
-                );
-                selection.collapse_to(cursor, goal);
-            });
+        self.change_selections(SelectionEffects::default(), window, cx, |selections| {
+            plan.apply(selections)
         });
     }
 
-    pub fn select_up(&mut self, _: &SelectUp, window: &mut Window, cx: &mut Context<Self>) {
-        let text_layout_details = &self.text_layout_details(window, cx);
-        self.change_selections(Default::default(), window, cx, |s| {
-            s.move_heads_with(&mut |map, head, goal| {
-                movement::up(map, head, goal, false, text_layout_details)
-            })
-        })
-    }
-
-    pub fn move_down(&mut self, _: &MoveDown, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn move_down(&mut self, action: &MoveDown, window: &mut Window, cx: &mut Context<Self>) {
+        if self.defer_action(action, Self::move_down, window, cx) {
+            return;
+        }
+        let plan = if !self.mode.is_single_line() {
+            let plan = self.plan_vertical_movement(1, true, Some(Bias::Right), window, cx);
+            let retry = action.clone();
+            let Some(plan) = self.ready_input_plan(
+                plan,
+                move |editor, window, cx| editor.move_down(&retry, window, cx),
+                window,
+                cx,
+            ) else {
+                return;
+            };
+            Some(plan)
+        } else {
+            None
+        };
         if self.take_rename(true, window, cx).is_some() {
             return;
         }
         if self.cycle_inline_input_history(InlineInputHistoryDirection::Newer, window, cx) {
             return;
         }
-
         if self.mode.is_single_line() {
             cx.propagate();
             return;
         }
-
-        let text_layout_details = &self.text_layout_details(window, cx);
+        let Some(plan) = plan else {
+            return;
+        };
         let selection_count = self.selections.count();
         let first_selection = self.selections.first_anchor();
-
-        self.change_selections(Default::default(), window, cx, |s| {
-            s.move_with(&mut |map, selection| {
-                if !selection.is_empty() {
-                    selection.goal = SelectionGoal::None;
-                }
-                let (cursor, goal) = movement::down(
-                    map,
-                    selection.end,
-                    selection.goal,
-                    false,
-                    text_layout_details,
-                );
-                selection.collapse_to(cursor, goal);
-            });
+        self.change_selections(SelectionEffects::default(), window, cx, |selections| {
+            plan.apply(selections)
         });
-
         if selection_count == 1 && first_selection.range() == self.selections.first_anchor().range()
         {
             cx.propagate();
@@ -302,21 +387,29 @@ impl Editor {
 
     pub fn select_page_down(
         &mut self,
-        _: &SelectPageDown,
+        action: &SelectPageDown,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::select_page_down, window, cx) {
+            return;
+        }
         let Some(row_count) = self.visible_row_count() else {
             return;
         };
-
-        let text_layout_details = &self.text_layout_details(window, cx);
-
-        self.change_selections(Default::default(), window, cx, |s| {
-            s.move_heads_with(&mut |map, head, goal| {
-                movement::down_by_rows(map, head, row_count, goal, false, text_layout_details)
-            })
-        })
+        let plan = self.plan_vertical_movement(row_count, true, None, window, cx);
+        let retry = action.clone();
+        let Some(plan) = self.ready_input_plan(
+            plan,
+            move |editor, window, cx| editor.select_page_down(&retry, window, cx),
+            window,
+            cx,
+        ) else {
+            return;
+        };
+        self.change_selections(SelectionEffects::default(), window, cx, |selections| {
+            plan.apply(selections)
+        });
     }
 
     pub fn move_page_down(
@@ -325,10 +418,30 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::move_page_down, window, cx) {
+            return;
+        }
+        let plan = if let Some(row_count) = self
+            .visible_row_count()
+            .filter(|_| !self.mode.is_single_line())
+        {
+            let plan = self.plan_vertical_movement(row_count, true, Some(Bias::Right), window, cx);
+            let retry = action.clone();
+            let Some(plan) = self.ready_input_plan(
+                plan,
+                move |editor, window, cx| editor.move_page_down(&retry, window, cx),
+                window,
+                cx,
+            ) else {
+                return;
+            };
+            Some(plan)
+        } else {
+            None
+        };
         if self.take_rename(true, window, cx).is_some() {
             return;
         }
-
         if self
             .context_menu
             .borrow_mut()
@@ -338,56 +451,59 @@ impl Editor {
         {
             return;
         }
-
-        if matches!(self.mode, EditorMode::SingleLine) {
+        if self.mode.is_single_line() {
             cx.propagate();
             return;
         }
-
-        let Some(row_count) = self.visible_row_count() else {
+        let Some(plan) = plan else {
             return;
         };
-
-        let effects = if action.center_cursor {
-            SelectionEffects::scroll(Autoscroll::center())
-        } else {
-            SelectionEffects::default()
-        };
-
-        let text_layout_details = &self.text_layout_details(window, cx);
-        self.change_selections(effects, window, cx, |s| {
-            s.move_with(&mut |map, selection| {
-                if !selection.is_empty() {
-                    selection.goal = SelectionGoal::None;
-                }
-                let (cursor, goal) = movement::down_by_rows(
-                    map,
-                    selection.end,
-                    row_count,
-                    selection.goal,
-                    false,
-                    text_layout_details,
-                );
-                selection.collapse_to(cursor, goal);
-            });
-        });
+        self.change_selections(
+            if action.center_cursor {
+                SelectionEffects::scroll(Autoscroll::center())
+            } else {
+                SelectionEffects::default()
+            },
+            window,
+            cx,
+            |selections| plan.apply(selections),
+        );
     }
 
-    pub fn select_down(&mut self, _: &SelectDown, window: &mut Window, cx: &mut Context<Self>) {
-        let text_layout_details = &self.text_layout_details(window, cx);
-        self.change_selections(Default::default(), window, cx, |s| {
-            s.move_heads_with(&mut |map, head, goal| {
-                movement::down(map, head, goal, false, text_layout_details)
-            })
+    pub fn select_down(
+        &mut self,
+        action: &SelectDown,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.defer_action(action, Self::select_down, window, cx) {
+            return;
+        }
+        let plan = self.plan_vertical_movement(1, true, None, window, cx);
+        let retry = action.clone();
+        let Some(plan) = self.ready_input_plan(
+            plan,
+            move |editor, window, cx| editor.select_down(&retry, window, cx),
+            window,
+            cx,
+        ) else {
+            return;
+        };
+        self.change_selections(SelectionEffects::default(), window, cx, |selections| {
+            plan.apply(selections)
         });
     }
 
     pub fn move_to_previous_word_start(
         &mut self,
-        _: &MoveToPreviousWordStart,
+        action: &MoveToPreviousWordStart,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::move_to_previous_word_start, window, cx) {
+            return;
+        }
+
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_cursors_with(&mut |map, head, _| {
                 (
@@ -400,10 +516,14 @@ impl Editor {
 
     pub fn move_to_previous_subword_start(
         &mut self,
-        _: &MoveToPreviousSubwordStart,
+        action: &MoveToPreviousSubwordStart,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::move_to_previous_subword_start, window, cx) {
+            return;
+        }
+
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_cursors_with(&mut |map, head, _| {
                 (
@@ -416,10 +536,14 @@ impl Editor {
 
     pub fn select_to_previous_word_start(
         &mut self,
-        _: &SelectToPreviousWordStart,
+        action: &SelectToPreviousWordStart,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::select_to_previous_word_start, window, cx) {
+            return;
+        }
+
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(&mut |map, head, _| {
                 (
@@ -432,10 +556,14 @@ impl Editor {
 
     pub fn select_to_previous_subword_start(
         &mut self,
-        _: &SelectToPreviousSubwordStart,
+        action: &SelectToPreviousSubwordStart,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::select_to_previous_subword_start, window, cx) {
+            return;
+        }
+
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(&mut |map, head, _| {
                 (
@@ -448,10 +576,14 @@ impl Editor {
 
     pub fn move_to_next_word_end(
         &mut self,
-        _: &MoveToNextWordEnd,
+        action: &MoveToNextWordEnd,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::move_to_next_word_end, window, cx) {
+            return;
+        }
+
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_cursors_with(&mut |map, head, _| {
                 (
@@ -464,10 +596,14 @@ impl Editor {
 
     pub fn move_to_next_subword_end(
         &mut self,
-        _: &MoveToNextSubwordEnd,
+        action: &MoveToNextSubwordEnd,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::move_to_next_subword_end, window, cx) {
+            return;
+        }
+
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_cursors_with(&mut |map, head, _| {
                 (movement::next_subword_end(map, head), SelectionGoal::None)
@@ -477,10 +613,14 @@ impl Editor {
 
     pub fn select_to_next_word_end(
         &mut self,
-        _: &SelectToNextWordEnd,
+        action: &SelectToNextWordEnd,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::select_to_next_word_end, window, cx) {
+            return;
+        }
+
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(&mut |map, head, _| {
                 (
@@ -493,10 +633,14 @@ impl Editor {
 
     pub fn select_to_next_subword_end(
         &mut self,
-        _: &SelectToNextSubwordEnd,
+        action: &SelectToNextSubwordEnd,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::select_to_next_subword_end, window, cx) {
+            return;
+        }
+
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(&mut |map, head, _| {
                 (movement::next_subword_end(map, head), SelectionGoal::None)
@@ -510,6 +654,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::move_to_beginning_of_line, window, cx) {
+            return;
+        }
+
         let stop_at_indent = action.stop_at_indent && !self.mode.is_single_line();
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_cursors_with(&mut |map, head, _| {
@@ -532,6 +680,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::select_to_beginning_of_line, window, cx) {
+            return;
+        }
+
         let stop_at_indent = action.stop_at_indent && !self.mode.is_single_line();
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(&mut |map, head, _| {
@@ -554,6 +706,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::move_to_end_of_line, window, cx) {
+            return;
+        }
+
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_cursors_with(&mut |map, head, _| {
                 (
@@ -570,6 +726,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::select_to_end_of_line, window, cx) {
+            return;
+        }
+
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(&mut |map, head, _| {
                 (
@@ -582,10 +742,14 @@ impl Editor {
 
     pub fn move_to_start_of_paragraph(
         &mut self,
-        _: &MoveToStartOfParagraph,
+        action: &MoveToStartOfParagraph,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::move_to_start_of_paragraph, window, cx) {
+            return;
+        }
+
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate();
             return;
@@ -602,10 +766,14 @@ impl Editor {
 
     pub fn move_to_end_of_paragraph(
         &mut self,
-        _: &MoveToEndOfParagraph,
+        action: &MoveToEndOfParagraph,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::move_to_end_of_paragraph, window, cx) {
+            return;
+        }
+
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate();
             return;
@@ -622,10 +790,14 @@ impl Editor {
 
     pub fn move_to_next_comment_paragraph(
         &mut self,
-        _: &MoveToNextCommentParagraph,
+        action: &MoveToNextCommentParagraph,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::move_to_next_comment_paragraph, window, cx) {
+            return;
+        }
+
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate();
             return;
@@ -653,10 +825,14 @@ impl Editor {
 
     pub fn move_to_previous_comment_paragraph(
         &mut self,
-        _: &MoveToPreviousCommentParagraph,
+        action: &MoveToPreviousCommentParagraph,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::move_to_previous_comment_paragraph, window, cx) {
+            return;
+        }
+
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate();
             return;
@@ -684,10 +860,14 @@ impl Editor {
 
     pub fn select_to_start_of_paragraph(
         &mut self,
-        _: &SelectToStartOfParagraph,
+        action: &SelectToStartOfParagraph,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::select_to_start_of_paragraph, window, cx) {
+            return;
+        }
+
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate();
             return;
@@ -704,10 +884,14 @@ impl Editor {
 
     pub fn select_to_end_of_paragraph(
         &mut self,
-        _: &SelectToEndOfParagraph,
+        action: &SelectToEndOfParagraph,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::select_to_end_of_paragraph, window, cx) {
+            return;
+        }
+
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate();
             return;
@@ -724,10 +908,14 @@ impl Editor {
 
     pub fn move_to_start_of_excerpt(
         &mut self,
-        _: &MoveToStartOfExcerpt,
+        action: &MoveToStartOfExcerpt,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::move_to_start_of_excerpt, window, cx) {
+            return;
+        }
+
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate();
             return;
@@ -748,10 +936,14 @@ impl Editor {
 
     pub fn move_to_start_of_next_excerpt(
         &mut self,
-        _: &MoveToStartOfNextExcerpt,
+        action: &MoveToStartOfNextExcerpt,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::move_to_start_of_next_excerpt, window, cx) {
+            return;
+        }
+
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate();
             return;
@@ -773,10 +965,14 @@ impl Editor {
 
     pub fn move_to_end_of_excerpt(
         &mut self,
-        _: &MoveToEndOfExcerpt,
+        action: &MoveToEndOfExcerpt,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::move_to_end_of_excerpt, window, cx) {
+            return;
+        }
+
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate();
             return;
@@ -797,10 +993,14 @@ impl Editor {
 
     pub fn move_to_end_of_previous_excerpt(
         &mut self,
-        _: &MoveToEndOfPreviousExcerpt,
+        action: &MoveToEndOfPreviousExcerpt,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::move_to_end_of_previous_excerpt, window, cx) {
+            return;
+        }
+
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate();
             return;
@@ -821,10 +1021,14 @@ impl Editor {
 
     pub fn select_to_start_of_excerpt(
         &mut self,
-        _: &SelectToStartOfExcerpt,
+        action: &SelectToStartOfExcerpt,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::select_to_start_of_excerpt, window, cx) {
+            return;
+        }
+
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate();
             return;
@@ -841,10 +1045,14 @@ impl Editor {
 
     pub fn select_to_start_of_next_excerpt(
         &mut self,
-        _: &SelectToStartOfNextExcerpt,
+        action: &SelectToStartOfNextExcerpt,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::select_to_start_of_next_excerpt, window, cx) {
+            return;
+        }
+
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate();
             return;
@@ -861,10 +1069,14 @@ impl Editor {
 
     pub fn select_to_end_of_excerpt(
         &mut self,
-        _: &SelectToEndOfExcerpt,
+        action: &SelectToEndOfExcerpt,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::select_to_end_of_excerpt, window, cx) {
+            return;
+        }
+
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate();
             return;
@@ -881,10 +1093,14 @@ impl Editor {
 
     pub fn select_to_end_of_previous_excerpt(
         &mut self,
-        _: &SelectToEndOfPreviousExcerpt,
+        action: &SelectToEndOfPreviousExcerpt,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::select_to_end_of_previous_excerpt, window, cx) {
+            return;
+        }
+
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate();
             return;
@@ -901,10 +1117,14 @@ impl Editor {
 
     pub fn move_to_beginning(
         &mut self,
-        _: &MoveToBeginning,
+        action: &MoveToBeginning,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::move_to_beginning, window, cx) {
+            return;
+        }
+
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate();
             return;
@@ -916,10 +1136,14 @@ impl Editor {
 
     pub fn select_to_beginning(
         &mut self,
-        _: &SelectToBeginning,
+        action: &SelectToBeginning,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::select_to_beginning, window, cx) {
+            return;
+        }
+
         let mut selection = self.selections.last::<Point>(&self.display_snapshot(cx));
         selection.set_head(Point::zero(), SelectionGoal::None);
         self.change_selections(Default::default(), window, cx, |s| {
@@ -927,7 +1151,11 @@ impl Editor {
         });
     }
 
-    pub fn move_to_end(&mut self, _: &MoveToEnd, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn move_to_end(&mut self, action: &MoveToEnd, window: &mut Window, cx: &mut Context<Self>) {
+        if self.defer_action(action, Self::move_to_end, window, cx) {
+            return;
+        }
+
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate();
             return;
@@ -964,27 +1192,36 @@ impl Editor {
     pub fn expand_excerpts(
         &mut self,
         action: &ExpandExcerpts,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::expand_excerpts, window, cx) {
+            return;
+        }
         self.expand_excerpts_for_direction(action.lines, ExpandExcerptDirection::UpAndDown, cx)
     }
 
     pub fn expand_excerpts_down(
         &mut self,
         action: &ExpandExcerptsDown,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::expand_excerpts_down, window, cx) {
+            return;
+        }
         self.expand_excerpts_for_direction(action.lines, ExpandExcerptDirection::Down, cx)
     }
 
     pub fn expand_excerpts_up(
         &mut self,
         action: &ExpandExcerptsUp,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::expand_excerpts_up, window, cx) {
+            return;
+        }
         self.expand_excerpts_for_direction(action.lines, ExpandExcerptDirection::Up, cx)
     }
 
@@ -1020,19 +1257,27 @@ impl Editor {
 
     pub fn go_to_next_document_highlight(
         &mut self,
-        _: &GoToNextDocumentHighlight,
+        action: &GoToNextDocumentHighlight,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::go_to_next_document_highlight, window, cx) {
+            return;
+        }
+
         self.go_to_document_highlight_before_or_after_position(Direction::Next, window, cx);
     }
 
     pub fn go_to_prev_document_highlight(
         &mut self,
-        _: &GoToPreviousDocumentHighlight,
+        action: &GoToPreviousDocumentHighlight,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::go_to_prev_document_highlight, window, cx) {
+            return;
+        }
+
         self.go_to_document_highlight_before_or_after_position(Direction::Prev, window, cx);
     }
 
@@ -1216,6 +1461,17 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
+        if self.input_is_deferred() {
+            return Some(self.defer_input_task(
+                move |editor, window, cx| {
+                    editor
+                        .go_to_reference_before_or_after_position(direction, count, window, cx)
+                        .unwrap_or_else(|| Task::ready(Ok(())))
+                },
+                window,
+                cx,
+            ));
+        }
         let selection = self.selections.newest_anchor();
         let head = selection.head();
 
@@ -1372,6 +1628,18 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<Navigated>>> {
+        if self.input_is_deferred() {
+            let action = action.clone();
+            return Some(self.defer_input_task(
+                move |editor, window, cx| {
+                    editor
+                        .find_all_references(&action, window, cx)
+                        .unwrap_or_else(|| Task::ready(Ok(Navigated::No)))
+                },
+                window,
+                cx,
+            ));
+        }
         let always_open_multibuffer = action.always_open_multibuffer;
         let selection = self.selections.newest_anchor();
         let multi_buffer = self.buffer.read(cx);
@@ -1639,10 +1907,14 @@ impl Editor {
 
     pub(super) fn go_to_next_change(
         &mut self,
-        _: &GoToNextChange,
+        action: &GoToNextChange,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::go_to_next_change, window, cx) {
+            return;
+        }
+
         if let Some(selections) = self
             .change_list
             .next_change(1, Direction::Next)
@@ -1660,10 +1932,14 @@ impl Editor {
 
     pub(super) fn go_to_previous_change(
         &mut self,
-        _: &GoToPreviousChange,
+        action: &GoToPreviousChange,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::go_to_previous_change, window, cx) {
+            return;
+        }
+
         if let Some(selections) = self
             .change_list
             .next_change(1, Direction::Prev)
@@ -1711,6 +1987,15 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Task<Result<Navigated>> {
+        if self.input_is_deferred() {
+            return self.defer_input_task(
+                move |editor, window, cx| {
+                    editor.navigate_to_hover_links(kind, definitions, origin, split, window, cx)
+                },
+                window,
+                cx,
+            );
+        }
         // Separate out url and file links, we can only handle one of them at most or an arbitrary number of locations
         let mut first_url_or_file = None;
         let definitions: Vec<_> = definitions
@@ -2041,10 +2326,14 @@ impl Editor {
 
     pub(super) fn go_to_next_reference(
         &mut self,
-        _: &GoToNextReference,
+        action: &GoToNextReference,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::go_to_next_reference, window, cx) {
+            return;
+        }
+
         let task = self.go_to_reference_before_or_after_position(Direction::Next, 1, window, cx);
         if let Some(task) = task {
             task.detach();
@@ -2053,10 +2342,14 @@ impl Editor {
 
     pub(super) fn go_to_prev_reference(
         &mut self,
-        _: &GoToPreviousReference,
+        action: &GoToPreviousReference,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::go_to_prev_reference, window, cx) {
+            return;
+        }
+
         let task = self.go_to_reference_before_or_after_position(Direction::Prev, 1, window, cx);
         if let Some(task) = task {
             task.detach();
@@ -2069,6 +2362,13 @@ impl Editor {
         cx: &mut Context<Self>,
         offset: i8,
     ) -> Task<Result<()>> {
+        if self.input_is_deferred() {
+            return self.defer_input_task(
+                move |editor, window, cx| editor.go_to_symbol_by_offset(window, cx, offset),
+                window,
+                cx,
+            );
+        }
         // We don't care about multi-buffer symbols
         if !self.buffer.read(cx).is_singleton() {
             return Task::ready(Ok(()));
@@ -2152,19 +2452,27 @@ impl Editor {
 
     pub(super) fn go_to_next_symbol(
         &mut self,
-        _: &GoToNextSymbol,
+        action: &GoToNextSymbol,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::go_to_next_symbol, window, cx) {
+            return;
+        }
+
         self.go_to_symbol_by_offset(window, cx, 1).detach();
     }
 
     pub(super) fn go_to_previous_symbol(
         &mut self,
-        _: &GoToPreviousSymbol,
+        action: &GoToPreviousSymbol,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::go_to_previous_symbol, window, cx) {
+            return;
+        }
+
         self.go_to_symbol_by_offset(window, cx, -1).detach();
     }
 
@@ -2322,19 +2630,64 @@ impl Editor {
         Some((editor, pane))
     }
 
+    fn plan_vertical_movement(
+        &self,
+        rows: u32,
+        down: bool,
+        collapse: Option<Bias>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<selections_collection::SelectionPlan, PendingRowGeometry> {
+        let details = self.text_layout_details(window, cx);
+        let snapshot = self.display_snapshot(cx);
+        self.selections.plan_move(&snapshot, |snapshot, selection| {
+            let (point, goal) = if let Some(bias) = collapse {
+                let point = if bias == Bias::Left {
+                    selection.start
+                } else {
+                    selection.end
+                };
+                let goal = if selection.is_empty() {
+                    selection.goal
+                } else {
+                    SelectionGoal::None
+                };
+                (point, goal)
+            } else {
+                (selection.head(), selection.goal)
+            };
+            let (point, goal) = if down {
+                movement::down_by_rows(snapshot, point, rows, goal, false, &details)?
+            } else {
+                movement::up_by_rows(snapshot, point, rows, goal, false, &details)?
+            };
+            if collapse.is_some() {
+                selection.collapse_to(point, goal);
+            } else {
+                selection.set_head(point, goal);
+            }
+            Ok(())
+        })
+    }
+
     fn navigation_data(&self, cursor_anchor: Anchor, cx: &mut Context<Self>) -> NavigationData {
         let display_snapshot = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx).read(cx);
         let cursor_position = cursor_anchor.to_point(&buffer);
         let scroll_anchor = self.scroll_manager.native_anchor(&display_snapshot, cx);
         let scroll_top_row = scroll_anchor.top_row(&buffer);
-        drop(buffer);
+        let horizontal_scroll = self
+            .scroll_manager
+            .serialized_position(&display_snapshot, cx)
+            .horizontal
+            .map(|(point, offset)| (buffer.anchor_before(point), point, offset));
 
         NavigationData {
             cursor_anchor,
             cursor_position,
             scroll_anchor,
             scroll_top_row,
+            horizontal_scroll,
         }
     }
 
@@ -2387,6 +2740,13 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Navigated>> {
+        if self.input_is_deferred() {
+            return self.defer_input_task(
+                move |editor, window, cx| editor.go_to_definition_of_kind(kind, split, window, cx),
+                window,
+                cx,
+            );
+        }
         let Some(provider) = self.semantics_provider.clone() else {
             return Task::ready(Ok(Navigated::No));
         };
@@ -2482,6 +2842,21 @@ impl Editor {
         let Some(end) = multibuffer.buffer_point_to_anchor(&buffer, range.end, cx) else {
             return;
         };
+        if self.defer_input(
+            move |editor, window, cx| {
+                let snapshot = editor.buffer.read(cx).snapshot(cx);
+                editor.go_to_singleton_buffer_range_impl(
+                    start.to_point(&snapshot)..end.to_point(&snapshot),
+                    record_nav_history,
+                    window,
+                    cx,
+                );
+            },
+            window,
+            cx,
+        ) {
+            return;
+        }
         self.change_selections(
             SelectionEffects::scroll(Autoscroll::for_go_to_definition(
                 self.cursor_top_offset(cx),

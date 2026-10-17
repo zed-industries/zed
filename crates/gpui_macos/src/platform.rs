@@ -26,11 +26,11 @@ use dispatch2::DispatchQueue;
 use futures::channel::oneshot;
 use gpui::{
     Action, ActivationPolicy, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem,
-    CursorStyle, ForegroundExecutor, GraphicalEnvironment, KeyContext, Keymap, Menu, MenuItem,
-    OsMenu, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Result, SystemMenuType, Task,
-    ThermalState, WindowAppearance, WindowKind, WindowParams, WindowingRequest,
-    popup::PopupNotSupportedError,
+    ClipboardReadMode, ClipboardRevision, ClipboardSnapshot, CursorStyle, ForegroundExecutor,
+    GraphicalEnvironment, KeyContext, Keymap, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions,
+    Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    PlatformWindow, Result, SystemMenuType, Task, ThermalState, WindowAppearance, WindowKind,
+    WindowParams, WindowingRequest, popup::PopupNotSupportedError,
 };
 use gpui_apple::{
     keychain,
@@ -1237,6 +1237,17 @@ impl Platform for MacPlatform {
     fn write_to_clipboard(&self, item: ClipboardItem) {
         let state = self.0.lock();
         state.general_pasteboard.write(item);
+    }
+
+    fn read_clipboard_snapshot(&self, mode: ClipboardReadMode) -> ClipboardSnapshot {
+        self.0.lock().general_pasteboard.read_snapshot(mode)
+    }
+
+    fn write_to_clipboard_with_revision(
+        &self,
+        item: ClipboardItem,
+    ) -> Result<Option<ClipboardRevision>> {
+        self.0.lock().general_pasteboard.write_with_revision(item)
     }
 
     fn read_from_find_pasteboard(&self) -> Option<ClipboardItem> {

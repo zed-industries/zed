@@ -1,6 +1,342 @@
 use super::*;
+use rope::Rope;
+
+pub(super) struct QueuedImeComposition {
+    snapshot: MultiBufferSnapshot,
+    origin: InputResult,
+    origin_range: Range<usize>,
+    pieces: Vec<QueuedImePiece>,
+    selection: Range<usize>,
+    reversed: bool,
+    marked: Option<Range<usize>>,
+}
 
 const ORDERED_LIST_MAX_MARKER_LEN: usize = 16;
+
+type InputResult = Rc<RefCell<Option<AppliedInput>>>;
+
+struct AppliedInput {
+    snapshot: MultiBufferSnapshot,
+    range: Range<MultiBufferOffsetUtf16>,
+}
+
+struct QueuedInput {
+    origin: InputResult,
+    result: InputResult,
+}
+
+#[derive(Clone)]
+struct QueuedImePiece {
+    range: Range<usize>,
+    input: Option<(Rc<Rope>, InputResult)>,
+}
+
+enum InputPoint {
+    Origin {
+        origin: InputResult,
+        projected: Range<usize>,
+        offset: usize,
+        bias: Bias,
+    },
+    Queued {
+        result: InputResult,
+        offset: usize,
+        length: usize,
+    },
+}
+
+enum InputReplacement {
+    Selection,
+    Anchors(Vec<Range<Anchor>>),
+    Marked {
+        ranges: Vec<Range<Anchor>>,
+        projection: Range<usize>,
+    },
+    Projected {
+        range: Range<InputPoint>,
+        projection: Range<usize>,
+    },
+}
+
+impl QueuedImeComposition {
+    fn new(
+        snapshot: MultiBufferSnapshot,
+        selection: UTF16Selection,
+        marked: Option<Range<usize>>,
+    ) -> Self {
+        let length = snapshot.len().to_offset_utf16(&snapshot).0.0;
+        Self {
+            snapshot,
+            origin: InputResult::default(),
+            origin_range: selection.range.clone(),
+            pieces: vec![QueuedImePiece {
+                range: 0..length,
+                input: None,
+            }],
+            selection: selection.range,
+            reversed: selection.reversed,
+            marked,
+        }
+    }
+
+    fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
+        let mut start = 0;
+        for piece in &self.pieces {
+            let end = start + piece.range.len();
+            if offset <= end {
+                let source = piece.range.start + offset.saturating_sub(start);
+                let clipped = if let Some((text, _)) = &piece.input {
+                    text.clip_offset_utf16(OffsetUtf16(source), bias).0
+                } else {
+                    self.snapshot
+                        .clip_offset_utf16(MultiBufferOffsetUtf16(OffsetUtf16(source)), bias)
+                        .0
+                        .0
+                };
+                return start + clipped - piece.range.start;
+            }
+            start = end;
+        }
+        start
+    }
+
+    fn replacement_range(&self, range: Range<usize>) -> Range<usize> {
+        let mut range = clip_ime_range(range, 0, |offset, bias| self.clip_offset(offset, bias));
+        range.end = range.end.max(range.start);
+        range
+    }
+
+    fn point(&self, offset: usize, bias: Bias, queued: bool) -> InputPoint {
+        let mut start = 0;
+        for (index, piece) in self.pieces.iter().enumerate() {
+            let end = start + piece.range.len();
+            if (!queued || piece.input.is_some())
+                && (offset < end
+                    || index + 1 == self.pieces.len()
+                    || offset == end
+                        && (bias == Bias::Left
+                            || index + 1 == self.pieces.len()
+                            || queued
+                                && self
+                                    .pieces
+                                    .get(index + 1)
+                                    .is_none_or(|piece| piece.input.is_none())))
+            {
+                let offset = piece.range.start.saturating_add(offset - start);
+                return if let Some((text, result)) = &piece.input {
+                    InputPoint::Queued {
+                        result: result.clone(),
+                        offset,
+                        length: text.summary().len_utf16.0,
+                    }
+                } else {
+                    InputPoint::Origin {
+                        origin: self.origin.clone(),
+                        projected: self.origin_range.clone(),
+                        offset,
+                        bias,
+                    }
+                };
+            }
+            start = end;
+        }
+        unreachable!("projected input offsets are clipped before capture")
+    }
+
+    fn queued_range(&self, range: Range<usize>) -> Option<Range<usize>> {
+        let mut offset = 0;
+        for pieces in self
+            .pieces
+            .chunk_by(|left, right| left.input.is_some() == right.input.is_some())
+        {
+            let end = offset + pieces.iter().map(|piece| piece.range.len()).sum::<usize>();
+            if pieces.first().is_some_and(|piece| piece.input.is_some()) {
+                let start = range.start.max(offset);
+                let end = range.end.min(end);
+                if start < end || range.is_empty() && start == end {
+                    return Some(start..end);
+                }
+            }
+            offset = end;
+        }
+        None
+    }
+
+    fn replacement(&self, range: Range<usize>) -> InputReplacement {
+        let Range { start, end } = self.replacement_range(range);
+        let queued = start == end && self.queued_range(start..end).is_some();
+        InputReplacement::Projected {
+            range: self.point(start, Bias::Right, queued)
+                ..self.point(
+                    end,
+                    if start == end {
+                        Bias::Right
+                    } else {
+                        Bias::Left
+                    },
+                    queued,
+                ),
+            projection: start..end,
+        }
+    }
+
+    fn replace(
+        &mut self,
+        range: Range<usize>,
+        text: &str,
+        selected: Option<Range<usize>>,
+        marking: bool,
+        result: InputResult,
+    ) {
+        let Range { start, end } = self.replacement_range(range);
+        let mut before = Vec::new();
+        let mut after = Vec::new();
+        let mut offset = 0;
+        for piece in self.pieces.drain(..) {
+            let piece_end = offset + piece.range.len();
+            if offset < start {
+                let mut prefix = piece.clone();
+                prefix.range.end = piece.range.start + start.min(piece_end) - offset;
+                before.push(prefix);
+            }
+            if piece_end > end {
+                let mut suffix = piece;
+                suffix.range.start += end.saturating_sub(offset);
+                after.push(suffix);
+            }
+            offset = piece_end;
+        }
+        let text = Rc::new(Rope::from(text));
+        let length = text.summary().len_utf16.0;
+        before.push(QueuedImePiece {
+            range: 0..length,
+            input: Some((text, result)),
+        });
+        before.extend(after);
+        self.pieces = before;
+        let mut selected =
+            clip_ime_range(selected.unwrap_or(length..length), start, |offset, bias| {
+                self.clip_offset(offset, bias)
+            });
+        self.reversed = selected.start > selected.end;
+        if self.reversed {
+            mem::swap(&mut selected.start, &mut selected.end);
+        }
+        self.selection = selected;
+        self.marked = (marking && length > 0).then_some(start..start + length);
+    }
+
+    fn text_for_range(
+        &self,
+        range: Range<usize>,
+        adjusted_range: &mut Option<Range<usize>>,
+    ) -> Option<String> {
+        if range.start > range.end {
+            return None;
+        }
+        let clipped = clip_ime_range(range.clone(), 0, |offset, bias| {
+            self.clip_offset(offset, bias)
+        });
+        let known = self.queued_range(clipped)?;
+        let start = known.start;
+        let end = known.end;
+        if (start..end) != range {
+            *adjusted_range = Some(start..end);
+        }
+        let mut text = String::new();
+        let mut offset = 0;
+        for piece in &self.pieces {
+            let piece_end = offset + piece.range.len();
+            let from = start.max(offset);
+            let to = end.min(piece_end);
+            if from < to {
+                let from = OffsetUtf16(piece.range.start + from - offset);
+                let to = OffsetUtf16(piece.range.start + to - offset);
+                if let Some((source, _)) = &piece.input {
+                    text.extend(source.chunks_in_range(
+                        source.offset_utf16_to_offset(from)..source.offset_utf16_to_offset(to),
+                    ));
+                }
+            }
+            offset = piece_end;
+            if offset >= end {
+                break;
+            }
+        }
+        Some(text)
+    }
+}
+
+impl InputPoint {
+    fn resolve(self, snapshot: &MultiBufferSnapshot, bias: Bias) -> MultiBufferOffsetUtf16 {
+        match self {
+            Self::Origin {
+                origin,
+                projected,
+                offset,
+                bias: anchor_bias,
+            } => {
+                let origin = origin.borrow();
+                let origin = origin
+                    .as_ref()
+                    .expect("queued input establishes its replay origin before replacement");
+                let offset = if offset < projected.start
+                    || offset == projected.start && anchor_bias == Bias::Left
+                {
+                    origin
+                        .range
+                        .start
+                        .0
+                        .0
+                        .saturating_sub(projected.start - offset)
+                } else if offset >= projected.end {
+                    origin.range.end.0.0.saturating_add(offset - projected.end)
+                } else {
+                    origin
+                        .range
+                        .start
+                        .0
+                        .0
+                        .saturating_add(offset - projected.start)
+                        .min(origin.range.end.0.0)
+                };
+                let offset = origin
+                    .snapshot
+                    .clip_offset_utf16(MultiBufferOffsetUtf16(OffsetUtf16(offset)), bias);
+                let anchor = if anchor_bias == Bias::Left {
+                    origin.snapshot.anchor_before(offset)
+                } else {
+                    origin.snapshot.anchor_after(offset)
+                };
+                anchor.to_offset_utf16(snapshot)
+            }
+            Self::Queued {
+                result,
+                offset,
+                length,
+            } => {
+                let result = result.borrow();
+                let input = result
+                    .as_ref()
+                    .expect("preceding queued input must finish before its replacement");
+                let offset = if offset >= length {
+                    MultiBufferOffsetUtf16(OffsetUtf16(
+                        input.range.end.0.0.saturating_add(offset - length),
+                    ))
+                } else {
+                    (input.range.start + offset).min(input.range.end)
+                };
+                let offset = input.snapshot.clip_offset_utf16(offset, bias);
+                let anchor = if bias == Bias::Left {
+                    input.snapshot.anchor_after(offset)
+                } else {
+                    input.snapshot.anchor_before(offset)
+                };
+                anchor.to_offset_utf16(snapshot)
+            }
+        }
+    }
+}
 
 impl Editor {
     pub fn set_input_enabled(&mut self, input_enabled: bool) {
@@ -30,6 +366,18 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.bind_input_window(window);
+        if self.input_is_deferred() {
+            let text = text.to_owned();
+            self.defer_input(
+                move |editor, window, cx| {
+                    editor.replay_insert_event(&text, relative_utf16_range, window, cx)
+                },
+                window,
+                cx,
+            );
+            return;
+        }
         if !self.input_enabled {
             cx.emit(EditorEvent::InputIgnored { text: text.into() });
             return;
@@ -70,6 +418,42 @@ impl Editor {
     }
 
     pub fn handle_input(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.bind_input_window(window);
+        if self.input_is_deferred() {
+            let text = text.to_owned();
+            self.defer_input(
+                move |editor, window, cx| editor.handle_input(&text, window, cx),
+                window,
+                cx,
+            );
+            return;
+        }
+        self.handle_input_with_result(text, None, window, cx);
+    }
+
+    fn handle_input_with_result(
+        &mut self,
+        text: &str,
+        result: Option<InputResult>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.bind_input_window(window);
+        if self.input_is_deferred() {
+            let text = text.to_owned();
+            self.defer_native_input(
+                move |editor, window, cx| {
+                    editor.handle_input_with_result(&text, result, window, cx)
+                },
+                window,
+                cx,
+            );
+            return;
+        }
+        let newest_selection_id = result
+            .as_ref()
+            .map(|result| self.initialize_input_result(result, cx));
+        let mut input_range = None;
         let text: Arc<str> = text.into();
 
         if self.read_only(cx) {
@@ -96,17 +480,7 @@ impl Editor {
             .peekable();
 
         while let Some((selection, autoclose_region)) = regions.next() {
-            if snapshot
-                .point_to_buffer_point(selection.head())
-                .is_none_or(|(snapshot, ..)| !snapshot.capability.editable())
-            {
-                continue;
-            }
-            if snapshot
-                .point_to_buffer_point(selection.tail())
-                .is_none_or(|(snapshot, ..)| !snapshot.capability.editable())
-            {
-                // note, ideally we'd clip the tail to the closest writeable region towards the head
+            if !Self::input_range_is_editable(selection.range(), &snapshot) {
                 continue;
             }
             all_selections_read_only = false;
@@ -248,6 +622,9 @@ impl Editor {
                                 && !is_closing_quote
                             {
                                 let anchor = snapshot.anchor_before(selection.end);
+                                if newest_selection_id == Some(selection.id) {
+                                    input_range = Some((anchor..anchor, text.len()));
+                                }
                                 new_selections.push((selection.map(|_| anchor), text.len()));
                                 new_autoclose_regions.push((
                                     anchor,
@@ -273,6 +650,9 @@ impl Editor {
                                 && snapshot.contains_str_at(region.range.end, text.as_ref());
                             if should_skip {
                                 let anchor = snapshot.anchor_after(selection.end);
+                                if newest_selection_id == Some(selection.id) {
+                                    input_range = Some((anchor..anchor, region.pair.end.len()));
+                                }
                                 new_selections
                                     .push((selection.map(|_| anchor), region.pair.end.len()));
                                 continue;
@@ -290,6 +670,9 @@ impl Editor {
                             // and the inserted text is a closing bracket and the selection is followed
                             // by the closing bracket then move the selection past the closing bracket.
                             let anchor = snapshot.anchor_after(selection.end);
+                            if newest_selection_id == Some(selection.id) {
+                                input_range = Some((anchor..anchor, text.len()));
+                            }
                             new_selections.push((selection.map(|_| anchor), text.len()));
                             continue;
                         }
@@ -301,6 +684,10 @@ impl Editor {
                         && is_bracket_pair_start
                         && bracket_pair.start.chars().count() == 1
                     {
+                        if newest_selection_id == Some(selection.id) {
+                            let anchor = snapshot.anchor_before(selection.start);
+                            input_range = Some((anchor..anchor, text.len()));
+                        }
                         edits.push((selection.start..selection.start, text.clone()));
                         edits.push((
                             selection.end..selection.end,
@@ -350,6 +737,12 @@ impl Editor {
 
                 // Insert emoji
                 let selection_start_anchor = snapshot.anchor_after(selection.start);
+                if newest_selection_id == Some(selection.id) {
+                    input_range = Some((
+                        snapshot.anchor_before(selection.start)..selection_start_anchor,
+                        0,
+                    ));
+                }
                 new_selections.push((selection.map(|_| selection_start_anchor), 0));
                 edits.push((selection.start..selection.end, emoji.to_string().into()));
 
@@ -396,6 +789,12 @@ impl Editor {
                 }
             }
 
+            if newest_selection_id == Some(selection.id) {
+                input_range = Some((
+                    snapshot.anchor_before(selection.start)..snapshot.anchor_after(selection.end),
+                    0,
+                ));
+            }
             new_selections.push((selection.map(|_| anchor), 0));
             edits.push((selection.start..selection.end, text.clone()));
 
@@ -435,6 +834,17 @@ impl Editor {
             let new_anchor_selections = new_selections.iter().map(|e| &e.0);
             let new_selection_deltas = new_selections.iter().map(|e| e.1);
             let map = this.display_map.update(cx, |map, cx| map.snapshot(cx));
+            if let Some(result) = result
+                && let Some((range, end_delta)) = input_range
+            {
+                let snapshot = map.buffer_snapshot().clone();
+                let start = range.start.to_offset_utf16(&snapshot);
+                let end = (range.end.to_offset(&snapshot) + end_delta).to_offset_utf16(&snapshot);
+                *result.borrow_mut() = Some(AppliedInput {
+                    snapshot,
+                    range: start..end,
+                });
+            }
             let new_selections = resolve_selections_wrapping_blocks::<MultiBufferOffset, _>(
                 new_anchor_selections,
                 &map,
@@ -540,7 +950,11 @@ impl Editor {
         });
     }
 
-    pub fn newline(&mut self, _: &Newline, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn newline(&mut self, action: &Newline, window: &mut Window, cx: &mut Context<Self>) {
+        if self.defer_action(action, Self::newline, window, cx) {
+            return;
+        }
+
         if self.read_only(cx) {
             return;
         }
@@ -793,7 +1207,16 @@ impl Editor {
         });
     }
 
-    pub fn newline_above(&mut self, _: &NewlineAbove, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn newline_above(
+        &mut self,
+        action: &NewlineAbove,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.defer_action(action, Self::newline_above, window, cx) {
+            return;
+        }
+
         if self.read_only(cx) {
             return;
         }
@@ -862,7 +1285,16 @@ impl Editor {
         });
     }
 
-    pub fn newline_below(&mut self, _: &NewlineBelow, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn newline_below(
+        &mut self,
+        action: &NewlineBelow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.defer_action(action, Self::newline_below, window, cx) {
+            return;
+        }
+
         if self.read_only(cx) {
             return;
         }
@@ -947,6 +1379,16 @@ impl Editor {
     }
 
     pub fn insert(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.bind_input_window(window);
+        if self.input_is_deferred() {
+            let text = text.to_owned();
+            self.defer_input(
+                move |editor, window, cx| editor.insert(&text, window, cx),
+                window,
+                cx,
+            );
+            return;
+        }
         let autoindent = text.is_empty().not().then(|| AutoindentMode::Block {
             original_indent_columns: Vec::new(),
         });
@@ -987,6 +1429,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::delete_to_previous_word_start, window, cx) {
+            return;
+        }
+
         if self.read_only(cx) {
             return;
         }
@@ -1020,6 +1466,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::delete_to_previous_subword_start, window, cx) {
+            return;
+        }
+
         if self.read_only(cx) {
             return;
         }
@@ -1053,6 +1503,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::delete_to_next_word_end, window, cx) {
+            return;
+        }
+
         if self.read_only(cx) {
             return;
         }
@@ -1085,6 +1539,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::delete_to_next_subword_end, window, cx) {
+            return;
+        }
+
         if self.read_only(cx) {
             return;
         }
@@ -1117,6 +1575,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::delete_to_beginning_of_line, window, cx) {
+            return;
+        }
+
         if self.read_only(cx) {
             return;
         }
@@ -1141,10 +1603,14 @@ impl Editor {
 
     pub fn delete_to_end_of_line(
         &mut self,
-        _: &DeleteToEndOfLine,
+        action: &DeleteToEndOfLine,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::delete_to_end_of_line, window, cx) {
+            return;
+        }
+
         if self.read_only(cx) {
             return;
         }
@@ -1172,35 +1638,35 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_clipboard_action(action, Self::cut_to_end_of_line, window, cx) {
+            return;
+        }
+
         if self.read_only(cx) {
             return;
         }
-        self.transact(window, cx, |this, window, cx| {
-            this.change_selections(Default::default(), window, cx, |s| {
-                s.move_with(&mut |_, selection| {
-                    selection.reversed = false;
-                });
+        let snapshot = self.display_snapshot(cx);
+        let mut selections = self.selections.clone();
+        selections.change_with(&snapshot, |selections| {
+            selections.move_with(&mut |_, selection| selection.reversed = false);
+            selections.move_heads_with(&mut |map, head, _| {
+                (movement::line_end(map, head, false), SelectionGoal::None)
             });
-
-            this.select_to_end_of_line(
-                &SelectToEndOfLine {
-                    stop_at_soft_wraps: false,
-                },
-                window,
-                cx,
-            );
             if !action.stop_at_newlines {
-                this.change_selections(Default::default(), window, cx, |s| {
-                    s.move_with(&mut |_, sel| {
-                        if sel.is_empty() {
-                            sel.end = DisplayPoint::new(sel.end.row() + 1_u32, 0);
-                        }
-                    });
+                selections.move_with(&mut |_, selection| {
+                    if selection.is_empty() {
+                        selection.end = DisplayPoint::new(selection.end.row() + 1_u32, 0);
+                    }
                 });
             }
-            let item = this.cut_common(false, window, cx);
-            cx.write_to_clipboard(item);
         });
+
+        let (item, selections) = self.prepare_cut(false, &selections, &snapshot, cx);
+        if let Err(error) = self.write_to_clipboard(item, cx) {
+            self.notify_clipboard_error(error, cx);
+            return;
+        }
+        self.delete_cut_ranges(selections, window, cx);
     }
 
     pub fn insert_snippet_at_selections(
@@ -1209,16 +1675,24 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::insert_snippet_at_selections, window, cx) {
+            return;
+        }
+
         self.try_insert_snippet_at_selections(action, window, cx)
             .log_err();
     }
 
     pub fn toggle_block_comments(
         &mut self,
-        _: &ToggleBlockComments,
+        action: &ToggleBlockComments,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::toggle_block_comments, window, cx) {
+            return;
+        }
+
         if self.read_only(cx) {
             return;
         }
@@ -1409,11 +1883,15 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::toggle_comments, window, cx) {
+            return;
+        }
+
         if self.read_only(cx) {
             return;
         }
-        let text_layout_details = &self.text_layout_details(window, cx);
-        self.transact(window, cx, |this, window, cx| {
+        let mut advance_pending = None;
+        let transaction = self.transact(window, cx, |this, window, cx| {
             let mut selections = this
                 .selections
                 .all::<MultiBufferPoint>(&this.display_snapshot(cx));
@@ -1705,31 +2183,41 @@ impl Editor {
                 && !matches!(this.mode, EditorMode::SingleLine);
 
             if advance_downwards {
-                let snapshot = this.buffer.read(cx).snapshot(cx);
-
-                this.change_selections(Default::default(), window, cx, |s| {
-                    s.move_cursors_with(&mut |display_snapshot, display_point, _| {
-                        let mut point = display_point.to_point(display_snapshot);
-                        point.row += 1;
-                        point = snapshot.clip_point(point, Bias::Left);
-                        let display_point = point.to_display_point(display_snapshot);
-                        let goal = SelectionGoal::HorizontalPosition(
-                            display_snapshot
-                                .x_for_display_point(display_point, text_layout_details),
-                        );
-                        (display_point, goal)
-                    })
-                });
+                match this.plan_comment_advance(window, cx) {
+                    Ok(plan) => this.change_selections(
+                        SelectionEffects::default(),
+                        window,
+                        cx,
+                        |selections| plan.apply(selections),
+                    ),
+                    Err(pending) => {
+                        advance_pending =
+                            Some((pending, this.buffer.read(cx).last_transaction_id(cx)));
+                    }
+                }
             }
         });
+        if let Some((pending, active_transaction)) = advance_pending {
+            let transaction = transaction.or(active_transaction);
+            self.defer_geometry(
+                pending,
+                move |editor, window, cx| editor.advance_after_comment(transaction, window, cx),
+                window,
+                cx,
+            );
+        }
     }
 
     pub fn unwrap_syntax_node(
         &mut self,
-        _: &UnwrapSyntaxNode,
+        action: &UnwrapSyntaxNode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::unwrap_syntax_node, window, cx) {
+            return;
+        }
+
         if self.read_only(cx) {
             return;
         }
@@ -1991,6 +2479,24 @@ impl Editor {
         cx: &mut Context<Self>,
         apply_linked_edits: bool,
     ) {
+        self.bind_input_window(window);
+        if self.input_is_deferred() {
+            let text = text.to_owned();
+            self.defer_input(
+                move |editor, window, cx| {
+                    editor.replace_selections(
+                        &text,
+                        autoindent_mode,
+                        window,
+                        cx,
+                        apply_linked_edits,
+                    )
+                },
+                window,
+                cx,
+            );
+            return;
+        }
         if self.read_only(cx) {
             return;
         }
@@ -2136,6 +2642,507 @@ impl Editor {
             }
             false
         });
+    }
+
+    fn plan_comment_advance(
+        &self,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<selections_collection::SelectionPlan, PendingRowGeometry> {
+        let details = self.text_layout_details(window, cx);
+        let snapshot = self.display_snapshot(cx);
+        self.selections.plan_move(&snapshot, |snapshot, selection| {
+            let mut point = selection.head().to_point(snapshot);
+            point.row += 1;
+            point = snapshot.buffer_snapshot().clip_point(point, Bias::Left);
+            let point = point.to_display_point(snapshot);
+            let goal =
+                SelectionGoal::HorizontalPosition(snapshot.x_for_display_point(point, &details)?);
+            selection.collapse_to(point, goal);
+            Ok(())
+        })
+    }
+
+    fn advance_after_comment(
+        &mut self,
+        transaction: Option<TransactionId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let plan = self.plan_comment_advance(window, cx);
+        let Some(plan) = self.ready_input_plan(
+            plan,
+            move |editor, window, cx| editor.advance_after_comment(transaction, window, cx),
+            window,
+            cx,
+        ) else {
+            return;
+        };
+        self.change_selections(SelectionEffects::default(), window, cx, |selections| {
+            plan.apply(selections)
+        });
+        if let Some(transaction) = transaction {
+            let transaction = self
+                .deferred_input
+                .transactions
+                .get(&transaction)
+                .copied()
+                .unwrap_or(transaction);
+            let redo = self.selections.disjoint_anchors_arc();
+            self.modify_transaction_selection_history(transaction, |history| {
+                history.redo = Some(redo)
+            });
+        }
+    }
+
+    fn projected_ime_composition(&self) -> Option<&QueuedImeComposition> {
+        self.queued_ime_composition
+            .as_ref()
+            .filter(|_| !self.input_is_replaying())
+    }
+
+    fn capture_input_replacement(
+        &self,
+        range: Option<Range<usize>>,
+        marking: bool,
+        cx: &mut Context<Self>,
+    ) -> InputReplacement {
+        if self.input_is_deferred()
+            && let Some(composition) = self.projected_ime_composition()
+            && (composition.marked.is_none()
+                || composition.pieces.iter().any(|piece| piece.input.is_some()))
+        {
+            if let Some(marked) = &composition.marked {
+                let range = if marking && let Some(relative) = range {
+                    marked.start.saturating_add(relative.start)
+                        ..marked.start.saturating_add(relative.end)
+                } else {
+                    marked.clone()
+                };
+                return composition.replacement(range);
+            }
+            if range
+                .as_ref()
+                .is_some_and(|range| range.is_empty() && *range == composition.selection)
+            {
+                return InputReplacement::Selection;
+            }
+            return range
+                .filter(|range| marking || !range.is_empty())
+                .map_or(InputReplacement::Selection, |range| {
+                    composition.replacement(range)
+                });
+        } else if let Some(mut ranges) = self.marked_text_ranges(cx) {
+            if marking && let Some(relative) = range {
+                let snapshot = self.buffer.read(cx).read(cx);
+                for range in &mut ranges {
+                    *range = clip_ime_range(relative.clone(), range.start.0.0, |offset, bias| {
+                        snapshot
+                            .clip_offset_utf16(MultiBufferOffsetUtf16(OffsetUtf16(offset)), bias)
+                    });
+                }
+            }
+            let ranges = self.capture_input_ranges(ranges, cx);
+            if let Some(first) = ranges.first() {
+                let snapshot = self.buffer.read(cx).read(cx);
+                let projection = first.start.to_offset_utf16(&snapshot).0.0
+                    ..first.end.to_offset_utf16(&snapshot).0.0;
+                return InputReplacement::Marked { ranges, projection };
+            }
+            return InputReplacement::Selection;
+        }
+        let Some(range) = range.filter(|range| marking || !range.is_empty()) else {
+            return InputReplacement::Selection;
+        };
+        if range.is_empty() && self.input_is_deferred() {
+            let selection = self
+                .selections
+                .newest::<MultiBufferOffsetUtf16>(&self.display_snapshot(cx));
+            if range.start == selection.head().0.0 {
+                return InputReplacement::Selection;
+            }
+        }
+        let ranges = self.selection_replacement_ranges(
+            MultiBufferOffsetUtf16(OffsetUtf16(range.start))
+                ..MultiBufferOffsetUtf16(OffsetUtf16(range.end)),
+            cx,
+        );
+        InputReplacement::Anchors(self.capture_input_ranges(ranges, cx))
+    }
+
+    fn capture_input_ranges(
+        &self,
+        ranges: Vec<Range<MultiBufferOffsetUtf16>>,
+        cx: &App,
+    ) -> Vec<Range<Anchor>> {
+        let snapshot = self.buffer.read(cx).read(cx);
+        ranges
+            .into_iter()
+            .map(|range| {
+                let start = snapshot.anchor_after(range.start);
+                let end = if range.is_empty() {
+                    start
+                } else {
+                    snapshot.anchor_before(range.end)
+                };
+                start..end
+            })
+            .collect()
+    }
+
+    fn queue_ime_input(
+        &mut self,
+        replacement: &InputReplacement,
+        text: &str,
+        selection: Option<Range<usize>>,
+        marking: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<QueuedInput> {
+        if self.input_is_replaying() {
+            return None;
+        }
+        self.ensure_queued_ime_composition(cx);
+        let composition = self
+            .queued_ime_composition
+            .as_mut()
+            .expect("queued IME projection initialized");
+        let range = match replacement {
+            InputReplacement::Selection => composition.selection.clone(),
+            InputReplacement::Anchors(_) => {
+                unreachable!("queued IME replacements use the composition projection")
+            }
+            InputReplacement::Marked { projection, .. } => {
+                if !composition.pieces.iter().any(|piece| piece.input.is_some()) {
+                    composition.origin_range = projection.clone();
+                }
+                projection.clone()
+            }
+            InputReplacement::Projected { projection, .. } => projection.clone(),
+        };
+        let result = InputResult::default();
+        composition.replace(range, text, selection, marking, result.clone());
+        Some(QueuedInput {
+            origin: composition.origin.clone(),
+            result,
+        })
+    }
+
+    fn ensure_queued_ime_composition(&mut self, cx: &mut Context<Self>) {
+        if self.queued_ime_composition.is_some() {
+            return;
+        }
+        let selection = self
+            .selections
+            .newest::<MultiBufferOffsetUtf16>(&self.display_snapshot(cx));
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let marked = self
+            .marked_text_ranges(cx)
+            .and_then(|ranges| ranges.first().map(|range| range.start.0.0..range.end.0.0));
+        self.queued_ime_composition = Some(QueuedImeComposition::new(
+            snapshot,
+            UTF16Selection {
+                range: selection.start.0.0..selection.end.0.0,
+                reversed: selection.reversed,
+            },
+            marked,
+        ));
+    }
+
+    fn newest_input_selection(&self, snapshot: &DisplaySnapshot) -> Selection<Point> {
+        self.selections
+            .all_adjusted(snapshot)
+            .into_iter()
+            .filter(|selection| {
+                Self::input_range_is_editable(selection.range(), snapshot.buffer_snapshot())
+            })
+            .max_by_key(|selection| selection.id)
+            .unwrap_or_else(|| self.selections.newest_adjusted(snapshot))
+    }
+
+    fn input_range_is_editable(range: Range<Point>, snapshot: &MultiBufferSnapshot) -> bool {
+        // note, ideally we'd clip the tail to the closest writeable region towards the head
+        [range.start, range.end].into_iter().all(|point| {
+            snapshot
+                .point_to_buffer_point(point)
+                .is_some_and(|(snapshot, ..)| snapshot.capability.editable())
+        })
+    }
+
+    fn initialize_input_result(&self, result: &InputResult, cx: &mut App) -> usize {
+        let snapshot = self.display_snapshot(cx);
+        let selection = self.newest_input_selection(&snapshot);
+        let snapshot = snapshot.buffer_snapshot().clone();
+        let head = selection.head().to_offset_utf16(&snapshot);
+        *result.borrow_mut() = Some(AppliedInput {
+            snapshot,
+            range: head..head,
+        });
+        selection.id
+    }
+
+    fn initialize_input_origin(
+        &self,
+        input: &QueuedInput,
+        replacement: &InputReplacement,
+        cx: &mut App,
+    ) {
+        let mut origin = input.origin.borrow_mut();
+        if origin.is_some() {
+            return;
+        }
+        let snapshot = self.display_snapshot(cx);
+        let buffer = snapshot.buffer_snapshot();
+        let marked_range = match replacement {
+            InputReplacement::Marked { ranges, .. } => ranges
+                .iter()
+                .rev()
+                .find(|range| {
+                    Self::input_range_is_editable(
+                        range.start.to_point(buffer)..range.end.to_point(buffer),
+                        buffer,
+                    )
+                })
+                .or_else(|| ranges.last()),
+            _ => None,
+        };
+        let range = if let Some(range) = marked_range {
+            range.start.to_offset_utf16(buffer)..range.end.to_offset_utf16(buffer)
+        } else {
+            let selection = self.newest_input_selection(&snapshot);
+            selection.start.to_offset_utf16(buffer)..selection.end.to_offset_utf16(buffer)
+        };
+        *origin = Some(AppliedInput {
+            snapshot: snapshot.buffer_snapshot().clone(),
+            range,
+        });
+    }
+
+    fn resolve_input_replacement(
+        &self,
+        replacement: InputReplacement,
+        cx: &mut App,
+    ) -> Option<Vec<Range<MultiBufferOffsetUtf16>>> {
+        match replacement {
+            InputReplacement::Selection => None,
+            InputReplacement::Anchors(ranges) | InputReplacement::Marked { ranges, .. } => {
+                let snapshot = self.buffer.read(cx).read(cx);
+                Some(
+                    ranges
+                        .into_iter()
+                        .map(|range| {
+                            let start = range.start.to_offset_utf16(&snapshot);
+                            let end = range.end.to_offset_utf16(&snapshot).max(start);
+                            start..end
+                        })
+                        .collect(),
+                )
+            }
+            InputReplacement::Projected { range, .. } => {
+                let snapshot = self.buffer.read(cx).snapshot(cx);
+                let start = range.start.resolve(&snapshot, Bias::Left);
+                let end = range.end.resolve(&snapshot, Bias::Right).max(start);
+                Some(self.selection_replacement_ranges(start..end, cx))
+            }
+        }
+    }
+
+    fn apply_input_replacement(
+        &mut self,
+        replacement: InputReplacement,
+        text: &str,
+        result: Option<QueuedInput>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(input) = &result {
+            self.initialize_input_origin(input, &replacement, cx);
+        }
+        if !self.input_enabled {
+            if let Some(input) = &result {
+                self.initialize_input_result(&input.result, cx);
+            }
+            cx.emit(EditorEvent::InputIgnored { text: text.into() });
+            return;
+        }
+        self.transact(window, cx, |this, window, cx| {
+            let new_selected_ranges = this.resolve_input_replacement(replacement, cx);
+
+            let range_to_replace = new_selected_ranges.as_ref().and_then(|ranges_to_replace| {
+                let newest_selection_id = this.selections.newest_anchor().id;
+                this.selections
+                    .all::<MultiBufferOffsetUtf16>(&this.display_snapshot(cx))
+                    .iter()
+                    .zip(ranges_to_replace.iter())
+                    .find_map(|(selection, range)| {
+                        if selection.id == newest_selection_id {
+                            Some(
+                                (range.start.0.0 as isize - selection.head().0.0 as isize)
+                                    ..(range.end.0.0 as isize - selection.head().0.0 as isize),
+                            )
+                        } else {
+                            None
+                        }
+                    })
+            });
+
+            cx.emit(EditorEvent::InputHandled {
+                utf16_range_to_replace: range_to_replace,
+                text: text.into(),
+            });
+
+            if let Some(new_selected_ranges) = new_selected_ranges {
+                // Only backspace if at least one range covers actual text. When all
+                // ranges are empty (e.g. a trailing-space insertion from Accessibility
+                // Keyboard sends replacementRange=cursor..cursor), backspace would
+                // incorrectly delete the character just before the cursor.
+                let should_backspace = new_selected_ranges.iter().any(|r| r.start != r.end);
+                this.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                    selections.select_ranges(new_selected_ranges)
+                });
+                if should_backspace {
+                    this.backspace(&Default::default(), window, cx);
+                }
+            }
+
+            this.handle_input_with_result(text, result.map(|input| input.result), window, cx);
+        });
+
+        if let Some(transaction) = self.ime_transaction {
+            self.buffer.update(cx, |buffer, cx| {
+                buffer.group_until_transaction(transaction, cx);
+            });
+        }
+
+        self.unmark_text(window, cx);
+    }
+
+    fn apply_marked_input_replacement(
+        &mut self,
+        replacement: InputReplacement,
+        text: &str,
+        new_selected_range_utf16: Option<Range<usize>>,
+        result: Option<QueuedInput>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(input) = &result {
+            self.initialize_input_origin(input, &replacement, cx);
+        }
+        if !self.input_enabled {
+            if let Some(input) = &result {
+                self.initialize_input_result(&input.result, cx);
+            }
+            return;
+        }
+        let transaction = self.transact(window, cx, |this, window, cx| {
+            let ranges_to_replace = this.resolve_input_replacement(replacement, cx);
+
+            let range_to_replace = ranges_to_replace.as_ref().and_then(|ranges_to_replace| {
+                let newest_selection_id = this.selections.newest_anchor().id;
+                this.selections
+                    .all::<MultiBufferOffsetUtf16>(&this.display_snapshot(cx))
+                    .iter()
+                    .zip(ranges_to_replace.iter())
+                    .find_map(|(selection, range)| {
+                        if selection.id == newest_selection_id {
+                            Some(
+                                (range.start.0.0 as isize - selection.head().0.0 as isize)
+                                    ..(range.end.0.0 as isize - selection.head().0.0 as isize),
+                            )
+                        } else {
+                            None
+                        }
+                    })
+            });
+
+            cx.emit(EditorEvent::InputHandled {
+                utf16_range_to_replace: range_to_replace,
+                text: text.into(),
+            });
+
+            if let Some(ranges) = ranges_to_replace {
+                this.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.select_ranges(ranges)
+                });
+            }
+
+            let marked_ranges = {
+                let snapshot = this.buffer.read(cx).read(cx);
+                this.selections
+                    .disjoint_anchors_arc()
+                    .iter()
+                    .map(|selection| {
+                        selection.start.bias_left(&snapshot)..selection.end.bias_right(&snapshot)
+                    })
+                    .collect::<Vec<_>>()
+            };
+
+            if text.is_empty() {
+                this.unmark_text(window, cx);
+            } else {
+                this.highlight_text(
+                    HighlightKey::InputComposition,
+                    marked_ranges.clone(),
+                    HighlightStyle {
+                        underline: Some(UnderlineStyle {
+                            thickness: px(1.),
+                            color: None,
+                            wavy: false,
+                        }),
+                        ..Default::default()
+                    },
+                    cx,
+                );
+            }
+
+            // Disable auto-closing when composing text (i.e. typing a `"` on a Brazilian keyboard)
+            let use_autoclose = this.use_autoclose;
+            let use_auto_surround = this.use_auto_surround;
+            this.set_use_autoclose(false);
+            this.set_use_auto_surround(false);
+            this.handle_input_with_result(text, result.map(|input| input.result), window, cx);
+            this.set_use_autoclose(use_autoclose);
+            this.set_use_auto_surround(use_auto_surround);
+
+            if let Some(new_selected_range) = new_selected_range_utf16 {
+                let snapshot = this.buffer.read(cx).read(cx);
+                let new_selected_ranges = marked_ranges
+                    .into_iter()
+                    .map(|marked_range| {
+                        let insertion_start = marked_range.start.to_offset_utf16(&snapshot).0.0;
+                        clip_ime_range(
+                            new_selected_range.clone(),
+                            insertion_start,
+                            |offset, bias| {
+                                snapshot.clip_offset_utf16(
+                                    MultiBufferOffsetUtf16(OffsetUtf16(offset)),
+                                    bias,
+                                )
+                            },
+                        )
+                    })
+                    .collect::<Vec<_>>();
+
+                drop(snapshot);
+                this.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                    selections.select_ranges(new_selected_ranges)
+                });
+            }
+        });
+
+        self.ime_transaction = self.ime_transaction.or(transaction);
+        if let Some(transaction) = self.ime_transaction {
+            self.buffer.update(cx, |buffer, cx| {
+                buffer.group_until_transaction(transaction, cx);
+            });
+        }
+
+        if self
+            .text_highlights(HighlightKey::InputComposition, cx)
+            .is_none()
+        {
+            self.ime_transaction.take();
+        }
     }
 
     fn set_use_auto_surround(&mut self, auto_surround: bool) {
@@ -2461,6 +3468,15 @@ impl NewlineConfig {
                 .chain(buffer.chars_for_range(range.end.0..pair.close_range.start))
                 .all(|c| c.is_whitespace() && c != '\n')
     }
+}
+
+fn clip_ime_range<T>(
+    range: Range<usize>,
+    origin: usize,
+    mut clip: impl FnMut(usize, Bias) -> T,
+) -> Range<T> {
+    clip(origin.saturating_add(range.start), Bias::Left)
+        ..clip(origin.saturating_add(range.end), Bias::Right)
 }
 
 fn comment_delimiter_for_newline(
@@ -2802,6 +3818,12 @@ impl EntityInputHandler for Editor {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<String> {
+        if self.input_is_deferred() && !self.input_is_replaying() {
+            self.ensure_queued_ime_composition(cx);
+        }
+        if let Some(composition) = self.projected_ime_composition() {
+            return composition.text_for_range(range_utf16, adjusted_range);
+        }
         let snapshot = self.buffer.read(cx).read(cx);
         let start = snapshot.clip_offset_utf16(
             MultiBufferOffsetUtf16(OffsetUtf16(range_utf16.start)),
@@ -2828,6 +3850,12 @@ impl EntityInputHandler for Editor {
         if !ignore_disabled_input && !self.input_enabled {
             return None;
         }
+        if let Some(composition) = self.projected_ime_composition() {
+            return Some(UTF16Selection {
+                range: composition.selection.clone(),
+                reversed: composition.reversed,
+            });
+        }
 
         let selection = self
             .selections
@@ -2841,6 +3869,9 @@ impl EntityInputHandler for Editor {
     }
 
     fn marked_text_range(&self, _: &mut Window, cx: &mut Context<Self>) -> Option<Range<usize>> {
+        if let Some(composition) = self.projected_ime_composition() {
+            return composition.marked.clone();
+        }
         let snapshot = self.buffer.read(cx).read(cx);
         let range = self
             .text_highlights(HighlightKey::InputComposition, cx)?
@@ -2849,7 +3880,22 @@ impl EntityInputHandler for Editor {
         Some(range.start.to_offset_utf16(&snapshot).0.0..range.end.to_offset_utf16(&snapshot).0.0)
     }
 
-    fn unmark_text(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+    fn unmark_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.bind_input_window(window);
+        if self.input_is_deferred() {
+            if !self.input_is_replaying() {
+                self.ensure_queued_ime_composition(cx);
+                if let Some(composition) = &mut self.queued_ime_composition {
+                    composition.marked = None;
+                }
+            }
+            self.defer_native_input(
+                |editor, window, cx| editor.unmark_text(window, cx),
+                window,
+                cx,
+            );
+            return;
+        }
         self.clear_highlights(HighlightKey::InputComposition, cx);
         self.ime_transaction.take();
     }
@@ -2861,87 +3907,24 @@ impl EntityInputHandler for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.input_enabled {
-            cx.emit(EditorEvent::InputIgnored { text: text.into() });
+        self.bind_input_window(window);
+        if self.input_is_deferred() && !self.input_is_replaying() {
+            self.ensure_queued_ime_composition(cx);
+        }
+        let replacement = self.capture_input_replacement(range_utf16, false, cx);
+        if self.input_is_deferred() {
+            let result = self.queue_ime_input(&replacement, text, None, false, cx);
+            let text = text.to_owned();
+            self.defer_native_input(
+                move |editor, window, cx| {
+                    editor.apply_input_replacement(replacement, &text, result, window, cx);
+                },
+                window,
+                cx,
+            );
             return;
         }
-
-        self.transact(window, cx, |this, window, cx| {
-            let new_selected_ranges = if let Some(range_utf16) = range_utf16 {
-                if let Some(marked_ranges) = this.marked_text_ranges(cx) {
-                    // During IME composition, macOS reports the replacement range
-                    // relative to the first marked region (the only one visible via
-                    // marked_text_range). The correct targets for replacement are the
-                    // marked ranges themselves — one per cursor — so use them directly.
-                    Some(marked_ranges)
-                } else if range_utf16.start == range_utf16.end {
-                    // An empty replacement range means "insert at cursor" with no text
-                    // to replace. macOS reports the cursor position from its own
-                    // (single-cursor) view of the buffer, which diverges from our actual
-                    // cursor positions after multi-cursor edits have shifted offsets.
-                    // Treating this as range_utf16=None lets each cursor insert in place.
-                    None
-                } else {
-                    // Outside of IME composition (e.g. Accessibility Keyboard word
-                    // completion), the range is an absolute document offset for the
-                    // newest cursor. Fan it out to all cursors via
-                    // selection_replacement_ranges, which applies the delta relative
-                    // to the newest selection to every cursor.
-                    let range_utf16 = MultiBufferOffsetUtf16(OffsetUtf16(range_utf16.start))
-                        ..MultiBufferOffsetUtf16(OffsetUtf16(range_utf16.end));
-                    Some(this.selection_replacement_ranges(range_utf16, cx))
-                }
-            } else {
-                this.marked_text_ranges(cx)
-            };
-
-            let range_to_replace = new_selected_ranges.as_ref().and_then(|ranges_to_replace| {
-                let newest_selection_id = this.selections.newest_anchor().id;
-                this.selections
-                    .all::<MultiBufferOffsetUtf16>(&this.display_snapshot(cx))
-                    .iter()
-                    .zip(ranges_to_replace.iter())
-                    .find_map(|(selection, range)| {
-                        if selection.id == newest_selection_id {
-                            Some(
-                                (range.start.0.0 as isize - selection.head().0.0 as isize)
-                                    ..(range.end.0.0 as isize - selection.head().0.0 as isize),
-                            )
-                        } else {
-                            None
-                        }
-                    })
-            });
-
-            cx.emit(EditorEvent::InputHandled {
-                utf16_range_to_replace: range_to_replace,
-                text: text.into(),
-            });
-
-            if let Some(new_selected_ranges) = new_selected_ranges {
-                // Only backspace if at least one range covers actual text. When all
-                // ranges are empty (e.g. a trailing-space insertion from Accessibility
-                // Keyboard sends replacementRange=cursor..cursor), backspace would
-                // incorrectly delete the character just before the cursor.
-                let should_backspace = new_selected_ranges.iter().any(|r| r.start != r.end);
-                this.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
-                    selections.select_ranges(new_selected_ranges)
-                });
-                if should_backspace {
-                    this.backspace(&Default::default(), window, cx);
-                }
-            }
-
-            this.handle_input(text, window, cx);
-        });
-
-        if let Some(transaction) = self.ime_transaction {
-            self.buffer.update(cx, |buffer, cx| {
-                buffer.group_until_transaction(transaction, cx);
-            });
-        }
-
-        self.unmark_text(window, cx);
+        self.apply_input_replacement(replacement, text, None, window, cx);
     }
 
     fn replace_and_mark_text_in_range(
@@ -2952,136 +3935,44 @@ impl EntityInputHandler for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.input_enabled {
+        self.bind_input_window(window);
+        if self.input_is_deferred() && !self.input_is_replaying() {
+            self.ensure_queued_ime_composition(cx);
+        }
+        let replacement = self.capture_input_replacement(range_utf16, true, cx);
+        if self.input_is_deferred() {
+            let result = self.queue_ime_input(
+                &replacement,
+                text,
+                new_selected_range_utf16.clone(),
+                true,
+                cx,
+            );
+            let text = text.to_owned();
+            self.defer_native_input(
+                move |editor, window, cx| {
+                    editor.apply_marked_input_replacement(
+                        replacement,
+                        &text,
+                        new_selected_range_utf16,
+                        result,
+                        window,
+                        cx,
+                    );
+                },
+                window,
+                cx,
+            );
             return;
         }
-
-        let transaction = self.transact(window, cx, |this, window, cx| {
-            let ranges_to_replace = if let Some(mut marked_ranges) = this.marked_text_ranges(cx) {
-                let snapshot = this.buffer.read(cx).read(cx);
-                if let Some(relative_range_utf16) = range_utf16.as_ref() {
-                    for marked_range in &mut marked_ranges {
-                        marked_range.end = marked_range.start + relative_range_utf16.end;
-                        marked_range.start += relative_range_utf16.start;
-                        marked_range.start =
-                            snapshot.clip_offset_utf16(marked_range.start, Bias::Left);
-                        marked_range.end =
-                            snapshot.clip_offset_utf16(marked_range.end, Bias::Right);
-                    }
-                }
-                Some(marked_ranges)
-            } else if let Some(range_utf16) = range_utf16 {
-                let range_utf16 = MultiBufferOffsetUtf16(OffsetUtf16(range_utf16.start))
-                    ..MultiBufferOffsetUtf16(OffsetUtf16(range_utf16.end));
-                Some(this.selection_replacement_ranges(range_utf16, cx))
-            } else {
-                None
-            };
-
-            let range_to_replace = ranges_to_replace.as_ref().and_then(|ranges_to_replace| {
-                let newest_selection_id = this.selections.newest_anchor().id;
-                this.selections
-                    .all::<MultiBufferOffsetUtf16>(&this.display_snapshot(cx))
-                    .iter()
-                    .zip(ranges_to_replace.iter())
-                    .find_map(|(selection, range)| {
-                        if selection.id == newest_selection_id {
-                            Some(
-                                (range.start.0.0 as isize - selection.head().0.0 as isize)
-                                    ..(range.end.0.0 as isize - selection.head().0.0 as isize),
-                            )
-                        } else {
-                            None
-                        }
-                    })
-            });
-
-            cx.emit(EditorEvent::InputHandled {
-                utf16_range_to_replace: range_to_replace,
-                text: text.into(),
-            });
-
-            if let Some(ranges) = ranges_to_replace {
-                this.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.select_ranges(ranges)
-                });
-            }
-
-            let marked_ranges = {
-                let snapshot = this.buffer.read(cx).read(cx);
-                this.selections
-                    .disjoint_anchors_arc()
-                    .iter()
-                    .map(|selection| {
-                        selection.start.bias_left(&snapshot)..selection.end.bias_right(&snapshot)
-                    })
-                    .collect::<Vec<_>>()
-            };
-
-            if text.is_empty() {
-                this.unmark_text(window, cx);
-            } else {
-                this.highlight_text(
-                    HighlightKey::InputComposition,
-                    marked_ranges.clone(),
-                    HighlightStyle {
-                        underline: Some(UnderlineStyle {
-                            thickness: px(1.),
-                            color: None,
-                            wavy: false,
-                        }),
-                        ..Default::default()
-                    },
-                    cx,
-                );
-            }
-
-            // Disable auto-closing when composing text (i.e. typing a `"` on a Brazilian keyboard)
-            let use_autoclose = this.use_autoclose;
-            let use_auto_surround = this.use_auto_surround;
-            this.set_use_autoclose(false);
-            this.set_use_auto_surround(false);
-            this.handle_input(text, window, cx);
-            this.set_use_autoclose(use_autoclose);
-            this.set_use_auto_surround(use_auto_surround);
-
-            if let Some(new_selected_range) = new_selected_range_utf16 {
-                let snapshot = this.buffer.read(cx).read(cx);
-                let new_selected_ranges = marked_ranges
-                    .into_iter()
-                    .map(|marked_range| {
-                        let insertion_start = marked_range.start.to_offset_utf16(&snapshot).0;
-                        let new_start = MultiBufferOffsetUtf16(OffsetUtf16(
-                            insertion_start.0 + new_selected_range.start,
-                        ));
-                        let new_end = MultiBufferOffsetUtf16(OffsetUtf16(
-                            insertion_start.0 + new_selected_range.end,
-                        ));
-                        snapshot.clip_offset_utf16(new_start, Bias::Left)
-                            ..snapshot.clip_offset_utf16(new_end, Bias::Right)
-                    })
-                    .collect::<Vec<_>>();
-
-                drop(snapshot);
-                this.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
-                    selections.select_ranges(new_selected_ranges)
-                });
-            }
-        });
-
-        self.ime_transaction = self.ime_transaction.or(transaction);
-        if let Some(transaction) = self.ime_transaction {
-            self.buffer.update(cx, |buffer, cx| {
-                buffer.group_until_transaction(transaction, cx);
-            });
-        }
-
-        if self
-            .text_highlights(HighlightKey::InputComposition, cx)
-            .is_none()
-        {
-            self.ime_transaction.take();
-        }
+        self.apply_marked_input_replacement(
+            replacement,
+            text,
+            new_selected_range_utf16,
+            None,
+            window,
+            cx,
+        );
     }
 
     fn bounds_for_range(
@@ -3091,6 +3982,9 @@ impl EntityInputHandler for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<gpui::Bounds<Pixels>> {
+        if self.projected_ime_composition().is_some() {
+            return None;
+        }
         let text_layout_details = self.text_layout_details(window, cx);
         let CharacterDimensions {
             em_width,
@@ -3099,15 +3993,19 @@ impl EntityInputHandler for Editor {
 
         let snapshot = self.snapshot(window, cx);
         let scroll_position = snapshot.scroll_position();
-        let scroll_left =
-            self.horizontal_scroll_pixels(scroll_position.x, &text_layout_details, window);
+        let scroll_left = self.horizontal_scroll_pixels(scroll_position.x, window, cx);
 
         let start =
             MultiBufferOffsetUtf16(OffsetUtf16(range_utf16.start)).to_display_point(&snapshot);
+        let source_x = match snapshot.x_for_display_point(start, &text_layout_details) {
+            Ok(x) => x,
+            Err(pending) => {
+                self.request_row_geometry(pending, cx);
+                return None;
+            }
+        };
         let x = Pixels::from(
-            snapshot.x_for_display_point(start, &text_layout_details)
-                + ScrollOffset::from(self.gutter_dimensions.full_width())
-                - scroll_left,
+            source_x + ScrollOffset::from(self.gutter_dimensions.full_width()) - scroll_left,
         );
         let y = line_height * (start.row().as_f64() - scroll_position.y) as f32;
 
@@ -3123,6 +4021,9 @@ impl EntityInputHandler for Editor {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<usize> {
+        if self.projected_ime_composition().is_some() {
+            return None;
+        }
         let position_map = self.last_position_map.as_ref()?;
         if !position_map.text_hitbox.contains(&point) {
             return None;

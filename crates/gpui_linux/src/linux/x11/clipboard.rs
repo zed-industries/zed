@@ -37,6 +37,7 @@ use x11rb::{
     connection::Connection,
     protocol::{
         Event,
+        xfixes::{ConnectionExt as _, SelectionEventMask},
         xproto::{
             Atom, AtomEnum, ConnectionExt as _, CreateWindowAux, EventMask, PropMode, Property,
             PropertyNotifyEvent, SELECTION_NOTIFY_EVENT, SelectionNotifyEvent,
@@ -47,7 +48,11 @@ use x11rb::{
     wrapper::ConnectionExt as _,
 };
 
-use gpui::{ClipboardItem, Image, ImageFormat, hash};
+use gpui::{
+    ClipboardItem, ClipboardReadMode, ClipboardRevision, ClipboardSnapshot, Image, ImageFormat,
+    hash,
+};
+use gpui_util::ResultExt;
 use strum::IntoEnumIterator;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -139,6 +144,62 @@ struct Inner {
     handover_cv: Condvar,
 
     serve_stopped: AtomicBool,
+    observer: Mutex<Option<SelectionObserver>>,
+}
+
+struct SelectionObserver {
+    context: XContext,
+    revisions: HashMap<Atom, ClipboardRevision>,
+}
+
+impl SelectionObserver {
+    fn new(display: &str, atoms: &Atoms) -> Result<Self> {
+        let context = XContext::new(display)?;
+        context
+            .conn
+            .xfixes_query_version(1, 0)
+            .map_err(into_unknown)?
+            .reply()
+            .map_err(into_unknown)?;
+        let mut revisions = HashMap::new();
+        for selection in [atoms.CLIPBOARD, atoms.PRIMARY, atoms.SECONDARY] {
+            context
+                .conn
+                .xfixes_select_selection_input(
+                    context.win_id,
+                    selection,
+                    SelectionEventMask::SET_SELECTION_OWNER
+                        | SelectionEventMask::SELECTION_WINDOW_DESTROY
+                        | SelectionEventMask::SELECTION_CLIENT_CLOSE,
+                )
+                .map_err(into_unknown)?
+                .check()
+                .map_err(into_unknown)?;
+            revisions.insert(selection, ClipboardRevision::default());
+        }
+        Ok(Self { context, revisions })
+    }
+
+    fn observe(&mut self, publication: Option<(Atom, u32)>) -> Result<Option<ClipboardRevision>> {
+        self.context
+            .conn
+            .get_input_focus()
+            .map_err(into_unknown)?
+            .reply()
+            .map_err(into_unknown)?;
+        let mut receipt = None;
+        while let Some(event) = self.context.conn.poll_for_event().map_err(into_unknown)? {
+            if let Event::XfixesSelectionNotify(event) = event
+                && let Some(revision) = self.revisions.get_mut(&event.selection)
+            {
+                *revision = ClipboardRevision::default();
+                if publication == Some((event.selection, event.owner)) {
+                    receipt = Some(revision.clone());
+                }
+            }
+        }
+        Ok(receipt)
+    }
 }
 
 impl XContext {
@@ -217,6 +278,7 @@ impl Inner {
             .reply()
             .map_err(into_unknown)?;
 
+        let observer = SelectionObserver::new(display, &atoms).log_err();
         Ok(Self {
             display: display.to_owned(),
             server,
@@ -227,6 +289,7 @@ impl Inner {
             handover_state: Mutex::new(ManagerHandoverState::Idle),
             handover_cv: Condvar::new(),
             serve_stopped: AtomicBool::new(false),
+            observer: Mutex::new(observer),
         })
     }
 
@@ -235,7 +298,7 @@ impl Inner {
         data: Vec<ClipboardData>,
         selection: ClipboardKind,
         wait: WaitConfig,
-    ) -> Result<()> {
+    ) -> Result<Option<ClipboardRevision>> {
         if self.serve_stopped.load(Ordering::Relaxed) {
             return Err(Error::unknown(
                 "The clipboard handler thread seems to have stopped. Logging messages may reveal the cause. (See the `log` crate.)",
@@ -243,13 +306,22 @@ impl Inner {
         }
 
         let server_win = self.server.win_id;
+        let selection_atom = self.atom_of(selection);
+        let mut observer = self.observer.lock();
+        if let Some(current) = observer.as_mut()
+            && current.observe(None).log_err().is_none()
+        {
+            *observer = None;
+        }
 
         // ICCCM version 2, section 2.6.1.3 states that we should re-assert ownership whenever data
         // changes.
         self.server
             .conn
-            .set_selection_owner(server_win, self.atom_of(selection), Time::CURRENT_TIME)
-            .map_err(|_| Error::ClipboardOccupied)?;
+            .set_selection_owner(server_win, selection_atom, Time::CURRENT_TIME)
+            .map_err(|_| Error::ClipboardOccupied)?
+            .check()
+            .map_err(into_unknown)?;
 
         self.server.conn.flush().map_err(into_unknown)?;
 
@@ -257,6 +329,13 @@ impl Inner {
         let selection = self.selection_of(selection);
         let mut data_guard = selection.data.write();
         *data_guard = Some(data);
+        let revision = observer.as_mut().and_then(|observer| {
+            observer
+                .observe(Some((selection_atom, server_win)))
+                .log_err()
+                .flatten()
+        });
+        drop(observer);
 
         // Lock the mutex to both ensure that no wakers of `data_changed` can wake us between
         // dropping the `data_guard` and calling `wait[_for]` and that we don't we wake other
@@ -279,7 +358,7 @@ impl Inner {
             }
         }
 
-        Ok(())
+        Ok(revision)
     }
 
     /// `formats` must be a slice of atoms, where each atom represents a target format.
@@ -986,7 +1065,7 @@ impl Clipboard {
         message: Cow<'_, str>,
         selection: ClipboardKind,
         wait: WaitConfig,
-    ) -> Result<()> {
+    ) -> Result<Option<ClipboardRevision>> {
         let data = vec![ClipboardData {
             bytes: message.into_owned().into_bytes(),
             format: self.inner.atoms.UTF8_STRING,
@@ -1020,7 +1099,40 @@ impl Clipboard {
             bytes: image.bytes,
             format: self.inner.atoms.PNG__MIME,
         }];
-        self.inner.write(data, selection, wait)
+        self.inner.write(data, selection, wait).map(|_| ())
+    }
+
+    pub(crate) fn read_snapshot(
+        &self,
+        selection: ClipboardKind,
+        owned_item: Option<&ClipboardItem>,
+        mode: ClipboardReadMode,
+    ) -> ClipboardSnapshot {
+        let mut observer = self.inner.observer.lock();
+        let atom = self.inner.atom_of(selection);
+        let before = observer.as_mut().and_then(|observer| {
+            observer.observe(None).log_err()?;
+            observer.revisions.get(&atom).cloned()
+        });
+        if mode == ClipboardReadMode::RevisionOnly {
+            return ClipboardSnapshot {
+                item: None,
+                revision: before,
+            };
+        }
+        let item = if self.is_owner(selection) && owned_item.is_some() {
+            owned_item.cloned()
+        } else {
+            self.get_any(selection).log_with_level(log::Level::Debug)
+        };
+        let after = observer.as_mut().and_then(|observer| {
+            observer.observe(None).log_err()?;
+            observer.revisions.get(&atom).cloned()
+        });
+        ClipboardSnapshot {
+            item,
+            revision: before.filter(|before| Some(before) == after.as_ref()),
+        }
     }
 
     pub(crate) fn get_any(&self, selection: ClipboardKind) -> Result<ClipboardItem> {

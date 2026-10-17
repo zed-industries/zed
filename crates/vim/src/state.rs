@@ -13,10 +13,15 @@ use db::{
 };
 use editor::display_map::{is_invisible, replacement};
 use editor::{Anchor, ClipboardSelection, Editor, MultiBuffer, ToPoint as EditorToPoint};
+use futures::{
+    FutureExt,
+    channel::oneshot,
+    future::{LocalBoxFuture, Shared},
+};
 use gpui::{
     Action, App, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, DismissEvent, Entity,
-    EntityId, Global, HighlightStyle, StyledText, Subscription, Task, TaskExt, TextStyle,
-    WeakEntity,
+    EntityId, FocusHandle, Global, HighlightStyle, StyledText, Subscription, Task, TaskExt,
+    TextStyle, WeakEntity,
 };
 use language::{Buffer, BufferEvent, BufferId, Chunk, LanguageAwareStyling, Point};
 
@@ -26,9 +31,15 @@ use project::{Project, ProjectItem, ProjectPath};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::borrow::BorrowMut;
+use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::path::Path;
-use std::{fmt::Display, ops::Range, sync::Arc};
+use std::rc::{Rc, Weak};
+use std::{
+    fmt::Display,
+    ops::{Deref, DerefMut, Range},
+    sync::Arc,
+};
 use text::{Bias, ToPoint};
 use theme_settings::ThemeSettings;
 use ui::{
@@ -250,28 +261,14 @@ impl From<String> for Register {
 pub struct VimGlobals {
     pub last_find: Option<Motion>,
 
-    pub dot_recording: bool,
     pub dot_replaying: bool,
-
-    /// pre_count is the number before an operator is specified (3 in 3d2d)
-    pub pre_count: Option<usize>,
-    /// post_count is the number after an operator is specified (2 in 3d2d)
-    pub post_count: Option<usize>,
-    pub forced_motion: bool,
-    pub stop_recording_after_next_action: bool,
-    pub ignore_current_insertion: bool,
-    pub recording_count: Option<usize>,
     pub recorded_count: Option<usize>,
-    pub recording_actions: Vec<ReplayableAction>,
     pub recorded_actions: Vec<ReplayableAction>,
     pub recorded_selection: RecordedSelection,
 
     /// The register being written to by the active `q{register}` macro
     /// recording.
     pub recording_register: Option<char>,
-    /// The register that was selected at the start of the current
-    /// dot-recording, for example, `"ap`.
-    pub recording_register_for_dot: Option<char>,
     /// The register from the last completed dot-recording. Used when replaying
     /// with `.`.
     pub recorded_register_for_dot: Option<char>,
@@ -286,6 +283,65 @@ pub struct VimGlobals {
     pub focused_vim: Option<WeakEntity<Vim>>,
 
     pub marks: HashMap<EntityId, Entity<MarksState>>,
+
+    pub(crate) keystroke_observers: Vec<(FocusHandle, WeakEntity<Vim>)>,
+    pub(crate) input: Rc<RefCell<VimInputState>>,
+    pub(crate) recording_input: Weak<RefCell<VimInputState>>,
+    focused_input: Rc<RefCell<VimInputState>>,
+    input_depth: usize,
+    command: VimCommandState,
+}
+
+#[derive(Default)]
+pub struct VimCommandState {
+    pub dot_recording: bool,
+    /// pre_count is the number before an operator is specified (3 in 3d2d)
+    pub pre_count: Option<usize>,
+    /// post_count is the number after an operator is specified (2 in 3d2d)
+    pub post_count: Option<usize>,
+    pub forced_motion: bool,
+    pub stop_recording_after_next_action: bool,
+    pub ignore_current_insertion: bool,
+    pub recording_count: Option<usize>,
+    pub recording_actions: Vec<ReplayableAction>,
+    pub recording_selection: RecordedSelection,
+    /// The register that was selected at the start of the current
+    /// dot-recording, for example, `"ap`.
+    pub recording_register_for_dot: Option<char>,
+}
+
+impl Deref for VimGlobals {
+    type Target = VimCommandState;
+
+    fn deref(&self) -> &Self::Target {
+        &self.command
+    }
+}
+
+impl DerefMut for VimGlobals {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.command
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct VimInputState {
+    pub editor: Option<WeakEntity<Editor>>,
+    pub command: VimCommandState,
+    macro_input: Option<Rc<MacroInputScopeState>>,
+}
+
+impl VimInputState {
+    pub(crate) fn new(editor: WeakEntity<Editor>) -> Rc<RefCell<Self>> {
+        Rc::new(RefCell::new(Self {
+            editor: Some(editor),
+            ..Self::default()
+        }))
+    }
+
+    fn swap(&mut self, globals: &mut VimGlobals) {
+        std::mem::swap(&mut self.command, &mut globals.command);
+    }
 }
 
 pub struct MarksState {
@@ -754,14 +810,75 @@ impl MarksState {
 impl Global for VimGlobals {}
 
 impl VimGlobals {
+    pub(crate) fn with_input<C, R>(
+        input: Rc<RefCell<VimInputState>>,
+        cx: &mut C,
+        run: impl FnOnce(&mut C) -> R,
+    ) -> R
+    where
+        C: BorrowMut<App>,
+    {
+        let globals = cx.borrow_mut().global_mut::<Self>();
+        let previous = globals.input.clone();
+        globals.input_depth += 1;
+        globals.activate_input(input);
+        let result = run(cx);
+        let globals = cx.borrow_mut().global_mut::<Self>();
+        globals.input_depth -= 1;
+        let input = if globals.input_depth == 0 {
+            globals.focused_input.clone()
+        } else {
+            previous
+        };
+        globals.activate_input(input);
+        result
+    }
+
+    pub(crate) fn focus_input(&mut self, input: Rc<RefCell<VimInputState>>) {
+        self.focused_input = input.clone();
+        if self.input_depth == 0 {
+            self.activate_input(input);
+        }
+    }
+
+    pub(crate) fn blur_input(&mut self, input: &Rc<RefCell<VimInputState>>) {
+        if Rc::ptr_eq(&self.focused_input, input) {
+            self.focus_input(Rc::default());
+        }
+    }
+
+    pub(crate) fn abort_recording(&mut self) {
+        self.dot_recording = false;
+        self.stop_recording_after_next_action = false;
+        self.recording_actions.clear();
+        self.recording_count = None;
+        self.recording_selection = RecordedSelection::None;
+        self.recording_register_for_dot = None;
+    }
+
+    pub(crate) fn finish_recording(&mut self) {
+        self.recorded_actions = std::mem::take(&mut self.recording_actions);
+        self.recorded_count = self.recording_count.take();
+        self.recorded_selection = std::mem::take(&mut self.recording_selection);
+        self.recorded_register_for_dot = self.recording_register_for_dot.take();
+        self.dot_recording = false;
+        self.stop_recording_after_next_action = false;
+    }
+
     pub(crate) fn register(cx: &mut App) {
         cx.set_global(VimGlobals::default());
 
-        cx.observe_keystrokes(|event, _, cx| {
-            let Some(action) = event.action.as_ref().map(|action| action.boxed_clone()) else {
-                return;
-            };
-            Vim::globals(cx).observe_action(action.boxed_clone())
+        cx.observe_keystrokes(|event, window, cx| {
+            let vim = Vim::globals(cx)
+                .keystroke_observers
+                .iter()
+                .find(|(focus, _)| window.is_key_dispatching_to(focus))
+                .and_then(|(_, vim)| vim.upgrade());
+            if let Some(vim) = vim {
+                vim.update(cx, |vim, cx| vim.observe_keystrokes(event, window, cx));
+            } else if let Some(action) = event.action.as_ref() {
+                Self::observe_action_after_input(action.boxed_clone(), cx);
+            }
         })
         .detach();
 
@@ -831,14 +948,29 @@ impl VimGlobals {
         .detach();
     }
 
+    pub(crate) fn register_read_uses_clipboard(register: Option<char>, cx: &App) -> bool {
+        match register {
+            Some('+' | '*') => true,
+            None | Some('"') => {
+                VimSettings::get_global(cx).use_system_clipboard != UseSystemClipboard::Never
+            }
+            _ => false,
+        }
+    }
+
+    pub(crate) fn register_write_uses_clipboard(register: Option<char>) -> bool {
+        matches!(register, None | Some('+' | '*'))
+    }
+
     pub(crate) fn write_registers(
         &mut self,
+        editor: &mut Editor,
         content: Register,
         register: Option<char>,
         is_yank: bool,
         kind: MotionKind,
         cx: &mut Context<Editor>,
-    ) {
+    ) -> Result<()> {
         if let Some(register) = register {
             let lower = register.to_lowercase().next().unwrap_or(register);
             if lower != register {
@@ -852,15 +984,15 @@ impl VimGlobals {
                 match lower {
                     '_' | ':' | '.' | '%' | '#' | '=' | '/' => {}
                     '+' => {
-                        self.registers.insert('"', content.clone());
-                        cx.write_to_clipboard(content.into());
+                        editor.write_to_clipboard(ClipboardItem::from(content.clone()), cx)?;
+                        self.registers.insert('"', content);
                     }
                     '*' => {
-                        self.registers.insert('"', content.clone());
                         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-                        cx.write_to_primary(content.into());
+                        editor.write_to_primary(ClipboardItem::from(content.clone()), cx)?;
                         #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-                        cx.write_to_clipboard(content.into());
+                        editor.write_to_clipboard(ClipboardItem::from(content.clone()), cx)?;
+                        self.registers.insert('"', content);
                     }
                     '"' => {
                         self.registers.insert('"', content.clone());
@@ -877,12 +1009,12 @@ impl VimGlobals {
             if setting == UseSystemClipboard::Always
                 || setting == UseSystemClipboard::OnYank && is_yank
             {
+                editor.write_to_clipboard(ClipboardItem::from(content.clone()), cx)?;
                 self.last_yank.replace(content.text.clone());
-                cx.write_to_clipboard(content.clone().into());
-            } else {
-                if let Some(text) = cx.read_from_clipboard().and_then(|i| i.text()) {
-                    self.last_yank.replace(text.into());
-                }
+            } else if let Ok(Some(item)) = editor.read_from_clipboard(cx)
+                && let Some(text) = item.text()
+            {
+                self.last_yank.replace(text.into());
             }
             self.registers.insert('"', content.clone());
             if is_yank {
@@ -904,6 +1036,7 @@ impl VimGlobals {
                 }
             }
         }
+        Ok(())
     }
 
     pub(crate) fn read_register(
@@ -911,29 +1044,46 @@ impl VimGlobals {
         register: Option<char>,
         editor: Option<&mut Editor>,
         cx: &mut App,
-    ) -> Option<Register> {
+    ) -> Result<Option<Register>> {
+        let read_clipboard = |cx: &App| {
+            editor.as_ref().map_or_else(
+                || Ok(cx.read_from_clipboard()),
+                |editor| editor.read_from_clipboard(cx),
+            )
+        };
         let Some(register) = register.filter(|reg| *reg != '"') else {
             let setting = VimSettings::get_global(cx).use_system_clipboard;
-            return match setting {
-                UseSystemClipboard::Always => cx.read_from_clipboard().map(|item| item.into()),
-                UseSystemClipboard::OnYank if self.system_clipboard_is_newer(cx) => {
-                    cx.read_from_clipboard().map(|item| item.into())
+            return Ok(match setting {
+                UseSystemClipboard::Always => read_clipboard(cx)?.map(Register::from),
+                UseSystemClipboard::OnYank => {
+                    let item = read_clipboard(cx)?;
+                    if self.system_clipboard_is_newer(item.as_ref()) {
+                        item.map(Register::from)
+                    } else {
+                        self.registers.get(&'"').cloned()
+                    }
                 }
-                _ => self.registers.get(&'"').cloned(),
-            };
+                UseSystemClipboard::Never => self.registers.get(&'"').cloned(),
+            });
         };
         let lower = register.to_lowercase().next().unwrap_or(register);
-        match lower {
+        Ok(match lower {
             '_' | ':' | '.' | '#' | '=' => None,
-            '+' => cx.read_from_clipboard().map(|item| item.into()),
+            '+' => read_clipboard(cx)?.map(Register::from),
             '*' => {
                 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
                 {
-                    cx.read_from_primary().map(|item| item.into())
+                    editor
+                        .as_ref()
+                        .map_or_else(
+                            || Ok(cx.read_from_primary()),
+                            |editor| editor.read_from_primary(cx),
+                        )?
+                        .map(Register::from)
                 }
                 #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
                 {
-                    cx.read_from_clipboard().map(|item| item.into())
+                    read_clipboard(cx)?.map(Register::from)
                 }
             }
             '%' => editor.and_then(|editor| {
@@ -953,16 +1103,44 @@ impl VimGlobals {
                 }
             }),
             _ => self.registers.get(&lower).cloned(),
-        }
+        })
     }
 
-    fn system_clipboard_is_newer(&self, cx: &App) -> bool {
-        cx.read_from_clipboard().is_some_and(|item| {
-            match (item.text().as_deref(), &self.last_yank) {
-                (Some(new), Some(last)) => last.as_ref() != new,
-                (Some(_), None) => true,
-                (None, _) => false,
-            }
+    fn system_clipboard_is_newer(&self, item: Option<&ClipboardItem>) -> bool {
+        item.is_some_and(|item| match (item.text().as_deref(), &self.last_yank) {
+            (Some(new), Some(last)) => last.as_ref() != new,
+            (Some(_), None) => true,
+            (None, _) => false,
+        })
+    }
+
+    pub(crate) fn observe_action_after_input(action: Box<dyn Action>, cx: &mut App) {
+        Vim::globals(cx).observe_macro_action(Some(action.as_ref()));
+        let deferred_action = action.boxed_clone();
+        if Self::defer_input(
+            move |_, cx| Vim::globals(cx).observe_action(deferred_action),
+            cx,
+        ) {
+            return;
+        }
+        Vim::globals(cx).observe_action(action);
+    }
+
+    pub(crate) fn defer_input(
+        continuation: impl FnOnce(&mut Window, &mut App) + 'static,
+        cx: &mut App,
+    ) -> bool {
+        let input = Vim::globals(cx).input.clone();
+        let editor = input.borrow().editor.as_ref().and_then(WeakEntity::upgrade);
+        editor.is_some_and(|editor| {
+            editor.update(cx, |editor, cx| {
+                editor.defer_external_input(
+                    move |window, cx| {
+                        Self::with_input(input, cx, |cx| continuation(window, cx));
+                    },
+                    cx,
+                )
+            })
         })
     }
 
@@ -972,20 +1150,90 @@ impl VimGlobals {
                 .push(ReplayableAction::Action(action.boxed_clone()));
 
             if self.stop_recording_after_next_action {
-                self.dot_recording = false;
-                self.recorded_actions = std::mem::take(&mut self.recording_actions);
-                self.recorded_count = self.recording_count.take();
-                self.recorded_register_for_dot = self.recording_register_for_dot.take();
-                self.stop_recording_after_next_action = false;
+                self.finish_recording();
             }
         }
-        if self.replayer.is_none()
-            && let Some(recording_register) = self.recording_register
+    }
+
+    pub(crate) fn stop_macro_recording(&mut self) -> bool {
+        if let Some(scope) = &self.input.borrow().macro_input
+            && let Some(input) = &scope.recording
+        {
+            let input = input.0.borrow();
+            if self.recording_register != Some(input.register)
+                || !self
+                    .recordings
+                    .get(&input.register)
+                    .and_then(|recording| recording.get(input.index))
+                    .is_some_and(|action| match action {
+                        ReplayableAction::Pending(pending) => {
+                            Rc::ptr_eq(&pending.identity, &input.identity)
+                        }
+                        _ => false,
+                    })
+            {
+                return true;
+            }
+        }
+        if let Some(register) = self.recording_register.take() {
+            self.last_recorded_register = Some(register);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn submit_macro_action(&mut self, action: &dyn Action) {
+        if !action.name().starts_with("vim::")
+            || action.as_any().is::<crate::normal::repeat::ToggleRecord>()
+        {
+            return;
+        }
+        if let Some(scope) = &self.input.borrow().macro_input
+            && let Some(input) = &scope.recording
+        {
+            let mut input = input.0.as_ref().borrow_mut();
+            let action = ReplayableAction::Action(action.boxed_clone());
+            if let Some(index) = input.submitted_action
+                && let Some(recorded) = input.actions.get_mut(index)
+            {
+                *recorded = action;
+            } else {
+                input.submitted_action = Some(input.actions.len());
+                input.actions.push(action);
+            }
+        }
+    }
+
+    pub(crate) fn observe_macro_action(&mut self, action: Option<&dyn Action>) {
+        let action =
+            action.filter(|action| !action.as_any().is::<crate::normal::repeat::ToggleRecord>());
+        let scope = self.input.borrow().macro_input.clone();
+        if let Some(scope) = scope {
+            if let Some(input) = &scope.recording {
+                let mut input = input.0.as_ref().borrow_mut();
+                if let Some(index) = input.submitted_action.take() {
+                    if let Some(action) = action {
+                        if let Some(recorded) = input.actions.get_mut(index) {
+                            *recorded = ReplayableAction::Action(action.boxed_clone());
+                        }
+                    } else if index < input.actions.len() {
+                        input.actions.remove(index);
+                    }
+                } else if let Some(action) = action {
+                    input
+                        .actions
+                        .push(ReplayableAction::Action(action.boxed_clone()));
+                }
+            }
+        } else if self.replayer.is_none()
+            && let Some(register) = self.recording_register
+            && let Some(action) = action
         {
             self.recordings
-                .entry(recording_register)
+                .entry(register)
                 .or_default()
-                .push(ReplayableAction::Action(action));
+                .push(ReplayableAction::Action(action.boxed_clone()));
         }
     }
 
@@ -1000,25 +1248,35 @@ impl VimGlobals {
                 utf16_range_to_replace: range_to_replace.clone(),
             });
             if self.stop_recording_after_next_action {
-                self.dot_recording = false;
-                self.recorded_actions = std::mem::take(&mut self.recording_actions);
-                self.recorded_count = self.recording_count.take();
-                self.recorded_register_for_dot = self.recording_register_for_dot.take();
-                self.stop_recording_after_next_action = false;
+                self.finish_recording();
             }
         }
-        if let Some(recording_register) = self.recording_register {
-            self.recordings.entry(recording_register).or_default().push(
-                ReplayableAction::Insertion {
-                    text: text.clone(),
-                    utf16_range_to_replace: range_to_replace,
-                },
-            );
+        let scope = self.input.borrow().macro_input.clone();
+        let action = ReplayableAction::Insertion {
+            text: text.clone(),
+            utf16_range_to_replace: range_to_replace,
+        };
+        if let Some(scope) = scope {
+            if let Some(input) = &scope.recording {
+                input.0.as_ref().borrow_mut().actions.push(action);
+            }
+        } else if self.replayer.is_none()
+            && let Some(register) = self.recording_register
+        {
+            self.recordings.entry(register).or_default().push(action);
         }
     }
 
     pub fn focused_vim(&self) -> Option<Entity<Vim>> {
         self.focused_vim.as_ref().and_then(|vim| vim.upgrade())
+    }
+
+    fn activate_input(&mut self, input: Rc<RefCell<VimInputState>>) {
+        if !Rc::ptr_eq(&self.input, &input) {
+            self.input.clone().as_ref().borrow_mut().swap(self);
+            input.as_ref().borrow_mut().swap(self);
+            self.input = input;
+        }
     }
 }
 
@@ -1035,9 +1293,170 @@ impl Vim {
     }
 }
 
+#[derive(Clone)]
+pub struct PendingMacroInput {
+    pub(crate) completion: Shared<LocalBoxFuture<'static, Option<Vec<ReplayableAction>>>>,
+    identity: Rc<()>,
+}
+
+impl std::fmt::Debug for PendingMacroInput {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PendingMacroInput")
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct MacroInput(Rc<RefCell<MacroInputState>>);
+
+pub(crate) struct MacroInputScope {
+    input: Rc<RefCell<VimInputState>>,
+    state: Rc<MacroInputScopeState>,
+}
+
+struct MacroInputScopeState {
+    previous: Option<Rc<MacroInputScopeState>>,
+    recording: Option<MacroInput>,
+    closed: Cell<bool>,
+}
+
+struct MacroInputState {
+    register: char,
+    index: usize,
+    identity: Rc<()>,
+    actions: Vec<ReplayableAction>,
+    submitted_action: Option<usize>,
+    sender: Option<oneshot::Sender<Vec<ReplayableAction>>>,
+}
+
+impl MacroInput {
+    pub(crate) fn capture(cx: &mut App) -> Option<Self> {
+        let globals = Vim::globals(cx);
+        let register = globals.recording_register?;
+        let recording = globals.recordings.entry(register).or_default();
+        let index = recording.len();
+        let identity = Rc::new(());
+        let (sender, receiver) = oneshot::channel();
+        recording.push(ReplayableAction::Pending(PendingMacroInput {
+            identity: identity.clone(),
+            completion: receiver.map(|result| result.ok()).boxed_local().shared(),
+        }));
+        Some(Self(Rc::new(RefCell::new(MacroInputState {
+            register,
+            index,
+            identity,
+            actions: Vec::new(),
+            submitted_action: None,
+            sender: Some(sender),
+        }))))
+    }
+
+    fn finish(&self, cx: &mut App) {
+        let mut input = self.0.as_ref().borrow_mut();
+        let actions = std::mem::take(&mut input.actions);
+        if let Some(recording) = Vim::globals(cx).recordings.get_mut(&input.register)
+            && let Some(ReplayableAction::Pending(pending)) = recording.get(input.index)
+            && Rc::ptr_eq(&pending.identity, &input.identity)
+        {
+            if let [action] = actions.as_slice() {
+                if let Some(recorded) = recording.get_mut(input.index) {
+                    *recorded = action.clone();
+                }
+            } else if input.index + 1 == recording.len() {
+                recording.pop();
+                recording.extend(actions.iter().cloned());
+            }
+        }
+        if let Some(sender) = input.sender.take() {
+            sender.send(actions).ok();
+        }
+    }
+}
+
+impl MacroInputScope {
+    pub(crate) fn new(
+        input: Rc<RefCell<VimInputState>>,
+        mut recording: Option<MacroInput>,
+        cx: &mut App,
+    ) -> Self {
+        if recording.is_none()
+            && Vim::globals(cx)
+                .recording_input
+                .ptr_eq(&Rc::downgrade(&input))
+        {
+            recording = MacroInput::capture(cx);
+        }
+        let state = Rc::new(MacroInputScopeState {
+            previous: input.as_ref().borrow_mut().macro_input.take(),
+            recording,
+            closed: Cell::new(false),
+        });
+        input.as_ref().borrow_mut().macro_input = Some(state.clone());
+        Self { input, state }
+    }
+
+    pub(crate) fn finish_after_input(self, cx: &mut App) {
+        cx.defer(move |cx| {
+            cx.defer(move |cx| {
+                let editor = self
+                    .input
+                    .borrow()
+                    .editor
+                    .as_ref()
+                    .and_then(WeakEntity::upgrade);
+                if let Some(editor) = editor {
+                    let scope = Rc::new(RefCell::new(Some(self)));
+                    let deferred_scope = scope.clone();
+                    let deferred = editor.update(cx, |editor, cx| {
+                        editor.defer_external_input(
+                            move |_, cx| {
+                                if let Some(scope) = deferred_scope.as_ref().borrow_mut().take() {
+                                    scope.finish(cx);
+                                }
+                            },
+                            cx,
+                        )
+                    });
+                    if !deferred && let Some(scope) = scope.as_ref().borrow_mut().take() {
+                        scope.finish(cx);
+                    }
+                }
+            });
+        });
+    }
+
+    fn finish(self, cx: &mut App) {
+        if let Some(recording) = &self.state.recording {
+            recording.finish(cx);
+        }
+    }
+}
+
+impl Drop for MacroInputScope {
+    fn drop(&mut self) {
+        self.state.closed.set(true);
+        let mut input = self.input.as_ref().borrow_mut();
+        while let Some(scope) = &input.macro_input
+            && scope.closed.get()
+        {
+            input.macro_input = scope.previous.clone();
+        }
+    }
+}
+
+impl Drop for MacroInputState {
+    fn drop(&mut self) {
+        if let Some(sender) = self.sender.take() {
+            sender.send(std::mem::take(&mut self.actions)).ok();
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum ReplayableAction {
     Action(Box<dyn Action>),
+    Pending(PendingMacroInput),
     Insertion {
         text: Arc<str>,
         utf16_range_to_replace: Option<Range<isize>>,
@@ -1048,6 +1467,7 @@ impl Clone for ReplayableAction {
     fn clone(&self) -> Self {
         match self {
             Self::Action(action) => Self::Action(action.boxed_clone()),
+            Self::Pending(input) => Self::Pending(input.clone()),
             Self::Insertion {
                 text,
                 utf16_range_to_replace,
@@ -1400,7 +1820,11 @@ impl RegistersView {
         let mut matches = Vec::default();
         cx.update_global(|globals: &mut VimGlobals, cx| {
             for name in ['"', '+', '*'] {
-                if let Some(register) = globals.read_register(Some(name), None, cx) {
+                if let Some(register) = globals
+                    .read_register(Some(name), None, cx)
+                    .log_err()
+                    .flatten()
+                {
                     matches.push(RegisterMatch {
                         name,
                         contents: register.text.clone(),
@@ -1411,7 +1835,7 @@ impl RegistersView {
                 let register = editor.update(cx, |editor, cx| {
                     globals.read_register(Some('%'), Some(editor), cx)
                 });
-                if let Some(register) = register {
+                if let Some(register) = register.log_err().flatten() {
                     matches.push(RegisterMatch {
                         name: '%',
                         contents: register.text,

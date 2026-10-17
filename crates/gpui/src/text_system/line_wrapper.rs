@@ -1,4 +1,6 @@
-use crate::{FontId, FontRun, LineLayout, Pixels, SharedString, TextRun, TextSystem, px};
+use crate::{
+    FontId, FontRun, LineLayout, Pixels, RetainedLineLayout, SharedString, TextRun, TextSystem, px,
+};
 use collections::HashMap;
 use std::{borrow::Cow, iter, sync::Arc};
 
@@ -569,11 +571,29 @@ impl LineWrapper {
         self.font_id
     }
 
+    /// Shapes a complete line for retained geometry.
+    pub fn layout_line_for_retention(&self, text: &str, runs: &[FontRun]) -> RetainedLineLayout {
+        self.text_system
+            .platform_text_system
+            .layout_line_for_retention(text, self.font_size, runs)
+    }
+
     /// Shapes the given single line of text with the given font runs at this wrapper's font size, without caching.
     pub fn layout_line(&self, text: &str, runs: &[FontRun]) -> LineLayout {
         self.text_system
             .platform_text_system
             .layout_line(text, self.font_size, runs)
+    }
+
+    /// Returns the layout, flattened glyph x positions, and width, with platform-dependent precision.
+    pub fn layout_line_with_precise_positions(
+        &self,
+        text: &str,
+        runs: &[FontRun],
+    ) -> (LineLayout, Vec<f64>, f64) {
+        self.text_system
+            .platform_text_system
+            .layout_line_with_precise_positions(text, self.font_size, runs)
     }
 }
 

@@ -16,7 +16,7 @@ use std::{
     any::TypeId,
     cmp::{self, Ordering},
     fmt, iter,
-    ops::{Add, AddAssign, Deref, DerefMut, Range, Sub, SubAssign},
+    ops::{Add, AddAssign, ControlFlow, Deref, DerefMut, Range, Sub, SubAssign},
     sync::Arc,
     usize,
 };
@@ -37,6 +37,7 @@ pub struct FoldPlaceholder {
     /// Text provided by the language server to display in place of the folded range.
     /// When set, this is used instead of the default "⋯" ellipsis.
     pub collapsed_text: Option<SharedString>,
+    pub uniform_width: bool,
 }
 
 impl Default for FoldPlaceholder {
@@ -47,6 +48,7 @@ impl Default for FoldPlaceholder {
             merge_adjacent: true,
             type_tag: None,
             collapsed_text: None,
+            uniform_width: false,
         }
     }
 }
@@ -80,6 +82,7 @@ impl FoldPlaceholder {
             merge_adjacent: true,
             type_tag: None,
             collapsed_text: None,
+            uniform_width: false,
         }
     }
 }
@@ -100,6 +103,7 @@ impl PartialEq for FoldPlaceholder {
         Arc::ptr_eq(&self.render, &other.render)
             && self.constrain_width == other.constrain_width
             && self.collapsed_text == other.collapsed_text
+            && self.uniform_width == other.uniform_width
     }
 }
 
@@ -387,6 +391,9 @@ impl FoldMap {
                         summary: TransformSummary {
                             input: inlay_snapshot.text_summary(),
                             output: inlay_snapshot.text_summary(),
+                            unmeasured_renderers: inlay_snapshot.unmeasured_renderer_count(
+                                InlayOffset(MultiBufferOffset(0))..inlay_snapshot.len(),
+                            ),
                         },
                         placeholder: None,
                     },
@@ -432,6 +439,21 @@ impl FoldMap {
                 self.snapshot.inlay_snapshot.len().0,
                 "transform tree does not match inlay snapshot's length"
             );
+
+            let mut inlay_start = InlayOffset(MultiBufferOffset(0));
+            for transform in self.snapshot.transforms.iter() {
+                let inlay_end = inlay_start + transform.summary.input.len.0;
+                if !transform.is_fold() {
+                    assert_eq!(
+                        transform.summary.unmeasured_renderers,
+                        self.snapshot
+                            .inlay_snapshot
+                            .unmeasured_renderer_count(inlay_start..inlay_end),
+                        "unmeasured renderers in {inlay_start:?}..{inlay_end:?}"
+                    );
+                }
+                inlay_start = inlay_end;
+            }
 
             let mut prev_transform_isomorphic = false;
             for transform in self.snapshot.transforms.iter() {
@@ -578,9 +600,12 @@ impl FoldMap {
                     }
 
                     if fold_range.start.0 > sum.input.len {
-                        let text_summary = inlay_snapshot
-                            .text_summary_for_range(InlayOffset(sum.input.len)..fold_range.start);
-                        push_isomorphic(&mut new_transforms, text_summary);
+                        let isomorphic_start = InlayOffset(sum.input.len);
+                        push_isomorphic(
+                            &mut new_transforms,
+                            &inlay_snapshot,
+                            isomorphic_start..fold_range.start,
+                        );
                     }
 
                     if fold_range.end > fold_range.start {
@@ -598,12 +623,20 @@ impl FoldMap {
                             });
 
                         let fold_id = fold.id;
+                        let width_class = fold.placeholder.uniform_width.then(|| {
+                            RendererWidthClass::Placeholder {
+                                render: Arc::as_ptr(&fold.placeholder.render).cast::<()>().addr(),
+                                constrain_width: fold.placeholder.constrain_width,
+                                text: placeholder_text.clone(),
+                            }
+                        });
                         new_transforms.push(
                             Transform {
                                 summary: TransformSummary {
                                     output: MBTextSummary::from(placeholder_text.as_ref()),
                                     input: inlay_snapshot
                                         .text_summary_for_range(fold_range.start..fold_range.end),
+                                    unmeasured_renderers: 0,
                                 },
                                 placeholder: Some(TransformPlaceholder {
                                     text: placeholder_text,
@@ -619,6 +652,7 @@ impl FoldMap {
                                         }),
                                         constrain_width: fold.placeholder.constrain_width,
                                         measured_width: self.snapshot.fold_width(&fold_id),
+                                        width_class,
                                     },
                                 }),
                             },
@@ -627,18 +661,23 @@ impl FoldMap {
                     }
                 }
 
-                let sum = new_transforms.summary();
-                if sum.input.len < edit.new.end.0 {
-                    let text_summary = inlay_snapshot
-                        .text_summary_for_range(InlayOffset(sum.input.len)..edit.new.end);
-                    push_isomorphic(&mut new_transforms, text_summary);
+                let isomorphic_start = InlayOffset(new_transforms.summary().input.len);
+                if isomorphic_start < edit.new.end {
+                    push_isomorphic(
+                        &mut new_transforms,
+                        &inlay_snapshot,
+                        isomorphic_start..edit.new.end,
+                    );
                 }
             }
 
             new_transforms.append(cursor.suffix(), ());
             if new_transforms.is_empty() {
-                let text_summary = inlay_snapshot.text_summary();
-                push_isomorphic(&mut new_transforms, text_summary);
+                push_isomorphic(
+                    &mut new_transforms,
+                    &inlay_snapshot,
+                    InlayOffset(MultiBufferOffset(0))..inlay_snapshot.len(),
+                );
             }
 
             drop(cursor);
@@ -789,6 +828,101 @@ impl FoldSnapshot {
         item.is_some_and(|transform| transform.placeholder.is_some())
     }
 
+    pub(super) fn has_unmeasured_renderers(&self) -> bool {
+        self.transforms.summary().unmeasured_renderers > 0
+    }
+
+    pub(super) fn renderer_source(
+        &self,
+        id: ChunkRendererId,
+    ) -> Option<(ChunkRenderer, RendererTextSource)> {
+        match id {
+            ChunkRendererId::Inlay(id) => self.inlay_snapshot.renderer_source(id),
+            ChunkRendererId::Fold(fold_id) => {
+                let metadata = self.fold_metadata_by_id.get(&fold_id)?;
+                let start = self
+                    .inlay_snapshot
+                    .to_inlay_offset(metadata.range.start.to_offset(self.buffer()));
+                let (_, _, transform) =
+                    self.transforms
+                        .find::<InlayOffset, _>((), &start, Bias::Right);
+                let placeholder = transform?.placeholder.as_ref()?;
+                (placeholder.renderer.id == id).then(|| {
+                    (
+                        placeholder.renderer.clone(),
+                        RendererTextSource::Shared(placeholder.text.clone()),
+                    )
+                })
+            }
+        }
+    }
+
+    pub(super) fn for_each_unmeasured_renderer(
+        &self,
+        range: Range<FoldOffset>,
+        f: &mut dyn FnMut(ChunkRenderer, RendererTextSource) -> ControlFlow<()>,
+    ) -> ControlFlow<()> {
+        let Range {
+            start: mut index,
+            end,
+        } = self.unmeasured_renderer_indices(range.clone());
+        if index >= end {
+            return ControlFlow::Continue(());
+        }
+        let mut cursor = self
+            .transforms
+            .cursor::<Dimensions<UnmeasuredRenderers, FoldOffset, InlayOffset>>(());
+        cursor.seek(&UnmeasuredRenderers(index), Bias::Right);
+        while index < end {
+            cursor.seek_forward(&UnmeasuredRenderers(index), Bias::Right);
+            let Some(transform) = cursor.item() else {
+                break;
+            };
+            match &transform.placeholder {
+                Some(placeholder) => {
+                    if placeholder.renderer.measured_width.is_none() {
+                        f(
+                            placeholder.renderer.clone(),
+                            RendererTextSource::Shared(placeholder.text.clone()),
+                        )?;
+                    }
+                }
+                None => {
+                    let Dimensions(_, fold_start, inlay_start) = *cursor.start();
+                    let fold_end = cursor.end().1;
+                    let start = range.start.max(fold_start);
+                    let end = range.end.min(fold_end);
+                    if start < end {
+                        self.inlay_snapshot.for_each_unmeasured_renderer(
+                            inlay_start + (start - fold_start)..inlay_start + (end - fold_start),
+                            f,
+                        )?;
+                    }
+                }
+            }
+            index = cursor.end().0.0.max(index + 1);
+        }
+        ControlFlow::Continue(())
+    }
+
+    fn unmeasured_renderer_indices(&self, range: Range<FoldOffset>) -> Range<usize> {
+        if range.is_empty() || !self.has_unmeasured_renderers() {
+            return 0..0;
+        }
+        let mut cursor = self
+            .transforms
+            .cursor::<Dimensions<FoldOffset, UnmeasuredRenderers>>(());
+        cursor.seek(&range.start, Bias::Right);
+        let start = cursor.start().1.0;
+        cursor.seek_forward(&range.end, Bias::Right);
+        let end = if cursor.start().0 < range.end {
+            cursor.end().1.0
+        } else {
+            cursor.start().1.0
+        };
+        start..end.max(start)
+    }
+
     #[ztracing::instrument(skip_all)]
     fn fold_width(&self, fold_id: &FoldId) -> Option<Pixels> {
         self.fold_metadata_by_id.get(fold_id)?.width
@@ -820,6 +954,9 @@ impl FoldSnapshot {
 
     #[ztracing::instrument(skip_all)]
     pub fn text_summary_for_range(&self, range: Range<FoldPoint>) -> MBTextSummary {
+        if range.start == FoldPoint::new(0, 0) && range.end == self.max_point() {
+            return self.transforms.summary().output;
+        }
         let mut summary = MBTextSummary::default();
 
         let mut cursor = self
@@ -829,7 +966,9 @@ impl FoldSnapshot {
         if let Some(transform) = cursor.item() {
             let start_in_transform = range.start.0 - cursor.start().0.0;
             let end_in_transform = cmp::min(range.end, cursor.end().0).0 - cursor.start().0.0;
-            if let Some(placeholder) = transform.placeholder.as_ref() {
+            if range.start == cursor.start().0 && range.end >= cursor.end().0 {
+                summary = transform.summary.output;
+            } else if let Some(placeholder) = transform.placeholder.as_ref() {
                 summary = MBTextSummary::from(
                     &placeholder.text.as_ref()
                         [start_in_transform.column as usize..end_in_transform.column as usize],
@@ -1158,13 +1297,20 @@ impl FoldPointCursor<'_> {
     }
 }
 
-fn push_isomorphic(transforms: &mut SumTree<Transform>, summary: MBTextSummary) {
+fn push_isomorphic(
+    transforms: &mut SumTree<Transform>,
+    inlay_snapshot: &InlaySnapshot,
+    range: Range<InlayOffset>,
+) {
+    let summary = inlay_snapshot.text_summary_for_range(range.clone());
+    let unmeasured_renderers = inlay_snapshot.unmeasured_renderer_count(range);
     let mut did_merge = false;
     transforms.update_last(
         |last| {
             if !last.is_fold() {
                 last.summary.input += summary;
                 last.summary.output += summary;
+                last.summary.unmeasured_renderers += unmeasured_renderers;
                 did_merge = true;
             }
         },
@@ -1176,6 +1322,7 @@ fn push_isomorphic(transforms: &mut SumTree<Transform>, summary: MBTextSummary) 
                 summary: TransformSummary {
                     input: summary,
                     output: summary,
+                    unmeasured_renderers,
                 },
                 placeholder: None,
             },
@@ -1300,13 +1447,20 @@ impl Transform {
 struct TransformSummary {
     output: MBTextSummary,
     input: MBTextSummary,
+    unmeasured_renderers: usize,
 }
 
 impl sum_tree::Item for Transform {
     type Summary = TransformSummary;
 
     fn summary(&self, _cx: ()) -> Self::Summary {
-        self.summary.clone()
+        match &self.placeholder {
+            Some(placeholder) => TransformSummary {
+                unmeasured_renderers: usize::from(placeholder.renderer.measured_width.is_none()),
+                ..self.summary.clone()
+            },
+            None => self.summary.clone(),
+        }
     }
 }
 
@@ -1318,6 +1472,7 @@ impl sum_tree::ContextLessSummary for TransformSummary {
     fn add_summary(&mut self, other: &Self) {
         self.input += other.input;
         self.output += other.output;
+        self.unmeasured_renderers += other.unmeasured_renderers;
     }
 }
 
@@ -1560,12 +1715,67 @@ pub struct ChunkRenderer {
     ///
     /// This is None if the element has not been laid out yet.
     pub measured_width: Option<Pixels>,
+    pub width_class: Option<RendererWidthClass>,
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub enum RendererWidthClass {
+    ColorSwatch,
+    Placeholder {
+        render: usize,
+        constrain_width: bool,
+        text: SharedString,
+    },
 }
 
 pub struct ChunkRendererContext<'a, 'b> {
     pub window: &'a mut Window,
     pub context: &'b mut App,
     pub max_width: Pixels,
+}
+
+#[derive(Clone)]
+pub(crate) enum RendererTextSource {
+    Shared(SharedString),
+    Rope(Arc<text::Rope>),
+}
+
+impl RendererTextSource {
+    pub(crate) fn same_source(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Shared(left), Self::Shared(right)) => {
+                left.len() == right.len()
+                    && (left.as_ptr() == right.as_ptr() || (left.len() <= 32 && left == right))
+            }
+            (Self::Rope(left), Self::Rope(right)) => Arc::ptr_eq(left, right),
+            _ => false,
+        }
+    }
+
+    pub(crate) fn materialize(&self) -> SharedString {
+        match self {
+            Self::Shared(text) => text.clone(),
+            Self::Rope(text) => SharedString::from(text.to_string()),
+        }
+    }
+}
+
+impl From<SharedString> for RendererTextSource {
+    fn from(text: SharedString) -> Self {
+        Self::Shared(text)
+    }
+}
+
+impl From<&SharedString> for RendererTextSource {
+    fn from(text: &SharedString) -> Self {
+        Self::Shared(text.clone())
+    }
+}
+
+impl From<&RendererTextSource> for RendererTextSource {
+    fn from(text: &RendererTextSource) -> Self {
+        text.clone()
+    }
 }
 
 impl fmt::Debug for ChunkRenderer {
@@ -1814,6 +2024,19 @@ where
     }
 }
 
+#[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
+struct UnmeasuredRenderers(usize);
+
+impl<'a> sum_tree::Dimension<'a, TransformSummary> for UnmeasuredRenderers {
+    fn zero(_cx: ()) -> Self {
+        Self::default()
+    }
+
+    fn add_summary(&mut self, summary: &'a TransformSummary, _: ()) {
+        self.0 += summary.unmeasured_renderers;
+    }
+}
+
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for FoldOffset {
     fn zero(_cx: ()) -> Self {
         Default::default()
@@ -1849,7 +2072,7 @@ pub type FoldEdit = Edit<FoldOffset>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{MultiBuffer, ToPoint, display_map::inlay_map::InlayMap};
+    use crate::{MultiBuffer, ToPoint, display_map::inlay_map::InlayMap, inlays::Inlay};
     use Bias::{Left, Right};
     use collections::HashSet;
     use rand::prelude::*;
@@ -1936,6 +2159,34 @@ mod tests {
         writer.unfold_intersecting(Some(Point::new(0, 4)..Point::new(0, 4)), true);
         let (snapshot6, _) = map.read(inlay_snapshot, vec![]);
         assert_eq!(snapshot6.text(), "123aaaaa\nbbbbbb\nccc123456eee");
+
+        let (mut writer, _, _) = map.write(snapshot6.inlay_snapshot, Vec::new());
+        let (snapshot, _) = writer.fold([(
+            Point::new(0, 3)..Point::new(0, 5),
+            FoldPlaceholder {
+                collapsed_text: Some(SharedString::from("é⋯")),
+                ..FoldPlaceholder::test()
+            },
+        )]);
+        for (range, expected) in [
+            (3..8, "é⋯"),
+            (3..5, "é"),
+            (5..8, "⋯"),
+            (1..8, "23é⋯"),
+            (1..5, "23é"),
+            (5..10, "⋯aa"),
+            (3..10, "é⋯aa"),
+            (5..5, ""),
+            (8..8, ""),
+        ] {
+            assert_eq!(
+                snapshot.text_summary_for_range(
+                    FoldPoint::new(0, range.start)..FoldPoint::new(0, range.end)
+                ),
+                MBTextSummary::from(expected),
+                "{range:?}"
+            );
+        }
     }
 
     #[gpui::test]
@@ -2119,6 +2370,7 @@ mod tests {
         let mut snapshot_edits = Vec::new();
 
         let mut next_inlay_id = 0;
+        let mut measured_inlays = HashSet::default();
         for _ in 0..operations {
             log::info!("text: {:?}", buffer_snapshot.text());
             let mut buffer_edits = Vec::new();
@@ -2127,8 +2379,49 @@ mod tests {
                 0..=39 => {
                     snapshot_edits.extend(map.randomly_mutate(&mut rng));
                 }
-                40..=59 => {
+                40..=49 => {
                     let (_, edits) = inlay_map.randomly_mutate(&mut next_inlay_id, &mut rng);
+                    inlay_edits = edits;
+                }
+                50..=54 => {
+                    let position = buffer_snapshot
+                        .random_byte_range(MultiBufferOffset(0), &mut rng)
+                        .start;
+                    let bias = if rng.random() { Left } else { Right };
+                    let inlay = Inlay::color(
+                        post_inc(&mut next_inlay_id),
+                        buffer_snapshot.anchor_at(position, bias),
+                        gpui::rgba(0xff0000ff),
+                    );
+                    log::info!("inserting color inlay {:?} at {position:?}", inlay.id);
+                    let (_, edits) = inlay_map.splice(&[], vec![inlay]);
+                    inlay_edits = edits;
+                }
+                55..=59 => {
+                    let invalidate = rng.random_bool(0.2);
+                    let widths = inlay_map
+                        .current_inlays()
+                        .map(|inlay| inlay.id)
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .filter(|_| rng.random())
+                        .collect::<Vec<_>>();
+                    log::info!("measuring inlays {widths:?}, invalidating: {invalidate}");
+                    if invalidate {
+                        measured_inlays.clear();
+                    }
+                    measured_inlays.extend(
+                        widths
+                            .iter()
+                            .filter(|id| matches!(id, InlayId::Color(_)))
+                            .copied(),
+                    );
+                    let (_, edits) = inlay_map.update_renderer_widths(
+                        invalidate,
+                        widths
+                            .into_iter()
+                            .map(|id| (ChunkRendererId::Inlay(id), gpui::px(1.))),
+                    );
                     inlay_edits = edits;
                 }
                 _ => buffer.update(cx, |buffer, cx| {
@@ -2165,6 +2458,71 @@ mod tests {
                 expected_text,
                 expected_text.matches('\n').count() + 1
             );
+
+            let fold_inlay_ranges = map
+                .merged_folds()
+                .into_iter()
+                .map(|fold_range| {
+                    inlay_snapshot.to_inlay_offset(fold_range.start)
+                        ..inlay_snapshot.to_inlay_offset(fold_range.end)
+                })
+                .collect::<Vec<_>>();
+            let to_fold_offset = |offset: InlayOffset| {
+                snapshot
+                    .to_fold_point(inlay_snapshot.to_point(offset), Right)
+                    .to_offset(&snapshot)
+            };
+            let displayed_unmeasured = inlay_map
+                .current_inlays()
+                .filter(|inlay| {
+                    matches!(inlay.id, InlayId::Color(_)) && !measured_inlays.contains(&inlay.id)
+                })
+                .filter_map(|inlay| {
+                    let range = inlay_snapshot.inlay_offset_range(inlay.id, inlay.position)?;
+                    let folded = fold_inlay_ranges
+                        .iter()
+                        .any(|fold| fold.start <= range.start && range.end <= fold.end);
+                    (!folded).then(|| {
+                        (
+                            inlay.id,
+                            to_fold_offset(range.start)..to_fold_offset(range.end),
+                        )
+                    })
+                })
+                .collect::<Vec<_>>();
+            let fold_len = snapshot.len().0.0;
+            let query_start = rng.random_range(0..=fold_len);
+            let query_end = rng.random_range(query_start..=fold_len);
+            for query in [0..fold_len, query_start..query_end] {
+                let query = FoldOffset(MultiBufferOffset(query.start))
+                    ..FoldOffset(MultiBufferOffset(query.end));
+                let mut expected = displayed_unmeasured
+                    .iter()
+                    .filter(|(_, range)| {
+                        !query.is_empty() && range.start < query.end && query.start < range.end
+                    })
+                    .map(|(id, _)| *id)
+                    .collect::<Vec<_>>();
+                expected.sort_unstable();
+                let mut unmeasured = Vec::new();
+                let flow = snapshot.for_each_unmeasured_renderer(
+                    query.clone(),
+                    &mut |renderer, source| {
+                        let (current, current_source) = snapshot
+                            .renderer_source(renderer.id)
+                            .expect("renderer source");
+                        assert!(source.same_source(&current_source));
+                        assert!(Arc::ptr_eq(&renderer.render, &current.render));
+                        if let ChunkRendererId::Inlay(id) = renderer.id {
+                            unmeasured.push(id);
+                        }
+                        ControlFlow::Continue(())
+                    },
+                );
+                assert_eq!(flow, ControlFlow::Continue(()));
+                unmeasured.sort_unstable();
+                assert_eq!(unmeasured, expected, "unmeasured renderers in {query:?}");
+            }
 
             let mut prev_row = 0;
             let mut expected_buffer_rows = Vec::new();

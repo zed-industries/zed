@@ -4,12 +4,18 @@ use super::{
 };
 
 use language::{LanguageAwareStyling, Point};
-use multi_buffer::{MultiBufferRow, MultiBufferSnapshot};
+use multi_buffer::{MBTextSummary, MultiBufferRow, MultiBufferSnapshot};
+#[cfg(test)]
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 use std::{cmp, num::NonZeroU32, ops::Range};
-use sum_tree::Bias;
+use sum_tree::{Bias, SumTree};
 
 const MAX_EXPANSION_COLUMN: u32 = 256;
 const MAX_ROW_SCAN_CHUNKS: usize = 8;
+const MAX_SUMMARY_ROWS: u32 = 64;
 
 // Handles a tab width <= 128
 const SPACES: &[u8; rope::Chunk::MASK_BITS] = &[b' '; _];
@@ -23,18 +29,25 @@ pub struct TabMap(TabSnapshot);
 impl TabMap {
     #[ztracing::instrument(skip_all)]
     pub fn new(fold_snapshot: FoldSnapshot, tab_size: NonZeroU32) -> (Self, TabSnapshot) {
-        let snapshot = TabSnapshot {
+        let mut snapshot = TabSnapshot {
             fold_snapshot,
             tab_size: tab_size.min(MAX_TABS),
             max_expansion_column: MAX_EXPANSION_COLUMN,
             version: 0,
+            row_lengths: SumTree::new(()),
+            #[cfg(test)]
+            summary_lookups: Arc::new(AtomicUsize::new(0)),
+            #[cfg(test)]
+            summary_bytes_scanned: Arc::new(AtomicUsize::new(0)),
         };
+        snapshot.rebuild_row_lengths();
         (Self(snapshot.clone()), snapshot)
     }
 
     #[cfg(test)]
     pub fn set_max_expansion_column(&mut self, column: u32) -> TabSnapshot {
         self.0.max_expansion_column = column;
+        self.0.rebuild_row_lengths();
         self.0.clone()
     }
 
@@ -52,6 +65,7 @@ impl TabMap {
             self.0.version += 1;
             self.0.fold_snapshot = fold_snapshot;
             self.0.tab_size = tab_size;
+            self.0.rebuild_row_lengths();
             return (
                 self.0.clone(),
                 vec![TabEdit {
@@ -71,6 +85,13 @@ impl TabMap {
             old_snapshot.version = new_version;
             old_snapshot.fold_snapshot = fold_snapshot;
             old_snapshot.tab_size = tab_size;
+            #[cfg(test)]
+            {
+                old_snapshot.summary_lookups.store(0, Ordering::Relaxed);
+                old_snapshot
+                    .summary_bytes_scanned
+                    .store(0, Ordering::Relaxed);
+            }
             return (old_snapshot.clone(), vec![]);
         }
 
@@ -155,11 +176,16 @@ impl TabMap {
         }
         drop(old_chunks);
 
-        let new_snapshot = TabSnapshot {
+        let mut new_snapshot = TabSnapshot {
             fold_snapshot,
             tab_size,
             max_expansion_column: old_snapshot.max_expansion_column,
             version: new_version,
+            row_lengths: SumTree::new(()),
+            #[cfg(test)]
+            summary_lookups: Arc::new(AtomicUsize::new(0)),
+            #[cfg(test)]
+            summary_bytes_scanned: Arc::new(AtomicUsize::new(0)),
         };
 
         let _old_alloc_ptr = fold_edits.as_ptr();
@@ -199,8 +225,32 @@ impl TabMap {
                         new: new_cursor.map(new_start)..new_cursor.map(new_end),
                     }
                 })
-                .collect()
+                .collect::<Vec<_>>()
         };
+        let mut old_row = 0;
+        let mut edits = tab_edits.iter().peekable();
+        while let Some(edit) = edits.next() {
+            let old_start = edit.old.start.row();
+            let new_start = edit.new.start.row();
+            let mut old_end = edit.old.end.row() + 1;
+            let mut new_end = edit.new.end.row() + 1;
+            while let Some(next) = edits.peek().filter(|next| next.old.start.row() < old_end) {
+                old_end = old_end.max(next.old.end.row() + 1);
+                new_end = new_end.max(next.new.end.row() + 1);
+                edits.next();
+            }
+            append_row_lengths(
+                &mut new_snapshot.row_lengths,
+                old_snapshot.slice_row_lengths(old_row..old_start),
+            );
+            let replacement = new_snapshot.summarize_rows(new_start..new_end);
+            append_row_lengths(&mut new_snapshot.row_lengths, replacement);
+            old_row = old_end;
+        }
+        append_row_lengths(
+            &mut new_snapshot.row_lengths,
+            old_snapshot.slice_row_lengths(old_row..old_snapshot.row_lengths.summary().lines.row),
+        );
         *old_snapshot = new_snapshot;
         (old_snapshot.clone(), tab_edits)
     }
@@ -214,6 +264,11 @@ pub struct TabSnapshot {
     /// Any tab after this column will not expand.
     pub max_expansion_column: u32,
     pub version: usize,
+    row_lengths: SumTree<RowLength>,
+    #[cfg(test)]
+    summary_lookups: Arc<AtomicUsize>,
+    #[cfg(test)]
+    summary_bytes_scanned: Arc<AtomicUsize>,
 }
 
 impl std::ops::Deref for TabSnapshot {
@@ -308,12 +363,26 @@ impl TabSnapshot {
             )
         };
 
+        let mut longest_row = 0;
+        let mut longest_row_chars = first_line_chars;
+        if range.end.row() - range.start.row() > 1 {
+            let summary = self.row_summary(range.start.row() + 1..range.end.row());
+            if summary.longest_row_chars > longest_row_chars {
+                longest_row = 1 + summary.longest_row;
+                longest_row_chars = summary.longest_row_chars;
+            }
+        }
+        if last_line_chars > longest_row_chars {
+            longest_row = range.end.row() - range.start.row();
+            longest_row_chars = last_line_chars;
+        }
+
         TextSummary {
             lines: range.end.0 - range.start.0,
             first_line_chars,
             last_line_chars,
-            longest_row: input_summary.longest_row,
-            longest_row_chars: input_summary.longest_row_chars,
+            longest_row,
+            longest_row_chars,
         }
     }
 
@@ -452,6 +521,208 @@ impl TabSnapshot {
         self.fold_snapshot
             .inlay_snapshot
             .to_buffer_point(inlay_point)
+    }
+
+    fn rebuild_row_lengths(&mut self) {
+        #[cfg(test)]
+        {
+            self.summary_lookups.store(0, Ordering::Relaxed);
+            self.summary_bytes_scanned.store(0, Ordering::Relaxed);
+        }
+        self.row_lengths = self.summarize_rows(0..self.fold_snapshot.max_point().row() + 1);
+    }
+
+    fn summarize_rows(&self, rows: Range<u32>) -> SumTree<RowLength> {
+        let summary = self.fold_row_summary(rows.clone());
+        if !summary.has_tabs || self.tab_size.get() == 1 || self.max_expansion_column == 0 {
+            return SumTree::from_iter([RowLength::unchanged(rows.end - rows.start, summary)], ());
+        }
+        if rows.end - rows.start > MAX_SUMMARY_ROWS {
+            let middle = rows.start
+                + (rows.end - rows.start).div_ceil(MAX_SUMMARY_ROWS) / 2 * MAX_SUMMARY_ROWS;
+            let mut lengths = self.summarize_rows(rows.start..middle);
+            append_row_lengths(&mut lengths, self.summarize_rows(middle..rows.end));
+            return lengths;
+        }
+        SumTree::from_iter([self.scan_rows(rows, summary)], ())
+    }
+
+    fn scan_rows(&self, rows: Range<u32>, summary: MBTextSummary) -> RowLength {
+        let mut length = RowLength::unchanged(rows.end - rows.start, summary);
+        let mut position = Point::new(rows.start, 0);
+        let end = Point::new(rows.end, 0).min(self.fold_snapshot.max_point().0);
+        let end_offset = FoldPoint(end).to_offset(&self.fold_snapshot);
+        let mut chunks = self.fold_snapshot.chunks(
+            FoldPoint(position).to_offset(&self.fold_snapshot)..end_offset,
+            LanguageAwareStyling {
+                tree_sitter: false,
+                diagnostics: false,
+            },
+            Highlights::default(),
+        );
+        let mut row_chars = 0;
+        let mut expansion = 0;
+        while position < end {
+            let Some(chunk) = chunks.next() else { break };
+            let oversized = chunk.text.len() > u128::BITS as usize;
+            if oversized {
+                let input_end =
+                    FoldPoint::new(position.row, self.fold_snapshot.line_len(position.row));
+                expansion = self.fold_point_to_tab_point(input_end).column() - input_end.column();
+                row_chars = 0;
+            } else {
+                #[cfg(test)]
+                self.summary_bytes_scanned
+                    .fetch_add(chunk.text.len(), Ordering::Relaxed);
+                let chunk_len = chunk.text.len() as u32;
+                let mask = !u128::MAX.unbounded_shl(chunk_len);
+                let chars = chunk.chars & mask;
+                let mut offset = 0;
+                while offset < chunk_len {
+                    let remaining = mask & u128::MAX.unbounded_shl(offset);
+                    let newlines = chunk.newlines & remaining;
+                    let mut tabs = chunk.tabs & remaining;
+                    if tabs == 0 && expansion == 0 {
+                        if newlines == 0 {
+                            row_chars += (chars & remaining).count_ones();
+                            position.column += chunk_len - offset;
+                        } else {
+                            let last_start = u128::BITS - newlines.leading_zeros();
+                            row_chars = (chars & u128::MAX.unbounded_shl(last_start)).count_ones();
+                            position += Point::new(newlines.count_ones(), chunk_len - last_start);
+                        }
+                        break;
+                    }
+                    let row_end = newlines.trailing_zeros().min(chunk_len);
+                    let row_mask = remaining & !u128::MAX.unbounded_shl(row_end);
+                    tabs &= row_mask;
+                    while tabs != 0 {
+                        let tab = tabs.trailing_zeros();
+                        if position.column + tab - offset >= self.max_expansion_column {
+                            break;
+                        }
+                        let before_tab =
+                            (chars & row_mask & !u128::MAX.unbounded_shl(tab)).count_ones();
+                        expansion += self.tab_size.get()
+                            - 1
+                            - (row_chars + before_tab + expansion) % self.tab_size.get();
+                        tabs &= tabs - 1;
+                    }
+                    row_chars += (chars & row_mask).count_ones();
+                    position.column += row_end - offset;
+                    offset = row_end;
+                    if row_end < chunk_len {
+                        length.expand_row(position.row - rows.start, row_chars, expansion);
+                        position = Point::new(position.row + 1, 0);
+                        row_chars = 0;
+                        expansion = 0;
+                        offset += 1;
+                    }
+                }
+            }
+            if (oversized || position.column >= self.max_expansion_column) && position < end {
+                let next_row = Point::new(position.row + 1, 0);
+                if expansion > 0 {
+                    #[cfg(test)]
+                    self.summary_lookups.fetch_add(1, Ordering::Relaxed);
+                    let start = if oversized {
+                        Point::new(position.row, 0)
+                    } else {
+                        position
+                    };
+                    let tail = self
+                        .fold_snapshot
+                        .text_summary_for_range(FoldPoint(start)..FoldPoint(next_row.min(end)));
+                    length.expand_row(
+                        position.row - rows.start,
+                        row_chars + tail.first_line_chars,
+                        expansion,
+                    );
+                }
+                position = next_row;
+                row_chars = 0;
+                expansion = 0;
+                if position < end {
+                    chunks.seek(FoldPoint(position).to_offset(&self.fold_snapshot)..end_offset);
+                }
+            }
+        }
+        if position.row < rows.end {
+            length.expand_row(position.row - rows.start, row_chars, expansion);
+        }
+        length
+    }
+
+    fn unchanged_rows(&self, rows: Range<u32>) -> RowLength {
+        RowLength::unchanged(rows.end - rows.start, self.fold_row_summary(rows))
+    }
+
+    fn fold_row_summary(&self, rows: Range<u32>) -> MBTextSummary {
+        #[cfg(test)]
+        self.summary_lookups.fetch_add(1, Ordering::Relaxed);
+        self.fold_snapshot.text_summary_for_range(
+            FoldPoint::new(rows.start, 0)
+                ..FoldPoint::new(rows.end, 0).min(self.fold_snapshot.max_point()),
+        )
+    }
+
+    fn clipped_row_length(&self, rows: Range<u32>, length: Option<&RowLength>) -> RowLength {
+        if length.is_some_and(|length| length.expanded) {
+            let lengths = self.summarize_rows(rows);
+            RowLength {
+                summary: lengths.summary().clone(),
+                expanded: lengths.iter().any(|length| length.expanded),
+            }
+        } else {
+            self.unchanged_rows(rows)
+        }
+    }
+
+    fn row_summary(&self, rows: Range<u32>) -> TextSummary {
+        let mut summary = TextSummary::default();
+        let mut cursor = self.row_lengths.cursor::<u32>(());
+        cursor.seek(&rows.start, Bias::Right);
+        if *cursor.start() < rows.start {
+            summary = self
+                .clipped_row_length(rows.start..rows.end.min(cursor.end()), cursor.item())
+                .summary;
+            if cursor.end() >= rows.end {
+                return summary;
+            }
+            cursor.next();
+        }
+        summary += &cursor.summary::<_, TextSummary>(&rows.end, Bias::Right);
+        if *cursor.start() < rows.end {
+            summary += &self
+                .clipped_row_length(*cursor.start()..rows.end, cursor.item())
+                .summary;
+        }
+        summary
+    }
+
+    fn slice_row_lengths(&self, rows: Range<u32>) -> SumTree<RowLength> {
+        let mut lengths = SumTree::new(());
+        if rows.is_empty() {
+            return lengths;
+        }
+        let mut cursor = self.row_lengths.cursor::<u32>(());
+        cursor.seek(&rows.start, Bias::Right);
+        if *cursor.start() < rows.start {
+            lengths.push(
+                self.clipped_row_length(rows.start..rows.end.min(cursor.end()), cursor.item()),
+                (),
+            );
+            if cursor.end() >= rows.end {
+                return lengths;
+            }
+            cursor.next();
+        }
+        append_row_lengths(&mut lengths, cursor.slice(&rows.end, Bias::Right));
+        if *cursor.start() < rows.end {
+            let last = self.clipped_row_length(*cursor.start()..rows.end, cursor.item());
+            append_row_lengths(&mut lengths, SumTree::from_iter([last], ()));
+        }
+        lengths
     }
 
     /// Expands the tabs between the cursor's position and `column`. `tab_count`
@@ -696,6 +967,26 @@ impl<'a> std::ops::AddAssign<&'a Self> for TextSummary {
         }
 
         self.lines += &other.lines;
+    }
+}
+
+impl sum_tree::ContextLessSummary for TextSummary {
+    fn zero() -> Self {
+        Self::default()
+    }
+
+    fn add_summary(&mut self, summary: &Self) {
+        *self += summary;
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, TextSummary> for u32 {
+    fn zero(_: ()) -> Self {
+        0
+    }
+
+    fn add_summary(&mut self, summary: &'a TextSummary, _: ()) {
+        *self += summary.lines.row;
     }
 }
 
@@ -1088,6 +1379,72 @@ fn count_chars_in_byte_range(range: Range<u32>, bitmap: u128) -> u32 {
     (bitmap & low_mask & high_mask).count_ones()
 }
 
+fn append_row_lengths(lengths: &mut SumTree<RowLength>, suffix: SumTree<RowLength>) {
+    if let Some((last, first)) = lengths.last().zip(suffix.first())
+        && ((!last.expanded && !first.expanded)
+            || last.summary.lines.row + first.summary.lines.row <= MAX_SUMMARY_ROWS)
+    {
+        lengths.update_last(
+            |last| {
+                last.summary += &first.summary;
+                last.expanded |= first.expanded;
+            },
+            (),
+        );
+        let mut cursor = suffix.cursor::<u32>(());
+        cursor.seek(&first.summary.lines.row, Bias::Right);
+        lengths.append(cursor.suffix(), ());
+    } else {
+        lengths.append(suffix, ());
+    }
+}
+
+#[derive(Clone)]
+struct RowLength {
+    summary: TextSummary,
+    expanded: bool,
+}
+
+impl RowLength {
+    fn unchanged(rows: u32, summary: MBTextSummary) -> Self {
+        Self {
+            summary: TextSummary {
+                lines: Point::new(rows, 0),
+                first_line_chars: summary.first_line_chars,
+                last_line_chars: 0,
+                longest_row: summary.longest_row,
+                longest_row_chars: summary.longest_row_chars,
+            },
+            expanded: false,
+        }
+    }
+
+    fn expand_row(&mut self, row: u32, chars: u32, expansion: u32) {
+        if expansion == 0 {
+            return;
+        }
+        self.expanded = true;
+        if row == 0 {
+            self.summary.first_line_chars += expansion;
+        }
+        let chars = chars + expansion;
+        if chars > self.summary.longest_row_chars
+            || (chars == self.summary.longest_row_chars && row < self.summary.longest_row)
+        {
+            self.summary.longest_row = row;
+            self.summary.longest_row_chars = chars;
+        }
+    }
+}
+
+impl sum_tree::Item for RowLength {
+    type Summary = TextSummary;
+
+    fn summary(&self, _: ()) -> TextSummary {
+        self.summary.clone()
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct TabStop {
     char_offset: u32,
@@ -1100,13 +1457,14 @@ mod tests {
 
     use super::*;
     use crate::{
-        MultiBuffer,
+        Inlay, MultiBuffer,
         display_map::{
             fold_map::{FoldMap, FoldOffset, FoldPlaceholder},
             inlay_map::InlayMap,
         },
     };
     use multi_buffer::MultiBufferOffset;
+    use project::InlayId;
     use rand::{Rng, prelude::StdRng};
     use util;
 
@@ -1205,6 +1563,75 @@ mod tests {
                 to_next_stop,
             )
         }
+    }
+
+    #[gpui::test]
+    fn test_text_summary_with_expanded_tabs(cx: &mut gpui::App) {
+        let long_line = "é".repeat(65_536);
+        for (tab_size, spaces_after_five) in [(1, 1), (4, 3), (128, 123)] {
+            let spaces = " ".repeat(tab_size as usize);
+            for (input, expected) in [
+                (
+                    format!("x\n{}END\n{}", "\t".repeat(128), "x".repeat(132)),
+                    format!("x\n{}END\n{}", spaces.repeat(128), "x".repeat(132)),
+                ),
+                (
+                    format!("x\n\t{long_line}\n{}\n", "x".repeat(65_538)),
+                    format!("x\n{spaces}{long_line}\n{}\n", "x".repeat(65_538)),
+                ),
+                (
+                    "x\naaaaa\t\nxxxxxxxx\n".to_string(),
+                    format!("x\naaaaa{}\nxxxxxxxx\n", " ".repeat(spaces_after_five)),
+                ),
+                (
+                    format!("x\na{}\t\n{}", "é".repeat(128), "x".repeat(131)),
+                    format!("x\na{} \n{}", "é".repeat(128), "x".repeat(131)),
+                ),
+            ] {
+                let buffer = MultiBuffer::build_simple(&input, cx);
+                let (_, inlay_snapshot) = InlayMap::new(buffer.read(cx).snapshot(cx));
+                let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
+                let (_, snapshot) = TabMap::new(fold_snapshot, NonZeroU32::new(tab_size).unwrap());
+                assert_eq!(
+                    snapshot.text_summary(),
+                    TextSummary::from(expected.as_str())
+                );
+                assert_eq!(
+                    snapshot.text_summary_for_range(TabPoint::new(1, 1)..TabPoint::new(1, 1)),
+                    TextSummary::default(),
+                );
+                assert_row_summaries(&snapshot);
+            }
+            for max_expansion_column in [0, 1, 255, 256] {
+                let input = format!(
+                    "{}{}界\t{long_line}\n{}é\t\nabc\t\n{}",
+                    "\n".repeat(257),
+                    "é".repeat(126),
+                    "é".repeat(127),
+                    "\n".repeat(257),
+                );
+                let buffer = MultiBuffer::build_simple(&input, cx);
+                let (_, inlay_snapshot) = InlayMap::new(buffer.read(cx).snapshot(cx));
+                let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
+                let (mut map, _) = TabMap::new(fold_snapshot, NonZeroU32::new(tab_size).unwrap());
+                let snapshot = map.set_max_expansion_column(max_expansion_column);
+                assert_row_summaries(&snapshot);
+            }
+        }
+        let buffer = MultiBuffer::build_simple(&format!("\t{}hello\n\t\n", "x".repeat(127)), cx);
+        let (_, inlay_snapshot) = InlayMap::new(buffer.read(cx).snapshot(cx));
+        let (mut fold_map, _) = FoldMap::new(inlay_snapshot.clone());
+        let (mut writer, _, _) = fold_map.write(inlay_snapshot.clone(), Vec::new());
+        writer.fold(vec![(
+            MultiBufferOffset(128)..MultiBufferOffset(133),
+            FoldPlaceholder {
+                collapsed_text: Some(gpui::SharedString::from("é".repeat(1024))),
+                ..FoldPlaceholder::test()
+            },
+        )]);
+        let (fold_snapshot, _) = fold_map.read(inlay_snapshot, Vec::new());
+        let (_, snapshot) = TabMap::new(fold_snapshot, NonZeroU32::new(4).unwrap());
+        assert_row_summaries(&snapshot);
     }
 
     #[gpui::test]
@@ -1314,9 +1741,8 @@ mod tests {
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
-        let (_, mut tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
-        tab_snapshot.max_expansion_column = rng.random_range(0..323);
-        tab_snapshot.tab_size = tab_size;
+        let (mut tab_map, _) = TabMap::new(fold_snapshot, tab_size);
+        let tab_snapshot = tab_map.set_max_expansion_column(rng.random_range(0..323));
 
         for (ix, _) in input.char_indices() {
             let range = TabPoint::new(0, ix as u32)..tab_snapshot.max_point();
@@ -1359,9 +1785,8 @@ mod tests {
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
-        let (_, mut tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
-
-        tab_snapshot.max_expansion_column = max_expansion_column;
+        let (mut tab_map, _) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
+        let tab_snapshot = tab_map.set_max_expansion_column(max_expansion_column);
         assert_eq!(tab_snapshot.text(), output);
 
         for (ix, c) in input.char_indices() {
@@ -1409,9 +1834,8 @@ mod tests {
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
-        let (_, mut tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
-
-        tab_snapshot.max_expansion_column = max_expansion_column;
+        let (mut tab_map, _) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
+        let tab_snapshot = tab_map.set_max_expansion_column(max_expansion_column);
         assert_eq!(tab_snapshot.text(), input);
     }
 
@@ -1654,12 +2078,10 @@ mod tests {
                 end
             );
 
-            let mut actual_summary = tabs_snapshot.text_summary_for_range(start..end);
-            if tab_size.get() > 1 && inlay_snapshot.text().contains('\t') {
-                actual_summary.longest_row = expected_summary.longest_row;
-                actual_summary.longest_row_chars = expected_summary.longest_row_chars;
-            }
-            assert_eq!(actual_summary, expected_summary);
+            assert_eq!(
+                tabs_snapshot.text_summary_for_range(start..end),
+                expected_summary
+            );
         }
 
         for row in 0..=text.max_point().row {
@@ -1692,11 +2114,11 @@ mod tests {
         let (inlay_snapshot, inlay_edits) = inlay_map.randomly_mutate(&mut next_inlay_id, &mut rng);
         let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
         let max_fold_point = fold_snapshot.max_point();
-        let (mut tab_snapshot, _) = tab_map.sync(fold_snapshot.clone(), fold_edits, tab_size);
+        tab_map.sync(fold_snapshot.clone(), fold_edits, tab_size);
 
         // Test random fold points
         for _ in 0..50 {
-            tab_snapshot.max_expansion_column = rng.random_range(0..=256);
+            let tab_snapshot = tab_map.set_max_expansion_column(rng.random_range(0..=256));
             // Generate random fold point
             let row = rng.random_range(0..=max_fold_point.row());
             let max_column = if row < max_fold_point.row() {
@@ -1841,6 +2263,257 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    fn test_tab_summary_incremental_rows(cx: &mut gpui::App) {
+        for (
+            input_line,
+            expanded_line,
+            entries,
+            initial_lookups,
+            boundary_lookups,
+            boundary_bytes,
+        ) in [
+            ("\n", "\n", 1, 1, 1, 0),
+            ("\t\n", "    \n", 7813, 15625, 2, 252),
+        ] {
+            let input = input_line.repeat(500_000);
+            let buffer = MultiBuffer::build_simple(&input, cx);
+            let (_, inlay_snapshot) = InlayMap::new(buffer.read(cx).snapshot(cx));
+            let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
+            let (_, snapshot) = TabMap::new(fold_snapshot, NonZeroU32::new(4).unwrap());
+            assert_eq!(
+                snapshot.summary_lookups.load(Ordering::Relaxed),
+                initial_lookups
+            );
+            assert_eq!(
+                snapshot.summary_bytes_scanned.load(Ordering::Relaxed),
+                if input_line == "\n" { 0 } else { input.len() }
+            );
+            assert_eq!(snapshot.row_lengths.iter().count(), entries);
+            assert_eq!(
+                snapshot.text_summary(),
+                TextSummary::from(expanded_line.repeat(500_000).as_str())
+            );
+            snapshot.summary_lookups.store(0, Ordering::Relaxed);
+            snapshot.summary_bytes_scanned.store(0, Ordering::Relaxed);
+            assert_eq!(
+                snapshot.row_summary(1..127),
+                TextSummary::from(expanded_line.repeat(126).as_str())
+            );
+            assert_eq!(
+                snapshot.summary_lookups.load(Ordering::Relaxed),
+                boundary_lookups
+            );
+            assert_eq!(
+                snapshot.summary_bytes_scanned.load(Ordering::Relaxed),
+                boundary_bytes
+            );
+        }
+
+        let input = format!("{}\n", "x".repeat(80)).repeat(512)
+            + &format!("\t{}\n", "x".repeat(79)).repeat(512);
+        let buffer = MultiBuffer::build_simple(&input, cx);
+        let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer.read(cx).snapshot(cx));
+        let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let tab_size = NonZeroU32::new(4).unwrap();
+        let (mut tab_map, initial_snapshot) = TabMap::new(fold_snapshot, tab_size);
+
+        for (edits, changed_rows) in [
+            (vec![(Point::new(511, 40)..Point::new(511, 41), "y")], 1),
+            (
+                vec![
+                    (Point::new(511, 0)..Point::new(511, 1), "\t"),
+                    (Point::new(511, 78)..Point::new(511, 79), "é"),
+                ],
+                1,
+            ),
+            (
+                vec![
+                    (Point::new(511, 10)..Point::new(511, 10), "\n"),
+                    (Point::new(511, 70)..Point::new(511, 70), "\n"),
+                ],
+                3,
+            ),
+            (
+                vec![
+                    (Point::new(511, 0)..Point::new(513, 0), ""),
+                    (Point::new(514, 0)..Point::new(514, 0), "\n"),
+                ],
+                3,
+            ),
+            (vec![(Point::new(1024, 80)..Point::new(1025, 0), "")], 1),
+            (
+                vec![(Point::new(1024, 80)..Point::new(1024, 80), "\n\n")],
+                3,
+            ),
+            (vec![(Point::zero()..Point::new(1026, 0), "")], 1),
+            (vec![(Point::zero()..Point::zero(), "\n\t\n")], 3),
+            (Vec::new(), 0),
+        ] {
+            let buffer_snapshot = buffer.update(cx, |buffer, cx| {
+                buffer.edit(edits, None, cx);
+                buffer.snapshot(cx)
+            });
+            let (inlay_snapshot, inlay_edits) =
+                inlay_map.sync(buffer_snapshot, subscription.consume().into_inner());
+            let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
+            let (snapshot, _) = tab_map.sync(fold_snapshot, fold_edits, tab_size);
+            assert!(
+                snapshot.summary_bytes_scanned.load(Ordering::Relaxed)
+                    <= changed_rows * (MAX_EXPANSION_COLUMN as usize + 127)
+            );
+            assert_row_summaries(&snapshot);
+        }
+        assert_row_summaries(&initial_snapshot);
+        assert_eq!(initial_snapshot.row_lengths.summary().lines.row, 1025);
+    }
+
+    #[gpui::test]
+    fn test_tab_summary_skips_tab_free_ranges(cx: &mut gpui::App) {
+        let rows = 16_384;
+        let input = format!("{}\n", "x".repeat(80)).repeat(rows as usize);
+        let buffer = MultiBuffer::build_simple(&input, cx);
+        let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer.read(cx).snapshot(cx));
+        let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (mut tab_map, initial_snapshot) =
+            TabMap::new(fold_snapshot.clone(), NonZeroU32::new(4).unwrap());
+        let expected = TextSummary {
+            lines: Point::new(rows, 0),
+            first_line_chars: 80,
+            last_line_chars: 0,
+            longest_row: 0,
+            longest_row_chars: 80,
+        };
+        for tab_size in [4, 8] {
+            let snapshot = if tab_size == 4 {
+                initial_snapshot.clone()
+            } else {
+                tab_map
+                    .sync(
+                        fold_snapshot.clone(),
+                        Vec::new(),
+                        NonZeroU32::new(tab_size).unwrap(),
+                    )
+                    .0
+            };
+            assert_eq!(snapshot.summary_bytes_scanned.load(Ordering::Relaxed), 0);
+            assert_eq!(snapshot.summary_lookups.load(Ordering::Relaxed), 1);
+            assert_eq!(snapshot.row_lengths.iter().count(), 1);
+            assert_eq!(snapshot.text_summary(), expected);
+        }
+
+        for (replacement, end_column, tab_size) in [("\t", 0, 8), ("", 1, 4)] {
+            let buffer_snapshot = buffer.update(cx, |buffer, cx| {
+                buffer.edit(
+                    [
+                        (
+                            Point::new(rows / 2, 0)..Point::new(rows / 2, end_column),
+                            replacement,
+                        ),
+                        (
+                            Point::new(rows - 1, 80)..Point::new(rows - 1, 80 + end_column),
+                            replacement,
+                        ),
+                    ],
+                    None,
+                    cx,
+                );
+                buffer.snapshot(cx)
+            });
+            let (inlay_snapshot, inlay_edits) =
+                inlay_map.sync(buffer_snapshot, subscription.consume().into_inner());
+            let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
+            let (snapshot, _) = tab_map.sync(
+                fold_snapshot.clone(),
+                fold_edits,
+                NonZeroU32::new(tab_size).unwrap(),
+            );
+            let mut expected = expected.clone();
+            if !replacement.is_empty() {
+                expected.longest_row = rows / 2;
+                expected.longest_row_chars += tab_size;
+            }
+            assert_eq!(snapshot.text_summary(), expected);
+            let tab_size = NonZeroU32::new(if replacement.is_empty() { 8 } else { 4 }).unwrap();
+            let (snapshot, _) = tab_map.sync(fold_snapshot, Vec::new(), tab_size);
+            assert!(
+                snapshot.summary_bytes_scanned.load(Ordering::Relaxed)
+                    <= 2 * MAX_SUMMARY_ROWS as usize * 81 + 2
+            );
+            assert!(snapshot.summary_lookups.load(Ordering::Relaxed) <= 37);
+            if replacement.is_empty() {
+                assert_eq!(snapshot.summary_bytes_scanned.load(Ordering::Relaxed), 0);
+                assert_eq!(snapshot.summary_lookups.load(Ordering::Relaxed), 1);
+                assert_eq!(snapshot.row_lengths.iter().count(), 1);
+            } else {
+                expected.longest_row_chars = 84;
+            }
+            assert_eq!(snapshot.text_summary(), expected);
+        }
+        assert_eq!(
+            initial_snapshot.text_summary(),
+            TextSummary::from(input.as_str())
+        );
+    }
+
+    #[gpui::test]
+    fn test_tab_summary_inlay_fold_invalidation(cx: &mut gpui::App) {
+        let input = format!(
+            "{}{}界{}Z\n{}",
+            "x\n".repeat(63),
+            "é".repeat(63),
+            "x".repeat(126),
+            "x\n".repeat(65)
+        );
+        let buffer = MultiBuffer::build_simple(&input, cx);
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let (mut inlay_map, mut inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot.clone());
+        let tab_size = NonZeroU32::new(4).unwrap();
+        let (mut tab_map, initial_snapshot) = TabMap::new(fold_snapshot, tab_size);
+        assert_row_summaries(&initial_snapshot);
+
+        for (id, column, text) in [(0, 255, "\t"), (1, 126, "é\t")] {
+            let (snapshot, inlay_edits) = inlay_map.splice(
+                &[],
+                vec![Inlay::mock_hint(
+                    id,
+                    buffer_snapshot.anchor_before(Point::new(63, column)),
+                    text,
+                )],
+            );
+            inlay_snapshot = snapshot;
+            let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot.clone(), inlay_edits);
+            let (snapshot, _) = tab_map.sync(fold_snapshot, fold_edits, tab_size);
+            assert_row_summaries(&snapshot);
+        }
+        let (mut writer, _, _) = fold_map.write(inlay_snapshot.clone(), Vec::new());
+        let (fold_snapshot, fold_edits) = writer.fold([(
+            Point::new(63, 0)..Point::new(64, 0),
+            FoldPlaceholder::test(),
+        )]);
+        let (snapshot, _) = tab_map.sync(fold_snapshot.clone(), fold_edits, tab_size);
+        assert_row_summaries(&snapshot);
+        let (_, rebuilt) = TabMap::new(fold_snapshot, tab_size);
+        assert_eq!(rebuilt.text_summary(), snapshot.text_summary());
+        assert_eq!(rebuilt.summary_bytes_scanned.load(Ordering::Relaxed), 0);
+        assert_eq!(rebuilt.row_lengths.iter().count(), 1);
+        let (mut writer, _, _) = fold_map.write(inlay_snapshot, Vec::new());
+        let (fold_snapshot, fold_edits) =
+            writer.unfold_intersecting([Point::new(63, 0)..Point::new(64, 0)], true);
+        let (snapshot, _) = tab_map.sync(fold_snapshot, fold_edits, tab_size);
+        assert_row_summaries(&snapshot);
+        let (inlay_snapshot, inlay_edits) =
+            inlay_map.splice(&[InlayId::Hint(0), InlayId::Hint(1)], Vec::new());
+        let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
+        let (snapshot, _) = tab_map.sync(fold_snapshot, fold_edits, tab_size);
+        assert_row_summaries(&snapshot);
+        assert_eq!(snapshot.text(), initial_snapshot.text());
+        assert_eq!(snapshot.text_summary(), initial_snapshot.text_summary());
+    }
+
     #[gpui::test(iterations = 100)]
     fn test_random_tab_map_sync(cx: &mut gpui::App, mut rng: StdRng) {
         let operations = std::env::var("OPERATIONS")
@@ -1899,7 +2572,9 @@ mod tests {
 
         let mut expected_text = text::Rope::from(initial_snapshot.text().as_str());
         for (tab_snapshot, tab_edits) in snapshot_edits {
-            let snapshot_text = text::Rope::from(tab_snapshot.text().as_str());
+            let snapshot_text = tab_snapshot.text();
+            assert_row_summaries(&tab_snapshot);
+            let snapshot_text = text::Rope::from(snapshot_text.as_str());
             for edit in &tab_edits {
                 let old_start = expected_text.point_to_offset(edit.new.start.0);
                 let old_end = expected_text
@@ -2197,6 +2872,61 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn assert_row_summaries(snapshot: &TabSnapshot) {
+        let input = snapshot.fold_snapshot.text();
+        let mut expected = String::new();
+        let mut expected_rows = Vec::new();
+        for (row, line) in input.split('\n').enumerate() {
+            let mut expanded = String::new();
+            let mut column = 0;
+            for (offset, character) in line.char_indices() {
+                if character == '\t' {
+                    let width = if offset < snapshot.max_expansion_column as usize {
+                        snapshot.tab_size.get() - column % snapshot.tab_size.get()
+                    } else {
+                        1
+                    };
+                    expanded.extend(std::iter::repeat_n(' ', width as usize));
+                    column += width;
+                } else {
+                    expanded.push(character);
+                    column += 1;
+                }
+            }
+            if row > 0 {
+                expected.push('\n');
+            }
+            expected.push_str(&expanded);
+            expanded.push('\n');
+            let summary = TextSummary::from(expanded.as_str());
+            assert_eq!(snapshot.row_summary(row as u32..row as u32 + 1), summary);
+            expected_rows.push(summary);
+        }
+        assert_eq!(snapshot.text(), expected);
+        assert_eq!(
+            snapshot.text_summary(),
+            TextSummary::from(expected.as_str())
+        );
+        let mut expected_rows = expected_rows.into_iter();
+        let mut previous = None::<&RowLength>;
+        for length in snapshot.row_lengths.iter() {
+            let mut expected = TextSummary::default();
+            for _ in 0..length.summary.lines.row {
+                expected += &expected_rows.next().expect("span exceeds row count");
+            }
+            assert_eq!(length.summary, expected);
+            if length.expanded {
+                assert!(length.summary.lines.row <= MAX_SUMMARY_ROWS);
+            }
+            if let Some(previous) = previous {
+                assert!(previous.expanded || length.expanded);
+                assert!(previous.summary.lines.row + length.summary.lines.row > MAX_SUMMARY_ROWS);
+            }
+            previous = Some(length);
+        }
+        assert_eq!(expected_rows.next(), None);
     }
 
     fn assert_max_tab_chunk_bitmaps(chunks: &mut TabChunks<'_>, expected_text: &str) {

@@ -5589,7 +5589,7 @@ impl BufferSnapshot {
 }
 
 /// A configuration to use when producing styled text chunks.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct LanguageAwareStyling {
     /// Whether to highlight text chunks using tree-sitter.
     pub tree_sitter: bool,

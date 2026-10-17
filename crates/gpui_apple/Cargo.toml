@@ -46,7 +46,7 @@ mach2.workspace = true
 metal.workspace = true
 objc2.workspace = true
 objc2-core-foundation = { workspace = true, features = ["std", "CFData", "CFDictionary", "CFString", "CFNumber", "CFBase"] }
-objc2-core-text = { workspace = true, optional = true }
+objc2-core-text = { workspace = true, optional = true, features = ["CTRun", "objc2-core-graphics"] }
 objc2-core-video = { workspace = true, features = ["CVPixelBuffer", "CVMetalTexture", "CVMetalTextureCache", "CVReturn", "objc2", "objc2-metal"] }
 objc2-metal = { version = "0.3", default-features = false, features = ["MTLDevice", "MTLPixelFormat", "MTLTexture"] }
 objc2-foundation = { workspace = true, features = ["NSThread", "NSNotification", "NSOperation", "NSProcessInfo", "block2"] }

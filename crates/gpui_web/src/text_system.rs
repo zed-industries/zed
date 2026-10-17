@@ -374,6 +374,17 @@ impl PlatformTextSystem for WebTextSystem {
         })
     }
 
+    fn glyph_raster_bounds_with_image(
+        &self,
+        params: &RenderGlyphParams,
+    ) -> Result<(Bounds<DevicePixels>, Option<Vec<u8>>)> {
+        if self.canvas_font(params.font_id).is_none() {
+            self.native.glyph_raster_bounds_with_image(params)
+        } else {
+            Ok((self.glyph_raster_bounds(params)?, None))
+        }
+    }
+
     fn rasterize_glyph(
         &self,
         params: &RenderGlyphParams,

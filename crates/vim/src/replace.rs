@@ -8,7 +8,7 @@ use editor::{
     Anchor, Bias, Editor, EditorSnapshot, HighlightKey, SelectionEffects, ToOffset, ToPoint,
     display_map::ToDisplayPoint,
 };
-use gpui::{ClipboardEntry, Context, Window, actions};
+use gpui::{Context, Window, actions};
 use language::{Point, SelectionGoal};
 use std::ops::Range;
 use std::sync::Arc;
@@ -184,39 +184,38 @@ impl Vim {
         self.clear_operator(window, cx);
     }
 
-    pub fn exchange_motion(
+    pub(crate) fn plan_exchange_motion(
         &mut self,
         motion: Motion,
         times: Option<usize>,
         forced_motion: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
-        self.stop_recording(cx);
-        self.update_editor(cx, |vim, editor, cx| {
-            editor.set_clip_at_line_ends(false, cx);
-            let text_layout_details = editor.text_layout_details(window, cx);
-            let mut selection = editor
-                .selections
-                .newest_display(&editor.display_snapshot(cx));
-            let snapshot = editor.snapshot(window, cx);
-            motion.expand_selection(
-                &snapshot,
-                &mut selection,
-                times,
-                &text_layout_details,
-                forced_motion,
-            );
-            let start = snapshot
-                .buffer_snapshot()
-                .anchor_before(selection.start.to_point(&snapshot));
-            let end = snapshot
-                .buffer_snapshot()
-                .anchor_before(selection.end.to_point(&snapshot));
-            let new_range = start..end;
-            vim.exchange_impl(new_range, editor, &snapshot, window, cx);
-            editor.set_clip_at_line_ends(true, cx);
-        });
+    ) -> Result<crate::GeometryCommit, editor::display_map::PendingRowGeometry> {
+        let newest_id = self.update_editor(cx, |_, editor, _| editor.selections.newest_anchor().id);
+        let ranges =
+            self.plan_selections(Some(false), window, cx, |map, details, mut selection| {
+                if Some(selection.id) != newest_id {
+                    return Ok(None);
+                }
+                motion.expand_selection(map, &mut selection, times, details, forced_motion)?;
+                let buffer = map.buffer_snapshot();
+                Ok(Some(
+                    buffer.anchor_before(selection.start.to_point(map))
+                        ..buffer.anchor_before(selection.end.to_point(map)),
+                ))
+            })?;
+        Ok(Box::new(move |vim, window, cx| {
+            vim.stop_recording(cx);
+            if let Some(range) = ranges.into_iter().flatten().next() {
+                vim.update_editor(cx, |vim, editor, cx| {
+                    editor.set_clip_at_line_ends(false, cx);
+                    let snapshot = editor.snapshot(window, cx);
+                    vim.exchange_impl(range, editor, &snapshot, window, cx);
+                    editor.set_clip_at_line_ends(true, cx);
+                });
+            }
+        }))
     }
 
     pub fn exchange_impl(
@@ -282,24 +281,27 @@ impl Vim {
     /// Pastes the clipboard contents, replacing the same number of characters
     /// as the clipboard's contents.
     pub fn paste_replace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let clipboard_text = cx.read_from_clipboard().and_then(|item| {
-            item.entries().iter().find_map(|entry| match entry {
-                ClipboardEntry::String(text) => Some(text.text().to_string()),
-                _ => None,
+        let register = self
+            .update_editor(cx, |vim, editor, cx| {
+                vim.read_register(Some('+'), editor, cx)
             })
-        });
+            .flatten();
 
-        if let Some(text) = clipboard_text {
+        if let Some(register) = register {
             self.push_operator(Operator::Replace, window, cx);
-            self.normal_replace(Arc::from(text), window, cx);
+            self.normal_replace(Arc::from(register.text.as_ref()), window, cx);
         }
     }
 }
 
 #[cfg(test)]
 mod test {
-    use gpui::ClipboardItem;
+    use editor::{SelectionEffects, actions::Paste};
+    use gpui::{ClipboardItem, Focusable};
     use indoc::indoc;
+    use language::Point;
+    use settings::SoftWrap;
+    use zed_actions::editor::MoveDown;
 
     use crate::{
         state::Mode,
@@ -536,6 +538,32 @@ mod test {
         cx.update_editor(|editor, window, cx| {
             let highlights = editor.all_text_background_highlights(window, cx);
             assert_eq!(0, highlights.len());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_deferred_clipboard_paste_replace(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state("aˇb\n", Mode::Replace);
+        let editor = cx.update_editor(|_, _, cx| cx.entity());
+        let completion = cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.set_soft_wrap_mode(SoftWrap::None, cx);
+                editor.set_text(format!("ab\n{}", "x".repeat(2_000)), window, cx);
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                    selections.select_ranges([Point::new(0, 1)..Point::new(0, 1)]);
+                });
+                editor.move_down(&MoveDown, window, cx);
+                assert!(editor.defer_external_input(|_, _| {}, cx));
+            });
+            cx.write_to_clipboard(ClipboardItem::new_string(String::from("A")));
+            editor.focus_handle(cx).dispatch_action(&Paste, window, cx);
+            cx.write_to_clipboard(ClipboardItem::new_string(String::from("B")));
+            editor.update(cx, |editor, cx| editor.input_completion(cx))
+        });
+        completion.await.expect("replace clipboard input completed");
+        cx.update_editor(|editor, _, cx| {
+            assert_eq!(editor.text(cx), format!("ab\nxA{}", "x".repeat(1_998)));
         });
     }
 

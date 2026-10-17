@@ -6,11 +6,11 @@
 //! [`InlaySnapshot`], which holds a sum tree of [`Transform`]s.
 
 use crate::{
-    ChunkRenderer, HighlightStyles,
+    ChunkRenderer, ChunkRendererContext, HighlightStyles,
     inlays::{Inlay, InlayContent},
 };
 use collections::{BTreeSet, HashMap, HashSet};
-use gpui::Pixels;
+use gpui::{AnyElement, Pixels};
 use language::{Chunk, Edit, LanguageAwareStyling, Point, TextSummary};
 use multi_buffer::{
     Anchor, MBTextSummary, MultiBufferOffset, MultiBufferRow, MultiBufferRows, MultiBufferSnapshot,
@@ -19,8 +19,8 @@ use multi_buffer::{
 use project::InlayId;
 use smallvec::SmallVec;
 use std::{
-    cmp, iter, mem,
-    ops::{Add, AddAssign, Range, Sub, SubAssign},
+    cmp, iter,
+    ops::{Add, AddAssign, ControlFlow, Range, Sub, SubAssign},
     slice,
     sync::Arc,
 };
@@ -28,7 +28,11 @@ use sum_tree::{Bias, Cursor, Dimensions, SumTree, TreeMap};
 use text::{ChunkBitmaps, Patch};
 use ui::{ActiveTheme, IntoElement as _, ParentElement as _, Styled as _, div};
 
-use super::{Highlights, custom_highlights::CustomHighlightsChunks, fold_map::ChunkRendererId};
+use super::{
+    Highlights,
+    custom_highlights::CustomHighlightsChunks,
+    fold_map::{ChunkRendererId, RendererTextSource, RendererWidthClass},
+};
 
 /// Decides where the [`Inlay`]s should be displayed.
 ///
@@ -43,6 +47,7 @@ pub struct InlaySnapshot {
     pub buffer: MultiBufferSnapshot,
     transforms: SumTree<Transform>,
     renderer_widths: TreeMap<InlayId, Pixels>,
+    renderers: TreeMap<InlayId, (Anchor, ChunkRenderer, RendererTextSource)>,
     pub version: usize,
 }
 
@@ -57,7 +62,21 @@ impl std::ops::Deref for InlaySnapshot {
 #[derive(Clone, Debug)]
 enum Transform {
     Isomorphic(MBTextSummary),
-    Inlay(Inlay),
+    Inlay(InlayTransform),
+}
+
+#[derive(Clone, Debug)]
+struct InlayTransform {
+    inlay: Inlay,
+    measured: bool,
+}
+
+impl std::ops::Deref for InlayTransform {
+    type Target = Inlay;
+
+    fn deref(&self) -> &Inlay {
+        &self.inlay
+    }
 }
 
 impl sum_tree::Item for Transform {
@@ -69,10 +88,12 @@ impl sum_tree::Item for Transform {
             Transform::Isomorphic(summary) => TransformSummary {
                 input: *summary,
                 output: *summary,
+                unmeasured_renderers: 0,
             },
             Transform::Inlay(inlay) => TransformSummary {
                 input: MBTextSummary::default(),
                 output: MBTextSummary::from(inlay.text().summary()),
+                unmeasured_renderers: usize::from(!inlay.measured && has_chunk_renderer(inlay)),
             },
         }
     }
@@ -84,6 +105,7 @@ struct TransformSummary {
     input: MBTextSummary,
     /// Summary of the text after inlays have been applied.
     output: MBTextSummary,
+    unmeasured_renderers: usize,
 }
 
 impl TransformSummary {
@@ -100,6 +122,7 @@ impl sum_tree::ContextLessSummary for TransformSummary {
     fn add_summary(&mut self, other: &Self) {
         self.input += other.input;
         self.output += other.output;
+        self.unmeasured_renderers += other.unmeasured_renderers;
     }
 }
 
@@ -185,6 +208,19 @@ impl Sub for InlayPoint {
 
     fn sub(self, rhs: Self) -> Self::Output {
         Self(self.0 - rhs.0)
+    }
+}
+
+#[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
+struct UnmeasuredRenderers(usize);
+
+impl<'a> sum_tree::Dimension<'a, TransformSummary> for UnmeasuredRenderers {
+    fn zero(_cx: ()) -> Self {
+        Self::default()
+    }
+
+    fn add_summary(&mut self, summary: &'a TransformSummary, _: ()) {
+        self.0 += summary.unmeasured_renderers;
     }
 }
 
@@ -336,7 +372,10 @@ impl<'a> Iterator for InlayChunks<'a> {
                     }
                 }
 
-                let mut renderer = None;
+                let renderer = self
+                    .snapshot
+                    .renderer_source(inlay.id)
+                    .map(|(renderer, _)| renderer);
                 let mut highlight_style = match inlay.id {
                     InlayId::EditPrediction(_) => self.highlight_styles.edit_prediction.map(|s| {
                         if inlay.text().chars().all(|c| c.is_whitespace()) {
@@ -345,70 +384,10 @@ impl<'a> Iterator for InlayChunks<'a> {
                             s.insertion
                         }
                     }),
-                    InlayId::Hint(_) => self.highlight_styles.inlay_hint,
-                    InlayId::DebuggerValue(_) => self.highlight_styles.inlay_hint,
-                    InlayId::ReplResult(_) => {
-                        let text = inlay.text().to_string();
-                        renderer = Some(ChunkRenderer {
-                            id: ChunkRendererId::Inlay(inlay.id),
-                            render: Arc::new(move |cx| {
-                                let colors = cx.theme().colors();
-                                div()
-                                    .flex()
-                                    .flex_row()
-                                    .items_center()
-                                    .child(div().w_4())
-                                    .child(
-                                        div()
-                                            .px_1()
-                                            .rounded_sm()
-                                            .bg(colors.surface_background)
-                                            .text_color(colors.text_muted)
-                                            .text_xs()
-                                            .child(text.trim().to_string()),
-                                    )
-                                    .into_any_element()
-                            }),
-                            constrain_width: false,
-                            measured_width: self.snapshot.renderer_widths.get(&inlay.id).copied(),
-                        });
-                        self.highlight_styles.inlay_hint
-                    }
-                    InlayId::Color(_) => {
-                        if let InlayContent::Color(color) = inlay.content {
-                            renderer = Some(ChunkRenderer {
-                                id: ChunkRendererId::Inlay(inlay.id),
-                                render: Arc::new(move |cx| {
-                                    div()
-                                        .relative()
-                                        .size_3p5()
-                                        .child(
-                                            div()
-                                                .absolute()
-                                                .right_1()
-                                                .size_3()
-                                                .border_1()
-                                                .border_color(
-                                                    if cx.theme().appearance().is_light() {
-                                                        gpui::black().opacity(0.5)
-                                                    } else {
-                                                        gpui::white().opacity(0.5)
-                                                    },
-                                                )
-                                                .bg(color),
-                                        )
-                                        .into_any_element()
-                                }),
-                                constrain_width: false,
-                                measured_width: self
-                                    .snapshot
-                                    .renderer_widths
-                                    .get(&inlay.id)
-                                    .copied(),
-                            });
-                        }
-                        self.highlight_styles.inlay_hint
-                    }
+                    InlayId::Hint(_)
+                    | InlayId::DebuggerValue(_)
+                    | InlayId::ReplResult(_)
+                    | InlayId::Color(_) => self.highlight_styles.inlay_hint,
                 };
                 let next_inlay_highlight_endpoint;
                 let offset_in_inlay = self.output_offset - self.transforms.start().0;
@@ -566,6 +545,7 @@ impl InlayMap {
             ),
             buffer,
             renderer_widths: TreeMap::default(),
+            renderers: TreeMap::default(),
             version,
         };
 
@@ -687,7 +667,13 @@ impl InlayMap {
                         buffer_snapshot.text_summary_for_range(prefix_start..prefix_end),
                     );
 
-                    new_transforms.push(Transform::Inlay(inlay.clone()), ());
+                    new_transforms.push(
+                        Transform::Inlay(InlayTransform {
+                            inlay: inlay.clone(),
+                            measured: snapshot.renderer_widths.get(&inlay.id).is_some(),
+                        }),
+                        (),
+                    );
                 }
 
                 // Apply the rest of the edit.
@@ -749,6 +735,7 @@ impl InlayMap {
                 let offset = inlay.position.to_offset(&snapshot.buffer);
                 edits.insert(offset);
                 snapshot.renderer_widths.remove(&inlay.id);
+                snapshot.renderers.remove(&inlay.id);
             }
             retain
         });
@@ -760,6 +747,18 @@ impl InlayMap {
             }
 
             let offset = inlay_to_insert.position.to_offset(&snapshot.buffer);
+            if let Some(renderer) = inlay_renderer(&inlay_to_insert) {
+                snapshot.renderers.insert(
+                    inlay_to_insert.id,
+                    (
+                        inlay_to_insert.position,
+                        renderer,
+                        RendererTextSource::Rope(Arc::new(inlay_to_insert.text().clone())),
+                    ),
+                );
+            } else {
+                snapshot.renderers.remove(&inlay_to_insert.id);
+            }
             match self.inlays.binary_search_by(|probe| {
                 probe
                     .position
@@ -792,55 +791,42 @@ impl InlayMap {
         invalidate: bool,
         new_widths: impl IntoIterator<Item = (ChunkRendererId, Pixels)>,
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
-        let new_widths = new_widths
+        let mut new_widths = new_widths
             .into_iter()
             .filter_map(|(id, width)| match id {
                 ChunkRendererId::Inlay(id) => Some((id, width)),
                 ChunkRendererId::Fold(_) => None,
             })
             .collect::<HashMap<_, _>>();
-        let previous_widths = if invalidate {
-            mem::take(&mut self.snapshot.renderer_widths)
+        let previous_widths = self.snapshot.renderer_widths.clone();
+        let candidates = if invalidate {
+            self.snapshot.renderer_widths = TreeMap::default();
+            previous_widths
+                .iter()
+                .map(|(id, _)| *id)
+                .chain(new_widths.keys().copied())
+                .collect::<HashSet<_>>()
         } else {
-            self.snapshot.renderer_widths.clone()
-        };
-        let mut changed_ids = HashSet::default();
-        if invalidate {
-            changed_ids.extend(
-                previous_widths
-                    .iter()
-                    .filter(|(id, width)| new_widths.get(id) != Some(width))
-                    .map(|(id, _)| *id),
-            );
-        }
-        let mut new_widths = new_widths
-            .into_iter()
-            .filter(|(id, width)| {
-                let unchanged = previous_widths.get(id) == Some(width);
-                if unchanged && invalidate {
-                    self.snapshot.renderer_widths.insert(*id, *width);
-                }
-                !unchanged
-            })
-            .collect::<HashMap<_, _>>();
-        for inlay in &self.inlays {
+            new_widths.retain(|id, width| previous_widths.get(id) != Some(width));
             if new_widths.is_empty() {
-                break;
+                return (self.snapshot.clone(), Vec::new());
             }
-            if let Some(width) = new_widths.remove(&inlay.id) {
-                self.snapshot.renderer_widths.insert(inlay.id, width);
-                changed_ids.insert(inlay.id);
+            new_widths.keys().copied().collect()
+        };
+        for (id, width) in &new_widths {
+            if self.snapshot.renderers.get(id).is_some() {
+                self.snapshot.renderer_widths.insert(*id, *width);
             }
         }
-        if changed_ids.is_empty() {
+        let edits = candidates
+            .iter()
+            .filter(|id| previous_widths.get(id) != self.snapshot.renderer_widths.get(id))
+            .filter_map(|id| self.snapshot.renderers.get(id))
+            .map(|(position, _, _)| position.to_offset(&self.snapshot.buffer))
+            .collect::<BTreeSet<_>>();
+        if edits.is_empty() {
             return (self.snapshot.clone(), Vec::new());
         }
-        let edits = self
-            .inlays
-            .iter()
-            .filter(|inlay| changed_ids.contains(&inlay.id))
-            .map(|inlay| inlay.position.to_offset(&self.snapshot.buffer))
-            .collect::<BTreeSet<_>>();
         let buffer_edits = edits
             .into_iter()
             .map(|offset| Edit {
@@ -1251,6 +1237,72 @@ impl InlaySnapshot {
         self.transforms.summary().output
     }
 
+    pub(super) fn unmeasured_renderer_count(&self, range: Range<InlayOffset>) -> usize {
+        self.unmeasured_renderer_indices(range).len()
+    }
+
+    pub(super) fn renderer_source(
+        &self,
+        id: InlayId,
+    ) -> Option<(ChunkRenderer, RendererTextSource)> {
+        let (_, renderer, text) = self.renderers.get(&id)?;
+        Some((
+            ChunkRenderer {
+                measured_width: self.renderer_widths.get(&id).copied(),
+                ..renderer.clone()
+            },
+            text.clone(),
+        ))
+    }
+
+    pub(super) fn for_each_unmeasured_renderer(
+        &self,
+        range: Range<InlayOffset>,
+        f: &mut dyn FnMut(ChunkRenderer, RendererTextSource) -> ControlFlow<()>,
+    ) -> ControlFlow<()> {
+        let Range {
+            start: mut index,
+            end,
+        } = self.unmeasured_renderer_indices(range);
+        if index >= end {
+            return ControlFlow::Continue(());
+        }
+        let mut cursor = self.transforms.cursor::<UnmeasuredRenderers>(());
+        cursor.seek(&UnmeasuredRenderers(index), Bias::Right);
+        while index < end {
+            cursor.seek_forward(&UnmeasuredRenderers(index), Bias::Right);
+            let Some(transform) = cursor.item() else {
+                break;
+            };
+            if let Transform::Inlay(inlay) = transform
+                && !inlay.measured
+                && let Some((renderer, text)) = self.renderer_source(inlay.id)
+            {
+                f(renderer, text)?;
+            }
+            index = cursor.end().0.max(index + 1);
+        }
+        ControlFlow::Continue(())
+    }
+
+    fn unmeasured_renderer_indices(&self, range: Range<InlayOffset>) -> Range<usize> {
+        if range.is_empty() || self.transforms.summary().unmeasured_renderers == 0 {
+            return 0..0;
+        }
+        let mut cursor = self
+            .transforms
+            .cursor::<Dimensions<InlayOffset, UnmeasuredRenderers>>(());
+        cursor.seek(&range.start, Bias::Right);
+        let start = cursor.start().1.0;
+        cursor.seek_forward(&range.end, Bias::Right);
+        let end = if cursor.start().0 < range.end {
+            cursor.end().1.0
+        } else {
+            cursor.start().1.0
+        };
+        start..end.max(start)
+    }
+
     #[ztracing::instrument(skip_all)]
     pub fn text_summary_for_range(&self, range: Range<InlayOffset>) -> MBTextSummary {
         let mut summary = MBTextSummary::default();
@@ -1570,12 +1622,73 @@ impl BufferOffsetToInlayPointCursor<'_> {
     }
 }
 
+fn inlay_renderer(inlay: &Inlay) -> Option<ChunkRenderer> {
+    let (render, width_class): (
+        Arc<dyn Send + Sync + Fn(&mut ChunkRendererContext) -> AnyElement>,
+        Option<RendererWidthClass>,
+    ) = match &inlay.content {
+        InlayContent::Text(_) => return None,
+        InlayContent::ReplResult { output, .. } => {
+            let output = output.clone();
+            (
+                Arc::new(move |cx| {
+                    let colors = cx.theme().colors();
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .child(div().w_4())
+                        .child(
+                            div()
+                                .px_1()
+                                .rounded_sm()
+                                .bg(colors.surface_background)
+                                .text_color(colors.text_muted)
+                                .text_xs()
+                                .child(output.clone()),
+                        )
+                        .into_any_element()
+                }),
+                None,
+            )
+        }
+        InlayContent::Color(color) => {
+            let color = *color;
+            (
+                Arc::new(move |cx| {
+                    div()
+                        .relative()
+                        .size_3p5()
+                        .child(
+                            div()
+                                .absolute()
+                                .right_1()
+                                .size_3()
+                                .border_1()
+                                .border_color(if cx.theme().appearance().is_light() {
+                                    gpui::black().opacity(0.5)
+                                } else {
+                                    gpui::white().opacity(0.5)
+                                })
+                                .bg(color),
+                        )
+                        .into_any_element()
+                }),
+                Some(RendererWidthClass::ColorSwatch),
+            )
+        }
+    };
+    Some(ChunkRenderer {
+        id: ChunkRendererId::Inlay(inlay.id),
+        render,
+        constrain_width: false,
+        measured_width: None,
+        width_class,
+    })
+}
+
 fn has_chunk_renderer(inlay: &Inlay) -> bool {
-    match inlay.id {
-        InlayId::ReplResult(_) => true,
-        InlayId::Color(_) => matches!(inlay.content, InlayContent::Color(_)),
-        InlayId::EditPrediction(_) | InlayId::Hint(_) | InlayId::DebuggerValue(_) => false,
-    }
+    !matches!(inlay.content, InlayContent::Text(_))
 }
 
 fn push_isomorphic(sum_tree: &mut SumTree<Transform>, summary: MBTextSummary) {
@@ -2095,6 +2208,18 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![Some(0), None, Some(1), None, None, Some(2)]
         );
+    }
+
+    #[gpui::test]
+    fn test_repl_result_columns_do_not_scale_with_output(cx: &mut App) {
+        let buffer = MultiBuffer::build_simple("x", cx);
+        let (mut inlay_map, _) = InlayMap::new(buffer.read(cx).snapshot(cx));
+        let position = buffer.read(cx).snapshot(cx).anchor_after(Point::new(0, 1));
+        let (inlay_snapshot, _) = inlay_map.splice(
+            &[],
+            vec![Inlay::repl_result(0, position, "r".repeat(1 << 20))],
+        );
+        assert_eq!(inlay_snapshot.text(), "x⋯");
     }
 
     #[gpui::test(iterations = 100)]

@@ -7,6 +7,7 @@ use std::{
     },
     path::PathBuf,
     rc::{Rc, Weak},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -90,7 +91,10 @@ use crate::linux::{
     keystroke_from_xkb, keystroke_underlying_dead_key, modifiers_from_xkb, new_xkb_context,
     open_uri_internal, read_fd_with_timeout, reveal_path_internal,
     wayland::{
-        clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPES},
+        clipboard::{
+            Clipboard, ClipboardFocusToken, ClipboardSource, DataOffer, FILE_LIST_MIME_TYPE,
+            TEXT_MIME_TYPES,
+        },
         cursor::Cursor,
         serial::{Serial, SerialKind, SerialTracker},
         to_shape,
@@ -507,9 +511,9 @@ where
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub(crate) enum DataSourceKind {
-    Clipboard,
+    Clipboard(Arc<ClipboardSource>),
     Drag,
 }
 
@@ -803,10 +807,12 @@ impl WaylandClientStatePtr {
         {
             state.mouse_focused_window = Some(window);
         }
-        if let Some(window) = state.keyboard_focused_window.take()
-            && !window.ptr_eq(&closed_window)
-        {
-            state.keyboard_focused_window = Some(window);
+        if let Some(window) = state.keyboard_focused_window.take() {
+            if window.ptr_eq(&closed_window) {
+                state.clipboard.keyboard_focus_lost();
+            } else {
+                state.keyboard_focused_window = Some(window);
+            }
         }
         if let Some(window) = state.cursor_hidden_window.take()
             && !window.ptr_eq(&closed_window)
@@ -1429,55 +1435,84 @@ impl WaylandConnection {
         }
     }
 
-    pub(crate) fn write_to_primary(&self, item: gpui::ClipboardItem) {
+    pub(crate) fn write_to_primary_with_revision(
+        &self,
+        item: gpui::ClipboardItem,
+    ) -> anyhow::Result<Option<gpui::ClipboardRevision>> {
         let mut state = self.0.borrow_mut();
         let (Some(primary_selection_manager), Some(primary_selection)) = (
             state.globals.primary_selection_manager.clone(),
             state.primary_selection.clone(),
         ) else {
-            return;
+            anyhow::bail!("Wayland primary selection is unavailable");
         };
         if state.mouse_focused_window.is_some() || state.keyboard_focused_window.is_some() {
-            state.clipboard.set_primary(item);
-            let Some(serial) = state.serial_tracker.selection_serial() else {
-                log::warn!(
-                    "Skipping Wayland primary selection ownership request because no keyboard or pointer press serial has been received"
-                );
-                return;
-            };
-            let data_source = primary_selection_manager.create_source(&state.globals.qh, ());
+            let serial = state
+                .serial_tracker
+                .selection_serial()
+                .context("Wayland primary selection requires a keyboard or pointer press serial")?;
+            let source = state.clipboard.set_primary(item);
+            let data_source =
+                primary_selection_manager.create_source(&state.globals.qh, source.clone());
             for mime_type in TEXT_MIME_TYPES {
                 data_source.offer(mime_type.to_string());
             }
-            data_source.offer(state.clipboard.self_mime());
+            data_source.offer(source.mime_type.clone());
             primary_selection.set_selection(Some(&data_source), serial.as_raw());
+            return Ok(Some(source.revision.clone()));
         }
+        anyhow::bail!("Wayland primary selection requires a focused window")
     }
 
-    pub(crate) fn write_to_clipboard(&self, item: gpui::ClipboardItem) {
+    pub(crate) fn write_to_clipboard_with_revision(
+        &self,
+        item: gpui::ClipboardItem,
+    ) -> anyhow::Result<Option<gpui::ClipboardRevision>> {
         let mut state = self.0.borrow_mut();
         let (Some(data_device_manager), Some(data_device)) = (
             state.globals.data_device_manager.clone(),
             state.data_device.clone(),
         ) else {
-            return;
+            anyhow::bail!("Wayland clipboard is unavailable");
         };
         if state.mouse_focused_window.is_some() || state.keyboard_focused_window.is_some() {
-            state.clipboard.set(item);
-            let Some(serial) = state.serial_tracker.selection_serial() else {
-                log::warn!(
-                    "Skipping Wayland clipboard ownership request because no keyboard or pointer press serial has been received"
-                );
-                return;
-            };
+            let serial = state
+                .serial_tracker
+                .selection_serial()
+                .context("Wayland clipboard requires a keyboard or pointer press serial")?;
+            let source = state.clipboard.set(item);
             let data_source = data_device_manager
-                .create_data_source(&state.globals.qh, DataSourceKind::Clipboard);
+                .create_data_source(&state.globals.qh, DataSourceKind::Clipboard(source.clone()));
             for mime_type in TEXT_MIME_TYPES {
                 data_source.offer(mime_type.to_string());
             }
-            data_source.offer(state.clipboard.self_mime());
+            data_source.offer(source.mime_type.clone());
             data_device.set_selection(Some(&data_source), serial.as_raw());
+            return Ok(Some(source.revision.clone()));
         }
+        anyhow::bail!("Wayland clipboard requires a focused window")
+    }
+
+    pub(crate) fn read_clipboard_snapshot(
+        &self,
+        mode: gpui::ClipboardReadMode,
+    ) -> gpui::ClipboardSnapshot {
+        let mut state = self.0.borrow_mut();
+        if state.data_device.is_none() {
+            return gpui::ClipboardSnapshot::default();
+        }
+        state.clipboard.read_snapshot(mode)
+    }
+
+    pub(crate) fn read_primary_snapshot(
+        &self,
+        mode: gpui::ClipboardReadMode,
+    ) -> gpui::ClipboardSnapshot {
+        let mut state = self.0.borrow_mut();
+        if state.primary_selection.is_none() {
+            return gpui::ClipboardSnapshot::default();
+        }
+        state.clipboard.read_primary_snapshot(mode)
     }
 
     pub(crate) fn read_from_primary(&self) -> Option<gpui::ClipboardItem> {
@@ -1673,6 +1708,25 @@ delegate_noop!(WaylandClientStatePtr: ignore zwp_text_input_manager_v3::ZwpTextI
 delegate_noop!(WaylandClientStatePtr: ignore org_kde_kwin_blur::OrgKdeKwinBlur);
 delegate_noop!(WaylandClientStatePtr: ignore wp_viewporter::WpViewporter);
 delegate_noop!(WaylandClientStatePtr: ignore wp_viewport::WpViewport);
+
+impl Dispatch<WlCallback, ClipboardFocusToken> for WaylandClientStatePtr {
+    fn event(
+        client: &mut Self,
+        _: &WlCallback,
+        event: wl_callback::Event,
+        token: &ClipboardFocusToken,
+        connection: &Connection,
+        queue_handle: &QueueHandle<Self>,
+    ) {
+        if let wl_callback::Event::Done { .. } = event {
+            let client = client.get_client();
+            let mut state = client.borrow_mut();
+            if let Some(token) = state.clipboard.keyboard_focus_synced(token) {
+                connection.display().sync(queue_handle, token);
+            }
+        }
+    }
+}
 
 impl Dispatch<WlCallback, ObjectId> for WaylandClientStatePtr {
     fn event(
@@ -2040,8 +2094,8 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
         _: &wl_keyboard::WlKeyboard,
         event: wl_keyboard::Event,
         _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
+        connection: &Connection,
+        queue_handle: &QueueHandle<Self>,
     ) {
         let client = this.get_client();
         let mut state = client.borrow_mut();
@@ -2087,6 +2141,9 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
             }
             wl_keyboard::Event::Enter { surface, .. } => {
                 state.keyboard_focused_window = get_window(&mut state, &surface.id());
+                if let Some(token) = state.clipboard.keyboard_focus_gained() {
+                    connection.display().sync(queue_handle, token);
+                }
                 state.enter_token = Some(());
 
                 if let Some(window) = state.keyboard_focused_window.clone() {
@@ -2097,6 +2154,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
             wl_keyboard::Event::Leave { surface, .. } => {
                 let keyboard_focused_window = get_window(&mut state, &surface.id());
                 state.keyboard_focused_window = None;
+                state.clipboard.keyboard_focus_lost();
                 state.enter_token.take();
                 // Prevent keyboard events from repeating after opening e.g. a file chooser and closing it quickly
                 state.repeat.current_id += 1;
@@ -3044,10 +3102,11 @@ impl Dispatch<wl_data_source::WlDataSource, DataSourceKind> for WaylandClientSta
         let mut state = client.borrow_mut();
 
         match (kind, event) {
-            (DataSourceKind::Clipboard, wl_data_source::Event::Send { mime_type, fd }) => {
-                state.clipboard.send(mime_type, fd);
+            (DataSourceKind::Clipboard(source), wl_data_source::Event::Send { fd, .. }) => {
+                state.clipboard.send(source, fd);
             }
-            (DataSourceKind::Clipboard, wl_data_source::Event::Cancelled) => {
+            (DataSourceKind::Clipboard(source), wl_data_source::Event::Cancelled) => {
+                state.clipboard.cancel(source);
                 data_source.destroy();
             }
             (DataSourceKind::Drag, wl_data_source::Event::Send { fd, .. }) => {
@@ -3135,25 +3194,26 @@ impl Dispatch<zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1, ()>
     }
 }
 
-impl Dispatch<zwp_primary_selection_source_v1::ZwpPrimarySelectionSourceV1, ()>
+impl Dispatch<zwp_primary_selection_source_v1::ZwpPrimarySelectionSourceV1, Arc<ClipboardSource>>
     for WaylandClientStatePtr
 {
     fn event(
         this: &mut Self,
         selection_source: &zwp_primary_selection_source_v1::ZwpPrimarySelectionSourceV1,
         event: zwp_primary_selection_source_v1::Event,
-        _: &(),
+        source: &Arc<ClipboardSource>,
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
         let client = this.get_client();
-        let state = client.borrow_mut();
+        let mut state = client.borrow_mut();
 
         match event {
-            zwp_primary_selection_source_v1::Event::Send { mime_type, fd } => {
-                state.clipboard.send_primary(mime_type, fd);
+            zwp_primary_selection_source_v1::Event::Send { fd, .. } => {
+                state.clipboard.send(source, fd);
             }
             zwp_primary_selection_source_v1::Event::Cancelled => {
+                state.clipboard.cancel_primary(source);
                 selection_source.destroy();
             }
             _ => {}

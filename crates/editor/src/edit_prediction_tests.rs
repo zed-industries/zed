@@ -4,15 +4,17 @@ use edit_prediction_types::{
 };
 use futures::StreamExt;
 use gpui::{
-    Entity, Focusable, KeyBinding, KeybindingKeystroke, Keystroke, Modifiers, NoAction, Pixels,
-    Task, prelude::*, size,
+    Capslock, ClipboardItem, Entity, Focusable, KeyBinding, KeybindingKeystroke, Keystroke,
+    Modifiers, ModifiersChangedEvent, NoAction, Pixels, PlatformInput, Task, prelude::*, size,
 };
 use indoc::indoc;
 use language::EditPredictionsMode;
+use language::language_settings::SoftWrap;
 use language::{Buffer, CodeLabel};
 use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
 use project::{Completion, CompletionResponse, CompletionSource};
 use std::{
+    cell::RefCell,
     ops::Range,
     path::PathBuf,
     rc::Rc,
@@ -22,14 +24,16 @@ use std::{
     },
     time::Duration,
 };
-use text::{Point, ToOffset};
+use text::{Bias, Point, ToOffset};
 use ui::prelude::*;
 
 use crate::{
-    AcceptEditPrediction, CodeContextMenu, CompletionContext, CompletionProvider, EditPrediction,
-    EditPredictionKeybindAction, EditPredictionKeybindSurface, MenuEditPredictionsPolicy,
-    MultiBuffer, ShowCompletions,
+    AcceptEditPrediction, CodeContextMenu, CompletionContext, CompletionProvider, DisplayPoint,
+    EditPrediction, EditPredictionKeybindAction, EditPredictionKeybindSurface,
+    MenuEditPredictionsPolicy, MultiBuffer, ShowCompletions,
+    deferred_input::CapturedInput,
     editor_tests::{init_test, update_test_language_settings},
+    inlays::Inlay,
     test::{
         build_editor, editor_lsp_test_context::EditorLspTestContext,
         editor_test_context::EditorTestContext,
@@ -174,6 +178,530 @@ async fn test_edit_prediction_diff_popover_avoids_right_dock_and_sidebar(
 ) {
     assert_edit_prediction_diff_popover_avoids_right_occluders(cx, Some(px(300.)), Some(px(300.)))
         .await;
+}
+
+#[gpui::test]
+async fn test_captured_input_completion_identity(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    for (item_ix, replace_menu) in [(Some(0), false), (None, true)] {
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.set_state("aˇ");
+        assign_editor_completion_menu_provider(&mut cx);
+        cx.update_editor(|editor, window, cx| {
+            editor.show_completions(&ShowCompletions, window, cx);
+        });
+        cx.run_until_parked();
+        let (completion, input) = cx.update_editor(|editor, window, cx| {
+            defer_input_for_identity_test(editor, window, cx);
+            let completion = editor
+                .confirm_completion(&crate::ConfirmCompletion { item_ix }, window, cx)
+                .expect("queued completion");
+            {
+                let mut context_menu = editor.context_menu.borrow_mut();
+                let Some(CodeContextMenu::Completions(menu)) = context_menu.as_mut() else {
+                    panic!("completion menu");
+                };
+                if replace_menu {
+                    menu.id += 1;
+                } else {
+                    Rc::make_mut(&mut menu.entries).swap(0, 1);
+                }
+            }
+            (completion, editor.input_completion(cx))
+        });
+        input.await.expect("input completed");
+        completion.await.expect("completion completed");
+        if replace_menu {
+            cx.assert_editor_state("aˇ");
+            cx.editor(|editor, _, _| assert!(editor.context_menu.borrow().is_some()));
+        } else {
+            cx.assert_editor_state("fake_completionˇ");
+        }
+    }
+}
+
+#[gpui::test]
+async fn test_captured_input_completion_navigation(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    for deferred in [false, true] {
+        for item_ix in [None, Some(0)] {
+            let mut cx = EditorTestContext::new(cx).await;
+            cx.set_state("aˇ");
+            assign_editor_completion_menu_provider(&mut cx);
+            cx.update_editor(|editor, window, cx| {
+                editor.show_completions(&ShowCompletions, window, cx);
+            });
+            cx.run_until_parked();
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            let editor = cx.editor.clone();
+            let input = cx.update(|window, cx| {
+                let focus = editor.update(cx, |editor, cx| {
+                    if deferred {
+                        defer_input_for_identity_test(editor, window, cx);
+                    }
+                    editor.focus_handle.clone()
+                });
+                focus.dispatch_action(&crate::ContextMenuNext, window, cx);
+                focus.dispatch_action(&crate::ConfirmCompletion { item_ix }, window, cx);
+                editor.update(cx, |editor, cx| editor.input_completion(cx))
+            });
+            input.await.expect("completion input completed");
+            cx.run_until_parked();
+            cx.assert_editor_state(if item_ix.is_some() {
+                "fake_completionˇ"
+            } else {
+                "fake_completion_2ˇ"
+            });
+        }
+    }
+}
+
+#[gpui::test]
+async fn test_captured_input_completion_filter_reset(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("aˇ");
+    assign_editor_completion_menu_provider(&mut cx);
+    cx.update_editor(|editor, window, cx| editor.show_completions(&ShowCompletions, window, cx));
+    cx.run_until_parked();
+    let matches = cx
+        .update_editor(|editor, _, cx| {
+            let context_menu = editor.context_menu.borrow();
+            let Some(CodeContextMenu::Completions(menu)) = context_menu.as_ref() else {
+                panic!("completion menu");
+            };
+            menu.do_async_filtering(
+                Arc::new(String::new()),
+                menu.buffer.read(cx).anchor_before(1),
+                &menu.buffer,
+                cx,
+            )
+        })
+        .await;
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let editor = cx.editor.clone();
+    let input = cx.update(|window, cx| {
+        let focus = editor.read(cx).focus_handle.clone();
+        focus.dispatch_action(&crate::ContextMenuNext, window, cx);
+        editor.update(cx, |editor, cx| {
+            defer_input_for_identity_test(editor, window, cx);
+        });
+        focus.dispatch_action(&crate::ConfirmCompletion { item_ix: None }, window, cx);
+        editor.update(cx, |editor, cx| {
+            {
+                let mut context_menu = editor.context_menu.borrow_mut();
+                let Some(CodeContextMenu::Completions(menu)) = context_menu.as_mut() else {
+                    panic!("completion menu");
+                };
+                assert_eq!(menu.selected_item, 1);
+                menu.set_filter_results(matches, None, window, cx);
+                assert_eq!(menu.selected_item, 0);
+                assert_eq!(
+                    menu.entries
+                        .as_ref()
+                        .iter()
+                        .filter_map(|entry| entry.as_match())
+                        .map(|candidate| candidate.candidate_id)
+                        .collect::<Vec<_>>(),
+                    [0, 1]
+                );
+            }
+            editor.input_completion(cx)
+        })
+    });
+    input.await.expect("completion input completed");
+    cx.run_until_parked();
+    cx.assert_editor_state("aˇ");
+    let completion = cx.update_editor(|editor, window, cx| {
+        editor
+            .confirm_completion(&crate::ConfirmCompletion { item_ix: None }, window, cx)
+            .expect("ready completion after filter reset")
+    });
+    completion.await.expect("completion completed");
+    cx.assert_editor_state("fake_completionˇ");
+}
+
+#[gpui::test]
+async fn test_captured_input_completion_scope_runs_handler(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("aˇ");
+    assign_editor_completion_menu_provider(&mut cx);
+    cx.update_editor(|editor, window, cx| editor.show_completions(&ShowCompletions, window, cx));
+    cx.run_until_parked();
+    let completion = cx.update_editor(|editor, window, cx| {
+        let action = crate::ConfirmCompletion { item_ix: Some(0) };
+        let captured = editor
+            .capture_completion_action(&action, cx)
+            .expect("completion action");
+        {
+            let mut context_menu = editor.context_menu.borrow_mut();
+            let Some(CodeContextMenu::Completions(menu)) = context_menu.as_mut() else {
+                panic!("completion menu");
+            };
+            let completions = menu.completions.borrow().clone();
+            menu.completions = Rc::new(RefCell::new(completions));
+        }
+        let mut handler_ran = false;
+        CapturedInput::completion(captured).run(cx, |cx| {
+            handler_ran = true;
+            assert!(editor.confirm_completion(&action, window, cx).is_none());
+        });
+        assert!(handler_ran);
+        assert_eq!(editor.text(cx), "a");
+        editor
+            .confirm_completion(&action, window, cx)
+            .expect("ready completion after scope")
+    });
+    completion.await.expect("completion completed");
+    cx.assert_editor_state("fake_completionˇ");
+}
+
+#[gpui::test]
+async fn test_captured_input_raw_completion_identity(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    for (target_present, item_ix, replace_menu) in [
+        (false, None, true),
+        (true, None, true),
+        (true, Some(1), false),
+    ] {
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.set_state("aˇ");
+        assign_editor_completion_menu_provider(&mut cx);
+        cx.update_editor(|editor, window, cx| {
+            editor.show_completions(&ShowCompletions, window, cx)
+        });
+        cx.run_until_parked();
+        let input = cx.update_editor(|editor, window, cx| {
+            let hidden_menu = if target_present {
+                None
+            } else {
+                editor.context_menu.borrow_mut().take()
+            };
+            cx.write_to_clipboard(ClipboardItem::new_string(String::from("before")));
+            defer_input_for_identity_test(editor, window, cx);
+            let origin = cx.weak_entity();
+            assert!(editor.defer_keystroke_input(
+                move |_, _| {
+                    Box::new(move |window, cx| {
+                        origin
+                            .update(cx, |editor, cx| {
+                                let action = crate::ConfirmCompletion { item_ix };
+                                let captured = editor
+                                    .capture_completion_action(&action, cx)
+                                    .expect("completion capture");
+                                CapturedInput::completion(captured).run(cx, |cx| {
+                                    assert_eq!(
+                                        editor
+                                            .read_from_clipboard(cx)
+                                            .expect("captured clipboard")
+                                            .and_then(|item| item.text()),
+                                        Some(String::from("before"))
+                                    );
+                                    let completion = editor.confirm_completion(&action, window, cx);
+                                    if replace_menu {
+                                        assert!(completion.is_none());
+                                    } else {
+                                        editor.detach_and_notify_err(
+                                            completion.expect("captured explicit completion"),
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                });
+                            })
+                            .expect("editor is alive");
+                    })
+                },
+                window,
+                cx,
+            ));
+            {
+                let mut context_menu = editor.context_menu.borrow_mut();
+                if let Some(menu) = hidden_menu {
+                    *context_menu = Some(menu);
+                }
+                let Some(CodeContextMenu::Completions(menu)) = context_menu.as_mut() else {
+                    panic!("completion menu");
+                };
+                if replace_menu {
+                    menu.id += 1;
+                }
+            }
+            cx.write_to_clipboard(ClipboardItem::new_string(String::from("after")));
+            editor.input_completion(cx)
+        });
+        input.await.expect("raw completion input completed");
+        cx.run_until_parked();
+        if !replace_menu {
+            cx.assert_editor_state("fake_completion_2ˇ");
+            continue;
+        }
+        cx.assert_editor_state("aˇ");
+        let completion = cx.update_editor(|editor, window, cx| {
+            editor
+                .confirm_completion(&crate::ConfirmCompletion { item_ix: None }, window, cx)
+                .expect("ready completion after raw input")
+        });
+        completion.await.expect("completion completed");
+        cx.assert_editor_state("fake_completionˇ");
+    }
+}
+
+#[gpui::test]
+async fn test_captured_input_raw_prediction_identity(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    for target_present in [false, true] {
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.set_state("aˇ");
+        let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+        assign_editor_completion_provider(provider.clone(), &mut cx);
+        if target_present {
+            propose_edits(&provider, vec![(1..1, "A")], &mut cx);
+            cx.update_editor(|editor, window, cx| {
+                editor.update_visible_edit_prediction(window, cx)
+            });
+        }
+        let input = cx.update_editor(|editor, window, cx| {
+            assert_eq!(editor.has_active_edit_prediction(), target_present);
+            cx.write_to_clipboard(ClipboardItem::new_string(String::from("before")));
+            defer_input_for_identity_test(editor, window, cx);
+            let origin = cx.weak_entity();
+            assert!(editor.defer_keystroke_input(
+                move |_, _| {
+                    Box::new(move |window, cx| {
+                        origin
+                            .update(cx, |editor, cx| {
+                                let captured = editor.capture_edit_prediction_target(cx);
+                                CapturedInput::edit_prediction(captured).run(cx, |cx| {
+                                    assert_eq!(
+                                        editor
+                                            .read_from_clipboard(cx)
+                                            .expect("captured clipboard")
+                                            .and_then(|item| item.text()),
+                                        Some(String::from("before"))
+                                    );
+                                    editor.accept_edit_prediction(
+                                        &AcceptEditPrediction,
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            })
+                            .expect("editor is alive");
+                    })
+                },
+                window,
+                cx,
+            ));
+            let snapshot = editor.buffer.read(cx).snapshot(cx);
+            let position = snapshot
+                .anchor_to_buffer_anchor(snapshot.anchor_after(Point::new(0, 1)))
+                .expect("prediction position")
+                .0;
+            provider.update(cx, |provider, _| {
+                provider.set_edit_prediction(Some(edit_prediction_types::EditPrediction::Local {
+                    id: None,
+                    edits: vec![(position..position, Arc::from("B"))],
+                    cursor_position: None,
+                    edit_preview: None,
+                }));
+            });
+            editor.update_visible_edit_prediction(window, cx);
+            cx.write_to_clipboard(ClipboardItem::new_string(String::from("after")));
+            editor.input_completion(cx)
+        });
+        input.await.expect("raw prediction input completed");
+        cx.assert_editor_state("aˇ");
+        cx.update_editor(|editor, window, cx| {
+            editor.accept_edit_prediction(&AcceptEditPrediction, window, cx);
+        });
+        cx.assert_editor_state("aBˇ");
+    }
+}
+
+#[gpui::test]
+async fn test_captured_input_prediction_presentation_refresh(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    update_test_language_settings(cx, &|settings| {
+        settings.edit_predictions.get_or_insert_default().mode = Some(EditPredictionsMode::Subtle);
+    });
+    cx.update(|cx| cx.bind_keys([KeyBinding::new("ctrl-enter", AcceptEditPrediction, None)]));
+    for (id, notify) in [
+        (None, false),
+        (None, true),
+        (Some("prediction"), false),
+        (Some("prediction"), true),
+    ] {
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.set_state("aˇ");
+        let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+        assign_editor_completion_provider(provider.clone(), &mut cx);
+        let position = cx.buffer_snapshot().anchor_after(1);
+        cx.update(|_, cx| {
+            provider.update(cx, |provider, _| {
+                provider.set_edit_prediction(Some(edit_prediction_types::EditPrediction::Local {
+                    id: id.map(SharedString::from),
+                    edits: vec![(position..position, Arc::from("A"))],
+                    cursor_position: None,
+                    edit_preview: None,
+                }));
+            });
+        });
+        let completion = cx.update_editor(|editor, window, cx| {
+            editor.update_visible_edit_prediction(window, cx);
+            defer_input_for_identity_test(editor, window, cx);
+            editor.update_edit_prediction_preview(&Modifiers::control(), window, cx);
+            editor.accept_edit_prediction(&AcceptEditPrediction, window, cx);
+            if notify {
+                provider.update(cx, |_, cx| cx.notify());
+            }
+            assert_eq!(editor.text(cx), "a");
+            editor.input_completion(cx)
+        });
+        completion.await.expect("prediction input completed");
+        cx.assert_editor_state("aAˇ");
+    }
+}
+
+#[gpui::test]
+async fn test_captured_input_prediction_republication(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    for move_within in [false, true] {
+        for (id, replacement_id, replacement_text, cursor_offset, replace_provider) in [
+            (Some("first"), Some("second"), "A", None, false),
+            (Some("first"), Some("first"), "B", None, false),
+            (Some("first"), Some("first"), "A", Some(0), false),
+            (None, None, "B", None, false),
+            (Some("first"), Some("first"), "A", None, true),
+        ] {
+            let mut cx = EditorTestContext::new(cx).await;
+            let initial_state = if move_within {
+                "aˇ\nb\nc\nd\ne\nf"
+            } else {
+                "aˇ"
+            };
+            cx.set_state(initial_state);
+            let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+            assign_editor_completion_provider(provider.clone(), &mut cx);
+            let snapshot = cx.buffer_snapshot();
+            let position = snapshot.anchor_after(snapshot.len());
+            let completion = cx.update_editor(|editor, window, cx| {
+                provider.update(cx, |provider, _| {
+                    provider.set_edit_prediction(Some(
+                        edit_prediction_types::EditPrediction::Local {
+                            id: id.map(SharedString::from),
+                            edits: vec![(position..position, Arc::from("A"))],
+                            cursor_position: None,
+                            edit_preview: None,
+                        },
+                    ));
+                });
+                editor.update_visible_edit_prediction(window, cx);
+                assert!(editor.has_active_edit_prediction());
+                defer_input_for_identity_test(editor, window, cx);
+                if move_within {
+                    editor.accept_next_word_edit_prediction(
+                        &crate::AcceptNextWordEditPrediction,
+                        window,
+                        cx,
+                    );
+                } else {
+                    editor.accept_edit_prediction(&AcceptEditPrediction, window, cx);
+                }
+                let replacement = edit_prediction_types::EditPrediction::Local {
+                    id: replacement_id.map(SharedString::from),
+                    edits: vec![(position..position, Arc::from(replacement_text))],
+                    cursor_position: cursor_offset
+                        .map(|offset| PredictedCursorPosition::new(position, offset)),
+                    edit_preview: None,
+                };
+                if replace_provider {
+                    let provider = cx.new(|_| FakeEditPredictionDelegate {
+                        completion: Some(replacement),
+                        ..FakeEditPredictionDelegate::default()
+                    });
+                    editor.set_edit_prediction_provider(
+                        Some(provider),
+                        EditPredictionRequestTrigger::EditorCreated,
+                        window,
+                        cx,
+                    );
+                } else {
+                    provider.update(cx, |provider, _| {
+                        provider.set_edit_prediction(Some(replacement));
+                    });
+                }
+                editor.update_visible_edit_prediction(window, cx);
+                editor.input_completion(cx)
+            });
+            completion.await.expect("prediction input completed");
+            cx.assert_editor_state(initial_state);
+            cx.editor(|editor, _, _| assert!(editor.has_active_edit_prediction()));
+            if move_within {
+                cx.update_editor(|editor, window, cx| {
+                    editor.accept_next_word_edit_prediction(
+                        &crate::AcceptNextWordEditPrediction,
+                        window,
+                        cx,
+                    );
+                });
+                cx.assert_editor_state("a\nb\nc\nd\ne\nfˇ");
+            }
+        }
+    }
+}
+
+#[gpui::test]
+async fn test_captured_input_prediction_identity(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    for geometry_retry in [false, true] {
+        let mut cx = EditorTestContext::new(cx).await;
+        let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+        assign_editor_completion_provider(provider.clone(), &mut cx);
+        cx.update_editor(|editor, _, cx| editor.set_soft_wrap_mode(SoftWrap::None, cx));
+        let text = format!("x\nx\nx\nx\nx\nx\n{}", "x".repeat(2_000));
+        cx.set_state(&format!("xˇ\nx\nx\nx\nx\nx\n{}", "x".repeat(2_000)));
+        let target = if geometry_retry {
+            Point::new(6, 1_000)
+        } else {
+            Point::new(0, 1)
+        };
+        propose_edits(&provider, vec![(target..target, "A")], &mut cx);
+        let completion = cx.update_editor(|editor, window, cx| {
+            editor.update_visible_edit_prediction(window, cx);
+            if !geometry_retry {
+                defer_input_for_identity_test(editor, window, cx);
+            }
+            editor.accept_edit_prediction(&AcceptEditPrediction, window, cx);
+            assert!(editor.input_is_deferred());
+            let snapshot = editor.buffer.read(cx).snapshot(cx);
+            let position = snapshot
+                .anchor_to_buffer_anchor(snapshot.anchor_after(Point::new(0, 1)))
+                .expect("prediction position")
+                .0;
+            provider.update(cx, |provider, _| {
+                provider.set_edit_prediction(Some(edit_prediction_types::EditPrediction::Local {
+                    id: None,
+                    edits: vec![(position..position, Arc::from("B"))],
+                    cursor_position: None,
+                    edit_preview: None,
+                }));
+            });
+            editor.update_visible_edit_prediction(window, cx);
+            editor.input_completion(cx)
+        });
+        completion.await.expect("prediction input completed");
+        cx.editor(|editor, _, cx| {
+            assert_eq!(editor.text(cx).get(..3), Some("x\nx"));
+            assert_eq!(editor.text(cx), text);
+            assert!(editor.has_active_edit_prediction());
+        });
+        cx.update_editor(|editor, window, cx| {
+            editor.accept_edit_prediction(&AcceptEditPrediction, window, cx);
+        });
+        cx.editor(|editor, _, cx| assert_eq!(editor.text(cx).get(..3), Some("xB\n")));
+    }
 }
 
 #[gpui::test]
@@ -372,6 +900,290 @@ async fn test_edit_prediction_jump_button(cx: &mut gpui::TestAppContext) {
         line 3
         line 4
     "});
+}
+
+#[gpui::test]
+async fn test_edit_prediction_preview_jump_to_horizontally_offscreen_target(
+    cx: &mut gpui::TestAppContext,
+) {
+    let (mut cx, provider) = modifier_preview_test_context(cx).await;
+    let long_row = "x".repeat(100_000);
+    let trailing_rows = "\n".repeat(40);
+    cx.set_state(&format!("xˇ\nx\nx\nx\nx\nx\n{long_row}{trailing_rows}"));
+    draw_editor(&mut cx);
+
+    let right_target = Point::new(6, 90_000);
+    propose_edits(&provider, vec![(right_target..right_target, "y")], &mut cx);
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+    assert_editor_active_move_completion(&mut cx, |snapshot, target| {
+        assert_eq!(target.to_point(&snapshot), right_target);
+    });
+
+    cx.simulate_modifiers_change(Modifiers::control());
+    draw_editor(&mut cx);
+    assert_line_popover_within_text_bounds(&mut cx);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.accept_edit_prediction(&AcceptEditPrediction, window, cx);
+        editor.accept_edit_prediction(&AcceptEditPrediction, window, cx);
+    });
+    draw_editor(&mut cx);
+    assert_eq!(newest_cursor(&mut cx), Point::new(0, 1));
+    assert_line_popover_within_text_bounds(&mut cx);
+    assert!(editor_scroll_position(&mut cx).x > 0.);
+
+    cx.simulate_modifiers_change(Modifiers::none());
+    draw_editor(&mut cx);
+    assert_eq!(editor_scroll_position(&mut cx), gpui::Point::new(0., 0.));
+
+    cx.simulate_modifiers_change(Modifiers::control());
+    draw_editor(&mut cx);
+    accept_completion(&mut cx);
+    draw_editor(&mut cx);
+    accept_completion(&mut cx);
+    assert_eq!(newest_cursor(&mut cx), right_target);
+
+    cx.simulate_modifiers_change(Modifiers::none());
+    draw_editor(&mut cx);
+    let scrolled_right_position = editor_scroll_position(&mut cx);
+    assert!(scrolled_right_position.x > 0.);
+
+    let left_target = Point::new(2, 1);
+    propose_edits(&provider, vec![(left_target..left_target, "y")], &mut cx);
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+    cx.simulate_modifiers_change(Modifiers::control());
+    draw_editor(&mut cx);
+    assert_line_popover_within_text_bounds(&mut cx);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.accept_edit_prediction(&AcceptEditPrediction, window, cx);
+        editor.accept_edit_prediction(&AcceptEditPrediction, window, cx);
+    });
+    draw_editor(&mut cx);
+    assert_eq!(newest_cursor(&mut cx), right_target);
+    assert_eq!(editor_scroll_position(&mut cx).x, 0.);
+    assert_line_popover_within_text_bounds(&mut cx);
+
+    cx.simulate_modifiers_change(Modifiers::none());
+    draw_editor(&mut cx);
+    assert_eq!(editor_scroll_position(&mut cx), scrolled_right_position);
+}
+
+#[gpui::test]
+async fn test_edit_prediction_cold_preview_acceptance_is_fifo(cx: &mut gpui::TestAppContext) {
+    let (mut cx, provider) = modifier_preview_test_context(cx).await;
+    let long_row = "x".repeat(100_000);
+    let trailing_rows = "\n".repeat(40);
+    let text = format!("x\nx\nx\nx\nx\nx\n{long_row}{trailing_rows}");
+    cx.set_state(&format!("xˇ\nx\nx\nx\nx\nx\n{long_row}{trailing_rows}"));
+
+    let target = Point::new(6, 90_000);
+    propose_edits(&provider, vec![(target..target, "y")], &mut cx);
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+    cx.cx.update(|window, cx| {
+        window.refresh();
+        window.draw(cx).clear(cx);
+        window.dispatch_event(
+            PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+                modifiers: Modifiers::control(),
+                capslock: Capslock { on: false },
+            }),
+            cx,
+        );
+    });
+
+    let completion = cx.update_editor(|editor, window, cx| {
+        assert!(editor.last_position_map.is_none());
+        assert!(editor.last_input_viewport().is_some());
+        let initial_scroll_position = editor.scroll_position(cx);
+        editor.accept_edit_prediction(&AcceptEditPrediction, window, cx);
+        editor.accept_edit_prediction(&AcceptEditPrediction, window, cx);
+        assert!(editor.input_is_deferred());
+        assert_eq!(editor.scroll_position(cx), initial_scroll_position);
+        assert_eq!(editor.buffer.read(cx).snapshot(cx).text(), text);
+        assert_eq!(
+            editor
+                .highlighted_rows::<crate::EditPredictionPreview>(cx)
+                .count(),
+            0,
+        );
+        assert!(matches!(
+            editor.edit_prediction_preview,
+            crate::EditPredictionPreview::Active {
+                previous_scroll_position: None,
+                ..
+            }
+        ));
+        assert!(editor.defer_input(
+            |editor, _, cx| {
+                let snapshot = editor.display_snapshot(cx);
+                assert_eq!(
+                    editor.selections.newest_anchor().head().to_point(&snapshot),
+                    Point::new(0, 1),
+                );
+                assert_eq!(
+                    editor.highlighted_display_row_for_autoscroll(&snapshot),
+                    Some(crate::DisplayRow(6)),
+                );
+                assert!(editor.scroll_position(cx).x > 0.);
+                assert!(matches!(
+                    editor.edit_prediction_preview,
+                    crate::EditPredictionPreview::Active {
+                        previous_scroll_position: Some(_),
+                        ..
+                    }
+                ));
+            },
+            window,
+            cx,
+        ));
+        editor.input_completion(cx)
+    });
+    cx.cx.update(|window, cx| {
+        window.dispatch_event(
+            PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+                modifiers: Modifiers::none(),
+                capslock: Capslock { on: false },
+            }),
+            cx,
+        );
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("!", window, cx);
+        assert_eq!(editor.buffer.read(cx).snapshot(cx).text(), text);
+        assert!(editor.edit_prediction_preview_is_active());
+    });
+    completion.await.expect("prediction input completed");
+
+    cx.assert_editor_state(&format!("x!ˇ\nx\nx\nx\nx\nx\n{long_row}{trailing_rows}"));
+    assert_eq!(editor_scroll_position(&mut cx), gpui::Point::new(0., 0.));
+    cx.editor(|editor, _, cx| {
+        assert!(!editor.edit_prediction_preview_is_active());
+        assert_eq!(
+            editor
+                .highlighted_rows::<crate::EditPredictionPreview>(cx)
+                .count(),
+            0,
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_edit_prediction_preview_resolves_target_after_inlay_change(
+    cx: &mut gpui::TestAppContext,
+) {
+    let (mut cx, provider) = modifier_preview_test_context(cx).await;
+    let long_row = "x".repeat(100_000);
+    let trailing_rows = "\n".repeat(40);
+    cx.set_state(&format!("xˇ\nx\nx\nx\nx\nx\n{long_row}{trailing_rows}"));
+    draw_editor(&mut cx);
+
+    let target_point = Point::new(6, 1);
+    propose_edits(&provider, vec![(target_point..target_point, "y")], &mut cx);
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+    cx.simulate_modifiers_change(Modifiers::control());
+    draw_editor(&mut cx);
+
+    let completion = cx.update_editor(|editor, window, cx| {
+        let initial_scroll_position = editor.scroll_position(cx);
+        let position = editor
+            .buffer()
+            .read(cx)
+            .snapshot(cx)
+            .anchor_after(Point::new(6, 0));
+        editor.splice_inlays(
+            &[],
+            vec![Inlay::mock_hint(0, position, "x".repeat(200))],
+            cx,
+        );
+        editor.accept_edit_prediction(&AcceptEditPrediction, window, cx);
+        assert!(editor.input_is_deferred());
+        assert_eq!(editor.scroll_position(cx), initial_scroll_position);
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        assert_eq!(
+            editor.selections.newest_anchor().head().to_point(&snapshot),
+            Point::new(0, 1),
+        );
+        editor.input_completion(cx)
+    });
+    completion.await.expect("prediction input completed");
+    draw_editor(&mut cx);
+
+    assert_eq!(newest_cursor(&mut cx), Point::new(0, 1));
+    cx.editor(|editor, _, cx| {
+        let position_map = editor
+            .last_position_map
+            .as_ref()
+            .expect("editor should have been drawn");
+        let target_x = 201. * f64::from(position_map.em_layout_width);
+        let visible_x = editor
+            .visible_x_range(&position_map.snapshot, cx)
+            .expect("editor should have a viewport");
+        assert!(target_x >= *visible_x.start());
+        assert!(target_x + f64::from(position_map.em_layout_width) <= *visible_x.end());
+    });
+}
+
+#[gpui::test]
+async fn test_edit_prediction_preview_jump_to_vertically_offscreen_target(
+    cx: &mut gpui::TestAppContext,
+) {
+    let (mut cx, provider) = modifier_preview_test_context(cx).await;
+    let rows = "\nx".repeat(80);
+    let half_row = "x".repeat(50_000);
+    cx.set_state(&format!("{half_row}ˇ{half_row}{rows}"));
+    draw_editor(&mut cx);
+
+    let target = Point::new(70, 0);
+    propose_edits(&provider, vec![(target..target, "y")], &mut cx);
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+    cx.simulate_modifiers_change(Modifiers::control());
+    for scroll_x in [0., 60_000.] {
+        cx.update_editor(|editor, window, cx| {
+            editor.set_scroll_position(gpui::Point::new(scroll_x, 0.), window, cx);
+        });
+        draw_editor(&mut cx);
+        assert_line_popover_within_text_bounds(&mut cx);
+    }
+    let previous_scroll_position = editor_scroll_position(&mut cx);
+    let original_left_edge = left_edge_point(&mut cx);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.accept_edit_prediction(&AcceptEditPrediction, window, cx);
+        editor.accept_edit_prediction(&AcceptEditPrediction, window, cx);
+    });
+    draw_editor(&mut cx);
+    assert_eq!(newest_cursor(&mut cx), Point::new(0, 50_000));
+    let preview_scroll_position = editor_scroll_position(&mut cx);
+    assert_eq!(preview_scroll_position.x, 0.);
+    assert!(preview_scroll_position.y > 0.);
+
+    cx.simulate_modifiers_change(Modifiers::none());
+    draw_editor(&mut cx);
+    assert_eq!(editor_scroll_position(&mut cx), previous_scroll_position);
+
+    cx.simulate_modifiers_change(Modifiers::control());
+    draw_editor(&mut cx);
+    accept_completion(&mut cx);
+    draw_editor(&mut cx);
+
+    cx.update_editor(|editor, _, cx| {
+        let position = editor
+            .buffer()
+            .read(cx)
+            .snapshot(cx)
+            .anchor_after(Point::new(0, 10));
+        editor.splice_inlays(
+            &[],
+            vec![Inlay::mock_hint(0, position, "h".repeat(500))],
+            cx,
+        );
+    });
+    cx.simulate_modifiers_change(Modifiers::none());
+    draw_editor(&mut cx);
+    cx.run_until_parked();
+    draw_editor(&mut cx);
+    assert_eq!(left_edge_point(&mut cx), original_left_edge);
 }
 
 #[gpui::test]
@@ -683,7 +1495,7 @@ async fn test_hidden_edit_prediction_opens_snippet_menu_for_strong_prefix_match(
         let Some(CodeContextMenu::Completions(menu)) = &*editor.context_menu.borrow() else {
             panic!("expected completions menu");
         };
-        let entries = menu.entries.borrow();
+        let entries = menu.entries.as_ref();
         assert!(
             entries
                 .iter()
@@ -1901,4 +2713,97 @@ impl EditPredictionDelegate for FakeNonZedEditPredictionDelegate {
     ) -> Option<edit_prediction_types::EditPrediction> {
         self.completion.clone()
     }
+}
+
+async fn modifier_preview_test_context(
+    cx: &mut gpui::TestAppContext,
+) -> (EditorTestContext, Entity<FakeEditPredictionDelegate>) {
+    init_test(cx, |_| {});
+    update_test_language_settings(cx, &|settings| {
+        settings.defaults.soft_wrap = Some(SoftWrap::None);
+        settings.edit_predictions.get_or_insert_default().mode = Some(EditPredictionsMode::Subtle);
+    });
+    cx.update(|cx| cx.bind_keys([KeyBinding::new("ctrl-enter", AcceptEditPrediction, None)]));
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.simulate_resize(size(px(800.), px(600.)));
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+    (cx, provider)
+}
+
+fn draw_editor(cx: &mut EditorTestContext) {
+    cx.cx.update(|window, cx| {
+        window.refresh();
+        window.draw(cx).clear(cx);
+    });
+}
+
+fn newest_cursor(cx: &mut EditorTestContext) -> Point {
+    cx.editor(|editor, _, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        editor.selections.newest_anchor().head().to_point(&snapshot)
+    })
+}
+
+fn editor_scroll_position(cx: &mut EditorTestContext) -> gpui::Point<f64> {
+    cx.update_editor(|editor, _, cx| editor.scroll_position(cx))
+}
+
+fn left_edge_point(cx: &mut EditorTestContext) -> Point {
+    cx.editor(|editor, _, _| {
+        let position_map = editor
+            .last_position_map
+            .as_ref()
+            .expect("editor should have been drawn");
+        let column = position_map.line_layouts[0]
+            .index_for_x(position_map.scroll_pixel_position.x)
+            .expect("a visible left edge");
+        position_map.snapshot.display_point_to_point(
+            DisplayPoint::new(position_map.visible_row_range.start, column as u32),
+            Bias::Left,
+        )
+    })
+}
+
+fn defer_input_for_identity_test(
+    editor: &mut crate::Editor,
+    window: &mut Window,
+    cx: &mut Context<crate::Editor>,
+) {
+    editor.set_placeholder_text(&"x".repeat(2_000), window, cx);
+    let pending = editor
+        .placeholder_display_map
+        .as_ref()
+        .expect("placeholder map")
+        .update(cx, |map, cx| {
+            map.snapshot(cx)
+                .long_row(crate::DisplayRow(0))
+                .err()
+                .expect("cold geometry")
+        });
+    editor.defer_geometry(pending, |_, _, _| {}, window, cx);
+    assert!(editor.input_is_deferred());
+}
+
+fn assert_line_popover_within_text_bounds(cx: &mut EditorTestContext) {
+    let text_bounds = cx.editor(|editor, window, _| {
+        window.pixel_snap_bounds(
+            editor
+                .last_position_map
+                .as_ref()
+                .expect("editor should have been drawn")
+                .text_hitbox
+                .bounds,
+        )
+    });
+    let popover_bounds = cx
+        .cx
+        .debug_bounds("edit_prediction_line_popover")
+        .expect("edit prediction indicator should be drawn");
+    assert_eq!(
+        popover_bounds.intersect(&text_bounds),
+        popover_bounds,
+        "edit prediction indicator should be within the text bounds {text_bounds:?}"
+    );
 }

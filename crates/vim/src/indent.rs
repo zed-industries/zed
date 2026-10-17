@@ -8,7 +8,7 @@ use language::SelectionGoal;
 use settings::Settings;
 use vim_mode_setting::HelixModeSetting;
 
-#[derive(PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum IndentDirection {
     In,
     Out,
@@ -91,7 +91,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 }
 
 impl Vim {
-    pub(crate) fn indent_motion(
+    pub(crate) fn plan_indent_motion(
         &mut self,
         motion: Motion,
         times: Option<usize>,
@@ -99,38 +99,35 @@ impl Vim {
         dir: IndentDirection,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
-        self.stop_recording(cx);
-        self.update_editor(cx, |_, editor, cx| {
-            let text_layout_details = editor.text_layout_details(window, cx);
-            editor.transact(window, cx, |editor, window, cx| {
-                let mut selection_starts: HashMap<_, _> = Default::default();
-                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.move_with(&mut |map, selection| {
-                        let anchor = map.display_point_to_anchor(selection.head(), Bias::Right);
-                        selection_starts.insert(selection.id, anchor);
-                        motion.expand_selection(
-                            map,
-                            selection,
-                            times,
-                            &text_layout_details,
-                            forced_motion,
-                        );
+    ) -> Result<crate::GeometryCommit, editor::display_map::PendingRowGeometry> {
+        let planned = self.expanded_motion(&motion, times, forced_motion, None, window, cx)?;
+        Ok(Box::new(move |vim, window, cx| {
+            vim.stop_recording(cx);
+            vim.update_editor(cx, |_, editor, cx| {
+                editor.transact(window, cx, |editor, window, cx| {
+                    let mut selection_starts: HashMap<_, _> = Default::default();
+                    editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                        s.move_with(&mut |map, selection| {
+                            let anchor = map.display_point_to_anchor(selection.head(), Bias::Right);
+                            selection_starts.insert(selection.id, anchor);
+                            planned.apply(selection);
+                        });
                     });
-                });
-                match dir {
-                    IndentDirection::In => editor.indent(&Default::default(), window, cx),
-                    IndentDirection::Out => editor.outdent(&Default::default(), window, cx),
-                    IndentDirection::Auto => editor.autoindent(&Default::default(), window, cx),
-                }
-                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.move_with(&mut |map, selection| {
-                        let anchor = selection_starts.remove(&selection.id).unwrap();
-                        selection.collapse_to(anchor.to_display_point(map), SelectionGoal::None);
+                    match dir {
+                        IndentDirection::In => editor.indent(&Default::default(), window, cx),
+                        IndentDirection::Out => editor.outdent(&Default::default(), window, cx),
+                        IndentDirection::Auto => editor.autoindent(&Default::default(), window, cx),
+                    }
+                    editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                        s.move_with(&mut |map, selection| {
+                            let anchor = selection_starts.remove(&selection.id).unwrap();
+                            selection
+                                .collapse_to(anchor.to_display_point(map), SelectionGoal::None);
+                        });
                     });
                 });
             });
-        });
+        }))
     }
 
     pub(crate) fn indent_object(

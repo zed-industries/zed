@@ -33,10 +33,11 @@ use font_kit::{
     sources::mem::MemSource,
 };
 use gpui::{
-    Bounds, DevicePixels, Font, FontFallbacks, FontFeatures, FontId, FontMetrics, FontRun,
-    FontStyle, FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, RenderGlyphParams,
-    Result, SUBPIXEL_VARIANTS_X, ShapedGlyph, ShapedRun, SharedString, Size, TextRenderingMode,
-    point, px, size, swap_rgba_pa_to_bgra,
+    Bounds, CompactGlyphPositions, CompactLineLayout, DevicePixels, Font, FontFallbacks,
+    FontFeatures, FontId, FontMetrics, FontRun, FontStyle, FontWeight, GlyphId, LineLayout, Pixels,
+    PlatformTextSystem, RenderGlyphParams, Result, RetainedLineLayout, SUBPIXEL_VARIANTS_X,
+    ShapedGlyph, ShapedRun, SharedString, Size, TextRenderingMode, point, px, size,
+    swap_rgba_pa_to_bgra,
 };
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use pathfinder_geometry::{
@@ -45,7 +46,7 @@ use pathfinder_geometry::{
     vector::Vector2F,
 };
 use smallvec::SmallVec;
-use std::{borrow::Cow, char, convert::TryFrom, sync::Arc};
+use std::{borrow::Cow, char, convert::TryFrom, ptr::NonNull, sync::Arc};
 
 #[cfg(target_os = "macos")]
 use {
@@ -210,7 +211,37 @@ impl PlatformTextSystem for AppleTextSystem {
     }
 
     fn layout_line(&self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
-        self.0.write().layout_line(text, font_size, font_runs)
+        self.layout_line_inner(text, font_size, font_runs, None).0
+    }
+
+    fn layout_line_for_retention(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        runs: &[FontRun],
+    ) -> RetainedLineLayout {
+        let (line, layout, width) = self.native_line(text, font_size, runs);
+        if let [run] = runs
+            && run.len == text.len()
+            && let Some(compact) = self.compact_line(&line, &layout, width, text)
+        {
+            return RetainedLineLayout::Compact(compact);
+        }
+        let mut positions = Vec::new();
+        let layout = self.extract_line(&line, layout, text, Some(&mut positions));
+        RetainedLineLayout::Dense(layout, positions, width)
+    }
+
+    fn layout_line_with_precise_positions(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        font_runs: &[FontRun],
+    ) -> (LineLayout, Vec<f64>, f64) {
+        let mut glyph_x_positions = Vec::new();
+        let (layout, width) =
+            self.layout_line_inner(text, font_size, font_runs, Some(&mut glyph_x_positions));
+        (layout, glyph_x_positions, width)
     }
 
     fn recommended_rendering_mode(
@@ -438,7 +469,11 @@ impl AppleTextSystemState {
         )?);
 
         // Expand the bounds by 1 pixel on each side to give CG room for anti-aliasing.
-        Ok(bounds.dilate(DevicePixels(1)))
+        let mut bounds = bounds.dilate(DevicePixels(1));
+        // Add an extra pixel when the subpixel variant isn't zero to make room for anti-aliasing.
+        bounds.size.width += DevicePixels(i32::from(params.subpixel_variant.x > 0));
+        bounds.size.height += DevicePixels(i32::from(params.subpixel_variant.y > 0));
+        Ok(bounds)
     }
 
     fn rasterize_glyph(
@@ -449,15 +484,7 @@ impl AppleTextSystemState {
         if glyph_bounds.size.width.0 == 0 || glyph_bounds.size.height.0 == 0 {
             anyhow::bail!("glyph bounds are empty");
         } else {
-            // Add an extra pixel when the subpixel variant isn't zero to make room for anti-aliasing.
-            let mut bitmap_size = glyph_bounds.size;
-            if params.subpixel_variant.x > 0 {
-                bitmap_size.width += DevicePixels(1);
-            }
-            if params.subpixel_variant.y > 0 {
-                bitmap_size.height += DevicePixels(1);
-            }
-            let bitmap_size = bitmap_size;
+            let bitmap_size = glyph_bounds.size;
 
             let mut bytes;
             let cx;
@@ -489,7 +516,8 @@ impl AppleTextSystemState {
             // makes drawing text consistent with the font-kit's raster_bounds.
             cx.translate(
                 -glyph_bounds.origin.x.0 as CGFloat,
-                (glyph_bounds.origin.y.0 + glyph_bounds.size.height.0) as CGFloat,
+                (glyph_bounds.origin.y.0 + glyph_bounds.size.height.0
+                    - i32::from(params.subpixel_variant.y > 0)) as CGFloat,
             );
             cx.scale(
                 params.scale_factor as CGFloat,
@@ -536,8 +564,29 @@ impl AppleTextSystemState {
             Ok((bitmap_size, bytes))
         }
     }
+}
 
-    fn layout_line(&mut self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
+impl AppleTextSystem {
+    fn layout_line_inner(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        font_runs: &[FontRun],
+        glyph_x_positions: Option<&mut Vec<f64>>,
+    ) -> (LineLayout, f64) {
+        let (line, layout, width) = self.native_line(text, font_size, font_runs);
+        (
+            self.extract_line(&line, layout, text, glyph_x_positions),
+            width,
+        )
+    }
+
+    fn native_line(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        font_runs: &[FontRun],
+    ) -> (CTLine, LineLayout, f64) {
         // Construct the attributed string, converting UTF8 ranges to UTF16 ranges.
         let mut string = CFMutableAttributedString::new();
         let mut max_ascent = 0.0f32;
@@ -557,7 +606,7 @@ impl AppleTextSystemState {
 
                 let length = utf16_end - utf16_start;
                 let cf_range = CFRange::init(utf16_start, length);
-                let font = &self.fonts[run.font_id.0];
+                let font = self.0.read().fonts[run.font_id.0].clone();
 
                 let font_metrics = font.metrics();
                 let font_scale = f32::from(font_size) / font_metrics.units_per_em as f32;
@@ -579,11 +628,32 @@ impl AppleTextSystemState {
                 break_ligature = !break_ligature;
             }
         }
-        // Retrieve the glyphs from the shaped line, converting UTF16 offsets to UTF8 offsets.
         let line = CTLine::new_with_attributed_string(string.as_concrete_TypeRef());
+        let width = line.get_typographic_bounds().width;
+        let layout = LineLayout {
+            font_size,
+            width: px(width as f32),
+            ascent: px(max_ascent),
+            descent: px(max_descent),
+            len: text.len(),
+            ..LineLayout::default()
+        };
+        (line, layout, width)
+    }
+
+    fn extract_line(
+        &self,
+        line: &CTLine,
+        mut layout: LineLayout,
+        text: &str,
+        mut glyph_x_positions: Option<&mut Vec<f64>>,
+    ) -> LineLayout {
+        // Retrieve the glyphs from the shaped line, converting UTF16 offsets to UTF8 offsets.
         let glyph_runs = line.glyph_runs();
-        let mut runs = <Vec<ShapedRun>>::with_capacity(glyph_runs.len() as usize);
+        let glyph_run_count = glyph_runs.len();
+        let mut runs = <Vec<ShapedRun>>::with_capacity(glyph_run_count as usize);
         let mut ix_converter = StringIndexConverter::new(text);
+        let mut font_identities = HashMap::<_, (FontId, bool)>::default();
         for run in glyph_runs.into_iter() {
             let attributes = run.attributes().unwrap();
             let font = unsafe {
@@ -592,8 +662,17 @@ impl AppleTextSystemState {
                     .downcast::<CTFont>()
                     .unwrap()
             };
-            let font_id = self.id_for_native_font(font);
+            let (font_id, is_emoji) = if glyph_run_count == 1 {
+                self.identify_font(&font)
+            } else {
+                *font_identities
+                    .entry(font.as_concrete_TypeRef())
+                    .or_insert_with(|| self.identify_font(&font))
+            };
 
+            if let Some(glyph_x_positions) = glyph_x_positions.as_mut() {
+                glyph_x_positions.reserve(run.glyph_count().try_into().unwrap_or(0));
+            }
             let glyphs = match runs.last_mut() {
                 Some(run) if run.font_id == font_id => &mut run.glyphs,
                 _ => {
@@ -611,27 +690,115 @@ impl AppleTextSystemState {
                 .zip(run.string_indices().iter())
             {
                 let glyph_utf16_ix = usize::try_from(glyph_utf16_ix).unwrap();
-                if ix_converter.utf16_ix > glyph_utf16_ix {
-                    // We cannot reuse current index converter, as it can only seek forward. Restart the search.
-                    ix_converter = StringIndexConverter::new(text);
-                }
                 ix_converter.advance_to_utf16_ix(glyph_utf16_ix);
+                if let Some(glyph_x_positions) = glyph_x_positions.as_mut() {
+                    glyph_x_positions.push(position.x);
+                }
                 glyphs.push(ShapedGlyph {
                     id: GlyphId(glyph_id as u32),
                     position: point(position.x as f32, position.y as f32).map(px),
                     index: ix_converter.utf8_ix,
-                    is_emoji: self.is_emoji(font_id),
+                    is_emoji,
                 });
             }
         }
-        let typographic_bounds = line.get_typographic_bounds();
-        LineLayout {
-            runs,
-            font_size,
-            width: typographic_bounds.width.into(),
-            ascent: max_ascent.into(),
-            descent: max_descent.into(),
-            len: text.len(),
+        layout.runs = runs;
+        layout
+    }
+
+    fn compact_line(
+        &self,
+        line: &CTLine,
+        layout: &LineLayout,
+        width: f64,
+        text: &str,
+    ) -> Option<CompactLineLayout> {
+        if text.is_empty()
+            || !text.bytes().all(|byte| (b' '..=b'~').contains(&byte))
+            || !width.is_finite()
+            || width < 0.
+        {
+            return None;
+        }
+        let runs = line.glyph_runs();
+        if runs.len() != 1 {
+            return None;
+        }
+        let run = runs.iter().next()?;
+        if usize::try_from(run.glyph_count()).ok()? != text.len() {
+            return None;
+        }
+        let attributes = run.attributes()?;
+        let font = unsafe { attributes.get(kCTFontAttributeName).downcast::<CTFont>()? };
+        let (font_id, is_emoji) = self.identify_font(&font);
+        let mut glyphs = vec![0_u16; text.len()];
+        let mut native_positions =
+            [objc2_core_foundation::CGPoint::new(0., 0.); CompactGlyphPositions::BLOCK_LEN];
+        let mut indices = [0_isize; CompactGlyphPositions::BLOCK_LEN];
+        let positions = CompactGlyphPositions::new(text.len(), |range, values| {
+            let count = range.len();
+            let native_range = objc2_core_foundation::CFRange::new(
+                isize::try_from(range.start).ok()?,
+                isize::try_from(count).ok()?,
+            );
+            unsafe {
+                let native = &*run.as_concrete_TypeRef().cast::<objc2_core_text::CTRun>();
+                native.glyphs(
+                    native_range,
+                    NonNull::new(glyphs.get_mut(range.clone())?.as_mut_ptr())?,
+                );
+                native.positions(native_range, NonNull::new(native_positions.as_mut_ptr())?);
+                native.string_indices(native_range, NonNull::new(indices.as_mut_ptr())?);
+            }
+            for (offset, value) in values.iter_mut().enumerate() {
+                let position = native_positions[offset];
+                let x = position.x;
+                if usize::try_from(indices[offset]).ok()? != range.start + offset
+                    || position.y.to_bits() != 0
+                    || !x.is_finite()
+                    || x < 0.
+                    || x > width
+                    || (offset > 0 && position.x < native_positions[offset - 1].x)
+                {
+                    return None;
+                }
+                *value = x;
+            }
+            Some(())
+        })?;
+        if positions.get(0)?.to_bits() != 0
+            || !(CompactGlyphPositions::BLOCK_LEN..text.len())
+                .step_by(CompactGlyphPositions::BLOCK_LEN)
+                .all(|index| {
+                    positions
+                        .get(index - 1)
+                        .zip(positions.get(index))
+                        .is_some_and(|(previous, next)| previous <= next)
+                })
+        {
+            return None;
+        }
+        Some(CompactLineLayout {
+            font_id,
+            font_size: layout.font_size,
+            ascent: layout.ascent,
+            descent: layout.descent,
+            width,
+            is_emoji,
+            glyphs,
+            positions,
+        })
+    }
+
+    fn identify_font(&self, font: &CTFont) -> (FontId, bool) {
+        let postscript_name = font.postscript_name();
+        let state = self.0.upgradable_read();
+        if let Some(&font_id) = state.font_ids_by_postscript_name.get(&postscript_name) {
+            (font_id, state.is_emoji(font_id))
+        } else {
+            let mut state = RwLockUpgradableReadGuard::upgrade(state);
+            let font_id = state.id_for_native_font(font.clone());
+            (font_id, state.is_emoji(font_id))
         }
     }
 }
@@ -643,18 +810,37 @@ struct StringIndexConverter<'a> {
     utf8_ix: usize,
     /// Index in UTF-16 code units
     utf16_ix: usize,
+    checkpoints: Option<Vec<(usize, usize)>>,
 }
 
 impl<'a> StringIndexConverter<'a> {
+    const CHECKPOINT_INTERVAL: usize = 64;
+
     fn new(text: &'a str) -> Self {
         Self {
             text,
             utf8_ix: 0,
             utf16_ix: 0,
+            checkpoints: None,
         }
     }
 
     fn advance_to_utf16_ix(&mut self, utf16_target: usize) {
+        let backward = self.utf16_ix > utf16_target;
+        if backward && self.checkpoints.is_none() {
+            self.checkpoints = Some(Self::build_checkpoints(self.text));
+        }
+        if (backward || utf16_target - self.utf16_ix > Self::CHECKPOINT_INTERVAL)
+            && let Some(checkpoints) = &self.checkpoints
+            && let Some(&(utf16_ix, utf8_ix)) = checkpoints
+                .partition_point(|&(utf16_ix, _)| utf16_ix <= utf16_target)
+                .checked_sub(1)
+                .and_then(|index| checkpoints.get(index))
+            && (backward || utf16_ix > self.utf16_ix)
+        {
+            self.utf16_ix = utf16_ix;
+            self.utf8_ix = utf8_ix;
+        }
         for (ix, c) in self.text[self.utf8_ix..].char_indices() {
             if self.utf16_ix >= utf16_target {
                 self.utf8_ix += ix;
@@ -663,6 +849,24 @@ impl<'a> StringIndexConverter<'a> {
             self.utf16_ix += c.len_utf16();
         }
         self.utf8_ix = self.text.len();
+    }
+
+    fn build_checkpoints(text: &str) -> Vec<(usize, usize)> {
+        let mut checkpoints = Vec::with_capacity(text.len() / Self::CHECKPOINT_INTERVAL + 2);
+        let mut utf16_ix = 0;
+        let mut next_checkpoint = 0;
+        for (utf8_ix, character) in text.char_indices() {
+            if utf16_ix >= next_checkpoint {
+                checkpoints.push((utf16_ix, utf8_ix));
+                next_checkpoint =
+                    (utf16_ix / Self::CHECKPOINT_INTERVAL + 1) * Self::CHECKPOINT_INTERVAL;
+            }
+            utf16_ix += character.len_utf16();
+        }
+        if utf16_ix >= next_checkpoint {
+            checkpoints.push((utf16_ix, text.len()));
+        }
+        checkpoints
     }
 }
 
@@ -774,9 +978,167 @@ mod lenient_font_attributes {
 
 #[cfg(test)]
 mod tests {
-    use crate::AppleTextSystem;
-    use gpui::{FontFallbacks, FontFeatures, FontRun, GlyphId, PlatformTextSystem, font, px};
-    use std::sync::Arc;
+    use super::{AppleTextSystem, StringIndexConverter};
+    use core_text::font_descriptor::kCTFontOrientationHorizontal;
+    use gpui::{
+        FontFallbacks, FontFeatures, FontRun, FontStyle, FontWeight, GlyphId, Pixels,
+        PlatformTextSystem, RenderGlyphParams, RetainedLineLayout, SUBPIXEL_VARIANTS_X, font,
+        point, px,
+    };
+    use std::{borrow::Cow, sync::Arc};
+
+    #[test]
+    fn test_retained_layout_matches_native() {
+        let fonts = test_fonts();
+        for (style, weight) in [
+            (FontStyle::Normal, FontWeight::NORMAL),
+            (FontStyle::Normal, FontWeight::BOLD),
+            (FontStyle::Italic, FontWeight::NORMAL),
+            (FontStyle::Italic, FontWeight::BOLD),
+        ] {
+            let mut descriptor = font("Lilex");
+            descriptor.style = style;
+            descriptor.weight = weight;
+            let font_id = fonts.font_id(&descriptor).unwrap();
+            for font_size in [
+                13.25_f32,
+                14.,
+                15.,
+                16.,
+                f32::from_bits(1),
+                f32::MIN_POSITIVE,
+                0.125,
+                16_777_216.,
+                f32::MAX.next_down(),
+            ] {
+                let mut texts = vec![
+                    "x".repeat(20_000),
+                    format!("{}!x!x", "x".repeat(19_998)),
+                    "xy".repeat(10_001),
+                    " x!x ".repeat(4_001),
+                    "hello world".repeat(1_819),
+                    "hello 0123456789, (world)! [a] {b}; c + d - e * f / g = h.".repeat(401),
+                ];
+                if style == FontStyle::Normal && weight == FontWeight::NORMAL {
+                    texts.extend(
+                        [1, 1_023, 1_024, 1_025, 65_535, 65_536, 65_537].map(|len| "x".repeat(len)),
+                    );
+                    if font_size == 15. {
+                        texts.push("x".repeat(1_048_577));
+                    }
+                }
+                for text in texts {
+                    let runs = [FontRun {
+                        font_id,
+                        len: text.len(),
+                    }];
+                    assert_retained_matches_native(&fonts, &text, px(font_size), &runs, true);
+                }
+            }
+        }
+        let font_id = fonts.font_id(&font("Lilex")).unwrap();
+        for text in [
+            "0xA",
+            "1x2",
+            "x!!x",
+            "//->...++",
+            "office",
+            "",
+            "x\t",
+            "x\u{301}",
+            "नमस्ते hello",
+            "x\u{202e}abc",
+        ] {
+            assert_retained_matches_native(
+                &fonts,
+                text,
+                px(15.),
+                &[FontRun {
+                    font_id,
+                    len: text.len(),
+                }],
+                false,
+            );
+        }
+        assert_retained_matches_native(
+            &fonts,
+            "xx",
+            px(15.),
+            &[FontRun { font_id, len: 1 }; 2],
+            false,
+        );
+        for features in [
+            vec![("aalt".to_string(), 1)],
+            vec![("calt".to_string(), 0)],
+            vec![("ordn".to_string(), 1)],
+            vec![("cv01".to_string(), 1)],
+            vec![("onum".to_string(), 1)],
+        ] {
+            let mut descriptor = font("Lilex");
+            descriptor.features = FontFeatures(Arc::new(features));
+            let font_id = fonts.font_id(&descriptor).unwrap();
+            let text = "hello world 0123456789 0xA 1x2 x!!x //->...++";
+            assert_retained_matches_native(
+                &fonts,
+                text,
+                px(15.),
+                &[FontRun {
+                    font_id,
+                    len: text.len(),
+                }],
+                false,
+            );
+        }
+    }
+
+    #[test]
+    fn test_raster_bounds_match_bitmap_size() {
+        let fonts = test_fonts();
+        let font_id = fonts.font_id(&font("Lilex")).expect("test font");
+        let text = "af\u{0361}😀";
+        let layout = fonts.layout_line(
+            text,
+            px(16.),
+            &[FontRun {
+                font_id,
+                len: text.len(),
+            }],
+        );
+        for scale_factor in [1., 1.25, 1.5, 2., 3.] {
+            for run in &layout.runs {
+                for glyph in &run.glyphs {
+                    for phase in 0..if glyph.is_emoji {
+                        1
+                    } else {
+                        SUBPIXEL_VARIANTS_X
+                    } {
+                        for dilation in 0..=if glyph.is_emoji { 0 } else { 4 } {
+                            let params = RenderGlyphParams {
+                                font_id: run.font_id,
+                                glyph_id: glyph.id,
+                                font_size: layout.font_size,
+                                subpixel_variant: point(phase, 0),
+                                scale_factor,
+                                is_emoji: glyph.is_emoji,
+                                subpixel_rendering: false,
+                                dilation,
+                            };
+                            let bounds = fonts.glyph_raster_bounds(&params).expect("raster bounds");
+                            let (size, bytes) = fonts
+                                .rasterize_glyph(&params, bounds)
+                                .expect("glyph bitmap");
+                            assert_eq!(size, bounds.size, "{params:?}");
+                            let channels = if glyph.is_emoji { 4 } else { 1 };
+                            assert_eq!(
+                                bytes.len(),
+                                size.width.0 as usize * size.height.0 as usize * channels
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn test_reload_family_with_features_and_fallbacks() {
@@ -799,6 +1161,109 @@ mod tests {
         );
         assert_eq!(layout.len, 6);
         assert!(!layout.runs.is_empty());
+    }
+
+    #[test]
+    fn test_layout_line_with_precise_positions() {
+        let fonts = AppleTextSystem::new();
+        let font_id = fonts.font_id(&font("Helvetica")).unwrap();
+        let glyph_id = fonts.glyph_for_char(font_id, 'm').unwrap().0 as u16;
+        for font_size in [16.0f32, 16_777_216.0] {
+            let native_font = fonts.0.read().fonts[font_id.0]
+                .native_font()
+                .clone_with_font_size(f64::from(font_size.next_up()));
+            let advance = unsafe {
+                native_font.get_advances_for_glyphs(
+                    kCTFontOrientationHorizontal,
+                    &glyph_id,
+                    std::ptr::null_mut(),
+                    1,
+                )
+            };
+            let (layout, positions, width) = fonts.layout_line_with_precise_positions(
+                "mmmm",
+                px(font_size),
+                &[FontRun { font_id, len: 4 }],
+            );
+            assert_eq!(positions, [0., advance, advance * 2., advance * 3.]);
+            assert_eq!(width, advance * 4.);
+            assert_ne!(width, f64::from(layout.width));
+        }
+
+        let text = "mक".repeat(3);
+        let layout = fonts.layout_line(
+            &text,
+            px(16.),
+            &[FontRun {
+                font_id,
+                len: text.len(),
+            }],
+        );
+        let fallback = layout.runs[1].font_id;
+        assert_ne!(fallback, font_id);
+        assert_eq!(
+            layout
+                .runs
+                .iter()
+                .map(|run| (run.font_id, run.glyphs[0].index, run.glyphs[0].is_emoji))
+                .collect::<Vec<_>>(),
+            [
+                (font_id, 0, false),
+                (fallback, 1, false),
+                (font_id, 4, false),
+                (fallback, 5, false),
+                (font_id, 8, false),
+                (fallback, 9, false),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_reordered_string_indices() {
+        let text = "😀किa".repeat(1_024);
+        let mut converter = StringIndexConverter::new(&text);
+        for repetition in 0..1_024 {
+            for (utf16, utf8) in [(0, 0), (3, 7), (2, 4), (1, 4), (4, 10), (5, 11)] {
+                converter.advance_to_utf16_ix(repetition * 5 + utf16);
+                assert_eq!(converter.utf8_ix, repetition * 11 + utf8);
+            }
+        }
+
+        let text = format!(
+            "{}😀{}{}a",
+            "a".repeat(63),
+            "कि".repeat(31),
+            "😀".repeat(40)
+        );
+        let utf16_len = text.encode_utf16().count();
+        let expected = |target: usize| {
+            let mut utf16_ix = 0;
+            text.char_indices()
+                .find_map(|(utf8_ix, character)| {
+                    if utf16_ix >= target {
+                        return Some(utf8_ix);
+                    }
+                    utf16_ix += character.len_utf16();
+                    None
+                })
+                .unwrap_or(text.len())
+        };
+        let mut converter = StringIndexConverter::new(&text);
+        for target in 0..=utf16_len + 2 {
+            converter.advance_to_utf16_ix(target);
+            assert_eq!(converter.utf8_ix, expected(target), "monotone {target}");
+        }
+        assert_eq!(converter.checkpoints, None);
+        for target in 0..=utf16_len + 2 {
+            for target in [target, 0, utf16_len + 2, target, utf16_len + 2 - target] {
+                converter.advance_to_utf16_ix(target);
+                assert_eq!(converter.utf8_ix, expected(target), "adversarial {target}");
+            }
+        }
+        assert_eq!(
+            converter.checkpoints,
+            Some(Vec::from([(0, 0), (65, 67), (129, 257), (193, 385)]))
+        );
     }
 
     #[test]
@@ -932,5 +1397,112 @@ mod tests {
         let layout = fonts.layout_line(text, px(16.), font_runs);
         assert_eq!(layout.len, 0);
         assert!(layout.runs.is_empty());
+    }
+
+    fn assert_retained_matches_native(
+        fonts: &AppleTextSystem,
+        text: &str,
+        font_size: Pixels,
+        runs: &[FontRun],
+        require_compact: bool,
+    ) {
+        let (expected, positions, width) =
+            fonts.layout_line_with_precise_positions(text, font_size, runs);
+        let retained = fonts.layout_line_for_retention(text, font_size, runs);
+        let (actual, actual_positions, actual_width) = match retained {
+            RetainedLineLayout::Dense(layout, positions, width) => {
+                assert!(
+                    !require_compact,
+                    "expected compact output for {} bytes at {font_size:?}",
+                    text.len()
+                );
+                (layout, positions, width)
+            }
+            RetainedLineLayout::Compact(compact) => {
+                assert_eq!(expected.runs.len(), 1);
+                assert_eq!(compact.font_id, expected.runs[0].font_id);
+                assert_eq!(compact.font_size, expected.font_size);
+                assert_eq!(compact.ascent, expected.ascent);
+                assert_eq!(compact.descent, expected.descent);
+                assert_eq!(compact.width.to_bits(), width.to_bits());
+                assert_eq!(compact.glyphs.len(), text.len());
+                assert_eq!(compact.positions.len(), positions.len());
+                for (index, glyph) in expected.runs[0].glyphs.iter().enumerate() {
+                    assert_eq!(GlyphId(u32::from(compact.glyphs[index])), glyph.id);
+                    assert_eq!(glyph.index, index);
+                    assert_eq!(glyph.position.y, Pixels::ZERO);
+                    assert_eq!(compact.is_emoji, glyph.is_emoji);
+                    assert_eq!(
+                        compact.positions.get(index).unwrap().to_bits(),
+                        positions[index].to_bits()
+                    );
+                }
+                return;
+            }
+        };
+        assert_eq!(actual_width.to_bits(), width.to_bits());
+        assert_eq!(
+            actual_positions
+                .iter()
+                .map(|value| value.to_bits())
+                .collect::<Vec<_>>(),
+            positions
+                .iter()
+                .map(|value| value.to_bits())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            (
+                actual.font_size,
+                actual.width,
+                actual.ascent,
+                actual.descent,
+                actual.len
+            ),
+            (
+                expected.font_size,
+                expected.width,
+                expected.ascent,
+                expected.descent,
+                expected.len
+            )
+        );
+        assert_eq!(actual.runs.len(), expected.runs.len());
+        for (actual, expected) in actual.runs.iter().zip(&expected.runs) {
+            assert_eq!(actual.font_id, expected.font_id);
+            assert_eq!(actual.glyphs.len(), expected.glyphs.len());
+            for (actual, expected) in actual.glyphs.iter().zip(&expected.glyphs) {
+                assert_eq!(
+                    (actual.id, actual.index, actual.position, actual.is_emoji),
+                    (
+                        expected.id,
+                        expected.index,
+                        expected.position,
+                        expected.is_emoji
+                    )
+                );
+            }
+        }
+    }
+
+    fn test_fonts() -> AppleTextSystem {
+        let fonts = AppleTextSystem::new();
+        fonts
+            .add_fonts(vec![
+                Cow::Borrowed(
+                    include_bytes!("../../../assets/fonts/lilex/Lilex-Regular.ttf").as_slice(),
+                ),
+                Cow::Borrowed(
+                    include_bytes!("../../../assets/fonts/lilex/Lilex-Bold.ttf").as_slice(),
+                ),
+                Cow::Borrowed(
+                    include_bytes!("../../../assets/fonts/lilex/Lilex-Italic.ttf").as_slice(),
+                ),
+                Cow::Borrowed(
+                    include_bytes!("../../../assets/fonts/lilex/Lilex-BoldItalic.ttf").as_slice(),
+                ),
+            ])
+            .unwrap();
+        fonts
     }
 }

@@ -3,7 +3,10 @@ use gpui::{Action, Context, Window};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::{Vim, state::Mode};
+use crate::{
+    Vim,
+    state::{Mode, VimGlobals},
+};
 
 /// Pastes text from the specified register at the cursor position.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
@@ -21,30 +24,33 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let retry = action.clone();
+        if VimGlobals::register_read_uses_clipboard(self.selected_register, cx)
+            && self.defer_clipboard_input(
+                move |vim, window, cx| vim.helix_paste(&retry, window, cx),
+                window,
+                cx,
+            )
+        {
+            return;
+        }
         self.record_current_action(cx);
         self.store_visual_marks(window, cx);
         let count = Vim::take_count(cx).unwrap_or(1);
         // TODO: vim paste calls take_forced_motion here, but I don't know what that does
         // (none of the other helix_ methods call it)
 
-        self.update_editor(cx, |vim, editor, cx| {
+        let pasted = self.update_editor(cx, |vim, editor, cx| {
             if editor.read_only(cx) {
-                return;
+                return None;
             }
+            let selected_register = vim.selected_register.take();
+            let register = vim.read_register(selected_register, editor, cx)?;
+            let text = register.text;
+            let clipboard_selections = register.clipboard_selections;
 
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
-
-                let selected_register = vim.selected_register.take();
-
-                let Some(register) = Vim::update_globals(cx, |globals, cx| {
-                    globals.read_register(selected_register, Some(editor), cx)
-                })
-                .filter(|reg| !reg.text.is_empty()) else {
-                    return;
-                };
-                let text = register.text;
-                let clipboard_selections = register.clipboard_selections;
 
                 let display_map = editor.display_snapshot(cx);
                 let current_selections = editor.selections.all_adjusted_display(&display_map);
@@ -132,9 +138,12 @@ impl Vim {
                     s.select_ranges(new_selections);
                 })
             });
+            Some(())
         });
 
-        self.switch_mode(Mode::HelixNormal, true, window, cx);
+        if pasted.flatten().is_some() {
+            self.switch_mode(Mode::HelixNormal, true, window, cx);
+        }
     }
 }
 

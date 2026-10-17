@@ -1,15 +1,16 @@
 use std::{borrow::Cow, sync::LazyLock};
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use collections::FxHashMap;
+use gpui_util::ResultExt as _;
 use itertools::Itertools;
 use windows::Win32::{
     Foundation::{HANDLE, HGLOBAL},
     System::{
         DataExchange::{
             CloseClipboard, CountClipboardFormats, EmptyClipboard, EnumClipboardFormats,
-            GetClipboardData, GetClipboardFormatNameW, OpenClipboard, RegisterClipboardFormatW,
-            SetClipboardData,
+            GetClipboardData, GetClipboardFormatNameW, GetClipboardSequenceNumber, OpenClipboard,
+            RegisterClipboardFormatW, SetClipboardData,
         },
         Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock},
         Ole::{CF_DIB, CF_HDROP, CF_UNICODETEXT},
@@ -19,7 +20,8 @@ use windows::Win32::{
 use windows::core::{Owned, PCWSTR};
 
 use gpui::{
-    ClipboardEntry, ClipboardItem, ClipboardString, ExternalPaths, Image, ImageFormat, hash,
+    ClipboardEntry, ClipboardItem, ClipboardReadMode, ClipboardRevision, ClipboardSnapshot,
+    ClipboardString, ExternalPaths, Image, ImageFormat, hash,
 };
 
 const DRAGDROP_GET_FILES_COUNT: u32 = 0xFFFFFFFF;
@@ -68,30 +70,49 @@ fn get_clipboard_data(format: u32) -> Option<LockedGlobal> {
 }
 
 pub(crate) fn write_to_clipboard(item: ClipboardItem) {
-    let Some(_clip) = ClipboardGuard::open() else {
-        return;
-    };
+    write_to_clipboard_with_revision(item).log_err();
+}
 
-    let result: Result<()> = (|| {
-        unsafe { EmptyClipboard()? };
-        for entry in item.entries() {
-            match entry {
-                ClipboardEntry::String(string) => write_string(string)?,
-                ClipboardEntry::Image(image) => write_image(image)?,
-                ClipboardEntry::ExternalPaths(_) => {}
+pub(crate) fn write_to_clipboard_with_revision(
+    item: ClipboardItem,
+) -> Result<Option<ClipboardRevision>> {
+    let _clip = ClipboardGuard::open().context("Failed to open the clipboard for writing")?;
+    unsafe { EmptyClipboard()? };
+    for entry in item.entries() {
+        match entry {
+            ClipboardEntry::String(string) => write_string(string)?,
+            ClipboardEntry::Image(image) => write_image(image)?,
+            ClipboardEntry::ExternalPaths(_) => {
+                anyhow::bail!("Writing file paths to the clipboard is unsupported")
             }
         }
-        Ok(())
-    })();
-
-    if let Err(e) = result {
-        log::error!("Failed to write to clipboard: {e}");
     }
+    Ok(clipboard_revision())
 }
 
 pub(crate) fn read_from_clipboard() -> Option<ClipboardItem> {
-    let _clip = ClipboardGuard::open()?;
+    read_clipboard_snapshot(ClipboardReadMode::Contents).item
+}
 
+pub(crate) fn read_clipboard_snapshot(mode: ClipboardReadMode) -> ClipboardSnapshot {
+    let Some(_clip) = ClipboardGuard::open() else {
+        return ClipboardSnapshot::default();
+    };
+    let item = (mode == ClipboardReadMode::Contents)
+        .then(read_open_clipboard)
+        .flatten();
+    ClipboardSnapshot {
+        item,
+        revision: clipboard_revision(),
+    }
+}
+
+fn clipboard_revision() -> Option<ClipboardRevision> {
+    let revision = unsafe { GetClipboardSequenceNumber() };
+    (revision != 0).then_some(ClipboardRevision::Native(u64::from(revision)))
+}
+
+fn read_open_clipboard() -> Option<ClipboardItem> {
     let mut entries = Vec::new();
     let mut have_text = false;
     let mut have_image = false;

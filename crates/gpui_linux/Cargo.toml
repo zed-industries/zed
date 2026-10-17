@@ -32,6 +32,7 @@ wayland = [
     "open",
     "gpui/wayland",
     "uuid/v5",
+    "uuid/v4",
 ]
 x11 = [
     "dep:accesskit_unix",
@@ -116,6 +117,7 @@ as-raw-xcb-connection = { version = "1", optional = true }
 x11rb = { version = "0.13.1", features = [
     "allow-unsafe-code",
     "xkb",
+    "xfixes",
     "randr",
     "xinput",
     "cursor",

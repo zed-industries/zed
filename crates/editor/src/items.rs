@@ -5,7 +5,7 @@ use crate::{
     display_map::HighlightKey,
     editor_settings::SeedQuerySetting,
     persistence::{EditorDb, SerializedEditor},
-    scroll::{ScrollAnchor, ScrollOffset},
+    scroll::{ScrollAnchor, SerializedScrollPosition},
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
@@ -18,8 +18,8 @@ use gpui::{
     IntoElement, ParentElement, Pixels, SharedString, Styled, Task, WeakEntity, Window, point,
 };
 use language::{
-    Bias, Buffer, BufferRow, CharKind, CharScopeContext, HighlightedText, LocalFile, PLAIN_TEXT,
-    Point, SelectionGoal,
+    Bias, Buffer, CharKind, CharScopeContext, HighlightedText, LocalFile, PLAIN_TEXT, Point,
+    SelectionGoal,
     language_settings::{FormatOnSave, LanguageSettings},
     proto::serialize_anchor as serialize_text_anchor,
 };
@@ -672,12 +672,20 @@ impl Item for Editor {
                 );
             }
 
+            let horizontal_scroll = data.horizontal_scroll.map(|(anchor, position, offset)| {
+                let position = if buffer.can_resolve(&anchor) {
+                    anchor.to_point(&buffer)
+                } else {
+                    position
+                };
+                (position, offset)
+            });
             drop(buffer);
 
             if newest_selection.head() == offset {
                 false
             } else {
-                self.set_scroll_anchor(scroll_anchor, window, cx);
+                self.restore_native_scroll_position(scroll_anchor, horizontal_scroll, window, cx);
                 self.change_selections(
                     SelectionEffects::default().nav_history(false),
                     window,
@@ -1561,7 +1569,7 @@ struct EditorRestorationData {
 
 #[derive(Default, Debug)]
 pub struct RestorationData {
-    pub scroll_position: (BufferRow, gpui::Point<ScrollOffset>),
+    pub scroll_position: SerializedScrollPosition,
     pub folds: Vec<Range<Point>>,
     pub selections: Vec<Range<Point>>,
 }
@@ -1581,7 +1589,6 @@ impl ProjectItem for Editor {
         cx: &mut Context<Self>,
     ) -> Self {
         let mut editor = Self::for_buffer(buffer.clone(), Some(project), window, cx);
-        let multibuffer_snapshot = editor.buffer().read(cx).snapshot(cx);
 
         if let Some(buffer_snapshot) = editor.buffer().read(cx).snapshot(cx).as_singleton()
             && WorkspaceSettings::get(None, cx).restore_on_file_reopen
@@ -1606,9 +1613,7 @@ impl ProjectItem for Editor {
                     s.select_ranges(clip_ranges(&restoration_data.selections, buffer_snapshot));
                 });
             }
-            let (top_row, offset) = restoration_data.scroll_position;
-            let anchor = multibuffer_snapshot.anchor_before(Point::new(top_row, 0));
-            editor.set_scroll_anchor(ScrollAnchor { anchor, offset }, window, cx);
+            editor.restore_scroll_position(restoration_data.scroll_position, window, cx);
         }
 
         editor

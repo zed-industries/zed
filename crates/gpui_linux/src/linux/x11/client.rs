@@ -1823,7 +1823,10 @@ impl X11Client {
         );
     }
 
-    pub(crate) fn write_to_primary(&self, item: gpui::ClipboardItem) {
+    pub(crate) fn write_to_primary_with_revision(
+        &self,
+        item: gpui::ClipboardItem,
+    ) -> anyhow::Result<Option<gpui::ClipboardRevision>> {
         let state = self.0.borrow_mut();
         state
             .clipboard
@@ -1832,22 +1835,46 @@ impl X11Client {
                 clipboard::ClipboardKind::Primary,
                 clipboard::WaitConfig::None,
             )
-            .context("X11 Failed to write to clipboard (primary)")
-            .log_with_level(log::Level::Debug);
+            .context("X11 failed to write to the primary selection")
     }
 
-    pub(crate) fn write_to_clipboard(&self, item: gpui::ClipboardItem) {
+    pub(crate) fn write_to_clipboard_with_revision(
+        &self,
+        item: gpui::ClipboardItem,
+    ) -> anyhow::Result<Option<gpui::ClipboardRevision>> {
         let mut state = self.0.borrow_mut();
-        state
+        let revision = state
             .clipboard
             .set_text(
                 std::borrow::Cow::Owned(item.text().unwrap_or_default()),
                 clipboard::ClipboardKind::Clipboard,
                 clipboard::WaitConfig::None,
             )
-            .context("X11: Failed to write to clipboard (clipboard)")
-            .log_with_level(log::Level::Debug);
+            .context("X11 failed to write to the clipboard")?;
         state.clipboard_item.replace(item);
+        Ok(revision)
+    }
+
+    pub(crate) fn read_clipboard_snapshot(
+        &self,
+        mode: gpui::ClipboardReadMode,
+    ) -> gpui::ClipboardSnapshot {
+        let state = self.0.borrow();
+        state.clipboard.read_snapshot(
+            clipboard::ClipboardKind::Clipboard,
+            state.clipboard_item.as_ref(),
+            mode,
+        )
+    }
+
+    pub(crate) fn read_primary_snapshot(
+        &self,
+        mode: gpui::ClipboardReadMode,
+    ) -> gpui::ClipboardSnapshot {
+        self.0
+            .borrow()
+            .clipboard
+            .read_snapshot(clipboard::ClipboardKind::Primary, None, mode)
     }
 
     pub(crate) fn read_from_primary(&self) -> Option<gpui::ClipboardItem> {

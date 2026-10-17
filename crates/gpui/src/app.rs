@@ -46,16 +46,16 @@ use crate::asset_cache::CachedLoad;
 use crate::{
     Action, ActionBuildError, ActionRegistry, ActivationPolicy, ActivityGuard, Any, AnyView,
     AnyWindowHandle, AppContext, Arena, ArenaBox, Asset, AssetSource, BackgroundExecutor, Bounds,
-    ClipboardItem, ClipboardReadError, CursorStyle, DispatchPhase, DisplayChanges, DisplayEvent,
-    DisplayId, EventEmitter, ExternalDragPayload, FocusHandle, FocusMap, ForegroundExecutor,
-    Global, KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, MissingGlyph,
-    OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, Point, Priority, PromptBuilder, PromptButton, PromptHandle,
-    PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, SystemNotification,
-    SystemNotificationResponse, Task, TextRenderingMode, TextSystem, ThermalState, Window,
-    WindowAppearance, WindowButtonLayout, WindowHandle, WindowId, WindowInvalidator,
-    WindowingRequest,
+    ClipboardItem, ClipboardReadError, ClipboardReadMode, ClipboardRevision, ClipboardSnapshot,
+    CursorStyle, DispatchPhase, DisplayChanges, DisplayEvent, DisplayId, EventEmitter,
+    ExternalDragPayload, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
+    Keymap, Keystroke, LayoutId, Menu, MenuItem, MissingGlyph, OwnedMenu, PathPromptOptions,
+    Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, Point,
+    Priority, PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
+    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
+    Subscription, SvgRenderer, SystemNotification, SystemNotificationResponse, Task,
+    TextRenderingMode, TextSystem, ThermalState, Window, WindowAppearance, WindowButtonLayout,
+    WindowHandle, WindowId, WindowInvalidator, WindowingRequest,
     colors::{Colors, GlobalColors},
     hash, init_app_menus,
 };
@@ -915,6 +915,13 @@ pub struct App {
     _ref_counts: Arc<RwLock<EntityRefCounts>>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Default)]
+struct TestClipboardWriteFailure(Cell<bool>);
+
+#[cfg(any(test, feature = "test-support"))]
+impl Global for TestClipboardWriteFailure {}
+
 impl App {
     #[allow(clippy::new_ret_no_self)]
     pub(crate) fn new_app(
@@ -1751,6 +1758,34 @@ impl App {
         self.platform.write_to_clipboard(item)
     }
 
+    #[expect(missing_docs)]
+    pub fn read_clipboard_snapshot(&self, mode: ClipboardReadMode) -> ClipboardSnapshot {
+        self.platform.read_clipboard_snapshot(mode)
+    }
+
+    #[expect(missing_docs)]
+    pub fn write_to_clipboard_with_revision(
+        &self,
+        item: ClipboardItem,
+    ) -> Result<Option<ClipboardRevision>> {
+        #[cfg(any(test, feature = "test-support"))]
+        if self
+            .try_global::<TestClipboardWriteFailure>()
+            .is_some_and(|failure| failure.0.replace(false))
+        {
+            anyhow::bail!("Injected clipboard publication failure");
+        }
+        self.platform.write_to_clipboard_with_revision(item)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    #[expect(missing_docs)]
+    pub fn fail_next_checked_clipboard_write(&mut self) {
+        self.default_global::<TestClipboardWriteFailure>()
+            .0
+            .set(true);
+    }
+
     /// Reads data from the primary selection buffer.
     /// Only available on Linux.
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -1763,6 +1798,21 @@ impl App {
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     pub fn write_to_primary(&self, item: ClipboardItem) {
         self.platform.write_to_primary(item)
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[expect(missing_docs)]
+    pub fn read_primary_snapshot(&self, mode: ClipboardReadMode) -> ClipboardSnapshot {
+        self.platform.read_primary_snapshot(mode)
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[expect(missing_docs)]
+    pub fn write_to_primary_with_revision(
+        &self,
+        item: ClipboardItem,
+    ) -> Result<Option<ClipboardRevision>> {
+        self.platform.write_to_primary_with_revision(item)
     }
 
     /// Reads data from macOS's "Find" pasteboard.

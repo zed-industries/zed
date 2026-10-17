@@ -3492,10 +3492,10 @@ extern "C" fn attributed_substring_for_proposed_range(
         let mut adjusted: Option<Range<usize>> = None;
 
         let selected_text = input_handler.text_for_range(range.clone(), &mut adjusted)?;
-        if let Some(adjusted) = adjusted
-            && adjusted != range
-        {
-            unsafe { (actual_range as *mut NSRange).write(NSRange::from(adjusted)) };
+        if !actual_range.is_null() {
+            unsafe {
+                (actual_range as *mut NSRange).write(NSRange::from(adjusted.unwrap_or(range)))
+            };
         }
         unsafe {
             let string: id = msg_send![class!(NSAttributedString), alloc];

@@ -8,21 +8,22 @@ use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AtlasTile, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow,
     Capslock, Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
-    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
-    EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
-    Hsla, InputHandler, InputPreference, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
-    Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent,
-    MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
-    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
-    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
-    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextInputConfiguration,
-    TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
+    DispatchActionListener, DispatchNode, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect,
+    Entity, EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId,
+    GlyphRasterConfig, GpuSpecs, Hsla, InputHandler, InputPreference, IsZero, KeyBinding,
+    KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex,
+    Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent,
+    MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority, PromptButton,
+    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
+    Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
+    ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubpixelSprite,
+    SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap,
+    TaffyLayoutEngine, Task, TextInputConfiguration, TextInputStateChange, TextRenderingMode,
+    TextStyle, TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
+    WindowOptions, WindowParams, WindowTextSystem, WindowVisibility, point, prelude::*, px, rems,
+    size, transparent_black, white,
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
@@ -1223,6 +1224,9 @@ pub struct Window {
     is_resizable: bool,
     is_minimizable: bool,
     sprite_atlas: Arc<dyn PlatformAtlas>,
+    glyph_buffer: Vec<PreparedGlyph>,
+    glyph_buffer_max_len: usize,
+    previous_glyph_buffer_max_len: usize,
     text_system: Arc<WindowTextSystem>,
     text_rendering_mode: Rc<Cell<TextRenderingMode>>,
     rem_size: Pixels,
@@ -1291,6 +1295,11 @@ pub struct Window {
     /// pending keyboard activation state when focus changes.
     pub(crate) focus_generation: u64,
     pending_input: Option<PendingInput>,
+    pending_replay_inputs: FxHashMap<Option<FocusId>, PendingInput>,
+    action_dispatch: Option<ActionDispatch>,
+    key_dispatch_target: Option<KeyDispatchTarget>,
+    key_dispatch_tree: Option<DispatchTree>,
+    input_handler: Option<(FocusId, SharedInputHandler)>,
     pending_modifier: ModifierState,
     pub(crate) pending_input_observers: SubscriberSet<(), AnyObserver>,
     prompt: Option<RenderablePromptHandle>,
@@ -1303,6 +1312,74 @@ pub struct Window {
     #[cfg(feature = "profiler")]
     debug_frame_overlay: crate::debug_overlay::DebugFrameOverlay,
     pub(crate) a11y: A11y,
+}
+
+struct ActionDispatch {
+    action: Box<dyn Action>,
+    nodes: SmallVec<[DispatchNodeId; 32]>,
+    listeners: std::vec::IntoIter<DispatchActionListener>,
+    key: Option<KeyDispatch>,
+}
+
+#[derive(Clone)]
+struct KeyDispatchTarget {
+    focus: Option<FocusId>,
+    input: Option<SharedInputHandler>,
+    route: KeyDispatchRoute,
+    refresh_context: Option<Rc<dyn Fn(&mut Window, &mut App) -> Option<KeyContext>>>,
+}
+
+#[derive(Clone)]
+enum KeyDispatchRoute {
+    Focus(FocusId),
+    Root,
+    Retained(Rc<[DispatchNode]>),
+}
+
+struct KeyDispatch {
+    target: KeyDispatchTarget,
+    event: PlatformInput,
+    keystroke: Keystroke,
+    input_preference: InputPreference,
+    bindings: smallvec::IntoIter<[KeyBinding; 1]>,
+    context_stack: Vec<KeyContext>,
+    replay: bool,
+    resumed: bool,
+    replays: smallvec::IntoIter<[Replay; 1]>,
+    after: Option<Box<dyn FnOnce(&mut Window, &mut App)>>,
+}
+
+#[derive(Clone)]
+struct SharedInputHandler(Rc<RefCell<dyn InputHandler>>);
+
+macro_rules! forward_input_handler {
+    ($($name:ident($($argument:ident: $argument_type:ty),*) $(-> $result:ty)?;)*) => {
+        $(fn $name(&mut self, $($argument: $argument_type),*) $(-> $result)? {
+            self.0.borrow_mut().$name($($argument),*)
+        })*
+    };
+}
+
+impl InputHandler for SharedInputHandler {
+    forward_input_handler! {
+        selected_text_range(ignore_disabled_input: bool, window: &mut Window, cx: &mut App) -> Option<crate::UTF16Selection>;
+        marked_text_range(window: &mut Window, cx: &mut App) -> Option<Range<usize>>;
+        text_for_range(range: Range<usize>, adjusted: &mut Option<Range<usize>>, window: &mut Window, cx: &mut App) -> Option<String>;
+        replace_text_in_range(range: Option<Range<usize>>, text: &str, window: &mut Window, cx: &mut App);
+        replace_and_mark_text_in_range(range: Option<Range<usize>>, text: &str, selection: Option<Range<usize>>, window: &mut Window, cx: &mut App);
+        unmark_text(window: &mut Window, cx: &mut App);
+        paste(item: crate::ClipboardItem, window: &mut Window, cx: &mut App);
+        bounds_for_range(range: Range<usize>, window: &mut Window, cx: &mut App) -> Option<Bounds<Pixels>>;
+        character_index_for_point(point: Point<Pixels>, window: &mut Window, cx: &mut App) -> Option<usize>;
+        set_selected_text_range(range: Range<usize>, window: &mut Window, cx: &mut App);
+        element_bounds(window: &mut Window, cx: &mut App) -> Option<Bounds<Pixels>>;
+        text_length_utf16(window: &mut Window, cx: &mut App) -> Option<usize>;
+        apple_press_and_hold_enabled() -> bool;
+        accepts_text_input(window: &mut Window, cx: &mut App) -> bool;
+        text_input_editable_range(window: &mut Window, cx: &mut App) -> Option<Range<usize>>;
+        prefers_ime_for_printable_keys(window: &mut Window, cx: &mut App) -> bool;
+        text_input_configuration(window: &mut Window, cx: &mut App) -> TextInputConfiguration;
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -2131,6 +2208,9 @@ impl Window {
             is_resizable,
             is_minimizable,
             sprite_atlas,
+            glyph_buffer: Vec::new(),
+            glyph_buffer_max_len: 0,
+            previous_glyph_buffer_max_len: 0,
             text_system,
             text_rendering_mode: cx.text_rendering_mode.clone(),
             rem_size: px(16.),
@@ -2190,6 +2270,11 @@ impl Window {
             focus_enabled: true,
             focus_generation: 0,
             pending_input: None,
+            pending_replay_inputs: FxHashMap::default(),
+            action_dispatch: None,
+            key_dispatch_target: None,
+            key_dispatch_tree: None,
+            input_handler: None,
             pending_modifier: ModifierState::default(),
             pending_input_observers: SubscriberSet::new(),
             prompt: None,
@@ -2246,6 +2331,66 @@ impl ContentMask<Pixels> {
         let bounds = self.bounds.intersect(&other.bounds);
         ContentMask { bounds }
     }
+}
+
+pub(crate) struct GlyphRasterMemo {
+    params: RenderGlyphParams,
+    bounds: Bounds<DevicePixels>,
+    tile: Option<AtlasTile>,
+}
+
+pub(crate) struct PreparedGlyph {
+    pub(crate) bounds: Bounds<ScaledPixels>,
+    content_mask: ContentMask<ScaledPixels>,
+    tile: AtlasTile,
+    kind: GlyphSpriteKind,
+}
+
+impl PreparedGlyph {
+    fn paint(self, scene: &mut Scene) {
+        let Self {
+            bounds,
+            content_mask,
+            tile,
+            kind,
+        } = self;
+        match kind {
+            GlyphSpriteKind::Monochrome(color) => scene.insert_primitive(MonochromeSprite {
+                order: 0,
+                pad: 0,
+                bounds,
+                content_mask,
+                color,
+                tile,
+                transformation: TransformationMatrix::unit(),
+            }),
+            GlyphSpriteKind::Subpixel(color) => scene.insert_primitive(SubpixelSprite {
+                order: 0,
+                pad: 0,
+                bounds,
+                content_mask,
+                color,
+                tile,
+                transformation: TransformationMatrix::unit(),
+            }),
+            GlyphSpriteKind::Polychrome(opacity) => scene.insert_primitive(PolychromeSprite {
+                order: 0,
+                pad: 0,
+                grayscale: false.into(),
+                bounds,
+                corner_radii: Corners::default(),
+                content_mask,
+                tile,
+                opacity,
+            }),
+        }
+    }
+}
+
+enum GlyphSpriteKind {
+    Monochrome(Hsla),
+    Subpixel(Hsla),
+    Polychrome(f32),
 }
 
 impl Window {
@@ -3311,7 +3456,7 @@ impl Window {
 
     /// Floors the near edge and ceils the far edge, producing a strict superset of the raw region.
     #[inline]
-    fn cover_bounds(&self, bounds: Bounds<Pixels>) -> Bounds<ScaledPixels> {
+    pub fn cover_bounds(&self, bounds: Bounds<Pixels>) -> Bounds<ScaledPixels> {
         let scale_factor = self.scale_factor();
         let left = floor_to_device_pixel(bounds.left().0, scale_factor);
         let top = floor_to_device_pixel(bounds.top().0, scale_factor);
@@ -3432,6 +3577,14 @@ impl Window {
         // This ensures that multiple test Apps have isolated arenas.
         let arena_scope = ElementArenaScope::enter(&cx.element_arena);
 
+        self.previous_glyph_buffer_max_len = mem::take(&mut self.glyph_buffer_max_len);
+        if self.previous_glyph_buffer_max_len == 0
+            || self.glyph_buffer.capacity()
+                > self.previous_glyph_buffer_max_len.saturating_mul(2).max(4)
+        {
+            self.glyph_buffer = Vec::new();
+        }
+
         if self.platform_window.prepare_frame() {
             self.refresh();
         }
@@ -3472,6 +3625,14 @@ impl Window {
             }
         }
         self.dirty_views.clear();
+        self.pending_replay_inputs.retain(|focus, _| {
+            focus.is_none_or(|focus| {
+                cx.focus_handles
+                    .read()
+                    .get(focus)
+                    .is_some_and(|handle| handle.ref_count.load(SeqCst) > 0)
+            })
+        });
         self.next_frame.window_active = self.active.get();
 
         // Register requested input handler with the platform window.
@@ -3490,6 +3651,7 @@ impl Window {
             self.platform_window.set_input_handler(input_handler);
             accepts_text_input
         } else {
+            self.input_handler = None;
             false
         };
         self.apply_text_input_configuration(cx);
@@ -4828,6 +4990,39 @@ impl Window {
     ) -> Result<()> {
         self.invalidator.debug_assert_paint();
 
+        if let Some((glyph, _)) =
+            self.prepare_glyph(origin, font_id, glyph_id, font_size, color, &mut None)?
+        {
+            glyph.paint(&mut self.next_frame.scene);
+        }
+        Ok(())
+    }
+
+    #[expect(missing_docs)]
+    pub fn glyph_raster_config(&self) -> GlyphRasterConfig {
+        GlyphRasterConfig {
+            scale_factor: self.scale_factor(),
+            rendering_mode: if self.platform_window.background_appearance()
+                == WindowBackgroundAppearance::Opaque
+                && self.platform_window.is_subpixel_rendering_supported()
+            {
+                self.text_rendering_mode.get()
+            } else {
+                TextRenderingMode::Grayscale
+            },
+            max_dilation: self.text_system().glyph_dilation_for_color(white()),
+        }
+    }
+
+    pub(crate) fn prepare_glyph(
+        &self,
+        origin: Point<Pixels>,
+        font_id: FontId,
+        glyph_id: GlyphId,
+        font_size: Pixels,
+        color: Hsla,
+        memo: &mut Option<GlyphRasterMemo>,
+    ) -> Result<Option<(PreparedGlyph, Bounds<ScaledPixels>)>> {
         let element_opacity = self.element_opacity();
         let scale_factor = self.scale_factor();
         let glyph_origin = origin.scale(scale_factor);
@@ -4856,44 +5051,39 @@ impl Window {
             dilation,
         };
 
-        let raster_bounds = self.text_system().raster_bounds(&params)?;
-        if !raster_bounds.is_zero() {
-            let tile = self
-                .sprite_atlas
-                .get_or_insert_with(params.clone().into(), &mut || {
-                    let (size, bytes) = self.text_system().rasterize_glyph(&params)?;
-                    Ok(Some((size, Cow::Owned(bytes))))
-                })?
-                .expect("Callback above only errors or returns Some");
-            let bounds = Bounds {
-                origin: integer_origin + raster_bounds.origin.map(Into::into),
-                size: tile.bounds.size.map(Into::into),
-            };
-            let content_mask = self.snapped_content_mask();
-
+        let color = color.opacity(element_opacity);
+        self.rasterized_glyph(
+            integer_origin,
+            &params,
             if subpixel_rendering {
-                self.next_frame.scene.insert_primitive(SubpixelSprite {
-                    order: 0,
-                    pad: 0,
-                    bounds,
-                    content_mask,
-                    color: color.opacity(element_opacity),
-                    tile,
-                    transformation: TransformationMatrix::unit(),
-                });
+                GlyphSpriteKind::Subpixel(color)
             } else {
-                self.next_frame.scene.insert_primitive(MonochromeSprite {
-                    order: 0,
-                    pad: 0,
-                    bounds,
-                    content_mask,
-                    color: color.opacity(element_opacity),
-                    tile,
-                    transformation: TransformationMatrix::unit(),
-                });
-            }
+                GlyphSpriteKind::Monochrome(color)
+            },
+            memo,
+        )
+    }
+
+    pub(crate) fn paint_underline_layer<R>(
+        &mut self,
+        origin: Point<Pixels>,
+        width: Pixels,
+        style: &UnderlineStyle,
+        paint: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.invalidator.debug_assert_paint();
+
+        let bounds = self
+            .underline_bounds(origin, width, style)
+            .intersect(&self.snapped_content_mask().bounds);
+        if !bounds.is_empty() {
+            self.next_frame.scene.push_layer(bounds);
         }
-        Ok(())
+        let result = paint(self);
+        if !bounds.is_empty() {
+            self.next_frame.scene.pop_layer();
+        }
+        result
     }
 
     fn should_use_subpixel_rendering(&self, font_id: FontId, font_size: Pixels) -> bool {
@@ -4932,6 +5122,22 @@ impl Window {
     ) -> Result<()> {
         self.invalidator.debug_assert_paint();
 
+        if let Some((glyph, _)) =
+            self.prepare_emoji(origin, font_id, glyph_id, font_size, &mut None)?
+        {
+            glyph.paint(&mut self.next_frame.scene);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn prepare_emoji(
+        &self,
+        origin: Point<Pixels>,
+        font_id: FontId,
+        glyph_id: GlyphId,
+        font_size: Pixels,
+        memo: &mut Option<GlyphRasterMemo>,
+    ) -> Result<Option<(PreparedGlyph, Bounds<ScaledPixels>)>> {
         let scale_factor = self.scale_factor();
         let glyph_origin = origin.scale(scale_factor);
         let integer_origin = glyph_origin.map(|c| ScaledPixels(round_half_toward_zero(c.0)));
@@ -4946,35 +5152,112 @@ impl Window {
             dilation: 0,
         };
 
-        let raster_bounds = self.text_system().raster_bounds(&params)?;
-        if !raster_bounds.is_zero() {
-            let tile = self
-                .sprite_atlas
-                .get_or_insert_with(params.clone().into(), &mut || {
-                    let (size, bytes) = self.text_system().rasterize_glyph(&params)?;
-                    Ok(Some((size, Cow::Owned(bytes))))
-                })?
-                .expect("Callback above only errors or returns Some");
+        self.rasterized_glyph(
+            integer_origin,
+            &params,
+            GlyphSpriteKind::Polychrome(self.element_opacity()),
+            memo,
+        )
+    }
 
-            let bounds = Bounds {
-                origin: integer_origin + raster_bounds.origin.map(Into::into),
-                size: tile.bounds.size.map(Into::into),
-            };
-            let content_mask = self.snapped_content_mask();
-            let opacity = self.element_opacity();
+    pub(crate) fn take_glyph_buffer(&mut self) -> Vec<PreparedGlyph> {
+        mem::take(&mut self.glyph_buffer)
+    }
 
-            self.next_frame.scene.insert_primitive(PolychromeSprite {
-                order: 0,
-                pad: 0,
-                grayscale: false.into(),
+    pub(crate) fn paint_glyphs(
+        &mut self,
+        mut glyphs: Vec<PreparedGlyph>,
+        bounds: Option<Bounds<ScaledPixels>>,
+    ) {
+        self.invalidator.debug_assert_paint();
+
+        self.glyph_buffer_max_len = self.glyph_buffer_max_len.max(glyphs.len());
+        if let Some(bounds) = bounds {
+            self.next_frame.scene.push_layer(bounds);
+            for glyph in glyphs.drain(..) {
+                glyph.paint(&mut self.next_frame.scene);
+            }
+            self.next_frame.scene.pop_layer();
+        } else {
+            glyphs.clear();
+        }
+        let max_len = self
+            .glyph_buffer_max_len
+            .max(self.previous_glyph_buffer_max_len);
+        if max_len > 0
+            && glyphs.capacity() <= max_len.saturating_mul(2).max(4)
+            && glyphs.capacity() > self.glyph_buffer.capacity()
+        {
+            self.glyph_buffer = glyphs;
+        }
+    }
+
+    fn rasterized_glyph(
+        &self,
+        origin: Point<ScaledPixels>,
+        params: &RenderGlyphParams,
+        kind: GlyphSpriteKind,
+        memo: &mut Option<GlyphRasterMemo>,
+    ) -> Result<Option<(PreparedGlyph, Bounds<ScaledPixels>)>> {
+        if memo.as_ref().is_some_and(|entry| entry.params != *params) {
+            *memo = None;
+        }
+        let content_mask = self.snapped_content_mask();
+        if content_mask.bounds.is_empty() {
+            return Ok(None);
+        }
+        let mut image = None;
+        let entry = match memo {
+            Some(entry) => entry,
+            None => {
+                let (bounds, raster_image) = self.text_system().raster_bounds_with_image(params)?;
+                image = raster_image;
+                memo.insert(GlyphRasterMemo {
+                    params: params.clone(),
+                    bounds,
+                    tile: None,
+                })
+            }
+        };
+        let raster_bounds = entry.bounds;
+        if raster_bounds.is_zero() {
+            return Ok(None);
+        }
+        let bounds = Bounds {
+            origin: origin + raster_bounds.origin.map(ScaledPixels::from),
+            size: raster_bounds.size.map(ScaledPixels::from),
+        };
+        let clipped_bounds = bounds.intersect(&content_mask.bounds);
+        if clipped_bounds.is_empty() {
+            return Ok(None);
+        }
+        let tile = match entry.tile {
+            Some(tile) => tile,
+            None => {
+                let tile = self
+                    .sprite_atlas
+                    .get_or_insert_with(params.clone().into(), &mut || {
+                        let (size, bytes) = match image.take() {
+                            Some(bytes) => (raster_bounds.size, bytes),
+                            None => self.text_system().rasterize_glyph(params)?,
+                        };
+                        Ok(Some((size, Cow::Owned(bytes))))
+                    })?
+                    .expect("Callback above only errors or returns Some");
+                entry.tile = Some(tile);
+                tile
+            }
+        };
+        debug_assert_eq!(tile.bounds.size, raster_bounds.size);
+        Ok(Some((
+            PreparedGlyph {
                 bounds,
-                corner_radii: Default::default(),
                 content_mask,
                 tile,
-                opacity,
-            });
-        }
-        Ok(())
+                kind,
+            },
+            clipped_bounds,
+        )))
     }
 
     /// Paint a monochrome SVG into the scene for the next frame at the current stacking context.
@@ -5397,6 +5680,8 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         if focus_handle.is_focused(self) {
+            let input_handler = SharedInputHandler(Rc::new(RefCell::new(input_handler)));
+            self.input_handler = Some((focus_handle.id, input_handler.clone()));
             let cx = self.to_async(cx);
             self.next_frame
                 .input_handlers
@@ -5571,6 +5856,39 @@ impl Window {
         }
 
         false
+    }
+
+    /// Returns whether the current keystroke targets this focus handle.
+    pub fn is_key_dispatching_to(&self, focus: &FocusHandle) -> bool {
+        self.key_dispatch_target
+            .as_ref()
+            .is_some_and(|target| target.focus == Some(focus.id))
+    }
+
+    /// Captures a target-preserving replay with a refreshed target key context.
+    pub fn keystroke_replay_with_context(
+        &self,
+        keystroke: Keystroke,
+        input_preference: InputPreference,
+        refresh_context: impl Fn(&mut Window, &mut App) -> Option<KeyContext> + 'static,
+    ) -> Box<dyn FnOnce(&mut Window, &mut App)> {
+        let mut target = self
+            .key_dispatch_target
+            .clone()
+            .unwrap_or_else(|| self.focused_key_dispatch_target());
+        self.retain_key_dispatch_target(&mut target);
+        target.refresh_context = Some(Rc::new(refresh_context));
+        Box::new(move |window, cx| {
+            if window.invalidator.is_dirty() {
+                window.draw(cx).clear(cx);
+            }
+            let event = KeyDownEvent {
+                keystroke,
+                is_held: false,
+                prefer_character_input: input_preference == InputPreference::CharacterInput,
+            };
+            window.dispatch_key_event_at_target(&event, target, true, cx);
+        })
     }
 
     /// Return a key binding string for an action, to display in the UI. Uses the highest precedence
@@ -5987,18 +6305,22 @@ impl Window {
 
     // If modifiers are not excessive (e.g. AltGr), and the input handler is accepting text input,
     // we prefer the text input over bindings.
-    fn input_preference(&mut self, event: &dyn Any, cx: &mut App) -> InputPreference {
+    fn input_preference(
+        &mut self,
+        event: &dyn Any,
+        target: &KeyDispatchTarget,
+        cx: &mut App,
+    ) -> InputPreference {
         let prefer_character_input = event
             .downcast_ref::<KeyDownEvent>()
             .is_some_and(|key_down_event| key_down_event.prefer_character_input);
         if !prefer_character_input {
             return InputPreference::KeyBindings;
         }
-        let Some(mut input_handler) = self.platform_window.take_input_handler() else {
+        let Some(mut input_handler) = target.input.clone() else {
             return InputPreference::KeyBindings;
         };
         let accepts_text_input = input_handler.accepts_text_input(self, cx);
-        self.platform_window.set_input_handler(input_handler);
         if accepts_text_input {
             InputPreference::CharacterInput
         } else {
@@ -6006,13 +6328,166 @@ impl Window {
         }
     }
 
+    fn current_key_dispatch_target(&self) -> KeyDispatchTarget {
+        let mut target = self.focused_key_dispatch_target();
+        if let Some(focus) = target.focus
+            && self
+                .rendered_frame
+                .dispatch_tree
+                .focusable_node_id(focus)
+                .is_none()
+        {
+            target.route = KeyDispatchRoute::Root;
+        }
+        target
+    }
+
+    fn focused_key_dispatch_target(&self) -> KeyDispatchTarget {
+        KeyDispatchTarget {
+            focus: self.focus,
+            input: self
+                .input_handler
+                .as_ref()
+                .filter(|(focus, _)| {
+                    Some(*focus) == self.focus && !self.rendered_frame.input_handlers.is_empty()
+                })
+                .map(|(_, handler)| handler.clone()),
+            route: self
+                .focus
+                .map_or(KeyDispatchRoute::Root, KeyDispatchRoute::Focus),
+            refresh_context: None,
+        }
+    }
+
+    fn retain_key_dispatch_target(&self, target: &mut KeyDispatchTarget) {
+        if let KeyDispatchRoute::Retained(_) = target.route {
+            return;
+        }
+        let Some(node_id) = self.key_dispatch_node(target) else {
+            return;
+        };
+        let tree = self.dispatch_tree();
+        target.route = KeyDispatchRoute::Retained(
+            tree.dispatch_path(node_id)
+                .into_iter()
+                .map(|node_id| {
+                    let source = tree.node(node_id);
+                    let mut node = DispatchNode::default();
+                    node.key_listeners = source.key_listeners.clone();
+                    node.action_listeners = source.action_listeners.clone();
+                    node.modifiers_changed_listeners = source.modifiers_changed_listeners.clone();
+                    node.context = source.context.clone();
+                    node.focus_id = source.focus_id;
+                    node
+                })
+                .collect(),
+        );
+    }
+
+    fn with_key_dispatch_target<R>(
+        &mut self,
+        target: Option<KeyDispatchTarget>,
+        cx: &mut App,
+        dispatch: impl FnOnce(&mut Self, &mut App) -> R,
+    ) -> R {
+        let retained_tree = target.as_ref().and_then(|target| {
+            let KeyDispatchRoute::Retained(route) = &target.route else {
+                return None;
+            };
+            let context = target
+                .refresh_context
+                .as_ref()
+                .and_then(|refresh| refresh(self, cx));
+            let mut tree = DispatchTree::new(cx.keymap.clone(), cx.actions.clone());
+            for (node_index, node) in route.iter().enumerate() {
+                tree.push_node();
+                let context = if node_index + 1 == route.len() {
+                    context.as_ref().or(node.context.as_ref())
+                } else {
+                    node.context.as_ref()
+                };
+                if let Some(context) = context {
+                    tree.set_key_context(context.clone());
+                }
+                if let Some(focus) = node.focus_id {
+                    tree.set_focus_id(focus);
+                }
+                for listener in &node.action_listeners {
+                    tree.on_action(listener.action_type, listener.listener.clone());
+                }
+                for listener in &node.key_listeners {
+                    tree.on_key_event(listener.clone());
+                }
+                for listener in &node.modifiers_changed_listeners {
+                    tree.on_modifiers_changed(listener.clone());
+                }
+            }
+            Some(tree)
+        });
+        let previous_tree = mem::replace(&mut self.key_dispatch_tree, retained_tree);
+        let previous_target = mem::replace(&mut self.key_dispatch_target, target);
+        let result = dispatch(self, cx);
+        self.key_dispatch_target = previous_target;
+        self.key_dispatch_tree = previous_tree;
+        result
+    }
+
+    fn dispatch_tree(&self) -> &DispatchTree {
+        self.key_dispatch_tree
+            .as_ref()
+            .unwrap_or(&self.rendered_frame.dispatch_tree)
+    }
+
+    fn dispatch_tree_mut(&mut self) -> &mut DispatchTree {
+        self.key_dispatch_tree
+            .as_mut()
+            .unwrap_or(&mut self.rendered_frame.dispatch_tree)
+    }
+
+    fn key_dispatch_node(&self, target: &KeyDispatchTarget) -> Option<DispatchNodeId> {
+        match &target.route {
+            KeyDispatchRoute::Focus(focus) => self.dispatch_tree().focusable_node_id(*focus),
+            KeyDispatchRoute::Root => Some(self.dispatch_tree().root_node_id()),
+            KeyDispatchRoute::Retained(_) => self.key_dispatch_tree.as_ref()?.active_node_id(),
+        }
+    }
+
     fn dispatch_key_event(&mut self, event: &dyn Any, cx: &mut App) {
         if self.invalidator.is_dirty() {
             self.draw(cx).clear(cx);
         }
+        let target = self.current_key_dispatch_target();
+        self.dispatch_key_event_at_target(event, target, false, cx);
+    }
 
-        let node_id = self.focus_node_id_in_rendered_frame(self.focus);
-        let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
+    fn dispatch_key_event_at_target(
+        &mut self,
+        event: &dyn Any,
+        target: KeyDispatchTarget,
+        resumed: bool,
+        cx: &mut App,
+    ) {
+        self.with_key_dispatch_target(Some(target.clone()), cx, |window, cx| {
+            window.dispatch_key_event_inner(event, target, resumed, cx);
+        });
+    }
+
+    fn dispatch_key_event_inner(
+        &mut self,
+        event: &dyn Any,
+        target: KeyDispatchTarget,
+        resumed: bool,
+        cx: &mut App,
+    ) {
+        let Some(node_id) = self.key_dispatch_node(&target) else {
+            cx.stop_propagation();
+            return;
+        };
+        let dispatch_path = self.dispatch_tree().dispatch_path(node_id);
+        let context_stack = dispatch_path
+            .iter()
+            .filter_map(|node| self.dispatch_tree().node(*node).context.clone())
+            .collect::<Vec<_>>();
 
         let mut keystroke: Option<Keystroke> = None;
 
@@ -6065,63 +6540,104 @@ impl Window {
                 None,
                 InputPreference::KeyBindings,
                 dispatch_path,
-                self.context_stack(),
+                context_stack,
                 cx,
             );
             return;
         };
 
-        let input_preference = self.input_preference(event, cx);
+        let input_preference = self.input_preference(event, &target, cx);
 
         cx.propagate_event = true;
-        self.dispatch_keystroke_interceptors(
-            &keystroke,
-            input_preference,
-            self.context_stack(),
-            cx,
-        );
+        if !resumed {
+            self.dispatch_keystroke_interceptors(
+                &keystroke,
+                input_preference,
+                context_stack.clone(),
+                cx,
+            );
+        }
         if !cx.propagate_event {
             self.finish_dispatch_key_event(
                 event,
                 Some(&keystroke),
                 input_preference,
                 dispatch_path,
-                self.context_stack(),
+                context_stack,
                 cx,
             );
             return;
         }
 
-        let mut currently_pending = self.pending_input.take().unwrap_or_default();
-        if currently_pending.focus.is_some() && currently_pending.focus != self.focus {
-            currently_pending = PendingInput::default();
+        let mut currently_pending = if self
+            .pending_input
+            .as_ref()
+            .is_some_and(|pending| pending.focus == target.focus)
+        {
+            self.pending_input.take()
+        } else {
+            self.pending_replay_inputs.remove(&target.focus)
         }
+        .unwrap_or_default();
 
-        let match_result = self.rendered_frame.dispatch_tree.dispatch_key(
-            currently_pending.keystrokes,
+        let mut match_result = self.dispatch_tree_mut().dispatch_key(
+            mem::take(&mut currently_pending.keystrokes),
             keystroke.clone(),
             &dispatch_path,
         );
 
-        if !match_result.to_replay.is_empty() {
-            self.replay_pending_input(match_result.to_replay, cx);
-            cx.propagate_event = true;
+        let event = if let Some(event) = event.downcast_ref::<KeyDownEvent>() {
+            PlatformInput::KeyDown(event.clone())
+        } else if let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() {
+            PlatformInput::ModifiersChanged(event.clone())
+        } else {
+            return;
+        };
+        let mut key = KeyDispatch {
+            target,
+            event,
+            keystroke,
+            input_preference,
+            bindings: SmallVec::new().into_iter(),
+            context_stack,
+            replay: false,
+            resumed,
+            replays: SmallVec::new().into_iter(),
+            after: None,
+        };
+        let replays = mem::take(&mut match_result.to_replay);
+        if replays.is_empty() {
+            self.finish_key_match(key, match_result, currently_pending, cx);
+        } else {
+            key.resumed = true;
+            self.retain_key_dispatch_target(&mut key.target);
+            let target = key.target.clone();
+            let after = Box::new(move |window: &mut Window, cx: &mut App| {
+                cx.propagate_event = true;
+                window.finish_key_match(key, match_result, currently_pending, cx);
+            });
+            self.replay_pending_input_then(replays, target, Some(after), cx);
         }
+    }
 
+    fn finish_key_match(
+        &mut self,
+        mut key: KeyDispatch,
+        match_result: crate::DispatchResult,
+        mut currently_pending: PendingInput,
+        cx: &mut App,
+    ) {
         if !match_result.pending.is_empty() {
             let previous_timeout = currently_pending.timeout.take();
             currently_pending.keystrokes = match_result.pending;
-            currently_pending.focus = self.focus;
+            currently_pending.focus = key.target.focus;
 
-            let text_input_requires_timeout = event
-                .downcast_ref::<KeyDownEvent>()
-                .filter(|key_down| key_down.keystroke.key_char.is_some())
-                .and_then(|_| self.platform_window.take_input_handler())
-                .map_or(false, |mut input_handler| {
-                    let accepts = input_handler.accepts_text_input(self, cx);
-                    self.platform_window.set_input_handler(input_handler);
-                    accepts
-                });
+            let text_input_requires_timeout = matches!(&key.event, PlatformInput::KeyDown(event) if event.keystroke.key_char.is_some())
+                && key
+                    .target
+                    .input
+                    .clone()
+                    .is_some_and(|mut input| input.accepts_text_input(self, cx));
 
             let needs_timeout = previous_timeout.is_some()
                 || match_result.pending_has_binding
@@ -6140,40 +6656,26 @@ impl Window {
             } else {
                 None
             };
-            self.pending_input = Some(currently_pending);
+            if key.target.focus == self.focus {
+                self.pending_input = Some(currently_pending);
+            } else {
+                self.pending_replay_inputs
+                    .insert(key.target.focus, currently_pending);
+            }
             self.pending_input_changed(cx);
             cx.propagate_event = false;
             return;
         }
 
         // Interceptors or replayed actions may have changed whether the input handler accepts text.
-        let input_preference = self.input_preference(event, cx);
-        if input_preference == InputPreference::KeyBindings {
-            for binding in match_result.bindings {
-                self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
-                if !cx.propagate_event {
-                    self.dispatch_keystroke_observers(
-                        &keystroke,
-                        input_preference,
-                        Some(binding.action.as_ref()),
-                        match_result.context_stack,
-                        cx,
-                    );
-                    self.pending_input_changed(cx);
-                    return;
-                }
-            }
+        if let Some(event) = key.event.keyboard_event() {
+            key.input_preference = self.input_preference(event, &key.target, cx);
         }
-
-        self.finish_dispatch_key_event(
-            event,
-            Some(&keystroke),
-            input_preference,
-            dispatch_path,
-            match_result.context_stack,
-            cx,
-        );
-        self.pending_input_changed(cx);
+        if key.input_preference == InputPreference::KeyBindings {
+            key.bindings = match_result.bindings.into_iter();
+        }
+        key.context_stack = match_result.context_stack;
+        self.dispatch_key_bindings(key, None, cx);
     }
 
     fn new_pending_input_timeout(&self, duration: Duration, cx: &App) -> PendingInputTimeout {
@@ -6187,27 +6689,39 @@ impl Window {
 
     fn start_pending_input_timeout(&self, remaining: Duration, cx: &App) -> (Instant, Task<()>) {
         let started_at = cx.background_executor().now();
+        let target = self
+            .key_dispatch_target
+            .clone()
+            .unwrap_or_else(|| self.current_key_dispatch_target());
         let task = self.spawn(cx, async move |cx| {
             cx.background_executor.timer(remaining).await;
             cx.update(move |window, cx| {
-                let Some(currently_pending) = window
+                let currently_pending = if window
                     .pending_input
-                    .take()
-                    .filter(|pending| pending.focus == window.focus)
-                else {
+                    .as_ref()
+                    .is_some_and(|pending| pending.focus == target.focus)
+                {
+                    window
+                        .pending_input
+                        .take()
+                        .filter(|pending| pending.focus == window.focus)
+                } else {
+                    window.pending_replay_inputs.remove(&target.focus)
+                };
+                let Some(currently_pending) = currently_pending else {
                     return;
                 };
-
-                let node_id = window.focus_node_id_in_rendered_frame(window.focus);
-                let dispatch_path = window.rendered_frame.dispatch_tree.dispatch_path(node_id);
-
-                let to_replay = window
-                    .rendered_frame
-                    .dispatch_tree
-                    .flush_dispatch(currently_pending.keystrokes, &dispatch_path);
-
-                window.pending_input_changed(cx);
-                window.replay_pending_input(to_replay, cx)
+                window.with_key_dispatch_target(Some(target.clone()), cx, |window, cx| {
+                    let Some(node_id) = window.key_dispatch_node(&target) else {
+                        return;
+                    };
+                    let dispatch_path = window.dispatch_tree().dispatch_path(node_id);
+                    let to_replay = window
+                        .dispatch_tree_mut()
+                        .flush_dispatch(currently_pending.keystrokes, &dispatch_path);
+                    window.pending_input_changed(cx);
+                    window.replay_pending_input_then(to_replay, target, None, cx);
+                });
             })
             .log_err();
         });
@@ -6265,7 +6779,7 @@ impl Window {
     ) {
         // Capture phase
         for node_id in dispatch_path {
-            let node = self.rendered_frame.dispatch_tree.node(*node_id);
+            let node = self.dispatch_tree().node(*node_id);
 
             for key_listener in node.key_listeners.clone() {
                 key_listener(event, DispatchPhase::Capture, self, cx);
@@ -6278,7 +6792,7 @@ impl Window {
         // Bubble phase
         for node_id in dispatch_path.iter().rev() {
             // Handle low level key events
-            let node = self.rendered_frame.dispatch_tree.node(*node_id);
+            let node = self.dispatch_tree().node(*node_id);
             for key_listener in node.key_listeners.clone() {
                 key_listener(event, DispatchPhase::Bubble, self, cx);
                 if !cx.propagate_event {
@@ -6298,7 +6812,7 @@ impl Window {
             return;
         };
         for node_id in dispatch_path.iter().rev() {
-            let node = self.rendered_frame.dispatch_tree.node(*node_id);
+            let node = self.dispatch_tree().node(*node_id);
             for listener in node.modifiers_changed_listeners.clone() {
                 listener(event, self, cx);
                 if !cx.propagate_event {
@@ -6421,42 +6935,128 @@ impl Window {
             .map(|pending_input| pending_input.keystrokes())
     }
 
-    fn replay_pending_input(&mut self, replays: SmallVec<[Replay; 1]>, cx: &mut App) {
-        let node_id = self.focus_node_id_in_rendered_frame(self.focus);
-        let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
-
-        'replay: for replay in replays {
-            let event = KeyDownEvent {
+    fn replay_pending_input_then(
+        &mut self,
+        replays: SmallVec<[Replay; 1]>,
+        target: KeyDispatchTarget,
+        after: Option<Box<dyn FnOnce(&mut Window, &mut App)>>,
+        cx: &mut App,
+    ) {
+        let mut replays = replays.into_iter();
+        let Some(replay) = replays.next() else {
+            if let Some(after) = after {
+                after(self, cx);
+            }
+            return;
+        };
+        let key = KeyDispatch {
+            target,
+            event: PlatformInput::KeyDown(KeyDownEvent {
                 keystroke: replay.keystroke.clone(),
                 is_held: false,
                 prefer_character_input: true,
-            };
+            }),
+            keystroke: replay.keystroke,
+            input_preference: InputPreference::KeyBindings,
+            bindings: replay.bindings.into_iter(),
+            context_stack: Vec::new(),
+            replay: true,
+            resumed: true,
+            replays,
+            after,
+        };
+        cx.propagate_event = true;
+        self.dispatch_key_bindings(key, None, cx);
+    }
 
-            cx.propagate_event = true;
-            for binding in replay.bindings {
-                self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
+    fn dispatch_key_bindings(
+        &mut self,
+        key: KeyDispatch,
+        handled: Option<Box<dyn Action>>,
+        cx: &mut App,
+    ) {
+        self.with_key_dispatch_target(Some(key.target.clone()), cx, |window, cx| {
+            window.dispatch_key_bindings_inner(key, handled, cx);
+        });
+    }
+
+    fn dispatch_key_bindings_inner(
+        &mut self,
+        mut key: KeyDispatch,
+        mut handled: Option<Box<dyn Action>>,
+        cx: &mut App,
+    ) {
+        loop {
+            let Some(node_id) = self.key_dispatch_node(&key.target) else {
+                cx.stop_propagation();
+                return;
+            };
+            while handled.is_none() {
+                let Some(binding) = key.bindings.next() else {
+                    break;
+                };
+                let Some(next_key) = self.dispatch_action_on_node_with_key(
+                    node_id,
+                    binding.action.as_ref(),
+                    Some(key),
+                    cx,
+                ) else {
+                    return;
+                };
+                key = next_key;
                 if !cx.propagate_event {
-                    self.dispatch_keystroke_observers(
-                        &replay.keystroke,
-                        InputPreference::KeyBindings,
-                        Some(binding.action.as_ref()),
-                        Vec::default(),
-                        cx,
-                    );
-                    continue 'replay;
+                    handled = Some(binding.action);
                 }
             }
-
-            self.dispatch_key_down_up_event(&event, &dispatch_path, cx);
-            if !cx.propagate_event {
-                continue 'replay;
+            if let Some(action) = handled.take() {
+                self.dispatch_keystroke_observers(
+                    &key.keystroke,
+                    key.input_preference,
+                    Some(action.as_ref()),
+                    mem::take(&mut key.context_stack),
+                    cx,
+                );
+                cx.stop_propagation();
+            } else if let Some(event) = key.event.keyboard_event() {
+                let dispatch_path = self.dispatch_tree().dispatch_path(node_id);
+                if key.replay {
+                    self.dispatch_key_down_up_event(event, &dispatch_path, cx);
+                } else {
+                    self.finish_dispatch_key_event(
+                        event,
+                        Some(&key.keystroke),
+                        key.input_preference,
+                        dispatch_path,
+                        mem::take(&mut key.context_stack),
+                        cx,
+                    );
+                }
+                if cx.propagate_event
+                    && key.resumed
+                    && let Some(input) = key.keystroke.key_char.as_deref()
+                    && let Some(mut handler) = key.target.input.clone()
+                {
+                    handler.replace_text_in_range(None, input, self, cx);
+                    cx.stop_propagation();
+                }
             }
-            if let Some(input) = replay.keystroke.key_char.as_ref().cloned()
-                && let Some(mut input_handler) = self.platform_window.take_input_handler()
-            {
-                input_handler.dispatch_input(&input, self, cx);
-                self.platform_window.set_input_handler(input_handler)
+            if !key.replay {
+                self.pending_input_changed(cx);
             }
+            let Some(replay) = key.replays.next() else {
+                if let Some(after) = key.after {
+                    after(self, cx);
+                }
+                return;
+            };
+            key.event = PlatformInput::KeyDown(KeyDownEvent {
+                keystroke: replay.keystroke.clone(),
+                is_held: false,
+                prefer_character_input: true,
+            });
+            key.keystroke = replay.keystroke;
+            key.bindings = replay.bindings.into_iter();
+            cx.propagate_event = true;
         }
     }
 
@@ -6470,13 +7070,106 @@ impl Window {
             .unwrap_or_else(|| self.rendered_frame.dispatch_tree.root_node_id())
     }
 
+    /// Suspends action bubbling and returns a callback that runs the handler before remaining listeners.
+    pub fn defer_action_dispatch(
+        &mut self,
+        action: &dyn Action,
+        cx: &mut App,
+        handler: impl FnOnce(&dyn Action, &mut Window, &mut App) + 'static,
+    ) -> Option<Box<dyn FnOnce(&mut Window, &mut App)>> {
+        if self.action_dispatch.as_ref()?.action.as_any().type_id() != action.as_any().type_id() {
+            return None;
+        }
+        let action = action.boxed_clone();
+        self.defer_current_action_dispatch(cx, move |window, cx| {
+            handler(action.as_ref(), window, cx)
+        })
+        .ok()
+    }
+
+    /// Suspends the current action and its key fallback around a deferred command.
+    pub fn defer_current_action_dispatch<F>(
+        &mut self,
+        cx: &mut App,
+        handler: F,
+    ) -> std::result::Result<Box<dyn FnOnce(&mut Window, &mut App)>, F>
+    where
+        F: FnOnce(&mut Window, &mut App) + 'static,
+    {
+        let Some(mut dispatch) = self.action_dispatch.take() else {
+            return Err(handler);
+        };
+        if let Some(key) = dispatch.key.as_mut() {
+            self.retain_key_dispatch_target(&mut key.target);
+        }
+        let action_type = dispatch.action.as_any().type_id();
+        let mut listeners = dispatch
+            .listeners
+            .filter(|listener| listener.action_type == action_type)
+            .collect::<Vec<_>>();
+        while let Some(node_id) = dispatch.nodes.pop() {
+            listeners.extend(
+                self.dispatch_tree()
+                    .node(node_id)
+                    .action_listeners
+                    .iter()
+                    .filter(|listener| listener.action_type == action_type)
+                    .cloned(),
+            );
+        }
+        dispatch.listeners = listeners.into_iter();
+        let action = dispatch.action.boxed_clone();
+        cx.stop_propagation();
+        Ok(Box::new(move |window, cx| {
+            let target = dispatch.key.as_ref().map(|key| key.target.clone());
+            window.with_key_dispatch_target(target, cx, |window, cx| {
+                let previous_dispatch = window.action_dispatch.replace(dispatch);
+                cx.propagate_event = false;
+                #[cfg(feature = "profiler")]
+                window
+                    .window_profiler
+                    .begin_action_handler(action.as_ref(), cx);
+                handler(window, cx);
+                #[cfg(feature = "profiler")]
+                window.window_profiler.end_action_handler();
+                if cx.propagate_event {
+                    window.dispatch_action_bubble(action.as_ref(), cx);
+                }
+                let key = window
+                    .action_dispatch
+                    .take()
+                    .and_then(|dispatch| dispatch.key);
+                window.action_dispatch = previous_dispatch;
+                if let Some(mut key) = key {
+                    key.resumed = true;
+                    let handled = (!cx.propagate_event).then_some(action);
+                    window.dispatch_key_bindings(key, handled, cx);
+                }
+            });
+        }))
+    }
+
     fn dispatch_action_on_node(
         &mut self,
         node_id: DispatchNodeId,
         action: &dyn Action,
         cx: &mut App,
     ) {
-        self.dispatch_action_on_node_inner(node_id, action, cx);
+        self.with_key_dispatch_target(None, cx, |window, cx| {
+            window.dispatch_action_on_node_with_key(node_id, action, None, cx);
+        });
+    }
+
+    fn dispatch_action_on_node_with_key(
+        &mut self,
+        node_id: DispatchNodeId,
+        action: &dyn Action,
+        key: Option<KeyDispatch>,
+        cx: &mut App,
+    ) -> Option<KeyDispatch> {
+        let previous_dispatch = self.action_dispatch.take();
+        let key = self.dispatch_action_on_node_inner(node_id, action, key, cx);
+        self.action_dispatch = previous_dispatch;
 
         if !cx.propagate_event
             && cx.cursor_hide_mode == CursorHideMode::OnTypingAndAction
@@ -6484,15 +7177,17 @@ impl Window {
         {
             cx.platform.hide_cursor_until_mouse_moves();
         }
+        key
     }
 
     fn dispatch_action_on_node_inner(
         &mut self,
         node_id: DispatchNodeId,
         action: &dyn Action,
+        key: Option<KeyDispatch>,
         cx: &mut App,
-    ) {
-        let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
+    ) -> Option<KeyDispatch> {
+        let dispatch_path = self.dispatch_tree().dispatch_path(node_id);
 
         // Capture phase for global actions.
         cx.propagate_event = true;
@@ -6522,12 +7217,12 @@ impl Window {
         }
 
         if !cx.propagate_event {
-            return;
+            return key;
         }
 
         // Capture phase for window actions.
         for node_id in &dispatch_path {
-            let node = self.rendered_frame.dispatch_tree.node(*node_id);
+            let node = self.dispatch_tree().node(*node_id);
             for DispatchActionListener {
                 action_type,
                 listener,
@@ -6542,32 +7237,53 @@ impl Window {
                     self.window_profiler.end_action_handler();
 
                     if !cx.propagate_event {
-                        return;
+                        return key;
                     }
                 }
             }
         }
 
+        self.action_dispatch = Some(ActionDispatch {
+            action: action.boxed_clone(),
+            nodes: dispatch_path,
+            listeners: Vec::new().into_iter(),
+            key,
+        });
+        self.dispatch_action_bubble(action, cx);
+        self.action_dispatch
+            .take()
+            .and_then(|dispatch| dispatch.key)
+    }
+
+    fn dispatch_action_bubble(&mut self, action: &dyn Action, cx: &mut App) {
         // Bubble phase for window actions.
-        for node_id in dispatch_path.iter().rev() {
-            let node = self.rendered_frame.dispatch_tree.node(*node_id);
-            for DispatchActionListener {
+        loop {
+            let Some(dispatch) = self.action_dispatch.as_mut() else {
+                return;
+            };
+            let Some(DispatchActionListener {
                 action_type,
                 listener,
-            } in node.action_listeners.clone()
-            {
-                let any_action = action.as_any();
-                if action_type == any_action.type_id() {
-                    cx.propagate_event = false; // Actions stop propagation by default during the bubble phase
-                    #[cfg(feature = "profiler")]
-                    self.window_profiler.begin_action_handler(action, cx);
-                    listener(any_action, DispatchPhase::Bubble, self, cx);
-                    #[cfg(feature = "profiler")]
-                    self.window_profiler.end_action_handler();
-
-                    if !cx.propagate_event {
-                        return;
+            }) = dispatch.listeners.next()
+            else {
+                if let Some(node_id) = dispatch.nodes.pop() {
+                    let listeners = self.dispatch_tree().node(node_id).action_listeners.clone();
+                    if let Some(dispatch) = self.action_dispatch.as_mut() {
+                        dispatch.listeners = listeners.into_iter();
                     }
+                    continue;
+                }
+                break;
+            };
+            if action_type == action.as_any().type_id() {
+                cx.propagate_event = false; // Actions stop propagation by default during the bubble phase
+                #[cfg(feature = "profiler")]
+                self.window_profiler.begin_action_handler(action, cx);
+                listener(action.as_any(), DispatchPhase::Bubble, self, cx);
+                #[cfg(feature = "profiler")]
+                self.window_profiler.end_action_handler();
+                if !cx.propagate_event {
+                    return;
                 }
             }
         }
@@ -7872,6 +8588,7 @@ fn with_element_arena_erased(callback: &mut dyn FnMut(&mut Arena)) -> Result<(),
 #[cfg(test)]
 mod tests {
     use std::{
+        any::TypeId,
         cell::{Cell, RefCell},
         path::PathBuf,
         rc::Rc,
@@ -7879,15 +8596,524 @@ mod tests {
     };
 
     use crate::{
-        AnyWindowHandle, AppContext as _, Bounds, ContentMask, Context, DispatchPhase,
+        AnyWindowHandle, App, AppContext as _, Bounds, ContentMask, Context, DispatchPhase,
         DragMoveEvent, Empty, ExternalDragPayload, ExternalPaths, FileDragPaths, FileDropEvent,
-        FocusHandle, InputEvent as _, InteractiveElement as _, IntoElement, KeyDownEvent,
-        Keystroke, LongPressEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement,
-        Pixels, PlatformInput, Point, Render, RequestFrameOptions, ScaledPixels,
+        FocusHandle, InputEvent as _, InteractiveElement as _, IntoElement, KeyContext,
+        KeyDownEvent, Keystroke, LongPressEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+        ParentElement, Pixels, PlatformInput, Point, Render, RequestFrameOptions, ScaledPixels,
         StatefulInteractiveElement as _, Styled, TestAppContext, TouchDragEvent, TouchEvent,
         TouchId, TouchPhase, Underline, UnderlineStyle, Window, WindowAppearance, WindowOptions,
         canvas, div, hsla, point, px, size,
     };
+
+    crate::actions!(
+        action_continuation_test,
+        [DeferredActionTest, NestedActionTest]
+    );
+
+    #[gpui::test]
+    fn test_keyboard_root_fallback_after_focused_child_removal(cx: &mut TestAppContext) {
+        let global_dispatches = Rc::new(Cell::new(0));
+        cx.update(|cx| {
+            cx.bind_keys([
+                crate::KeyBinding::new("ctrl-j", NestedActionTest, None),
+                crate::KeyBinding::new("ctrl-k", NestedActionTest, None),
+                crate::KeyBinding::new("ctrl-k ctrl-j", NestedActionTest, None),
+            ]);
+            cx.on_action({
+                let global_dispatches = global_dispatches.clone();
+                move |_: &NestedActionTest, _| {
+                    global_dispatches.set(global_dispatches.get() + 1);
+                }
+            });
+        });
+        let child_dispatches = Rc::new(Cell::new(0));
+        let window = cx.add_window({
+            let child_dispatches = child_dispatches.clone();
+            move |_, cx| KeyboardFocusTarget {
+                focus: cx.focus_handle(),
+                show_child: true,
+                child_dispatches,
+            }
+        });
+        let focus = window
+            .update(cx, |view, window, cx| {
+                window.focus(&view.focus, cx);
+                window.activate_window();
+                view.focus.clone()
+            })
+            .expect("focus rendered child");
+        let replay = cx
+            .update_window(window.into(), |_, window, cx| {
+                window.draw(cx).clear(cx);
+                window.dispatch_keystroke(Keystroke::parse("ctrl-j").expect("shortcut"), cx);
+                window.keystroke_replay_with_context(
+                    Keystroke::parse("ctrl-j").expect("shortcut"),
+                    crate::InputPreference::KeyBindings,
+                    |_, _| None,
+                )
+            })
+            .expect("capture child replay");
+        assert_eq!(child_dispatches.get(), 1);
+        assert_eq!(global_dispatches.get(), 0);
+        window
+            .update(cx, |view, _, cx| {
+                view.show_child = false;
+                cx.notify();
+            })
+            .expect("hide focused child");
+        cx.update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+            assert_eq!(window.focus, Some(focus.id));
+            assert_eq!(
+                window
+                    .rendered_frame
+                    .dispatch_tree
+                    .focusable_node_id(focus.id),
+                None
+            );
+            let missing_target_replay = window.keystroke_replay_with_context(
+                Keystroke::parse("ctrl-j").expect("shortcut"),
+                crate::InputPreference::KeyBindings,
+                |_, _| None,
+            );
+            missing_target_replay(window, cx);
+            assert_eq!(child_dispatches.get(), 1);
+            assert_eq!(global_dispatches.get(), 0);
+            replay(window, cx);
+            assert_eq!(child_dispatches.get(), 2);
+            assert_eq!(global_dispatches.get(), 0);
+            window.dispatch_keystroke(Keystroke::parse("ctrl-j").expect("shortcut"), cx);
+            assert_eq!(global_dispatches.get(), 1);
+            window.dispatch_keystroke(Keystroke::parse("ctrl-k").expect("prefix"), cx);
+            assert!(window.has_pending_keystrokes());
+            window.dispatch_keystroke(Keystroke::parse("ctrl-j").expect("shortcut"), cx);
+            assert_eq!(global_dispatches.get(), 2);
+            assert_eq!(child_dispatches.get(), 2);
+            assert_eq!(window.focus, Some(focus.id));
+            assert!(!window.has_pending_keystrokes());
+            window.dispatch_keystroke(Keystroke::parse("ctrl-k").expect("prefix"), cx);
+            let pause_owner = cx.new(|_| ());
+            assert!(window.set_pending_input_timeout_paused(&pause_owner, true, cx));
+            assert!(window.set_pending_input_timeout_paused(&pause_owner, false, cx));
+        })
+        .expect("dispatch after focused child removal");
+        cx.executor().run_until_parked();
+        cx.executor().advance_clock(crate::PENDING_INPUT_TIMEOUT);
+        cx.executor().run_until_parked();
+        assert_eq!(global_dispatches.get(), 3);
+        assert_eq!(child_dispatches.get(), 2);
+    }
+
+    #[gpui::test]
+    fn test_keyboard_root_replay_retains_original_route(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            cx.bind_keys([
+                crate::KeyBinding::new("ctrl-j", NestedActionTest, Some("ReplayedRoot")),
+                crate::KeyBinding::new("ctrl-j", NestedActionTest, Some("ReplacementRoot")),
+            ]);
+        });
+        let window = cx.add_window(|_, _| EmptyView);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.dispatch_keystroke(Keystroke::parse("ctrl-j").expect("shortcut"), cx);
+            assert_eq!(window.focus, None);
+            let events = Rc::new(RefCell::new(Vec::new()));
+            let mut replay = None;
+            for name in ["original", "replacement"] {
+                let tree = &mut window.rendered_frame.dispatch_tree;
+                tree.clear();
+                tree.push_node();
+                tree.on_action(
+                    TypeId::of::<NestedActionTest>(),
+                    Rc::new({
+                        let events = events.clone();
+                        move |_, phase, _, _| {
+                            if phase == DispatchPhase::Bubble {
+                                events.borrow_mut().push(name);
+                            }
+                        }
+                    }),
+                );
+                if name == "original" {
+                    replay = Some(window.keystroke_replay_with_context(
+                        Keystroke::parse("ctrl-j").expect("shortcut"),
+                        crate::InputPreference::KeyBindings,
+                        |_, _| Some(KeyContext::parse("ReplayedRoot").expect("replay context")),
+                    ));
+                } else {
+                    tree.set_key_context(
+                        KeyContext::parse("ReplacementRoot").expect("live context"),
+                    );
+                }
+            }
+            replay.expect("root replay")(window, cx);
+            assert_eq!(*events.borrow(), ["original"]);
+            window.dispatch_keystroke(Keystroke::parse("ctrl-j").expect("shortcut"), cx);
+            assert_eq!(*events.borrow(), ["original", "replacement"]);
+            assert_eq!(window.focus, None);
+        })
+        .expect("replay on retained root");
+    }
+
+    #[gpui::test]
+    fn test_deferred_action_dispatch_resumes_remaining_handlers(cx: &mut TestAppContext) {
+        for stop_after_resume in [false, true] {
+            let window = cx.add_window(|_, _| EmptyView);
+            let events = Rc::new(RefCell::new(Vec::new()));
+            let pending: Rc<RefCell<Option<Box<dyn FnOnce(&mut Window, &mut App)>>>> =
+                Rc::default();
+            window
+                .update(cx, |_, window, cx| {
+                    let tree = &mut window.rendered_frame.dispatch_tree;
+                    tree.clear();
+                    tree.push_node();
+                    tree.on_action(
+                        TypeId::of::<DeferredActionTest>(),
+                        Rc::new({
+                            let events = events.clone();
+                            move |_, phase, _, cx| {
+                                if phase == DispatchPhase::Bubble {
+                                    events.borrow_mut().push("ancestor");
+                                    cx.propagate();
+                                }
+                            }
+                        }),
+                    );
+                    let target = tree.push_node();
+                    tree.on_action(
+                        TypeId::of::<DeferredActionTest>(),
+                        Rc::new({
+                            let events = events.clone();
+                            move |_, phase, _, cx| {
+                                if phase == DispatchPhase::Bubble {
+                                    events.borrow_mut().push("visited");
+                                    cx.propagate();
+                                }
+                            }
+                        }),
+                    );
+                    for name in ["deferred", "remaining"] {
+                        tree.on_action(
+                            TypeId::of::<DeferredActionTest>(),
+                            Rc::new({
+                                let events = events.clone();
+                                let pending = pending.clone();
+                                move |action, phase, window, cx| {
+                                    if phase != DispatchPhase::Bubble {
+                                        return;
+                                    }
+                                    let action = action
+                                        .downcast_ref::<DeferredActionTest>()
+                                        .expect("typed action");
+                                    let events = events.clone();
+                                    let continuation = window
+                                        .defer_action_dispatch(
+                                            action,
+                                            cx,
+                                            move |action, window, cx| {
+                                                assert!(action.as_any().is::<DeferredActionTest>());
+                                                events.borrow_mut().push(name);
+                                                if name == "deferred" {
+                                                    let root = window
+                                                        .rendered_frame
+                                                        .dispatch_tree
+                                                        .root_node_id();
+                                                    window.dispatch_action_on_node(
+                                                        root,
+                                                        &NestedActionTest,
+                                                        cx,
+                                                    );
+                                                }
+                                                if stop_after_resume {
+                                                    cx.stop_propagation();
+                                                } else {
+                                                    cx.propagate();
+                                                }
+                                            },
+                                        )
+                                        .expect("active action dispatch");
+                                    assert!(pending.borrow_mut().replace(continuation).is_none());
+                                }
+                            }),
+                        );
+                    }
+                    cx.global_action_listeners.insert(
+                        TypeId::of::<DeferredActionTest>(),
+                        vec![Rc::new({
+                            let events = events.clone();
+                            move |_, phase, cx| {
+                                events
+                                    .borrow_mut()
+                                    .push(if phase == DispatchPhase::Capture {
+                                        "capture"
+                                    } else {
+                                        "global"
+                                    });
+                                cx.propagate();
+                            }
+                        })],
+                    );
+                    window.dispatch_action_on_node(target, &DeferredActionTest, cx);
+                    assert!(!cx.propagate_event);
+                })
+                .expect("dispatch initial action");
+            assert_eq!(*events.borrow(), ["capture", "visited"]);
+
+            window
+                .update(cx, |_, window, cx| {
+                    let tree = &mut window.rendered_frame.dispatch_tree;
+                    tree.clear();
+                    tree.push_node();
+                    tree.on_action(
+                        TypeId::of::<DeferredActionTest>(),
+                        Rc::new(|_, _, _, _| {
+                            panic!(
+                                "the replaced dispatch tree must not receive the suspended action"
+                            );
+                        }),
+                    );
+                    tree.on_action(TypeId::of::<NestedActionTest>(), Rc::new({
+                    let events = events.clone();
+                    move |_, phase, window, cx| {
+                        assert!(window.defer_action_dispatch(&DeferredActionTest, cx, |_, _, _| {
+                            panic!("nested dispatch must not suspend the outer action");
+                        }).is_none());
+                        if phase == DispatchPhase::Bubble {
+                            events.borrow_mut().push("nested");
+                            cx.propagate();
+                        }
+                    }
+                }));
+                    let continuation = pending.borrow_mut().take().expect("first continuation");
+                    continuation(window, cx);
+                    assert!(!cx.propagate_event);
+                    assert!(window.action_dispatch.is_none());
+                })
+                .expect("resume first handler");
+            assert_eq!(
+                *events.borrow(),
+                ["capture", "visited", "deferred", "nested"]
+            );
+
+            if stop_after_resume {
+                assert!(pending.borrow().is_none());
+            } else {
+                window
+                    .update(cx, |_, window, cx| {
+                        let continuation =
+                            pending.borrow_mut().take().expect("remaining continuation");
+                        continuation(window, cx);
+                        assert!(cx.propagate_event);
+                        assert!(window.action_dispatch.is_none());
+                    })
+                    .expect("resume remaining handler");
+                assert_eq!(
+                    *events.borrow(),
+                    [
+                        "capture",
+                        "visited",
+                        "deferred",
+                        "nested",
+                        "remaining",
+                        "ancestor",
+                        "global"
+                    ]
+                );
+                assert!(pending.borrow().is_none());
+            }
+            cx.update(|cx| {
+                cx.global_action_listeners
+                    .remove(&TypeId::of::<DeferredActionTest>());
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn test_deferred_key_dispatch_preserves_fallback_and_target(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            cx.bind_keys([
+                crate::KeyBinding::new("g", NestedActionTest, None),
+                crate::KeyBinding::new("g", DeferredActionTest, None),
+                crate::KeyBinding::new("g h", NestedActionTest, Some("ReplayPrefix")),
+                crate::KeyBinding::new("z", NestedActionTest, Some("ReplayNormal")),
+            ])
+        });
+        for (consume_fallback, keep_focus_node, replay_prefix) in [
+            (false, false, false),
+            (true, false, false),
+            (false, true, false),
+            (true, true, false),
+            (false, false, true),
+            (true, false, true),
+            (false, true, true),
+            (true, true, true),
+        ] {
+            let window = cx.add_window(|_, _| EmptyView);
+            cx.update_window(window.into(), |_, window, cx| {
+                window.draw(cx).clear(cx);
+                let first = cx.focus_handle();
+                let second = cx.focus_handle();
+                let events = Rc::new(RefCell::new(Vec::new()));
+                let input = Rc::new(RefCell::new(String::new()));
+                let other_input = Rc::new(RefCell::new(String::new()));
+                let insert_mode = Rc::new(Cell::new(false));
+                let pending: Rc<RefCell<Option<Box<dyn FnOnce(&mut Window, &mut App)>>>> =
+                    Rc::default();
+                let tree = &mut window.rendered_frame.dispatch_tree;
+                tree.clear();
+                tree.push_node();
+                tree.push_node();
+                tree.set_focus_id(first.id);
+                tree.set_key_context(
+                    crate::KeyContext::parse(if replay_prefix {
+                        "ReplayPrefix"
+                    } else {
+                        "ReplayNormal"
+                    })
+                    .expect("context"),
+                );
+                tree.on_action(
+                    TypeId::of::<DeferredActionTest>(),
+                    Rc::new({
+                        let events = events.clone();
+                        let pending = pending.clone();
+                        move |_, phase, window, cx| {
+                            if phase == DispatchPhase::Bubble {
+                                events.borrow_mut().push("first");
+                                let events = events.clone();
+                                let continuation = window
+                                    .defer_current_action_dispatch(cx, move |_, cx| {
+                                        events.borrow_mut().push("resume");
+                                        cx.propagate();
+                                    })
+                                    .ok()
+                                    .expect("active dispatch");
+                                assert!(pending.borrow_mut().replace(continuation).is_none());
+                            }
+                        }
+                    }),
+                );
+                tree.on_action(
+                    TypeId::of::<NestedActionTest>(),
+                    Rc::new({
+                        let events = events.clone();
+                        let insert_mode = insert_mode.clone();
+                        move |_, phase, _, cx| {
+                            if phase == DispatchPhase::Bubble {
+                                events.borrow_mut().push("fallback");
+                                insert_mode.set(true);
+                                if !consume_fallback {
+                                    cx.propagate();
+                                }
+                            }
+                        }
+                    }),
+                );
+                tree.pop_node();
+                window.focus = Some(first.id);
+                window.input_handler = Some((
+                    first.id,
+                    super::SharedInputHandler(Rc::new(RefCell::new(KeyInputCapture(
+                        input.clone(),
+                    )))),
+                ));
+                window.rendered_frame.input_handlers.push(None);
+                let keys: &[&str] = if replay_prefix { &["g", "x"] } else { &["g"] };
+                for key in keys {
+                    window.dispatch_key_event(
+                        &KeyDownEvent {
+                            keystroke: Keystroke::parse(key)
+                                .expect("keystroke")
+                                .with_simulated_ime(),
+                            is_held: false,
+                            prefer_character_input: false,
+                        },
+                        cx,
+                    );
+                    if replay_prefix && *key == "g" {
+                        assert!(window.has_pending_keystrokes());
+                        assert!(pending.borrow().is_none());
+                        assert_eq!(*events.borrow(), Vec::<&str>::new());
+                    }
+                }
+                assert_eq!(*events.borrow(), ["first"]);
+                assert_eq!(*input.borrow(), "");
+                assert!(!cx.propagate_event);
+                let replay = window.keystroke_replay_with_context(
+                    Keystroke::parse("z")
+                        .expect("keystroke")
+                        .with_simulated_ime(),
+                    crate::InputPreference::KeyBindings,
+                    move |_, _| {
+                        Some(
+                            crate::KeyContext::parse(if insert_mode.get() {
+                                "ReplayInsert"
+                            } else {
+                                "ReplayNormal"
+                            })
+                            .expect("context"),
+                        )
+                    },
+                );
+                let tree = &mut window.rendered_frame.dispatch_tree;
+                tree.clear();
+                tree.push_node();
+                if keep_focus_node {
+                    tree.push_node();
+                    tree.set_focus_id(first.id);
+                    tree.set_key_context(crate::KeyContext::parse("ReplayOther").expect("context"));
+                    tree.pop_node();
+                }
+                tree.push_node();
+                tree.set_focus_id(second.id);
+                tree.on_action(
+                    TypeId::of::<NestedActionTest>(),
+                    Rc::new(|_, _, _, _| {
+                        panic!("fallback must retain its original target");
+                    }),
+                );
+                if keep_focus_node {
+                    assert!(tree.focusable_node_id(first.id).is_some());
+                } else {
+                    assert!(tree.focusable_node_id(first.id).is_none());
+                }
+                window.focus = Some(second.id);
+                let other_prefix = Keystroke::parse("ctrl-b").expect("keystroke");
+                window.pending_input = Some(super::PendingInput {
+                    keystrokes: smallvec::smallvec![other_prefix.clone()],
+                    focus: Some(second.id),
+                    ..super::PendingInput::default()
+                });
+                window.input_handler = Some((
+                    second.id,
+                    super::SharedInputHandler(Rc::new(RefCell::new(KeyInputCapture(
+                        other_input.clone(),
+                    )))),
+                ));
+                let continuation = pending.borrow_mut().take().expect("suspended command");
+                continuation(window, cx);
+                assert_eq!(*events.borrow(), ["first", "resume", "fallback"]);
+                let expected_input = match (consume_fallback, replay_prefix) {
+                    (true, false) => "",
+                    (false, false) => "g",
+                    (true, true) => "x",
+                    (false, true) => "gx",
+                };
+                assert_eq!(*input.borrow(), expected_input);
+                replay(window, cx);
+                assert_eq!(*input.borrow(), format!("{expected_input}z"));
+                assert_eq!(*events.borrow(), ["first", "resume", "fallback"]);
+                assert_eq!(*other_input.borrow(), "");
+                assert_eq!(window.focus, Some(second.id));
+                assert_eq!(
+                    window.pending_input_keystrokes(),
+                    Some([other_prefix].as_slice())
+                );
+                assert!(pending.borrow().is_none());
+            })
+            .expect("dispatch and resume keys");
+        }
+    }
 
     #[cfg(feature = "profiler")]
     #[gpui::test]
@@ -9612,6 +10838,92 @@ mod tests {
                 );
             })
             .unwrap();
+    }
+    struct KeyInputCapture(Rc<RefCell<String>>);
+
+    impl crate::InputHandler for KeyInputCapture {
+        fn selected_text_range(
+            &mut self,
+            _: bool,
+            _: &mut Window,
+            _: &mut App,
+        ) -> Option<crate::UTF16Selection> {
+            None
+        }
+        fn marked_text_range(
+            &mut self,
+            _: &mut Window,
+            _: &mut App,
+        ) -> Option<std::ops::Range<usize>> {
+            None
+        }
+        fn text_for_range(
+            &mut self,
+            _: std::ops::Range<usize>,
+            _: &mut Option<std::ops::Range<usize>>,
+            _: &mut Window,
+            _: &mut App,
+        ) -> Option<String> {
+            None
+        }
+        fn replace_text_in_range(
+            &mut self,
+            _: Option<std::ops::Range<usize>>,
+            text: &str,
+            _: &mut Window,
+            _: &mut App,
+        ) {
+            self.0.borrow_mut().push_str(text);
+        }
+        fn replace_and_mark_text_in_range(
+            &mut self,
+            _: Option<std::ops::Range<usize>>,
+            _: &str,
+            _: Option<std::ops::Range<usize>>,
+            _: &mut Window,
+            _: &mut App,
+        ) {
+            panic!("unexpected IME composition");
+        }
+        fn unmark_text(&mut self, _: &mut Window, _: &mut App) {}
+        fn bounds_for_range(
+            &mut self,
+            _: std::ops::Range<usize>,
+            _: &mut Window,
+            _: &mut App,
+        ) -> Option<Bounds<Pixels>> {
+            None
+        }
+        fn character_index_for_point(
+            &mut self,
+            _: Point<Pixels>,
+            _: &mut Window,
+            _: &mut App,
+        ) -> Option<usize> {
+            None
+        }
+    }
+
+    struct KeyboardFocusTarget {
+        focus: FocusHandle,
+        show_child: bool,
+        child_dispatches: Rc<Cell<usize>>,
+    }
+
+    impl Render for KeyboardFocusTarget {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let root = div().size_full();
+            if self.show_child {
+                let child_dispatches = self.child_dispatches.clone();
+                root.child(div().size(px(50.)).track_focus(&self.focus).on_action(
+                    move |_: &NestedActionTest, _, _| {
+                        child_dispatches.set(child_dispatches.get() + 1);
+                    },
+                ))
+            } else {
+                root
+            }
+        }
     }
 }
 

@@ -25,6 +25,7 @@ use text::{Bias, BufferId, OffsetRangeExt as _, Patch, ToPoint as _};
 use crate::{
     display_map::CompanionExcerptPatch,
     element::SplitSide,
+    scroll::companion_display_point,
     split_editor_view::{SplitEditorState, SplitEditorView},
 };
 use ui::{Toggleable as _, Tooltip, prelude::*, render_modifiers};
@@ -995,9 +996,12 @@ impl SplittableEditor {
         let source_snapshot = source_editor.update(cx, |editor, cx| editor.snapshot(window, cx));
         let target_snapshot = target_editor.update(cx, |editor, cx| editor.snapshot(window, cx));
 
-        let display_point = source_snapshot
-            .display_snapshot
-            .point_to_display_point(source_point, Bias::Right);
+        let (display_point, _) = companion_display_point(
+            &target_snapshot.display_snapshot,
+            &source_snapshot.display_snapshot,
+            source_point,
+            Bias::Right,
+        );
         let display_point = target_snapshot.clip_point(display_point, Bias::Right);
         let target_point = target_snapshot.display_point_to_point(display_point, Bias::Right);
 
@@ -1166,14 +1170,8 @@ impl SplittableEditor {
 
         self.rhs_editor.update(cx, |rhs, cx| {
             let rhs_snapshot = rhs.display_map.update(cx, |dm, cx| dm.snapshot(cx));
-            let native_anchor = rhs.scroll_manager.native_anchor(&rhs_snapshot, cx);
-            let rhs_display_map_id = rhs_snapshot.display_map_id;
             rhs.scroll_manager
-                .scroll_anchor_entity()
-                .update(cx, |shared, _| {
-                    shared.scroll_anchor = native_anchor;
-                    shared.display_map_id = Some(rhs_display_map_id);
-                });
+                .make_scroll_anchor_native(&rhs_snapshot, cx);
 
             rhs.set_on_local_selections_changed(None);
             rhs.set_delegate_expand_excerpts(false);
@@ -2332,7 +2330,7 @@ mod tests {
     use buffer_diff::BufferDiff;
     use collections::{HashMap, HashSet};
     use fs::FakeFs;
-    use gpui::{AppContext as _, Entity, Pixels, VisualTestContext};
+    use gpui::{AppContext as _, Entity, IntoElement as _, Pixels, VisualTestContext, size};
     use gpui::{BorrowAppContext as _, Element as _};
     use language::language_settings::SoftWrap;
     use language::{Buffer, Capability};
@@ -2351,8 +2349,9 @@ mod tests {
     };
     use crate::inlays::Inlay;
     use crate::test::{editor_content_with_blocks_and_width, set_block_content_for_tests};
-    use crate::{Editor, SplittableEditor};
+    use crate::{DisplayPoint, Editor, SplittableEditor, display_map::ToDisplayPoint as _};
     use multi_buffer::MultiBufferOffset;
+    use text::Bias;
 
     async fn init_test(
         cx: &mut gpui::TestAppContext,
@@ -4481,29 +4480,12 @@ mod tests {
 
     #[gpui::test]
     async fn test_split_sides_show_same_text_at_left_edge(cx: &mut gpui::TestAppContext) {
-        use crate::{DisplayPoint, display_map::ToDisplayPoint as _};
-        use gpui::{IntoElement as _, point, size};
+        use gpui::point;
         use rope::Point;
-        use text::Bias;
 
-        let (editor, cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Split).await;
         let content = format!("{}\nend", "x".repeat(4_000));
-        let (buffer, diff) = buffer_with_diff(&content, &content, cx);
-        editor.update(cx, |editor, cx| {
-            editor.update_excerpts_for_path(
-                PathKey::sorted(0),
-                buffer.clone(),
-                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
-                0,
-                diff.clone(),
-                cx,
-            );
-        });
-        cx.run_until_parked();
-        let (rhs_editor, lhs_editor) = editor.update(cx, |editor, _| {
-            let lhs = editor.lhs.as_ref().expect("should have lhs editor");
-            (editor.rhs_editor.clone(), lhs.editor.clone())
-        });
+        let (_editor, rhs_editor, lhs_editor, cx) =
+            split_with_long_rows(&content, &content, cx).await;
         rhs_editor.update(cx, |editor, cx| {
             let position = editor
                 .buffer()
@@ -4520,29 +4502,144 @@ mod tests {
         rhs_editor.update_in(cx, |editor, window, cx| {
             editor.set_scroll_position(point(2_000., 0.), window, cx);
         });
-        let left_edge = |editor: &Entity<Editor>, cx: &mut VisualTestContext| {
-            cx.draw(gpui::Point::default(), size(px(300.), px(300.)), |_, _| {
-                editor.clone().into_any_element()
-            });
-            editor.update_in(cx, |editor, window, cx| {
-                let snapshot = editor.snapshot(window, cx);
-                let details = editor.text_layout_details(window, cx);
-                let em_width = snapshot
-                    .display_snapshot
-                    .long_row_em_width()
-                    .expect("long rows");
-                let row = Point::new(0, 0).to_display_point(&snapshot).row();
-                let column = snapshot.display_column_for_x(
-                    row,
-                    snapshot.scroll_position().x * em_width,
-                    &details,
-                );
-                snapshot.display_point_to_point(DisplayPoint::new(row, column), Bias::Left)
-            })
-        };
-        let rhs = left_edge(&rhs_editor, cx);
-        let lhs = left_edge(&lhs_editor, cx);
+        let rhs = left_edge_point(&rhs_editor, cx).await;
+        let lhs = left_edge_point(&lhs_editor, cx).await;
         assert!(rhs.column > 1_000, "{rhs:?}");
+        assert_eq!(lhs, rhs);
+    }
+
+    #[gpui::test]
+    async fn test_resplit_keeps_horizontal_scroll_of_both_sides(cx: &mut gpui::TestAppContext) {
+        use rope::Point;
+
+        let (base_text, current_text) = tab_and_space_indented_texts();
+        let (editor, rhs_editor, lhs_editor, cx) =
+            split_with_long_rows(&base_text, &current_text, cx).await;
+        lhs_editor.update_in(cx, |editor, window, cx| {
+            editor.set_scroll_position(gpui::point(800., 0.), window, cx);
+        });
+        let lhs_before = left_edge_point(&lhs_editor, cx).await;
+        let rhs_before = left_edge_point(&rhs_editor, cx).await;
+        assert_eq!(lhs_before, Point::new(0, 500));
+        assert_eq!(rhs_before, lhs_before);
+
+        editor.update_in(cx, |editor, window, cx| editor.unsplit(window, cx));
+        cx.run_until_parked();
+        left_edge_point(&rhs_editor, cx).await;
+        editor.update_in(cx, |editor, window, cx| editor.split(window, cx));
+        cx.run_until_parked();
+
+        let (rhs_editor, lhs_editor) = split_sides(&editor, cx);
+        assert_eq!(left_edge_point(&lhs_editor, cx).await, lhs_before);
+        assert_eq!(left_edge_point(&rhs_editor, cx).await, rhs_before);
+    }
+
+    #[gpui::test]
+    async fn test_split_side_cursors_stay_in_aligned_viewports(cx: &mut gpui::TestAppContext) {
+        use rope::Point;
+
+        let (base_text, current_text) = tab_and_space_indented_texts();
+        let (_editor, rhs_editor, lhs_editor, cx) =
+            split_with_long_rows(&base_text, &current_text, cx).await;
+        lhs_editor.update_in(cx, |editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            let text_row = Point::new(0, 0).to_display_point(&snapshot).row();
+            editor.set_scroll_position(gpui::point(800., f64::from(text_row.0)), window, cx);
+        });
+        left_edge_point(&lhs_editor, cx).await;
+        let rhs_left_edge = left_edge_point(&rhs_editor, cx).await;
+        assert_eq!(rhs_left_edge, Point::new(0, 500));
+
+        rhs_editor.update_in(cx, |editor, window, cx| {
+            editor.change_selections(crate::SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_ranges([Point::new(0, 505)..Point::new(0, 505)]);
+            });
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            [
+                cursor_and_visibility(&rhs_editor, cx).await,
+                cursor_and_visibility(&lhs_editor, cx).await,
+            ],
+            [(Point::new(0, 505), std::cmp::Ordering::Equal); 2]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_split_cursor_sync_clips_aligned_long_rows_at_line_ends(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use rope::Point;
+
+        let base_text = format!("{}\nend", "x".repeat(4_000));
+        let current_text = format!("{}\nend", "x".repeat(4_001));
+        let (_editor, rhs_editor, lhs_editor, cx) =
+            split_with_long_rows(&base_text, &current_text, cx).await;
+        lhs_editor.update(cx, |editor, cx| editor.set_clip_at_line_ends(true, cx));
+        rhs_editor.update_in(cx, |editor, window, cx| {
+            editor.change_selections(crate::SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_ranges([Point::new(0, 4_000)..Point::new(0, 4_000)]);
+            });
+        });
+        cx.run_until_parked();
+        let lhs_head = lhs_editor.update(cx, |editor, cx| {
+            editor
+                .selections
+                .newest::<Point>(&editor.display_snapshot(cx))
+                .head()
+        });
+        assert_eq!(lhs_head, Point::new(0, 3_999));
+    }
+
+    #[gpui::test]
+    async fn test_split_cursor_sync_past_shorter_long_row_stays_at_line_end(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use rope::Point;
+
+        let base_text = format!("{}{}\nend", "\t".repeat(100), "x".repeat(3_900));
+        let current_text = format!("{}\nend", "x".repeat(4_001));
+        let (_editor, rhs_editor, lhs_editor, cx) =
+            split_with_long_rows(&base_text, &current_text, cx).await;
+        let lhs_heads = [4_000, 4_001].map(|column| {
+            rhs_editor.update_in(cx, |editor, window, cx| {
+                editor.change_selections(crate::SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.select_ranges([Point::new(0, column)..Point::new(0, column)]);
+                });
+            });
+            cx.run_until_parked();
+            lhs_editor.update(cx, |editor, cx| {
+                editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx))
+                    .head()
+            })
+        });
+        assert_eq!(lhs_heads, [Point::new(0, 4_000); 2]);
+    }
+
+    #[gpui::test]
+    async fn test_split_sides_stay_aligned_when_anchor_faces_spacer(cx: &mut gpui::TestAppContext) {
+        use rope::Point;
+
+        let tokens = long_row_tokens();
+        let base_text = format!("A{tokens}\nB{tokens}\n");
+        let current_text = format!(
+            "A{tokens}\n{}inserted {tokens}\nB{tokens}\n",
+            "\t".repeat(200)
+        );
+        let (_editor, rhs_editor, lhs_editor, cx) =
+            split_with_long_rows(&base_text, &current_text, cx).await;
+        rhs_editor.update_in(cx, |editor, window, cx| {
+            editor.change_selections(crate::SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_ranges([Point::new(1, 0)..Point::new(1, 0)]);
+            });
+            editor.set_scroll_position(gpui::point(1_000., 0.), window, cx);
+        });
+
+        let rhs = left_edge_point(&rhs_editor, cx).await;
+        let lhs = left_edge_point(&lhs_editor, cx).await;
+        assert_eq!(rhs, Point::new(0, 1_000));
         assert_eq!(lhs, rhs);
     }
 
@@ -6302,9 +6399,12 @@ mod tests {
         assert_split_content(&editor, expected_rhs.clone(), expected_lhs.clone(), &mut cx);
 
         let key = RendererWidthsKey {
+            editor_width: px(500.),
+            line_height: px(20.),
             rem_size: px(16.),
             font: crate::test::test_font(),
             font_size: px(14.),
+            buffer_font: crate::test::test_font(),
         };
         rhs_editor.update(cx, |rhs_editor, cx| {
             rhs_editor.update_renderer_widths(
@@ -6598,5 +6698,114 @@ mod tests {
             editor.is_some(),
             "SplittableEditor should be able to act as Editor"
         );
+    }
+
+    async fn left_edge_point(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> rope::Point {
+        loop {
+            cx.draw(gpui::Point::default(), size(px(300.), px(300.)), |_, _| {
+                editor.clone().into_any_element()
+            });
+            let result =
+                editor.update_in(cx, |editor, window, cx| {
+                    let snapshot = editor.snapshot(window, cx);
+                    let details = editor.text_layout_details(window, cx);
+                    let em_width = snapshot
+                        .display_snapshot
+                        .long_row_em_width()
+                        .expect("long rows");
+                    let row = rope::Point::new(0, 0).to_display_point(&snapshot).row();
+                    let x = snapshot.scroll_position().x * em_width;
+                    match snapshot.display_column_for_x(row, x, &details) {
+                        Ok(column) => Ok(snapshot
+                            .display_point_to_point(DisplayPoint::new(row, column), Bias::Left)),
+                        Err(pending) => {
+                            assert!(editor.request_row_geometry(pending.clone(), cx));
+                            Err(pending)
+                        }
+                    }
+                });
+            match result {
+                Ok(point) => return point,
+                Err(pending) => pending.wait().await,
+            }
+        }
+    }
+
+    async fn cursor_and_visibility(
+        editor: &Entity<Editor>,
+        cx: &mut VisualTestContext,
+    ) -> (rope::Point, std::cmp::Ordering) {
+        loop {
+            let result = editor.update_in(cx, |editor, window, cx| {
+                match editor.newest_selection_on_screen(window, cx) {
+                    Ok(visibility) => {
+                        let snapshot = editor.display_snapshot(cx);
+                        Ok((
+                            editor.selections.newest::<rope::Point>(&snapshot).head(),
+                            visibility,
+                        ))
+                    }
+                    Err(pending) => {
+                        assert!(editor.request_row_geometry(pending.clone(), cx));
+                        Err(pending)
+                    }
+                }
+            });
+            match result {
+                Ok(value) => return value,
+                Err(pending) => pending.wait().await,
+            }
+        }
+    }
+
+    async fn split_with_long_rows<'a>(
+        base_text: &str,
+        current_text: &str,
+        cx: &'a mut gpui::TestAppContext,
+    ) -> (
+        Entity<SplittableEditor>,
+        Entity<Editor>,
+        Entity<Editor>,
+        &'a mut VisualTestContext,
+    ) {
+        let (editor, cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Split).await;
+        let (buffer, diff) = buffer_with_diff(base_text, current_text, cx);
+        editor.update(cx, |editor, cx| {
+            editor.update_excerpts_for_path(
+                PathKey::sorted(0),
+                buffer.clone(),
+                vec![rope::Point::new(0, 0)..buffer.read(cx).max_point()],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        let (rhs_editor, lhs_editor) = split_sides(&editor, cx);
+        (editor, rhs_editor, lhs_editor, cx)
+    }
+
+    fn split_sides(
+        editor: &Entity<SplittableEditor>,
+        cx: &mut VisualTestContext,
+    ) -> (Entity<Editor>, Entity<Editor>) {
+        editor.update(cx, |editor, _| {
+            let lhs = editor.lhs.as_ref().expect("should have lhs editor");
+            (editor.rhs_editor.clone(), lhs.editor.clone())
+        })
+    }
+
+    fn tab_and_space_indented_texts() -> (String, String) {
+        let tokens = long_row_tokens();
+        (
+            format!("{}{tokens}old\nend", "\t".repeat(100)),
+            format!("{}{tokens}new\nend", " ".repeat(100)),
+        )
+    }
+
+    fn long_row_tokens() -> String {
+        (0..1_000)
+            .map(|index| format!("{index:04} "))
+            .collect::<String>()
     }
 }

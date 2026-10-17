@@ -163,7 +163,16 @@ impl Editor {
         );
     }
 
-    pub fn set_mark(&mut self, _: &actions::SetMark, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn set_mark(
+        &mut self,
+        action: &actions::SetMark,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.defer_action(action, Self::set_mark, window, cx) {
+            return;
+        }
+
         if self.selection_mark_mode {
             self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.move_with(&mut |_, sel| {
@@ -177,10 +186,14 @@ impl Editor {
 
     pub fn swap_selection_ends(
         &mut self,
-        _: &actions::SwapSelectionEnds,
+        action: &actions::SwapSelectionEnds,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::swap_selection_ends, window, cx) {
+            return;
+        }
+
         self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.move_with(&mut |_, sel| {
                 if sel.start != sel.end {
@@ -192,7 +205,16 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn select_to_end(&mut self, _: &SelectToEnd, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn select_to_end(
+        &mut self,
+        action: &SelectToEnd,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.defer_action(action, Self::select_to_end, window, cx) {
+            return;
+        }
+
         let buffer = self.buffer.read(cx).snapshot(cx);
         let mut selection = self
             .selections
@@ -203,13 +225,26 @@ impl Editor {
         });
     }
 
-    pub fn select_all(&mut self, _: &SelectAll, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn select_all(&mut self, action: &SelectAll, window: &mut Window, cx: &mut Context<Self>) {
+        if self.defer_action(action, Self::select_all, window, cx) {
+            return;
+        }
+
         self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges(vec![Anchor::Min..Anchor::Max]);
         });
     }
 
-    pub fn select_line(&mut self, _: &SelectLine, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn select_line(
+        &mut self,
+        action: &SelectLine,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.defer_action(action, Self::select_line, window, cx) {
+            return;
+        }
+
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections.all::<Point>(&display_map);
         let max_point = display_map.buffer_snapshot().max_point();
@@ -230,6 +265,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::split_selection_into_lines, window, cx) {
+            return;
+        }
+
         let selections = self
             .selections
             .all::<Point>(&self.display_snapshot(cx))
@@ -289,6 +328,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::add_selection_above, window, cx) {
+            return;
+        }
+
         self.add_selection(true, action.skip_soft_wrap, window, cx);
     }
 
@@ -298,15 +341,29 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::add_selection_below, window, cx) {
+            return;
+        }
+
         self.add_selection(false, action.skip_soft_wrap, window, cx);
     }
 
     pub fn select_all_matches(
         &mut self,
-        _action: &SelectAllMatches,
+        action: &SelectAllMatches,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<()> {
+        if self.defer_action(
+            action,
+            |editor, action, window, cx| {
+                editor.select_all_matches(action, window, cx).log_err();
+            },
+            window,
+            cx,
+        ) {
+            return Ok(());
+        }
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
         self.select_next_match_internal(&display_map, false, None, window, cx)?;
@@ -372,6 +429,16 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<()> {
+        if self.defer_action(
+            action,
+            |editor, action, window, cx| {
+                editor.select_next(action, window, cx).log_err();
+            },
+            window,
+            cx,
+        ) {
+            return Ok(());
+        }
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         self.select_next_match_internal(
             &display_map,
@@ -388,6 +455,16 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<()> {
+        if self.defer_action(
+            action,
+            |editor, action, window, cx| {
+                editor.select_previous(action, window, cx).log_err();
+            },
+            window,
+            cx,
+        ) {
+            return Ok(());
+        }
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = display_map.buffer_snapshot();
         let mut selections = self.selections.all::<MultiBufferOffset>(&display_map);
@@ -529,10 +606,20 @@ impl Editor {
 
     pub fn find_next_match(
         &mut self,
-        _: &FindNextMatch,
+        action: &FindNextMatch,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<()> {
+        if self.defer_action(
+            action,
+            |editor, action, window, cx| {
+                editor.find_next_match(action, window, cx).log_err();
+            },
+            window,
+            cx,
+        ) {
+            return Ok(());
+        }
         let selections = self.selections.disjoint_anchors_arc();
         match selections.first() {
             Some(first) if selections.len() >= 2 => {
@@ -553,10 +640,20 @@ impl Editor {
 
     pub fn find_previous_match(
         &mut self,
-        _: &FindPreviousMatch,
+        action: &FindPreviousMatch,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<()> {
+        if self.defer_action(
+            action,
+            |editor, action, window, cx| {
+                editor.find_previous_match(action, window, cx).log_err();
+            },
+            window,
+            cx,
+        ) {
+            return Ok(());
+        }
         let selections = self.selections.disjoint_anchors_arc();
         match selections.last() {
             Some(last) if selections.len() >= 2 => {
@@ -577,10 +674,14 @@ impl Editor {
 
     pub fn select_enclosing_symbol(
         &mut self,
-        _: &SelectEnclosingSymbol,
+        action: &SelectEnclosingSymbol,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::select_enclosing_symbol, window, cx) {
+            return;
+        }
+
         let buffer = self.buffer.read(cx).snapshot(cx);
         let old_selections = self
             .selections
@@ -633,10 +734,14 @@ impl Editor {
 
     pub fn select_larger_syntax_node(
         &mut self,
-        _: &SelectLargerSyntaxNode,
+        action: &SelectLargerSyntaxNode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::select_larger_syntax_node, window, cx) {
+            return;
+        }
+
         let Some(visible_row_count) = self.visible_row_count() else {
             return;
         };
@@ -757,10 +862,14 @@ impl Editor {
 
     pub fn select_smaller_syntax_node(
         &mut self,
-        _: &SelectSmallerSyntaxNode,
+        action: &SelectSmallerSyntaxNode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::select_smaller_syntax_node, window, cx) {
+            return;
+        }
+
         if let Some((mut selections, scroll_behavior, is_selection_reversed)) =
             self.select_syntax_node_history.pop()
         {
@@ -796,10 +905,14 @@ impl Editor {
 
     pub fn select_next_syntax_node(
         &mut self,
-        _: &SelectNextSyntaxNode,
+        action: &SelectNextSyntaxNode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::select_next_syntax_node, window, cx) {
+            return;
+        }
+
         let old_selections = self.selections.all_anchors(&self.display_snapshot(cx));
         if old_selections.is_empty() {
             return;
@@ -857,10 +970,14 @@ impl Editor {
 
     pub fn select_prev_syntax_node(
         &mut self,
-        _: &SelectPreviousSyntaxNode,
+        action: &SelectPreviousSyntaxNode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::select_prev_syntax_node, window, cx) {
+            return;
+        }
+
         let old_selections: Arc<[_]> = self.selections.all_anchors(&self.display_snapshot(cx));
 
         let multibuffer_snapshot = self.buffer.read(cx).snapshot(cx);
@@ -915,55 +1032,94 @@ impl Editor {
 
     pub fn move_to_start_of_larger_syntax_node(
         &mut self,
-        _: &MoveToStartOfLargerSyntaxNode,
+        action: &MoveToStartOfLargerSyntaxNode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(
+            action,
+            Self::move_to_start_of_larger_syntax_node,
+            window,
+            cx,
+        ) {
+            return;
+        }
+
         self.move_cursors_to_syntax_nodes(window, cx, false);
     }
 
     pub fn move_to_end_of_larger_syntax_node(
         &mut self,
-        _: &MoveToEndOfLargerSyntaxNode,
+        action: &MoveToEndOfLargerSyntaxNode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::move_to_end_of_larger_syntax_node, window, cx) {
+            return;
+        }
+
         self.move_cursors_to_syntax_nodes(window, cx, true);
     }
 
     pub fn select_to_start_of_larger_syntax_node(
         &mut self,
-        _: &SelectToStartOfLargerSyntaxNode,
+        action: &SelectToStartOfLargerSyntaxNode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(
+            action,
+            Self::select_to_start_of_larger_syntax_node,
+            window,
+            cx,
+        ) {
+            return;
+        }
+
         self.select_to_syntax_nodes(window, cx, false);
     }
 
     pub fn select_to_end_of_larger_syntax_node(
         &mut self,
-        _: &SelectToEndOfLargerSyntaxNode,
+        action: &SelectToEndOfLargerSyntaxNode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(
+            action,
+            Self::select_to_end_of_larger_syntax_node,
+            window,
+            cx,
+        ) {
+            return;
+        }
+
         self.select_to_syntax_nodes(window, cx, true);
     }
 
     pub fn select_inside_delimiters(
         &mut self,
-        _: &SelectInsideDelimiters,
+        action: &SelectInsideDelimiters,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::select_inside_delimiters, window, cx) {
+            return;
+        }
+
         self.select_delimiters_impl(false, window, cx);
     }
 
     pub fn select_around_delimiters(
         &mut self,
-        _: &SelectAroundDelimiters,
+        action: &SelectAroundDelimiters,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::select_around_delimiters, window, cx) {
+            return;
+        }
+
         self.select_delimiters_impl(true, window, cx);
     }
 
@@ -1014,10 +1170,14 @@ impl Editor {
 
     pub fn move_to_enclosing_bracket(
         &mut self,
-        _: &MoveToEnclosingBracket,
+        action: &MoveToEnclosingBracket,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::move_to_enclosing_bracket, window, cx) {
+            return;
+        }
+
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_offsets_with(&mut |snapshot, selection| {
                 let Some(enclosing_bracket_ranges) =
@@ -1070,10 +1230,14 @@ impl Editor {
 
     pub fn undo_selection(
         &mut self,
-        _: &UndoSelection,
+        action: &UndoSelection,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::undo_selection, window, cx) {
+            return;
+        }
+
         if let Some(entry) = self.selection_history.undo_stack.pop_back() {
             self.selection_history.mode = SelectionHistoryMode::Undoing;
             self.with_selection_effects_deferred(window, cx, |this, window, cx| {
@@ -1082,12 +1246,7 @@ impl Editor {
                     SelectionEffects::scroll(Autoscroll::newest()),
                     window,
                     cx,
-                    |s| {
-                        s.select_anchors_unexpanded(
-                            entry.selections.to_vec(),
-                            entry.goal_origins.clone(),
-                        )
-                    },
+                    |s| s.select_anchors_unexpanded(entry.selections.to_vec()),
                 );
             });
             self.selection_history.mode = SelectionHistoryMode::Normal;
@@ -1100,10 +1259,14 @@ impl Editor {
 
     pub fn redo_selection(
         &mut self,
-        _: &RedoSelection,
+        action: &RedoSelection,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_action(action, Self::redo_selection, window, cx) {
+            return;
+        }
+
         if let Some(entry) = self.selection_history.redo_stack.pop_back() {
             self.selection_history.mode = SelectionHistoryMode::Redoing;
             self.with_selection_effects_deferred(window, cx, |this, window, cx| {
@@ -1112,12 +1275,7 @@ impl Editor {
                     SelectionEffects::scroll(Autoscroll::newest()),
                     window,
                     cx,
-                    |s| {
-                        s.select_anchors_unexpanded(
-                            entry.selections.to_vec(),
-                            entry.goal_origins.clone(),
-                        )
-                    },
+                    |s| s.select_anchors_unexpanded(entry.selections.to_vec()),
                 );
             });
             self.selection_history.mode = SelectionHistoryMode::Normal;
@@ -1134,6 +1292,11 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.input_is_deferred() {
+            let continuation = self.selection_continuation(phase, cx);
+            self.defer_input(continuation, window, cx);
+            return;
+        }
         self.hide_context_menu(window, cx);
 
         match phase {
@@ -1168,6 +1331,17 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.input_is_deferred() {
+            let continuation = self.selection_continuation(
+                SelectPhase::Extend {
+                    position,
+                    click_count,
+                },
+                cx,
+            );
+            self.defer_input(continuation, window, cx);
+            return;
+        }
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let tail = self
             .selections
@@ -1235,6 +1409,18 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.input_is_deferred() {
+            let continuation = self.selection_continuation(
+                SelectPhase::Begin {
+                    position,
+                    add,
+                    click_count,
+                },
+                cx,
+            );
+            self.defer_input(continuation, window, cx);
+            return;
+        }
         if !self.focus_handle.is_focused(window) {
             self.last_focused_descendant = None;
             window.focus(&self.focus_handle, cx);
@@ -1339,10 +1525,35 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.input_is_deferred() {
+            let continuation = self.selection_continuation(
+                SelectPhase::Update {
+                    position,
+                    goal_column,
+                    scroll_delta,
+                },
+                cx,
+            );
+            self.defer_input(continuation, window, cx);
+            return;
+        }
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
         if self.columnar_selection_state.is_some() {
-            self.select_columns(position, goal_column, &display_map, window, cx);
+            if let Err(pending) =
+                self.select_columns(position, goal_column, &display_map, window, cx)
+            {
+                let retry = self.selection_continuation(
+                    SelectPhase::Update {
+                        position,
+                        goal_column,
+                        scroll_delta,
+                    },
+                    cx,
+                );
+                self.defer_geometry(pending, retry, window, cx);
+                return;
+            }
         } else if let Some((mut pending, mode)) = self.pending_selection_and_mode() {
             let buffer = display_map.buffer_snapshot();
             let head;
@@ -1430,6 +1641,9 @@ impl Editor {
     }
 
     pub(super) fn end_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.defer_input(Self::end_selection, window, cx) {
+            return;
+        }
         self.columnar_selection_state.take();
         if let Some(pending_mode) = self.selections.pending_mode() {
             let selections = self
@@ -1462,12 +1676,59 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let display_map = self.display_snapshot(cx);
+        let tail = if reset {
+            position.to_point(&display_map)
+        } else {
+            self.selections.newest::<Point>(&display_map).tail()
+        };
+        let selection_anchor = display_map.buffer_snapshot().anchor_before(tail);
+        let state = match mode.clone() {
+            ColumnarMode::FromMouse => ColumnarSelectionState::FromMouse {
+                selection_tail: selection_anchor,
+                goal_column_offset: if reset {
+                    i64::from(goal_column)
+                        - i64::from(selection_anchor.to_display_point(&display_map).column())
+                } else {
+                    0
+                },
+            },
+            ColumnarMode::FromSelection => ColumnarSelectionState::FromSelection {
+                selection_tail: selection_anchor,
+            },
+        };
+
+        let ranges = if reset {
+            Vec::new()
+        } else {
+            match self.plan_column_selection(
+                &state,
+                position,
+                goal_column,
+                &display_map,
+                window,
+                cx,
+            ) {
+                Ok(ranges) => ranges,
+                Err(pending) => {
+                    let retry = self.selection_continuation(
+                        SelectPhase::BeginColumnar {
+                            position,
+                            goal_column,
+                            reset,
+                            mode,
+                        },
+                        cx,
+                    );
+                    self.defer_geometry(pending, retry, window, cx);
+                    return;
+                }
+            }
+        };
         if !self.focus_handle.is_focused(window) {
             self.last_focused_descendant = None;
             window.focus(&self.focus_handle, cx);
         }
-
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
         if reset {
             let pointer_position = display_map
@@ -1488,28 +1749,12 @@ impl Editor {
             );
         };
 
-        let tail = self.selections.newest::<Point>(&display_map).tail();
-        let selection_anchor = display_map.buffer_snapshot().anchor_before(tail);
-        self.columnar_selection_state = match mode {
-            ColumnarMode::FromMouse => Some(ColumnarSelectionState::FromMouse {
-                selection_tail: selection_anchor,
-                display_point: if reset {
-                    if position.column() != goal_column {
-                        Some(DisplayPoint::new(position.row(), goal_column))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                },
-            }),
-            ColumnarMode::FromSelection => Some(ColumnarSelectionState::FromSelection {
-                selection_tail: selection_anchor,
-            }),
-        };
-
-        if !reset {
-            self.select_columns(position, goal_column, &display_map, window, cx);
+        self.columnar_selection_state = Some(state);
+        if !ranges.is_empty() {
+            self.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges(ranges)
+            });
+            cx.notify();
         }
     }
 
@@ -1572,8 +1817,9 @@ impl Editor {
                 }
             }
 
+            drop(buffer_handle);
             if !text.is_empty() {
-                cx.write_to_primary(ClipboardItem::new_string(text));
+                self.publish_primary_item(ClipboardItem::new_string(text), window, cx);
             }
         }
 
@@ -1805,6 +2051,69 @@ impl Editor {
         }
     }
 
+    fn selection_continuation(
+        &self,
+        mut phase: SelectPhase,
+        cx: &mut App,
+    ) -> deferred_input::InputContinuation {
+        let snapshot = self.display_snapshot(cx);
+        let position = match &phase {
+            SelectPhase::Begin { position, .. } | SelectPhase::Extend { position, .. } => {
+                Some((*position, 0))
+            }
+            SelectPhase::BeginColumnar {
+                position,
+                goal_column,
+                ..
+            }
+            | SelectPhase::Update {
+                position,
+                goal_column,
+                ..
+            } => Some((
+                *position,
+                i64::from(*goal_column) - i64::from(position.column()),
+            )),
+            SelectPhase::End => None,
+        }
+        .map(|(position, delta)| {
+            let anchor = snapshot.display_point_to_anchor(position, Bias::Left);
+            let anchor_column = anchor.to_display_point(&snapshot).column();
+            (
+                anchor,
+                delta + i64::from(position.column()) - i64::from(anchor_column),
+            )
+        });
+        Box::new(move |editor, window, cx| {
+            if let Some((anchor, delta)) = position {
+                let snapshot = editor.display_snapshot(cx);
+                let point = anchor.to_display_point(&snapshot);
+                match &mut phase {
+                    SelectPhase::Begin { position, .. } | SelectPhase::Extend { position, .. } => {
+                        *position = point
+                    }
+                    SelectPhase::BeginColumnar {
+                        position,
+                        goal_column,
+                        ..
+                    }
+                    | SelectPhase::Update {
+                        position,
+                        goal_column,
+                        ..
+                    } => {
+                        *position = point;
+                        *goal_column = (i64::from(point.column()) + delta)
+                            .clamp(0, i64::from(u32::MAX))
+                            as u32;
+                    }
+                    SelectPhase::End => {}
+                }
+            }
+            editor.select(phase, window, cx);
+        })
+    }
+
     fn select_columns(
         &mut self,
         head: DisplayPoint,
@@ -1812,16 +2121,40 @@ impl Editor {
         display_map: &DisplaySnapshot,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
-        let Some(columnar_state) = self.columnar_selection_state.as_ref() else {
-            return;
+    ) -> Result<(), PendingRowGeometry> {
+        let Some(state) = self.columnar_selection_state.as_ref() else {
+            return Ok(());
         };
+        let ranges =
+            self.plan_column_selection(state, head, goal_column, display_map, window, cx)?;
+        if !ranges.is_empty() {
+            self.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges(ranges)
+            });
+            cx.notify();
+        }
+        Ok(())
+    }
 
+    fn plan_column_selection(
+        &self,
+        columnar_state: &ColumnarSelectionState,
+        head: DisplayPoint,
+        goal_column: u32,
+        display_map: &DisplaySnapshot,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<Vec<Range<Point>>, PendingRowGeometry> {
         let tail = match columnar_state {
             ColumnarSelectionState::FromMouse {
                 selection_tail,
-                display_point,
-            } => display_point.unwrap_or_else(|| selection_tail.to_display_point(display_map)),
+                goal_column_offset,
+            } => {
+                let mut tail = selection_tail.to_display_point(display_map);
+                *tail.column_mut() = (i64::from(tail.column()) + goal_column_offset)
+                    .clamp(0, i64::from(u32::MAX)) as u32;
+                tail
+            }
             ColumnarSelectionState::FromSelection { selection_tail } => {
                 selection_tail.to_display_point(display_map)
             }
@@ -1850,23 +2183,24 @@ impl Editor {
         let em_layout_width = text_layout_details
             .text_system
             .em_layout_width(font_id, font_size);
-        let x_for_unclipped_point = |point: DisplayPoint| {
-            let line_len = display_map.line_len(point.row());
-            if point.column() > line_len {
-                let eol_x = display_map.x_for_display_point(
-                    DisplayPoint::new(point.row(), line_len),
-                    &text_layout_details,
-                );
-                eol_x
-                    + ScrollPixelOffset::from(em_layout_width)
-                        * (point.column() - line_len) as ScrollPixelOffset
-            } else {
-                display_map.x_for_display_point(point, &text_layout_details)
-            }
-        };
+        let x_for_unclipped_point =
+            |point: DisplayPoint| -> Result<ScrollPixelOffset, PendingRowGeometry> {
+                let line_len = display_map.line_len(point.row());
+                if point.column() > line_len {
+                    let eol_x = display_map.x_for_display_point(
+                        DisplayPoint::new(point.row(), line_len),
+                        &text_layout_details,
+                    )?;
+                    Ok(eol_x
+                        + ScrollPixelOffset::from(em_layout_width)
+                            * (point.column() - line_len) as ScrollPixelOffset)
+                } else {
+                    display_map.x_for_display_point(point, &text_layout_details)
+                }
+            };
 
-        let tail_x = x_for_unclipped_point(tail);
-        let head_x = x_for_unclipped_point(DisplayPoint::new(head.row(), goal_column));
+        let tail_x = x_for_unclipped_point(tail)?;
+        let head_x = x_for_unclipped_point(DisplayPoint::new(head.row(), goal_column))?;
         let start_x = tail_x.min(head_x);
         let end_x = tail_x.max(head_x);
         let reversed = head_x < tail_x;
@@ -1874,22 +2208,22 @@ impl Editor {
         let mut last_buffer_row = None;
         let selection_ranges = (start_row.0..=end_row.0)
             .map(DisplayRow)
-            .filter_map(|row| {
+            .map(|row| {
                 if display_map.is_block_line(row) {
-                    return None;
+                    return Ok(None);
                 }
 
                 let buffer_row = row.as_display_point().to_point(display_map).row;
                 if last_buffer_row == Some(buffer_row) {
-                    return None;
+                    return Ok(None);
                 }
                 last_buffer_row = Some(buffer_row);
 
-                let layout = display_map.layout_row(row, &text_layout_details);
+                let layout = display_map.layout_row(row, &text_layout_details)?;
                 if matches!(columnar_state, ColumnarSelectionState::FromSelection { .. })
                     && start_x > layout.width()
                 {
-                    return None;
+                    return Ok(None);
                 }
 
                 let start_column = layout.closest_index_for_x(start_x) as u32;
@@ -1902,14 +2236,17 @@ impl Editor {
                     .clip_point(DisplayPoint::new(row, end_column), Bias::Right)
                     .to_point(display_map);
                 if reversed {
-                    Some(end..start)
+                    Ok(Some(end..start))
                 } else {
-                    Some(start..end)
+                    Ok(Some(start..end))
                 }
             })
+            .collect::<Result<Vec<_>, PendingRowGeometry>>()?
+            .into_iter()
+            .flatten()
             .collect::<Vec<_>>();
         if selection_ranges.is_empty() {
-            return;
+            return Ok(Vec::new());
         }
 
         let ranges = match columnar_state {
@@ -1927,10 +2264,7 @@ impl Editor {
             _ => selection_ranges,
         };
 
-        self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges(ranges);
-        });
-        cx.notify();
+        Ok(ranges)
     }
 
     fn pending_selection_and_mode(&self) -> Option<(Selection<Anchor>, SelectMode)> {
@@ -2082,7 +2416,6 @@ impl Editor {
     fn selection_history_entry(&self) -> SelectionHistoryEntry {
         SelectionHistoryEntry {
             selections: self.selections.disjoint_anchors_arc(),
-            goal_origins: self.selections.goal_origins(),
             select_next_state: self.select_next_state.clone(),
             select_prev_state: self.select_prev_state.clone(),
             add_selections_state: self.add_selections_state.clone(),
@@ -2122,10 +2455,65 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_input(
+            move |editor, window, cx| editor.add_selection(above, skip_soft_wrap, window, cx),
+            window,
+            cx,
+        ) {
+            return;
+        }
+        let plan = self.plan_add_selection(above, skip_soft_wrap, window, cx);
+        let Some((planned_selections, mut state, final_selections)) = self.ready_input_plan(
+            plan,
+            move |editor, window, cx| editor.add_selection(above, skip_soft_wrap, window, cx),
+            window,
+            cx,
+        ) else {
+            return;
+        };
+        let history_entry = self
+            .deferred_selection_effects_state
+            .is_none()
+            .then(|| self.selection_history_entry());
+        self.selections = planned_selections;
+        self.add_selections_state = None;
+        let unmerged_selections = final_selections.clone();
+        self.change_selections_with_history(
+            SelectionEffects::default(),
+            history_entry,
+            window,
+            cx,
+            |selections| selections.select(final_selections),
+        );
+
+        let display_map = self.display_snapshot(cx);
+        let current = self.selections.all_unexpanded::<Point>(&display_map);
+        Self::reconcile_add_selection_groups(&mut state, &unmerged_selections, &current);
+
+        if !state.groups.is_empty() {
+            self.add_selections_state = Some(state);
+        }
+    }
+
+    fn plan_add_selection(
+        &self,
+        above: bool,
+        skip_soft_wrap: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<
+        (
+            SelectionsCollection,
+            AddSelectionsState,
+            Vec<Selection<Point>>,
+        ),
+        PendingRowGeometry,
+    > {
+        let mut planned_selections = self.selections.clone();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let text_layout_details = self.text_layout_details(window, cx);
         let buffer = display_map.buffer_snapshot();
-        let all_selections = self.selections.all_unexpanded::<Point>(&display_map);
+        let all_selections = planned_selections.all_unexpanded::<Point>(&display_map);
         let goal_source_for_selection = |selection: &Selection<Point>| {
             let end_bias = if selection.is_empty() {
                 Bias::Right
@@ -2135,27 +2523,17 @@ impl Editor {
             buffer.anchor_after(selection.start)..buffer.anchor_at(selection.end, end_bias)
         };
 
-        let history_entry = self
-            .deferred_selection_effects_state
-            .is_none()
-            .then(|| self.selection_history_entry());
-        if self
-            .add_selections_state
-            .as_ref()
-            .is_some_and(|state| state.skip_soft_wrap != skip_soft_wrap)
-        {
-            self.add_selections_state = None;
-        }
         let mut state = self
             .add_selections_state
-            .take()
+            .clone()
+            .filter(|state| state.skip_soft_wrap == skip_soft_wrap)
             .unwrap_or_else(|| AddSelectionsState {
                 groups: Vec::new(),
                 skip_soft_wrap,
             });
         if !state.groups.is_empty() {
             let previous = Self::resolve_add_selection_anchors(
-                self.selections.disjoint_anchors(),
+                planned_selections.disjoint_anchors(),
                 &display_map,
             );
             Self::reconcile_add_selection_groups(&mut state, &previous, &all_selections);
@@ -2245,8 +2623,7 @@ impl Editor {
                     *projection_count = Some(queries.len() - query_start);
                 }
             }
-            projected_selections = self
-                .selections
+            projected_selections = planned_selections
                 .build_columnar_selections_from_tab_expanded_columns(&mut columnar_rows, &queries);
         }
         let mut projected_selections = projected_selections.into_iter();
@@ -2286,8 +2663,8 @@ impl Editor {
                 continue;
             }
             let range = selection.display_range(&display_map).sorted();
-            let start_x = display_map.x_for_display_point(range.start, &text_layout_details);
-            let end_x = display_map.x_for_display_point(range.end, &text_layout_details);
+            let start_x = display_map.x_for_display_point(range.start, &text_layout_details)?;
+            let end_x = display_map.x_for_display_point(range.end, &text_layout_details)?;
             let positions = start_x.min(end_x)..start_x.max(end_x);
             let mut stack = Vec::new();
             if range.start.row() == range.end.row() && !display_map.is_block_line(range.start.row())
@@ -2302,13 +2679,13 @@ impl Editor {
                 });
             } else {
                 for row in range.start.row().0..=range.end.row().0 {
-                    if let Some(selection) = self.selections.build_columnar_selection(
+                    if let Some(selection) = planned_selections.build_columnar_selection(
                         &display_map,
                         DisplayRow(row),
                         &positions,
                         selection.reversed,
                         &text_layout_details,
-                    ) {
+                    )? {
                         stack.push(selection.id);
                         columnar_selections.push(selection);
                     }
@@ -2366,7 +2743,7 @@ impl Editor {
                 })
                 .collect::<Vec<_>>();
             next_logical_selections.extend(queries.iter().map(|(selection, _)| selection.id).zip(
-                self.selections.find_next_columnar_selections_by_buffer_row(
+                planned_selections.find_next_columnar_selections_by_buffer_row(
                     &display_map,
                     &mut columnar_rows,
                     &queries,
@@ -2395,12 +2772,12 @@ impl Editor {
                                 start..end
                             } else {
                                 let start_x = display_map
-                                    .x_for_display_point(range.start, &text_layout_details);
+                                    .x_for_display_point(range.start, &text_layout_details)?;
                                 let end_x = display_map
-                                    .x_for_display_point(range.end, &text_layout_details);
+                                    .x_for_display_point(range.end, &text_layout_details)?;
                                 start_x.min(end_x)..start_x.max(end_x)
                             };
-                        self.selections.find_next_columnar_selection_by_display_row(
+                        planned_selections.find_next_columnar_selection_by_display_row(
                             &display_map,
                             row,
                             end_row,
@@ -2408,7 +2785,7 @@ impl Editor {
                             &positions,
                             selection.reversed,
                             &text_layout_details,
-                        )
+                        )?
                     };
 
                     if let Some(new_selection) = maybe_new_selection {
@@ -2431,21 +2808,7 @@ impl Editor {
             }
         }
 
-        let unmerged_selections = final_selections.clone();
-        self.change_selections_with_history(
-            SelectionEffects::default(),
-            history_entry,
-            window,
-            cx,
-            |selections| selections.select(final_selections),
-        );
-
-        let current = self.selections.all_unexpanded::<Point>(&display_map);
-        Self::reconcile_add_selection_groups(&mut state, &unmerged_selections, &current);
-
-        if !state.groups.is_empty() {
-            self.add_selections_state = Some(state);
-        }
+        Ok((planned_selections, state, final_selections))
     }
 
     fn select_match_ranges(

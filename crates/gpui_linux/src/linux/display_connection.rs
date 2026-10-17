@@ -1,8 +1,9 @@
 use std::{path::PathBuf, rc::Rc};
 
 use gpui::{
-    AnyWindowHandle, ClipboardItem, CursorStyle, GraphicalEnvironment, PlatformDisplay,
-    PlatformKeyboardLayout, PlatformWindow, WindowParams, WindowingModes,
+    AnyWindowHandle, ClipboardItem, ClipboardReadMode, ClipboardRevision, ClipboardSnapshot,
+    CursorStyle, GraphicalEnvironment, PlatformDisplay, PlatformKeyboardLayout, PlatformWindow,
+    WindowParams, WindowingModes,
 };
 
 #[cfg(feature = "wayland")]
@@ -174,20 +175,34 @@ impl DisplayConnection {
         dispatch!(self, connection => connection.reveal_path(path), headless => ())
     }
 
-    pub(crate) fn write_to_primary(&self, item: ClipboardItem) {
-        dispatch!(self, connection => connection.write_to_primary(item), headless => ())
-    }
-
-    pub(crate) fn write_to_clipboard(&self, item: ClipboardItem) {
-        dispatch!(self, connection => connection.write_to_clipboard(item), headless => ())
-    }
-
     pub(crate) fn read_from_primary(&self) -> Option<ClipboardItem> {
         dispatch!(self, connection => connection.read_from_primary(), headless => None)
     }
 
     pub(crate) fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         dispatch!(self, connection => connection.read_from_clipboard(), headless => None)
+    }
+
+    pub(crate) fn read_clipboard_snapshot(&self, mode: ClipboardReadMode) -> ClipboardSnapshot {
+        dispatch!(self, connection => connection.read_clipboard_snapshot(mode), headless => ClipboardSnapshot::default())
+    }
+
+    pub(crate) fn read_primary_snapshot(&self, mode: ClipboardReadMode) -> ClipboardSnapshot {
+        dispatch!(self, connection => connection.read_primary_snapshot(mode), headless => ClipboardSnapshot::default())
+    }
+
+    pub(crate) fn write_to_clipboard_with_revision(
+        &self,
+        item: ClipboardItem,
+    ) -> anyhow::Result<Option<ClipboardRevision>> {
+        dispatch!(self, connection => connection.write_to_clipboard_with_revision(item), headless => Err(anyhow::anyhow!("Clipboard publication is unavailable without a display")))
+    }
+
+    pub(crate) fn write_to_primary_with_revision(
+        &self,
+        item: ClipboardItem,
+    ) -> anyhow::Result<Option<ClipboardRevision>> {
+        dispatch!(self, connection => connection.write_to_primary_with_revision(item), headless => Err(anyhow::anyhow!("Primary selection publication is unavailable without a display")))
     }
 
     #[cfg(any(feature = "wayland", feature = "x11"))]

@@ -26,7 +26,7 @@ use windows_numerics::Vector2;
 use crate::*;
 use gpui::*;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct FontInfo {
     font_family_h: HSTRING,
     font_face: IDWriteFontFace3,
@@ -231,6 +231,41 @@ impl DirectWriteTextSystem {
     pub(crate) fn release_gpu(&self) {
         self.state.write().gpu_state = None;
     }
+
+    fn publish_retained_fonts(
+        &self,
+        worker: DirectWriteState,
+        font_count: usize,
+    ) -> Result<Vec<FontId>> {
+        let mut font_ids = Vec::with_capacity(worker.fonts.len() - font_count);
+        for (index, font) in worker.fonts.into_iter().enumerate().skip(font_count) {
+            let key = font.font_face.cast::<IUnknown>()?.as_raw().addr();
+            let descriptor = worker
+                .font_to_font_id
+                .iter()
+                .find_map(|(font, font_id)| (font_id.0 == index).then_some(font))
+                .cloned();
+            let mut state = self.state.write();
+            let font_id = if let Some(&font_id) = descriptor
+                .as_ref()
+                .and_then(|font| state.font_to_font_id.get(font))
+                && state.fonts[font_id.0].font_face.as_raw() == font.font_face.as_raw()
+            {
+                font_id
+            } else {
+                let font_id = FontId(state.fonts.len());
+                state.fonts.push(font);
+                state.font_info_cache.insert(key, font_id);
+                font_id
+            };
+            if let Some(descriptor) = descriptor {
+                state.font_to_font_id.entry(descriptor).or_insert(font_id);
+            }
+            font_ids.push(font_id);
+        }
+
+        Ok(font_ids)
+    }
 }
 
 impl PlatformTextSystem for DirectWriteTextSystem {
@@ -289,12 +324,93 @@ impl PlatformTextSystem for DirectWriteTextSystem {
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
         self.state
             .write()
-            .layout_line(&self.components, text, font_size, runs)
+            .layout_line(&self.components, text, font_size, runs, None)
+            .map(|(layout, _)| layout)
             .log_err()
             .unwrap_or(LineLayout {
                 font_size,
                 ..Default::default()
             })
+    }
+
+    fn layout_line_for_retention(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        runs: &[FontRun],
+    ) -> RetainedLineLayout {
+        if runs.is_empty() {
+            return RetainedLineLayout::Dense(
+                LineLayout {
+                    font_size,
+                    ..LineLayout::default()
+                },
+                Vec::new(),
+                0.0,
+            );
+        }
+        let mut worker = self.state.read().retained_snapshot();
+        let font_count = worker.fonts.len();
+        let mut positions = Vec::new();
+        let result = worker
+            .layout_line(
+                &self.components,
+                text,
+                font_size,
+                runs,
+                Some(&mut positions),
+            )
+            .and_then(|(mut layout, width)| {
+                let font_ids = self.publish_retained_fonts(worker, font_count)?;
+                for run in &mut layout.runs {
+                    if run.font_id.0 >= font_count {
+                        run.font_id = font_ids[run.font_id.0 - font_count];
+                    }
+                }
+                Ok((layout, width))
+            });
+        match result.log_err() {
+            Some((layout, width)) => RetainedLineLayout::Dense(layout, positions, width),
+            None => RetainedLineLayout::Dense(
+                LineLayout {
+                    font_size,
+                    ..LineLayout::default()
+                },
+                Vec::new(),
+                0.0,
+            ),
+        }
+    }
+
+    fn layout_line_with_precise_positions(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        runs: &[FontRun],
+    ) -> (LineLayout, Vec<f64>, f64) {
+        let mut glyph_x_positions = Vec::new();
+        match self
+            .state
+            .write()
+            .layout_line(
+                &self.components,
+                text,
+                font_size,
+                runs,
+                Some(&mut glyph_x_positions),
+            )
+            .log_err()
+        {
+            Some((layout, width)) => (layout, glyph_x_positions, width),
+            None => (
+                LineLayout {
+                    font_size,
+                    ..LineLayout::default()
+                },
+                Vec::new(),
+                0.0,
+            ),
+        }
     }
 
     fn recommended_rendering_mode(
@@ -311,6 +427,18 @@ impl PlatformTextSystem for DirectWriteTextSystem {
 }
 
 impl DirectWriteState {
+    fn retained_snapshot(&self) -> Self {
+        Self {
+            gpu_state: None,
+            system_font_collection: self.system_font_collection.clone(),
+            custom_font_collection: self.custom_font_collection.clone(),
+            fonts: self.fonts.clone(),
+            font_to_font_id: self.font_to_font_id.clone(),
+            font_info_cache: self.font_info_cache.clone(),
+            layout_line_scratch: Vec::new(),
+        }
+    }
+
     fn select_and_cache_font(
         &mut self,
         components: &DirectWriteComponents,
@@ -527,12 +655,16 @@ impl DirectWriteState {
         text: &str,
         font_size: Pixels,
         font_runs: &[FontRun],
-    ) -> Result<LineLayout> {
+        glyph_x_positions: Option<&mut Vec<f64>>,
+    ) -> Result<(LineLayout, f64)> {
         if font_runs.is_empty() {
-            return Ok(LineLayout {
-                font_size,
-                ..Default::default()
-            });
+            return Ok((
+                LineLayout {
+                    font_size,
+                    ..LineLayout::default()
+                },
+                0.0,
+            ));
         }
         unsafe {
             self.layout_line_scratch.clear();
@@ -624,6 +756,8 @@ impl DirectWriteState {
                 index_converter: StringIndexConverter::new(text),
                 runs: &mut runs,
                 width: 0.0,
+                glyph_x_positions,
+                precise_width: 0.0,
             };
             text_layout.Draw(
                 Some((&raw mut renderer_context).cast::<c_void>().cast_const()),
@@ -631,16 +765,24 @@ impl DirectWriteState {
                 0.0,
                 0.0,
             )?;
-            let width = px(renderer_context.width);
+            let precise_width = renderer_context.precise_width;
+            let width = if renderer_context.glyph_x_positions.is_some() {
+                px(precise_width as f32)
+            } else {
+                px(renderer_context.width)
+            };
 
-            Ok(LineLayout {
-                font_size,
-                width,
-                ascent,
-                descent,
-                runs,
-                len: text.len(),
-            })
+            Ok((
+                LineLayout {
+                    font_size,
+                    width,
+                    ascent,
+                    descent,
+                    runs,
+                    len: text.len(),
+                },
+                precise_width,
+            ))
         }
     }
 
@@ -1407,6 +1549,8 @@ struct RendererContext<'t, 'a, 'b> {
     index_converter: StringIndexConverter<'a>,
     runs: &'b mut Vec<ShapedRun>,
     width: f32,
+    glyph_x_positions: Option<&'b mut Vec<f64>>,
+    precise_width: f64,
 }
 
 #[derive(Debug)]
@@ -1605,17 +1749,25 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
                 let id = GlyphId(*glyph_id as u32);
                 let is_emoji =
                     color_font && is_color_glyph(font_face, id, &context.components.factory);
-                let this_glyph_idx = glyph_idx + cluster_glyph_idx;
+                let glyph_index = glyph_idx + cluster_glyph_idx;
+                let offset = glyph_offsets[glyph_index];
+                let advance = glyph_advances[glyph_index];
+                let position_x = if let Some(positions) = context.glyph_x_positions.as_mut() {
+                    let position = context.precise_width + f64::from(offset.advanceOffset);
+                    positions.push(position);
+                    context.precise_width += f64::from(advance);
+                    position as f32
+                } else {
+                    let position = context.width + offset.advanceOffset;
+                    context.width += advance;
+                    position
+                };
                 glyphs.push(ShapedGlyph {
                     id,
-                    position: point(
-                        px(context.width + glyph_offsets[this_glyph_idx].advanceOffset),
-                        px(-glyph_offsets[this_glyph_idx].ascenderOffset),
-                    ),
+                    position: point(px(position_x), px(-offset.ascenderOffset)),
                     index: context.index_converter.utf8_ix,
                     is_emoji,
                 });
-                context.width += glyph_advances[this_glyph_idx];
             }
             glyph_idx += cluster_glyph_count;
         }
@@ -1967,9 +2119,11 @@ mod tests {
     use crate::directx_devices::DirectXDevices;
     use anyhow::Result;
     use gpui::{
-        DevicePixels, Font, PlatformTextSystem, RenderGlyphParams, Rgba, bounds, point, px, size,
+        DevicePixels, Font, FontFeatures, FontRun, FontWeight, LineLayout, Pixels,
+        PlatformTextSystem, RenderGlyphParams, RetainedLineLayout, Rgba, bounds, font, point, px,
+        size,
     };
-    use std::ffi::c_void;
+    use std::{borrow::Cow, ffi::c_void, sync::Arc};
     use windows::Win32::Graphics::Direct3D11::{
         D3D11_BIND_RENDER_TARGET, D3D11_RENDER_TARGET_VIEW_DESC, D3D11_RENDER_TARGET_VIEW_DESC_0,
         D3D11_RTV_DIMENSION_TEXTURE2D, D3D11_SUBRESOURCE_DATA, D3D11_TEX2D_RTV,
@@ -2012,6 +2166,139 @@ mod tests {
         assert_eq!(next, Some((5, 1)));
         let next = analyzer.next();
         assert_eq!(next, None);
+    }
+
+    #[test]
+    fn retained_layout_isolated_from_foreground_state() -> Result<()> {
+        let text_system = DirectWriteTextSystem::new(None)?;
+        text_system.add_fonts(vec![
+            Cow::Borrowed(include_bytes!(
+                "../../../assets/fonts/lilex/Lilex-Regular.ttf"
+            )),
+            Cow::Borrowed(include_bytes!("../../../assets/fonts/lilex/Lilex-Bold.ttf")),
+        ])?;
+        let mut bold = font("Lilex");
+        bold.weight = FontWeight::BOLD;
+        let primary = text_system.font_id(&bold)?;
+        let mut worker = text_system.state.read().retained_snapshot();
+        let font_count = worker.fonts.len();
+        let regular = font("Lilex");
+        let local_font_id = worker
+            .select_and_cache_font(&text_system.components, &regular)
+            .unwrap();
+        let mut configured = font("Lilex");
+        configured.features = FontFeatures(Arc::new(vec![("calt".to_owned(), 0)]));
+        let competing_font_id = text_system.font_id(&configured)?;
+        assert_eq!(local_font_id, competing_font_id);
+        let text = "hello //->...++ x\u{0301}";
+        let font_size = px(16.1);
+        let mut positions = Vec::new();
+        let foreground = text_system.state.write();
+        let (mut layout, width) = worker.layout_line(
+            &text_system.components,
+            text,
+            font_size,
+            &[FontRun {
+                font_id: local_font_id,
+                len: text.len(),
+            }],
+            Some(&mut positions),
+        )?;
+        drop(foreground);
+        let overlapping_worker = worker.retained_snapshot();
+        let font_ids = text_system.publish_retained_fonts(worker, font_count)?;
+        let published_font_count = text_system.state.read().fonts.len();
+        assert_eq!(
+            text_system.publish_retained_fonts(overlapping_worker, font_count)?,
+            font_ids
+        );
+        assert_eq!(text_system.state.read().fonts.len(), published_font_count);
+        let published_font_id = font_ids[local_font_id.0 - font_count];
+        assert_ne!(published_font_id, competing_font_id);
+        assert_eq!(text_system.font_id(&regular)?, published_font_id);
+        assert_eq!(text_system.font_id(&configured)?, competing_font_id);
+        assert_retained_layout_eq(
+            text_system.layout_line_for_retention("", font_size, &[]),
+            text_system.layout_line_with_precise_positions("", font_size, &[]),
+        );
+        for run in &mut layout.runs {
+            if run.font_id.0 >= font_count {
+                run.font_id = font_ids[run.font_id.0 - font_count];
+            }
+        }
+        assert_retained_layout_eq(
+            RetainedLineLayout::Dense(layout, positions, width),
+            text_system.layout_line_with_precise_positions(
+                text,
+                font_size,
+                &[FontRun {
+                    font_id: published_font_id,
+                    len: text.len(),
+                }],
+            ),
+        );
+        for font_id in [primary, competing_font_id] {
+            for text in ["", "hello //->...++", "x\u{0301} नमस्ते 😀"] {
+                let runs = [FontRun {
+                    font_id,
+                    len: text.len(),
+                }];
+                let retained = text_system.layout_line_for_retention(text, font_size, &runs);
+                assert_retained_layout_eq(
+                    retained,
+                    text_system.layout_line_with_precise_positions(text, font_size, &runs),
+                );
+            }
+        }
+        let runs = [
+            FontRun {
+                font_id: primary,
+                len: 6,
+            },
+            FontRun {
+                font_id: competing_font_id,
+                len: text.len() - 6,
+            },
+        ];
+        assert_retained_layout_eq(
+            text_system.layout_line_for_retention(text, font_size, &runs),
+            text_system.layout_line_with_precise_positions(text, font_size, &runs),
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_layout_line_with_precise_positions() -> Result<()> {
+        let text_system = DirectWriteTextSystem::new(None)?;
+        text_system.add_fonts(vec![Cow::Borrowed(include_bytes!(
+            "../../../assets/fonts/lilex/Lilex-Regular.ttf"
+        ))])?;
+        let font_id = text_system.font_id(&font("Lilex"))?;
+        let font_size = px(16.1);
+        let advance = f64::from(
+            text_system
+                .layout_line("m", font_size, &[FontRun { font_id, len: 1 }])
+                .width,
+        );
+        let text = "m".repeat(1_000_000);
+        let (layout, positions, width) = text_system.layout_line_with_precise_positions(
+            &text,
+            font_size,
+            &[FontRun {
+                font_id,
+                len: text.len(),
+            }],
+        );
+        assert_eq!(positions.len(), text.len());
+        assert_eq!(width, advance * text.len() as f64);
+        assert_eq!(layout.width, Pixels::from(width));
+        for index in [0, 65_535, 65_536, text.len() - 1] {
+            assert_eq!(positions[index], advance * index as f64);
+        }
+        let (empty, positions, width) =
+            text_system.layout_line_with_precise_positions("", font_size, &[]);
+        assert_eq!((empty.len, positions, width), (0, Vec::new(), 0.0));
+        Ok(())
     }
 
     #[test]
@@ -2166,5 +2453,66 @@ mod tests {
             "uncovered texel retained the poison from the uninitialized render target"
         );
         Ok(())
+    }
+
+    fn assert_retained_layout_eq(
+        retained: RetainedLineLayout,
+        expected: (LineLayout, Vec<f64>, f64),
+    ) {
+        let RetainedLineLayout::Dense(actual, positions, width) = retained else {
+            panic!("expected dense layout")
+        };
+        let (expected, expected_positions, expected_width) = expected;
+        assert_eq!(width.to_bits(), expected_width.to_bits());
+        assert_eq!(
+            positions
+                .iter()
+                .map(|position| position.to_bits())
+                .collect::<Vec<_>>(),
+            expected_positions
+                .iter()
+                .map(|position| position.to_bits())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            (
+                actual.font_size,
+                actual.width,
+                actual.ascent,
+                actual.descent,
+                actual.len
+            ),
+            (
+                expected.font_size,
+                expected.width,
+                expected.ascent,
+                expected.descent,
+                expected.len
+            )
+        );
+        let glyphs = |layout: &LineLayout| {
+            layout
+                .runs
+                .iter()
+                .map(|run| {
+                    (
+                        run.font_id,
+                        run.glyphs
+                            .iter()
+                            .map(|glyph| {
+                                (
+                                    glyph.id,
+                                    glyph.index,
+                                    f32::from(glyph.position.x).to_bits(),
+                                    f32::from(glyph.position.y).to_bits(),
+                                    glyph.is_emoji,
+                                )
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(glyphs(&actual), glyphs(&expected));
     }
 }

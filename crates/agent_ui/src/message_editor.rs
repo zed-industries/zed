@@ -1051,8 +1051,39 @@ impl MessageEditor {
     }
 
     pub fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(clipboard) = cx.read_from_clipboard() else {
+        let message_editor = cx.weak_entity();
+        if self.editor.update(cx, |editor, cx| {
+            editor.defer_clipboard_input(
+                move |window, cx| {
+                    message_editor
+                        .update(cx, |message_editor, cx| {
+                            message_editor.paste(&Paste, window, cx);
+                        })
+                        .ok();
+                },
+                window,
+                cx,
+            )
+        }) {
+            cx.stop_propagation();
             return;
+        }
+
+        let clipboard = match self.editor.read(cx).read_from_clipboard(cx) {
+            Ok(Some(clipboard)) => clipboard,
+            Ok(None) => return,
+            Err(error) => {
+                cx.stop_propagation();
+                let message = format!("Clipboard operation failed: {error:#}");
+                log::error!("{message}");
+                let workspace = self.workspace.clone();
+                cx.defer(move |cx| {
+                    workspace
+                        .update(cx, |workspace, cx| workspace.show_error(message, cx))
+                        .ok();
+                });
+                return;
+            }
         };
 
         if self.editor.read(cx).read_only(cx) {
@@ -2302,8 +2333,8 @@ mod tests {
     use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
     use base64::Engine as _;
     use editor::{
-        AnchorRangeExt as _, Editor, EditorMode, MultiBufferOffset, SelectionEffects,
-        actions::{Cut, Paste},
+        AnchorRangeExt as _, Editor, EditorMode, MultiBuffer, MultiBufferOffset, SelectionEffects,
+        actions::{Copy, Cut, Paste, SelectDown},
     };
 
     use fs::FakeFs;
@@ -2317,6 +2348,7 @@ mod tests {
     use parking_lot::RwLock;
     use project::{AgentId, CompletionIntent, Project, ProjectPath};
     use serde_json::{Value, json};
+    use settings::SoftWrap;
 
     use text::Point;
     use ui::{App, Context, IntoElement, Render, SharedString, Window};
@@ -5166,6 +5198,54 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert!(editor.text(cx).contains("[@f](file:///test.txt)"));
         });
+    }
+
+    #[gpui::test]
+    async fn test_paste_waits_for_cross_editor_copy(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (_message_editor, editor, mut target_cx) =
+            setup_paste_test_message_editor(json!({"file.txt": "content"}), cx).await;
+        let (source, source_cx) = cx.add_window_view(|window, cx| {
+            let buffer = MultiBuffer::build_simple("A\nshort", cx);
+            Editor::for_multibuffer(buffer, None, window, cx)
+        });
+        source_cx.update(|window, cx| window.draw(cx).clear(cx));
+        target_cx.update(|window, cx| window.draw(cx).clear(cx));
+        source_cx.background_executor.set_block_on_ticks(0..=0);
+
+        let mut source_completion = source_cx.update(|window, cx| {
+            cx.write_to_clipboard(ClipboardItem::new_string(String::from("old")));
+            source.update(cx, |editor, cx| {
+                editor.set_soft_wrap_mode(SoftWrap::None, cx);
+                editor.set_text(format!("A\n{}", "x".repeat(2_000)), window, cx);
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                    selections.select_ranges([Point::new(0, 0)..Point::new(0, 0)]);
+                });
+                editor.select_down(&SelectDown, window, cx);
+            });
+            source.focus_handle(cx).dispatch_action(&Copy, window, cx);
+            source.update(cx, |editor, cx| editor.input_completion(cx))
+        });
+        assert!((&mut source_completion).now_or_never().is_none());
+
+        let mut target_completion = target_cx.update(|window, cx| {
+            editor.focus_handle(cx).dispatch_action(&Paste, window, cx);
+            assert_eq!(editor.read(cx).text(cx), "");
+            cx.write_to_clipboard(ClipboardItem::new_string(String::from("later")));
+            editor.update(cx, |editor, cx| editor.input_completion(cx))
+        });
+        assert!((&mut target_completion).now_or_never().is_none());
+
+        source_cx.background_executor.set_block_on_ticks(0..=50);
+        source_completion.await.expect("source copy completed");
+        target_completion.await.expect("message paste completed");
+        editor.read_with(&target_cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "A\n");
+        });
+        assert_eq!(
+            target_cx.read_from_clipboard().and_then(|item| item.text()),
+            Some(String::from("later"))
+        );
     }
 
     #[gpui::test]

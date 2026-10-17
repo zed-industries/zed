@@ -1,19 +1,19 @@
-#[cfg(any(test, feature = "test-support"))]
-use crate::NoopTextSystem;
-#[cfg(any(test, feature = "test-support"))]
-use crate::PathPromptOptions;
 use crate::{
-    ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
-    DisplayId, DummyKeyboardMapper, ForegroundExecutor, Keymap, OwnedMenu, Platform,
-    PlatformDisplay, PlatformHeadlessRenderer, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformTextSystem, PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
-    SharedString, SourceMetadata, SystemNotification, SystemNotificationResponse, Task,
-    TestDisplay, TestWindow, ThermalState, WindowAppearance, WindowParams, size,
+    ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, ClipboardReadMode,
+    ClipboardRevision, ClipboardSnapshot, CursorStyle, DevicePixels, DummyKeyboardMapper,
+    ForegroundExecutor, Keymap, OwnedMenu, Platform, PlatformDisplay, PlatformHeadlessRenderer,
+    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PromptButton,
+    ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, SharedString, SourceMetadata,
+    SystemNotification, SystemNotificationResponse, Task, TestDisplay, TestWindow, ThermalState,
+    WindowAppearance, WindowParams, size,
 };
+#[cfg(any(test, feature = "test-support"))]
+use crate::{DisplayId, NoopTextSystem, PathPromptOptions};
 use anyhow::Result;
 #[cfg(any(test, feature = "test-support"))]
 use collections::VecDeque;
 use futures::channel::oneshot;
+use gpui_util::ResultExt as _;
 use parking_lot::Mutex;
 use std::{
     cell::{Cell, RefCell},
@@ -35,9 +35,9 @@ pub(crate) struct TestPlatform {
     displays: RefCell<Vec<TestDisplay>>,
     displays_changed_callback: RefCell<Option<Box<dyn FnMut()>>>,
     active_cursor: Mutex<CursorStyle>,
-    current_clipboard_item: Mutex<Option<ClipboardItem>>,
+    current_clipboard_item: Mutex<ClipboardSnapshot>,
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    current_primary_item: Mutex<Option<ClipboardItem>>,
+    current_primary_item: Mutex<ClipboardSnapshot>,
     #[cfg(target_os = "macos")]
     current_find_pasteboard_item: Mutex<Option<ClipboardItem>>,
     #[cfg(any(test, feature = "test-support"))]
@@ -141,6 +141,7 @@ impl TestPlatform {
         Self::with_platform(executor, foreground_executor, text_system, None)
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn simulate_display_added(
         &self,
         display_id: DisplayId,
@@ -152,6 +153,7 @@ impl TestPlatform {
 
     /// Adds a display without telling App yet, as when the platform's
     /// notifications about a window arrive before those about displays.
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn connect_display(
         &self,
         display_id: DisplayId,
@@ -162,6 +164,7 @@ impl TestPlatform {
         self.displays.borrow_mut().push(display);
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn simulate_display_removed(&self, display_id: DisplayId) {
         self.displays
             .borrow_mut()
@@ -169,6 +172,7 @@ impl TestPlatform {
         self.report_displays_changed();
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn simulate_display_refresh_interval_change(
         &self,
         display_id: DisplayId,
@@ -182,6 +186,7 @@ impl TestPlatform {
         self.report_displays_changed();
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     fn report_displays_changed(&self) {
         let callback = self.displays_changed_callback.borrow_mut().take();
         if let Some(mut callback) = callback {
@@ -211,9 +216,15 @@ impl TestPlatform {
             displays_changed_callback: Default::default(),
             active_window: Default::default(),
             expect_restart: Default::default(),
-            current_clipboard_item: Mutex::new(None),
+            current_clipboard_item: Mutex::new(ClipboardSnapshot {
+                item: None,
+                revision: Some(ClipboardRevision::default()),
+            }),
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-            current_primary_item: Mutex::new(None),
+            current_primary_item: Mutex::new(ClipboardSnapshot {
+                item: None,
+                revision: Some(ClipboardRevision::default()),
+            }),
             #[cfg(target_os = "macos")]
             current_find_pasteboard_item: Mutex::new(None),
             idle_sleep_prevention_count: Arc::new(AtomicUsize::new(0)),
@@ -738,21 +749,67 @@ impl Platform for TestPlatform {
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        self.current_clipboard_item.lock().clone()
+        self.current_clipboard_item.lock().item.clone()
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
-        *self.current_clipboard_item.lock() = Some(item);
+        self.write_to_clipboard_with_revision(item).log_err();
+    }
+
+    fn read_clipboard_snapshot(&self, mode: ClipboardReadMode) -> ClipboardSnapshot {
+        let clipboard = self.current_clipboard_item.lock();
+        ClipboardSnapshot {
+            item: (mode == ClipboardReadMode::Contents)
+                .then(|| clipboard.item.clone())
+                .flatten(),
+            revision: clipboard.revision.clone(),
+        }
+    }
+
+    fn write_to_clipboard_with_revision(
+        &self,
+        item: ClipboardItem,
+    ) -> Result<Option<ClipboardRevision>> {
+        let revision = ClipboardRevision::default();
+        *self.current_clipboard_item.lock() = ClipboardSnapshot {
+            item: Some(item),
+            revision: Some(revision.clone()),
+        };
+        Ok(Some(revision))
     }
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     fn read_from_primary(&self) -> Option<ClipboardItem> {
-        self.current_primary_item.lock().clone()
+        self.current_primary_item.lock().item.clone()
     }
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     fn write_to_primary(&self, item: ClipboardItem) {
-        *self.current_primary_item.lock() = Some(item);
+        self.write_to_primary_with_revision(item).log_err();
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    fn read_primary_snapshot(&self, mode: ClipboardReadMode) -> ClipboardSnapshot {
+        let clipboard = self.current_primary_item.lock();
+        ClipboardSnapshot {
+            item: (mode == ClipboardReadMode::Contents)
+                .then(|| clipboard.item.clone())
+                .flatten(),
+            revision: clipboard.revision.clone(),
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    fn write_to_primary_with_revision(
+        &self,
+        item: ClipboardItem,
+    ) -> Result<Option<ClipboardRevision>> {
+        let revision = ClipboardRevision::default();
+        *self.current_primary_item.lock() = ClipboardSnapshot {
+            item: Some(item),
+            revision: Some(revision.clone()),
+        };
+        Ok(Some(revision))
     }
 
     #[cfg(target_os = "macos")]

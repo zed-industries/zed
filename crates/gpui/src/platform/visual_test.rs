@@ -7,13 +7,15 @@
 
 use crate::ScreenCaptureSource;
 use crate::{
-    ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle,
-    ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, Task, TestDispatcher, WindowAppearance, WindowParams,
+    ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, ClipboardReadMode,
+    ClipboardRevision, ClipboardSnapshot, CursorStyle, ForegroundExecutor, Keymap, Menu, MenuItem,
+    OwnedMenu, PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Task, TestDispatcher,
+    WindowAppearance, WindowParams,
 };
 use anyhow::Result;
 use futures::channel::oneshot;
+use gpui_util::ResultExt as _;
 use parking_lot::Mutex;
 
 use std::{
@@ -33,7 +35,7 @@ pub struct VisualTestPlatform {
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
     platform: Rc<dyn Platform>,
-    clipboard: Mutex<Option<ClipboardItem>>,
+    clipboard: Mutex<ClipboardSnapshot>,
     find_pasteboard: Mutex<Option<ClipboardItem>>,
 }
 
@@ -53,7 +55,10 @@ impl VisualTestPlatform {
             background_executor,
             foreground_executor,
             platform,
-            clipboard: Mutex::new(None),
+            clipboard: Mutex::new(ClipboardSnapshot {
+                item: None,
+                revision: Some(ClipboardRevision::default()),
+            }),
             find_pasteboard: Mutex::new(None),
         }
     }
@@ -223,11 +228,33 @@ impl Platform for VisualTestPlatform {
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        self.clipboard.lock().clone()
+        self.clipboard.lock().item.clone()
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
-        *self.clipboard.lock() = Some(item);
+        self.write_to_clipboard_with_revision(item).log_err();
+    }
+
+    fn read_clipboard_snapshot(&self, mode: ClipboardReadMode) -> ClipboardSnapshot {
+        let clipboard = self.clipboard.lock();
+        ClipboardSnapshot {
+            item: (mode == ClipboardReadMode::Contents)
+                .then(|| clipboard.item.clone())
+                .flatten(),
+            revision: clipboard.revision.clone(),
+        }
+    }
+
+    fn write_to_clipboard_with_revision(
+        &self,
+        item: ClipboardItem,
+    ) -> Result<Option<ClipboardRevision>> {
+        let revision = ClipboardRevision::default();
+        *self.clipboard.lock() = ClipboardSnapshot {
+            item: Some(item),
+            revision: Some(revision.clone()),
+        };
+        Ok(Some(revision))
     }
 
     #[cfg(target_os = "macos")]
