@@ -5131,7 +5131,7 @@ impl Workspace {
                 if let Some(project_entry_id) = project_entry_id {
                     item.project_entry_ids(cx).as_slice() == [project_entry_id]
                 } else {
-                    item.project_path(cx).as_ref() == Some(project_path)
+                    item.project_paths(cx).as_slice() == std::slice::from_ref(project_path)
                 }
             })
         };

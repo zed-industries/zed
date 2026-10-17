@@ -1094,7 +1094,7 @@ impl Pane {
         } else {
             for (index, item) in self.items.iter().enumerate() {
                 if item.buffer_kind(cx) == ItemBufferKind::Singleton
-                    && item.project_path(cx).as_ref() == Some(&project_path)
+                    && item.project_paths(cx).as_slice() == [project_path.clone()]
                 {
                     let item = item.boxed_clone();
                     existing_item = Some((index, item));
@@ -1419,7 +1419,7 @@ impl Pane {
     ) -> Option<Box<dyn ItemHandle>> {
         self.items.iter().find_map(move |item| {
             if item.buffer_kind(cx) == ItemBufferKind::Singleton
-                && (item.project_path(cx).as_slice() == [project_path.clone()])
+                && (item.project_paths(cx).as_slice() == [project_path.clone()])
             {
                 Some(item.boxed_clone())
             } else {
@@ -3083,10 +3083,6 @@ impl Pane {
                     }),
             );
 
-        let single_entry_to_resolve = (self.items[ix].buffer_kind(cx) == ItemBufferKind::Singleton)
-            .then(|| self.items[ix].project_entry_ids(cx).get(0).copied())
-            .flatten();
-
         let total_items = self.items.len();
         let has_multibuffer_items = self
             .items
@@ -3107,6 +3103,18 @@ impl Pane {
                 let pane = pane.clone();
                 let menu_context = menu_context.clone();
                 let extra_actions = item_handle.tab_extra_context_menu_actions(window, cx);
+                let project_path = (item_handle.buffer_kind(cx) == ItemBufferKind::Singleton)
+                    .then(|| item_handle.project_path(cx))
+                    .flatten();
+                let single_entry_to_resolve = project_path.as_ref().and_then(|path| {
+                    pane.upgrade()?
+                        .read(cx)
+                        .project
+                        .upgrade()?
+                        .read(cx)
+                        .entry_for_path(path, cx)
+                        .map(|entry| entry.id)
+                });
                 ContextMenu::build(window, cx, move |mut menu, window, cx| {
                     let close_active_item_action = CloseActiveItem {
                         save_intent: None,
@@ -3267,10 +3275,6 @@ impl Pane {
                         }
 
                         if let Some(entry) = single_entry_to_resolve {
-                            let project_path = pane
-                                .read(cx)
-                                .item_for_entry(entry, cx)
-                                .and_then(|item| item.project_path(cx));
                             let worktree = project_path.as_ref().and_then(|project_path| {
                                 pane.read(cx)
                                     .project
