@@ -149,6 +149,12 @@ pub(crate) struct A11y {
     pub(crate) focus_ids: FxHashMap<NodeId, FocusId>,
     pub(crate) node_bounds: FxHashMap<NodeId, Bounds<Pixels>>,
     pub(crate) action_listeners: FxHashMap<NodeId, Vec<(Action, A11yActionListener)>>,
+    /// How many [`Window::transact`] calls are currently open. While this is
+    /// non-zero, overwritten [`Self::node_bounds`] and [`Self::focus_ids`]
+    /// entries are logged so a failed transaction can restore them.
+    transaction_depth: usize,
+    node_bounds_undo: Vec<(NodeId, Option<Bounds<Pixels>>)>,
+    focus_ids_undo: Vec<(NodeId, Option<FocusId>)>,
     /// The window's title, used to label the root node so assistive
     /// technology can tell windows apart.
     window_title: Option<SharedString>,
@@ -177,6 +183,9 @@ impl A11y {
             focus_ids: FxHashMap::default(),
             node_bounds: FxHashMap::default(),
             action_listeners: FxHashMap::default(),
+            transaction_depth: 0,
+            node_bounds_undo: Vec::new(),
+            focus_ids_undo: Vec::new(),
             window_title,
             last_focus_without_node: None,
             debug: debug::A11yDebug::default(),
@@ -222,7 +231,72 @@ impl A11y {
     }
 
     pub(crate) fn set_focusable(&mut self, node_id: NodeId, focus_id: FocusId) {
-        self.focus_ids.insert(node_id, focus_id);
+        let previous = self.focus_ids.insert(node_id, focus_id);
+        if self.transaction_depth > 0 {
+            self.focus_ids_undo.push((node_id, previous));
+        }
+    }
+
+    pub(crate) fn set_node_bounds(&mut self, node_id: NodeId, bounds: Bounds<Pixels>) {
+        let previous = self.node_bounds.insert(node_id, bounds);
+        if self.transaction_depth > 0 {
+            self.node_bounds_undo.push((node_id, previous));
+        }
+    }
+
+    /// Starts recording the state written during prepaint, so that
+    /// [`Self::rollback_transaction`] can discard it. Every call must be paired
+    /// with either [`Self::commit_transaction`] or [`Self::rollback_transaction`].
+    pub(crate) fn begin_transaction(&mut self) -> A11yCheckpoint {
+        self.transaction_depth += 1;
+        A11yCheckpoint {
+            nodes: self.nodes.checkpoint(),
+            node_bounds_undo_len: self.node_bounds_undo.len(),
+            focus_ids_undo_len: self.focus_ids_undo.len(),
+        }
+    }
+
+    pub(crate) fn commit_transaction(&mut self) {
+        self.end_transaction();
+    }
+
+    /// Discards every node, bound, and focus registration made since
+    /// `checkpoint`, so that the elements can be prepainted again.
+    ///
+    /// [`Self::last_focus_without_node`] is intentionally not restored: it
+    /// only deduplicates a log message, and the message can't be taken back.
+    pub(crate) fn rollback_transaction(&mut self, checkpoint: A11yCheckpoint) {
+        self.nodes.rollback(&checkpoint.nodes);
+        for (node_id, previous) in self
+            .node_bounds_undo
+            .drain(checkpoint.node_bounds_undo_len..)
+            .rev()
+        {
+            match previous {
+                Some(bounds) => self.node_bounds.insert(node_id, bounds),
+                None => self.node_bounds.remove(&node_id),
+            };
+        }
+        for (node_id, previous) in self
+            .focus_ids_undo
+            .drain(checkpoint.focus_ids_undo_len..)
+            .rev()
+        {
+            match previous {
+                Some(focus_id) => self.focus_ids.insert(node_id, focus_id),
+                None => self.focus_ids.remove(&node_id),
+            };
+        }
+        self.end_transaction();
+    }
+
+    fn end_transaction(&mut self) {
+        debug_assert!(self.transaction_depth > 0, "unbalanced a11y transaction");
+        self.transaction_depth = self.transaction_depth.saturating_sub(1);
+        if self.transaction_depth == 0 {
+            self.node_bounds_undo.clear();
+            self.focus_ids_undo.clear();
+        }
     }
 
     /// Report `node_id` as the currently-focused node, if it is present in the
@@ -276,6 +350,9 @@ impl A11y {
         self.focus_ids.clear();
         self.node_bounds.clear();
         self.action_listeners.clear();
+        self.transaction_depth = 0;
+        self.node_bounds_undo.clear();
+        self.focus_ids_undo.clear();
         self.nodes.begin_frame(self.window_title.as_ref());
     }
 
@@ -292,6 +369,11 @@ impl A11y {
         #[cfg(debug_assertions)]
         self.debug.capture_node_info(&self.nodes.node_info);
         update
+    }
+
+    #[cfg(test)]
+    pub(crate) fn last_tree_update(&self) -> Option<&TreeUpdate> {
+        self.debug.last_tree_update()
     }
 
     pub(crate) fn debug_tree_json(&self) -> Option<String> {
@@ -366,6 +448,21 @@ impl<'a> A11ySubtreeBuilder<'a> {
             .current_node_mut()
             .expect("A11ySubtreeBuilder exists only while its element's node is on the stack")
     }
+}
+
+/// State captured by [`A11y::begin_transaction`].
+pub(crate) struct A11yCheckpoint {
+    nodes: A11yNodesCheckpoint,
+    node_bounds_undo_len: usize,
+    focus_ids_undo_len: usize,
+}
+
+struct A11yNodesCheckpoint {
+    all_nodes_len: usize,
+    stack_depth: usize,
+    open_node_children_len: usize,
+    focus: Option<NodeId>,
+    active_descendant: Option<NodeId>,
 }
 
 pub(crate) struct A11yNodeBuilder {
@@ -468,6 +565,50 @@ impl A11yNodeBuilder {
         if let (Some(id), Some(node)) = (self.ids_stack.pop(), self.nodes_stack.pop()) {
             self.all_nodes.push((id, node));
         }
+    }
+
+    fn checkpoint(&self) -> A11yNodesCheckpoint {
+        A11yNodesCheckpoint {
+            all_nodes_len: self.all_nodes.len(),
+            stack_depth: self.ids_stack.len(),
+            open_node_children_len: self
+                .nodes_stack
+                .last()
+                .map_or(0, |node| node.children().len()),
+            focus: self.focus,
+            active_descendant: self.active_descendant,
+        }
+    }
+
+    fn rollback(&mut self, checkpoint: &A11yNodesCheckpoint) {
+        // Elements push and pop their nodes in pairs, so by the time a
+        // transaction ends, every node pushed during it has been popped into
+        // `all_nodes`, and the node that was open at the checkpoint is open
+        // again.
+        debug_assert_eq!(
+            self.ids_stack.len(),
+            checkpoint.stack_depth,
+            "a11y node stack changed depth across a transaction"
+        );
+
+        let all_nodes_len = checkpoint.all_nodes_len.min(self.all_nodes.len());
+        for (id, _) in self.all_nodes.drain(all_nodes_len..) {
+            self.seen_ids.remove(&id);
+            #[cfg(debug_assertions)]
+            self.node_info.remove(&id);
+        }
+
+        // The open node already lists the discarded nodes as its children.
+        if let Some(parent) = self.nodes_stack.last_mut() {
+            let children = parent.children();
+            if children.len() > checkpoint.open_node_children_len {
+                let kept_children = children[..checkpoint.open_node_children_len].to_vec();
+                parent.set_children(kept_children);
+            }
+        }
+
+        self.focus = checkpoint.focus;
+        self.active_descendant = checkpoint.active_descendant;
     }
 
     /// Push the root node to start a new frame.
@@ -638,7 +779,7 @@ mod tests {
     // Import specific items rather than glob-importing `super`, which would pull
     // in gpui's own `test` attribute macro and shadow the standard one.
     use super::{A11y, A11yNodeBuilder, ROOT_NODE_ID};
-    use crate::FocusId;
+    use crate::{Bounds, FocusId, Pixels, point, px, size};
     use accesskit::{NodeId, Role};
     use std::sync::{Arc, atomic::AtomicBool};
 
@@ -901,5 +1042,264 @@ mod tests {
 
         let update = a11y.end_frame(Default::default());
         assert_eq!(update.focus, a);
+    }
+
+    fn focus_ids(count: usize) -> Vec<FocusId> {
+        let mut focus_ids = slotmap::SlotMap::<FocusId, ()>::with_key();
+        (0..count).map(|_| focus_ids.insert(())).collect()
+    }
+
+    fn bounds(y: f32) -> Bounds<Pixels> {
+        Bounds::new(point(px(0.), px(y)), size(px(10.), px(10.)))
+    }
+
+    // A transaction that fails is retried with the same element ids, so the
+    // nodes it pushed must be discarded, including from the children of the
+    // node that is still open around the transaction.
+    #[test]
+    fn rollback_discards_nodes_pushed_during_transaction() {
+        let mut a11y = new_a11y();
+        let parent = NodeId(1);
+        let kept_child = NodeId(2);
+        let retried_child = NodeId(3);
+        let synthetic_child = NodeId(4);
+        let leaf = NodeId(5);
+
+        assert!(a11y.nodes.push(parent, test_node()));
+        assert!(a11y.nodes.push(kept_child, test_node()));
+        a11y.nodes.pop();
+
+        let checkpoint = a11y.begin_transaction();
+        assert!(a11y.nodes.push(retried_child, test_node()));
+        assert!(a11y.nodes.push_leaf(synthetic_child, test_node()));
+        a11y.nodes.pop();
+        assert!(a11y.nodes.push_leaf(leaf, test_node()));
+        a11y.rollback_transaction(checkpoint);
+
+        assert_eq!(
+            a11y.nodes
+                .current_node_mut()
+                .map(|node| node.children().to_vec()),
+            Some(vec![kept_child])
+        );
+        assert!(a11y.nodes.has_node(kept_child));
+        for discarded in [retried_child, synthetic_child, leaf] {
+            assert!(!a11y.nodes.has_node(discarded));
+        }
+
+        a11y.begin_transaction();
+        assert!(a11y.nodes.push(retried_child, test_node()));
+        a11y.nodes.pop();
+        a11y.commit_transaction();
+        a11y.nodes.pop(); // parent
+
+        let update = a11y.end_frame(Default::default());
+        let mut ids: Vec<NodeId> = update.nodes.iter().map(|(id, _)| *id).collect();
+        ids.sort();
+        assert_eq!(ids, vec![ROOT_NODE_ID, parent, kept_child, retried_child]);
+        let parent_children = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == parent)
+            .map(|(_, node)| node.children().to_vec());
+        assert_eq!(parent_children, Some(vec![kept_child, retried_child]));
+    }
+
+    #[test]
+    fn rollback_allows_focus_to_be_set_again() {
+        let mut a11y = new_a11y();
+        let item = NodeId(1);
+        let focus_ids = focus_ids(1);
+
+        let checkpoint = a11y.begin_transaction();
+        assert!(a11y.nodes.push(item, test_node()));
+        a11y.set_focusable(item, focus_ids[0]);
+        a11y.set_focus(item);
+        a11y.nodes.pop();
+        a11y.rollback_transaction(checkpoint);
+
+        assert!(!a11y.focus_ids.contains_key(&item));
+
+        a11y.begin_transaction();
+        assert!(a11y.nodes.push(item, test_node()));
+        a11y.set_focusable(item, focus_ids[0]);
+        a11y.set_focus(item);
+        a11y.nodes.pop();
+        a11y.commit_transaction();
+
+        let update = a11y.end_frame(Default::default());
+        assert_eq!(update.focus, item);
+    }
+
+    #[test]
+    fn rollback_discards_active_descendant_claimed_during_transaction() {
+        let mut a11y = new_a11y();
+        let container = NodeId(1);
+        let item = NodeId(2);
+        let focus_ids = focus_ids(1);
+
+        assert!(a11y.nodes.push(container, test_node()));
+        a11y.set_focusable(container, focus_ids[0]);
+        a11y.set_focus(container);
+
+        let checkpoint = a11y.begin_transaction();
+        assert!(a11y.nodes.push(item, test_node()));
+        a11y.set_active_descendant(item);
+        a11y.nodes.pop();
+        a11y.rollback_transaction(checkpoint);
+
+        a11y.nodes.pop(); // container
+        let update = a11y.end_frame(Default::default());
+        assert_eq!(update.focus, container);
+    }
+
+    #[test]
+    fn rollback_keeps_active_descendant_claimed_before_transaction() {
+        let mut a11y = new_a11y();
+        let container = NodeId(1);
+        let claimed = NodeId(2);
+        let discarded = NodeId(3);
+        let focus_ids = focus_ids(1);
+
+        assert!(a11y.nodes.push(container, test_node()));
+        a11y.set_focusable(container, focus_ids[0]);
+        a11y.set_focus(container);
+        assert!(a11y.nodes.push(claimed, test_node()));
+        a11y.set_active_descendant(claimed);
+        a11y.nodes.pop();
+
+        let checkpoint = a11y.begin_transaction();
+        assert!(a11y.nodes.push(discarded, test_node()));
+        a11y.nodes.pop();
+        a11y.rollback_transaction(checkpoint);
+
+        a11y.nodes.pop(); // container
+        let update = a11y.end_frame(Default::default());
+        assert_eq!(update.focus, claimed);
+    }
+
+    // Focusable elements without a role register in `focus_ids` without
+    // pushing a node, and an element can overwrite an entry made before the
+    // transaction, so both maps are restored from an undo log rather than from
+    // the discarded node ids.
+    #[test]
+    fn rollback_restores_overwritten_focus_ids_and_bounds() {
+        let mut a11y = new_a11y();
+        let existing = NodeId(1);
+        let without_role = NodeId(2);
+        let focus_ids = focus_ids(3);
+
+        a11y.set_focusable(existing, focus_ids[0]);
+        a11y.set_node_bounds(existing, bounds(0.));
+
+        let checkpoint = a11y.begin_transaction();
+        a11y.set_focusable(existing, focus_ids[1]);
+        a11y.set_node_bounds(existing, bounds(50.));
+        a11y.set_focusable(without_role, focus_ids[2]);
+        a11y.rollback_transaction(checkpoint);
+
+        assert_eq!(a11y.focus_ids.get(&existing), Some(&focus_ids[0]));
+        assert_eq!(a11y.node_bounds.get(&existing), Some(&bounds(0.)));
+        assert!(!a11y.focus_ids.contains_key(&without_role));
+    }
+
+    #[test]
+    fn outer_rollback_discards_committed_inner_transaction() {
+        let mut a11y = new_a11y();
+        let node = NodeId(1);
+
+        let outer = a11y.begin_transaction();
+        a11y.begin_transaction();
+        assert!(a11y.nodes.push(node, test_node()));
+        a11y.set_node_bounds(node, bounds(0.));
+        a11y.nodes.pop();
+        a11y.commit_transaction();
+        assert!(a11y.nodes.has_node(node));
+
+        a11y.rollback_transaction(outer);
+        assert!(!a11y.nodes.has_node(node));
+        assert!(!a11y.node_bounds.contains_key(&node));
+    }
+
+    // Writes to the same key are undone in reverse order, so an inner rollback
+    // returns to the outer transaction's value rather than to the value from
+    // before either transaction.
+    #[test]
+    fn nested_rollback_restores_each_level() {
+        for outer_commits in [true, false] {
+            let mut a11y = new_a11y();
+            let parent = NodeId(1);
+            let outer_child = NodeId(2);
+            let inner_child = NodeId(3);
+            let focus_ids = focus_ids(5);
+
+            assert!(a11y.nodes.push(parent, test_node()));
+            a11y.set_focusable(parent, focus_ids[0]);
+            a11y.set_node_bounds(parent, bounds(0.));
+
+            let outer = a11y.begin_transaction();
+            assert!(a11y.nodes.push(outer_child, test_node()));
+            a11y.nodes.pop();
+            a11y.set_focusable(parent, focus_ids[1]);
+            a11y.set_node_bounds(parent, bounds(1.));
+
+            let inner = a11y.begin_transaction();
+            assert!(a11y.nodes.push(inner_child, test_node()));
+            a11y.nodes.pop();
+            a11y.set_focusable(parent, focus_ids[2]);
+            a11y.set_node_bounds(parent, bounds(2.));
+            a11y.set_focusable(parent, focus_ids[3]);
+            a11y.set_node_bounds(parent, bounds(3.));
+            a11y.rollback_transaction(inner);
+
+            assert_eq!(a11y.focus_ids.get(&parent), Some(&focus_ids[1]));
+            assert_eq!(a11y.node_bounds.get(&parent), Some(&bounds(1.)));
+            assert!(a11y.nodes.has_node(outer_child));
+            assert!(!a11y.nodes.has_node(inner_child));
+            assert_eq!(
+                a11y.nodes
+                    .current_node_mut()
+                    .map(|node| node.children().to_vec()),
+                Some(vec![outer_child])
+            );
+
+            a11y.set_focusable(parent, focus_ids[4]);
+            a11y.set_node_bounds(parent, bounds(4.));
+            if outer_commits {
+                a11y.commit_transaction();
+                assert_eq!(a11y.focus_ids.get(&parent), Some(&focus_ids[4]));
+                assert_eq!(a11y.node_bounds.get(&parent), Some(&bounds(4.)));
+                assert!(a11y.nodes.has_node(outer_child));
+            } else {
+                a11y.rollback_transaction(outer);
+                assert_eq!(a11y.focus_ids.get(&parent), Some(&focus_ids[0]));
+                assert_eq!(a11y.node_bounds.get(&parent), Some(&bounds(0.)));
+                assert!(!a11y.nodes.has_node(outer_child));
+            }
+
+            assert_eq!(a11y.transaction_depth, 0);
+            assert!(a11y.node_bounds_undo.is_empty());
+            assert!(a11y.focus_ids_undo.is_empty());
+        }
+    }
+
+    // Writes outside a transaction aren't logged, so the undo logs only grow
+    // while a transaction is open.
+    #[test]
+    fn writes_outside_transactions_are_not_logged() {
+        let mut a11y = new_a11y();
+        let node = NodeId(1);
+        let focus_ids = focus_ids(1);
+
+        a11y.set_focusable(node, focus_ids[0]);
+        a11y.set_node_bounds(node, bounds(0.));
+        assert!(a11y.node_bounds_undo.is_empty());
+        assert!(a11y.focus_ids_undo.is_empty());
+
+        a11y.begin_transaction();
+        a11y.set_node_bounds(node, bounds(1.));
+        a11y.commit_transaction();
+        assert!(a11y.node_bounds_undo.is_empty());
+        assert_eq!(a11y.node_bounds.get(&node), Some(&bounds(1.)));
     }
 }
