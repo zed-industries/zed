@@ -3055,13 +3055,12 @@ impl ToolCallContent {
                 meta: content.meta,
             },
             PreparedToolCallContent::LegacyDiff(source) => {
-                let diff = cx.new(|cx| {
+                let diff = cx.new(|_| {
                     Diff::finalized(
                         source.path.to_string_lossy().into_owned(),
                         source.old_text.clone(),
                         source.new_text.clone(),
                         language_registry.clone(),
-                        cx,
                     )
                 });
                 Self::LegacyDiff { source, diff }
@@ -3139,7 +3138,7 @@ impl ToolCallContent {
 
     pub fn to_markdown(&self, cx: &App) -> String {
         match self {
-            Self::ContentBlock { block, .. } => block.to_markdown(cx).to_string(),
+            Self::ContentBlock { block, .. } => block.to_markdown(cx).to_owned(),
             Self::Diff(diff) | Self::LegacyDiff { diff, .. } => diff.read(cx).to_markdown(cx),
             Self::Terminal { terminal, .. } => terminal.read(cx).to_markdown(cx),
             Self::DiffPatch { source, .. } => format!(
@@ -5363,17 +5362,6 @@ impl AcpThread {
         call.update_raw_output_content(&languages, cx);
         cx.emit(AcpThreadEvent::EntryUpdated(index));
         Ok(())
-    }
-
-    /// Builds the diffs of the tool call at `index` on first view.
-    pub fn resolve_tool_call_diffs(&self, index: usize, cx: &mut App) {
-        let diffs: Vec<Entity<Diff>> = match self.entries().get(index) {
-            Some(AgentThreadEntry::ToolCall(call)) => call.diffs().cloned().collect(),
-            _ => return,
-        };
-        for diff in diffs {
-            diff.update(cx, |diff, cx| diff.resolve(cx));
-        }
     }
 
     /// Updates a tool call if id matches an existing entry, otherwise inserts a new one.
@@ -9190,13 +9178,12 @@ mod tests {
             };
             assert_eq!(source.path, PathBuf::from("second.rs"));
             assert_ne!(diff, &previous);
-            let native_diff = cx.new(|cx| {
+            let native_diff = cx.new(|_| {
                 Diff::finalized(
                     "native.rs".into(),
                     Some("before".into()),
                     "after".into(),
                     languages.clone(),
-                    cx,
                 )
             });
             let mut native = ToolCallContent::Diff(native_diff.clone());

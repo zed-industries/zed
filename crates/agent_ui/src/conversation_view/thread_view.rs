@@ -1306,16 +1306,14 @@ impl ThreadView {
         !self.message_queue.is_empty()
     }
 
-    /// Materializes the tool-call views skipped when restoring the thread.
     fn materialize_tool_call_views(
         &mut self,
         entry_ix: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let thread = self.thread.clone();
         self.entry_view_state.update(cx, |state, cx| {
-            state.materialize_entry(entry_ix, &thread, window, cx);
+            state.materialize_entry(entry_ix, &self.thread, window, cx);
         });
     }
 
