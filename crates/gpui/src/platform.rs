@@ -3082,6 +3082,8 @@ pub enum ClipboardEntry {
     Image(Image),
     /// A file entry
     ExternalPaths(crate::ExternalPaths),
+    /// An HTML entry
+    Html(String),
 }
 
 impl ClipboardItem {
@@ -3145,6 +3147,17 @@ impl ClipboardItem {
         } else {
             None
         }
+    }
+
+    /// Returns the HTML entry's content if one is present.
+    pub fn html(&self) -> Option<&str> {
+        self.entries.iter().find_map(|entry| {
+            if let ClipboardEntry::Html(html) = entry {
+                Some(html.as_str())
+            } else {
+                None
+            }
+        })
     }
 
     /// If this item is one ClipboardEntry::String, returns its metadata.
