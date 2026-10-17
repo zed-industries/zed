@@ -1,14 +1,18 @@
 use anyhow::{Result, anyhow};
 use credentials_provider::CredentialsProvider;
-use futures::future::Shared;
-use gpui::{App, Context, Entity, SharedString, Task, Window};
+use futures::FutureExt as _;
+use futures::future::{BoxFuture, Shared};
+
+use gpui::{App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, FastModeConfirmation, IconOrSvg, InlineDescription, LanguageModel,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, ProviderSettingsView,
+    AuthenticateError, CompactionResult, FastModeConfirmation, IconOrSvg, InlineDescription,
+    LanguageModel, LanguageModelClient, LanguageModelCompletionError,
+    LanguageModelCompletionStream, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest, ModelRateLimiters,
+    ProviderSettingsView, unavailable_error,
 };
-use openai_subscribed::{PROVIDER_ID, PROVIDER_NAME, State, create_language_model};
+use openai_subscribed::{ChatGptModel, PROVIDER_ID, PROVIDER_NAME, State, language_model};
 use std::sync::Arc;
 use ui::{ConfiguredApiCard, prelude::*};
 
@@ -17,6 +21,7 @@ const SUBSCRIPTION_DESCRIPTION: &str =
 
 pub struct OpenAiSubscribedProvider {
     state: Entity<State>,
+    request_limiters: ModelRateLimiters,
 }
 
 impl OpenAiSubscribedProvider {
@@ -26,7 +31,25 @@ impl OpenAiSubscribedProvider {
         cx: &mut App,
     ) -> Self {
         let state = cx.new(|cx| State::new(http_client, credentials_provider, cx));
-        Self { state }
+        Self {
+            state,
+            request_limiters: ModelRateLimiters::default(),
+        }
+    }
+
+    /// The current configuration of `model`, if this provider still offers it.
+    fn config(
+        &self,
+        model: &LanguageModel,
+        cx: &App,
+    ) -> Result<ChatGptModel, LanguageModelCompletionError> {
+        self.state
+            .read(cx)
+            .available_models()
+            .iter()
+            .find(|config| config.id() == model.id.0.as_ref())
+            .cloned()
+            .ok_or_else(|| unavailable_error(model))
     }
 }
 
@@ -51,31 +74,30 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
         IconOrSvg::Icon(IconName::AiOpenAiGptSub)
     }
 
-    fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+    fn default_model(&self, cx: &App) -> Option<LanguageModel> {
         self.state
             .read(cx)
             .default_model()
-            .map(|model| create_language_model(model, &self.state, cx))
+            .map(|model| language_model(&model))
     }
 
-    fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+    fn default_fast_model(&self, cx: &App) -> Option<LanguageModel> {
         self.state
             .read(cx)
             .default_fast_model()
-            .map(|model| create_language_model(model, &self.state, cx))
+            .map(|model| language_model(&model))
     }
 
-    fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+    fn provided_models(&self, cx: &App) -> Vec<LanguageModel> {
         self.state
             .read(cx)
             .available_models()
             .iter()
-            .cloned()
-            .map(|model| create_language_model(model, &self.state, cx))
+            .map(language_model)
             .collect()
     }
 
-    fn recommended_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+    fn recommended_models(&self, cx: &App) -> Vec<LanguageModel> {
         self.default_model(cx).into_iter().collect()
     }
 
@@ -159,6 +181,37 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
                 premium per-token rate."
                 .into(),
         })
+    }
+}
+
+impl LanguageModelClient for OpenAiSubscribedProvider {
+    fn stream_completion(
+        &self,
+        model: &LanguageModel,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<LanguageModelCompletionStream, LanguageModelCompletionError>>
+    {
+        let config = match cx.update(|cx| self.config(model, cx)) {
+            Ok(config) => config,
+            Err(error) => return async move { Err(error) }.boxed(),
+        };
+        let request_limiter = self.request_limiters.for_model(&model.id);
+        openai_subscribed::stream_completion(&config, &self.state, &request_limiter, request, cx)
+    }
+
+    fn compact(
+        &self,
+        model: &LanguageModel,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<CompactionResult, LanguageModelCompletionError>> {
+        let config = match cx.update(|cx| self.config(model, cx)) {
+            Ok(config) => config,
+            Err(error) => return async move { Err(error) }.boxed(),
+        };
+        let request_limiter = self.request_limiters.for_model(&model.id);
+        openai_subscribed::compact(&config, &self.state, &request_limiter, request, cx)
     }
 }
 

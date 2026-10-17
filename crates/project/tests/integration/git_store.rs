@@ -99,6 +99,44 @@ mod conflict_set_tests {
     }
 
     #[test]
+    fn test_parse_conflicts_with_empty_sides() {
+        let test_content = r#"
+            <<<<<<< HEAD
+            =======
+            their version
+            >>>>>>> branch
+            <<<<<<< HEAD
+            our version
+            =======
+            >>>>>>> branch
+        "#
+        .unindent();
+
+        let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), test_content);
+        let conflict_snapshot = ConflictSet::parse(&buffer.snapshot());
+        assert_eq!(conflict_snapshot.conflicts.len(), 2);
+
+        for conflict in conflict_snapshot.conflicts.iter() {
+            for side in [&conflict.ours, &conflict.theirs] {
+                assert!(side.start.cmp(&side.end, &buffer).is_le(), "{side:?}");
+            }
+        }
+        assert_eq!(
+            conflict_snapshot.conflicts[0].ours.to_point(&buffer),
+            Point::new(1, 0)..Point::new(1, 0)
+        );
+        assert_eq!(
+            conflict_snapshot.conflicts[1].theirs.to_point(&buffer),
+            Point::new(7, 0)..Point::new(7, 0)
+        );
+
+        // Text typed into an empty side becomes part of that side.
+        let ours = conflict_snapshot.conflicts[0].ours.clone();
+        buffer.edit([(Point::new(1, 0)..Point::new(1, 0), "resolution\n")]);
+        assert_eq!(ours.to_point(&buffer), Point::new(1, 0)..Point::new(2, 0));
+    }
+
+    #[test]
     fn test_nested_conflict_markers() {
         // Create a buffer with nested conflict markers
         let test_content = r#"
@@ -1205,90 +1243,73 @@ mod git_worktrees {
     }
 
     #[test]
-    fn test_resolve_worktree_directory() {
+    fn test_validate_worktree_directory() {
         let work_dir = Path::new("/code/my-project");
 
-        assert_eq!(
-            worktrees_directory_for_repo(work_dir, "../worktrees", PathStyle::Unix).unwrap(),
-            PathBuf::from("/code/worktrees/my-project")
-        );
-        assert_eq!(
-            worktrees_directory_for_repo(work_dir, ".git/zed-worktrees", PathStyle::Unix).unwrap(),
-            PathBuf::from("/code/my-project/.git/zed-worktrees")
-        );
-        assert_eq!(
-            worktrees_directory_for_repo(work_dir, "my-worktrees", PathStyle::Unix).unwrap(),
-            PathBuf::from("/code/my-project/my-worktrees")
-        );
-        assert_eq!(
-            worktrees_directory_for_repo(
-                work_dir,
-                "../../other-project/worktrees",
-                PathStyle::Unix
-            )
-            .unwrap(),
-            PathBuf::from("/other-project/worktrees/my-project")
-        );
-        assert_eq!(
-            worktrees_directory_for_repo(work_dir, "/tmp/worktrees", PathStyle::Unix).unwrap(),
-            PathBuf::from("/tmp/worktrees/my-project")
-        );
-        assert_eq!(
-            worktrees_directory_for_repo(work_dir, "/", PathStyle::Unix).unwrap(),
-            PathBuf::from("/my-project")
-        );
-        assert_eq!(
-            worktrees_directory_for_repo(
-                work_dir,
-                "/code/my-project/.git/zed-worktrees",
-                PathStyle::Unix
-            )
-            .unwrap(),
-            PathBuf::from("/code/my-project/.git/zed-worktrees")
-        );
+        // Valid: sibling
+        assert!(worktrees_directory_for_repo(work_dir, "../worktrees", PathStyle::Unix).is_ok());
 
-        for setting in ["", "..", "../", "/code", "/code/my-project"] {
-            let error =
-                worktrees_directory_for_repo(work_dir, setting, PathStyle::Unix).unwrap_err();
-            assert!(
-                error
-                    .to_string()
-                    .contains("must not resolve to the repository directory")
-            );
-        }
-    }
+        // Valid: subdirectory
+        assert!(
+            worktrees_directory_for_repo(work_dir, ".git/zed-worktrees", PathStyle::Unix).is_ok()
+        );
+        assert!(worktrees_directory_for_repo(work_dir, "my-worktrees", PathStyle::Unix).is_ok());
 
-    #[test]
-    fn test_resolve_absolute_windows_worktree_directory() {
-        let directory = worktrees_directory_for_repo(
-            Path::new("C:/code/my-project"),
-            r"D:\worktrees",
-            PathStyle::Windows,
-        )
-        .unwrap();
+        // Invalid: just ".." would resolve back to the working directory itself
+        let err = worktrees_directory_for_repo(work_dir, "..", PathStyle::Unix).unwrap_err();
+        assert!(err.to_string().contains("must not be \"..\""));
 
-        assert_eq!(directory.to_string_lossy(), r"D:\worktrees\my-project");
+        // Invalid: ".." with trailing separators
+        let err = worktrees_directory_for_repo(work_dir, "..\\", PathStyle::Unix).unwrap_err();
+        assert!(err.to_string().contains("must not be \"..\""));
+        let err = worktrees_directory_for_repo(work_dir, "../", PathStyle::Unix).unwrap_err();
+        assert!(err.to_string().contains("must not be \"..\""));
 
-        let directory = worktrees_directory_for_repo(
-            Path::new("C:/code/my-project"),
-            "D:\\",
-            PathStyle::Windows,
-        )
-        .unwrap();
+        // Invalid: empty string would resolve to the working directory itself
+        let err = worktrees_directory_for_repo(work_dir, "", PathStyle::Unix).unwrap_err();
+        assert!(err.to_string().contains("must not be empty"));
 
-        assert_eq!(directory.to_string_lossy(), r"D:\my-project");
+        // Invalid: absolute path
+        let err =
+            worktrees_directory_for_repo(work_dir, "/tmp/worktrees", PathStyle::Unix).unwrap_err();
+        assert!(err.to_string().contains("relative path"));
+
+        // Invalid: "/" is absolute on Unix
+        let err = worktrees_directory_for_repo(work_dir, "/", PathStyle::Unix).unwrap_err();
+        assert!(err.to_string().contains("relative path"));
+
+        // Invalid: "///" is absolute
+        let err = worktrees_directory_for_repo(work_dir, "///", PathStyle::Unix).unwrap_err();
+        assert!(err.to_string().contains("relative path"));
+
+        // Invalid: escapes too far up
+        let err = worktrees_directory_for_repo(work_dir, "../../other-project/wt", PathStyle::Unix)
+            .unwrap_err();
+        assert!(err.to_string().contains("outside"));
     }
 
     #[test]
     fn test_worktree_directory_uses_remote_path_style() {
-        let work_dir = Path::new("/home/user/dev/lsp-tests");
-
-        let directory =
-            worktrees_directory_for_repo(work_dir, "../worktrees", PathStyle::Unix).unwrap();
+        // Unix remote
+        let anchor = Path::new("/home/user/dev/lsp-tests");
 
         assert_eq!(
-            directory,
+            worktrees_directory_for_repo(anchor, "../worktrees", PathStyle::Unix).unwrap(),
             PathBuf::from("/home/user/dev/worktrees/lsp-tests")
+        );
+
+        // Windows remote: the anchor intentionally mixes `/` and `\` separators.
+        let anchor = Path::new(r"C:\Users/user/dev\lsp-tests");
+
+        assert_eq!(
+            worktrees_directory_for_repo(anchor, "../worktrees", PathStyle::Windows).unwrap(),
+            PathBuf::from(r"C:\Users\user\dev\worktrees\lsp-tests")
+        );
+
+        assert_eq!(
+            worktrees_directory_for_repo(anchor, ".git\\zed-worktrees", PathStyle::Windows)
+                .unwrap(),
+            PathBuf::from(r"C:\Users\user\dev\lsp-tests\.git\zed-worktrees")
         );
     }
 
@@ -1951,20 +1972,40 @@ mod resolve_worktree_tests {
             (
                 "/home/bob/zed",
                 "/home/bob/worktrees/olivetti/zed",
+                PathStyle::Unix,
                 Some("olivetti".into()),
             ),
-            ("/home/bob/zed", "/home/bob/zed2", Some("zed2".into())),
+            (
+                "/home/bob/zed",
+                "/home/bob/zed2",
+                PathStyle::Unix,
+                Some("zed2".into()),
+            ),
             (
                 "/home/bob/zed",
                 "/home/bob/worktrees/zed/selectric",
+                PathStyle::Unix,
                 Some("selectric".into()),
             ),
-            ("/home/bob/zed", "/home/bob/zed", None),
+            ("/home/bob/zed", "/home/bob/zed", PathStyle::Unix, None),
+            (
+                r"C:\Users\bob\dev\zed",
+                r"C:\Users\bob\dev\worktrees\zed\olivetti\zed",
+                PathStyle::Windows,
+                Some("olivetti".into()),
+            ),
+            (
+                r"C:\Users\bob\dev\zed",
+                r"C:\Users\bob\dev\zed2",
+                PathStyle::Windows,
+                Some("zed2".into()),
+            ),
         ];
-        for (main_worktree_path, linked_worktree_path, expected) in examples {
+        for (main_worktree_path, linked_worktree_path, path_style, expected) in examples {
             let short_name = linked_worktree_short_name(
                 Path::new(main_worktree_path),
                 Path::new(linked_worktree_path),
+                path_style,
             );
             assert_eq!(
                 short_name, expected,
