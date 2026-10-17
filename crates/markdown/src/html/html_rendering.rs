@@ -7,9 +7,9 @@ use pulldown_cmark::Alignment;
 use ui::prelude::*;
 
 use crate::html::html_parser::{
-    HtmlHighlightStyle, HtmlImage, HtmlParagraph, HtmlParagraphChunk, ParsedHtmlBlock,
-    ParsedHtmlElement, ParsedHtmlList, ParsedHtmlListItemType, ParsedHtmlTable, ParsedHtmlTableRow,
-    ParsedHtmlText,
+    HtmlContainerBoundary, HtmlHighlightStyle, HtmlImage, HtmlParagraph, HtmlParagraphChunk,
+    ParsedHtmlBlock, ParsedHtmlElement, ParsedHtmlList, ParsedHtmlListItemType,
+    ParsedHtmlParagraph, ParsedHtmlTable, ParsedHtmlTableRow, ParsedHtmlText,
 };
 use crate::{MarkdownElement, MarkdownElementBuilder};
 
@@ -62,9 +62,53 @@ impl MarkdownElement {
         markdown_end: usize,
         cx: &mut App,
     ) {
-        for element in elements {
+        // HTML children share the whole block's source range, so source offsets
+        // alone cannot identify which child is at the edge of the document.
+        let trim_start = builder.trim_block_start_margin;
+        let trim_end = builder.trim_block_end_margin;
+        let mut image_row = false;
+        for (index, element) in elements.iter().enumerate() {
+            builder.trim_block_start_margin = trim_start && index == 0;
+            builder.trim_block_end_margin = trim_end && index + 1 == elements.len();
+            match element {
+                ParsedHtmlElement::Image(image) if !image_row => {
+                    builder.trim_block_end_margin = trim_end
+                        && elements[index..].iter().all(|element| match element {
+                            ParsedHtmlElement::Image(_) => true,
+                            ParsedHtmlElement::Paragraph(paragraph) => {
+                                is_html_whitespace(paragraph)
+                            }
+                            _ => false,
+                        });
+                    self.push_markdown_paragraph(builder, &image.source_range, markdown_end, None);
+                    image_row = true;
+                }
+                ParsedHtmlElement::Paragraph(paragraph)
+                    if image_row && is_html_whitespace(paragraph) =>
+                {
+                    self.render_html_paragraph(
+                        &paragraph.contents,
+                        source_allocator,
+                        builder,
+                        cx,
+                        markdown_end,
+                    );
+                    continue;
+                }
+                ParsedHtmlElement::Image(_) => {}
+                _ if image_row => {
+                    self.pop_markdown_paragraph(builder);
+                    image_row = false;
+                }
+                _ => {}
+            }
             self.render_html_element(element, source_allocator, builder, markdown_end, cx);
         }
+        if image_row {
+            self.pop_markdown_paragraph(builder);
+        }
+        builder.trim_block_start_margin = trim_start;
+        builder.trim_block_end_margin = trim_end;
     }
 
     fn render_html_element(
@@ -80,6 +124,23 @@ impl MarkdownElement {
         };
 
         match element {
+            ParsedHtmlElement::Container(container) => {
+                if container.boundary != HtmlContainerBoundary::Continuation {
+                    builder.html_container_alignments.push(container.text_align);
+                }
+                builder.push_div(div().w_full(), &container.source_range, markdown_end);
+                self.render_html_elements(
+                    &container.children,
+                    source_allocator,
+                    builder,
+                    markdown_end,
+                    cx,
+                );
+                builder.pop_div();
+                if container.boundary != HtmlContainerBoundary::Open {
+                    builder.html_container_alignments.pop();
+                }
+            }
             ParsedHtmlElement::Paragraph(paragraph) => {
                 self.push_markdown_paragraph(
                     builder,
@@ -136,7 +197,7 @@ impl MarkdownElement {
                 self.render_html_table(table, source_allocator, builder, markdown_end, cx);
             }
             ParsedHtmlElement::Image(image) => {
-                self.render_html_image(image, builder, cx);
+                self.render_html_image(image, &source_allocator.allocate(1), builder, cx);
             }
         }
     }
@@ -359,7 +420,7 @@ impl MarkdownElement {
                     self.render_html_text(text, source_allocator, builder, cx);
                 }
                 HtmlParagraphChunk::Image(image) => {
-                    self.render_html_image(image, builder, cx);
+                    self.render_html_image(image, &source_allocator.allocate(1), builder, cx);
                 }
             }
         }
@@ -451,6 +512,7 @@ impl MarkdownElement {
     pub(crate) fn render_html_image(
         &self,
         image: &HtmlImage,
+        source_range: &Range<usize>,
         builder: &mut MarkdownElementBuilder,
         cx: &App,
     ) {
@@ -462,16 +524,33 @@ impl MarkdownElement {
             return;
         };
 
+        if let Some(link) = &image.link {
+            builder.link_depth += 1;
+            builder.push_link(link.clone(), source_range.clone());
+        }
         self.push_markdown_image(
             builder,
-            &image.source_range,
+            source_range,
             source,
             image.dest_url.clone(),
             image.alt_text.clone(),
             image.width,
             image.height,
         );
+        if image.link.is_some() {
+            builder.link_depth = builder.link_depth.saturating_sub(1);
+        }
     }
+}
+
+fn is_html_whitespace(paragraph: &ParsedHtmlParagraph) -> bool {
+    paragraph.contents.iter().all(|chunk| {
+        let HtmlParagraphChunk::Text(text) = chunk else {
+            return false;
+        };
+
+        text.contents.trim().is_empty()
+    })
 }
 
 fn apply_html_highlight_style(refinement: &mut TextStyleRefinement, style: &HtmlHighlightStyle) {
