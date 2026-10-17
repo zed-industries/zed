@@ -62,4 +62,4 @@ cbindgen.workspace = true
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
-objc2-core-video = { workspace = true, features = ["CVBase"] }
+objc2-core-video = { workspace = true, features = ["CVBase", "CVPixelBufferPool"] }
