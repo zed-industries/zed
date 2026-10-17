@@ -650,11 +650,17 @@ impl ListState {
         self.0.borrow_mut().follow_state.stop_following();
     }
 
-    /// Marks item heights as provisional, e.g. while deferred content parses.
+    /// Marks item heights as provisional, for lists whose items defer their
+    /// own measurement (for example, lazily parsed content).
     ///
-    /// While set, layout keeps the current scroll anchor, does not measure
-    /// items above it, and does not re-enable tail-following. Clear once the
-    /// anchored items have their final sizes.
+    /// Set this after positioning the list with [`Self::scroll_to`] and before
+    /// the first layout, then clear it once the items around the scroll anchor
+    /// have their final sizes. While set, layout preserves the requested anchor
+    /// and in-item offset, does not lay out items above the anchor, and does not
+    /// re-enable tail-following. The viewport may remain underfilled until you
+    /// clear it; the list never clears this automatically.
+    ///
+    /// User scrolling still works while item heights are provisional.
     pub fn set_item_heights_provisional(&self, provisional: bool) {
         self.0.borrow_mut().item_heights_provisional = provisional;
     }
