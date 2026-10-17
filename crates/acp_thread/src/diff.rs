@@ -680,14 +680,16 @@ impl FinalizedDiff {
     /// Reproduces [`Diff::to_markdown`]'s output for a diff that has not been
     /// built yet. That output is the multibuffer's buffers, which is render
     /// state: it holds the new text, with normalized line endings, only once the
-    /// edit produced hunks.
+    /// edit produced hunks. The diff normalizes the base text too, so compare
+    /// both sides normalized.
     fn export_before_resolve(&self) -> String {
         let Some(deferred) = &self.deferred else {
             return String::new();
         };
+        let base_text = LineEnding::normalize_arc(self.base_text.clone());
         let mut new_text = deferred.new_text.clone();
         LineEnding::normalize(&mut new_text);
-        if new_text.as_str() == self.base_text.as_ref() {
+        if new_text.as_str() == base_text.as_ref() {
             String::new()
         } else {
             new_text
