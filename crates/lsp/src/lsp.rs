@@ -1131,6 +1131,9 @@ impl LanguageServer {
                             ]),
                         }),
                     }),
+                    filters: Some(TextDocumentFilterClientCapabilities {
+                        relative_pattern_support: Some(true),
+                    }),
                     ..TextDocumentClientCapabilities::default()
                 }),
                 experimental: Some(json!({
