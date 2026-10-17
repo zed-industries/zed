@@ -11,7 +11,7 @@ world extension {
 
     use common.{env-vars, range};
     use context-server.{context-server-configuration};
-    use dap.{attach-request, build-task-template, debug-config, debug-adapter-binary, debug-task-definition, debug-request, debug-scenario, launch-request, resolved-task, start-debugging-request-arguments-request};
+    use dap.{attach-request, build-task-template, debug-config, debug-adapter-binary, debug-task-definition, debug-request, debug-scenario, launch-request, resolved-task, start-debugging-request-arguments-request, task-template};
     use lsp.{completion, symbol};
     use process.{command};
     use slash-command.{slash-command, slash-command-argument-completion, slash-command-output};
@@ -176,4 +176,18 @@ world extension {
     export dap-config-to-scenario: func(config: debug-config) -> result<debug-scenario, string>;
     export dap-locator-create-scenario: func(locator-name: string, build-config-template: build-task-template, resolved-label: string, debug-adapter-name: string) -> option<debug-scenario>;
     export run-dap-locator: func(locator-name: string, config: resolved-task) -> result<debug-request, string>;
+
+
+    /// A command handled by Zed instead of being forwarded to the language server.
+    variant client-command {
+        /// Show a list of locations from the LSP command arguments.
+        show-locations,
+        /// Schedule a Zed task.
+        schedule-task(task-template),
+    }
+
+    /// Maps an LSP command to a Zed client command.
+    ///
+    /// The arguments are represented as a JSON array string.
+    export language-server-client-command: func(language-server-id: string, command: string, arguments: string) -> result<option<client-command>, string>;
 }
