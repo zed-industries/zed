@@ -573,6 +573,39 @@ async fn test_thinking_allowed_when_model_cannot_disable_thinking(cx: &mut TestA
             .unwrap();
         assert!(request.thinking_allowed);
     });
+
+    // A model-level capability can be overridden by the selected effort.
+    fake.update_model("fake", |model| {
+        model.supported_effort_levels = [
+            language_model::LanguageModelEffortLevel {
+                name: "High".into(),
+                value: "high".into(),
+                is_default: true,
+                supports_disabling_thinking: Some(true),
+            },
+            language_model::LanguageModelEffortLevel {
+                name: "Max".into(),
+                value: "max".into(),
+                is_default: false,
+                supports_disabling_thinking: None,
+            },
+        ]
+        .into();
+    });
+    thread.update(cx, |thread, cx| {
+        thread.refresh_model(&model.provider_id, cx);
+        thread.set_thinking_effort(Some("high".to_string()), cx);
+        let request = thread
+            .build_completion_request(CompletionIntent::UserPrompt, cx)
+            .unwrap();
+        assert!(!request.thinking_allowed);
+
+        thread.set_thinking_effort(Some("max".to_string()), cx);
+        let request = thread
+            .build_completion_request(CompletionIntent::UserPrompt, cx)
+            .unwrap();
+        assert!(request.thinking_allowed);
+    });
 }
 
 #[gpui::test]
