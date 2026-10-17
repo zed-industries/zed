@@ -1598,5 +1598,6 @@ unsafe extern "C" {
     pub(super) static kTISPropertyLocalizedName: CFStringRef;
     pub(super) static kTISPropertyInputSourceIsASCIICapable: CFStringRef;
     pub(super) static kTISPropertyInputSourceType: CFStringRef;
+    pub(super) static kTISPropertyInputSourceLanguages: CFStringRef;
     pub(super) static kTISTypeKeyboardInputMode: CFStringRef;
 }
