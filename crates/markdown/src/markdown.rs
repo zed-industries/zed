@@ -517,8 +517,6 @@ pub struct Markdown {
     context_menu_selected_markdown: Option<SharedString>,
     search_highlights: Rc<[Range<usize>]>,
     active_search_highlight: Option<usize>,
-    /// Set from [`MarkdownOptions::defer_parsing`]; cleared once parsing starts.
-    deferred: bool,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -689,7 +687,6 @@ impl Markdown {
         } else {
             None
         };
-        let deferred = options.defer_parsing;
         let mut this = Self {
             source,
             selection: Selection::default(),
@@ -718,9 +715,8 @@ impl Markdown {
             context_menu_selected_markdown: None,
             search_highlights: Rc::default(),
             active_search_highlight: None,
-            deferred,
         };
-        if !deferred {
+        if !this.options.defer_parsing {
             this.parse(cx);
         }
         this
@@ -959,7 +955,7 @@ impl Markdown {
     }
 
     pub fn scroll_to_heading_when_parsed(&mut self, slug: SharedString, cx: &mut Context<Self>) {
-        if self.pending_parse.is_some() || self.deferred || self.source.is_empty() {
+        if self.pending_parse.is_some() || self.options.defer_parsing || self.source.is_empty() {
             self.pending_heading_scroll = Some(slug);
         } else {
             self.scroll_to_heading(&slug, cx);
@@ -1015,7 +1011,7 @@ impl Markdown {
     ) {
         // Deferred or in-flight parsing has no text positions yet, so queue
         // the request; parse completion forwards it.
-        if self.pending_parse.is_some() || self.deferred {
+        if self.pending_parse.is_some() || self.options.defer_parsing {
             self.pending_autoscroll = Some(source_index);
         } else {
             self.autoscroll_request = Some(source_index);
@@ -1047,7 +1043,7 @@ impl Markdown {
 
     pub fn reset(&mut self, source: SharedString, cx: &mut Context<Self>) {
         if &source == self.source() {
-            if self.pending_parse.is_none() && !self.deferred {
+            if self.pending_parse.is_none() && !self.options.defer_parsing {
                 if let Some(slug) = self.pending_heading_scroll.take() {
                     self.pending_autoscroll = None;
                     self.scroll_to_heading(&slug, cx);
@@ -1215,14 +1211,14 @@ impl Markdown {
     /// Starts parsing if it was deferred. Rendering the markdown does this
     /// automatically; other code that needs the parsed events must call it.
     pub fn ensure_parsed(&mut self, cx: &mut Context<Self>) {
-        if self.deferred {
-            self.deferred = false;
+        if self.options.defer_parsing {
+            self.options.defer_parsing = false;
             self.parse(cx);
         }
     }
 
     fn parse(&mut self, cx: &mut Context<Self>) {
-        if self.deferred {
+        if self.options.defer_parsing {
             return;
         }
 
@@ -5293,7 +5289,7 @@ mod tests {
         markdown.update(cx, |markdown, cx| {
             markdown.append("hello **world**", cx);
             assert!(
-                markdown.deferred,
+                markdown.options.defer_parsing,
                 "empty-source deferred markdown stays deferred"
             );
             assert!(
