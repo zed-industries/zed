@@ -47,8 +47,8 @@ use std::{
 use theme_settings::ThemeSettings;
 use ui::{
     ContextMenu, ContextMenuEntry, ContextMenuItem, DecoratedIcon, IconButtonShape, IconDecoration,
-    IconDecorationKind, Indicator, PopoverMenu, PopoverMenuHandle, Tab, TabBar, TabPosition,
-    Tooltip, prelude::*, right_click_menu,
+    IconDecorationKind, IconPosition, Indicator, PopoverMenu, PopoverMenuHandle, Tab, TabBar,
+    TabPosition, Tooltip, prelude::*, right_click_menu,
 };
 use util::{
     ResultExt, debug_panic, markdown::MarkdownInlineCode, maybe, paths::PathStyle,
@@ -445,6 +445,7 @@ pub struct Pane {
     close_pane_if_empty: bool,
     pub new_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub split_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
+    pub tab_overflow_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     pinned_tab_count: usize,
     diagnostics: HashMap<ProjectPath, DiagnosticSeverity>,
     zoom_out_on_close: bool,
@@ -618,6 +619,7 @@ impl Pane {
             close_pane_if_empty: true,
             split_item_context_menu_handle: Default::default(),
             new_item_context_menu_handle: Default::default(),
+            tab_overflow_context_menu_handle: Default::default(),
             pinned_tab_count: 0,
             diagnostics: Default::default(),
             zoom_out_on_close: true,
@@ -724,6 +726,7 @@ impl Pane {
     pub fn context_menu_focused(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         self.new_item_context_menu_handle.is_focused(window, cx)
             || self.split_item_context_menu_handle.is_focused(window, cx)
+            || self.tab_overflow_context_menu_handle.is_focused(window, cx)
     }
 
     fn focus_out(&mut self, _event: FocusOutEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -4321,11 +4324,61 @@ fn default_render_tab_bar_buttons(
         Some(_) => (false, pane.items_len() > 1),
         None => (false, false),
     };
+    let tab_count = pane.items_len();
+    let pane_handle = cx.entity();
     // Ideally we would return a vec of elements here to pass directly to the [TabBar]'s
     // `end_slot`, but due to needing a view here that isn't possible.
     let right_children = h_flex()
         // Instead we need to replicate the spacing from the [TabBar]'s `end_slot` here.
         .gap(DynamicSpacing::Base04.rems(cx))
+        .child(
+            PopoverMenu::new("pane-tab-bar-overflow")
+                .trigger_with_tooltip(
+                    IconButton::new("tab-overflow", IconName::ChevronDown)
+                        .icon_size(IconSize::Small)
+                        .disabled(tab_count == 0),
+                    Tooltip::text("All Tabs"),
+                )
+                .anchor(Anchor::TopRight)
+                .with_handle(pane.tab_overflow_context_menu_handle.clone())
+                .menu(move |window, cx| {
+                    let pane_handle = pane_handle.clone();
+                    let pane = pane_handle.read(cx);
+                    if pane.items_len() == 0 {
+                        return None;
+                    }
+                    let active_item_id = pane.active_item().map(|item| item.item_id());
+                    let entries: Vec<(EntityId, SharedString)> = pane
+                        .items()
+                        .map(|item| (item.item_id(), item.tab_content_text(0, cx)))
+                        .collect();
+                    Some(ContextMenu::build(window, cx, move |mut menu, _, _| {
+                        for (item_id, title) in entries {
+                            let pane_handle = pane_handle.clone();
+                            let is_active = active_item_id == Some(item_id);
+                            let title = if title.is_empty() {
+                                SharedString::from("untitled")
+                            } else {
+                                title
+                            };
+                            menu = menu.toggleable_entry(
+                                title,
+                                is_active,
+                                IconPosition::Start,
+                                None,
+                                move |window, cx| {
+                                    pane_handle.update(cx, |pane, cx| {
+                                        if let Some(ix) = pane.index_for_item_id(item_id) {
+                                            pane.activate_item(ix, true, true, window, cx);
+                                        }
+                                    });
+                                },
+                            );
+                        }
+                        menu
+                    }))
+                }),
+        )
         .child(
             PopoverMenu::new("pane-tab-bar-popover-menu")
                 .trigger_with_tooltip(
@@ -9055,6 +9108,43 @@ mod tests {
             cx.set_global(settings_store);
             theme_settings::init(LoadThemes::JustBase, cx);
         });
+    }
+
+    #[gpui::test]
+    async fn test_tab_overflow_menu_activates_item(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        for label in ["A", "B", "C"] {
+            pane.update_in(cx, |pane, window, cx| {
+                let item = cx.new(|cx| {
+                    let mut item = TestItem::new(cx).with_label(label);
+                    item.tab_descriptions = Some(vec![label]);
+                    item
+                });
+                pane.add_item(Box::new(item), false, false, None, window, cx);
+            });
+        }
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+        pane.update_in(cx, |pane, window, cx| {
+            window.focus(&pane.focus_handle(cx), cx);
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        let menu_handle =
+            pane.read_with(cx, |pane, _| pane.tab_overflow_context_menu_handle.clone());
+        cx.update(|window, cx| menu_handle.show(window, cx));
+        assert!(menu_handle.is_deployed());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let first_tab = cx.debug_bounds("MENU_ITEM-A").expect("first tab menu item");
+        cx.simulate_click(first_tab.center(), Modifiers::none());
+
+        assert_item_labels(&pane, ["A*", "B", "C"], cx);
     }
 
     fn set_max_tabs(cx: &mut TestAppContext, value: Option<usize>) {

@@ -1070,6 +1070,107 @@ async fn test_remove_project_group_opens_unloaded_local_neighbor(cx: &mut TestAp
 }
 
 #[gpui::test]
+async fn test_move_project_group_to_and_end(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/project-a", json!({})).await;
+    fs.insert_tree("/project-b", json!({})).await;
+    fs.insert_tree("/project-c", json!({})).await;
+    cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+
+    let project_a = Project::test(fs.clone(), ["/project-a".as_ref()], cx).await;
+    let project_b = Project::test(fs.clone(), ["/project-b".as_ref()], cx).await;
+    let project_c = Project::test(fs, ["/project-c".as_ref()], cx).await;
+
+    let key_a = project_a.read_with(cx, |project, cx| project.project_group_key(cx));
+    let key_b = project_b.read_with(cx, |project, cx| project.project_group_key(cx));
+    let key_c = project_c.read_with(cx, |project, cx| project.project_group_key(cx));
+
+    let (multi_workspace, cx) = setup_multi_workspace(&[project_a], cx);
+
+    multi_workspace.update(cx, |multi_workspace, _cx| {
+        multi_workspace.test_add_project_group(ProjectGroup {
+            key: key_b.clone(),
+            workspaces: Vec::new(),
+            expanded: true,
+        });
+        multi_workspace.test_add_project_group(ProjectGroup {
+            key: key_c.clone(),
+            workspaces: Vec::new(),
+            expanded: true,
+        });
+    });
+
+    multi_workspace.read_with(cx, |mw, _| {
+        assert_eq!(
+            mw.project_group_keys(),
+            vec![key_a.clone(), key_b.clone(), key_c.clone()]
+        );
+    });
+
+    multi_workspace.update(cx, |mw, cx| {
+        assert!(mw.move_project_group_to(&key_a, &key_c, cx));
+    });
+    multi_workspace.read_with(cx, |mw, _| {
+        assert_eq!(
+            mw.project_group_keys(),
+            vec![key_b.clone(), key_c.clone(), key_a.clone()]
+        );
+    });
+
+    multi_workspace.update(cx, |mw, cx| {
+        assert!(mw.move_project_group_to(&key_c, &key_b, cx));
+    });
+    multi_workspace.read_with(cx, |mw, _| {
+        assert_eq!(
+            mw.project_group_keys(),
+            vec![key_c.clone(), key_b.clone(), key_a.clone()]
+        );
+    });
+
+    multi_workspace.update(cx, |mw, cx| {
+        assert!(mw.move_project_group_to_end(&key_c, cx));
+    });
+    multi_workspace.read_with(cx, |mw, _| {
+        assert_eq!(
+            mw.project_group_keys(),
+            vec![key_b.clone(), key_a.clone(), key_c.clone()]
+        );
+    });
+
+    multi_workspace.update(cx, |multi_workspace, cx| {
+        assert!(multi_workspace.move_project_group_to_start(&key_c, cx));
+        assert!(!multi_workspace.move_project_group_to_start(&key_c, cx));
+        assert!(!multi_workspace.move_project_group_to_end(&key_a, cx));
+    });
+    cx.run_until_parked();
+
+    let expected_order = vec![key_c, key_b, key_a];
+    assert_eq!(
+        multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace
+            .project_group_keys()),
+        expected_order
+    );
+    let saved_state = cx.update(|window, cx| {
+        let json = db::kvp::KeyValueStore::global(cx)
+            .scoped("multi_workspace_state")
+            .read(&window.window_handle().window_id().as_u64().to_string())
+            .expect("read saved project order")
+            .expect("project reorder should persist window state");
+        serde_json::from_str::<crate::persistence::model::MultiWorkspaceState>(&json)
+            .expect("saved window state")
+    });
+    assert_eq!(
+        saved_state
+            .project_groups
+            .into_iter()
+            .map(ProjectGroupKey::from)
+            .collect::<Vec<_>>(),
+        expected_order
+    );
+}
+
+#[gpui::test]
 async fn test_remove_project_group_replaces_unretained_active_workspace(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.executor());

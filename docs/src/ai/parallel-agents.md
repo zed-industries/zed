@@ -71,6 +71,8 @@ The Threads Sidebar can hold multiple projects at once. Each project gets its ow
 
 To add another project to the sidebar, click the **Add Project** button (open-folder icon) in the sidebar bottom bar. The popover that opens lists your recent projects and also provides **Add Local Folders** and **Add Remote Folder** buttons at the bottom.
 
+To reorder project folders, right-click a project header (or open its ellipsis menu) and choose **Move Up**, **Move Down**, **Move to Top**, or **Move to Bottom**. These actions move the whole project group without changing the order of its threads. The project order is saved for the window and restored when you reopen it. **Move to Top** is disabled for the first project, and **Move to Bottom** is disabled for the last.
+
 ### Multi-Root Folder Projects {#multi-root-folder-projects}
 
 A single project can contain multiple folders (a multi-root folder project). Agents can then read and write across all of those folders in a single thread. There are multiple ways to set one up:
