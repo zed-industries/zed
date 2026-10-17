@@ -5,7 +5,7 @@ use gpui::{
     AbsoluteLength, AnyElement, App, AvailableSpace, Bounds, Context, DragMoveEvent, Element,
     Entity, GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId, Length,
     ParentElement, Pixels, StatefulInteractiveElement, Styled, TextStyleRefinement, Window, div,
-    linear_color_stop, linear_gradient, point, px, size,
+    point, px, size,
 };
 use multi_buffer::{Anchor, ExcerptBoundaryInfo};
 use smallvec::smallvec;
@@ -557,14 +557,13 @@ impl SplitBufferHeadersElement {
             .w(available_width)
             .relative()
             .child(
+                // Opaque rather than a gradient: this backs the padding around the header
+                // bar, and is all that masks the excerpt scrolling underneath. A
+                // translucent edge leaks that text through the padding strip.
                 div()
                     .w(available_width)
                     .h(FILE_HEADER_HEIGHT as f32 * line_height)
-                    .bg(linear_gradient(
-                        0.,
-                        linear_color_stop(editor_bg_color.opacity(0.), 0.),
-                        linear_color_stop(editor_bg_color, 0.6),
-                    ))
+                    .bg(editor_bg_color)
                     .absolute()
                     .top_0(),
             )
