@@ -4110,4 +4110,26 @@ mod test {
         cx.simulate_keystrokes("d a w");
         cx.assert_state("fooˇBaz", Mode::Normal);
     }
+
+    #[gpui::test]
+    async fn test_helix_inner_subword_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.update(|_window, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "q",
+                super::Subword {
+                    ignore_punctuation: false,
+                },
+                Some("vim_operator == i"),
+            )]);
+        });
+
+        cx.set_state("abc dˇef ghi", Mode::HelixNormal);
+        cx.simulate_keystrokes("m i q");
+        cx.assert_state("abc «defˇ» ghi", Mode::HelixNormal);
+
+        cx.set_state("fooBˇarBaz", Mode::HelixNormal);
+        cx.simulate_keystrokes("m i q");
+        cx.assert_state("foo«Barˇ»Baz", Mode::HelixNormal);
+    }
 }
