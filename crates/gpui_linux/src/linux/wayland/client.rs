@@ -932,7 +932,7 @@ fn wayland_socket_path(environment: &GraphicalEnvironment) -> anyhow::Result<Pat
 fn wl_seat_version(version: u32) -> anyhow::Result<u32> {
     // We rely on the wl_pointer.frame event
     const WL_SEAT_MIN_VERSION: u32 = 5;
-    const WL_SEAT_MAX_VERSION: u32 = 9;
+    const WL_SEAT_MAX_VERSION: u32 = 10;
 
     if version < WL_SEAT_MIN_VERSION {
         anyhow::bail!(
@@ -2255,6 +2255,16 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                         drop(state);
                         focused_window.handle_input(input);
                     }
+                    wl_keyboard::KeyState::Repeated if !keysym.is_modifier_key() => {
+                        let input = PlatformInput::KeyDown(KeyDownEvent {
+                            keystroke: keystroke_from_xkb(keymap_state, state.modifiers, keycode),
+                            is_held: true,
+                            prefer_character_input: false,
+                        });
+
+                        drop(state);
+                        focused_window.handle_input(input);
+                    }
                     wl_keyboard::KeyState::Released if !keysym.is_modifier_key() => {
                         let input = PlatformInput::KeyUp(KeyUpEvent {
                             keystroke: keystroke_from_xkb(keymap_state, state.modifiers, keycode),
@@ -3197,6 +3207,12 @@ mod tests {
         assert!(wl_output_version(1).is_err());
         assert_eq!(wl_seat_version(5).expect("minimum seat version"), 5);
         assert_eq!(wl_output_version(2).expect("minimum output version"), 2);
+    }
+
+    #[test]
+    fn binds_seat_version_with_server_side_key_repeat() {
+        assert_eq!(wl_seat_version(10).expect("repeated key state"), 10);
+        assert_eq!(wl_seat_version(11).expect("newer seat version"), 10);
     }
 
     #[test]
