@@ -795,7 +795,20 @@ impl SplittableEditor {
                     if this.lhs.is_some() {
                         let translated =
                             translate_lhs_selections_to_rhs(selections_by_buffer, this, cx);
-                        if !translated.is_empty() {
+                        if translated.is_empty() {
+                            return;
+                        }
+                        // Let the owner of the rhs editor decide which buffer to open, as it
+                        // would for an open requested from the rhs.
+                        if this.rhs_editor.read(cx).delegates_open_excerpts() {
+                            cx.emit(EditorEvent::OpenExcerptsRequested {
+                                selections_by_buffer: translated
+                                    .into_iter()
+                                    .map(|(buffer, value)| (buffer.read(cx).remote_id(), value))
+                                    .collect(),
+                                split: *split,
+                            });
+                        } else {
                             let workspace = this.workspace.clone();
                             let split = *split;
                             Editor::open_buffers_in_workspace(
