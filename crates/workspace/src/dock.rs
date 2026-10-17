@@ -435,10 +435,10 @@ impl Dock {
             let focus_subscription =
                 cx.on_focus(&focus_handle, window, |dock: &mut Dock, window, cx| {
                     if let Some(active_entry) = dock.active_panel_entry() {
-                        active_entry
-                            .panel
-                            .activation_focus_handle(cx)
-                            .focus(window, cx)
+                        let panel_focus_handle = active_entry.panel.panel_focus_handle(cx);
+                        if dock.focus_handle.contains(&panel_focus_handle, window) {
+                            panel_focus_handle.focus(window, cx);
+                        }
                     }
                 });
             let zoom_subscription = cx.subscribe(&workspace, |dock, workspace, e: &Event, cx| {
@@ -1615,6 +1615,7 @@ pub mod test {
         pub default_size: Pixels,
         pub flexible: bool,
         pub activation_priority: u32,
+        pub track_focus: bool,
     }
     actions!(test_only, [ToggleTestPanel]);
 
@@ -1631,6 +1632,18 @@ pub mod test {
                 default_size: px(300.),
                 flexible: false,
                 activation_priority,
+                track_focus: true,
+            }
+        }
+
+        pub fn new_without_tracked_focus(
+            position: DockPosition,
+            activation_priority: u32,
+            cx: &mut App,
+        ) -> Self {
+            Self {
+                track_focus: false,
+                ..Self::new(position, activation_priority, cx)
             }
         }
 
@@ -1661,7 +1674,9 @@ pub mod test {
         fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             div()
                 .id("test")
-                .track_focus(&self.focus_handle(cx))
+                .when(self.track_focus, |this| {
+                    this.track_focus(&self.focus_handle(cx))
+                })
                 .children(self.activation_focus_handle.iter().map(|focus_handle| {
                     div().id("test-activation-child").track_focus(focus_handle)
                 }))
