@@ -8102,27 +8102,8 @@ impl LineWithInvisibles {
                 line_y,
             );
         let extract_whitespace_info = |invisible: &Invisible| {
-            let (token_offset, token_end_offset, invisible_symbol) = match invisible {
-                Invisible::Tab {
-                    line_start_offset,
-                    line_end_offset,
-                } => (*line_start_offset, *line_end_offset, &layout.tab_invisible),
-                Invisible::Whitespace {
-                    line_start_offset,
-                    line_end_offset,
-                } => (
-                    *line_start_offset,
-                    *line_end_offset,
-                    &layout.space_invisible,
-                ),
-            };
-
-            let token_x = self.x_for_index(token_offset);
-            // Center the marker inside the actual glyph's width so it lines up with
-            // proportional fonts instead of assuming a monospace `em_width` cell.
-            let glyph_width = (self.x_for_index(token_end_offset) - token_x).max(Pixels::ZERO);
-            let invisible_offset = (glyph_width - invisible_symbol.width).max(Pixels::ZERO) / 2.0;
-            let origin = line_origin + point(token_x + invisible_offset, Pixels::ZERO);
+            let ([token_offset, token_end_offset], invisible_symbol, origin) =
+                self.invisible_paint_info(invisible, layout, line_origin);
 
             (
                 [token_offset, token_end_offset],
@@ -8204,6 +8185,36 @@ impl LineWithInvisibles {
                 }
             }
         }
+    }
+
+    fn invisible_paint_info<'a>(
+        &self,
+        invisible: &Invisible,
+        layout: &'a EditorLayout,
+        line_origin: gpui::Point<Pixels>,
+    ) -> ([usize; 2], &'a ShapedLine, gpui::Point<Pixels>) {
+        let (token_offset, token_end_offset, invisible_symbol) = match invisible {
+            Invisible::Tab {
+                line_start_offset,
+                line_end_offset,
+            } => (*line_start_offset, *line_end_offset, &layout.tab_invisible),
+            Invisible::Whitespace {
+                line_start_offset,
+                line_end_offset,
+            } => (
+                *line_start_offset,
+                *line_end_offset,
+                &layout.space_invisible,
+            ),
+        };
+
+        let token_x = self.x_for_index(token_offset);
+        let glyph_width = (self.x_for_index(token_end_offset) - token_x).max(Pixels::ZERO);
+        let invisible_offset =
+            invisible_marker_offset(invisible, glyph_width, invisible_symbol.width);
+        let origin = line_origin + point(token_x + invisible_offset, Pixels::ZERO);
+
+        ([token_offset, token_end_offset], invisible_symbol, origin)
     }
 
     pub fn x_for_index(&self, index: usize) -> Pixels {
@@ -8296,6 +8307,24 @@ impl LineWithInvisibles {
             TextAlign::Left => px(0.0),
             TextAlign::Center => (content_width - line_width) / 2.0,
             TextAlign::Right => content_width - line_width,
+        }
+    }
+}
+
+/// Offset of an invisible marker from the start of its token.
+///
+/// Tab markers sit at the start of the tab so they line up with where the tab
+/// begins. Whitespace markers are centered inside the glyph's actual width so
+/// they line up with proportional fonts.
+fn invisible_marker_offset(
+    invisible: &Invisible,
+    glyph_width: Pixels,
+    invisible_symbol_width: Pixels,
+) -> Pixels {
+    match invisible {
+        Invisible::Tab { .. } => Pixels::ZERO,
+        Invisible::Whitespace { .. } => {
+            (glyph_width - invisible_symbol_width).max(Pixels::ZERO) / 2.0
         }
     }
 }
@@ -13143,6 +13172,121 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_tab_invisible_markers_are_left_aligned(cx: &mut TestAppContext) {
+        const TAB_SIZE: u32 = 4;
+
+        init_test(cx, |s| {
+            s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
+            s.defaults.tab_size = NonZeroU32::new(TAB_SIZE);
+            s.defaults.whitespace_map = Some(settings::WhitespaceMapContent {
+                space: Some('\u{00b7}'),
+                tab: Some('\u{2192}'),
+            });
+        });
+
+        let state = draw_new_editor_layout(cx, EditorMode::full(), "\t\t", px(500.0), false);
+        let Some(line_layout) = state.position_map.line_layouts.first() else {
+            panic!("expected a line layout for tab invisibles");
+        };
+
+        assert_eq!(
+            line_layout.invisibles,
+            vec![
+                Invisible::Tab {
+                    line_start_offset: 0,
+                    line_end_offset: TAB_SIZE as usize,
+                },
+                Invisible::Tab {
+                    line_start_offset: TAB_SIZE as usize,
+                    line_end_offset: TAB_SIZE as usize * 2,
+                },
+            ]
+        );
+
+        let line_origin = invisible_test_line_origin(&state, line_layout);
+        for invisible in &line_layout.invisibles {
+            let ([start, _], _, origin) =
+                line_layout.invisible_paint_info(invisible, &state, line_origin);
+            assert_eq!(origin.x, line_origin.x + line_layout.x_for_index(start));
+        }
+    }
+
+    #[gpui::test]
+    fn test_space_invisible_markers_keep_centering_offset(cx: &mut TestAppContext) {
+        init_test(cx, |s| {
+            s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
+            s.defaults.whitespace_map = Some(settings::WhitespaceMapContent {
+                space: Some('\u{00b7}'),
+                tab: Some('\u{2192}'),
+            });
+        });
+
+        let state = draw_new_editor_layout(cx, EditorMode::full(), "  ", px(500.0), false);
+        let Some(line_layout) = state.position_map.line_layouts.first() else {
+            panic!("expected a line layout for space invisibles");
+        };
+
+        assert_eq!(
+            line_layout.invisibles,
+            vec![
+                Invisible::Whitespace {
+                    line_start_offset: 0,
+                    line_end_offset: 1,
+                },
+                Invisible::Whitespace {
+                    line_start_offset: 1,
+                    line_end_offset: 2,
+                },
+            ]
+        );
+
+        let line_origin = invisible_test_line_origin(&state, line_layout);
+        for invisible in &line_layout.invisibles {
+            let ([start, end], _, origin) =
+                line_layout.invisible_paint_info(invisible, &state, line_origin);
+            let token_x = line_layout.x_for_index(start);
+            let glyph_width = line_layout.x_for_index(end) - token_x;
+            let expected_x = line_origin.x
+                + token_x
+                + invisible_marker_offset(invisible, glyph_width, state.space_invisible.width);
+
+            assert_eq!(origin.x, expected_x);
+        }
+
+        let space = Invisible::Whitespace {
+            line_start_offset: 0,
+            line_end_offset: 1,
+        };
+        assert_eq!(invisible_marker_offset(&space, px(10.0), px(2.0)), px(4.0));
+        assert_eq!(invisible_marker_offset(&space, px(10.0), px(12.0)), px(0.0));
+        assert_eq!(
+            invisible_marker_offset(
+                &Invisible::Tab {
+                    line_start_offset: 0,
+                    line_end_offset: 4,
+                },
+                px(40.0),
+                px(2.0)
+            ),
+            px(0.0)
+        );
+    }
+
+    fn invisible_test_line_origin(
+        state: &EditorLayout,
+        line_layout: &LineWithInvisibles,
+    ) -> gpui::Point<Pixels> {
+        let line_y = state.position_map.line_height
+            * (DisplayRow(0).as_f64() - state.position_map.scroll_position.y) as f32;
+        state.content_origin
+            + point(
+                line_layout.alignment_offset(state.text_align, state.content_width)
+                    - Pixels::from(state.position_map.scroll_pixel_position.x),
+                line_y,
+            )
+    }
+
+    #[gpui::test]
     fn test_multibyte_whitespace_uses_utf8_byte_offsets(cx: &mut TestAppContext) {
         init_test(cx, |s| {
             s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
@@ -13370,6 +13514,22 @@ mod tests {
         editor_width: Pixels,
         show_line_numbers: bool,
     ) -> Vec<Invisible> {
+        draw_new_editor_layout(cx, editor_mode, input_text, editor_width, show_line_numbers)
+            .position_map
+            .line_layouts
+            .iter()
+            .flat_map(|line_with_invisibles| &line_with_invisibles.invisibles)
+            .cloned()
+            .collect()
+    }
+
+    fn draw_new_editor_layout(
+        cx: &mut TestAppContext,
+        editor_mode: EditorMode,
+        input_text: &str,
+        editor_width: Pixels,
+        show_line_numbers: bool,
+    ) -> EditorLayout {
         info!(
             "Creating editor with mode {editor_mode:?}, width {}px and text '{input_text}'",
             f32::from(editor_width)
@@ -13395,12 +13555,6 @@ mod tests {
             |_, _| EditorElement::new(&editor, style),
         );
         state
-            .position_map
-            .line_layouts
-            .iter()
-            .flat_map(|line_with_invisibles| &line_with_invisibles.invisibles)
-            .cloned()
-            .collect()
     }
 
     #[gpui::test]
