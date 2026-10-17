@@ -2,18 +2,17 @@ use crate::{
     conflict_view,
     git_panel::{GitPanel, GitStatusEntry},
     git_panel_settings::GitPanelSettings,
-    image_diff_view::{
-        ImageDiff, ImageDiffFile, ImageDiffPane, ImageDiffPaneView, image_diff_inputs,
-    },
+    image_diff_view::{ImageDiff, ImageDiffPane, ImageDiffPaneView, image_diff_inputs},
 };
 use anyhow::Result;
 use buffer_diff::BufferDiff;
 use collections::{HashMap, HashSet};
 use editor::{
-    EditorEvent, EditorSettings, SelectionEffects, SplittableEditor,
+    Editor, EditorEvent, EditorSettings, SelectionEffects, SplittableEditor,
     actions::GoToHunk,
     display_map::{
-        BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
+        BlockContext, BlockId, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId,
+        RenderBlock,
     },
     multibuffer_context_lines,
     scroll::Autoscroll,
@@ -25,11 +24,11 @@ use git::{
     status::{FileStatus, TreeDiffStatus},
 };
 use gpui::{
-    App, AppContext as _, AsyncWindowContext, Entity, EventEmitter, FocusHandle, Focusable, Render,
-    SharedString, Subscription, Task, WeakEntity,
+    App, AppContext as _, AsyncWindowContext, Entity, EventEmitter, FocusHandle, Focusable, Pixels,
+    Render, SharedString, Subscription, Task, WeakEntity, canvas, px,
 };
 use language::{
-    Anchor, Buffer, BufferId, Capability, OffsetRangeExt, Point, ReplicaId, TextBuffer,
+    Anchor, Buffer, BufferId, Capability, DiskState, OffsetRangeExt, Point, ReplicaId, TextBuffer,
 };
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{
@@ -786,10 +785,28 @@ impl DiffMultibuffer {
                 image_diff.set_inputs(old_input, new_input, cx);
             });
         } else {
-            let file = Arc::new(ImageDiffFile {
+            let Some(worktree) = self
+                .project
+                .read(cx)
+                .worktree_for_id(project_path.worktree_id, cx)
+            else {
+                return;
+            };
+            let entry_id = worktree
+                .read(cx)
+                .entry_for_path(&project_path.path)
+                .map(|entry| entry.id);
+            // A worktree file with its real entry lets the outline panel place the section in the
+            // file tree. It is not local, so the buffer never loads the image bytes as text.
+            let file = Arc::new(project::File {
+                worktree,
                 path: project_path.path.clone(),
-                worktree_id: project_path.worktree_id,
-                is_deleted,
+                disk_state: DiskState::Historic {
+                    was_deleted: is_deleted,
+                },
+                entry_id,
+                is_local: false,
+                is_private: false,
             });
             let buffer = cx.new(|cx| {
                 let text = TextBuffer::new(
@@ -831,16 +848,26 @@ impl DiffMultibuffer {
             let both_panes =
                 cx.new(|cx| ImageDiffPaneView::new(image_diff.clone(), ImageDiffPane::Both, cx));
             let splittable_editor = self.editor.downgrade();
-            let rhs_render: RenderBlock = Arc::new(move |cx| {
-                // When split, the left side shows the old image in this block's balancing block.
-                let is_split = splittable_editor
-                    .upgrade()
-                    .is_some_and(|editor| editor.read(cx.app).lhs_editor().is_some());
-                let pane = if is_split { &new_pane } else { &both_panes };
-                render_image_diff_block(pane.clone().into_any_element(), cx)
+            let rhs_render: RenderBlock = Arc::new({
+                let image_diff = image_diff.clone();
+                move |cx| {
+                    let Some(splittable_editor) = splittable_editor.upgrade() else {
+                        return div().into_any_element();
+                    };
+                    let splittable_editor = splittable_editor.read(cx.app);
+                    // When split, the left side shows the old image in this block's balancing block.
+                    let is_split = splittable_editor.lhs_editor().is_some();
+                    let fit = ImageBlockFit {
+                        image_diff: image_diff.clone(),
+                        editor: splittable_editor.rhs_editor().downgrade(),
+                        pane_count: if is_split { 1 } else { 2 },
+                    };
+                    let pane = if is_split { &new_pane } else { &both_panes };
+                    render_image_diff_block(pane.clone().into_any_element(), Some(fit), cx)
+                }
             });
             let lhs_render: RenderBlock = Arc::new(move |cx| {
-                render_image_diff_block(old_pane.clone().into_any_element(), cx)
+                render_image_diff_block(old_pane.clone().into_any_element(), None, cx)
             });
 
             let block_id = self
@@ -1411,14 +1438,96 @@ fn tree_sort_path(repo_path: &RelPath) -> Arc<RelPath> {
         .unwrap_or_else(|_| repo_path.into_arc())
 }
 
-fn render_image_diff_block(content: AnyElement, cx: &mut BlockContext) -> AnyElement {
+/// Lets an image section grow or shrink so its images fill the available width.
+struct ImageBlockFit {
+    image_diff: Entity<ImageDiff>,
+    editor: WeakEntity<Editor>,
+    pane_count: usize,
+}
+
+fn render_image_diff_block(
+    content: AnyElement,
+    fit: Option<ImageBlockFit>,
+    cx: &mut BlockContext,
+) -> AnyElement {
+    let line_height = cx.line_height;
+    let current_lines = cx.height;
+    let block_id = cx.block_id;
     div()
         .id(cx.block_id)
-        .h(cx.line_height * cx.height as f32)
+        .h(line_height * current_lines as f32)
         .w_full()
+        .overflow_hidden()
         .pl(cx.margins.gutter.full_width())
         .pr(cx.margins.right)
         .py_2()
-        .child(content)
+        .child(
+            div()
+                .relative()
+                .size_full()
+                .child(content)
+                .when_some(fit, |this, fit| {
+                    // The block's height is a line count fixed when it is inserted, so measure the
+                    // width it actually got and resize it to match the images.
+                    this.child(
+                        canvas(
+                            move |bounds, _window, cx| {
+                                let BlockId::Custom(block_id) = block_id else {
+                                    return;
+                                };
+                                let Some(height_ratio) = fit.image_diff.read(cx).max_height_ratio()
+                                else {
+                                    return;
+                                };
+                                let lines = image_diff_block_lines(
+                                    bounds.size.width,
+                                    fit.pane_count,
+                                    height_ratio,
+                                    line_height,
+                                );
+                                if lines == current_lines {
+                                    return;
+                                }
+                                let editor = fit.editor;
+                                // The editor is mid-paint, so it cannot be updated until this frame ends.
+                                cx.defer(move |cx| {
+                                    editor
+                                        .update(cx, |editor, cx| {
+                                            editor.resize_blocks(
+                                                HashMap::from_iter([(block_id, lines)]),
+                                                None,
+                                                cx,
+                                            );
+                                        })
+                                        .log_err();
+                                });
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .inset_0(),
+                    )
+                }),
+        )
         .into_any_element()
+}
+
+/// Mirrors the spacing in `image_diff_view::render_side` and `ImageDiff::render_pane`.
+fn image_diff_block_lines(
+    content_width: Pixels,
+    pane_count: usize,
+    height_ratio: f32,
+    line_height: Pixels,
+) -> u32 {
+    const PANE_GAP: Pixels = px(8.);
+    const CAPTION_GAP: Pixels = px(4.);
+    const FRAME_BORDERS: Pixels = px(2.);
+    const BLOCK_PADDING: Pixels = px(16.);
+
+    let pane_count = pane_count.max(1);
+    let pane_width = (content_width - PANE_GAP * (pane_count - 1) as f32) / pane_count as f32;
+    let image_height = (pane_width - FRAME_BORDERS).max(px(0.)) * height_ratio;
+    // A line of height is a safe allowance for the small caption label.
+    let total_height = image_height + line_height + CAPTION_GAP + FRAME_BORDERS + BLOCK_PADDING;
+    ((total_height / line_height).ceil() as u32).max(1)
 }

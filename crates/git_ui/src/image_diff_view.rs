@@ -6,8 +6,6 @@ use gpui::{
     IntoElement, ObjectFit, Render, StyledImage as _, Subscription, Task, WeakEntity, Window,
     checkerboard, img,
 };
-use language::DiskState;
-use project::WorktreeId;
 use project::{
     Project, ProjectPath,
     git_store::{
@@ -16,9 +14,9 @@ use project::{
     },
     image_store::{ImageItem, ImageMetadata, create_gpui_image},
 };
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 use ui::prelude::*;
-use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath, size::format_file_size};
+use util::{ResultExt as _, paths::PathStyle, size::format_file_size};
 use workspace::{Item, Workspace};
 
 const CHECKERBOARD_SQUARE_SIZE: f32 = 16.;
@@ -282,6 +280,20 @@ impl ImageDiff {
 }
 
 impl ImageDiff {
+    /// The largest height-to-width ratio among the loaded sides, or `None` while no side has an
+    /// image to size against.
+    pub(crate) fn max_height_ratio(&self) -> Option<f32> {
+        [&self.old_side, &self.new_side]
+            .into_iter()
+            .filter_map(|side| match side {
+                ImageDiffSide::Loaded { metadata, .. } if metadata.width > 0 => {
+                    Some(metadata.height as f32 / metadata.width as f32)
+                }
+                _ => None,
+            })
+            .reduce(f32::max)
+    }
+
     fn render_pane(&self, pane: ImageDiffPane, cx: &App) -> AnyElement {
         let old = || {
             render_side(
@@ -512,14 +524,19 @@ fn render_side(
         ImageDiffSide::Failed(message) => Label::new(message.clone())
             .color(Color::Error)
             .into_any_element(),
+        // Percentage heights do not resolve against the flex-sized frame, so `img` would take its
+        // height from its aspect ratio and overflow; absolute positioning sizes it to the frame.
         ImageDiffSide::Loaded { image, .. } => div()
-            .size_full()
+            .absolute()
+            .inset_0()
             .bg(checkerboard(
                 colors.panel_background,
                 CHECKERBOARD_SQUARE_SIZE,
             ))
             .child(
                 img(image.clone())
+                    .absolute()
+                    .inset_0()
                     .size_full()
                     .object_fit(ObjectFit::Contain),
             )
@@ -535,6 +552,7 @@ fn render_side(
         .child(Label::new(caption).size(LabelSize::Small).color(accent))
         .child(
             div()
+                .relative()
                 .flex_1()
                 .w_full()
                 .min_h_0()
@@ -545,65 +563,6 @@ fn render_side(
                 .border_color(colors.border)
                 .child(body),
         )
-}
-
-/// Images cannot be loaded as text buffers, so their diff sections use an empty placeholder
-/// buffer backed by this file.
-pub(crate) struct ImageDiffFile {
-    pub path: Arc<RelPath>,
-    pub worktree_id: WorktreeId,
-    pub is_deleted: bool,
-}
-
-impl language::File for ImageDiffFile {
-    fn as_local(&self) -> Option<&dyn language::LocalFile> {
-        None
-    }
-
-    fn disk_state(&self) -> DiskState {
-        DiskState::Historic {
-            was_deleted: self.is_deleted,
-        }
-    }
-
-    fn path_style(&self, _: &App) -> PathStyle {
-        PathStyle::local()
-    }
-
-    fn path(&self) -> &Arc<RelPath> {
-        &self.path
-    }
-
-    fn full_path(&self, _: &App) -> PathBuf {
-        self.path.as_std_path().to_path_buf()
-    }
-
-    fn file_name<'a>(&'a self, _: &'a App) -> &'a str {
-        self.path.file_name().unwrap_or_default()
-    }
-
-    fn worktree_id(&self, _: &App) -> WorktreeId {
-        self.worktree_id
-    }
-
-    fn to_proto(&self, _cx: &App) -> language::proto::File {
-        language::proto::File {
-            worktree_id: self.worktree_id.to_proto(),
-            entry_id: None,
-            path: self.path.as_unix_str().to_owned(),
-            mtime: None,
-            is_deleted: self.is_deleted,
-            is_historic: true,
-        }
-    }
-
-    fn is_private(&self) -> bool {
-        false
-    }
-
-    fn can_open(&self) -> bool {
-        !self.is_deleted
-    }
 }
 
 #[cfg(test)]

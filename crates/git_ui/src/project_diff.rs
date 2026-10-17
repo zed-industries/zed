@@ -2603,7 +2603,7 @@ mod tests {
             image_state(cx),
             (
                 vec![("logo.png".into(), "Loaded(2x2)".into(), "Absent".into())],
-                vec![("logo.png".into(), false)],
+                vec![("logo.png".into(), true)],
                 1,
                 1
             )
