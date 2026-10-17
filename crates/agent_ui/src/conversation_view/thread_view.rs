@@ -338,6 +338,31 @@ fn parse_cat_numbered_line(line: &str) -> Option<(u32, &str)> {
     Some((number.parse().ok()?, text))
 }
 
+/// Numbered `read_file` output. The language for highlighting comes from the
+/// parsed events, so displaying this renderer starts parsing.
+#[derive(IntoElement)]
+struct CatNumberedCodeBlock {
+    markdown: Entity<Markdown>,
+    parsed: ParsedCatNumberedCode,
+    markdown_style: MarkdownStyle,
+    copy_button_id: String,
+}
+
+impl RenderOnce for CatNumberedCodeBlock {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        self.markdown
+            .update(cx, |markdown, cx| markdown.ensure_parsed(cx));
+        let language = self.markdown.read(cx).first_code_block_language();
+        render_cat_numbered_code_block(
+            self.parsed,
+            language,
+            self.markdown_style,
+            self.copy_button_id,
+            cx,
+        )
+    }
+}
+
 fn render_cat_numbered_code_block(
     parsed: ParsedCatNumberedCode,
     language: Option<Arc<Language>>,
@@ -515,6 +540,80 @@ mod numbered_code_block_tests {
             .is_none()
         );
     }
+
+    #[gpui::test]
+    fn numbered_output_starts_parsing_when_rendered(cx: &mut gpui::TestAppContext) {
+        crate::test_support::init_test(cx);
+
+        let languages = Arc::new(language::LanguageRegistry::test(
+            cx.background_executor.clone(),
+        ));
+        languages.add(language::rust_lang());
+        let markdown = cx.new(|cx| {
+            Markdown::new_with_options(
+                "```rust\n     1\tfn main() {}\n```\n".into(),
+                Some(languages),
+                None,
+                markdown::MarkdownOptions {
+                    defer_parsing: true,
+                    ..Default::default()
+                },
+                cx,
+            )
+        });
+        cx.update(|cx| {
+            assert!(
+                markdown.read(cx).first_code_block_language().is_none(),
+                "deferred markdown has no parsed events yet"
+            );
+        });
+
+        struct TestWindow;
+
+        impl Render for TestWindow {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+
+        struct NumberedOutputView {
+            markdown: Entity<Markdown>,
+        }
+
+        impl Render for NumberedOutputView {
+            fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+                let parsed =
+                    parse_cat_numbered_markdown_code_block(self.markdown.read(cx).source())
+                        .expect("cat-numbered block");
+                CatNumberedCodeBlock {
+                    parsed,
+                    markdown: self.markdown.clone(),
+                    markdown_style: MarkdownStyle::default(),
+                    copy_button_id: "read-file-output-test".into(),
+                }
+            }
+        }
+
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        cx.draw(
+            Default::default(),
+            gpui::size(gpui::px(600.0), gpui::px(600.0)),
+            |_, cx| {
+                cx.new(|_| NumberedOutputView {
+                    markdown: markdown.clone(),
+                })
+                .into_any_element()
+            },
+        );
+        cx.run_until_parked();
+
+        cx.update(|_, cx| {
+            assert!(
+                markdown.read(cx).first_code_block_language().is_some(),
+                "rendering the numbered output must start parsing"
+            );
+        });
+    }
 }
 
 /// Tracks the user's permission dropdown selection state for a specific request.
@@ -595,6 +694,8 @@ pub struct ThreadView {
     pub last_token_limit_telemetry: Option<acp_thread::TokenUsageRatio>,
     thread_feedback: ThreadFeedbackState,
     pub list_state: ListState,
+    /// Scroll position to keep pinned while deferred markdown parses.
+    scroll_restore: Option<ListOffset>,
     pub session_capabilities: SharedSessionCapabilities,
     pub expanded_tool_call_raw_inputs: HashSet<acp_v2::ToolCallId>,
     collapsed_sandbox_authorization_details: HashSet<acp_v2::ToolCallId>,
@@ -794,6 +895,7 @@ impl ThreadView {
         model_selector: Option<Entity<ModelSelectorPopover>>,
         profile_selector: Option<Entity<ProfileSelector>>,
         list_state: ListState,
+        restored_scroll_position: Option<ListOffset>,
         session_capabilities: SharedSessionCapabilities,
         resumed_without_history: bool,
         project: WeakEntity<Project>,
@@ -1008,6 +1110,9 @@ impl ThreadView {
         }));
 
         let current_submission = thread.read(cx).latest_submission_id();
+        let scroll_restore = restored_scroll_position
+            .filter(|offset| offset.item_ix < thread.read(cx).entries().len());
+        list_state.set_item_heights_provisional(scroll_restore.is_some());
         let mut this = Self {
             root_thread_id,
             session_id,
@@ -1029,6 +1134,7 @@ impl ThreadView {
             model_selector,
             profile_selector,
             list_state,
+            scroll_restore,
             session_capabilities,
             resumed_without_history,
             _subscriptions: subscriptions,
@@ -1098,6 +1204,7 @@ impl ThreadView {
                 cx.defer(move |cx| {
                     let scroll_top = list_state.logical_scroll_top();
                     let _ = thread_view.update(cx, |this, cx| {
+                        this.clear_scroll_restore();
                         if let Some(thread) = this.as_native_thread(cx) {
                             thread.update(cx, |thread, _cx| {
                                 thread.set_ui_scroll_position(Some(scroll_top));
@@ -2047,6 +2154,7 @@ impl ThreadView {
             })?;
 
             let _ = this.update(cx, |this, cx| {
+                this.clear_scroll_restore();
                 this.list_state.scroll_to_end();
                 cx.notify();
             });
@@ -4237,6 +4345,7 @@ impl ThreadView {
                                     ),
                                 )
                                 .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.clear_scroll_restore();
                                     this.list_state.scroll_to(ListOffset {
                                         item_ix: entry_ix,
                                         offset_in_item: px(0.0),
@@ -4322,6 +4431,7 @@ impl ThreadView {
                             .color(Color::Default),
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
+                        this.clear_scroll_restore();
                         this.list_state.scroll_to(ListOffset {
                             item_ix: entry_ix,
                             offset_in_item: px(0.0),
@@ -6773,6 +6883,52 @@ fn sandbox_network_rows(network: &SandboxNetPolicy) -> Vec<SandboxRow> {
 }
 
 impl ThreadView {
+    /// Releases the provisional-height mode once every row that affects the
+    /// restored viewport has finished parsing.
+    fn finish_scroll_restore(&mut self, cx: &mut Context<Self>) {
+        let Some(target) = self.scroll_restore else {
+            return;
+        };
+
+        if self.list_state.is_scrollbar_dragging() {
+            self.clear_scroll_restore();
+            return;
+        }
+
+        if self.list_state.bounds_for_item(target.item_ix).is_none() {
+            return;
+        }
+
+        let parses_pending = {
+            let entries = self.thread.read(cx).entries();
+            let mut parses_pending = false;
+            let mut ix = target.item_ix;
+            while let Some(entry) = entries.get(ix) {
+                if self.list_state.bounds_for_item(ix).is_none() {
+                    break;
+                }
+                if entry.has_pending_markdown_parse(cx) {
+                    parses_pending = true;
+                    break;
+                }
+                ix += 1;
+            }
+            parses_pending
+        };
+
+        if parses_pending {
+            return;
+        }
+
+        self.clear_scroll_restore();
+        cx.notify();
+    }
+
+    fn clear_scroll_restore(&mut self) {
+        self.scroll_restore = None;
+        self.list_state.set_item_heights_provisional(false);
+    }
+
     fn render_entries(&mut self, cx: &mut Context<Self>) -> List {
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
         let centered_container = move |content: AnyElement| {
@@ -6787,6 +6943,18 @@ impl ThreadView {
         list(
             self.list_state.clone(),
             cx.processor(move |this, index: usize, window, cx| {
+                if this
+                    .scroll_restore
+                    .is_some_and(|target| target.item_ix == index)
+                {
+                    let thread_view = cx.entity().downgrade();
+                    cx.defer(move |cx| {
+                        thread_view
+                            .update(cx, |this, cx| this.finish_scroll_restore(cx))
+                            .ok();
+                    });
+                }
+
                 let entries = this.thread.read(cx).entries();
                 if let Some(entry) = entries.get(index) {
                     let rendered = this.render_entry(index, entries.len(), entry, window, cx);
@@ -7701,6 +7869,8 @@ impl ThreadView {
         user_message_index: Option<usize>,
         cx: &mut Context<Self>,
     ) {
+        self.clear_scroll_restore();
+
         let thread = self.thread.read(cx);
         let entries = thread.entries();
         if entries.is_empty() {
@@ -7725,6 +7895,7 @@ impl ThreadView {
     }
 
     pub fn scroll_to_end(&mut self, cx: &mut Context<Self>) {
+        self.clear_scroll_restore();
         self.list_state.scroll_to_end();
         cx.notify();
     }
@@ -7747,6 +7918,7 @@ impl ThreadView {
     }
 
     pub(crate) fn scroll_to_top(&mut self, cx: &mut Context<Self>) {
+        self.clear_scroll_restore();
         self.list_state.scroll_to(ListOffset::default());
         cx.notify();
     }
@@ -7817,6 +7989,7 @@ impl ThreadView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.clear_scroll_restore();
         let thread = self.thread.read(cx);
         let entries = thread.entries();
         let current_ix = self.list_state.logical_scroll_top().item_ix;
@@ -7839,6 +8012,7 @@ impl ThreadView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.clear_scroll_restore();
         let thread = self.thread.read(cx);
         let entries = thread.entries();
         let current_ix = self.list_state.logical_scroll_top().item_ix;
@@ -7901,6 +8075,7 @@ impl ThreadView {
                     let view = view.clone();
                     cx.defer(move |cx| {
                         view.update(cx, |this, cx| {
+                            this.clear_scroll_restore();
                             this.list_state.scroll_to(gpui::ListOffset {
                                 item_ix: entry_ix,
                                 offset_in_item: gpui::px(0.),
@@ -11317,16 +11492,16 @@ impl ThreadView {
             return None;
         }
 
-        let markdown = markdown.read(cx);
-        let parsed = parse_cat_numbered_markdown_code_block(markdown.source())?;
-        let language = markdown.first_code_block_language();
-        Some(render_cat_numbered_code_block(
-            parsed,
-            language,
-            markdown_style,
-            format!("copy-read-file-output-{entry_ix}-{context_ix}"),
-            cx,
-        ))
+        let parsed = parse_cat_numbered_markdown_code_block(markdown.read(cx).source())?;
+        Some(
+            CatNumberedCodeBlock {
+                markdown,
+                parsed,
+                markdown_style,
+                copy_button_id: format!("copy-read-file-output-{entry_ix}-{context_ix}"),
+            }
+            .into_any_element(),
+        )
     }
 
     fn render_image_output(

@@ -983,6 +983,37 @@ impl AgentThreadEntry {
         }
     }
 
+    /// Whether any markdown that contributes to this entry's rendered height
+    /// is still parsing.
+    pub fn has_pending_markdown_parse(&self, cx: &App) -> bool {
+        match self {
+            Self::UserMessage(message) => message
+                .content
+                .markdowns()
+                .any(|markdown| markdown.read(cx).is_parse_pending()),
+            Self::AssistantMessage(message) => message.chunks.iter().any(|chunk| {
+                let (AssistantMessageChunk::Message { block, .. }
+                | AssistantMessageChunk::Thought { block, .. }) = chunk;
+                block
+                    .markdowns()
+                    .any(|markdown| markdown.read(cx).is_parse_pending())
+            }),
+            Self::ToolCall(call) => {
+                call.label.read(cx).is_parse_pending()
+                    || call
+                        .raw_input_markdown
+                        .as_ref()
+                        .is_some_and(|markdown| markdown.read(cx).is_parse_pending())
+                    || call
+                        .content()
+                        .iter()
+                        .filter_map(|content| content.markdown())
+                        .any(|markdown| markdown.read(cx).is_parse_pending())
+            }
+            Self::Elicitation(_) | Self::ContextCompaction(_) => false,
+        }
+    }
+
     pub fn to_markdown(&self, cx: &App) -> String {
         match self {
             Self::UserMessage(message) => message.to_markdown(cx),
@@ -1644,7 +1675,7 @@ impl ToolCall {
                     (Some(markdown), Some(text)) => update_markdown_in_place(markdown, &text, cx),
                     (_, Some(text)) => {
                         self.raw_input_markdown = Some(cx.new(|cx| {
-                            Markdown::new(text.into(), Some(language_registry.clone()), None, cx)
+                            Markdown::new_deferred(text, Some(language_registry.clone()), cx)
                         }));
                     }
                     (_, None) => self.raw_input_markdown = None,
@@ -1697,7 +1728,7 @@ impl ToolCall {
             update_markdown_in_place(markdown, &text, cx);
         } else {
             let markdown =
-                cx.new(|cx| Markdown::new(text.into(), Some(language_registry.clone()), None, cx));
+                cx.new(|cx| Markdown::new_deferred(text, Some(language_registry.clone()), cx));
             self.raw_output_content = Some(Box::new(ToolCallContent::ContentBlock {
                 block: ContentBlock::from_markdown(markdown),
                 meta: None,
@@ -2689,6 +2720,7 @@ impl ContentBlock {
                 MarkdownOptions {
                     render_mermaid_diagrams: true,
                     render_metadata_blocks: true,
+                    defer_parsing: true,
                     ..Default::default()
                 },
                 cx,
@@ -7881,13 +7913,15 @@ impl AcpThread {
     }
 }
 
+/// Creates a markdown entity that parses on first render. Used for thread
+/// content that is long and often off-screen.
 fn markdown_for_raw_output(
     raw_output: &serde_json::Value,
     language_registry: &Arc<LanguageRegistry>,
     cx: &mut App,
 ) -> Option<Entity<Markdown>> {
     let text = raw_output_text(raw_output)?;
-    Some(cx.new(|cx| Markdown::new(text.into(), Some(language_registry.clone()), None, cx)))
+    Some(cx.new(|cx| Markdown::new_deferred(text, Some(language_registry.clone()), cx)))
 }
 
 fn raw_output_text(raw_output: &serde_json::Value) -> Option<String> {

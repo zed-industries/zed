@@ -526,6 +526,9 @@ pub struct MarkdownOptions {
     pub render_mermaid_diagrams: bool,
     pub parse_heading_slugs: bool,
     pub render_metadata_blocks: bool,
+    /// Defer parsing until the markdown is first rendered, or until
+    /// [`Markdown::ensure_parsed`] is called.
+    pub defer_parsing: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -666,6 +669,24 @@ impl Markdown {
         )
     }
 
+    /// Creates markdown that is parsed on first render instead of at construction.
+    pub fn new_deferred(
+        source: impl Into<SharedString>,
+        language_registry: Option<Arc<LanguageRegistry>>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new_with_options(
+            source.into(),
+            language_registry,
+            None,
+            MarkdownOptions {
+                defer_parsing: true,
+                ..Default::default()
+            },
+            cx,
+        )
+    }
+
     pub fn new_with_options(
         source: SharedString,
         language_registry: Option<Arc<LanguageRegistry>>,
@@ -713,7 +734,9 @@ impl Markdown {
             search_highlights: Rc::default(),
             active_search_highlight: None,
         };
-        this.parse(cx);
+        if !this.options.defer_parsing {
+            this.parse(cx);
+        }
         this
     }
 
@@ -950,7 +973,7 @@ impl Markdown {
     }
 
     pub fn scroll_to_heading_when_parsed(&mut self, slug: SharedString, cx: &mut Context<Self>) {
-        if self.pending_parse.is_some() || self.source.is_empty() {
+        if self.pending_parse.is_some() || self.options.defer_parsing || self.source.is_empty() {
             self.pending_heading_scroll = Some(slug);
         } else {
             self.scroll_to_heading(&slug, cx);
@@ -1004,7 +1027,9 @@ impl Markdown {
         source_index: usize,
         cx: &mut Context<Self>,
     ) {
-        if self.pending_parse.is_some() {
+        // Deferred or in-flight parsing has no text positions yet, so queue
+        // the request; parse completion forwards it.
+        if self.pending_parse.is_some() || self.options.defer_parsing {
             self.pending_autoscroll = Some(source_index);
         } else {
             self.autoscroll_request = Some(source_index);
@@ -1036,7 +1061,7 @@ impl Markdown {
 
     pub fn reset(&mut self, source: SharedString, cx: &mut Context<Self>) {
         if &source == self.source() {
-            if self.pending_parse.is_none() {
+            if self.pending_parse.is_none() && !self.options.defer_parsing {
                 if let Some(slug) = self.pending_heading_scroll.take() {
                     self.pending_autoscroll = None;
                     self.scroll_to_heading(&slug, cx);
@@ -1201,7 +1226,25 @@ impl Markdown {
         self.context_menu_selected_markdown.as_ref()
     }
 
+    /// Starts parsing if it was deferred. Rendering the markdown does this
+    /// automatically; other code that needs the parsed events must call it.
+    pub fn ensure_parsed(&mut self, cx: &mut Context<Self>) {
+        if self.options.defer_parsing {
+            self.options.defer_parsing = false;
+            self.parse(cx);
+        }
+    }
+
+    /// Whether a parse was started and its result has not been applied yet.
+    pub fn is_parse_pending(&self) -> bool {
+        self.pending_parse.is_some()
+    }
+
     fn parse(&mut self, cx: &mut Context<Self>) {
+        if self.options.defer_parsing {
+            return;
+        }
+
         if self.source.is_empty() {
             self.should_reparse = false;
             self.pending_parse.take();
@@ -2599,6 +2642,10 @@ impl Element for MarkdownElement {
         window: &mut Window,
         cx: &mut App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
+        // Start deferred parsing here: layout means the markdown is visible.
+        self.markdown
+            .update(cx, |markdown, cx| markdown.ensure_parsed(cx));
+
         let highlights = {
             let markdown = self.markdown.read(cx);
             let colors = cx.theme().colors();
@@ -5245,6 +5292,69 @@ mod tests {
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     };
+
+    #[gpui::test]
+    fn test_deferred_parsing_waits_for_layout_even_when_created_empty(cx: &mut TestAppContext) {
+        // Text appended before the first layout is parsed on layout, not on
+        // append.
+        let markdown = cx.new(|cx| {
+            Markdown::new_with_options(
+                "".into(),
+                None,
+                None,
+                MarkdownOptions {
+                    defer_parsing: true,
+                    ..Default::default()
+                },
+                cx,
+            )
+        });
+
+        markdown.update(cx, |markdown, cx| {
+            markdown.append("hello **world**", cx);
+            assert!(
+                markdown.options.defer_parsing,
+                "empty-source deferred markdown stays deferred"
+            );
+            assert!(
+                markdown.parsed_markdown.events.is_empty(),
+                "nothing is parsed before first layout"
+            );
+            markdown.ensure_parsed(cx);
+        });
+        cx.run_until_parked();
+
+        markdown.read_with(cx, |markdown, _| {
+            assert!(!markdown.parsed_markdown.events.is_empty());
+        });
+    }
+
+    #[gpui::test]
+    fn test_autoscroll_before_first_layout_is_queued_as_pending(cx: &mut TestAppContext) {
+        // A reveal request before the first layout is queued until parsing
+        // completes.
+        let markdown = cx.new(|cx| {
+            Markdown::new_with_options(
+                "hello".into(),
+                None,
+                None,
+                MarkdownOptions {
+                    defer_parsing: true,
+                    ..Default::default()
+                },
+                cx,
+            )
+        });
+
+        markdown.update(cx, |markdown, cx| {
+            markdown.request_autoscroll_to_source_index(3, cx);
+            assert_eq!(markdown.pending_autoscroll, Some(3));
+            assert_eq!(
+                markdown.autoscroll_request, None,
+                "request must not be consumed before layout"
+            );
+        });
+    }
 
     #[gpui::test]
     fn test_code_block_controls_are_unique_across_markdown_entities(cx: &mut TestAppContext) {
