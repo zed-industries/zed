@@ -1247,6 +1247,7 @@ impl Markdown {
                         languages_by_path: TreeMap::default(),
                         root_block_starts: Arc::default(),
                         html_blocks: BTreeMap::default(),
+                        inline_images: BTreeMap::default(),
                         metadata_blocks: BTreeMap::default(),
                         mermaid_diagrams: BTreeMap::default(),
                         heading_slugs: HashMap::default(),
@@ -1270,6 +1271,7 @@ impl Markdown {
             let paths = parsed.language_paths;
             let root_block_starts = parsed.root_block_starts;
             let html_blocks = parsed.html_blocks;
+            let inline_images = parsed.inline_images;
             let metadata_blocks = parsed.metadata_blocks;
             let heading_slugs = parsed.heading_slugs;
             let footnote_definitions = parsed.footnote_definitions;
@@ -1344,6 +1346,7 @@ impl Markdown {
                 languages_by_path,
                 root_block_starts: Arc::from(root_block_starts),
                 html_blocks,
+                inline_images,
                 metadata_blocks,
                 mermaid_diagrams,
                 heading_slugs,
@@ -1493,6 +1496,7 @@ pub struct ParsedMarkdown {
     pub languages_by_path: TreeMap<Arc<str>, Arc<Language>>,
     pub root_block_starts: Arc<[usize]>,
     pub(crate) html_blocks: BTreeMap<usize, html::html_parser::ParsedHtmlBlock>,
+    pub(crate) inline_images: BTreeMap<usize, html::html_parser::HtmlImage>,
     pub(crate) metadata_blocks: BTreeMap<usize, ParsedMetadataBlock>,
     pub(crate) mermaid_diagrams: BTreeMap<usize, ParsedMarkdownMermaidDiagram>,
     pub heading_slugs: HashMap<SharedString, usize>,
@@ -1574,6 +1578,11 @@ impl ParsedMarkdown {
             }
         }
 
+        ranges.extend(
+            self.inline_images
+                .values()
+                .map(|image| image.source_range.clone()),
+        );
         ranges.extend(self.link_definition_spans.iter().cloned());
         // Callers binary search these ranges, which requires them to be sorted and disjoint.
         ranges.sort_by_key(|range| range.start);
@@ -2016,7 +2025,9 @@ impl MarkdownElement {
         markdown_end: usize,
         text_align_override: Option<TextAlign>,
     ) {
-        let align = text_align_override.unwrap_or(self.style.base_text_style.text_align);
+        let align = text_align_override
+            .or_else(|| builder.inherited_html_alignment())
+            .unwrap_or(self.style.base_text_style.text_align);
         let mut paragraph = div().when(!self.style.height_is_multiple_of_line_height, |el| {
             el.mb(self.style.paragraph_spacing)
                 .line_height(self.style.paragraph_line_height)
@@ -2048,7 +2059,9 @@ impl MarkdownElement {
         markdown_end: usize,
         text_align_override: Option<TextAlign>,
     ) {
-        let align = text_align_override.unwrap_or(self.style.base_text_style.text_align);
+        let align = text_align_override
+            .or_else(|| builder.inherited_html_alignment())
+            .unwrap_or(self.style.base_text_style.text_align);
         let mut heading = div().mt_4().mb_2();
         heading = apply_heading_style(
             heading,
@@ -3311,6 +3324,10 @@ impl Element for MarkdownElement {
                     builder.push_text(html, range.clone());
                 }
                 MarkdownEvent::InlineHtml => {
+                    if let Some(image) = parsed_markdown.inline_images.get(&range.start) {
+                        self.render_html_image(image, &image.source_range, &mut builder, cx);
+                        continue;
+                    }
                     let html = &parsed_markdown.source[range.clone()];
                     if let Some(code) = html
                         .strip_prefix("<code>")
@@ -3778,6 +3795,9 @@ struct MarkdownElementBuilder {
     rendered_footnote_separator: bool,
     base_text_style: TextStyle,
     text_style_stack: Vec<TextStyleRefinement>,
+    html_container_alignments: Vec<Option<TextAlign>>,
+    trim_block_start_margin: bool,
+    trim_block_end_margin: bool,
     code_block_stack: Vec<Option<Arc<Language>>>,
     link_depth: usize,
     list_stack: Vec<ListStackEntry>,
@@ -3897,6 +3917,9 @@ impl MarkdownElementBuilder {
             rendered_footnote_separator: false,
             base_text_style,
             text_style_stack: Vec::new(),
+            html_container_alignments: Vec::new(),
+            trim_block_start_margin: true,
+            trim_block_end_margin: true,
             code_block_stack: Vec::new(),
             link_depth: 0,
             list_stack: Vec::new(),
@@ -3928,6 +3951,13 @@ impl MarkdownElementBuilder {
         self.text_style_stack.push(style);
     }
 
+    fn inherited_html_alignment(&self) -> Option<TextAlign> {
+        self.html_container_alignments
+            .iter()
+            .rev()
+            .find_map(|alignment| *alignment)
+    }
+
     fn text_style(&self) -> TextStyle {
         let mut style = self.base_text_style.clone();
         for refinement in &self.text_style_stack {
@@ -3944,7 +3974,7 @@ impl MarkdownElementBuilder {
         let mut div = div.into();
         self.flush_text();
 
-        if range.start == 0 {
+        if range.start == 0 && self.trim_block_start_margin {
             // Remove the top margin on the first element.
             div.style().refine(&StyleRefinement {
                 margin: gpui::EdgesRefinement {
@@ -3957,7 +3987,7 @@ impl MarkdownElementBuilder {
             });
         }
 
-        if range.end == markdown_end {
+        if range.end == markdown_end && self.trim_block_end_margin {
             div.style().refine(&StyleRefinement {
                 margin: gpui::EdgesRefinement {
                     top: None,
@@ -5576,6 +5606,28 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_non_rendered_source_ranges_for_inline_html_images(cx: &mut TestAppContext) {
+        let source = r#"before <img src="badge.svg" alt="version"> after"#;
+        let markdown = cx.new(|cx| {
+            Markdown::new_with_options(
+                source.into(),
+                None,
+                None,
+                MarkdownOptions {
+                    parse_html: true,
+                    ..Default::default()
+                },
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            markdown.read_with(cx, |markdown, _| markdown.non_rendered_source_ranges()),
+            vec![7..42],
+        );
+    }
+
+    #[gpui::test]
     fn test_non_rendered_source_ranges_for_linked_images(cx: &mut TestAppContext) {
         let source = "[![alt](https://example.com/img.png)](https://example.com/dest)";
         let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
@@ -6680,7 +6732,7 @@ mod tests {
     }
 
     fn leading_image_and_container_bounds(
-        source: &'static str,
+        source: &str,
         cx: &mut TestAppContext,
     ) -> (Bounds<Pixels>, Bounds<Pixels>) {
         let mut cx = render_image_layout(source, cx);
@@ -6691,6 +6743,221 @@ mod tests {
             .debug_bounds("inner")
             .expect("markdown container should be rendered");
         (image, container)
+    }
+
+    #[gpui::test]
+    fn test_inline_html_images_render_in_paragraphs_and_badge_rows(cx: &mut TestAppContext) {
+        for source in [
+            r#"[<img src="icon.png">](https://example.com/one) [<img src="icon.png">](https://example.com/two)"#,
+            r#"Before <img src="icon.png"> between <img src="icon.png"> after."#,
+            "<div align=\"center\">\n\n# Heading\n\n[<img src=\"icon.png\">](https://example.com/one) [<img src=\"icon.png\">](https://example.com/two)\n\n</div>",
+        ] {
+            let mut cx = render_image_layout(source, cx);
+            let bounds = source
+                .match_indices("<img")
+                .map(|(offset, _)| image_bounds(&mut cx, offset))
+                .collect::<Vec<_>>();
+            assert_eq!(bounds.len(), 2);
+            assert!(bounds[0].left() < bounds[1].left());
+            assert_eq!(bounds[0].top(), bounds[1].top());
+        }
+    }
+
+    #[gpui::test]
+    fn test_html_image_click_opens_enclosing_link(cx: &mut TestAppContext) {
+        for (source, offsets) in [
+            (
+                r#"[<img src="icon.png" width="40" height="20">](https://example.com/one) [<img src="icon.png">](https://example.com/two)"#,
+                None,
+            ),
+            (
+                r#"Before <a href="https://example.com/one"><img src="icon.png"></a> between <A HREF="https://example.com/two"><img src="icon.png"></A> after"#,
+                None,
+            ),
+            (
+                r#"<div><a href="https://example.com/one"><img src="icon.png"></a> <a href="https://example.com/two"><img src="icon.png"></a></div>"#,
+                // The HTML allocator reserves one byte per image and one for the space.
+                Some(vec![0, 2]),
+            ),
+            (
+                r#"<div><a href="https://example.com/one"><p><img src="icon.png"></p></a><a href="https://example.com/two"><h2><img src="icon.png"></h2></a></div>"#,
+                Some(vec![0, 1]),
+            ),
+        ] {
+            let offsets = offsets.unwrap_or_else(|| {
+                source
+                    .match_indices("<img")
+                    .map(|(offset, _)| offset)
+                    .collect()
+            });
+            let mut cx = render_image_layout(source, cx);
+            for (offset, url) in offsets
+                .into_iter()
+                .zip(["https://example.com/one", "https://example.com/two"])
+            {
+                let image = image_bounds(&mut cx, offset);
+                cx.simulate_click(image.center(), gpui::Modifiers::default());
+                assert_eq!(cx.opened_url().as_deref(), Some(url), "{source}");
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn test_inline_html_anchors_render_images_without_literal_tags(cx: &mut TestAppContext) {
+        let source = r#"Before <a href="https://example.com/one"><img src="icon.png"></a> between <A HREF="https://example.com/two?x=1&amp;y=2">label<img src="icon.png"></A> after"#;
+        ensure_theme_initialized(cx);
+        let markdown = cx.new(|cx| {
+            Markdown::new_with_options(
+                source.into(),
+                None,
+                None,
+                MarkdownOptions {
+                    parse_html: true,
+                    ..Default::default()
+                },
+                cx,
+            )
+        });
+        let rendered =
+            render_markdown_entity_in_view(markdown, MarkdownStyle::default(), None, None, cx);
+        assert_eq!(
+            rendered
+                .lines
+                .iter()
+                .map(|line| line.layout.text())
+                .collect::<String>(),
+            "Before  between label after"
+        );
+    }
+
+    #[gpui::test]
+    fn test_flattened_divs_do_not_shift_later_container_boundaries(cx: &mut TestAppContext) {
+        for prefix in [
+            "<table><tr><td><div>a</div></td></tr></table>",
+            "<table><tr><th><div>a</div></th></tr></table>",
+            "<h1><div>a</div></h1>",
+            "<p><div>a</div></p>",
+            "<template><div>a</div></template>",
+        ] {
+            let source =
+                format!("{prefix}\n<div align=center>\n\nAfter <img src=icon.png>\n\n</div>");
+            let offset = source.find("<img").expect("source should contain an image");
+            let mut cx = render_image_layout(&source, cx);
+            let image = image_bounds(&mut cx, offset);
+            let container = cx
+                .debug_bounds("inner")
+                .expect("markdown container should render");
+            let offset_from_center = image.center().x - container.center().x;
+            assert!(
+                offset_from_center > px(0.) && offset_from_center < px(100.),
+                "open div after {prefix} must retain its alignment: {image:?}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_html_container_boundaries_with_content(cx: &mut TestAppContext) {
+        let source = "<div align=center>\n<img src=icon.png>\n\n# <img src=icon.png>\n\n<img src=icon.png>\n</div>\n\nAfter <img src=icon.png>";
+        let offsets = source
+            .match_indices("<img")
+            .map(|(offset, _)| offset)
+            .collect::<Vec<_>>();
+        let mut cx = render_image_layout(source, cx);
+        let container = cx
+            .debug_bounds("inner")
+            .expect("markdown container should render");
+        // The first HTML block allocates its image at the block start, before the <img> tag.
+        for (index, offset) in [0, offsets[1], offsets[2], offsets[3]]
+            .into_iter()
+            .enumerate()
+        {
+            let image = image_bounds(&mut cx, offset);
+            if index < 3 {
+                assert_centered(image, container);
+            } else {
+                assert!(
+                    image.right() < container.center().x,
+                    "alignment must end with the div"
+                );
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn test_content_after_html_container_close_in_same_block(cx: &mut TestAppContext) {
+        let source = "<div align=center>\n\n<img src=icon.png>\n</div>\n<p><img src=icon.png></p>";
+        let start = source.find("<img").expect("source should contain an image");
+        let mut cx = render_image_layout(source, cx);
+        let container = cx
+            .debug_bounds("inner")
+            .expect("markdown container should render");
+        // Both images share one HTML block; the allocator assigns one byte per image.
+        for (index, offset) in [start, start + 1].into_iter().enumerate() {
+            let image = image_bounds(&mut cx, offset);
+            if index == 0 {
+                assert_centered(image, container);
+            } else {
+                assert!((image.left() - container.left()).abs() <= px(1.));
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn test_self_closing_html_container_does_not_leak_alignment(cx: &mut TestAppContext) {
+        let source = "<div align=center />\n\nBefore <img src=icon.png>";
+        let offset = source.find("<img").expect("source should contain an image");
+        let mut cx = render_image_layout(source, cx);
+        let image = image_bounds(&mut cx, offset);
+        assert!(
+            image.right()
+                < cx.debug_bounds("inner")
+                    .expect("markdown container should render")
+                    .center()
+                    .x
+        );
+    }
+
+    #[gpui::test]
+    fn test_html_containers_preserve_alignment_and_block_order(cx: &mut TestAppContext) {
+        let source = r#"<div align="center"><h2><img src="icon.png"></h2><a href="https://example.com/one"><img src="icon.png"></a> <a href="https://example.com/two"><img src="icon.png"></a></div>"#;
+        let mut cx = render_image_layout(source, cx);
+        // The HTML allocator assigns one byte per image and one for the space between badges.
+        let heading = image_bounds(&mut cx, 0);
+        let first = image_bounds(&mut cx, 1);
+        let second = image_bounds(&mut cx, 3);
+        let container = cx
+            .debug_bounds("inner")
+            .expect("markdown container should render");
+        assert!(
+            first.top() - heading.bottom() >= px(8.),
+            "HTML heading should retain its bottom margin before the image row"
+        );
+        assert_eq!(first.top(), second.top());
+        assert!(first.right() <= second.left());
+        assert_centered(heading, container);
+        assert_centered(first.union(&second), container);
+    }
+
+    #[gpui::test]
+    fn test_html_container_alignment_spans_markdown_blocks_and_restores(cx: &mut TestAppContext) {
+        let source = "<div align=center>\n\n# <img src=icon.png>\n\n<div>\n<div style='text-align: right'>\n\nBefore <img src=icon.png>\n\n</div>\n</div>\n\n[<img src=icon.png>](https://example.com)\n\n</div>\n\nBefore <img src=icon.png>";
+        let mut cx = render_image_layout(source, cx);
+        let container = cx
+            .debug_bounds("inner")
+            .expect("markdown container should render");
+        let images = source
+            .match_indices("<img")
+            .map(|(offset, _)| image_bounds(&mut cx, offset))
+            .collect::<Vec<_>>();
+        assert_centered(images[0], container);
+        assert!((images[1].right() - container.right()).abs() <= px(1.));
+        assert_centered(images[2], container);
+        assert!(images[3].right() < container.center().x);
+        assert!(
+            images
+                .windows(2)
+                .all(|pair| pair[0].bottom() < pair[1].top())
+        );
     }
 
     #[gpui::test]
@@ -8790,7 +9057,7 @@ mod tests {
         }
     }
 
-    fn render_image_layout(source: &'static str, cx: &mut TestAppContext) -> VisualTestContext {
+    fn render_image_layout(source: &str, cx: &mut TestAppContext) -> VisualTestContext {
         ensure_theme_initialized(cx);
         let render_svg = |svg: &'static [u8], cx: &mut TestAppContext| {
             cx.update(|cx| {
@@ -8814,7 +9081,7 @@ mod tests {
         let window = cx.open_window(size(px(800.), px(600.)), |_, cx| {
             let markdown = cx.new(|cx| {
                 Markdown::new_with_options(
-                    source.into(),
+                    source.to_owned().into(),
                     None,
                     None,
                     MarkdownOptions {
@@ -8833,6 +9100,18 @@ mod tests {
         });
         cx.run_until_parked();
         VisualTestContext::from_window(window.into(), cx)
+    }
+
+    fn image_bounds(cx: &mut VisualTestContext, offset: usize) -> Bounds<Pixels> {
+        let selector = format!("markdown_image_{offset}").leak();
+        cx.debug_bounds(selector).expect("image should be rendered")
+    }
+
+    fn assert_centered(bounds: Bounds<Pixels>, container: Bounds<Pixels>) {
+        assert!(
+            (bounds.center().x - container.center().x).abs() <= px(1.),
+            "element should be centered: element {bounds:?}, container {container:?}"
+        );
     }
 
     fn image_selectors(source: &str) -> Vec<&'static str> {
