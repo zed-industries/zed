@@ -23,7 +23,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(gpui_hot_reload)");
     if std::env::var_os("CARGO_FEATURE_HOT_RELOAD").is_some()
         && std::env::var_os("CARGO_CFG_DEBUG_ASSERTIONS").is_some()
-        && matches!(target_os.as_str(), "macos" | "linux" | "windows")
+        && matches!(target_os.as_str(), "macos" | "linux" | "windows" | "ios")
     {
         println!("cargo::rustc-cfg=gpui_hot_reload");
     }

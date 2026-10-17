@@ -134,7 +134,7 @@ async-channel = { workspace = true, features = ["std"] }
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 pollster.workspace = true
 
-[target.'cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))'.dependencies]
+[target.'cfg(any(target_os = "macos", target_os = "linux", target_os = "windows", target_os = "ios"))'.dependencies]
 async-tungstenite = { workspace = true, optional = true }
 dioxus-cli-config = { version = "=0.7.10", optional = true }
 dioxus-devtools-types = { version = "=0.7.10", optional = true }
