@@ -17,7 +17,10 @@ mod table_data_engine;
 mod table_view;
 pub mod types;
 
-actions!(tabular_data, [OpenPreview, OpenPreviewToTheSide]);
+actions!(
+    tabular_data,
+    [OpenPreview, OpenPreviewToTheSide, ClearSelection]
+);
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -29,10 +32,32 @@ pub enum NavigationDirection {
     Right,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MoveUnit {
+    /// Move one cell. Default when `unit` is omitted in JSON keybindings.
+    #[default]
+    Cell,
+    /// Move by one visible page (vertical only; horizontal degrades to `Cell`).
+    Page,
+    /// Jump to the first or last cell on the axis.
+    Edge,
+}
+
 #[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
 #[action(namespace = tabular_data)]
 pub struct MoveFocusedCell {
     pub direction: NavigationDirection,
+    #[serde(default)]
+    pub unit: MoveUnit,
+}
+
+#[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
+#[action(namespace = tabular_data)]
+pub struct ExtendSelection {
+    pub direction: NavigationDirection,
+    #[serde(default)]
+    pub unit: MoveUnit,
 }
 
 /// Editor-backed adapter: watches an [`Editor`], parses its buffer into a [`crate::types::TableLikeContent`],
