@@ -359,18 +359,14 @@ impl TerminalPanel {
         // Since panels/docks are loaded outside from the workspace, we cleanup here, instead of through the workspace.
         let cleanup = workspace.update_in(cx, |workspace, window, cx| {
             let alive_item_ids = terminal_panel.upgrade().map(|terminal_panel| {
-                let terminal_views = terminal_panel
+                terminal_panel
                     .read(cx)
                     .center
                     .panes()
                     .into_iter()
                     .flat_map(|pane| pane.read(cx).items())
-                    .filter_map(|item| item.act_as::<TerminalView>(cx))
-                    .collect::<Vec<_>>();
-                terminal_views
-                    .iter()
-                    .map(|terminal_view| workspace::persistent_item_id(terminal_view, cx))
-                    .collect::<Vec<ItemId>>()
+                    .map(|item| item.item_id().as_u64() as ItemId)
+                    .collect::<Vec<_>>()
             });
             alive_item_ids
                 .zip(workspace.database_id())
@@ -391,14 +387,11 @@ impl TerminalPanel {
                         .flat_map(|pane| {
                             pane.read(cx)
                                 .items()
+                                .filter(|item| {
+                                    !alive_item_ids.contains(&(item.item_id().as_u64() as ItemId))
+                                })
                                 .filter_map(|item| item.act_as::<TerminalView>(cx))
                                 .collect::<Vec<_>>()
-                        })
-                        .collect::<Vec<_>>()
-                        .into_iter()
-                        .filter(|terminal_view| {
-                            !alive_item_ids
-                                .contains(&workspace::persistent_item_id(terminal_view, cx))
                         })
                         .collect::<Vec<_>>();
                     for terminal_view in terminals_to_reserialize {

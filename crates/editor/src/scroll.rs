@@ -23,7 +23,7 @@ use settings::Settings;
 use std::{cmp::Ordering, time::Duration};
 use ui::scrollbars::ScrollbarAutoHide;
 use util::ResultExt;
-use workspace::WorkspaceId;
+use workspace::{ItemId, WorkspaceId};
 
 const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -410,7 +410,7 @@ impl ScrollManager {
         cx.emit(EditorEvent::ScrollPositionChanged { local, autoscroll });
         self.show_scrollbars(window, cx);
         if let Some(workspace_id) = workspace_id {
-            let item_id = workspace::persistent_item_id(&cx.entity(), cx);
+            let item_id = cx.entity().entity_id().as_u64() as ItemId;
             let executor = cx.background_executor().clone();
 
             let db = EditorDb::global(cx);

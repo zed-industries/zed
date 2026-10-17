@@ -1,7 +1,5 @@
 use std::{path::PathBuf, sync::Arc};
 
-use parking_lot::Mutex;
-
 use anyhow::Result;
 use askpass::EncryptedPassword;
 use auto_update::AutoUpdater;
@@ -85,12 +83,6 @@ impl RemoteConnectionPrompt {
         self.cancellation = Some(tx);
     }
 
-    pub fn cancel(&mut self) {
-        if let Some(cancel) = self.cancellation.take() {
-            cancel.send(()).ok();
-        }
-    }
-
     pub fn set_prompt(
         &mut self,
         prompt: String,
@@ -99,7 +91,7 @@ impl RemoteConnectionPrompt {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let is_yes_no = is_confirmation_prompt(&prompt);
+        let is_yes_no = prompt.contains("yes/no");
         self.is_password_prompt = !is_yes_no;
         self.is_masked = !is_yes_no;
         self.editor.set_masked(self.is_masked, window, cx);
@@ -117,14 +109,6 @@ impl RemoteConnectionPrompt {
         self.status_message.take();
         window.focus(&self.editor.focus_handle(cx), cx);
         cx.notify();
-    }
-
-    fn prompt_answered(&mut self, cx: &mut Context<Self>) {
-        if self.prompt.take().is_some() {
-            self.prompt_cancellation_task.take();
-            self.status_message = Some("Connecting".into());
-            cx.notify();
-        }
     }
 
     pub fn set_status(&mut self, status: Option<String>, cx: &mut Context<Self>) {
@@ -454,64 +438,18 @@ impl ModalView for RemoteConnectionModal {
     }
 }
 
-#[derive(Clone, Default)]
-pub struct KnownPassword(Arc<Mutex<KnownPasswordState>>);
-
-impl KnownPassword {
-    pub fn for_connection(connection_options: &RemoteConnectionOptions) -> Self {
-        let known_password = Self::default();
-        known_password.provide_for_connection(connection_options);
-        known_password
-    }
-
-    pub fn provide_for_connection(&self, connection_options: &RemoteConnectionOptions) {
-        if let RemoteConnectionOptions::Ssh(options) = connection_options
-            && let Some(password) = options
-                .password
-                .as_deref()
-                .and_then(|password| EncryptedPassword::try_from(password).ok())
-        {
-            self.provide(password);
-        }
-    }
-
-    fn provide(&self, password: EncryptedPassword) {
-        let mut state = self.0.lock();
-        for pending_prompt in state.pending_prompts.drain(..) {
-            pending_prompt.send(password.clone()).ok();
-        }
-        state.password = Some(password);
-    }
-
-    fn password(&self) -> Option<EncryptedPassword> {
-        self.0.lock().password.clone()
-    }
-
-    fn wait_for_password(&self) -> oneshot::Receiver<EncryptedPassword> {
-        let (password_tx, password_rx) = oneshot::channel();
-        let mut state = self.0.lock();
-        match state.password.clone() {
-            Some(password) => {
-                password_tx.send(password).ok();
-            }
-            None => state.pending_prompts.push(password_tx),
-        }
-        password_rx
-    }
-}
-
 #[derive(Clone)]
 pub struct RemoteClientDelegate {
     window: AnyWindowHandle,
     ui: WeakEntity<RemoteConnectionPrompt>,
-    known_password: KnownPassword,
+    known_password: Option<EncryptedPassword>,
 }
 
 impl RemoteClientDelegate {
     pub fn new(
         window: AnyWindowHandle,
         ui: WeakEntity<RemoteConnectionPrompt>,
-        known_password: KnownPassword,
+        known_password: Option<EncryptedPassword>,
     ) -> Self {
         Self {
             window,
@@ -529,31 +467,18 @@ impl remote::RemoteClientDelegate for RemoteClientDelegate {
         cancellation: oneshot::Receiver<()>,
         cx: &mut AsyncApp,
     ) {
-        if is_confirmation_prompt(&prompt) {
-            self.show_prompt(prompt, tx, cancellation, cx);
-            return;
-        }
-        if let Some(password) = self.known_password.password() {
+        let mut known_password = self.known_password.clone();
+        if let Some(password) = known_password.take() {
             tx.send(password).ok();
-            return;
+        } else {
+            self.window
+                .update(cx, |_, window, cx| {
+                    self.ui.update(cx, |modal, cx| {
+                        modal.set_prompt(prompt, tx, cancellation, window, cx);
+                    })
+                })
+                .ok();
         }
-        let (prompt_tx, prompt_rx) = oneshot::channel();
-        let provided_password = self.known_password.wait_for_password();
-        self.show_prompt(prompt, prompt_tx, cancellation, cx);
-        let ui = self.ui.clone();
-        cx.spawn(async move |cx| {
-            let password = select! {
-                password = prompt_rx.fuse() => password.ok(),
-                password = provided_password.fuse() => {
-                    ui.update(cx, |modal, cx| modal.prompt_answered(cx)).ok();
-                    password.ok()
-                },
-            };
-            if let Some(password) = password {
-                tx.send(password).ok();
-            }
-        })
-        .detach();
     }
 
     fn set_status(&self, status: Option<&str>, cx: &mut AsyncApp) {
@@ -621,23 +546,6 @@ impl RemoteClientDelegate {
                 })
                 .ok()
         });
-    }
-
-    fn show_prompt(
-        &self,
-        prompt: String,
-        tx: oneshot::Sender<EncryptedPassword>,
-        cancellation: oneshot::Receiver<()>,
-        cx: &mut AsyncApp,
-    ) {
-        self.window
-            .update(cx, |_, window, cx| {
-                self.ui.update(cx, |modal, cx| {
-                    window.activate_window();
-                    modal.set_prompt(prompt, tx, cancellation, window, cx);
-                })
-            })
-            .ok();
     }
 }
 
@@ -803,7 +711,13 @@ pub fn connect(
     cx: &mut App,
 ) -> Task<Result<Option<Entity<RemoteClient>>>> {
     let window = window.window_handle();
-    let known_password = KnownPassword::for_connection(&connection_options);
+    let known_password = match &connection_options {
+        RemoteConnectionOptions::Ssh(ssh_connection_options) => ssh_connection_options
+            .password
+            .as_deref()
+            .and_then(|pw| pw.try_into().ok()),
+        _ => None,
+    };
     let (tx, mut rx) = oneshot::channel();
     ui.update(cx, |ui, _cx| ui.set_cancellation_tx(tx));
 
@@ -823,16 +737,6 @@ pub fn connect(
         cx.update(|cx| remote::RemoteClient::new(unique_identifier, connection, rx, delegate, cx))
             .await
     })
-}
-
-#[derive(Default)]
-struct KnownPasswordState {
-    password: Option<EncryptedPassword>,
-    pending_prompts: Vec<oneshot::Sender<EncryptedPassword>>,
-}
-
-fn is_confirmation_prompt(prompt: &str) -> bool {
-    prompt.contains("yes/no")
 }
 
 use anyhow::Context as _;
@@ -885,88 +789,6 @@ mod tests {
         cx.run_until_parked();
 
         assert!(prompt.read_with(cx, |prompt, _| prompt.prompt.is_none()));
-    }
-
-    #[gpui::test]
-    fn known_password_answers_only_password_prompts(cx: &mut TestAppContext) {
-        initialize_test(cx);
-        let confirmation = "Are you sure you want to continue connecting (yes/no/[fingerprint])?";
-        let connection_options = RemoteConnectionOptions::Ssh(remote::SshConnectionOptions {
-            host: "example.com".into(),
-            password: Some("secret".to_string()),
-            ..Default::default()
-        });
-
-        let mut outcomes = Vec::new();
-        for (prompt_text, password_known_upfront) in [
-            ("Password:", false),
-            (confirmation, false),
-            (confirmation, true),
-        ] {
-            let window = cx.add_window(|window, cx| Editor::single_line(window, cx));
-            let prompt = window
-                .update(cx, |_, window, cx| {
-                    cx.new(|cx| {
-                        RemoteConnectionPrompt::new(
-                            "example.com".to_string(),
-                            None,
-                            false,
-                            false,
-                            window,
-                            cx,
-                        )
-                    })
-                })
-                .expect("test window should remain open");
-            let known_password = KnownPassword::default();
-            if password_known_upfront {
-                known_password.provide_for_connection(&connection_options);
-            }
-            let delegate = RemoteClientDelegate::new(
-                window.into(),
-                prompt.downgrade(),
-                known_password.clone(),
-            );
-
-            let (response_sender, mut response_receiver) = oneshot::channel();
-            let (_cancellation_sender, cancellation) = oneshot::channel();
-            remote::RemoteClientDelegate::ask_password(
-                &delegate,
-                prompt_text.to_string(),
-                response_sender,
-                cancellation,
-                &mut cx.to_async(),
-            );
-            cx.run_until_parked();
-            let prompt_shown = prompt.read_with(cx, |prompt, _| prompt.prompt.is_some());
-
-            known_password.provide_for_connection(&connection_options);
-            cx.run_until_parked();
-
-            let answer = response_receiver
-                .try_recv()
-                .ok()
-                .flatten()
-                .and_then(|password| {
-                    password
-                        .decrypt(askpass::IKnowWhatIAmDoingAndIHaveReadTheDocs)
-                        .ok()
-                });
-            outcomes.push((
-                prompt_shown,
-                answer,
-                prompt.read_with(cx, |prompt, _| prompt.prompt.is_some()),
-            ));
-        }
-
-        assert_eq!(
-            outcomes,
-            vec![
-                (true, Some("secret".to_string()), false),
-                (true, None, true),
-                (true, None, true),
-            ]
-        );
     }
 
     #[gpui::test]

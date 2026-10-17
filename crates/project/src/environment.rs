@@ -18,9 +18,7 @@ use crate::{
 };
 
 pub struct ProjectEnvironment {
-    this: WeakEntity<Self>,
     cli_environment: Option<HashMap<String, String>>,
-    cli_environment_gate: Option<Shared<Task<()>>>,
     local_environments: HashMap<(Shell, Arc<Path>), Shared<Task<Option<HashMap<String, String>>>>>,
     remote_environments: HashMap<(Shell, Arc<Path>), Shared<Task<Option<HashMap<String, String>>>>>,
     environment_error_messages: VecDeque<String>,
@@ -32,6 +30,7 @@ pub struct ProjectEnvironment {
 }
 
 pub enum ProjectEnvironmentEvent {
+    CliEnvironmentChanged,
     ErrorsUpdated,
 }
 
@@ -56,9 +55,7 @@ impl ProjectEnvironment {
             }
         });
         Self {
-            this: cx.weak_entity(),
             cli_environment,
-            cli_environment_gate: None,
             local_environments: Default::default(),
             remote_environments: Default::default(),
             environment_error_messages: Default::default(),
@@ -70,65 +67,29 @@ impl ProjectEnvironment {
         }
     }
 
+    pub fn set_cli_environment(
+        &mut self,
+        cli_environment: HashMap<String, String>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.cli_environment.as_ref() != Some(&cli_environment) {
+            self.cli_environment = Some(cli_environment);
+            self.local_environments.clear();
+            self.remote_environments.clear();
+            cx.emit(ProjectEnvironmentEvent::CliEnvironmentChanged);
+        }
+    }
+
     /// Returns the inherited CLI environment, if this project was opened from the Zed CLI.
     pub(crate) fn get_cli_environment(&self) -> Option<HashMap<String, String>> {
-        if cfg!(any(test, feature = "test-support")) {
-            return Some(self.cli_environment.clone().unwrap_or_default());
-        }
         if let Some(mut env) = self.cli_environment.clone() {
             set_origin_marker(&mut env, EnvironmentOrigin::Cli);
             Some(env)
+        } else if cfg!(any(test, feature = "test-support")) {
+            Some(HashMap::default())
         } else {
             None
         }
-    }
-
-    pub(crate) fn set_cli_environment_if_unset(
-        &mut self,
-        cli_environment: HashMap<String, String>,
-    ) {
-        if self.accepts_cli_environment() {
-            self.cli_environment = Some(cli_environment);
-        }
-    }
-
-    pub(crate) fn set_cli_environment_gate(
-        &mut self,
-        gate: impl Future<Output = ()> + 'static,
-        cx: &mut Context<Self>,
-    ) {
-        if self.accepts_cli_environment() {
-            self.cli_environment_gate = Some(cx.spawn(async move |_, _| gate.await).shared());
-        }
-    }
-
-    fn accepts_cli_environment(&self) -> bool {
-        self.cli_environment.is_none() && !self.is_remote_project && self.remote_client.is_none()
-    }
-
-    fn gated_environment(
-        &mut self,
-        cx: &mut App,
-        environment: impl FnOnce(
-            &mut Self,
-            &mut Context<Self>,
-        ) -> Shared<Task<Option<HashMap<String, String>>>>
-        + 'static,
-    ) -> Option<Shared<Task<Option<HashMap<String, String>>>>> {
-        let gate = self.cli_environment_gate.clone()?;
-        if gate.clone().now_or_never().is_some() {
-            self.cli_environment_gate = None;
-            return None;
-        }
-        let this = self.this.clone();
-        Some(
-            cx.spawn(async move |cx| {
-                gate.await;
-                let environment = this.update(cx, |this, cx| environment(this, cx)).ok()?;
-                environment.await
-            })
-            .shared(),
-        )
     }
 
     pub fn buffer_environment(
@@ -137,14 +98,6 @@ impl ProjectEnvironment {
         worktree_store: &Entity<WorktreeStore>,
         cx: &mut Context<Self>,
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
-        let gated = self.gated_environment(cx, {
-            let buffer = buffer.clone();
-            let worktree_store = worktree_store.clone();
-            move |this, cx| this.buffer_environment(&buffer, &worktree_store, cx)
-        });
-        if let Some(gated) = gated {
-            return gated;
-        }
         if let Some(cli_environment) = self.get_cli_environment() {
             log::debug!("using project environment variables from CLI");
             return Task::ready(Some(cli_environment)).shared();
@@ -166,13 +119,6 @@ impl ProjectEnvironment {
         worktree: Entity<Worktree>,
         cx: &mut App,
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
-        let gated = self.gated_environment(cx, {
-            let worktree = worktree.clone();
-            move |this, cx| this.worktree_environment(worktree, cx)
-        });
-        if let Some(gated) = gated {
-            return gated;
-        }
         if let Some(cli_environment) = self.get_cli_environment() {
             log::debug!("using project environment variables from CLI");
             return Task::ready(Some(cli_environment)).shared();
@@ -265,14 +211,6 @@ impl ProjectEnvironment {
         abs_path: Arc<Path>,
         cx: &mut App,
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
-        let gated = self.gated_environment(cx, {
-            let shell = shell.clone();
-            let abs_path = abs_path.clone();
-            move |this, cx| this.local_directory_environment(&shell, abs_path, cx)
-        });
-        if let Some(gated) = gated {
-            return gated;
-        }
         if let Some(cli_environment) = self.get_cli_environment() {
             log::debug!("using project environment variables from CLI");
             return Task::ready(Some(cli_environment)).shared();

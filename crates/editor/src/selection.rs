@@ -1707,7 +1707,7 @@ impl Editor {
                 let snapshot = self.buffer().read(cx).snapshot(cx);
                 let selections = selections.clone();
                 let background_executor = cx.background_executor().clone();
-                let editor_id = workspace::persistent_item_id(&cx.entity(), cx);
+                let editor_id = cx.entity().entity_id().as_u64() as ItemId;
                 let db = EditorDb::global(cx);
                 self.serialize_selections = cx.background_spawn(async move {
                     background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;

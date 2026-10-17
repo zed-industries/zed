@@ -2381,7 +2381,7 @@ mod tests {
     use workspace::item::{Item, ItemHandle, SerializableItem};
     use workspace::path_link::{OpenTarget, OpenTargetFoundBy};
     use workspace::{
-        AppState, MultiWorkspace, OpenOptions, OpenVisible, Pane, SaveIntent, Workspace,
+        AppState, ItemId, MultiWorkspace, OpenOptions, OpenVisible, Pane, SaveIntent, Workspace,
         WorkspaceId, open_paths,
     };
 
@@ -3851,10 +3851,9 @@ mod tests {
             .update(cx, |multi_workspace, _window, cx| {
                 let workspace = multi_workspace.workspace().clone();
                 workspace.update(cx, |workspace, cx| {
-                    let item_id = workspace::persistent_item_id(&preview, cx);
                     preview
                         .update(cx, |preview, cx| {
-                            preview.serialize(workspace, item_id, false, cx)
+                            preview.serialize(workspace, cx.entity_id().as_u64(), false, cx)
                         })
                         .unwrap()
                 })
@@ -3863,7 +3862,7 @@ mod tests {
         serialize_task.await.unwrap();
 
         assert_eq!(
-            saved_preview_path(cx, &preview, workspace_id),
+            saved_preview_path(cx, preview.entity_id().as_u64(), workspace_id),
             PathBuf::from(path!("/dir/todo.md"))
         );
 
@@ -3898,7 +3897,7 @@ mod tests {
             Some(PathBuf::from(path!("/dir/subdir")))
         );
         assert_eq!(
-            saved_preview_path(cx, &preview, workspace_id),
+            saved_preview_path(cx, preview.entity_id().as_u64(), workspace_id),
             PathBuf::from(path!("/dir/subdir/renamed.md"))
         );
     }
@@ -4000,10 +3999,9 @@ mod tests {
             .update(cx, |multi_workspace, _window, cx| {
                 let workspace = multi_workspace.workspace().clone();
                 workspace.update(cx, |workspace, cx| {
-                    let item_id = workspace::persistent_item_id(&preview, cx);
                     preview
                         .update(cx, |preview, cx| {
-                            preview.serialize(workspace, item_id, false, cx)
+                            preview.serialize(workspace, cx.entity_id().as_u64(), false, cx)
                         })
                         .unwrap()
                 })
@@ -4012,7 +4010,7 @@ mod tests {
         serialize_task.await.unwrap();
 
         assert_eq!(
-            saved_preview_path(cx, &preview, workspace_id),
+            saved_preview_path(cx, preview.entity_id().as_u64(), workspace_id),
             PathBuf::from(path!("/dir/a.md"))
         );
 
@@ -4029,7 +4027,7 @@ mod tests {
         assert_eq!(followed_path.as_ref(), rel_path("b.md"));
 
         assert_eq!(
-            saved_preview_path(cx, &preview, workspace_id),
+            saved_preview_path(cx, preview.entity_id().as_u64(), workspace_id),
             PathBuf::from(path!("/dir/b.md")),
             "a Follow preview should persist the source editor it most recently followed"
         );
@@ -4895,13 +4893,12 @@ mod tests {
         cx.run_until_parked();
     }
 
-    fn saved_preview_path<T: 'static>(
+    fn saved_preview_path(
         cx: &mut TestAppContext,
-        item: &Entity<T>,
+        item_id: ItemId,
         workspace_id: WorkspaceId,
     ) -> PathBuf {
         cx.update(|cx| {
-            let item_id = workspace::persistent_item_id(item, cx);
             super::persistence::MarkdownPreviewDb::global(cx)
                 .get_preview(item_id, workspace_id)
                 .unwrap()

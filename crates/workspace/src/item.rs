@@ -438,7 +438,6 @@ pub trait SerializableItem: Item {
 
 pub trait SerializableItemHandle: ItemHandle {
     fn serialized_item_kind(&self) -> &'static str;
-    fn persistent_item_id(&self, cx: &mut App) -> ItemId;
     fn serialize(
         &self,
         workspace: &mut Workspace,
@@ -456,19 +455,14 @@ where
         T::serialized_item_kind()
     }
 
-    fn persistent_item_id(&self, cx: &mut App) -> ItemId {
-        crate::persistent_item_id(self, cx)
-    }
-
     fn serialize(
         &self,
         workspace: &mut Workspace,
         closing: bool,
         cx: &mut App,
     ) -> Option<Task<Result<()>>> {
-        let item_id = self.persistent_item_id(cx);
         self.update(cx, |this, cx| {
-            this.serialize(workspace, item_id, closing, cx)
+            this.serialize(workspace, cx.entity_id().as_u64(), closing, cx)
         })
     }
 
@@ -1436,32 +1430,15 @@ pub mod test {
         ItemId, ItemNavHistory, Workspace, WorkspaceId,
         item::{ItemBufferKind, SaveOptions},
     };
-    use futures::{channel::oneshot, future::Shared};
     use gpui::{
         AnyElement, App, AppContext as _, Context, Entity, EntityId, EventEmitter, Focusable,
-        Global, InteractiveElement, IntoElement, ParentElement, Render, SharedString, Task,
-        WeakEntity, Window,
+        InteractiveElement, IntoElement, ParentElement, Render, SharedString, Task, WeakEntity,
+        Window,
     };
     use language::Capability;
     use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
     use std::{any::Any, cell::Cell, sync::Arc};
     use util::rel_path::rel_path;
-
-    pub struct PendingTestItemDeserialization(pub Shared<oneshot::Receiver<()>>);
-
-    impl Global for PendingTestItemDeserialization {}
-
-    pub struct PendingTestItemIds(pub Vec<ItemId>);
-
-    impl Global for PendingTestItemIds {}
-
-    pub struct TestItemDeserializationAwaitsEnvironment;
-
-    impl Global for TestItemDeserializationAwaitsEnvironment {}
-
-    pub struct FailingTestItemDeserialization;
-
-    impl Global for FailingTestItemDeserialization {}
 
     pub struct TestProjectItem {
         pub entry_id: Option<ProjectEntryId>,
@@ -1871,41 +1848,15 @@ pub mod test {
         }
 
         fn deserialize(
-            project: Entity<Project>,
+            _project: Entity<Project>,
             _workspace: WeakEntity<Workspace>,
             workspace_id: WorkspaceId,
-            item_id: ItemId,
+            _item_id: ItemId,
             _window: &mut Window,
             cx: &mut App,
         ) -> Task<anyhow::Result<Entity<Self>>> {
-            if cx.has_global::<FailingTestItemDeserialization>() {
-                return Task::ready(Err(anyhow::anyhow!("test item {item_id} is unavailable")));
-            }
-            if cx.has_global::<TestItemDeserializationAwaitsEnvironment>() {
-                let environment = project.read(cx).environment().clone();
-                let environment =
-                    environment.update(cx, |environment, cx| environment.default_environment(cx));
-                return cx.spawn(async move |cx| {
-                    environment.await;
-                    Ok(cx.new(|cx| Self::new_deserialized(workspace_id, cx)))
-                });
-            }
-            let item_is_pending = cx
-                .try_global::<PendingTestItemIds>()
-                .is_none_or(|PendingTestItemIds(item_ids)| item_ids.contains(&item_id));
-            match cx
-                .try_global::<PendingTestItemDeserialization>()
-                .filter(|_| item_is_pending)
-            {
-                Some(PendingTestItemDeserialization(pending)) => {
-                    let pending = pending.clone();
-                    cx.spawn(async move |cx| {
-                        pending.await.ok();
-                        Ok(cx.new(|cx| Self::new_deserialized(workspace_id, cx)))
-                    })
-                }
-                None => Task::ready(Ok(cx.new(|cx| Self::new_deserialized(workspace_id, cx)))),
-            }
+            let entity = cx.new(|cx| Self::new_deserialized(workspace_id, cx));
+            Task::ready(Ok(entity))
         }
 
         fn cleanup(

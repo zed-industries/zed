@@ -995,10 +995,6 @@ impl Pane {
         self.preview_item_id
     }
 
-    pub(crate) fn project(&self) -> &WeakEntity<Project> {
-        &self.project
-    }
-
     pub fn preview_item(&self) -> Option<Box<dyn ItemHandle>> {
         self.preview_item_id
             .and_then(|id| self.items.iter().find(|item| item.item_id() == id))
@@ -1337,7 +1333,6 @@ impl Pane {
                 self.activate_item(insertion_index, activate_pane, focus_item, window, cx);
             }
         } else {
-            let had_items = !self.items.is_empty();
             self.items.insert(insertion_index, item.clone());
             cx.notify();
 
@@ -1349,8 +1344,6 @@ impl Pane {
                 }
 
                 self.activate_item(insertion_index, activate_pane, focus_item, window, cx);
-            } else if had_items && insertion_index <= self.active_item_index {
-                self.active_item_index += 1;
             }
         }
 
@@ -1359,50 +1352,6 @@ impl Pane {
         if existing_item_index.is_none() || replaces_existing_item_in_pane {
             cx.emit(Event::AddItem { item: item.clone() });
         }
-    }
-
-    pub(crate) fn insert_restored_item(
-        &mut self,
-        item: Box<dyn ItemHandle>,
-        destination_index: usize,
-        cx: &mut Context<Self>,
-    ) -> (Box<dyn ItemHandle>, bool) {
-        let project_entry_id = if item.buffer_kind(cx) == ItemBufferKind::Singleton {
-            item.project_entry_ids(cx).first().copied()
-        } else {
-            None
-        };
-        let live_item = self.items.iter().find(|existing_item| {
-            existing_item.item_id() == item.item_id()
-                || (project_entry_id.is_some()
-                    && existing_item.buffer_kind(cx) == ItemBufferKind::Singleton
-                    && existing_item.project_entry_ids(cx).first().copied() == project_entry_id)
-        });
-        if let Some(live_item) = live_item {
-            return (live_item.boxed_clone(), false);
-        }
-
-        if let Some(entry_id) = project_entry_id
-            && let Some(project) = self.project.upgrade()
-        {
-            let project = project.read(cx);
-            if let Some(project_path) = project.path_for_entry(entry_id, cx) {
-                let abs_path = project.absolute_path(&project_path, cx);
-                self.nav_history
-                    .0
-                    .lock()
-                    .paths_by_item
-                    .insert(item.item_id(), (project_path, abs_path));
-            }
-        }
-        let insertion_index = destination_index.min(self.items.len());
-        if !self.items.is_empty() && insertion_index <= self.active_item_index {
-            self.active_item_index += 1;
-        }
-        self.items.insert(insertion_index, item.clone());
-        cx.notify();
-        cx.emit(Event::AddItem { item: item.clone() });
-        (item, true)
     }
 
     pub fn add_item(
@@ -1991,17 +1940,13 @@ impl Pane {
     ) -> String {
         let mut file_names = BTreeSet::default();
         for item in items {
-            let singleton_title = (item.buffer_kind(cx) == ItemBufferKind::Singleton)
-                .then(|| item.tab_content_text(0, cx).to_string())
-                .filter(|title| !title.is_empty());
             item.for_each_project_item(cx, &mut |_, project_item| {
                 if !project_item.is_dirty() {
                     return;
                 }
                 let filename = project_item
                     .project_path(cx)
-                    .and_then(|path| path.path.file_name().map(ToOwned::to_owned))
-                    .or_else(|| singleton_title.clone());
+                    .and_then(|path| path.path.file_name().map(ToOwned::to_owned));
                 file_names.insert(filename.unwrap_or("untitled".to_string()));
             });
         }
@@ -5153,7 +5098,6 @@ mod tests {
     use crate::{
         Member,
         item::test::{TestItem, TestProjectItem},
-        persistence::model::{SerializedItem, SerializedPane},
     };
     use gpui::{
         AppContext, Axis, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
@@ -5270,57 +5214,6 @@ mod tests {
                 "N5", "N6*",
             ],
             cx,
-        );
-    }
-
-    #[gpui::test]
-    async fn test_restoring_into_a_populated_pane_keeps_its_live_tabs(cx: &mut TestAppContext) {
-        init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, None, cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
-        let file_item = |label: &str, entry_id: u64, cx: &mut VisualTestContext| {
-            Box::new(cx.new(|cx| {
-                let project_item = TestProjectItem::new(entry_id, &format!("{label}.txt"), cx);
-                TestItem::new(cx)
-                    .with_label(label)
-                    .with_buffer_kind(ItemBufferKind::Singleton)
-                    .with_project_items(&[project_item])
-            })) as Box<dyn ItemHandle>
-        };
-        let live_a = file_item("A", 1, cx);
-        for item in [file_item("B", 2, cx), live_a.boxed_clone()] {
-            pane.update_in(cx, |pane, window, cx| {
-                pane.add_item(item, true, true, None, window, cx)
-            });
-        }
-        set_max_tabs(cx, Some(2));
-
-        let restored_items = [Some(file_item("A", 1, cx)), Some(file_item("C", 3, cx))];
-        let placed_item_ids = pane.update_in(cx, |pane, window, cx| {
-            SerializedPane::new(
-                vec![
-                    SerializedItem::new("TestItem", 10, true, false),
-                    SerializedItem::new("TestItem", 11, false, false),
-                ],
-                false,
-                0,
-            )
-            .place_restored_items(pane, &restored_items, window, cx)
-            .into_iter()
-            .map(|item| item.map(|item| item.item_id()))
-            .collect::<Vec<_>>()
-        });
-
-        assert_item_labels(&pane, ["C", "B", "A*"], cx);
-        assert_eq!(
-            placed_item_ids,
-            vec![
-                Some(live_a.item_id()),
-                restored_items[1].as_ref().map(|item| item.item_id())
-            ]
         );
     }
 

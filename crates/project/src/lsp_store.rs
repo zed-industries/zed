@@ -37,7 +37,7 @@ use crate::{
     ManifestProvidersStore, Project, ProjectItem, ProjectPath, ProjectTransaction,
     PulledDiagnostics, ResolveState, Symbol,
     buffer_store::{BufferStore, BufferStoreEvent},
-    environment::ProjectEnvironment,
+    environment::{ProjectEnvironment, ProjectEnvironmentEvent},
     lsp_command::{self, *},
     lsp_store::{
         self,
@@ -4966,6 +4966,8 @@ impl LspStore {
             .detach();
         cx.subscribe(&toolchain_store, Self::on_toolchain_store_event)
             .detach();
+        cx.subscribe(&environment, Self::on_environment_event)
+            .detach();
         cx.observe_global::<SettingsStore>(Self::on_settings_changed)
             .detach();
         let binary_status_task = subscribe_to_binary_statuses(&languages, cx);
@@ -6409,6 +6411,34 @@ impl LspStore {
                 )
                 .await
         })
+    }
+
+    fn on_environment_event(
+        &mut self,
+        _: Entity<ProjectEnvironment>,
+        event: &ProjectEnvironmentEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            ProjectEnvironmentEvent::CliEnvironmentChanged => {
+                let Some(local) = self.as_local() else {
+                    return;
+                };
+                let servers = local
+                    .language_server_ids
+                    .keys()
+                    .map(|seed| LanguageServerSelector::Name(seed.name.clone()))
+                    .collect();
+                let buffers = self.buffer_store.read(cx).buffers().collect();
+                self.restart_local_language_servers_for_buffers(
+                    buffers,
+                    servers,
+                    LanguageServerStartMode::Automatic,
+                    cx,
+                );
+            }
+            ProjectEnvironmentEvent::ErrorsUpdated => {}
+        }
     }
 
     fn on_settings_changed(&mut self, cx: &mut Context<Self>) {

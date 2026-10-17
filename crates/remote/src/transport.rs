@@ -1,7 +1,4 @@
-use std::{
-    io::Write,
-    sync::atomic::{AtomicU64, Ordering},
-};
+use std::io::Write;
 
 use crate::{
     RemoteArch, RemoteOs, RemotePlatform,
@@ -544,16 +541,6 @@ async fn which(
             "Failed to run 'which' to find the binary '{binary_name}': {err}"
         )),
     }
-}
-
-static NEXT_STAGING_FILE_ID: AtomicU64 = AtomicU64::new(0);
-
-fn staging_file_suffix() -> String {
-    format!(
-        "{}-{}",
-        std::process::id(),
-        NEXT_STAGING_FILE_ID.fetch_add(1, Ordering::Relaxed)
-    )
 }
 
 #[cfg(test)]

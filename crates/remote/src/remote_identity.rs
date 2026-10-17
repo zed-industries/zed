@@ -97,21 +97,6 @@ pub fn same_remote_connection_identity(
     }
 }
 
-pub fn same_remote_connection_target(
-    left: &RemoteConnectionOptions,
-    right: &RemoteConnectionOptions,
-) -> bool {
-    remote_connection_identity(left) == remote_connection_identity(right)
-        && remote_connection_target_args(left) == remote_connection_target_args(right)
-}
-
-pub fn remote_connection_target_args(options: &RemoteConnectionOptions) -> Option<&[String]> {
-    match options {
-        RemoteConnectionOptions::Ssh(options) => Some(options.args.as_deref().unwrap_or_default()),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -210,28 +195,5 @@ mod tests {
 
         assert!(same_remote_connection_identity(None, None));
         assert!(!same_remote_connection_identity(None, Some(&remote)));
-    }
-
-    #[test]
-    fn ssh_target_includes_connection_arguments() {
-        let ssh = |args: Option<&[&str]>| {
-            RemoteConnectionOptions::Ssh(SshConnectionOptions {
-                host: "target".into(),
-                args: args.map(|args| args.iter().map(|arg| arg.to_string()).collect()),
-                nickname: args.map(|_| "nickname".to_string()),
-                ..Default::default()
-            })
-        };
-        let host_a = ssh(Some(&["-o", "Hostname=host-a"]));
-        let host_b = ssh(Some(&["-o", "Hostname=host-b"]));
-
-        assert_eq!(
-            [
-                same_remote_connection_target(&host_a, &host_a),
-                same_remote_connection_target(&host_a, &host_b),
-                same_remote_connection_target(&ssh(None), &ssh(Some(&[]))),
-            ],
-            [true, false, true]
-        );
     }
 }

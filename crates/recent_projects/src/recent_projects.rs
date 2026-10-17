@@ -17,10 +17,9 @@ use fs::Fs;
 #[cfg(target_os = "windows")]
 mod wsl_picker;
 
-pub use dev_container_suggest::open_dev_container_from_cli;
 use remote::{RemoteConnectionOptions, same_remote_connection_identity};
-pub use remote_connection::{KnownPassword, RemoteConnectionModal, connect, connect_with_modal};
-pub use remote_connections::{navigate_to_positions, open_remote_project, restore_remote_project};
+pub use remote_connection::{RemoteConnectionModal, connect, connect_with_modal};
+pub use remote_connections::{navigate_to_positions, open_remote_project};
 
 use disconnected_overlay::DisconnectedOverlay;
 use fuzzy_nucleo::{StringMatch, StringMatchCandidate, match_strings};

@@ -14,7 +14,7 @@ use crate::{
 use anyhow::{Context as _, Result, anyhow};
 use askpass::EncryptedPassword;
 use async_trait::async_trait;
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use futures::{
     Future, FutureExt as _, StreamExt as _,
     channel::{
@@ -38,12 +38,10 @@ use rpc::{
 };
 use semver::Version;
 use std::{
-    cell::RefCell,
     collections::VecDeque,
     fmt,
     ops::ControlFlow,
     path::PathBuf,
-    rc::{self, Rc},
     sync::{
         Arc, Weak,
         atomic::{AtomicU32, AtomicU64, Ordering::SeqCst},
@@ -340,7 +338,6 @@ pub struct RemoteClient {
     platform: RemotePlatform,
     os_version: Option<String>,
     state: Option<State>,
-    _server_identifier: ServerIdentifierLease,
 }
 
 #[derive(Debug)]
@@ -385,43 +382,6 @@ impl ConnectionIdentifier {
     }
 }
 
-#[derive(Default)]
-struct LiveServerIdentifiers(Rc<RefCell<HashSet<String>>>);
-
-impl Global for LiveServerIdentifiers {}
-
-struct ServerIdentifierLease {
-    live: rc::Weak<RefCell<HashSet<String>>>,
-    identifier: String,
-}
-
-impl ServerIdentifierLease {
-    fn acquire(identifier: ConnectionIdentifier, cx: &mut App) -> Self {
-        let live = cx.default_global::<LiveServerIdentifiers>().0.clone();
-        let mut identifier = identifier.to_string(cx);
-        while live.borrow().contains(&identifier) {
-            identifier = ConnectionIdentifier::setup().to_string(cx);
-        }
-        live.borrow_mut().insert(identifier.clone());
-        Self {
-            live: Rc::downgrade(&live),
-            identifier,
-        }
-    }
-
-    fn identifier(&self) -> &str {
-        &self.identifier
-    }
-}
-
-impl Drop for ServerIdentifierLease {
-    fn drop(&mut self) {
-        if let Some(live) = self.live.upgrade() {
-            live.borrow_mut().remove(&self.identifier);
-        }
-    }
-}
-
 pub async fn connect(
     connection_options: RemoteConnectionOptions,
     delegate: Arc<dyn RemoteClientDelegate>,
@@ -458,8 +418,7 @@ impl RemoteClient {
         delegate: Arc<dyn RemoteClientDelegate>,
         cx: &mut App,
     ) -> Task<Result<Option<Entity<Self>>>> {
-        let server_identifier = ServerIdentifierLease::acquire(unique_identifier, cx);
-        let unique_identifier = server_identifier.identifier().to_owned();
+        let unique_identifier = unique_identifier.to_string(cx);
         cx.spawn(async move |cx| {
             let success = Box::pin(async move {
                 let (outgoing_tx, outgoing_rx) = mpsc::unbounded::<Envelope>();
@@ -489,7 +448,6 @@ impl RemoteClient {
                     platform,
                     os_version: os_version.clone(),
                     state: Some(State::Connecting),
-                    _server_identifier: server_identifier,
                 });
 
                 let io_task = remote_connection.start_proxy(
@@ -2354,33 +2312,6 @@ mod tests {
             client.stream_response_channels.lock().len(),
             0,
             "stream channel should be removed once the consumer has dropped the stream"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_live_server_identifiers_are_unique(cx: &mut TestAppContext) {
-        let workspace_identifier =
-            |cx: &mut App| ServerIdentifierLease::acquire(ConnectionIdentifier::Workspace(7), cx);
-        let (first, second, reacquired) = cx.update(|cx| {
-            release_channel::init_test(Version::new(0, 0, 0), ReleaseChannel::Stable, cx);
-            let first = workspace_identifier(cx);
-            let second = workspace_identifier(cx);
-            let identifiers = (
-                first.identifier().to_owned(),
-                second.identifier().to_owned(),
-            );
-            drop(first);
-            let reacquired = workspace_identifier(cx);
-            (
-                identifiers.0,
-                identifiers.1,
-                reacquired.identifier().to_owned(),
-            )
-        });
-
-        assert_eq!(
-            (first.as_str(), second == first, reacquired.as_str()),
-            ("workspace-7", false, "workspace-7")
         );
     }
 

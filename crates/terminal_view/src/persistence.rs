@@ -1,5 +1,6 @@
 use anyhow::Result;
 use async_recursion::async_recursion;
+use collections::HashSet;
 use futures::future::join_all;
 use gpui::{AppContext as _, AsyncWindowContext, Axis, Entity, Task, WeakEntity};
 use project::Project;
@@ -14,8 +15,8 @@ use db::{
     sqlez_macros::sql,
 };
 use workspace::{
-    ItemId, Member, Pane, PaneAxis, PaneGroup, SerializableItem as _, SplitDirection, Workspace,
-    WorkspaceDb, WorkspaceId,
+    ItemHandle, ItemId, Member, Pane, PaneAxis, PaneGroup, SerializableItem as _, SplitDirection,
+    Workspace, WorkspaceDb, WorkspaceId,
 };
 
 use crate::{
@@ -57,23 +58,27 @@ fn build_serialized_pane_group(
 }
 
 fn serialize_pane(pane: &Entity<Pane>, active: bool, cx: &mut App) -> SerializedPane {
+    let mut items_to_serialize = HashSet::default();
     let pane = pane.read(cx);
-    let active_item_id = pane.active_item().map(|item| item.item_id());
-    let pinned_count = pane.pinned_count();
-    let terminal_views = pane
+    let children = pane
         .items()
-        .filter_map(|item| item.act_as::<TerminalView>(cx))
-        .filter(|terminal_view| terminal_view.read(cx).terminal().read(cx).task().is_none())
+        .filter_map(|item| {
+            let terminal_view = item.act_as::<TerminalView>(cx)?;
+            if terminal_view.read(cx).terminal().read(cx).task().is_some() {
+                None
+            } else {
+                let id = item.item_id().as_u64();
+                items_to_serialize.insert(id);
+                Some(id)
+            }
+        })
         .collect::<Vec<_>>();
-    let mut children = Vec::with_capacity(terminal_views.len());
-    let mut active_item = None;
-    for terminal_view in terminal_views {
-        let item_id = workspace::persistent_item_id(&terminal_view, cx);
-        if Some(terminal_view.entity_id()) == active_item_id {
-            active_item = Some(item_id);
-        }
-        children.push(item_id);
-    }
+    let active_item = pane
+        .active_item()
+        .map(|item| item.item_id().as_u64())
+        .filter(|active_id| items_to_serialize.contains(active_id));
+
+    let pinned_count = pane.pinned_count();
     SerializedPane {
         active,
         children,
@@ -169,15 +174,15 @@ pub(crate) fn deserialize_terminal_panel(
 
 fn populate_pane_items(
     pane: &mut Pane,
-    items: Vec<(ItemId, Entity<TerminalView>)>,
-    active_item: Option<ItemId>,
+    items: Vec<Entity<TerminalView>>,
+    active_item: Option<u64>,
     window: &mut Window,
     cx: &mut Context<Pane>,
 ) {
     let interim_active_item = (pane.items_len() > 0).then(|| pane.active_item()).flatten();
     let mut active_item_index = None;
-    for (item_index, (saved_item_id, item)) in (pane.items_len()..).zip(items) {
-        if Some(saved_item_id) == active_item {
+    for (item_index, item) in (pane.items_len()..).zip(items) {
+        if Some(item.item_id().as_u64()) == active_item {
             active_item_index = Some(item_index);
         }
         pane.add_item(Box::new(item), false, false, None, window, cx);
@@ -314,24 +319,27 @@ fn deserialize_terminal_views(
     workspace: WeakEntity<Workspace>,
     item_ids: &[u64],
     cx: &mut AsyncWindowContext,
-) -> impl Future<Output = Vec<(ItemId, Entity<TerminalView>)>> + use<> {
+) -> impl Future<Output = Vec<Entity<TerminalView>>> + use<> {
     let deserialized_items = join_all(item_ids.iter().filter_map(|item_id| {
-        let item_id = *item_id;
-        let item = cx
-            .update(|window, cx| {
-                TerminalView::deserialize(
-                    project.clone(),
-                    workspace.clone(),
-                    workspace_id,
-                    item_id,
-                    window,
-                    cx,
-                )
-            })
-            .ok()?;
-        Some(async move { Some((item_id, item.await.log_err()?)) })
+        cx.update(|window, cx| {
+            TerminalView::deserialize(
+                project.clone(),
+                workspace.clone(),
+                workspace_id,
+                *item_id,
+                window,
+                cx,
+            )
+        })
+        .ok()
     }));
-    async move { deserialized_items.await.into_iter().flatten().collect() }
+    async move {
+        deserialized_items
+            .await
+            .into_iter()
+            .filter_map(|item| item.log_err())
+            .collect()
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]

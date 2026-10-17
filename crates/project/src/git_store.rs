@@ -5,7 +5,7 @@ pub mod job_debug_queue;
 pub mod pending_op;
 
 use crate::{
-    Project, ProjectEnvironment, ProjectItem, ProjectPath,
+    Project, ProjectEnvironment, ProjectEnvironmentEvent, ProjectItem, ProjectPath,
     buffer_store::{BufferStore, BufferStoreEvent},
     project_settings::ProjectSettings,
     trusted_worktrees::{
@@ -922,20 +922,21 @@ impl GitStore {
                             };
                             let project_environment = project_environment.downgrade();
                             let fs = fs.clone();
-                            let repositories_to_respawn = this
+                            let repositories_to_refresh = this
                                 .repositories
                                 .iter()
                                 .filter_map(|(repository_id, repo)| {
                                     repo.read(cx)
-                                        .job_sender
-                                        .is_closed()
+                                        .repository_state
+                                        .peek()
+                                        .is_some_and(Result::is_err)
                                         .then_some((*repository_id, repo.clone()))
                                 })
                                 .collect::<Vec<_>>();
-                            for (repository_id, repo) in repositories_to_respawn {
+                            for (repository_id, repo) in repositories_to_refresh {
                                 let is_trusted = this.repository_is_trusted(repository_id, cx);
                                 repo.update(cx, |repo, cx| {
-                                    repo.respawn_local_worker(
+                                    repo.refresh_local_backend(
                                         project_environment.clone(),
                                         fs.clone(),
                                         is_trusted,
@@ -1006,6 +1007,13 @@ impl GitStore {
 
         if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
             _subscriptions.push(cx.subscribe(&trusted_worktrees, Self::on_trusted_worktrees_event));
+        }
+        if let GitStoreState::Local {
+            project_environment,
+            ..
+        } = &state
+        {
+            _subscriptions.push(cx.subscribe(project_environment, Self::on_environment_event));
         }
 
         _subscriptions.push(cx.observe_global::<SettingsStore>(|this, cx| {
@@ -3015,6 +3023,31 @@ impl GitStore {
                 |parked| abs_path.starts_with(&parked.work_directory_abs_path),
                 cx,
             );
+        }
+    }
+
+    fn on_environment_event(
+        &mut self,
+        environment: Entity<ProjectEnvironment>,
+        event: &ProjectEnvironmentEvent,
+        cx: &mut Context<Self>,
+    ) {
+        let ProjectEnvironmentEvent::CliEnvironmentChanged = event else {
+            return;
+        };
+        let GitStoreState::Local { fs, .. } = &self.state else {
+            return;
+        };
+        for (repository_id, repository) in &self.repositories {
+            let is_trusted = self.repository_is_trusted(*repository_id, cx);
+            repository.update(cx, |repository, cx| {
+                repository.refresh_local_backend(
+                    environment.downgrade(),
+                    fs.clone(),
+                    is_trusted,
+                    cx,
+                );
+            });
         }
     }
 
@@ -6549,12 +6582,31 @@ impl Repository {
         is_trusted: bool,
         cx: &mut Context<Self>,
     ) {
+        self.refresh_local_backend(project_environment, fs, is_trusted, cx);
+        self.job_sender.close_channel();
+        self._worker_task = Task::ready(());
+        self.active_jobs.clear();
+        self.job_debug_queue
+            .mark_unfinished_complete(job_debug_queue::CompletedJobStatus::Skipped);
+        cx.notify();
+
+        let (job_sender, worker_task) = Repository::spawn_local_git_worker(cx);
+        self.job_sender = job_sender;
+        self._worker_task = worker_task;
+    }
+
+    fn refresh_local_backend(
+        &mut self,
+        project_environment: WeakEntity<ProjectEnvironment>,
+        fs: Arc<dyn Fs>,
+        is_trusted: bool,
+        cx: &mut Context<Self>,
+    ) {
         let work_directory_abs_path = self.snapshot.work_directory_abs_path.clone();
         let dot_git_abs_path = self.snapshot.dot_git_abs_path.clone();
-
-        let state = cx
+        self.repository_state = cx
             .spawn(async move |_, cx| {
-                LocalRepositoryState::new(
+                let state = LocalRepositoryState::new(
                     work_directory_abs_path,
                     dot_git_abs_path,
                     project_environment,
@@ -6563,22 +6615,7 @@ impl Repository {
                     cx,
                 )
                 .await
-                .map_err(|err| err.to_string())
-            })
-            .shared();
-        self.job_sender.close_channel();
-        self._worker_task = Task::ready(());
-        self.active_jobs.clear();
-        self.job_debug_queue
-            .mark_unfinished_complete(job_debug_queue::CompletedJobStatus::Skipped);
-        cx.notify();
-
-        let (job_sender, worker_task) = Repository::spawn_local_git_worker(state.clone(), cx);
-        self.job_sender = job_sender;
-        self._worker_task = worker_task;
-        self.repository_state = cx
-            .spawn(async move |_, _| {
-                let state = state.await?;
+                .map_err(|error| error.to_string())?;
                 Ok(RepositoryState::Local(state))
             })
             .shared();
@@ -10247,49 +10284,65 @@ impl Repository {
         );
     }
 
-    fn spawn_local_git_worker(
-        state: Shared<Task<Result<LocalRepositoryState, String>>>,
-        cx: &mut Context<Self>,
-    ) -> (mpsc::UnboundedSender<GitJob>, Task<()>) {
+    fn spawn_local_git_worker(cx: &mut Context<Self>) -> (mpsc::UnboundedSender<GitJob>, Task<()>) {
         let (job_tx, mut job_rx) = mpsc::unbounded::<GitJob>();
 
-        let worker_task = cx.spawn(async move |this, cx| {
-            let Some(state) = state.await.log_err() else {
-                return;
-            };
-            if let Some(git_hosting_provider_registry) =
-                cx.update(|cx| GitHostingProviderRegistry::try_global(cx))
-            {
-                git_hosting_providers::register_additional_providers(
-                    git_hosting_provider_registry,
-                    state.backend.clone(),
-                )
-                .await;
-            }
-            let state = RepositoryState::Local(state);
+        let worker_task = cx.spawn(async move |repository, cx| {
+            let mut provider_registry = cx.update(|cx| GitHostingProviderRegistry::try_global(cx));
             let mut jobs = VecDeque::new();
             loop {
-                while let Ok(next_job) = job_rx.try_recv() {
-                    jobs.push_back(next_job);
-                }
-
                 if let Some(job) = jobs.pop_front() {
+                    let Ok(state) = repository
+                        .read_with(cx, |repository, _| repository.repository_state.clone())
+                    else {
+                        return;
+                    };
+                    let state = state.await;
+                    if let Ok(RepositoryState::Local(state)) = &state
+                        && let Some(registry) = provider_registry.take()
+                    {
+                        git_hosting_providers::register_additional_providers(
+                            registry,
+                            state.backend.clone(),
+                        )
+                        .await;
+                    }
+                    while let Ok(next_job) = job_rx.try_recv() {
+                        jobs.push_back(next_job);
+                    }
                     if let Some(current_key) = &job.key
                         && jobs
                             .iter()
                             .any(|other_job| other_job.key.as_ref() == Some(current_key))
                     {
                         let skipped_job_id = job.id;
-                        this.update(cx, |repo, _| {
-                            repo.job_debug_queue.mark_complete(
-                                skipped_job_id,
-                                job_debug_queue::CompletedJobStatus::Skipped,
-                            );
-                        })
-                        .ok();
+                        repository
+                            .update(cx, |repository, _| {
+                                repository.job_debug_queue.mark_complete(
+                                    skipped_job_id,
+                                    job_debug_queue::CompletedJobStatus::Skipped,
+                                );
+                            })
+                            .ok();
                         continue;
                     }
-                    (job.job)(state.clone(), cx).await;
+                    match state {
+                        Ok(state) => (job.job)(state, cx).await,
+                        Err(error) => {
+                            log::error!(
+                                "failed to get repository state for Git job {}: {error}",
+                                job.id
+                            );
+                            repository
+                                .update(cx, |repository, _| {
+                                    repository.job_debug_queue.mark_complete(
+                                        job.id,
+                                        job_debug_queue::CompletedJobStatus::Skipped,
+                                    );
+                                })
+                                .ok();
+                        }
+                    }
                 } else if let Some(job) = job_rx.next().await {
                     jobs.push_back(job);
                 } else {
@@ -12224,6 +12277,49 @@ mod tests {
 
         gate.open();
         cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_git_jobs_coalesce_after_backend_refresh(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(util::path!("/project"), json!({ ".git": {} }))
+            .await;
+        let project = Project::test(fs, [util::path!("/project").as_ref()], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        let repository =
+            project.read_with(cx, |project, cx| project.active_repository(cx).unwrap());
+        let (release_sender, release_receiver) = oneshot::channel();
+        let mut superseded_job = repository.update(cx, |repository, cx| {
+            let state = repository.repository_state.clone();
+            repository.repository_state = cx
+                .background_spawn(async move {
+                    release_receiver.await.unwrap();
+                    state.await
+                })
+                .shared();
+            repository.send_keyed_job(
+                "superseded",
+                Some(GitJobKey::WriteIndex(vec![repo_path("file.txt")])),
+                None,
+                |_, _| async { 1 },
+            )
+        });
+        cx.run_until_parked();
+        assert!((&mut superseded_job).now_or_never().is_none());
+        let latest_job = repository.update(cx, |repository, _| {
+            repository.send_keyed_job(
+                "latest",
+                Some(GitJobKey::WriteIndex(vec![repo_path("file.txt")])),
+                None,
+                |_, _| async { 2 },
+            )
+        });
+        release_sender.send(()).unwrap();
+        assert!(superseded_job.await.is_err());
+        assert_eq!(latest_job.await.unwrap(), 2);
     }
 
     #[gpui::test]
