@@ -1719,14 +1719,17 @@ impl sum_tree::SeekTarget<'_, ListItemSummary, ListItemSummary> for Height {
 #[cfg(test)]
 mod test {
 
+    use accesskit::Role;
     use gpui::{ScrollDelta, ScrollWheelEvent};
     use std::cell::Cell;
     use std::rc::Rc;
+    use std::sync::{Arc, atomic::AtomicBool};
 
     use crate::{
-        self as gpui, AppContext, Bounds, Context, Element, FollowMode, InteractiveElement,
-        IntoElement, ListState, Render, Styled, TestAppContext, Window, canvas, div, list, point,
-        px, size,
+        self as gpui, AppContext, Bounds, Context, Element, FocusHandle, FollowMode,
+        InteractiveElement, IntoElement, ListState, ParentElement, Render,
+        StatefulInteractiveElement, Styled, TestAppContext, Window, canvas, div, list, point, px,
+        size, window::a11y::A11y,
     };
 
     #[gpui::test]
@@ -1780,6 +1783,125 @@ mod test {
         );
         assert_eq!(scroll_top.item_ix, 0);
         assert_eq!(scroll_top.offset_in_item, px(10.));
+    }
+
+    // When an item requests an autoscroll, `List` prepaints its items a second
+    // time. The accessibility nodes from the first pass must be discarded, or
+    // the retry pushes duplicate ids and claims focus a second time.
+    #[gpui::test]
+    fn test_autoscroll_retry_rebuilds_a11y_nodes(cx: &mut TestAppContext) {
+        struct TestView {
+            state: ListState,
+            focus_handle: FocusHandle,
+            prepaint_count: Rc<Cell<usize>>,
+        }
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let focus_handle = self.focus_handle.clone();
+                let prepaint_count = self.prepaint_count.clone();
+                div()
+                    .id("container")
+                    .role(Role::List)
+                    .w(px(100.))
+                    .h(px(60.))
+                    .child(
+                        list(self.state.clone(), move |ix, _, _| {
+                            let item = div()
+                                .id(("item", ix))
+                                .role(Role::ListItem)
+                                .h(px(20.))
+                                .w_full();
+                            if ix == 2 {
+                                let prepaint_count = prepaint_count.clone();
+                                item.track_focus(&focus_handle)
+                                    .child(
+                                        canvas(
+                                            move |bounds, window, _| {
+                                                prepaint_count.set(prepaint_count.get() + 1);
+                                                window.request_autoscroll(Bounds::from_corners(
+                                                    point(bounds.left(), bounds.top() - px(30.)),
+                                                    point(bounds.right(), bounds.top() + px(5.)),
+                                                ));
+                                            },
+                                            |_, _, _, _| {},
+                                        )
+                                        .size_full(),
+                                    )
+                                    .into_any()
+                            } else {
+                                item.into_any()
+                            }
+                        })
+                        .w_full()
+                        .h_full(),
+                    )
+            }
+        }
+
+        let state = ListState::new(5, crate::ListAlignment::Top, px(20.));
+        state.scroll_to(gpui::ListOffset {
+            item_ix: 2,
+            offset_in_item: px(0.),
+        });
+        let prepaint_count = Rc::new(Cell::new(0));
+
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            window.a11y = A11y::new(Arc::new(AtomicBool::new(true)), false, None);
+            let focus_handle = cx.focus_handle();
+            window.focus(&focus_handle, cx);
+            TestView {
+                state: state.clone(),
+                focus_handle,
+                prepaint_count: prepaint_count.clone(),
+            }
+        });
+
+        let (update, node_bounds, scale_factor) = cx.update(|window, _| {
+            (
+                window.a11y.last_tree_update().cloned(),
+                window.a11y.node_bounds.clone(),
+                window.scale_factor(),
+            )
+        });
+        // The first draw retries for the autoscroll; once scrolled, the
+        // requested bounds are within the list and later draws don't retry.
+        assert!(
+            prepaint_count.get() >= 2,
+            "the list should have retried prepaint"
+        );
+        let update = update.expect("an a11y tree update should have been built");
+
+        let mut ids: Vec<_> = update.nodes.iter().map(|(id, _)| *id).collect();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), update.nodes.len(), "duplicate a11y nodes");
+
+        // 30px above item 2's top lands 10px into item 0, so items 0 to 3 are
+        // visible.
+        let mut items: Vec<_> = update
+            .nodes
+            .iter()
+            .filter(|(_, node)| node.role() == Role::ListItem)
+            .map(|(id, node)| (*id, node_bounds[id].origin.y, node.bounds()))
+            .collect();
+        items.sort_by(|a, b| a.1.0.total_cmp(&b.1.0));
+        let item_tops: Vec<_> = items.iter().map(|(_, top, _)| *top).collect();
+        assert_eq!(item_tops, vec![px(-10.), px(10.), px(30.), px(50.)]);
+        for (_, top, accesskit_bounds) in &items {
+            assert_eq!(
+                accesskit_bounds.map(|bounds| bounds.y0),
+                Some((top.0 * scale_factor) as f64)
+            );
+        }
+
+        let container_children = update
+            .nodes
+            .iter()
+            .find(|(_, node)| node.role() == Role::List)
+            .map(|(_, node)| node.children().to_vec());
+        let item_ids: Vec<_> = items.iter().map(|(id, _, _)| *id).collect();
+        assert_eq!(container_children, Some(item_ids.clone()));
+        assert_eq!(update.focus, item_ids[2]);
     }
 
     #[gpui::test]

@@ -4249,7 +4249,15 @@ impl Window {
     pub fn transact<T, U>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, U>) -> Result<T, U> {
         self.invalidator.debug_assert_prepaint();
         let index = self.prepaint_index();
+        let a11y_checkpoint = self.a11y.is_active().then(|| self.a11y.begin_transaction());
         let result = f(self);
+        if let Some(a11y_checkpoint) = a11y_checkpoint {
+            if result.is_err() {
+                self.a11y.rollback_transaction(a11y_checkpoint);
+            } else {
+                self.a11y.commit_transaction();
+            }
+        }
         if result.is_err() {
             self.next_frame.hitboxes.truncate(index.hitboxes_index);
             self.next_frame
