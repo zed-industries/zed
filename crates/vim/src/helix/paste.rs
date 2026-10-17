@@ -27,24 +27,17 @@ impl Vim {
         // TODO: vim paste calls take_forced_motion here, but I don't know what that does
         // (none of the other helix_ methods call it)
 
-        self.update_editor(cx, |vim, editor, cx| {
+        let pasted = self.update_editor(cx, |vim, editor, cx| {
             if editor.read_only(cx) {
-                return;
+                return None;
             }
+            let selected_register = vim.selected_register.take();
+            let register = vim.read_register(selected_register, editor, cx)?;
+            let text = register.text;
+            let clipboard_selections = register.clipboard_selections;
 
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
-
-                let selected_register = vim.selected_register.take();
-
-                let Some(register) = Vim::update_globals(cx, |globals, cx| {
-                    globals.read_register(selected_register, Some(editor), cx)
-                })
-                .filter(|reg| !reg.text.is_empty()) else {
-                    return;
-                };
-                let text = register.text;
-                let clipboard_selections = register.clipboard_selections;
 
                 let display_map = editor.display_snapshot(cx);
                 let current_selections = editor.selections.all_adjusted_display(&display_map);
@@ -132,9 +125,12 @@ impl Vim {
                     s.select_ranges(new_selections);
                 })
             });
+            Some(())
         });
 
-        self.switch_mode(Mode::HelixNormal, true, window, cx);
+        if pasted.flatten().is_some() {
+            self.switch_mode(Mode::HelixNormal, true, window, cx);
+        }
     }
 }
 

@@ -1,8 +1,6 @@
-use std::any::TypeId;
-
 use debugger_panel::DebugPanel;
 use editor::{Editor, MultiBufferOffsetUtf16};
-use gpui::{Action, App, DispatchPhase, EntityInputHandler, TaskExt, actions};
+use gpui::{Action, App, EntityInputHandler, TaskExt, actions};
 use new_process_modal::{NewProcessModal, NewProcessMode};
 use project::debugger::{self, breakpoint_store::SourceBreakpoint, session::ThreadStatus};
 use schemars::JsonSchema;
@@ -299,18 +297,13 @@ pub fn init(cx: &mut App) {
                         return;
                     }
 
-                    let editor = cx.entity().downgrade();
+                    let editor_handle = cx.entity().downgrade();
 
-                    window.on_action_when(
-                        session.any_stopped_thread(),
-                        TypeId::of::<editor::actions::RunToCursor>(),
-                        {
-                            let editor = editor.clone();
+                    if session.any_stopped_thread() {
+                        editor.register_action_handler(window, cx, {
+                            let editor = editor_handle.clone();
                             let active_session = active_session.clone();
-                            move |_, phase, _, cx| {
-                                if phase != DispatchPhase::Bubble {
-                                    return;
-                                }
+                            move |_: &editor::actions::RunToCursor, _, cx| {
                                 maybe!({
                                     let (buffer, position) = editor
                                         .update(cx, |editor, cx| {
@@ -357,14 +350,15 @@ pub fn init(cx: &mut App) {
                                     Some(())
                                 });
                             }
-                        },
-                    );
+                        });
+                    }
 
-                    window.on_action(
-                        TypeId::of::<editor::actions::EvaluateSelectedText>(),
-                        move |_, _, window, cx| {
-                            let status = maybe!({
-                                let text = editor
+                    editor.register_action_handler(
+                        window,
+                        cx,
+                        move |_: &editor::actions::EvaluateSelectedText, window, cx| {
+                            maybe!({
+                                let text = editor_handle
                                     .update(cx, |editor, cx| {
                                         let range = editor
                                             .selections
@@ -401,9 +395,6 @@ pub fn init(cx: &mut App) {
 
                                 Some(())
                             });
-                            if status.is_some() {
-                                cx.stop_propagation();
-                            }
                         },
                     );
                 })

@@ -6,7 +6,8 @@ use editor::code_context_menus::CodeContextMenu;
 use editor::display_map::{CreaseId, EditorMargins};
 use editor::{AnchorRangeExt as _, MultiBufferOffset, ToOffset as _};
 use editor::{
-    ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
+    ClipboardAccess, ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode,
+    EditorStyle, MultiBuffer, NativeInput,
 };
 use fs::Fs;
 use gpui::{
@@ -411,17 +412,66 @@ impl<T: 'static> PromptEditor<T> {
     }
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
-        if inline_assistant_model_supports_images(cx)
-            && let Some(task) = paste_images_as_context(
-                self.editor.clone(),
-                self.mention_set.clone(),
-                self.workspace.clone(),
+        let prompt_editor = cx.weak_entity();
+        cx.stop_propagation();
+        let admission = self.editor.update(cx, |editor, cx| {
+            editor.defer_shared_input(
+                NativeInput {
+                    clipboard: Some(ClipboardAccess::Read),
+                    ..NativeInput::default()
+                },
+                move |result, window, cx| {
+                    prompt_editor
+                        .update(cx, |prompt_editor, cx| match result {
+                            Ok(()) => prompt_editor.paste(&Paste, window, cx),
+                            Err(error) => prompt_editor.notify_clipboard_error(error, cx),
+                        })
+                        .ok();
+                },
                 window,
                 cx,
             )
-        {
-            task.detach();
-        }
+        });
+        let scope = match admission {
+            Ok(Some(scope)) => scope,
+            Ok(None) => return,
+            Err(error) => {
+                self.notify_clipboard_error(error, cx);
+                return;
+            }
+        };
+        scope.run(cx, |cx| {
+            if inline_assistant_model_supports_images(cx) {
+                match paste_images_as_context(
+                    self.editor.clone(),
+                    self.mention_set.clone(),
+                    self.workspace.clone(),
+                    window,
+                    cx,
+                ) {
+                    Ok(Some(task)) => task.detach(),
+                    Ok(None) => {}
+                    Err(error) => {
+                        self.notify_clipboard_error(error, cx);
+                        return;
+                    }
+                }
+            }
+            self.editor.update(cx, |editor, cx| {
+                editor.paste(&Paste, window, cx);
+            });
+        });
+    }
+
+    fn notify_clipboard_error(&self, error: anyhow::Error, cx: &mut Context<Self>) {
+        let message = format!("Clipboard operation failed: {error:#}");
+        log::error!("{message}");
+        let workspace = self.workspace.clone();
+        cx.defer(move |cx| {
+            workspace
+                .update(cx, |workspace, cx| workspace.show_error(message, cx))
+                .ok();
+        });
     }
 
     fn handle_prompt_editor_events(
@@ -1628,11 +1678,14 @@ mod tests {
     use agent::ThreadStore;
     use collections::VecDeque;
     use fs::FakeFs;
-    use gpui::{TestAppContext, VisualTestContext};
+    use gpui::{
+        ClipboardEntry, Image, ImageFormat, TestAppContext, VisualContext, VisualTestContext,
+    };
     use language::Buffer;
     use project::Project;
     use settings::SettingsStore;
     use std::cell::RefCell;
+    use std::io::Cursor;
     use std::path::Path;
     use std::rc::Rc;
     use terminal::TerminalBuilder;
@@ -1702,6 +1755,86 @@ mod tests {
                 )
             })
         })
+    }
+
+    #[gpui::test]
+    async fn test_paste_captures_queued_image_and_pastes_text_once(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                let mut model = registry.inline_assistant_model().expect("inline model");
+                model.supports_images = true;
+                registry.set_inline_assistant_model(Some(model), cx);
+            });
+        });
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", serde_json::json!({"file": ""}))
+            .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let prompt_editor = build_terminal_prompt_editor(&workspace, cx);
+        let editor = prompt_editor.read_with(cx, |prompt, _| prompt.editor.clone());
+        cx.replace_root_view(|_, _| PromptEditorTestView(prompt_editor.clone()));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        let mut image_bytes = Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(1, 1)
+            .write_to(&mut image_bytes, image::ImageFormat::Png)
+            .expect("encode image");
+        let mut clipboard = ClipboardItem::new_string(String::from("caption"));
+        clipboard.entries.insert(
+            0,
+            ClipboardEntry::Image(Image::from_bytes(
+                ImageFormat::Png,
+                image_bytes.into_inner(),
+            )),
+        );
+        cx.update(|window, cx| {
+            cx.write_to_clipboard(ClipboardItem::new_string(String::from("old")));
+            editor.update(cx, |editor, cx| {
+                editor.schedule_input_continuation(window, cx, |_, _| {});
+                let source = cx.weak_entity();
+                let admission = editor
+                    .defer_shared_input(
+                        NativeInput {
+                            clipboard: Some(ClipboardAccess::Write),
+                            ..NativeInput::default()
+                        },
+                        move |result, _, cx| {
+                            result.expect("image copy admitted");
+                            source
+                                .update(cx, |editor, cx| editor.write_to_clipboard(clipboard, cx))
+                                .expect("source editor exists")
+                                .expect("publish image");
+                        },
+                        window,
+                        cx,
+                    )
+                    .expect("admit image copy");
+                assert!(admission.is_none());
+            });
+            editor.focus_handle(cx).dispatch_action(&Paste, window, cx);
+            assert_eq!(editor.read(cx).text(cx), "");
+            cx.write_to_clipboard(ClipboardItem::new_string(String::from("later")));
+        });
+        cx.run_until_parked();
+
+        let image_link = acp_thread::MentionUri::PastedImage {
+            name: String::from("Image"),
+        }
+        .as_link()
+        .to_string();
+        editor.read_with(cx, |editor, cx| {
+            assert_eq!(editor.text(cx), format!("caption{image_link} "));
+        });
+        prompt_editor.read_with(cx, |prompt, cx| {
+            assert_eq!(prompt.mention_set.read(cx).creases().len(), 1);
+        });
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some(String::from("later"))
+        );
     }
 
     #[gpui::test]
@@ -1818,5 +1951,13 @@ mod tests {
             ),
             "Expected ConfirmRequested with execute: false"
         );
+    }
+
+    struct PromptEditorTestView(Entity<PromptEditor<TerminalCodegen>>);
+
+    impl Render for PromptEditorTestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.0.clone()
+        }
     }
 }

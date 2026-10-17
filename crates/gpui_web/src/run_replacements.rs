@@ -1,5 +1,5 @@
 use crate::canvas_fallback::classify_canvas_fallback;
-use gpui::{FontId, FontRun, LineLayout, Pixels, Point, ShapedGlyph, ShapedRun};
+use gpui::{FontId, FontRun, LineLayout, Pixels, ShapedGlyph, ShapedRun};
 use smallvec::SmallVec;
 use std::ops::Range;
 use unicode_segmentation::UnicodeSegmentation;
@@ -16,8 +16,6 @@ pub(crate) struct Candidate {
 #[derive(Debug, PartialEq)]
 pub(crate) struct GlyphSpan {
     pub(crate) range: Range<usize>,
-    pub(crate) position: Point<Pixels>,
-    pub(crate) end_x: Pixels,
     pub(crate) contiguous: bool,
     pub(crate) missing: bool,
     pub(crate) native_color: bool,
@@ -62,13 +60,12 @@ pub(crate) fn collect_candidates(
         return candidates;
     }
 
-    let mut glyphs = layout
+    for (index, glyph) in layout
         .runs
         .iter()
         .flat_map(|run| run.glyphs.iter())
         .enumerate()
-        .peekable();
-    while let Some((index, glyph)) = glyphs.next() {
+    {
         let candidate_index =
             candidates.partition_point(|candidate| candidate.source.end <= glyph.index);
         let Some(candidate) = candidates
@@ -79,17 +76,12 @@ pub(crate) fn collect_candidates(
         };
         let span = candidate.glyphs.get_or_insert_with(|| GlyphSpan {
             range: index..index,
-            position: glyph.position,
-            end_x: glyph.position.x,
             contiguous: true,
             missing: false,
             native_color: true,
         });
         span.contiguous &= span.range.end == index;
         span.range.end = index + 1;
-        span.end_x = glyphs
-            .peek()
-            .map_or(layout.width, |(_, next)| next.position.x);
         span.missing |= glyph.id.0 == 0;
         span.native_color &= glyph.is_emoji;
     }
@@ -97,10 +89,17 @@ pub(crate) fn collect_candidates(
 }
 
 pub(crate) struct Replacement {
+    pub(crate) source: Range<usize>,
     pub(crate) glyph_range: Range<usize>,
     pub(crate) font_id: FontId,
     pub(crate) glyph: ShapedGlyph,
-    pub(crate) width_delta: Pixels,
+    pub(crate) start_x: f64,
+    pub(crate) width_delta: f64,
+}
+
+pub(crate) struct PreciseLayout {
+    pub(crate) glyph_x_positions: Vec<f64>,
+    pub(crate) width: f64,
 }
 
 struct Segment {
@@ -110,15 +109,40 @@ struct Segment {
 
 /// Ranges refer to the original flattened glyph stream and must be sorted,
 /// non-overlapping, nonempty, and in bounds.
-pub(crate) fn apply_replacements(layout: &mut LineLayout, replacements: Vec<Replacement>) {
+pub(crate) fn apply_replacements(
+    layout: &mut LineLayout,
+    replacements: Vec<Replacement>,
+    mut precise: Option<&mut PreciseLayout>,
+) {
     if replacements.is_empty() {
         return;
     }
 
+    let width = precise.as_ref().map_or_else(
+        || layout.caret_x_for_index(layout.len),
+        |precise| precise.width,
+    );
+    let mut caret_replacements = replacements.iter().peekable();
+    let mut caret_shift = 0.0;
+    layout.caret_positions.retain_mut(|(index, position)| {
+        while let Some(replacement) =
+            caret_replacements.next_if(|replacement| replacement.source.end <= *index)
+        {
+            caret_shift += replacement.width_delta;
+        }
+        if caret_replacements.peek().is_some_and(|replacement| {
+            replacement.source.start < *index && *index < replacement.source.end
+        }) {
+            return false;
+        }
+        *position += caret_shift;
+        true
+    });
     let mut replacements = replacements.into_iter().peekable();
     let mut original_index = 0;
+    let mut retained_count = 0;
     let mut consumed_end = 0;
-    let mut shift = Pixels::ZERO;
+    let mut shift = 0.0;
     let mut segments_by_run: SmallVec<[SmallVec<[Segment; 4]>; 4]> = SmallVec::new();
     let mut spare_buffers: SmallVec<[Vec<ShapedGlyph>; 4]> = SmallVec::new();
     let mut final_run_count = 0;
@@ -132,18 +156,30 @@ pub(crate) fn apply_replacements(layout: &mut LineLayout, replacements: Vec<Repl
                 return false;
             }
 
-            let font_id = if let Some(replacement) =
+            let (font_id, position) = if let Some(replacement) =
                 replacements.next_if(|replacement| replacement.glyph_range.start == index)
             {
                 consumed_end = replacement.glyph_range.end;
                 *glyph = replacement.glyph;
-                glyph.position.x += shift;
+                let position = if precise.is_some() {
+                    replacement.start_x
+                } else {
+                    f64::from(glyph.position.x)
+                } + shift;
                 shift += replacement.width_delta;
-                replacement.font_id
+                (replacement.font_id, position)
             } else {
-                glyph.position.x += shift;
-                run.font_id
+                let position = precise.as_ref().map_or_else(
+                    || f64::from(glyph.position.x),
+                    |precise| precise.glyph_x_positions[index],
+                ) + shift;
+                (run.font_id, position)
             };
+            glyph.position.x = Pixels::from(position);
+            if let Some(precise) = precise.as_deref_mut() {
+                precise.glyph_x_positions[retained_count] = position;
+            }
+            retained_count += 1;
 
             if let Some(segment) = segments.last_mut().filter(|last| last.font_id == font_id) {
                 segment.length += 1;
@@ -162,7 +198,11 @@ pub(crate) fn apply_replacements(layout: &mut LineLayout, replacements: Vec<Repl
             true
         }
     });
-    layout.width += shift;
+    layout.width = Pixels::from(width + shift);
+    if let Some(precise) = precise {
+        precise.glyph_x_positions.truncate(retained_count);
+        precise.width = width + shift;
+    }
 
     let source_run_count = layout.runs.len();
     layout.runs.resize_with(final_run_count, || ShapedRun {
@@ -216,7 +256,7 @@ mod tests {
     }
 
     #[test]
-    fn candidates_capture_bounds_without_a_flattened_vector() -> Result<()> {
+    fn candidates_capture_ranges_without_a_flattened_vector() -> Result<()> {
         let text = "中a文 ";
         let mut layout = layout(&[2, 0, 2]);
         layout.width = px(50.0);
@@ -244,8 +284,6 @@ mod tests {
             first.glyphs,
             Some(GlyphSpan {
                 range: 0..1,
-                position: point(px(0.0), px(2.0)),
-                end_x: px(10.0),
                 contiguous: true,
                 missing: true,
                 native_color: false,
@@ -255,8 +293,6 @@ mod tests {
         assert_eq!(last.source, 4..7);
         let span = last.glyphs.as_ref().context("missing glyph span")?;
         assert_eq!(span.range, 2..3);
-        assert_eq!(span.position.x, px(25.0));
-        assert_eq!(span.end_x, px(40.0));
         Ok(())
     }
 
@@ -283,8 +319,6 @@ mod tests {
             .and_then(|candidate| candidate.glyphs.as_ref())
             .context("missing glyph span")?;
         assert_eq!(span.range, 0..2);
-        assert_eq!(span.position.x, px(0.0));
-        assert_eq!(span.end_x, layout.width);
         assert!(span.contiguous);
 
         font_runs[1].font_id = FontId(8);
@@ -314,16 +348,12 @@ mod tests {
             .and_then(|candidate| candidate.glyphs.as_ref())
             .context("missing first span")?;
         assert_eq!(first.range, 1..2);
-        assert_eq!(first.position.x, px(20.0));
-        assert_eq!(first.end_x, px(30.0));
         assert!(first.contiguous);
         let last = candidates
             .last()
             .and_then(|candidate| candidate.glyphs.as_ref())
             .context("missing last span")?;
         assert_eq!(last.range, 0..3);
-        assert_eq!(last.position.x, px(0.0));
-        assert_eq!(last.end_x, layout.width);
         assert!(!last.contiguous);
         Ok(())
     }
@@ -386,6 +416,7 @@ mod tests {
             ascent: px(11.0),
             descent: px(3.0),
             len: index * 2,
+            caret_positions: Vec::new(),
         }
     }
 
@@ -396,17 +427,19 @@ mod tests {
         glyph.position.y = px(7.0);
         glyph.is_emoji = true;
         Replacement {
+            source: range.start * 2..range.end * 2,
             glyph_range: range,
             font_id: FontId(font_id),
+            start_x: f64::from(glyph.position.x),
             glyph,
-            width_delta: px(delta),
+            width_delta: f64::from(delta),
         }
     }
 
     fn reference(layout: &mut LineLayout, replacements: Vec<Replacement>) {
         let original = std::mem::take(&mut layout.runs);
         let mut replacements = replacements.into_iter().peekable();
-        let mut shift = Pixels::ZERO;
+        let mut shift = 0.0;
         let mut consumed_end = 0;
         for (index, (font_id, mut glyph)) in original
             .into_iter()
@@ -426,12 +459,12 @@ mod tests {
             {
                 let replacement = replacements.next().expect("peeked replacement");
                 glyph = replacement.glyph;
-                glyph.position.x += shift;
+                glyph.position.x = Pixels::from(f64::from(glyph.position.x) + shift);
                 shift += replacement.width_delta;
                 consumed_end = replacement.glyph_range.end;
                 replacement.font_id
             } else {
-                glyph.position.x += shift;
+                glyph.position.x = Pixels::from(f64::from(glyph.position.x) + shift);
                 font_id
             };
             if let Some(run) = layout.runs.last_mut().filter(|run| run.font_id == font_id) {
@@ -443,7 +476,7 @@ mod tests {
                 });
             }
         }
-        layout.width += shift;
+        layout.width = Pixels::from(f64::from(layout.width) + shift);
     }
 
     fn assert_equal(actual: &LineLayout, expected: &LineLayout) {
@@ -477,13 +510,13 @@ mod tests {
         let mut actual = layout(&[0, 3, 0]);
         let pointer = actual.runs.as_ptr();
         let glyph_pointer = actual.runs[1].glyphs.as_ptr();
-        apply_replacements(&mut actual, vec![]);
+        apply_replacements(&mut actual, Vec::new(), None);
         assert_eq!(actual.runs.len(), 3);
         assert_eq!(actual.runs.as_ptr(), pointer);
         assert_eq!(actual.runs[1].glyphs.as_ptr(), glyph_pointer);
         assert_equal(&actual, &layout(&[0, 3, 0]));
-        apply_replacements(&mut layout(&[]), vec![]);
-        apply_replacements(&mut layout(&[0, 0]), vec![]);
+        apply_replacements(&mut layout(&[]), Vec::new(), None);
+        apply_replacements(&mut layout(&[0, 0]), Vec::new(), None);
     }
 
     #[test]
@@ -496,7 +529,7 @@ mod tests {
             actual.runs[0].glyphs.as_ptr(),
             actual.runs[0].glyphs.capacity(),
         );
-        apply_replacements(&mut actual, vec![replacement(0..8, 9, -20.0)]);
+        apply_replacements(&mut actual, vec![replacement(0..8, 9, -20.0)], None);
         assert_eq!((actual.runs.as_ptr(), actual.runs.capacity()), runs);
         assert_eq!(
             (
@@ -520,7 +553,7 @@ mod tests {
             actual.runs[1].glyphs.capacity(),
         );
         let unaffected = actual.runs[2].glyphs.as_ptr();
-        apply_replacements(&mut actual, vec![replacement(2..8, 9, -3.0)]);
+        apply_replacements(&mut actual, vec![replacement(2..8, 9, -3.0)], None);
         assert_eq!((actual.runs.as_ptr(), actual.runs.capacity()), outer);
         assert_eq!(actual.runs[0].glyphs.as_ptr(), prefix);
         assert_eq!(
@@ -538,21 +571,83 @@ mod tests {
 
     #[test]
     fn multiple_splits_and_shifts() {
-        let mut actual = layout(&[7, 2, 3]);
-        actual.runs.reserve(12);
-        let outer = actual.runs.as_ptr();
-        let mut expected = layout(&[7, 2, 3]);
-        let replacements = || {
-            vec![
-                replacement(1..2, 9, 3.0),
-                replacement(3..5, 8, -7.0),
-                replacement(6..10, 9, 2.0),
-            ]
-        };
-        apply_replacements(&mut actual, replacements());
-        reference(&mut expected, replacements());
-        assert_equal(&actual, &expected);
-        assert_eq!(actual.runs.as_ptr(), outer);
+        for first_shift in [3.0, 67_108_864.0] {
+            for with_precise in [false, true] {
+                let mut actual = layout(&[7, 2, 3]);
+                actual.runs.reserve(12);
+                let outer = actual.runs.as_ptr();
+                let mut precise = with_precise.then(|| PreciseLayout {
+                    glyph_x_positions: (0..12).map(|index| f64::from(index) * 10.0).collect(),
+                    width: 120.0,
+                });
+                let positions_buffer = precise.as_ref().map(|precise| {
+                    (
+                        precise.glyph_x_positions.as_ptr(),
+                        precise.glyph_x_positions.capacity(),
+                    )
+                });
+                let mut expected = layout(&[7, 2, 3]);
+                let replacements = || {
+                    vec![
+                        replacement(1..2, 9, first_shift),
+                        replacement(3..5, 8, -7.0),
+                        replacement(6..10, 9, 2.0),
+                    ]
+                };
+                apply_replacements(&mut actual, replacements(), precise.as_mut());
+                reference(&mut expected, replacements());
+                assert_equal(&actual, &expected);
+                assert_eq!(actual.runs.as_ptr(), outer);
+                if let Some(precise) = precise {
+                    let shift = f64::from(first_shift);
+                    assert_eq!(
+                        precise.glyph_x_positions,
+                        [
+                            0.0,
+                            11.0,
+                            20.0 + shift,
+                            31.0 + shift,
+                            43.0 + shift,
+                            54.0 + shift,
+                            95.0 + shift,
+                            105.0 + shift
+                        ]
+                    );
+                    assert_eq!(precise.width, 115.0 + shift);
+                    assert_eq!(
+                        Some((
+                            precise.glyph_x_positions.as_ptr(),
+                            precise.glyph_x_positions.capacity()
+                        )),
+                        positions_buffer
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn replacements_preserve_carets_independently_of_glyph_origins() {
+        let mut layout = layout(&[2, 2]);
+        layout.width = px(32.0);
+        layout.caret_positions = vec![(0, 0.0), (2, 8.0), (4, 12.0), (6, 20.0), (8, 32.0)];
+        apply_replacements(&mut layout, vec![replacement(1..3, 9, 2.5)], None);
+        assert_eq!(
+            layout.caret_positions,
+            [(0, 0.0), (2, 8.0), (6, 22.5), (8, 34.5)]
+        );
+        assert_eq!(layout.width, px(34.5));
+        assert_eq!(layout.index_for_x(px(20.0)), Some(2));
+        assert_eq!(layout.closest_index_for_x(px(20.0)), 6);
+        assert_eq!(
+            layout
+                .runs
+                .iter()
+                .flat_map(|run| &run.glyphs)
+                .map(|glyph| glyph.position.x)
+                .collect::<Vec<_>>(),
+            [px(0.0), px(11.0), px(32.5)]
+        );
     }
 
     #[test]
@@ -584,7 +679,7 @@ mod tests {
                     };
                     let mut actual = layout(&lengths);
                     let mut expected = layout(&lengths);
-                    apply_replacements(&mut actual, replacements());
+                    apply_replacements(&mut actual, replacements(), None);
                     reference(&mut expected, replacements());
                     assert_equal(&actual, &expected);
                 }

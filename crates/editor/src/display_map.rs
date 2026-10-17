@@ -80,27 +80,38 @@ mod tab_map;
 mod wrap_map;
 
 pub use crate::display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap};
+use crate::element::{PreparedRendererConstraint, PreparedRowText};
 pub use block_map::{
     Block, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap, BlockPlacement,
     BlockPoint, BlockProperties, BlockRows, BlockStyle, CompanionView, CompanionViewMut,
     CustomBlockId, EditorMargins, RenderBlock, StickyHeaderExcerpt,
 };
 pub use crease_map::*;
+pub(crate) use fold_map::RendererTextSource;
 pub use fold_map::{
     ChunkRenderer, ChunkRendererContext, ChunkRendererId, Fold, FoldId, FoldPlaceholder, FoldPoint,
+    RendererWidthClass,
 };
 pub use inlay_map::{InlayOffset, InlayPoint};
 pub use invisibles::{is_invisible, replacement};
-use long_rows::StandaloneInvisibles;
-pub use long_rows::{LongRow, RowWindow};
-pub(crate) use long_rows::{MeasureRequest, POSITION_TOLERANCE, RowRuns, TextPiece};
+pub use long_rows::LongRow;
+pub(crate) use long_rows::RowMetrics;
+use long_rows::{DetachedLongRows, RowCache, StandaloneInvisibles};
 pub use wrap_map::{WrapPoint, WrapRow, WrapSnapshot};
 
-use collections::{HashMap, HashSet, IndexSet};
+use collections::{HashMap, HashSet, IndexMap, IndexSet};
+use futures::{
+    FutureExt, SinkExt, StreamExt,
+    channel::{mpsc, oneshot},
+    future::{Shared, poll_fn},
+    task::AtomicWaker,
+};
 use gpui::{
-    App, Context, Entity, EntityId, Font, HighlightStyle, Hsla, LineLayout, Pixels, UnderlineStyle,
+    App, AppContext as _, BackgroundExecutor, Context, Entity, EntityId, Font, FontId,
+    GlyphRasterConfig, HighlightStyle, Hsla, LineLayout, Pixels, Task, TextRun, UnderlineStyle,
     WeakEntity,
 };
+use itertools::Either;
 use language::{
     LanguageAwareStyling, Point, Subscription as BufferSubscription,
     language_settings::{AllLanguageSettings, LanguageSettings, SoftWrapIndent},
@@ -110,6 +121,7 @@ use multi_buffer::{
     Anchor, AnchorRangeExt, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16,
     MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot, RowInfo, ToOffset, ToPoint,
 };
+use parking_lot::Mutex;
 use project::project_settings::DiagnosticSeverity;
 use project::{InlayId, lsp_store::LspFoldingRange, lsp_store::TokenType};
 use serde::Deserialize;
@@ -123,7 +135,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use ztracing::instrument;
 
 use std::cell::RefCell;
-use std::collections::{VecDeque, hash_map::Entry};
+use std::collections::{BTreeMap, VecDeque, hash_map::Entry};
 use std::{
     any::TypeId,
     borrow::Cow,
@@ -132,7 +144,11 @@ use std::{
     num::NonZeroU32,
     ops::{self, Add, Range, RangeInclusive, Sub},
     slice,
-    sync::Arc,
+    sync::{
+        Arc, OnceLock, Weak,
+        atomic::{AtomicBool, Ordering},
+    },
+    task::Poll,
 };
 
 use crate::{
@@ -140,7 +156,7 @@ use crate::{
     scroll::ScrollPixelOffset,
 };
 use block_map::{BlockPointCursor, BlockRow, BlockSnapshot};
-use fold_map::{FoldPointCursor, FoldSnapshot};
+use fold_map::{FoldOffset, FoldPointCursor, FoldSnapshot};
 use inlay_map::{BufferOffsetToInlayPointCursor, InlaySnapshot};
 pub(crate) use tab_map::TabPoint;
 use tab_map::{TabPointCursor, TabSnapshot};
@@ -154,39 +170,6 @@ pub enum FoldStatus {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct NavigationOverlayKey(TypeId);
-
-#[derive(Clone, Copy, Debug, Default)]
-struct DiagnosticState {
-    underline: Option<UnderlineStyle>,
-    severity: Option<lsp::DiagnosticSeverity>,
-}
-
-impl DiagnosticState {
-    fn observe(
-        &mut self,
-        severity: Option<lsp::DiagnosticSeverity>,
-        underline: bool,
-        is_unnecessary: bool,
-        snapshot: &DisplaySnapshot,
-        editor_style: &EditorStyle,
-    ) -> Option<HighlightStyle> {
-        let severity =
-            severity.filter(|severity| snapshot.diagnostic_severity_is_visible(*severity));
-        let highlight = severity.map(|severity| HighlightStyle {
-            fade_out: is_unnecessary.then_some(editor_style.unnecessary_code_fade),
-            underline: snapshot.diagnostic_underline_style(
-                severity,
-                underline,
-                is_unnecessary,
-                editor_style,
-            ),
-            ..HighlightStyle::default()
-        });
-        self.underline = highlight.as_ref().and_then(|highlight| highlight.underline);
-        self.severity = self.underline.and_then(|_| severity);
-        highlight
-    }
-}
 
 impl NavigationOverlayKey {
     pub const fn unique<T: 'static>() -> Self {
@@ -246,11 +229,118 @@ pub struct CompanionExcerptPatch {
     pub target_excerpt_range: Range<MultiBufferPoint>,
 }
 
+#[derive(Clone, Default, PartialEq)]
+pub struct SyntaxStyling {
+    pub(crate) semantic_tokens_enabled: bool,
+    pub(crate) semantic_token_only_buffers: Arc<HashSet<BufferId>>,
+}
+
+impl SyntaxStyling {
+    fn language_aware(
+        &self,
+        buffer: &MultiBufferSnapshot,
+        point: MultiBufferPoint,
+    ) -> LanguageAwareStyling {
+        LanguageAwareStyling {
+            tree_sitter: !self.semantic_tokens_enabled
+                || self.semantic_token_only_buffers.is_empty()
+                || buffer
+                    .excerpt_containing(point..point)
+                    .is_some_and(|(buffer, _)| {
+                        !self
+                            .semantic_token_only_buffers
+                            .contains(&buffer.remote_id())
+                    }),
+            diagnostics: true,
+        }
+    }
+}
+
+fn shaping_highlight(mut style: HighlightStyle) -> Option<HighlightStyle> {
+    style.background_color = None;
+    (style != HighlightStyle::default()).then_some(style)
+}
+
+#[derive(Clone)]
+struct LongRowSource {
+    style: EditorStyle,
+    syntax: SyntaxStyling,
+    text_highlights: TextHighlights,
+    inlay_highlights: Arc<InlayHighlights>,
+    semantic_token_highlights: SemanticTokensHighlights,
+    diagnostics_max_severity: DiagnosticSeverity,
+    text_system: Arc<gpui::TextSystem>,
+    #[cfg(test)]
+    resolved_bytes: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl LongRowSource {
+    fn matches_style(&self, style: &EditorStyle) -> bool {
+        let mut previous_text = self.style.text.clone();
+        let mut text = style.text.clone();
+        previous_text.background_color = None;
+        text.background_color = None;
+        previous_text == text
+            && Arc::ptr_eq(&self.style.syntax, &style.syntax)
+            && self.style.background == style.background
+            && self.style.status == style.status
+            && shaping_highlight(self.style.inlay_hints_style)
+                == shaping_highlight(style.inlay_hints_style)
+            && shaping_highlight(self.style.edit_prediction_styles.insertion)
+                == shaping_highlight(style.edit_prediction_styles.insertion)
+            && shaping_highlight(self.style.edit_prediction_styles.whitespace)
+                == shaping_highlight(style.edit_prediction_styles.whitespace)
+            && self.style.unnecessary_code_fade == style.unnecessary_code_fade
+            && self.style.show_underlines == style.show_underlines
+    }
+
+    fn matches_paint_style(&self, style: &EditorStyle) -> bool {
+        self.matches_style(style)
+            && self.style.text == style.text
+            && self.style.inlay_hints_style == style.inlay_hints_style
+            && self.style.edit_prediction_styles.insertion == style.edit_prediction_styles.insertion
+            && self.style.edit_prediction_styles.whitespace
+                == style.edit_prediction_styles.whitespace
+    }
+
+    fn highlighted_chunks<'a>(
+        &'a self,
+        snapshot: &'a TabSnapshot,
+        row: u32,
+        columns: Range<u32>,
+    ) -> impl Iterator<Item = HighlightedChunk<'a>> + 'a {
+        let start = TabPoint::new(row, 0);
+        let fold_start = snapshot.tab_point_to_fold_point(start, Bias::Left).0;
+        let inlay = &snapshot.fold_snapshot.inlay_snapshot;
+        let point = inlay.to_buffer_point(fold_start.to_inlay_point(&snapshot.fold_snapshot));
+        let language_aware = self
+            .syntax
+            .language_aware(snapshot.buffer_snapshot(), point);
+        DisplaySnapshot::highlighted_tab_chunks(
+            snapshot,
+            row,
+            columns,
+            language_aware,
+            &self.style,
+            Highlights {
+                text_highlights: Some(&self.text_highlights),
+                inlay_highlights: Some(&self.inlay_highlights),
+                semantic_token_highlights: Some(&self.semantic_token_highlights),
+                styles: DisplaySnapshot::highlight_styles(&self.style),
+            },
+            self.diagnostics_max_severity,
+        )
+    }
+}
+
 #[derive(Clone, PartialEq)]
 pub struct RendererWidthsKey {
     pub rem_size: Pixels,
     pub font: Font,
     pub font_size: Pixels,
+    pub buffer_font: Font,
+    pub editor_width: Pixels,
+    pub line_height: Pixels,
 }
 
 /// Decides how text in a [`MultiBuffer`] should be displayed in a buffer, handling inlay hints,
@@ -275,7 +365,7 @@ pub struct DisplayMap {
     /// Regions of text that should be highlighted.
     text_highlights: TextHighlights,
     /// Regions of inlays that should be highlighted.
-    inlay_highlights: InlayHighlights,
+    inlay_highlights: Arc<InlayHighlights>,
     /// The semantic tokens from the language server.
     pub semantic_token_highlights: SemanticTokensHighlights,
     /// A container for explicitly foldable ranges, which supersede indentation based fold range suggestions.
@@ -287,12 +377,364 @@ pub struct DisplayMap {
     pub(crate) companion: Option<(WeakEntity<DisplayMap>, Entity<Companion>)>,
     lsp_folding_crease_ids: HashMap<BufferId, Vec<CreaseId>>,
     renderer_widths_key: Option<RendererWidthsKey>,
+    long_row_source: Option<Arc<LongRowSource>>,
+    paint_source: Option<Arc<LongRowSource>>,
+    long_row_widths: LongRowWidths,
+    shaping_text_highlights_input: TextHighlights,
+    shaping_inlay_highlights_input: Arc<InlayHighlights>,
 }
+
+#[derive(Clone)]
+pub struct PendingRowGeometry {
+    display_map_id: EntityId,
+    display_row: DisplayRow,
+    tab_row: u32,
+    text: bool,
+    renderer: Option<ChunkRendererId>,
+    completion: Arc<PendingRowCompletion>,
+    readiness: Arc<RowReadiness>,
+    retained: Option<Arc<RetainedRow>>,
+}
+
+#[derive(Clone, Default)]
+pub struct RowGeometryLease {
+    rows: Arc<RetainedRows>,
+}
+
+impl PendingRowGeometry {
+    pub fn display_map_id(&self) -> EntityId {
+        self.display_map_id
+    }
+
+    pub fn row(&self) -> DisplayRow {
+        self.display_row
+    }
+
+    pub fn is_current(&self, snapshot: &DisplaySnapshot) -> bool {
+        Arc::ptr_eq(&self.readiness, &snapshot.row_readiness)
+    }
+
+    pub async fn wait(&self) {
+        futures_lite::future::race(
+            self.completion.receiver.clone(),
+            self.readiness.cancelled.receiver.clone(),
+        )
+        .await
+        .ok();
+    }
+
+    fn complete(&self) {
+        self.completion.complete();
+    }
+}
+
+impl Debug for PendingRowGeometry {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PendingRowGeometry")
+            .field("display_map_id", &self.display_map_id)
+            .field("row", &self.display_row)
+            .finish()
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct LongRowWidthKey {
+    display_map_id: EntityId,
+    geometry: Arc<RowCache>,
+    paint_source: Option<Arc<LongRowSource>>,
+    renderer_rem_size: Option<Pixels>,
+    replacements: Option<Arc<block_map::ReplacedRows>>,
+    masked: bool,
+}
+
+impl PartialEq for LongRowWidthKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.geometry_eq(other)
+            && self.renderer_rem_size == other.renderer_rem_size
+            && match (&self.paint_source, &other.paint_source) {
+                (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+                (None, None) => true,
+                _ => false,
+            }
+    }
+}
+
+impl LongRowWidthKey {
+    fn geometry_eq(&self, other: &Self) -> bool {
+        self.display_map_id == other.display_map_id
+            && Arc::ptr_eq(&self.geometry, &other.geometry)
+            && match (&self.replacements, &other.replacements) {
+                (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+                (None, None) => true,
+                _ => false,
+            }
+            && self.masked == other.masked
+    }
+}
+
+impl Eq for LongRowWidthKey {}
 
 pub(crate) struct Companion {
     rhs_display_map_id: EntityId,
     rhs_custom_block_to_balancing_block: RefCell<HashMap<CustomBlockId, CustomBlockId>>,
     lhs_custom_block_to_balancing_block: RefCell<HashMap<CustomBlockId, CustomBlockId>>,
+}
+
+struct PendingRowCompletion {
+    sender: Mutex<Option<oneshot::Sender<()>>>,
+    receiver: Shared<oneshot::Receiver<()>>,
+}
+
+type RetainedRows = Mutex<BTreeMap<u32, Arc<RetainedRow>>>;
+
+#[derive(Default)]
+struct RowReadiness {
+    retained: Mutex<BTreeMap<u32, Weak<RetainedRow>>>,
+    leases: Arc<Mutex<Vec<Weak<RetainedRows>>>>,
+    constraints: Mutex<TreeMap<ChunkRendererId, Arc<RendererConstraintJob>>>,
+    constraint_waiters: Mutex<BTreeMap<ChunkRendererId, Arc<PendingRowCompletion>>>,
+    cancelled: PendingRowCompletion,
+    executor: OnceLock<BackgroundExecutor>,
+}
+
+struct RetainedRow {
+    row: u32,
+    readiness: Weak<RowReadiness>,
+    geometry: OnceLock<LongRow>,
+    text: OnceLock<Arc<PreparedRowText>>,
+    geometry_ready: Arc<PendingRowCompletion>,
+    text_ready: Arc<PendingRowCompletion>,
+}
+
+impl RowReadiness {
+    fn retained_row(&self, row: u32) -> Option<Arc<RetainedRow>> {
+        self.retained.lock().get(&row)?.upgrade()
+    }
+
+    fn retain_row(
+        self: &Arc<Self>,
+        row: u32,
+        lease: &OnceLock<RowGeometryLease>,
+    ) -> Arc<RetainedRow> {
+        let retained = {
+            let mut rows = self.retained.lock();
+            if let Some(retained) = rows.get(&row).and_then(Weak::upgrade) {
+                retained
+            } else {
+                let retained = Arc::new(RetainedRow {
+                    row,
+                    readiness: Arc::downgrade(self),
+                    geometry: OnceLock::new(),
+                    text: OnceLock::new(),
+                    geometry_ready: Arc::default(),
+                    text_ready: Arc::default(),
+                });
+                rows.insert(row, Arc::downgrade(&retained));
+                retained
+            }
+        };
+        lease
+            .get_or_init(RowGeometryLease::default)
+            .rows
+            .lock()
+            .insert(row, retained.clone());
+        let active = self.cancelled.sender.lock();
+        if active.is_some() {
+            self.leases.lock().retain(|lease| {
+                if let Some(lease) = lease.upgrade() {
+                    lease.lock().insert(row, retained.clone());
+                    true
+                } else {
+                    false
+                }
+            });
+        }
+        retained
+    }
+}
+
+impl Drop for RetainedRow {
+    fn drop(&mut self) {
+        if let Some(readiness) = self.readiness.upgrade() {
+            let mut rows = readiness.retained.lock();
+            if rows
+                .get(&self.row)
+                .is_some_and(|row| std::ptr::eq(row.as_ptr(), self))
+            {
+                rows.remove(&self.row);
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+struct LongRowPriority {
+    input: IndexMap<(u32, bool), Arc<RetainedRow>>,
+    visible: IndexSet<(u32, bool)>,
+    constraints: BTreeMap<ChunkRendererId, Arc<RendererConstraintJob>>,
+}
+
+struct RendererConstraintJob {
+    input: Option<PreparedRendererConstraint>,
+    font: Option<(Font, Pixels)>,
+    ready: OnceLock<Arc<PreparedRendererConstraint>>,
+    cancelled: Arc<AtomicBool>,
+}
+
+impl Default for PendingRowCompletion {
+    fn default() -> Self {
+        let (sender, receiver) = oneshot::channel();
+        Self {
+            sender: Mutex::new(Some(sender)),
+            receiver: receiver.shared(),
+        }
+    }
+}
+
+impl PendingRowCompletion {
+    fn complete(&self) {
+        if let Some(sender) = self.sender.lock().take() {
+            sender.send(()).ok();
+        }
+    }
+}
+
+impl Drop for RowReadiness {
+    fn drop(&mut self) {
+        if let Some(executor) = self.executor.get()
+            && executor.is_main_thread()
+        {
+            let retained = (
+                std::mem::take(self.retained.get_mut()),
+                std::mem::take(self.constraints.get_mut()),
+                std::mem::take(self.constraint_waiters.get_mut()),
+            );
+            executor
+                .spawn(async move {
+                    drop(retained);
+                })
+                .detach();
+        }
+    }
+}
+
+enum LongRowCompletion {
+    Row(
+        (u32, bool),
+        Option<LongRow>,
+        Option<Arc<PreparedRowText>>,
+        oneshot::Sender<bool>,
+    ),
+    Constraint(
+        ChunkRendererId,
+        Arc<RendererConstraintJob>,
+        Option<Arc<PreparedRendererConstraint>>,
+    ),
+    Finished(Option<ScrollPixelOffset>),
+}
+
+#[derive(Default)]
+struct LongRowWidths {
+    key: Option<LongRowWidthKey>,
+    renderer_source_version: usize,
+    width: Option<ScrollPixelOffset>,
+    requested: bool,
+    measure_width: Arc<AtomicBool>,
+    readiness: Arc<RowReadiness>,
+    viewport: Vec<Arc<RetainedRow>>,
+    unmeasured: HashSet<u32>,
+    priority: Arc<Mutex<LongRowPriority>>,
+    cancelled: Arc<AtomicBool>,
+    pending: Arc<Mutex<Option<LongRowWidthRequest>>>,
+    wake: Arc<AtomicWaker>,
+    task: Option<Task<()>>,
+    #[cfg(test)]
+    pause: Option<futures::channel::oneshot::Receiver<()>>,
+}
+
+struct LongRowWidthRequest {
+    paint_source: Option<Arc<LongRowSource>>,
+    snapshot: TabSnapshot,
+    rows: DetachedLongRows,
+    readiness: Arc<RowReadiness>,
+    text_system: Arc<gpui::TextSystem>,
+    executor: BackgroundExecutor,
+    excluded: Arc<[Range<WrapRow>]>,
+    measure_width: Arc<AtomicBool>,
+    priority: Arc<Mutex<LongRowPriority>>,
+    cancelled: Arc<AtomicBool>,
+    #[cfg(test)]
+    pause: Option<futures::channel::oneshot::Receiver<()>>,
+}
+
+impl LongRowWidths {
+    fn set_key(
+        &mut self,
+        key: LongRowWidthKey,
+        renderer_source_version: usize,
+        unrepresentable_rows: bool,
+    ) {
+        let retain_constraints = self
+            .key
+            .as_ref()
+            .is_some_and(|previous| previous.display_map_id == key.display_map_id)
+            && self.renderer_source_version == renderer_source_version;
+        self.renderer_source_version = renderer_source_version;
+        if self.key.as_ref() == Some(&key) {
+            return;
+        }
+        let width = self
+            .key
+            .as_ref()
+            .filter(|previous| previous.geometry_eq(&key))
+            .and(self.width);
+        let constraints = retain_constraints.then(|| self.readiness.constraints.lock().clone());
+        self.invalidate();
+        self.width = width;
+        self.key = Some(key);
+        if unrepresentable_rows {
+            self.cancelled.store(true, Ordering::Release);
+            self.readiness.cancelled.complete();
+        } else if let Some(constraints) = constraints {
+            *self.readiness.constraints.lock() = constraints;
+        }
+    }
+
+    fn invalidate(&mut self) {
+        self.cancelled.store(true, Ordering::Release);
+        self.readiness.cancelled.complete();
+        self.readiness.leases.lock().retain(|lease| {
+            if let Some(lease) = lease.upgrade() {
+                lease.lock().clear();
+                true
+            } else {
+                false
+            }
+        });
+        let mut readiness = RowReadiness::default();
+        readiness.leases = self.readiness.leases.clone();
+        self.readiness = Arc::new(readiness);
+        self.viewport.clear();
+        self.priority.lock().input.clear();
+        let pending = self.pending.lock().take();
+        drop(pending);
+        self.key = None;
+        self.width = None;
+        self.requested = false;
+        self.unmeasured.clear();
+        self.measure_width = Arc::default();
+        self.cancelled = Arc::default();
+        self.priority = Arc::default();
+    }
+}
+
+impl Drop for LongRowWidths {
+    fn drop(&mut self) {
+        self.cancelled.store(true, Ordering::Release);
+        self.readiness.cancelled.complete();
+        self.priority.lock().input.clear();
+    }
 }
 
 impl Companion {
@@ -459,6 +901,421 @@ impl DisplayMap {
             companion: None,
             lsp_folding_crease_ids: HashMap::default(),
             renderer_widths_key: None,
+            long_row_source: None,
+            paint_source: None,
+            long_row_widths: LongRowWidths::default(),
+            shaping_text_highlights_input: TextHighlights::default(),
+            shaping_inlay_highlights_input: Arc::default(),
+        }
+    }
+
+    pub fn retain_row_geometry(&self) -> RowGeometryLease {
+        let lease = RowGeometryLease::default();
+        let mut leases = self.long_row_widths.readiness.leases.lock();
+        leases.retain(|lease| lease.strong_count() > 0);
+        leases.push(Arc::downgrade(&lease.rows));
+        lease
+    }
+
+    pub fn request_row_geometry(&mut self, pending: PendingRowGeometry, cx: &mut Context<Self>) {
+        let snapshot = self.snapshot(cx);
+        if pending.renderer.is_some() {
+            self.request_pending_renderer_constraint(pending, &snapshot, cx);
+            return;
+        }
+        if snapshot.tab_snapshot().has_unrepresentable_rows()
+            || !pending.is_current(&snapshot)
+            || snapshot.row_request_ready(pending.tab_row, pending.text)
+        {
+            pending.complete();
+            return;
+        }
+        let row = pending.tab_row;
+        if (pending.text || !self.long_row_widths.unmeasured.contains(&row))
+            && let Some(retained) = pending.retained
+        {
+            self.long_row_widths
+                .priority
+                .lock()
+                .input
+                .insert((row, pending.text), retained);
+            self.start_long_row_worker(&snapshot, cx);
+        }
+    }
+
+    pub fn request_viewport_row_geometry(
+        &mut self,
+        pending: impl IntoIterator<Item = PendingRowGeometry>,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.snapshot(cx);
+        let mut visible = IndexSet::default();
+        let mut retained = Vec::new();
+        for pending in pending {
+            if snapshot.tab_snapshot().has_unrepresentable_rows() {
+                pending.complete();
+                continue;
+            }
+            if pending.is_current(&snapshot)
+                && let Some(row) = &pending.retained
+            {
+                retained.push(row.clone());
+            }
+            if pending.renderer.is_some() {
+                self.request_pending_renderer_constraint(pending, &snapshot, cx);
+            } else if !pending.is_current(&snapshot)
+                || snapshot.row_request_ready(pending.tab_row, pending.text)
+            {
+                pending.complete();
+            } else if pending.text || !self.long_row_widths.unmeasured.contains(&pending.tab_row) {
+                visible.insert((pending.tab_row, pending.text));
+            }
+        }
+        self.long_row_widths.viewport = retained;
+        let missing = !visible.is_empty();
+        let previous =
+            std::mem::replace(&mut self.long_row_widths.priority.lock().visible, visible);
+        drop(previous);
+        if missing {
+            self.start_long_row_worker(&snapshot, cx);
+        }
+    }
+
+    pub(crate) fn request_renderer_constraint(
+        &mut self,
+        renderer: ChunkRenderer,
+        text: impl Into<RendererTextSource>,
+        font: Font,
+        font_size: Pixels,
+        cx: &mut Context<Self>,
+    ) -> Option<Arc<PreparedRendererConstraint>> {
+        let snapshot = self.snapshot(cx);
+        if snapshot.tab_snapshot().has_unrepresentable_rows() {
+            return None;
+        }
+        let text = text.into();
+        let id = renderer.id;
+        let mut constraints = self.long_row_widths.readiness.constraints.lock();
+        if let Some(job) = constraints.get(&id) {
+            if let Some(ready) = job.ready.get()
+                && ready.matches(&renderer, &text, &font, font_size)
+            {
+                return Some(ready.clone());
+            }
+            if !job.cancelled.load(Ordering::Acquire)
+                && job
+                    .input
+                    .as_ref()
+                    .is_some_and(|input| input.matches(&renderer, &text, &font, font_size))
+            {
+                return None;
+            }
+        }
+        let job = Arc::new(RendererConstraintJob {
+            input: Some(PreparedRendererConstraint::new(
+                renderer, text, font, font_size,
+            )),
+            font: None,
+            ready: OnceLock::new(),
+            cancelled: self.long_row_widths.cancelled.clone(),
+        });
+        constraints.insert(id, job.clone());
+        drop(constraints);
+        self.long_row_widths
+            .priority
+            .lock()
+            .constraints
+            .insert(id, job);
+        self.start_long_row_worker(&snapshot, cx);
+        None
+    }
+
+    pub(crate) fn request_max_long_row_width(
+        &mut self,
+        snapshot: &DisplaySnapshot,
+        cx: &mut Context<Self>,
+    ) -> Option<ScrollPixelOffset> {
+        let current = self.snapshot(cx);
+        if current.tab_snapshot().has_unrepresentable_rows()
+            || snapshot.tab_snapshot().has_unrepresentable_rows()
+            || current.long_row_width_key() != snapshot.long_row_width_key()
+        {
+            return None;
+        }
+        if self.long_row_widths.width.is_some() {
+            return self.long_row_widths.width;
+        }
+        if snapshot.masked
+            || snapshot.long_row_em_width().is_none()
+            || snapshot.tab_snapshot().max_line_len_bound(0..u32::MAX) as usize
+                <= crate::MAX_LINE_LEN
+        {
+            self.long_row_widths.width = Some(0.);
+            return Some(0.);
+        }
+        let excluded = snapshot.block_snapshot.replaced_wrap_rows();
+        if let [range] = excluded.as_ref()
+            && range.start == WrapRow(0)
+            && range.end.0 > snapshot.tab_snapshot().max_point().row()
+        {
+            self.long_row_widths.width = Some(0.);
+            return Some(0.);
+        }
+        if let Some(width) = snapshot
+            .wrap_snapshot()
+            .long_rows
+            .try_max_width(snapshot.tab_snapshot(), &excluded)
+        {
+            self.long_row_widths.width = Some(width);
+            self.long_row_widths
+                .measure_width
+                .store(false, Ordering::Release);
+            return Some(width);
+        }
+        if self.long_row_widths.unmeasured.is_empty() {
+            self.long_row_widths
+                .measure_width
+                .store(true, Ordering::Release);
+            self.start_long_row_worker(snapshot, cx);
+        }
+        None
+    }
+
+    fn request_pending_renderer_constraint(
+        &mut self,
+        pending: PendingRowGeometry,
+        snapshot: &DisplaySnapshot,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(id) = pending.renderer else {
+            return;
+        };
+        if snapshot.tab_snapshot().has_unrepresentable_rows()
+            || !pending.is_current(snapshot)
+            || snapshot.prepared_renderer_constraint(id).is_some()
+        {
+            pending.complete();
+            return;
+        }
+        let Some((font, font_size)) = snapshot.renderer_constraint_font() else {
+            return;
+        };
+        let mut constraints = self.long_row_widths.readiness.constraints.lock();
+        if constraints.get(&id).is_some_and(|job| {
+            job.ready.get().is_none()
+                && !job.cancelled.load(Ordering::Acquire)
+                && (job
+                    .input
+                    .as_ref()
+                    .is_some_and(|input| input.matches_font(&font, font_size))
+                    || job
+                        .font
+                        .as_ref()
+                        .is_some_and(|(current_font, current_size)| {
+                            *current_font == font && *current_size == font_size
+                        }))
+        }) {
+            return;
+        }
+        let job = Arc::new(RendererConstraintJob {
+            input: None,
+            font: Some((font, font_size)),
+            ready: OnceLock::new(),
+            cancelled: self.long_row_widths.cancelled.clone(),
+        });
+        constraints.insert(id, job.clone());
+        drop(constraints);
+        self.long_row_widths
+            .priority
+            .lock()
+            .constraints
+            .insert(id, job);
+        self.start_long_row_worker(snapshot, cx);
+    }
+
+    fn start_long_row_worker(&mut self, snapshot: &DisplaySnapshot, cx: &mut Context<Self>) {
+        if snapshot.tab_snapshot().has_unrepresentable_rows()
+            || self.long_row_widths.cancelled.load(Ordering::Acquire)
+            || self.long_row_widths.requested
+        {
+            return;
+        }
+        self.long_row_widths.requested = true;
+        *self.long_row_widths.pending.lock() = Some(LongRowWidthRequest {
+            paint_source: snapshot.paint_source.clone(),
+            snapshot: snapshot.tab_snapshot().clone(),
+            rows: snapshot
+                .wrap_snapshot()
+                .long_rows
+                .detached(cx.background_executor().clone()),
+            readiness: self.long_row_widths.readiness.clone(),
+            text_system: cx.text_system().clone(),
+            executor: cx.background_executor().clone(),
+            excluded: snapshot.block_snapshot.replaced_wrap_rows(),
+            measure_width: self.long_row_widths.measure_width.clone(),
+            priority: self.long_row_widths.priority.clone(),
+            cancelled: self.long_row_widths.cancelled.clone(),
+            #[cfg(test)]
+            pause: self.long_row_widths.pause.take(),
+        });
+        self.long_row_widths.wake.wake();
+        if self.long_row_widths.task.is_none() {
+            let pending = self.long_row_widths.pending.clone();
+            let wake = self.long_row_widths.wake.clone();
+            let (mut results, mut completed) = mpsc::channel(0);
+            let worker = cx.background_spawn(async move {
+                loop {
+                    let request = poll_fn(|cx| {
+                        wake.register(cx.waker());
+                        pending.lock().take().map_or(Poll::Pending, Poll::Ready)
+                    })
+                    .await;
+                    #[cfg(test)]
+                    let mut request = request;
+                    #[cfg(test)]
+                    if let Some(pause) = request.pause.take()
+                        && pause.await.is_err()
+                    {
+                        continue;
+                    }
+                    let width = request.prepare(&mut results).await;
+                    if results
+                        .send((request.readiness, LongRowCompletion::Finished(width)))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            });
+            self.long_row_widths.task = Some(cx.spawn(async move |map, cx| {
+                let _worker = worker;
+                while let Some((readiness, completion)) = completed.next().await {
+                    if map
+                        .update(cx, |map, cx| {
+                            let snapshot = map.snapshot(cx);
+                            if !Arc::ptr_eq(&readiness, &snapshot.row_readiness) {
+                                return;
+                            }
+                            let notify = match completion {
+                                LongRowCompletion::Constraint(id, job, constraint) => {
+                                    let current = map
+                                        .long_row_widths
+                                        .readiness
+                                        .constraints
+                                        .lock()
+                                        .get(&id)
+                                        .is_some_and(|current| Arc::ptr_eq(current, &job));
+                                    if current {
+                                        if let Some(constraint) = constraint {
+                                            job.ready.set(constraint).ok();
+                                        } else {
+                                            map.long_row_widths
+                                                .readiness
+                                                .constraints
+                                                .lock()
+                                                .remove(&id);
+                                        }
+                                        if let Some(pending) = map
+                                            .long_row_widths
+                                            .readiness
+                                            .constraint_waiters
+                                            .lock()
+                                            .remove(&id)
+                                        {
+                                            pending.complete();
+                                        }
+                                    }
+                                    current
+                                }
+                                LongRowCompletion::Row(request, geometry, text, accepted) => {
+                                    let (row, text_only) = request;
+                                    let mut notify = false;
+                                    let has_text = text.is_some();
+                                    if let Some(text) = text {
+                                        if let Some(retained) =
+                                            map.long_row_widths.readiness.retained_row(row)
+                                        {
+                                            retained.text.set(text).ok();
+                                            retained.text_ready.complete();
+                                            notify = true;
+                                        }
+                                    }
+                                    if let Some(geometry) = geometry {
+                                        if let Some(retained) =
+                                            map.long_row_widths.readiness.retained_row(row)
+                                        {
+                                            retained.geometry.set(geometry.clone()).ok();
+                                            retained.geometry_ready.complete();
+                                            snapshot.wrap_snapshot().long_rows.publish_row(
+                                                snapshot.tab_snapshot(),
+                                                row,
+                                                geometry,
+                                            );
+                                            notify = true;
+                                        } else {
+                                            snapshot.wrap_snapshot().long_rows.publish_width(
+                                                snapshot.tab_snapshot(),
+                                                row,
+                                                geometry.width(),
+                                            );
+                                        }
+                                    } else if !text_only {
+                                        notify |= map.long_row_widths.unmeasured.insert(row);
+                                        map.long_row_widths
+                                            .measure_width
+                                            .store(false, Ordering::Release);
+                                    }
+                                    {
+                                        let mut priority = map.long_row_widths.priority.lock();
+                                        priority.input.swap_remove(&request);
+                                        priority.visible.swap_remove(&request);
+                                        if has_text {
+                                            priority.input.swap_remove(&(row, true));
+                                            priority.visible.swap_remove(&(row, true));
+                                        }
+                                    }
+                                    accepted.send(true).ok();
+                                    notify
+                                }
+                                LongRowCompletion::Finished(width) => {
+                                    map.long_row_widths.requested = false;
+                                    if let Some(width) = width {
+                                        map.long_row_widths.width = Some(width);
+                                        map.long_row_widths
+                                            .measure_width
+                                            .store(false, Ordering::Release);
+                                        if snapshot.block_snapshot.replaced_wrap_rows().is_empty() {
+                                            snapshot
+                                                .wrap_snapshot()
+                                                .long_rows
+                                                .publish_max_width(width);
+                                        }
+                                    }
+                                    let pending_rows = {
+                                        let priority = map.long_row_widths.priority.lock();
+                                        !priority.input.is_empty()
+                                            || !priority.visible.is_empty()
+                                            || !priority.constraints.is_empty()
+                                    };
+                                    if pending_rows
+                                        || map.long_row_widths.measure_width.load(Ordering::Acquire)
+                                    {
+                                        map.start_long_row_worker(&snapshot, cx);
+                                    }
+                                    width.is_some()
+                                }
+                            };
+                            if notify {
+                                cx.notify();
+                            }
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            }));
         }
     }
 
@@ -605,6 +1462,7 @@ impl DisplayMap {
     }
 
     fn sync_through_wrap(&mut self, cx: &mut App) -> (WrapSnapshot, WrapPatch) {
+        self.sync_long_row_source(cx);
         let tab_size = Self::tab_size(&self.buffer, cx);
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
@@ -700,8 +1558,12 @@ impl DisplayMap {
                 .ok()
         });
 
-        DisplaySnapshot {
+        let mut snapshot = DisplaySnapshot {
             display_map_id: self.entity_id,
+            row_readiness: self.long_row_widths.readiness.clone(),
+            row_geometry: OnceLock::new(),
+            paint_source: self.paint_source.clone(),
+            renderer_rem_size: self.renderer_widths_key.as_ref().map(|key| key.rem_size),
             companion_display_snapshot,
             block_snapshot,
             diagnostics_max_severity: self.diagnostics_max_severity,
@@ -713,7 +1575,19 @@ impl DisplayMap {
             masked: self.masked,
             use_lsp_folding_ranges: !self.lsp_folding_crease_ids.is_empty(),
             fold_placeholder: self.fold_placeholder.clone(),
-        }
+        };
+        self.long_row_widths.set_key(
+            snapshot.long_row_width_key(),
+            snapshot.tab_snapshot().version,
+            snapshot.tab_snapshot().has_unrepresentable_rows(),
+        );
+        snapshot.row_readiness = self.long_row_widths.readiness.clone();
+        snapshot
+            .row_readiness
+            .executor
+            .set(cx.background_executor().clone())
+            .ok();
+        snapshot
     }
 
     fn snapshot_simple(&mut self, cx: &mut Context<Self>) -> DisplaySnapshot {
@@ -724,8 +1598,12 @@ impl DisplayMap {
             .read(wrap_snapshot, wrap_edits, None)
             .snapshot;
 
-        DisplaySnapshot {
+        let mut snapshot = DisplaySnapshot {
             display_map_id: self.entity_id,
+            row_readiness: self.long_row_widths.readiness.clone(),
+            row_geometry: OnceLock::new(),
+            paint_source: self.paint_source.clone(),
+            renderer_rem_size: self.renderer_widths_key.as_ref().map(|key| key.rem_size),
             companion_display_snapshot: None,
             block_snapshot,
             diagnostics_max_severity: self.diagnostics_max_severity,
@@ -737,7 +1615,19 @@ impl DisplayMap {
             masked: self.masked,
             use_lsp_folding_ranges: !self.lsp_folding_crease_ids.is_empty(),
             fold_placeholder: self.fold_placeholder.clone(),
-        }
+        };
+        self.long_row_widths.set_key(
+            snapshot.long_row_width_key(),
+            snapshot.tab_snapshot().version,
+            snapshot.tab_snapshot().has_unrepresentable_rows(),
+        );
+        snapshot.row_readiness = self.long_row_widths.readiness.clone();
+        snapshot
+            .row_readiness
+            .executor
+            .set(cx.background_executor().clone())
+            .ok();
+        snapshot
     }
 
     pub fn crease_snapshot(&self) -> CreaseSnapshot {
@@ -1037,6 +1927,7 @@ impl DisplayMap {
                     merge_adjacent: base_placeholder.merge_adjacent,
                     type_tag: base_placeholder.type_tag,
                     collapsed_text: Some(collapsed_text),
+                    uniform_width: true,
                 }
             } else {
                 base_placeholder.clone()
@@ -1227,12 +2118,13 @@ impl DisplayMap {
         highlights: Vec<InlayHighlight>,
         style: HighlightStyle,
     ) {
+        let inlay_highlights = Arc::make_mut(&mut self.inlay_highlights);
         for highlight in highlights {
-            let update = self.inlay_highlights.update(&key, |highlights| {
+            let update = inlay_highlights.update(&key, |highlights| {
                 highlights.insert(highlight.inlay, (style, highlight.clone()))
             });
             if update.is_none() {
-                self.inlay_highlights.insert(
+                inlay_highlights.insert(
                     key,
                     TreeMap::from_ordered_entries([(highlight.inlay, (style, highlight))]),
                 );
@@ -1264,10 +2156,15 @@ impl DisplayMap {
     }
 
     pub fn clear_highlights(&mut self, key: HighlightKey) -> bool {
-        let mut cleared = Arc::make_mut(&mut self.text_highlights)
-            .remove(&key)
-            .is_some();
-        cleared |= self.inlay_highlights.remove(&key).is_some();
+        let mut cleared = self.text_highlights.contains_key(&key);
+        if cleared {
+            Arc::make_mut(&mut self.text_highlights).remove(&key);
+        }
+        if self.inlay_highlights.get(&key).is_some() {
+            cleared |= Arc::make_mut(&mut self.inlay_highlights)
+                .remove(&key)
+                .is_some();
+        }
         cleared
     }
 
@@ -1278,7 +2175,7 @@ impl DisplayMap {
             cleared |= b;
             b
         });
-        self.inlay_highlights.retain(|k, _| {
+        Arc::make_mut(&mut self.inlay_highlights).retain(|k, _| {
             let b = !f(k);
             cleared |= b;
             b
@@ -1286,18 +2183,156 @@ impl DisplayMap {
         cleared
     }
 
+    pub(crate) fn set_shaping_style(
+        &mut self,
+        style: &EditorStyle,
+        syntax: SyntaxStyling,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .long_row_source
+            .as_ref()
+            .is_none_or(|source| !source.matches_style(style) || source.syntax != syntax)
+        {
+            self.long_row_source = Some(Arc::new(LongRowSource {
+                style: style.clone(),
+                syntax,
+                text_highlights: self
+                    .long_row_source
+                    .as_ref()
+                    .map_or_else(TextHighlights::default, |source| {
+                        source.text_highlights.clone()
+                    }),
+                inlay_highlights: self
+                    .long_row_source
+                    .as_ref()
+                    .map_or_else(Arc::default, |source| source.inlay_highlights.clone()),
+                semantic_token_highlights: self.semantic_token_highlights.clone(),
+                diagnostics_max_severity: self.diagnostics_max_severity,
+                text_system: cx.text_system().clone(),
+                #[cfg(test)]
+                resolved_bytes: Arc::default(),
+            }));
+        }
+        if let Some(source) = &self.long_row_source
+            && self.paint_source.as_ref().is_none_or(|paint| {
+                !paint.matches_paint_style(style) || paint.syntax != source.syntax
+            })
+        {
+            let mut paint = source.as_ref().clone();
+            paint.style = style.clone();
+            paint.text_highlights = self.text_highlights.clone();
+            paint.inlay_highlights = self.inlay_highlights.clone();
+            self.paint_source = Some(Arc::new(paint));
+        }
+        self.sync_long_row_source(cx);
+    }
+
+    fn sync_long_row_source(&mut self, cx: &mut App) {
+        let Some(source) = &mut self.long_row_source else {
+            return;
+        };
+        if !Arc::ptr_eq(&self.shaping_text_highlights_input, &self.text_highlights) {
+            let highlights = self
+                .text_highlights
+                .iter()
+                .filter_map(|(key, entry)| {
+                    if self
+                        .shaping_text_highlights_input
+                        .get(key)
+                        .is_some_and(|previous| Arc::ptr_eq(previous, entry))
+                    {
+                        return source
+                            .text_highlights
+                            .get(key)
+                            .map(|entry| (*key, entry.clone()));
+                    }
+                    let style = shaping_highlight(entry.0)?;
+                    Some((
+                        *key,
+                        if style == entry.0 {
+                            entry.clone()
+                        } else {
+                            Arc::new((style, entry.1.clone()))
+                        },
+                    ))
+                })
+                .collect::<HashMap<_, _>>();
+            self.shaping_text_highlights_input = self.text_highlights.clone();
+            if source.text_highlights.len() != highlights.len()
+                || highlights.iter().any(|(key, entry)| {
+                    source
+                        .text_highlights
+                        .get(key)
+                        .is_none_or(|previous| !Arc::ptr_eq(previous, entry) && previous != entry)
+                })
+            {
+                Arc::make_mut(source).text_highlights = Arc::new(highlights);
+            }
+        }
+        if !Arc::ptr_eq(&self.shaping_inlay_highlights_input, &self.inlay_highlights) {
+            self.shaping_inlay_highlights_input = self.inlay_highlights.clone();
+            let highlights = TreeMap::from_ordered_entries(self.inlay_highlights.iter().map(
+                |(key, entries)| {
+                    let entries = TreeMap::from_ordered_entries(entries.iter().map(
+                        |(id, (style, highlight))| {
+                            (
+                                *id,
+                                (
+                                    shaping_highlight(*style).unwrap_or_default(),
+                                    highlight.clone(),
+                                ),
+                            )
+                        },
+                    ));
+                    (*key, entries)
+                },
+            ));
+            if *source.inlay_highlights != highlights {
+                Arc::make_mut(source).inlay_highlights = Arc::new(highlights);
+            }
+        }
+        if !Arc::ptr_eq(
+            &source.semantic_token_highlights,
+            &self.semantic_token_highlights,
+        ) || source.diagnostics_max_severity != self.diagnostics_max_severity
+        {
+            let source = Arc::make_mut(source);
+            source.semantic_token_highlights = self.semantic_token_highlights.clone();
+            source.diagnostics_max_severity = self.diagnostics_max_severity;
+        }
+        let source = source.clone();
+        self.wrap_map
+            .update(cx, |map, _| map.set_shaping_source(source));
+        if let Some(paint) = &mut self.paint_source
+            && (!Arc::ptr_eq(&paint.text_highlights, &self.text_highlights)
+                || !Arc::ptr_eq(&paint.inlay_highlights, &self.inlay_highlights)
+                || !Arc::ptr_eq(
+                    &paint.semantic_token_highlights,
+                    &self.semantic_token_highlights,
+                )
+                || paint.diagnostics_max_severity != self.diagnostics_max_severity)
+        {
+            let paint = Arc::make_mut(paint);
+            paint.text_highlights = self.text_highlights.clone();
+            paint.inlay_highlights = self.inlay_highlights.clone();
+            paint.semantic_token_highlights = self.semantic_token_highlights.clone();
+            paint.diagnostics_max_severity = self.diagnostics_max_severity;
+        }
+    }
+
     pub fn set_font(&self, font: Font, font_size: Pixels, cx: &mut Context<Self>) -> bool {
         self.wrap_map
             .update(cx, |map, cx| map.set_font_with_size(font, font_size, cx))
     }
 
-    pub(crate) fn measure_long_row_columns(
-        &self,
-        requests: &[MeasureRequest],
-        cx: &mut Context<Self>,
-    ) -> bool {
+    pub(crate) fn set_raster_config(&self, config: GlyphRasterConfig, cx: &mut Context<Self>) {
         self.wrap_map
-            .update(cx, |map, _| map.measure_long_row_columns(requests))
+            .update(cx, |map, _| map.set_raster_config(config));
+    }
+
+    pub(crate) fn font_with_size<'a>(&self, cx: &'a App) -> &'a (Font, Pixels) {
+        &self.wrap_map.read(cx).font_with_size
     }
 
     pub fn set_wrap_width(&self, width: Option<Pixels>, cx: &mut Context<Self>) -> bool {
@@ -1310,6 +2345,10 @@ impl DisplayMap {
             .update(cx, |map, cx| map.set_soft_wrap_indent(indent, cx))
     }
 
+    pub(crate) fn renderer_widths_key(&self) -> Option<&RendererWidthsKey> {
+        self.renderer_widths_key.as_ref()
+    }
+
     #[instrument(skip_all)]
     pub fn update_renderer_widths(
         &mut self,
@@ -1317,6 +2356,7 @@ impl DisplayMap {
         widths: impl IntoIterator<Item = (ChunkRendererId, Pixels)>,
         cx: &mut Context<Self>,
     ) -> bool {
+        let constraints = self.snapshot(cx).row_readiness.constraints.lock().clone();
         let widths = widths.into_iter().collect::<Vec<_>>();
         let invalidate = self.renderer_widths_key.as_ref() != Some(&key);
         self.renderer_widths_key = Some(key);
@@ -1351,12 +2391,65 @@ impl DisplayMap {
             .compose(inlay_wrap_edits)
             .compose(fold_wrap_edits);
         self.sync_blocks_with_companion(wrap_snapshot, wrap_edits, companion_wrap_data, cx);
+        if widths_changed {
+            let snapshot = self.snapshot(cx);
+            *snapshot.row_readiness.constraints.lock() = constraints;
+        }
 
         widths_changed
     }
 
     pub(crate) fn current_inlays(&self) -> slice::Iter<'_, Inlay> {
         self.inlay_map.current_inlays()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn set_tab_column_limit(&mut self, limit: u32, cx: &mut Context<Self>) {
+        self.snapshot(cx);
+        let companion_wrap_data = self.companion.as_ref().and_then(|(companion, _)| {
+            companion
+                .update(cx, |map, cx| map.sync_through_wrap(cx))
+                .ok()
+        });
+        let (snapshot, edits) = self.tab_map.set_column_limit(limit);
+        let (snapshot, edits) = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        self.sync_blocks_with_companion(snapshot, edits, companion_wrap_data, cx);
+        self.snapshot(cx);
+        cx.notify();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn retained_row_counts(
+        &self,
+        outside_snapshot: Option<&DisplaySnapshot>,
+    ) -> (usize, usize, usize) {
+        let mut rows = self
+            .long_row_widths
+            .readiness
+            .retained
+            .lock()
+            .values()
+            .filter_map(Weak::upgrade)
+            .collect::<Vec<_>>();
+
+        if let Some(lease) = outside_snapshot.and_then(|snapshot| snapshot.row_geometry.get()) {
+            let retained = lease.rows.lock();
+
+            rows.retain(|row| {
+                retained
+                    .get(&row.row)
+                    .is_none_or(|owner| !Arc::ptr_eq(owner, row))
+            });
+        }
+        (
+            rows.len(),
+            rows.iter()
+                .filter(|row| row.geometry.get().is_some())
+                .count(),
+            rows.iter().filter(|row| row.text.get().is_some()).count(),
+        )
     }
 
     #[instrument(skip_all)]
@@ -1479,7 +2572,7 @@ pub(crate) struct Highlights<'a> {
     pub styles: HighlightStyles,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EditPredictionStyles {
     pub insertion: HighlightStyle,
     pub whitespace: HighlightStyle,
@@ -1508,13 +2601,22 @@ pub struct HighlightedChunk<'a> {
 
 pub enum RowLayout {
     Shaped(Arc<LineLayout>),
+    Rendered(RowFragments),
     Long(LongRow),
+}
+
+#[derive(Default)]
+pub struct RowFragments {
+    fragments: Vec<(usize, Pixels, RowFragment)>,
+    len: usize,
+    width: ScrollPixelOffset,
 }
 
 impl RowLayout {
     pub fn width(&self) -> ScrollPixelOffset {
         match self {
             Self::Shaped(layout) => ScrollPixelOffset::from(layout.width),
+            Self::Rendered(fragments) => fragments.width,
             Self::Long(row) => row.width(),
         }
     }
@@ -1522,6 +2624,13 @@ impl RowLayout {
     pub fn x_for_index(&self, index: usize) -> ScrollPixelOffset {
         match self {
             Self::Shaped(layout) => ScrollPixelOffset::from(layout.x_for_index(index)),
+            Self::Rendered(fragments) => {
+                let index = fragments.renderer_start(index).unwrap_or(index);
+                fragments
+                    .positions()
+                    .find(|(column, _, _)| *column >= index)
+                    .map_or(fragments.width, |(_, x, _)| x)
+            }
             Self::Long(row) => row.x_for_column(u32::try_from(index).unwrap_or(u32::MAX)),
         }
     }
@@ -1529,40 +2638,160 @@ impl RowLayout {
     pub fn closest_index_for_x(&self, x: ScrollPixelOffset) -> usize {
         match self {
             Self::Shaped(layout) => layout.closest_index_for_x(Pixels::from(x)),
+            Self::Rendered(fragments) => {
+                let mut previous = (0, 0.);
+                for (column, position, _) in fragments.positions() {
+                    if position >= x {
+                        return if position - x < x - previous.1 {
+                            column
+                        } else {
+                            previous.0
+                        };
+                    }
+                    previous = (column, position);
+                }
+                fragments.len
+            }
             Self::Long(row) => row.closest_column_for_x(x) as usize,
         }
     }
 
-    pub fn previous_index(&self, index: usize) -> usize {
+    pub(crate) fn hit_test_width(&self) -> ScrollPixelOffset {
+        self.width()
+    }
+
+    pub(crate) fn index_for_x(&self, x: ScrollPixelOffset) -> Option<usize> {
         match self {
-            Self::Shaped(layout) => layout
-                .runs
-                .iter()
-                .flat_map(|run| &run.glyphs)
-                .map(|glyph| glyph.index)
-                .take_while(|glyph_index| *glyph_index < index)
-                .last()
-                .unwrap_or(0),
-            Self::Long(row) => row
-                .floor_column(u32::try_from(index.saturating_sub(1)).unwrap_or(u32::MAX))
-                as usize,
+            Self::Shaped(layout) => (x < f64::from(layout.width))
+                .then(|| layout.index_for_x(Pixels::from(x)).unwrap_or(layout.len)),
+            Self::Rendered(fragments) => {
+                let mut start = 0;
+                let mut origin = 0.;
+                for (len, width, fragment) in &fragments.fragments {
+                    if x < origin + f64::from(*width) {
+                        let index = match fragment {
+                            RowFragment::Shaped(layout) => layout
+                                .runs
+                                .iter()
+                                .rev()
+                                .flat_map(|run| run.glyphs.iter().rev())
+                                .find(|glyph| f64::from(glyph.position.x) <= x - origin)
+                                .map_or(0, |glyph| glyph.index),
+                            RowFragment::Replacement(_) | RowFragment::Renderer(_) => 0,
+                        };
+                        return Some(start + index);
+                    }
+                    start += len;
+                    origin += f64::from(*width);
+                }
+                None
+            }
+            Self::Long(row) => (x < row.width()).then(|| row.column_at_x(x) as usize),
         }
     }
 }
 
+impl RowFragments {
+    pub(crate) fn font_id_for_index(&self, index: usize) -> Option<FontId> {
+        if self.renderer_start(index).is_some() {
+            return None;
+        }
+        self.positions()
+            .find(|(column, _, _)| *column >= index)
+            .and_then(|(_, _, font_id)| font_id)
+    }
+
+    fn positions(&self) -> impl Iterator<Item = (usize, ScrollPixelOffset, Option<FontId>)> + '_ {
+        let mut start = 0;
+        let mut origin = 0.;
+        self.fragments
+            .iter()
+            .flat_map(move |(len, width, fragment)| {
+                let (column, x) = (start, origin);
+                start += len;
+                origin += f64::from(*width);
+                match fragment {
+                    RowFragment::Shaped(layout) => {
+                        Either::Left(layout.runs.iter().flat_map(move |run| {
+                            run.glyphs.iter().map(move |glyph| {
+                                (
+                                    column + glyph.index,
+                                    x + f64::from(glyph.position.x),
+                                    Some(run.font_id),
+                                )
+                            })
+                        }))
+                    }
+                    RowFragment::Replacement(font_id) => {
+                        Either::Right(iter::once((column, x, *font_id)))
+                    }
+                    RowFragment::Renderer(_) => Either::Right(iter::once((column, x, None))),
+                }
+            })
+            .chain(iter::once((self.len, self.width, None)))
+    }
+
+    fn renderer_start(&self, index: usize) -> Option<usize> {
+        let mut start = 0;
+        for (len, _, fragment) in &self.fragments {
+            if (start..start + len).contains(&index) {
+                return matches!(fragment, RowFragment::Renderer(_)).then_some(start);
+            }
+            start += len;
+        }
+        None
+    }
+
+    fn push_shaped(&mut self, layout: Arc<LineLayout>) {
+        self.push(layout.len, layout.width, RowFragment::Shaped(layout));
+    }
+
+    fn push(&mut self, len: usize, width: Pixels, fragment: RowFragment) {
+        self.len += len;
+        if let RowFragment::Renderer(id) = &fragment
+            && let Some((previous_len, _, RowFragment::Renderer(previous))) =
+                self.fragments.last_mut()
+            && *previous == *id
+        {
+            *previous_len += len;
+        } else {
+            self.width += f64::from(width);
+            self.fragments.push((len, width, fragment));
+        }
+    }
+}
+
+enum RowFragment {
+    Shaped(Arc<LineLayout>),
+    Replacement(Option<FontId>),
+    Renderer(ChunkRendererId),
+}
+
 impl<'a> HighlightedChunk<'a> {
+    pub(crate) fn text_run(&self, style: &EditorStyle) -> TextRun {
+        match self.style {
+            Some(highlight) => style
+                .text
+                .clone()
+                .highlight(highlight)
+                .to_run(self.text.len()),
+            None => style.text.to_run(self.text.len()),
+        }
+    }
+
     #[instrument(skip_all)]
     fn highlight_invisibles(
         self,
         editor_style: &'a EditorStyle,
         standalone_invisibles: &mut StandaloneInvisibles,
         next: Option<char>,
+        is_last: bool,
     ) -> impl Iterator<Item = Self> + use<'a> {
         let invisible_ranges = if self.replacement.is_some() {
             standalone_invisibles.reset();
             SmallVec::new()
         } else {
-            standalone_invisibles.find(self.text, next)
+            standalone_invisibles.find(self.text, next, is_last)
         };
         let text = self.text;
         let style = self.style;
@@ -1629,9 +2858,13 @@ pub struct DisplaySnapshot {
     pub display_map_id: EntityId,
     pub companion_display_snapshot: Option<Arc<DisplaySnapshot>>,
     pub crease_snapshot: CreaseSnapshot,
+    row_readiness: Arc<RowReadiness>,
+    row_geometry: OnceLock<RowGeometryLease>,
+    paint_source: Option<Arc<LongRowSource>>,
+    renderer_rem_size: Option<Pixels>,
     block_snapshot: BlockSnapshot,
     text_highlights: TextHighlights,
-    inlay_highlights: InlayHighlights,
+    inlay_highlights: Arc<InlayHighlights>,
     semantic_token_highlights: SemanticTokensHighlights,
     clip_at_line_ends: bool,
     masked: bool,
@@ -1707,12 +2940,6 @@ impl DisplaySnapshot {
         })
     }
 
-    fn diagnostic_severity_is_visible(&self, severity: lsp::DiagnosticSeverity) -> bool {
-        self.diagnostics_max_severity
-            .into_lsp()
-            .is_some_and(|max_severity| severity <= max_severity)
-    }
-
     pub(crate) fn diagnostic_underline_style(
         &self,
         severity: lsp::DiagnosticSeverity,
@@ -1720,15 +2947,13 @@ impl DisplaySnapshot {
         is_unnecessary: bool,
         editor_style: &EditorStyle,
     ) -> Option<UnderlineStyle> {
-        (underline
-            && editor_style.show_underlines
-            && self.diagnostic_severity_is_visible(severity)
-            && !(is_unnecessary && severity > lsp::DiagnosticSeverity::WARNING))
-            .then(|| UnderlineStyle {
-                color: Some(diagnostic_style(severity, &editor_style.status)),
-                thickness: 1.0.into(),
-                wavy: true,
-            })
+        DiagnosticState::underline_style(
+            self.diagnostics_max_severity,
+            severity,
+            underline,
+            is_unnecessary,
+            editor_style,
+        )
     }
 
     pub fn wrap_snapshot(&self) -> &WrapSnapshot {
@@ -1775,17 +3000,15 @@ impl DisplaySnapshot {
         self.buffer_snapshot().len() == MultiBufferOffset(0)
     }
 
-    /// Returns whether tree-sitter syntax highlighting should be used.
-    /// Returns `false` if any buffer with semantic token highlights has the "full" mode setting,
-    /// meaning LSP semantic tokens should replace tree-sitter highlighting.
-    pub fn use_tree_sitter_for_syntax(&self, position: DisplayRow, cx: &App) -> bool {
-        let position = DisplayPoint::new(position, 0);
-        let Some((buffer_snapshot, ..)) = self.point_to_buffer_point(position.to_point(self))
-        else {
-            return false;
-        };
-        let settings = LanguageSettings::for_buffer_snapshot(&buffer_snapshot, None, cx);
-        settings.semantic_tokens.use_tree_sitter()
+    pub(crate) fn language_aware_styling(
+        &self,
+        row: DisplayRow,
+        syntax: &SyntaxStyling,
+    ) -> LanguageAwareStyling {
+        syntax.language_aware(
+            self.buffer_snapshot(),
+            DisplayPoint::new(row, 0).to_point(self),
+        )
     }
 
     pub fn row_infos(&self, start_row: DisplayRow) -> impl Iterator<Item = RowInfo> + '_ {
@@ -2042,7 +3265,8 @@ impl DisplaySnapshot {
         language_aware: LanguageAwareStyling,
         editor_style: &'a EditorStyle,
     ) -> impl Iterator<Item = HighlightedChunk<'a>> {
-        self.highlight_chunks(
+        Self::highlight_chunks(
+            self.diagnostics_max_severity,
             self.chunks(
                 display_rows,
                 language_aware,
@@ -2050,9 +3274,11 @@ impl DisplaySnapshot {
             ),
             editor_style,
             DiagnosticState::default(),
+            StandaloneInvisibles::default(),
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn highlighted_chunks_in_row<'a>(
         &'a self,
         display_row: DisplayRow,
@@ -2060,8 +3286,26 @@ impl DisplaySnapshot {
         language_aware: LanguageAwareStyling,
         editor_style: &'a EditorStyle,
     ) -> impl Iterator<Item = HighlightedChunk<'a>> {
-        let tab_snapshot = self.tab_snapshot();
-        let tab_row = self.tab_row(display_row);
+        Self::highlighted_tab_chunks(
+            self.tab_snapshot(),
+            self.tab_row(display_row),
+            columns,
+            language_aware,
+            editor_style,
+            self.highlights(Self::highlight_styles(editor_style)),
+            self.diagnostics_max_severity,
+        )
+    }
+
+    fn highlighted_tab_chunks<'a>(
+        tab_snapshot: &'a TabSnapshot,
+        tab_row: u32,
+        columns: Range<u32>,
+        language_aware: LanguageAwareStyling,
+        editor_style: &'a EditorStyle,
+        highlights: Highlights<'a>,
+        diagnostics_max_severity: DiagnosticSeverity,
+    ) -> impl Iterator<Item = HighlightedChunk<'a>> {
         let columns = long_rows::clip_row_columns(tab_snapshot, tab_row, columns);
         let start = TabPoint::new(tab_row, columns.start);
         let (fold_start, _, to_next_tab_stop) =
@@ -2072,21 +3316,30 @@ impl DisplaySnapshot {
             start
         };
         let mut skipped_bytes = (start.column() - read_start.column()) as usize;
-        let diagnostic_state = self.diagnostic_state_before(
+        let diagnostic_state = Self::diagnostic_state_before(
+            tab_snapshot,
             tab_snapshot
                 .tab_point_to_fold_point(read_start, Bias::Left)
                 .0,
             language_aware,
+            diagnostics_max_severity,
             editor_style,
         );
-        self.highlight_chunks(
-            tab_snapshot.chunks(
-                read_start..TabPoint::new(tab_row, columns.end),
-                language_aware,
-                self.highlights(Self::highlight_styles(editor_style)),
-            ),
+        let chunks = tab_snapshot.chunks(
+            read_start..TabPoint::new(tab_row, columns.end),
+            language_aware,
+            highlights,
+        );
+        Self::highlight_chunks(
+            diagnostics_max_severity,
+            chunks,
             editor_style,
             diagnostic_state,
+            StandaloneInvisibles::for_columns(
+                tab_snapshot,
+                tab_row,
+                &(read_start.column()..columns.end),
+            ),
         )
         .filter_map(move |mut chunk| {
             if skipped_bytes > 0 {
@@ -2102,24 +3355,26 @@ impl DisplaySnapshot {
     }
 
     fn diagnostic_state_before(
-        &self,
+        snapshot: &TabSnapshot,
         point: FoldPoint,
         language_aware: LanguageAwareStyling,
+        diagnostics_max_severity: DiagnosticSeverity,
         editor_style: &EditorStyle,
     ) -> DiagnosticState {
         let mut state = DiagnosticState::default();
         if !language_aware.diagnostics {
             return state;
         }
-        let inlay_snapshot = self.inlay_snapshot();
-        let end = inlay_snapshot
-            .to_buffer_offset(inlay_snapshot.to_offset(point.to_inlay_point(self.fold_snapshot())));
+        let inlay_snapshot = &snapshot.fold_snapshot.inlay_snapshot;
+        let end = inlay_snapshot.to_buffer_offset(
+            inlay_snapshot.to_offset(point.to_inlay_point(&snapshot.fold_snapshot)),
+        );
         let Some(start) = end.0.checked_sub(1) else {
             return state;
         };
-        let buffer = self.buffer_snapshot();
+        let buffer = snapshot.buffer_snapshot();
         let start = buffer.clip_offset(MultiBufferOffset(start), Bias::Left);
-        if self.fold_snapshot().intersects_fold(start) {
+        if snapshot.fold_snapshot.intersects_fold(start) {
             return state;
         }
         for chunk in buffer.chunks(start..end, language_aware) {
@@ -2127,68 +3382,268 @@ impl DisplaySnapshot {
                 chunk.diagnostic_severity,
                 chunk.underline,
                 chunk.is_unnecessary,
-                self,
+                diagnostics_max_severity,
                 editor_style,
             );
         }
         state
     }
 
-    pub fn long_row(&self, display_row: DisplayRow) -> Option<LongRow> {
-        if self.masked || self.is_block_line(display_row) {
-            return None;
-        }
-        self.wrap_snapshot()
-            .long_rows
-            .row(self.tab_snapshot(), self.tab_row(display_row))
+    pub fn is_long_row(&self, display_row: DisplayRow) -> bool {
+        !self.masked
+            && !self.is_block_line(display_row)
+            && self.long_row_em_width().is_some()
+            && self.tab_snapshot().line_len(self.tab_row(display_row)) as usize
+                > crate::MAX_LINE_LEN
     }
 
-    pub(crate) fn max_long_row_width(&self) -> ScrollPixelOffset {
-        if self.masked {
-            return 0.;
+    pub fn long_row(&self, display_row: DisplayRow) -> Result<Option<LongRow>, PendingRowGeometry> {
+        if !self.is_long_row(display_row) {
+            return Ok(None);
         }
-        let long_rows = &self.wrap_snapshot().long_rows;
-        if !self.block_snapshot.has_replacement_blocks() {
-            return long_rows.max_width();
+        let tab_row = self.tab_row(display_row);
+        let retained = self.row_readiness.retain_row(tab_row, &self.row_geometry);
+        if let Some(row) = retained.geometry.get() {
+            return Ok(Some(row.clone()));
         }
-        let mut is_replaced = self.block_snapshot.ascending_wrap_row_replaced_checker();
-        long_rows
-            .row_widths()
-            .filter(|(row, _)| !is_replaced(WrapRow(*row)))
-            .map(|(_, width)| width)
-            .fold(0., f64::max)
+        if let Some(row) = self
+            .wrap_snapshot()
+            .long_rows
+            .row(self.tab_snapshot(), tab_row)
+        {
+            retained.geometry.set(row.clone()).ok();
+            return Ok(Some(row));
+        }
+        Err(self.pending_row(display_row, false))
+    }
+
+    pub(crate) fn prepared_row_text(
+        &self,
+        display_row: DisplayRow,
+    ) -> Result<Option<Arc<PreparedRowText>>, PendingRowGeometry> {
+        if !self.is_long_row(display_row) || self.paint_source.is_none() {
+            return Ok(None);
+        }
+        let retained = self
+            .row_readiness
+            .retain_row(self.tab_row(display_row), &self.row_geometry);
+        if let Some(text) = retained.text.get() {
+            return Ok(Some(text.clone()));
+        }
+        Err(self.pending_row(display_row, true))
+    }
+
+    pub(crate) fn prepared_renderer_constraint(
+        &self,
+        id: ChunkRendererId,
+    ) -> Option<Arc<PreparedRendererConstraint>> {
+        if self.tab_snapshot().has_unrepresentable_rows() {
+            return None;
+        }
+        let ready = self
+            .row_readiness
+            .constraints
+            .lock()
+            .get(&id)?
+            .ready
+            .get()
+            .cloned()?;
+        if let Some((_, source)) = self.fold_snapshot().renderer_source(id)
+            && !ready.text().same_source(&source)
+        {
+            return None;
+        }
+        if let Some((font, font_size)) = self.renderer_constraint_font() {
+            if !ready.matches_font(&font, font_size) {
+                return None;
+            }
+        } else if self.paint_source.is_some() {
+            return None;
+        }
+        Some(ready)
+    }
+
+    pub(crate) fn pending_renderer_constraint(
+        &self,
+        display_row: DisplayRow,
+        id: ChunkRendererId,
+    ) -> PendingRowGeometry {
+        let completion = self
+            .row_readiness
+            .constraint_waiters
+            .lock()
+            .entry(id)
+            .or_default()
+            .clone();
+        PendingRowGeometry {
+            display_map_id: self.display_map_id,
+            display_row,
+            tab_row: self.tab_row(display_row),
+            text: false,
+            renderer: Some(id),
+            completion,
+            readiness: self.row_readiness.clone(),
+            retained: None,
+        }
+    }
+
+    fn renderer_constraint_font(&self) -> Option<(Font, Pixels)> {
+        let style = &self.paint_source.as_ref()?.style.text;
+        Some((
+            style.font(),
+            style.font_size.to_pixels(self.renderer_rem_size?),
+        ))
+    }
+
+    pub(crate) fn pending_row(&self, display_row: DisplayRow, text: bool) -> PendingRowGeometry {
+        let tab_row = self.tab_row(display_row);
+        let retained = self.row_readiness.retain_row(tab_row, &self.row_geometry);
+        let completion = if text {
+            retained.text_ready.clone()
+        } else {
+            retained.geometry_ready.clone()
+        };
+        PendingRowGeometry {
+            display_map_id: self.display_map_id,
+            display_row,
+            tab_row,
+            text,
+            renderer: None,
+            completion,
+            readiness: self.row_readiness.clone(),
+            retained: Some(retained),
+        }
+    }
+
+    fn row_request_ready(&self, row: u32, text: bool) -> bool {
+        if text {
+            self.row_readiness
+                .retained_row(row)
+                .is_some_and(|row| row.text.get().is_some())
+        } else {
+            self.wrap_snapshot()
+                .long_rows
+                .row(self.tab_snapshot(), row)
+                .is_some()
+        }
+    }
+
+    pub(crate) fn long_row_width_key(&self) -> LongRowWidthKey {
+        LongRowWidthKey {
+            display_map_id: self.display_map_id,
+            geometry: self.wrap_snapshot().long_rows.identity(),
+            paint_source: self.paint_source.clone(),
+            renderer_rem_size: self.renderer_rem_size,
+            replacements: self
+                .block_snapshot
+                .has_replacement_blocks()
+                .then(|| self.block_snapshot.replaced_rows.clone()),
+            masked: self.masked,
+        }
     }
 
     pub(crate) fn long_row_em_width(&self) -> Option<ScrollPixelOffset> {
         self.wrap_snapshot().long_rows.em_width()
     }
 
-    pub(crate) fn long_row_epoch(&self) -> usize {
-        self.wrap_snapshot().long_rows.epoch()
+    pub(crate) fn for_each_unmeasured_renderer(
+        &self,
+        priority_rows: Range<DisplayRow>,
+        mut f: impl FnMut(ChunkRenderer, RendererTextSource) -> ops::ControlFlow<()>,
+    ) {
+        let fold_snapshot = self.fold_snapshot();
+        if !fold_snapshot.has_unmeasured_renderers() {
+            return;
+        }
+        let settled_at = &self.block_snapshot.replaced_rows.renderers_settled_at;
+        if *settled_at.lock() == Some(fold_snapshot.version) {
+            return;
+        }
+        let fold_end = fold_snapshot.len();
+        let fold_offset_at_tab_row = |tab_row: u32| {
+            if tab_row > fold_snapshot.max_point().row() {
+                fold_end
+            } else {
+                FoldPoint::new(tab_row, 0).to_offset(fold_snapshot)
+            }
+        };
+        let fold_offset_at_wrap_row = |wrap_row: WrapRow| {
+            if wrap_row > self.wrap_snapshot().max_point().row() {
+                fold_end
+            } else {
+                fold_offset_at_tab_row(
+                    self.wrap_snapshot()
+                        .to_tab_point(WrapPoint::new(wrap_row, 0))
+                        .row(),
+                )
+            }
+        };
+        let mut displayed = Vec::new();
+        let mut displayed_start = FoldOffset(MultiBufferOffset(0));
+        for replaced in self.block_snapshot.replaced_wrap_rows().iter().cloned() {
+            let replaced_start = fold_offset_at_wrap_row(replaced.start);
+            if displayed_start < replaced_start {
+                displayed.push(displayed_start..replaced_start);
+            }
+            displayed_start = displayed_start.max(fold_offset_at_wrap_row(replaced.end));
+        }
+        if displayed_start < fold_end {
+            displayed.push(displayed_start..fold_end);
+        }
+        let priority_start = fold_offset_at_tab_row(self.tab_row(priority_rows.start));
+        let priority_end = if priority_rows.end > self.max_point().row() {
+            fold_end
+        } else {
+            fold_offset_at_tab_row(self.tab_row(priority_rows.end))
+        }
+        .max(priority_start);
+        let regions = [
+            priority_start..priority_end,
+            FoldOffset(MultiBufferOffset(0))..priority_start,
+            priority_end..fold_end,
+        ];
+        let mut found = false;
+        let mut visit = |renderer, text| {
+            found = true;
+            f(renderer, text)
+        };
+        for region in regions {
+            for range in &displayed {
+                let range = range.start.max(region.start)..range.end.min(region.end);
+                if fold_snapshot
+                    .for_each_unmeasured_renderer(range, &mut visit)
+                    .is_break()
+                {
+                    return;
+                }
+            }
+        }
+        if !found {
+            *settled_at.lock() = Some(fold_snapshot.version);
+        }
     }
 
     pub(crate) fn long_rows_in_view(
         &self,
         rows: Range<DisplayRow>,
-        window: impl Fn(&LongRow) -> RowWindow,
-    ) -> Vec<(DisplayRow, LongRow, RowWindow)> {
-        if self.long_row_em_width().is_none() {
-            return Vec::new();
+        window: impl Fn(&LongRow) -> Range<u32>,
+    ) -> Result<Vec<(DisplayRow, LongRow, Range<u32>)>, PendingRowGeometry> {
+        let mut result = Vec::new();
+        if self.long_row_em_width().is_some() {
+            for row in (rows.start.0..rows.end.0).map(DisplayRow) {
+                if let Some(long_row) = self.long_row(row)? {
+                    let window = window(&long_row);
+                    result.push((row, long_row, window));
+                }
+            }
         }
-        (rows.start.0..rows.end.0)
-            .map(DisplayRow)
-            .filter_map(|row| {
-                let long_row = self.long_row(row)?;
-                let window = window(&long_row);
-                Some((row, long_row, window))
-            })
-            .collect()
+        Ok(result)
     }
 
     pub(crate) fn visible_buffer_ranges(
         &self,
         range: Range<MultiBufferPoint>,
-        long_rows: &[(DisplayRow, LongRow, RowWindow)],
+        long_rows: &[(DisplayRow, LongRow, Range<u32>)],
     ) -> Vec<Range<MultiBufferPoint>> {
         let mut ranges = Vec::<Range<MultiBufferPoint>>::new();
         let mut push = |visible: Range<MultiBufferPoint>, keep_empty: bool| {
@@ -2207,12 +3662,10 @@ impl DisplaySnapshot {
         let mut gap_start = range.start;
         for (row, long_row, window) in long_rows {
             push(gap_start..point(*row, 0, Bias::Left), false);
-            for segment in window.segments() {
-                push(
-                    point(*row, segment.start, Bias::Left)..point(*row, segment.end, Bias::Right),
-                    true,
-                );
-            }
+            push(
+                point(*row, window.start, Bias::Left)..point(*row, window.end, Bias::Right),
+                true,
+            );
             gap_start = point(*row, long_row.len(), Bias::Right);
         }
         push(gap_start..range.end, false);
@@ -2234,14 +3687,14 @@ impl DisplaySnapshot {
     }
 
     fn highlight_chunks<'a>(
-        &'a self,
+        diagnostics_max_severity: DiagnosticSeverity,
         chunks: impl Iterator<Item = fold_map::Chunk<'a>> + 'a,
         editor_style: &'a EditorStyle,
         mut diagnostic_state: DiagnosticState,
+        mut standalone_invisibles: StandaloneInvisibles,
     ) -> impl Iterator<Item = HighlightedChunk<'a>> + 'a {
         let mut chunks = chunks.fuse();
         let mut lookahead = VecDeque::<fold_map::Chunk<'a>>::new();
-        let mut standalone_invisibles = StandaloneInvisibles::default();
         let is_empty_text =
             |chunk: &fold_map::Chunk| chunk.text.is_empty() && chunk.renderer.is_none();
         iter::from_fn({
@@ -2254,10 +3707,11 @@ impl DisplaySnapshot {
                 {
                     lookahead.push_back(next);
                 }
-                let next = lookahead
-                    .back()
+                let following = lookahead.back();
+                let next = following
                     .filter(|next| next.renderer.is_none())
                     .and_then(|next| next.text.chars().next());
+                let is_last = following.is_none_or(is_empty_text);
                 let syntax_highlight_style = chunk
                     .syntax_highlight_id
                     .and_then(|id| editor_style.syntax.get(id).cloned());
@@ -2293,7 +3747,7 @@ impl DisplaySnapshot {
                         chunk.diagnostic_severity,
                         chunk.underline,
                         chunk.is_unnecessary,
-                        self,
+                        diagnostics_max_severity,
                         editor_style,
                     );
                     (highlight, diagnostic_state.severity)
@@ -2321,6 +3775,7 @@ impl DisplaySnapshot {
                         editor_style,
                         &mut standalone_invisibles,
                         next,
+                        is_last,
                     ),
                 )
             }
@@ -2385,58 +3840,80 @@ impl DisplaySnapshot {
             text_system,
             editor_style,
             rem_size,
-            scroll_anchor: _,
-            visible_rows: _,
-            vertical_scroll_margin: _,
+            syntax,
+            ..
         }: &TextLayoutDetails,
-    ) -> RowLayout {
-        if let Some(long_row) = self.long_row(display_row) {
-            return RowLayout::Long(long_row);
+    ) -> Result<RowLayout, PendingRowGeometry> {
+        if let Some(long_row) = self.long_row(display_row)? {
+            return Ok(RowLayout::Long(long_row));
         }
+        let font_size = editor_style.text.font_size.to_pixels(*rem_size);
+        let shape =
+            |text: &str, runs: &[TextRun]| text_system.layout_line(text, font_size, runs, None);
         let mut runs = Vec::new();
         let mut line = String::new();
+        let mut fragments = None::<RowFragments>;
 
         let range = display_row..display_row.next_row();
         for chunk in self.highlighted_chunks(
             range,
-            LanguageAwareStyling {
-                tree_sitter: false,
-                diagnostics: false,
-            },
+            self.language_aware_styling(display_row, syntax),
             editor_style,
         ) {
-            line.push_str(chunk.text);
-
+            let text = chunk.text.strip_suffix('\n').unwrap_or(chunk.text);
             let text_style = if let Some(style) = chunk.style {
                 Cow::Owned(editor_style.text.clone().highlight(style))
             } else {
                 Cow::Borrowed(&editor_style.text)
             };
-
-            runs.push(text_style.to_run(chunk.text.len()))
-        }
-
-        if line.ends_with('\n') {
-            line.pop();
-            if let Some(last_run) = runs.last_mut() {
-                last_run.len -= 1;
-                if last_run.len == 0 {
-                    runs.pop();
+            let Some(replacement) = chunk.replacement else {
+                if !text.is_empty() {
+                    line.push_str(text);
+                    runs.push(text_style.to_run(text.len()));
+                }
+                continue;
+            };
+            let fragments = fragments.get_or_insert_with(RowFragments::default);
+            if !line.is_empty() {
+                fragments.push_shaped(shape(&line, &runs));
+                line.clear();
+                runs.clear();
+            }
+            match replacement {
+                ChunkReplacement::Renderer(renderer) => {
+                    let Some(width) = renderer.measured_width else {
+                        return Err(self.pending_row(display_row, false));
+                    };
+                    fragments.push(text.len(), width, RowFragment::Renderer(renderer.id));
+                }
+                ChunkReplacement::Str(replacement) => {
+                    let layout = shape(&replacement, &[text_style.to_run(replacement.len())]);
+                    fragments.push(
+                        text.len(),
+                        layout.width,
+                        RowFragment::Replacement(layout.font_id_for_index(0)),
+                    );
                 }
             }
         }
 
-        let font_size = editor_style.text.font_size.to_pixels(*rem_size);
-        RowLayout::Shaped(text_system.layout_line(&line, font_size, &runs, None))
+        let Some(mut fragments) = fragments else {
+            return Ok(RowLayout::Shaped(shape(&line, &runs)));
+        };
+        if !line.is_empty() {
+            fragments.push_shaped(shape(&line, &runs));
+        }
+        Ok(RowLayout::Rendered(fragments))
     }
 
     pub fn x_for_display_point(
         &self,
         display_point: DisplayPoint,
         text_layout_details: &TextLayoutDetails,
-    ) -> ScrollPixelOffset {
-        self.layout_row(display_point.row(), text_layout_details)
-            .x_for_index(display_point.column() as usize)
+    ) -> Result<ScrollPixelOffset, PendingRowGeometry> {
+        Ok(self
+            .layout_row(display_point.row(), text_layout_details)?
+            .x_for_index(display_point.column() as usize))
     }
 
     pub fn display_column_for_x(
@@ -2444,70 +3921,22 @@ impl DisplaySnapshot {
         display_row: DisplayRow,
         x: ScrollPixelOffset,
         details: &TextLayoutDetails,
-    ) -> u32 {
-        self.layout_row(display_row, details).closest_index_for_x(x) as u32
-    }
-
-    pub fn visible_display_columns(
-        &self,
-        display_row: DisplayRow,
-        visible_x: RangeInclusive<ScrollPixelOffset>,
-        details: &TextLayoutDetails,
-    ) -> RangeInclusive<u32> {
-        let layout = self.layout_row(display_row, details);
-        let min_column = layout.closest_index_for_x(*visible_x.start());
-        let closest_to_end = layout.closest_index_for_x(*visible_x.end());
-        let max_column = if layout.x_for_index(closest_to_end) <= *visible_x.end() {
-            closest_to_end
-        } else {
-            layout.previous_index(closest_to_end)
-        };
-        min_column as u32..=max_column.max(min_column) as u32
+    ) -> Result<u32, PendingRowGeometry> {
+        Ok(self
+            .layout_row(display_row, details)?
+            .closest_index_for_x(x) as u32)
     }
 
     #[instrument(skip_all)]
     pub fn grapheme_at(&self, mut point: DisplayPoint) -> Option<SharedString> {
         point = DisplayPoint(self.block_snapshot.clip_point(point.0, Bias::Left));
-        let take_grapheme_prefix = {
-            let mut prev = false;
-            move |char: &char| {
-                let now = char.is_ascii();
-                let end = char.is_ascii() && (char.is_ascii_whitespace() || prev);
-                prev = now;
-                !end
-            }
-        };
-        let text = if self.long_row(point.row()).is_some() {
-            let tab_row = self.tab_row(point.row());
-            let end = self.line_len(point.row()).min(
-                point
-                    .column()
-                    .saturating_add(long_rows::MAX_GRAPHEME_CONTEXT_LEN),
-            );
-            let end = self
-                .tab_snapshot()
-                .clip_point(TabPoint::new(tab_row, end), Bias::Left);
-            let mut grapheme = String::new();
-            for character in self
-                .tab_snapshot()
-                .chunks(
-                    TabPoint::new(tab_row, point.column())..end,
-                    LanguageAwareStyling {
-                        tree_sitter: false,
-                        diagnostics: false,
-                    },
-                    Highlights::default(),
-                )
-                .flat_map(|chunk| chunk.text.chars())
-            {
-                let len = grapheme.len();
-                grapheme.push(character);
-                if len > 0 && long_rows::is_cluster_boundary(&grapheme, len) {
-                    grapheme.truncate(len);
-                    break;
-                }
-            }
-            grapheme
+
+        let text = if self.is_long_row(point.row()) {
+            long_rows::row_grapheme(
+                self.tab_snapshot(),
+                self.tab_row(point.row()),
+                point.column(),
+            )
         } else {
             self.text_chunks(point.row())
                 .flat_map(str::chars)
@@ -2519,7 +3948,15 @@ impl DisplaySnapshot {
                         !at_point
                     }
                 })
-                .take_while(take_grapheme_prefix)
+                .take_while({
+                    let mut prev = false;
+                    move |char| {
+                        let now = char.is_ascii();
+                        let end = char.is_ascii() && (char.is_ascii_whitespace() || prev);
+                        prev = now;
+                        !end
+                    }
+                })
                 .collect::<String>()
         };
         text.graphemes(true).next().map(|s| {
@@ -3158,6 +4595,63 @@ impl DisplayPointConverter<'_> {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct DiagnosticState {
+    underline: Option<UnderlineStyle>,
+    severity: Option<lsp::DiagnosticSeverity>,
+}
+
+impl DiagnosticState {
+    fn underline_style(
+        diagnostics_max_severity: DiagnosticSeverity,
+        severity: lsp::DiagnosticSeverity,
+        underline: bool,
+        is_unnecessary: bool,
+        editor_style: &EditorStyle,
+    ) -> Option<UnderlineStyle> {
+        (underline
+            && editor_style.show_underlines
+            && diagnostics_max_severity
+                .into_lsp()
+                .is_some_and(|max| severity <= max)
+            && !(is_unnecessary && severity > lsp::DiagnosticSeverity::WARNING))
+            .then(|| UnderlineStyle {
+                color: Some(diagnostic_style(severity, &editor_style.status)),
+                thickness: 1.0.into(),
+                wavy: true,
+            })
+    }
+
+    fn observe(
+        &mut self,
+        severity: Option<lsp::DiagnosticSeverity>,
+        underline: bool,
+        is_unnecessary: bool,
+        diagnostics_max_severity: DiagnosticSeverity,
+        editor_style: &EditorStyle,
+    ) -> Option<HighlightStyle> {
+        let severity = severity.filter(|severity| {
+            diagnostics_max_severity
+                .into_lsp()
+                .is_some_and(|max| *severity <= max)
+        });
+        let highlight = severity.map(|severity| HighlightStyle {
+            fade_out: is_unnecessary.then_some(editor_style.unnecessary_code_fade),
+            underline: Self::underline_style(
+                diagnostics_max_severity,
+                severity,
+                underline,
+                is_unnecessary,
+                editor_style,
+            ),
+            ..HighlightStyle::default()
+        });
+        self.underline = highlight.as_ref().and_then(|highlight| highlight.underline);
+        self.severity = self.underline.and_then(|_| severity);
+        highlight
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
@@ -3167,9 +4661,7 @@ pub mod tests {
     };
     use Bias::*;
     use block_map::BlockPlacement;
-    use gpui::{
-        App, AppContext as _, BorrowAppContext, Element, Hsla, Rgba, div, font, observe, px,
-    };
+    use gpui::{App, BorrowAppContext, Element, Hsla, Rgba, div, font, observe, px};
     use language::{
         Buffer, Diagnostic, DiagnosticEntry, DiagnosticSet, Language, LanguageConfig,
         LanguageMatcher,
@@ -3516,7 +5008,8 @@ pub mod tests {
             );
 
             let x = snapshot
-                .x_for_display_point(DisplayPoint::new(DisplayRow(1), 10), &text_layout_details);
+                .x_for_display_point(DisplayPoint::new(DisplayRow(1), 10), &text_layout_details)
+                .expect("short row geometry");
             assert_eq!(
                 movement::up(
                     &snapshot,
@@ -3524,7 +5017,8 @@ pub mod tests {
                     language::SelectionGoal::None,
                     false,
                     &text_layout_details,
-                ),
+                )
+                .expect("short row movement"),
                 (
                     DisplayPoint::new(DisplayRow(0), 7),
                     language::SelectionGoal::HorizontalPosition(x)
@@ -3537,7 +5031,8 @@ pub mod tests {
                     language::SelectionGoal::HorizontalPosition(x),
                     false,
                     &text_layout_details
-                ),
+                )
+                .expect("short row movement"),
                 (
                     DisplayPoint::new(DisplayRow(1), 10),
                     language::SelectionGoal::HorizontalPosition(x)
@@ -3550,7 +5045,8 @@ pub mod tests {
                     language::SelectionGoal::HorizontalPosition(x),
                     false,
                     &text_layout_details
-                ),
+                )
+                .expect("short row movement"),
                 (
                     DisplayPoint::new(DisplayRow(2), 4),
                     language::SelectionGoal::HorizontalPosition(x)
@@ -3944,6 +5440,114 @@ pub mod tests {
                 "point {point:?}"
             );
         }
+    }
+
+    #[gpui::test]
+    fn test_unmeasured_renderers_skip_hidden_content(cx: &mut App) {
+        init_test(cx, &|_| {});
+        let buffer = MultiBuffer::build_simple("ab\ncd\nef\ngh", cx);
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let map = inlay_test_map(buffer, font("Courier"), px(16.0), None, cx);
+        map.update(cx, |map, cx| {
+            map.splice_inlays(
+                &[],
+                (0..4)
+                    .map(|row| {
+                        Inlay::mock_repl_result(
+                            row as usize,
+                            buffer_snapshot.anchor_after(Point::new(row, 1)),
+                            "r",
+                        )
+                    })
+                    .collect(),
+                cx,
+            );
+            map.fold(
+                vec![Crease::simple(
+                    MultiBufferPoint::new(1, 0)..MultiBufferPoint::new(1, 2),
+                    FoldPlaceholder::test(),
+                )],
+                cx,
+            );
+            map.insert_blocks(
+                [BlockProperties {
+                    placement: BlockPlacement::Replace(
+                        buffer_snapshot.anchor_before(Point::new(2, 0))
+                            ..=buffer_snapshot.anchor_after(Point::new(2, 2)),
+                    ),
+                    height: Some(1),
+                    style: BlockStyle::Fixed,
+                    render: Arc::new(|_| div().into_any()),
+                    priority: 0,
+                }],
+                cx,
+            );
+        });
+        let unmeasured = |priority_rows: Range<DisplayRow>, limit: usize, cx: &mut App| {
+            let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+            let mut renderers = Vec::new();
+            snapshot.for_each_unmeasured_renderer(priority_rows, |renderer, _| {
+                renderers.push(renderer.id);
+                if renderers.len() == limit {
+                    ops::ControlFlow::Break(())
+                } else {
+                    ops::ControlFlow::Continue(())
+                }
+            });
+            renderers
+        };
+        let inlays = |renderers: &[ChunkRendererId]| {
+            renderers
+                .iter()
+                .map(|renderer| match renderer {
+                    ChunkRendererId::Inlay(id) => Some(*id),
+                    ChunkRendererId::Fold(_) => None,
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let all_rows = DisplayRow(0)..DisplayRow(u32::MAX);
+        let renderers = unmeasured(DisplayRow(3)..DisplayRow(4), usize::MAX, cx);
+        assert_eq!(
+            inlays(&renderers),
+            [
+                Some(InlayId::ReplResult(3)),
+                Some(InlayId::ReplResult(0)),
+                None
+            ]
+        );
+        assert_eq!(
+            inlays(&unmeasured(all_rows.clone(), 1, cx)),
+            [Some(InlayId::ReplResult(0))]
+        );
+
+        let key = RendererWidthsKey {
+            rem_size: px(16.),
+            font: font("Courier"),
+            font_size: px(16.),
+            buffer_font: font("Courier"),
+            editor_width: px(500.),
+            line_height: px(20.),
+        };
+        map.update(cx, |map, cx| {
+            map.update_renderer_widths(
+                key,
+                renderers.into_iter().map(|renderer| (renderer, px(10.))),
+                cx,
+            )
+        });
+        assert_eq!(
+            inlays(&unmeasured(all_rows.clone(), usize::MAX, cx)),
+            Vec::<Option<InlayId>>::new()
+        );
+
+        map.update(cx, |map, cx| {
+            map.unfold_intersecting([MultiBufferOffset(3)..MultiBufferOffset(5)], true, cx);
+        });
+        assert_eq!(
+            inlays(&unmeasured(all_rows, usize::MAX, cx)),
+            [Some(InlayId::ReplResult(1))]
+        );
     }
 
     #[gpui::test]
@@ -5251,7 +6855,12 @@ pub mod tests {
         };
 
         let chunks: Vec<_> = chunk
-            .highlight_invisibles(&editor_style, &mut StandaloneInvisibles::default(), None)
+            .highlight_invisibles(
+                &editor_style,
+                &mut StandaloneInvisibles::default(),
+                None,
+                true,
+            )
             .map(|chunk| chunk.text.to_string())
             .collect();
 

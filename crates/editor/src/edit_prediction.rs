@@ -1,4 +1,5 @@
 use super::*;
+use crate::deferred_input::CapturedInput;
 
 pub fn make_suggestion_styles(cx: &App) -> EditPredictionStyles {
     EditPredictionStyles {
@@ -13,12 +14,20 @@ pub fn make_suggestion_styles(cx: &App) -> EditPredictionStyles {
     }
 }
 
+#[derive(Clone)]
+pub(super) struct CapturedEditPredictionAction {
+    editor: EntityId,
+    prediction: Option<Rc<EditPredictionState>>,
+}
+
+#[derive(Clone)]
 pub(super) enum EditDisplayMode {
     TabAccept,
     DiffPopover,
     Inline,
 }
 
+#[derive(Clone)]
 pub(super) enum EditPrediction {
     Edit {
         // TODO could be a language::Anchor?
@@ -48,6 +57,8 @@ pub(super) struct EditPredictionState {
     pub(super) completion: EditPrediction,
     pub(super) completion_id: Option<SharedString>,
     pub(super) invalidation_range: Option<Range<Anchor>>,
+    provider: Arc<dyn EditPredictionDelegateHandle>,
+    source: edit_prediction_types::EditPrediction,
 }
 
 pub(super) enum EditPredictionSettings {
@@ -159,9 +170,9 @@ impl Editor {
         T: EditPredictionDelegate,
     {
         self.edit_prediction_provider = provider.map(|provider| RegisteredEditPredictionDelegate {
-            _subscription: cx.observe_in(&provider, window, |this, _, window, cx| {
-                if this.focus_handle.is_focused(window) {
-                    this.update_visible_edit_prediction(window, cx);
+            _subscription: cx.observe_in(&provider, window, |editor, _, window, cx| {
+                if editor.focus_handle.is_focused(window) {
+                    editor.update_visible_edit_prediction(window, cx);
                 }
             }),
             provider: Arc::new(provider),
@@ -359,221 +370,12 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.read_only(cx) {
-            return;
-        }
-        if self.show_edit_predictions_in_menu() {
-            self.hide_context_menu(window, cx);
-        }
-
-        let Some(active_edit_prediction) = self.active_edit_prediction.as_ref() else {
-            return;
-        };
-
-        if !matches!(granularity, EditPredictionGranularity::Full) && self.selections.count() != 1 {
-            return;
-        }
-
-        match &active_edit_prediction.completion {
-            EditPrediction::MoveWithin { target, .. } => {
-                let target = *target;
-
-                if matches!(granularity, EditPredictionGranularity::Full) {
-                    if let Some(position_map) = &self.last_position_map {
-                        let target_row = target.to_display_point(&position_map.snapshot).row();
-                        let is_visible = position_map.visible_row_range.contains(&target_row);
-
-                        if is_visible || !self.edit_prediction_requires_modifier() {
-                            self.unfold_ranges(&[target..target], true, false, cx);
-                            self.change_selections(
-                                SelectionEffects::scroll(Autoscroll::newest()),
-                                window,
-                                cx,
-                                |selections| {
-                                    selections.select_anchor_ranges([target..target]);
-                                },
-                            );
-                            self.clear_row_highlights::<EditPredictionPreview>();
-                            self.edit_prediction_preview
-                                .set_previous_scroll_position(None);
-                        } else {
-                            // Highlight and request scroll
-                            self.edit_prediction_preview
-                                .set_previous_scroll_position(Some(
-                                    position_map.snapshot.scroll_anchor,
-                                ));
-                            self.highlight_rows::<EditPredictionPreview>(
-                                target..target,
-                                |cx| cx.theme().colors().editor_highlighted_line_background,
-                                RowHighlightOptions {
-                                    autoscroll: true,
-                                    ..Default::default()
-                                },
-                                cx,
-                            );
-                            self.request_autoscroll(Autoscroll::fit(), cx);
-                        }
-                    }
-                } else {
-                    self.change_selections(
-                        SelectionEffects::scroll(Autoscroll::newest()),
-                        window,
-                        cx,
-                        |selections| {
-                            selections.select_anchor_ranges([target..target]);
-                        },
-                    );
-                }
-            }
-            EditPrediction::MoveOutside { snapshot, target } => {
-                if let Some(workspace) = self.workspace() {
-                    Self::open_editor_at_anchor(snapshot, *target, &workspace, window, cx)
-                        .detach_and_log_err(cx);
-                }
-            }
-            EditPrediction::Edit {
-                edits,
-                cursor_position,
-                ..
-            } => {
-                self.report_edit_prediction_event(
-                    active_edit_prediction.completion_id.clone(),
-                    true,
-                    cx,
-                );
-
-                match granularity {
-                    EditPredictionGranularity::Full => {
-                        let transaction_id_prev = self.buffer.read(cx).last_transaction_id(cx);
-
-                        // Compute fallback cursor position BEFORE applying the edit,
-                        // so the anchor tracks through the edit correctly
-                        let fallback_cursor_target = {
-                            let snapshot = self.buffer.read(cx).snapshot(cx);
-                            let Some((last_edit_range, _)) = edits.last() else {
-                                return;
-                            };
-                            last_edit_range.end.bias_right(&snapshot)
-                        };
-
-                        self.buffer.update(cx, |buffer, cx| {
-                            buffer.edit(edits.iter().cloned(), None, cx)
-                        });
-
-                        if let Some(provider) = self.edit_prediction_provider() {
-                            provider.accept(cx);
-                        }
-
-                        // Resolve cursor position after the edit is applied
-                        let cursor_target = if let Some((anchor, offset)) = cursor_position {
-                            // The anchor tracks through the edit, then we add the offset
-                            let snapshot = self.buffer.read(cx).snapshot(cx);
-                            let base_offset = anchor.to_offset(&snapshot).0;
-                            let target_offset =
-                                MultiBufferOffset((base_offset + offset).min(snapshot.len().0));
-                            snapshot.anchor_after(target_offset)
-                        } else {
-                            fallback_cursor_target
-                        };
-
-                        self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                            s.select_anchor_ranges([cursor_target..cursor_target]);
-                        });
-
-                        let selections = self.selections.disjoint_anchors_arc();
-                        if let Some(transaction_id_now) =
-                            self.buffer.read(cx).last_transaction_id(cx)
-                        {
-                            if transaction_id_prev != Some(transaction_id_now) {
-                                self.selection_history.insert_transaction(
-                                    transaction_id_now,
-                                    selections,
-                                    self.add_selections_state.clone(),
-                                    self.selections.goal_origins(),
-                                );
-                            }
-                        }
-
-                        self.update_visible_edit_prediction(window, cx);
-                        if self.active_edit_prediction.is_none() {
-                            self.refresh_edit_prediction(
-                                true,
-                                true,
-                                EditPredictionRequestTrigger::PredictionAccepted,
-                                window,
-                                cx,
-                            );
-                        }
-                        cx.notify();
-                    }
-                    _ => {
-                        let snapshot = self.buffer.read(cx).snapshot(cx);
-                        let cursor_offset = self
-                            .selections
-                            .newest::<MultiBufferOffset>(&self.display_snapshot(cx))
-                            .head();
-
-                        let insertion = edits.iter().find_map(|(range, text)| {
-                            let range = range.to_offset(&snapshot);
-                            if range.is_empty() && range.start == cursor_offset {
-                                Some(text)
-                            } else {
-                                None
-                            }
-                        });
-
-                        if let Some(text) = insertion {
-                            let text_to_insert = match granularity {
-                                EditPredictionGranularity::Word => {
-                                    let mut partial = text
-                                        .chars()
-                                        .by_ref()
-                                        .take_while(|c| c.is_alphabetic())
-                                        .collect::<String>();
-                                    if partial.is_empty() {
-                                        partial = text
-                                            .chars()
-                                            .by_ref()
-                                            .take_while(|c| c.is_whitespace() || !c.is_alphabetic())
-                                            .collect::<String>();
-                                    }
-                                    partial
-                                }
-                                EditPredictionGranularity::Line => {
-                                    if let Some(line) = text.split_inclusive('\n').next() {
-                                        line.to_string()
-                                    } else {
-                                        text.to_string()
-                                    }
-                                }
-                                EditPredictionGranularity::Full => unreachable!(),
-                            };
-
-                            cx.emit(EditorEvent::InputHandled {
-                                utf16_range_to_replace: None,
-                                text: text_to_insert.clone().into(),
-                            });
-
-                            self.replace_selections(&text_to_insert, None, window, cx, false);
-                            self.refresh_edit_prediction(
-                                true,
-                                true,
-                                EditPredictionRequestTrigger::PredictionPartiallyAccepted,
-                                window,
-                                cx,
-                            );
-                            cx.notify();
-                        } else {
-                            self.accept_partial_edit_prediction(
-                                EditPredictionGranularity::Full,
-                                window,
-                                cx,
-                            );
-                        }
-                    }
-                }
-            }
-        }
+        self.accept_partial_edit_prediction_in_viewport(
+            granularity,
+            self.last_input_viewport().cloned(),
+            window,
+            cx,
+        );
     }
 
     pub fn accept_next_word_edit_prediction(
@@ -771,7 +573,24 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let modifiers_held = self.edit_prediction_preview_modifiers_held(modifiers, window, cx);
+        let modifiers = *modifiers;
+        if self.defer_input(
+            move |editor, window, cx| {
+                editor.update_edit_prediction_preview(&modifiers, window, cx);
+            },
+            window,
+            cx,
+        ) {
+            return;
+        }
+        self.update_edit_prediction_settings(cx);
+        if !self.show_edit_predictions_in_menu()
+            && !self.edit_prediction_requires_modifier()
+            && !self.edit_prediction_preview_is_active()
+        {
+            return;
+        }
+        let modifiers_held = self.edit_prediction_preview_modifiers_held(&modifiers, window, cx);
 
         if modifiers_held {
             if matches!(
@@ -791,15 +610,8 @@ impl Editor {
             since,
         } = self.edit_prediction_preview
         {
-            if let (Some(previous_scroll_position), Some(position_map)) =
-                (previous_scroll_position, self.last_position_map.as_ref())
-            {
-                self.set_scroll_position(
-                    previous_scroll_position
-                        .scroll_position(&position_map.snapshot.display_snapshot),
-                    window,
-                    cx,
-                );
+            if let Some(previous_scroll_position) = previous_scroll_position {
+                self.restore_scroll_anchor(previous_scroll_position, window, cx);
             }
 
             self.edit_prediction_preview = EditPredictionPreview::Inactive {
@@ -808,6 +620,22 @@ impl Editor {
             self.clear_row_highlights::<EditPredictionPreview>();
             self.update_visible_edit_prediction(window, cx);
             cx.notify();
+        }
+    }
+
+    pub(super) fn capture_edit_prediction_target(
+        &self,
+        cx: &Context<Self>,
+    ) -> CapturedEditPredictionAction {
+        if let Some(captured) = CapturedInput::current(cx)
+            .and_then(|input| input.edit_prediction.as_ref())
+            .filter(|captured| captured.editor == cx.entity_id())
+        {
+            return captured.clone();
+        }
+        CapturedEditPredictionAction {
+            editor: cx.entity_id(),
+            prediction: self.active_edit_prediction.clone(),
         }
     }
 
@@ -888,6 +716,8 @@ impl Editor {
 
         let edit_prediction = provider.suggest(&buffer, cursor_text_anchor, cx)?;
 
+        let source = edit_prediction.clone();
+
         let (completion_id, edits, predicted_cursor_position, edit_preview) = match edit_prediction
         {
             edit_prediction_types::EditPrediction::Local {
@@ -905,12 +735,14 @@ impl Editor {
                     provider.provider.did_show(SuggestionDisplayType::Jump, cx);
                 }
                 self.stale_edit_prediction_in_menu = None;
-                self.active_edit_prediction = Some(EditPredictionState {
-                    inlay_ids: vec![],
+                self.active_edit_prediction = Some(Rc::new(EditPredictionState {
+                    inlay_ids: Vec::new(),
                     completion: EditPrediction::MoveOutside { snapshot, target },
                     completion_id: id,
                     invalidation_range: None,
-                });
+                    provider,
+                    source,
+                }));
                 cx.notify();
                 return Some(());
             }
@@ -1069,12 +901,14 @@ impl Editor {
             ));
 
         self.stale_edit_prediction_in_menu = None;
-        self.active_edit_prediction = Some(EditPredictionState {
+        self.active_edit_prediction = Some(Rc::new(EditPredictionState {
             inlay_ids,
             completion,
             completion_id,
             invalidation_range: Some(invalidation_range),
-        });
+            provider,
+            source,
+        }));
 
         cx.notify();
 
@@ -1127,6 +961,7 @@ impl Editor {
                         scroll_pixel_position,
                         newest_selection_head,
                         target_display_point,
+                        editor_width,
                         window,
                         cx,
                     )
@@ -1709,32 +1544,66 @@ impl Editor {
         scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
         newest_selection_head: Option<DisplayPoint>,
         target_display_point: DisplayPoint,
+        editor_width: Pixels,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<(AnyElement, gpui::Point<Pixels>)> {
         const SCROLL_PADDING_Y: Pixels = px(12.);
 
-        if target_display_point.row() < visible_row_range.start {
+        let target_y = (target_display_point.row().as_f64() * f64::from(line_height))
+            - scroll_pixel_position.y;
+
+        let placement = edit_prediction_target_placement(
+            target_display_point,
+            &visible_row_range,
+            || {
+                line_layouts
+                    .get(target_display_point.row().minus(visible_row_range.start) as usize)
+                    .map(|line| line.x_for_index(target_display_point.column() as usize))
+            },
+            scroll_pixel_position.x,
+            edit_prediction_visible_x(text_bounds, content_origin, editor_width),
+        );
+        let scroll_icon = match placement {
+            EditPredictionTargetPlacement::Above => Some(IconName::ArrowUp),
+            EditPredictionTargetPlacement::Below => Some(IconName::ArrowDown),
+            EditPredictionTargetPlacement::Left => Some(IconName::ArrowLeft),
+            EditPredictionTargetPlacement::Right => Some(IconName::ArrowRight),
+            EditPredictionTargetPlacement::Visible => None,
+        };
+        if let Some(scroll_icon) = scroll_icon {
+            let cursor_x = newest_selection_head
+                .filter(|cursor| visible_row_range.contains(&cursor.row()))
+                .and_then(|cursor| {
+                    line_layouts
+                        .get(cursor.row().minus(visible_row_range.start) as usize)
+                        .map(|line| line.x_for_index(cursor.column() as usize))
+                })
+                .map_or(Pixels::ZERO, |x| Pixels::from(x - scroll_pixel_position.x));
             return self.render_edit_prediction_scroll_popover(
-                &|_| SCROLL_PADDING_Y,
-                IconName::ArrowUp,
-                visible_row_range,
-                line_layouts,
-                newest_selection_head,
-                content_origin,
-                scroll_pixel_position,
-                window,
-                cx,
-            );
-        } else if target_display_point.row() >= visible_row_range.end {
-            return self.render_edit_prediction_scroll_popover(
-                &|size| text_bounds.size.height - size.height - SCROLL_PADDING_Y,
-                IconName::ArrowDown,
-                visible_row_range,
-                line_layouts,
-                newest_selection_head,
-                content_origin,
-                scroll_pixel_position,
+                |size| match placement {
+                    EditPredictionTargetPlacement::Above => {
+                        content_origin + point(cursor_x, SCROLL_PADDING_Y)
+                    }
+                    EditPredictionTargetPlacement::Below => {
+                        content_origin
+                            + point(
+                                cursor_x,
+                                text_bounds.size.height - size.height - SCROLL_PADDING_Y,
+                            )
+                    }
+                    _ => point(
+                        if placement == EditPredictionTargetPlacement::Left {
+                            content_origin.x
+                        } else {
+                            content_origin.x + editor_width - size.width - px(2.)
+                        },
+                        content_origin.y + Pixels::from(target_y)
+                            - (size.height - line_height) / 2.,
+                    ),
+                },
+                scroll_icon,
+                text_bounds,
                 window,
                 cx,
             );
@@ -1748,8 +1617,6 @@ impl Editor {
 
         let target_x =
             Pixels::from(line_layout.x_for_index(target_column) - scroll_pixel_position.x);
-        let target_y = (target_display_point.row().as_f64() * f64::from(line_height))
-            - scroll_pixel_position.y;
 
         let flag_on_right = target_x < text_bounds.size.width / 2.;
 
@@ -1796,13 +1663,9 @@ impl Editor {
 
     fn render_edit_prediction_scroll_popover(
         &mut self,
-        to_y: &dyn Fn(Size<Pixels>) -> Pixels,
+        to_origin: impl FnOnce(Size<Pixels>) -> gpui::Point<Pixels>,
         scroll_icon: IconName,
-        visible_row_range: Range<DisplayRow>,
-        line_layouts: &[LineWithInvisibles],
-        newest_selection_head: Option<DisplayPoint>,
-        content_origin: gpui::Point<Pixels>,
-        scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
+        text_bounds: &Bounds<Pixels>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<(AnyElement, gpui::Point<Pixels>)> {
@@ -1811,19 +1674,364 @@ impl Editor {
             .into_any();
 
         let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
-
-        let cursor = newest_selection_head?;
-        let cursor_row_layout =
-            line_layouts.get(cursor.row().minus(visible_row_range.start) as usize)?;
-        let cursor_column = cursor.column() as usize;
-
-        let cursor_character_x =
-            Pixels::from(cursor_row_layout.x_for_index(cursor_column) - scroll_pixel_position.x);
-
-        let origin = content_origin + point(cursor_character_x, to_y(size));
+        let origin = to_origin(size);
+        let origin = point(
+            origin
+                .x
+                .min(text_bounds.right() - size.width)
+                .max(text_bounds.left()),
+            origin
+                .y
+                .min(text_bounds.bottom() - size.height)
+                .max(text_bounds.top()),
+        );
 
         element.prepaint_at(origin, window, cx);
         Some((element, origin))
+    }
+
+    fn accept_partial_edit_prediction_in_viewport(
+        &mut self,
+        granularity: EditPredictionGranularity,
+        viewport: Option<element::InputViewport>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let captured = self.capture_edit_prediction_target(cx);
+        if self.input_is_deferred(cx) {
+            self.defer_input(
+                move |editor, window, cx| {
+                    CapturedInput::edit_prediction(captured).run(cx, |cx| {
+                        editor.accept_partial_edit_prediction_in_viewport(
+                            granularity,
+                            viewport,
+                            window,
+                            cx,
+                        );
+                    });
+                },
+                window,
+                cx,
+            );
+            return;
+        }
+        if self.read_only(cx) {
+            return;
+        }
+
+        let Some(active_edit_prediction) =
+            self.active_edit_prediction.as_ref().filter(|prediction| {
+                captured
+                    .prediction
+                    .as_ref()
+                    .is_some_and(|captured| captured.same_suggestion(prediction))
+                    && self
+                        .edit_prediction_provider
+                        .as_ref()
+                        .is_some_and(|provider| {
+                            Arc::ptr_eq(&provider.provider, &prediction.provider)
+                        })
+            })
+        else {
+            cx.propagate();
+            return;
+        };
+
+        if granularity != EditPredictionGranularity::Full && self.selections.count() != 1 {
+            return;
+        }
+
+        let completion = active_edit_prediction.completion.clone();
+        let completion_id = active_edit_prediction.completion_id.clone();
+        let move_geometry = if let EditPrediction::MoveWithin { target, .. } = &completion
+            && granularity == EditPredictionGranularity::Full
+        {
+            let snapshot = self.display_snapshot(cx);
+            let target_display_point = target.to_display_point(&snapshot);
+            let details = self.text_layout_details(window, cx);
+            let target_x = match snapshot.x_for_display_point(target_display_point, &details) {
+                Ok(target_x) => target_x,
+                Err(pending) => {
+                    self.defer_geometry(
+                        pending,
+                        move |editor, window, cx| {
+                            CapturedInput::edit_prediction(captured).run(cx, |cx| {
+                                editor.accept_partial_edit_prediction_in_viewport(
+                                    granularity,
+                                    viewport,
+                                    window,
+                                    cx,
+                                );
+                            });
+                        },
+                        window,
+                        cx,
+                    );
+                    return;
+                }
+            };
+            let Some(viewport) = viewport.as_ref() else {
+                return;
+            };
+            Some((viewport, target_display_point, target_x))
+        } else {
+            None
+        };
+
+        if self.show_edit_predictions_in_menu() {
+            self.hide_context_menu(window, cx);
+        }
+
+        match &completion {
+            EditPrediction::MoveWithin { target, .. } => {
+                let target = *target;
+
+                if granularity == EditPredictionGranularity::Full {
+                    if let Some((viewport, target_display_point, target_x)) = move_geometry {
+                        let is_visible = edit_prediction_target_placement(
+                            target_display_point,
+                            &viewport.visible_row_range,
+                            || Some(target_x),
+                            viewport.scroll_pixel_position.x,
+                            edit_prediction_visible_x(
+                                &viewport.text_bounds,
+                                viewport.content_origin,
+                                self.edit_prediction_viewport_width(viewport),
+                            ),
+                        ) == EditPredictionTargetPlacement::Visible;
+
+                        if is_visible || !self.edit_prediction_requires_modifier() {
+                            self.unfold_ranges(&[target..target], true, false, cx);
+                            self.change_selections(
+                                SelectionEffects::scroll(Autoscroll::newest()),
+                                window,
+                                cx,
+                                |selections| {
+                                    selections.select_anchor_ranges([target..target]);
+                                },
+                            );
+                            self.clear_row_highlights::<EditPredictionPreview>();
+                            self.edit_prediction_preview
+                                .set_previous_scroll_position(None);
+                        } else {
+                            // Highlight and request scroll
+                            self.highlight_rows::<EditPredictionPreview>(
+                                target..target,
+                                |cx| cx.theme().colors().editor_highlighted_line_background,
+                                RowHighlightOptions {
+                                    autoscroll: true,
+                                    ..Default::default()
+                                },
+                                cx,
+                            );
+                            let previous_scroll_anchor = match self.edit_prediction_preview {
+                                EditPredictionPreview::Active {
+                                    previous_scroll_position: Some(anchor),
+                                    ..
+                                } => anchor,
+                                _ => self.save_scroll_anchor(cx),
+                            };
+                            self.scroll_to_edit_prediction_preview_target(
+                                target_x, viewport, window, cx,
+                            );
+                            self.edit_prediction_preview
+                                .set_previous_scroll_position(Some(previous_scroll_anchor));
+                        }
+                    }
+                } else {
+                    self.change_selections(
+                        SelectionEffects::scroll(Autoscroll::newest()),
+                        window,
+                        cx,
+                        |selections| {
+                            selections.select_anchor_ranges([target..target]);
+                        },
+                    );
+                }
+            }
+            EditPrediction::MoveOutside { snapshot, target } => {
+                if let Some(workspace) = self.workspace() {
+                    Self::open_editor_at_anchor(snapshot, *target, &workspace, window, cx)
+                        .detach_and_log_err(cx);
+                }
+            }
+            EditPrediction::Edit {
+                edits,
+                cursor_position,
+                ..
+            } => {
+                self.report_edit_prediction_event(completion_id, true, cx);
+
+                match granularity {
+                    EditPredictionGranularity::Full => {
+                        let transaction_id_prev = self.buffer.read(cx).last_transaction_id(cx);
+
+                        // Compute fallback cursor position BEFORE applying the edit,
+                        // so the anchor tracks through the edit correctly
+                        let fallback_cursor_target = {
+                            let snapshot = self.buffer.read(cx).snapshot(cx);
+                            let Some((last_edit_range, _)) = edits.last() else {
+                                return;
+                            };
+                            last_edit_range.end.bias_right(&snapshot)
+                        };
+
+                        self.buffer.update(cx, |buffer, cx| {
+                            buffer.edit(edits.iter().cloned(), None, cx)
+                        });
+
+                        if let Some(provider) = self.edit_prediction_provider() {
+                            provider.accept(cx);
+                        }
+
+                        // Resolve cursor position after the edit is applied
+                        let cursor_target = if let Some((anchor, offset)) = cursor_position {
+                            // The anchor tracks through the edit, then we add the offset
+                            let snapshot = self.buffer.read(cx).snapshot(cx);
+                            let base_offset = anchor.to_offset(&snapshot).0;
+                            let target_offset =
+                                MultiBufferOffset((base_offset + offset).min(snapshot.len().0));
+                            snapshot.anchor_after(target_offset)
+                        } else {
+                            fallback_cursor_target
+                        };
+
+                        self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                            s.select_anchor_ranges([cursor_target..cursor_target]);
+                        });
+
+                        let selections = self.selections.disjoint_anchors_arc();
+                        if let Some(transaction_id_now) =
+                            self.buffer.read(cx).last_transaction_id(cx)
+                        {
+                            if transaction_id_prev != Some(transaction_id_now) {
+                                self.selection_history.insert_transaction(
+                                    transaction_id_now,
+                                    selections,
+                                    self.add_selections_state.clone(),
+                                );
+                            }
+                        }
+
+                        self.update_visible_edit_prediction(window, cx);
+                        if self.active_edit_prediction.is_none() {
+                            self.refresh_edit_prediction(
+                                true,
+                                true,
+                                EditPredictionRequestTrigger::PredictionAccepted,
+                                window,
+                                cx,
+                            );
+                        }
+                        cx.notify();
+                    }
+                    _ => {
+                        let snapshot = self.buffer.read(cx).snapshot(cx);
+                        let cursor_offset = self
+                            .selections
+                            .newest::<MultiBufferOffset>(&self.display_snapshot(cx))
+                            .head();
+
+                        let insertion = edits.iter().find_map(|(range, text)| {
+                            let range = range.to_offset(&snapshot);
+                            if range.is_empty() && range.start == cursor_offset {
+                                Some(text)
+                            } else {
+                                None
+                            }
+                        });
+
+                        if let Some(text) = insertion {
+                            let text_to_insert = match granularity {
+                                EditPredictionGranularity::Word => {
+                                    let mut partial = text
+                                        .chars()
+                                        .by_ref()
+                                        .take_while(|c| c.is_alphabetic())
+                                        .collect::<String>();
+                                    if partial.is_empty() {
+                                        partial = text
+                                            .chars()
+                                            .by_ref()
+                                            .take_while(|c| c.is_whitespace() || !c.is_alphabetic())
+                                            .collect::<String>();
+                                    }
+                                    partial
+                                }
+                                EditPredictionGranularity::Line => {
+                                    if let Some(line) = text.split_inclusive('\n').next() {
+                                        line.to_string()
+                                    } else {
+                                        text.to_string()
+                                    }
+                                }
+                                EditPredictionGranularity::Full => unreachable!(),
+                            };
+
+                            cx.emit(EditorEvent::InputHandled {
+                                utf16_range_to_replace: None,
+                                text: text_to_insert.clone().into(),
+                            });
+
+                            self.replace_selections(&text_to_insert, None, window, cx, false);
+                            self.refresh_edit_prediction(
+                                true,
+                                true,
+                                EditPredictionRequestTrigger::PredictionPartiallyAccepted,
+                                window,
+                                cx,
+                            );
+                            cx.notify();
+                        } else {
+                            self.accept_partial_edit_prediction_in_viewport(
+                                EditPredictionGranularity::Full,
+                                viewport,
+                                window,
+                                cx,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn edit_prediction_viewport_width(&self, viewport: &element::InputViewport) -> Pixels {
+        self.visible_column_count().map_or_else(
+            || viewport.text_bounds.right() - viewport.content_origin.x,
+            |columns| viewport.em_advance * columns as f32,
+        )
+    }
+
+    fn scroll_to_edit_prediction_preview_target(
+        &mut self,
+        target_x: ScrollPixelOffset,
+        viewport: &element::InputViewport,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let expect_bounds_change = self.expect_bounds_change.take();
+        self.autoscroll_vertically(
+            viewport.text_bounds,
+            viewport.line_height,
+            viewport.scroll_max_y,
+            Some((Autoscroll::fit(), true)),
+            window,
+            cx,
+        );
+        self.expect_bounds_change = expect_bounds_change;
+
+        let viewport_width = ScrollPixelOffset::from(self.edit_prediction_viewport_width(viewport));
+        let em_layout_width = ScrollPixelOffset::from(viewport.em_layout_width);
+        let scroll_left = if target_x + em_layout_width <= viewport_width {
+            0.
+        } else {
+            target_x - viewport_width / 2.
+        };
+
+        let mut scroll_position = self.scroll_position(cx);
+        scroll_position.x = scroll_left / em_layout_width;
+        self.set_scroll_position_internal(scroll_position, true, true, window, cx);
     }
 
     fn render_edit_prediction_eager_jump_popover(
@@ -2058,7 +2266,7 @@ impl Editor {
         let longest_line_width = if visible_row_range.contains(&longest_row) {
             line_layouts[(longest_row.0 - visible_row_range.start.0) as usize].width
         } else {
-            layout_line(
+            match layout_line(
                 longest_row,
                 editor_snapshot,
                 style,
@@ -2067,8 +2275,13 @@ impl Editor {
                 |_| false,
                 window,
                 cx,
-            )
-            .width
+            ) {
+                Ok(line) => line.width,
+                Err(pending) => {
+                    self.request_row_geometry(pending, cx);
+                    return None;
+                }
+            }
         };
 
         let viewport_bounds =
@@ -2248,6 +2461,7 @@ impl Editor {
 
         h_flex()
             .id("ep-line-popover")
+            .debug_selector(|| "edit_prediction_line_popover".into())
             .py_0p5()
             .pl_1()
             .pr(padding_right)
@@ -2557,6 +2771,75 @@ impl Render for MissingEditPredictionKeybindingTooltip {
     }
 }
 
+impl EditPredictionState {
+    fn same_suggestion(&self, other: &Self) -> bool {
+        if !Arc::ptr_eq(&self.provider, &other.provider)
+            || self.completion_id != other.completion_id
+        {
+            return false;
+        }
+        let same_source = match (&self.source, &other.source) {
+            (
+                edit_prediction_types::EditPrediction::Local {
+                    edits,
+                    cursor_position,
+                    ..
+                },
+                edit_prediction_types::EditPrediction::Local {
+                    edits: other_edits,
+                    cursor_position: other_cursor_position,
+                    ..
+                },
+            ) => {
+                edits == other_edits
+                    && cursor_position.map(|position| (position.anchor, position.offset))
+                        == other_cursor_position.map(|position| (position.anchor, position.offset))
+            }
+            (
+                edit_prediction_types::EditPrediction::Jump {
+                    snapshot, target, ..
+                },
+                edit_prediction_types::EditPrediction::Jump {
+                    snapshot: other_snapshot,
+                    target: other_target,
+                    ..
+                },
+            ) => snapshot.remote_id() == other_snapshot.remote_id() && target == other_target,
+            _ => false,
+        };
+        same_source
+            && match (&self.completion, &other.completion) {
+                (
+                    EditPrediction::Edit {
+                        edits,
+                        cursor_position,
+                        ..
+                    },
+                    EditPrediction::Edit {
+                        edits: other_edits,
+                        cursor_position: other_cursor_position,
+                        ..
+                    },
+                ) => edits == other_edits && cursor_position == other_cursor_position,
+                (
+                    EditPrediction::MoveWithin { target, .. },
+                    EditPrediction::MoveWithin {
+                        target: other_target,
+                        ..
+                    },
+                ) => target == other_target,
+                (
+                    EditPrediction::MoveOutside { target, snapshot },
+                    EditPrediction::MoveOutside {
+                        target: other_target,
+                        snapshot: other_snapshot,
+                    },
+                ) => target == other_target && snapshot.remote_id() == other_snapshot.remote_id(),
+                _ => false,
+            }
+    }
+}
+
 fn edit_prediction_fallback_text(edits: &[(Range<Anchor>, Arc<str>)], cx: &App) -> HighlightedText {
     // Fallback for providers that don't provide edit_preview (like Copilot)
     // Just show the raw edit text with basic styling
@@ -2610,4 +2893,48 @@ fn all_edits_insertions_or_deletions(
         }
     }
     all_insertions || all_deletions
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EditPredictionTargetPlacement {
+    Visible,
+    Above,
+    Below,
+    Left,
+    Right,
+}
+
+fn edit_prediction_target_placement(
+    target: DisplayPoint,
+    visible_row_range: &Range<DisplayRow>,
+    target_x: impl FnOnce() -> Option<ScrollPixelOffset>,
+    scroll_pixel_x: ScrollPixelOffset,
+    visible_x: Range<ScrollPixelOffset>,
+) -> EditPredictionTargetPlacement {
+    if target.row() < visible_row_range.start {
+        return EditPredictionTargetPlacement::Above;
+    }
+    if target.row() >= visible_row_range.end {
+        return EditPredictionTargetPlacement::Below;
+    }
+    let Some(target_x) = target_x() else {
+        return EditPredictionTargetPlacement::Visible;
+    };
+    let target_x = target_x - scroll_pixel_x;
+    if target_x < visible_x.start {
+        EditPredictionTargetPlacement::Left
+    } else if target_x > visible_x.end {
+        EditPredictionTargetPlacement::Right
+    } else {
+        EditPredictionTargetPlacement::Visible
+    }
+}
+
+fn edit_prediction_visible_x(
+    text_bounds: &Bounds<Pixels>,
+    content_origin: gpui::Point<Pixels>,
+    viewport_width: Pixels,
+) -> Range<ScrollPixelOffset> {
+    ScrollPixelOffset::from(text_bounds.left() - content_origin.x)
+        ..ScrollPixelOffset::from(viewport_width)
 }

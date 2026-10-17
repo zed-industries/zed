@@ -218,29 +218,90 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.update_editor(cx, |vim, editor, cx| {
-            let text_layout_details = editor.text_layout_details(window, cx);
-            if vim.mode == Mode::VisualBlock
-                && !matches!(
-                    motion,
-                    Motion::EndOfLine {
-                        display_lines: false
+        self.with_geometry(
+            move |vim, window, cx| vim.plan_visual_motion(motion.clone(), times, window, cx),
+            window,
+            cx,
+        );
+    }
+
+    pub(crate) fn plan_visual_motion(
+        &mut self,
+        motion: Motion,
+        times: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<crate::GeometryCommit, editor::display_map::PendingRowGeometry> {
+        let prior_selections = match &motion {
+            Motion::ZedSearchResult {
+                prior_selections, ..
+            } if !prior_selections.is_empty() => Some(prior_selections.clone()),
+            _ => None,
+        };
+        let Some(source) = self.update_editor(cx, |_, editor, cx| {
+            let mut source = editor.selections.clone();
+            if let Some(prior_selections) = &prior_selections {
+                let snapshot = editor.display_snapshot(cx);
+                source.change_with(&snapshot, |selections| {
+                    selections.select_ranges(prior_selections.clone());
+                });
+            }
+            source
+        }) else {
+            return Ok(Box::new(|_, _, _| {}));
+        };
+        if self.mode == Mode::VisualBlock
+            && !matches!(
+                motion,
+                Motion::EndOfLine {
+                    display_lines: false
+                }
+            )
+        {
+            let preserve_goal = matches!(motion, Motion::Up { .. } | Motion::Down { .. });
+            let selections = self
+                .update_editor(cx, |vim, editor, cx| {
+                    let details = editor.text_layout_details(window, cx);
+                    vim.plan_visual_block_motion(
+                        preserve_goal,
+                        editor,
+                        (*source.newest_anchor(), *source.oldest_anchor()),
+                        window,
+                        cx,
+                        &mut |map, point, goal| {
+                            motion.move_point(map, point, goal, times, &details)
+                        },
+                    )
+                })
+                .transpose()?
+                .flatten();
+            return Ok(Box::new(move |vim, window, cx| {
+                vim.update_editor(cx, |_, editor, cx| {
+                    if let Some(prior_selections) = prior_selections {
+                        editor.change_selections(
+                            SelectionEffects::default(),
+                            window,
+                            cx,
+                            |selections| {
+                                selections.select_ranges(prior_selections);
+                            },
+                        );
                     }
-                )
-            {
-                let is_up_or_down = matches!(motion, Motion::Up { .. } | Motion::Down { .. });
-                vim.visual_block_motion(
-                    is_up_or_down,
-                    editor,
-                    window,
-                    cx,
-                    &mut |map, point, goal| {
-                        motion.move_point(map, point, goal, times, &text_layout_details)
-                    },
-                )
-            } else {
-                editor.change_selections(Default::default(), window, cx, |s| {
-                    s.move_with(&mut |map, selection| {
+                    Self::apply_visual_block_motion(editor, selections, window, cx);
+                });
+            }));
+        }
+        let mode = self.mode;
+        let selections = self
+            .update_editor(cx, |_, editor, cx| {
+                let snapshot = editor.display_snapshot(cx);
+                let details = editor.text_layout_details(window, cx);
+                source
+                    .all_display(&snapshot)
+                    .into_iter()
+                    .map(|mut planned_selection| {
+                        let map = &snapshot;
+                        let selection = &mut planned_selection;
                         let was_reversed = selection.reversed;
                         let mut current_head = selection.head();
 
@@ -256,16 +317,17 @@ impl Vim {
                             current_head,
                             selection.goal,
                             times,
-                            &text_layout_details,
-                        ) else {
-                            return;
+                            &details,
+                        )?
+                        else {
+                            return Ok(selection.map(|point| point.to_point(map)));
                         };
 
                         selection.set_head(new_head, goal);
 
                         // ensure the current character is included in the selection.
                         if !selection.reversed {
-                            let next_point = if vim.mode == Mode::VisualBlock {
+                            let next_point = if mode == Mode::VisualBlock {
                                 movement::saturating_right(map, selection.end)
                             } else {
                                 movement::right(map, selection.end)
@@ -282,99 +344,123 @@ impl Vim {
                         } else if !was_reversed && selection.reversed {
                             selection.end = movement::right(map, selection.end);
                         }
+                        Ok(selection.map(|point| point.to_point(map)))
                     })
+                    .collect::<Result<Vec<_>, editor::display_map::PendingRowGeometry>>()
+            })
+            .transpose()?
+            .unwrap_or_default();
+        Ok(Box::new(move |vim, window, cx| {
+            vim.update_editor(cx, |_, editor, cx| {
+                if let Some(prior_selections) = prior_selections {
+                    editor.change_selections(
+                        SelectionEffects::default(),
+                        window,
+                        cx,
+                        |selections| {
+                            selections.select_ranges(prior_selections);
+                        },
+                    );
+                }
+                editor.change_selections(Default::default(), window, cx, |collection| {
+                    collection.select(selections)
                 });
-            }
-        });
+            });
+        }))
     }
 
-    pub fn visual_block_motion(
-        &mut self,
+    pub(crate) fn plan_visual_block_motion(
+        &self,
         preserve_goal: bool,
-        editor: &mut Editor,
+        editor: &Editor,
+        (newest, oldest): (Selection<editor::Anchor>, Selection<editor::Anchor>),
         window: &mut Window,
-        cx: &mut Context<Editor>,
+        cx: &mut gpui::App,
         move_selection: &mut dyn FnMut(
             &DisplaySnapshot,
             DisplayPoint,
             SelectionGoal,
-        ) -> Option<(DisplayPoint, SelectionGoal)>,
-    ) {
+        ) -> Result<
+            Option<(DisplayPoint, SelectionGoal)>,
+            editor::display_map::PendingRowGeometry,
+        >,
+    ) -> Result<Option<Vec<Selection<Point>>>, editor::display_map::PendingRowGeometry> {
         let text_layout_details = editor.text_layout_details(window, cx);
-        editor.change_selections(Default::default(), window, cx, |s| {
-            let map = &s.display_snapshot();
-            let mut head = s.newest_anchor().head().to_display_point(map);
-            let mut tail = s.oldest_anchor().tail().to_display_point(map);
+        let snapshot = editor.display_snapshot(cx);
+        let map = &snapshot;
+        let mut head = newest.head().to_display_point(map);
+        let mut tail = oldest.tail().to_display_point(map);
 
-            let mut head_x = map.x_for_display_point(head, &text_layout_details);
-            let mut tail_x = map.x_for_display_point(tail, &text_layout_details);
+        let mut head_x = map.x_for_display_point(head, &text_layout_details)?;
+        let mut tail_x = map.x_for_display_point(tail, &text_layout_details)?;
 
-            let (start, end) = match s.newest_anchor().goal {
-                SelectionGoal::HorizontalRange { start, end } if preserve_goal => (start, end),
-                SelectionGoal::HorizontalPosition(start) if preserve_goal => (start, start),
-                _ => (tail_x, head_x),
-            };
-            let mut goal = SelectionGoal::HorizontalRange { start, end };
+        let (start, end) = match newest.goal {
+            SelectionGoal::HorizontalRange { start, end } if preserve_goal => (start, end),
+            SelectionGoal::HorizontalPosition(start) if preserve_goal => (start, start),
+            _ => (tail_x, head_x),
+        };
+        let mut goal = SelectionGoal::HorizontalRange { start, end };
 
-            let was_reversed = tail_x > head_x;
-            if !was_reversed && !preserve_goal {
-                head = movement::saturating_left(map, head);
+        let was_reversed = tail_x > head_x;
+        if !was_reversed && !preserve_goal {
+            head = movement::saturating_left(map, head);
+        }
+
+        let reverse_aware_goal = if was_reversed {
+            SelectionGoal::HorizontalRange {
+                start: end,
+                end: start,
             }
+        } else {
+            goal
+        };
 
-            let reverse_aware_goal = if was_reversed {
-                SelectionGoal::HorizontalRange {
-                    start: end,
-                    end: start,
-                }
-            } else {
-                goal
+        let Some((new_head, _)) = move_selection(map, head, reverse_aware_goal)? else {
+            return Ok(None);
+        };
+        head = new_head;
+        head_x = map.x_for_display_point(head, &text_layout_details)?;
+
+        let is_reversed = tail_x > head_x;
+        if was_reversed && !is_reversed {
+            tail = movement::saturating_left(map, tail);
+            tail_x = map.x_for_display_point(tail, &text_layout_details)?;
+        } else if !was_reversed && is_reversed {
+            tail = movement::saturating_right(map, tail);
+            tail_x = map.x_for_display_point(tail, &text_layout_details)?;
+        }
+        if !is_reversed && !preserve_goal {
+            head = movement::saturating_right(map, head);
+            head_x = map.x_for_display_point(head, &text_layout_details)?;
+        }
+
+        let positions = if is_reversed {
+            head_x..tail_x
+        } else {
+            tail_x..head_x
+        };
+
+        if !preserve_goal {
+            goal = SelectionGoal::HorizontalRange {
+                start: positions.start,
+                end: positions.end,
             };
+        }
 
-            let Some((new_head, _)) = move_selection(map, head, reverse_aware_goal) else {
-                return;
-            };
-            head = new_head;
-            head_x = map.x_for_display_point(head, &text_layout_details);
+        let mut selections = Vec::new();
+        let mut row = tail.row();
+        let going_up = tail.row() > head.row();
+        let direction = if going_up { -1 } else { 1 };
 
-            let is_reversed = tail_x > head_x;
-            if was_reversed && !is_reversed {
-                tail = movement::saturating_left(map, tail);
-                tail_x = map.x_for_display_point(tail, &text_layout_details);
-            } else if !was_reversed && is_reversed {
-                tail = movement::saturating_right(map, tail);
-                tail_x = map.x_for_display_point(tail, &text_layout_details);
-            }
-            if !is_reversed && !preserve_goal {
-                head = movement::saturating_right(map, head);
-                head_x = map.x_for_display_point(head, &text_layout_details);
-            }
-
-            let positions = if is_reversed {
-                head_x..tail_x
-            } else {
-                tail_x..head_x
-            };
-
-            if !preserve_goal {
-                goal = SelectionGoal::HorizontalRange {
-                    start: positions.start,
-                    end: positions.end,
-                };
-            }
-
-            let mut selections = Vec::new();
-            let mut row = tail.row();
-            let going_up = tail.row() > head.row();
-            let direction = if going_up { -1 } else { 1 };
-
-            loop {
-                let laid_out_line = map.layout_row(row, &text_layout_details);
-                let start = DisplayPoint::new(
-                    row,
-                    laid_out_line.closest_index_for_x(positions.start) as u32,
-                );
-                let mut end =
-                    DisplayPoint::new(row, laid_out_line.closest_index_for_x(positions.end) as u32);
+        loop {
+            let laid_out_line = map.layout_row(row, &text_layout_details)?;
+            let start = DisplayPoint::new(
+                row,
+                laid_out_line.closest_index_for_x(positions.start) as u32,
+            );
+            let mut end =
+                DisplayPoint::new(row, laid_out_line.closest_index_for_x(positions.end) as u32);
+            if positions.start <= laid_out_line.width() {
                 if end <= start {
                     if start.column() == map.line_len(start.row()) {
                         end = start;
@@ -382,39 +468,52 @@ impl Vim {
                         end = movement::saturating_right(map, start);
                     }
                 }
+                let selection = Selection {
+                    id: 0,
+                    start: start.to_point(map),
+                    end: end.to_point(map),
+                    reversed: is_reversed &&
+                                // For neovim parity: cursor is not reversed when column is a single character
+                                end.column() - start.column() > 1,
+                    goal,
+                };
 
-                if positions.start <= laid_out_line.width() {
-                    let selection = Selection {
-                        id: s.new_selection_id(),
-                        start: start.to_point(map),
-                        end: end.to_point(map),
-                        reversed: is_reversed &&
-                                    // For neovim parity: cursor is not reversed when column is a single character
-                                    end.column() - start.column() > 1,
-                        goal,
-                    };
-
-                    selections.push(selection);
-                }
-
-                // When dealing with soft wrapped lines, it's possible that
-                // `row` ends up being set to a value other than `head.row()` as
-                // `head.row()` might be a `DisplayPoint` mapped to a soft
-                // wrapped line, hence the need for `<=` and `>=` instead of
-                // `==`.
-                if going_up && row <= head.row() || !going_up && row >= head.row() {
-                    break;
-                }
-
-                // Find the next or previous buffer row where the `row` should
-                // be moved to, so that wrapped lines are skipped.
-                row = map
-                    .start_of_relative_buffer_row(DisplayPoint::new(row, 0), direction)
-                    .row();
+                selections.push(selection);
             }
 
-            s.select(selections);
-        })
+            // When dealing with soft wrapped lines, it's possible that
+            // `row` ends up being set to a value other than `head.row()` as
+            // `head.row()` might be a `DisplayPoint` mapped to a soft
+            // wrapped line, hence the need for `<=` and `>=` instead of
+            // `==`.
+            if going_up && row <= head.row() || !going_up && row >= head.row() {
+                break;
+            }
+
+            // Find the next or previous buffer row where the `row` should
+            // be moved to, so that wrapped lines are skipped.
+            row = map
+                .start_of_relative_buffer_row(DisplayPoint::new(row, 0), direction)
+                .row();
+        }
+
+        Ok(Some(selections))
+    }
+
+    pub(crate) fn apply_visual_block_motion(
+        editor: &mut Editor,
+        selections: Option<Vec<Selection<Point>>>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        if let Some(mut selections) = selections {
+            editor.change_selections(Default::default(), window, cx, |collection| {
+                for selection in &mut selections {
+                    selection.id = collection.new_selection_id();
+                }
+                collection.select(selections);
+            });
+        }
     }
 
     pub fn visual_object(
@@ -624,7 +723,9 @@ impl Vim {
         cx: &mut Context<Self>,
     ) -> Option<TransactionId> {
         self.store_visual_marks(window, cx);
+        let mut copied = true;
         let transaction_id = self.update_editor(cx, |vim, editor, cx| {
+            let original_selections = editor.selections.clone();
             let mut original_columns: HashMap<_, _> = Default::default();
             let line_mode = line_mode || editor.selections.line_mode();
             editor.selections.set_line_mode(false);
@@ -632,6 +733,9 @@ impl Vim {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.change_selections(Default::default(), window, cx, |s| {
                     s.move_with(&mut |map, selection| {
+                        if vim.mode.is_helix() && selection.is_empty() {
+                            selection.end = movement::right(map, selection.end);
+                        }
                         if line_mode {
                             let mut position = selection.head();
                             if !selection.reversed {
@@ -664,7 +768,11 @@ impl Vim {
                 } else {
                     MotionKind::Exclusive
                 };
-                vim.copy_selections_content(editor, kind, window, cx);
+                copied = vim.copy_selections_content(editor, kind, window, cx);
+                if !copied {
+                    editor.selections = original_selections;
+                    return;
+                }
 
                 if line_mode && vim.mode != Mode::VisualBlock {
                     editor.change_selections(Default::default(), window, cx, |s| {
@@ -705,14 +813,24 @@ impl Vim {
                 });
             })
         });
+        if !copied {
+            return None;
+        }
         let transaction_id = transaction_id.flatten();
-        self.switch_mode(Mode::Normal, true, window, cx);
+        let mode = if self.mode.is_helix() {
+            Mode::HelixNormal
+        } else {
+            Mode::Normal
+        };
+        self.switch_mode(mode, true, window, cx);
         transaction_id
     }
 
     pub fn visual_yank(&mut self, line_mode: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.store_visual_marks(window, cx);
+        let mut copied = true;
         self.update_editor(cx, |vim, editor, cx| {
+            let original_selections = editor.selections.clone();
             let line_mode = line_mode || editor.selections.line_mode();
 
             // For visual line mode, adjust selections to avoid yanking the next line when on \n
@@ -739,7 +857,11 @@ impl Vim {
             } else {
                 MotionKind::Exclusive
             };
-            vim.yank_selections_content(editor, kind, window, cx);
+            copied = vim.yank_selections_content(editor, kind, window, cx);
+            if !copied {
+                editor.selections = original_selections;
+                return;
+            }
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.move_with(&mut |map, selection| {
                     if line_mode {
@@ -752,7 +874,9 @@ impl Vim {
                 }
             });
         });
-        self.switch_mode(Mode::Normal, true, window, cx);
+        if copied {
+            self.switch_mode(Mode::Normal, true, window, cx);
+        }
     }
 
     pub(crate) fn visual_replace(
@@ -937,10 +1061,16 @@ impl Vim {
 }
 #[cfg(test)]
 mod test {
+    use editor::SelectionEffects;
+    use gpui::UpdateGlobal;
     use indoc::indoc;
+    use language::Point;
+    use settings::{FontSize, SettingsStore};
     use workspace::item::Item;
 
     use crate::{
+        VimAddon,
+        motion::Motion,
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
@@ -1295,6 +1425,154 @@ mod test {
                     ˇfox jumps over
                     the lazy dog"});
         cx.shared_clipboard().await.assert_eq("fox jumps over\n");
+    }
+
+    #[gpui::test]
+    async fn test_visual_block_authoritative_row_membership(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.buffer_font_size = Some(FontSize(15.));
+                });
+            });
+        });
+        cx.update_editor(|editor, _, cx| {
+            editor.set_soft_wrap_mode(settings::SoftWrap::None, cx);
+            editor.set_use_selection_highlight(false);
+        });
+        cx.set_state("aa«aˇ»\nx\nxxxx", Mode::VisualBlock);
+        cx.simulate_keystrokes("j");
+        cx.update_editor(|editor, _, cx| {
+            let snapshot = editor.display_snapshot(cx);
+            assert_eq!(
+                editor
+                    .selections
+                    .all::<Point>(&snapshot)
+                    .iter()
+                    .map(|selection| selection.range())
+                    .collect::<Vec<_>>(),
+                vec![
+                    Point::new(0, 1)..Point::new(0, 3),
+                    Point::new(1, 1)..Point::new(1, 1)
+                ]
+            );
+        });
+        let line = "x".repeat(200_050);
+
+        for restore in [false, true] {
+            for interrupt in [false, true] {
+                let (text, cold_row, source_column, suffix) = if restore {
+                    (format!("ˇ{line}\n\n{line}"), 1, 200_004, 99_992)
+                } else {
+                    (
+                        format!("ˇ\n{}\n{line}", "x".repeat(200_010)),
+                        0,
+                        200_030,
+                        100_000,
+                    )
+                };
+                let cold = format!(
+                    "{}{}{}",
+                    "x".repeat(100_000),
+                    "😀".repeat(8),
+                    "x".repeat(suffix)
+                );
+                cx.set_state(&text, Mode::VisualBlock);
+                cx.background_executor.set_block_on_ticks(0..=0);
+                let vim = cx.update_editor(|editor, window, cx| {
+                    editor.buffer().update(cx, |buffer, cx| {
+                        let start = Point::new(cold_row, 0);
+                        buffer.edit([(start..start, cold.as_str())], None, cx);
+                    });
+                    editor.change_selections(
+                        SelectionEffects::no_scroll(),
+                        window,
+                        cx,
+                        |selections| {
+                            selections.select_ranges([
+                                Point::new(0, source_column)..Point::new(0, source_column + 1)
+                            ]);
+                        },
+                    );
+                    editor.addon::<VimAddon>().cloned().expect("vim")
+                });
+                cx.update(|window, cx| {
+                    vim.entity.update(cx, |vim, cx| {
+                        vim.visual_motion(
+                            Motion::Down {
+                                display_lines: false,
+                            },
+                            Some(2),
+                            window,
+                            cx,
+                        );
+                        if interrupt {
+                            vim.switch_mode(Mode::Insert, false, window, cx);
+                        }
+                    });
+                });
+                let completion = cx.update_editor(|editor, _, cx| editor.input_completion(cx));
+                cx.background_executor.set_block_on_ticks(0..=50);
+                completion.await.expect("deferred visual block motion");
+                let expected_rows = if restore { vec![0, 1, 2] } else { vec![0, 2] };
+                cx.update_editor(|editor, _, cx| {
+                    assert_eq!(
+                        vim.entity.read(cx).mode,
+                        if interrupt {
+                            Mode::Insert
+                        } else {
+                            Mode::VisualBlock
+                        }
+                    );
+                    let snapshot = editor.display_snapshot(cx);
+                    assert_eq!(
+                        editor
+                            .selections
+                            .all::<Point>(&snapshot)
+                            .iter()
+                            .map(|selection| selection.start.row)
+                            .collect::<Vec<_>>(),
+                        expected_rows,
+                        "initial rows: restore={restore}, interrupt={interrupt}, selections={:?}",
+                        editor.selections.all::<Point>(&snapshot)
+                    );
+                });
+                cx.run_until_parked();
+                cx.update_editor(|editor, _, cx| {
+                    let snapshot = editor.display_snapshot(cx);
+                    let selections = editor.selections.all::<Point>(&snapshot);
+                    let rows = expected_rows;
+                    assert_eq!(
+                        selections
+                            .iter()
+                            .map(|selection| selection.start.row)
+                            .collect::<Vec<_>>(),
+                        rows,
+                        "restore={restore}, interrupt={interrupt}"
+                    );
+                    if !interrupt {
+                        let columns = if restore {
+                            vec![(0, 200_004), (1, 200_020), (2, 200_004)]
+                        } else {
+                            vec![(0, 200_030), (2, 200_014)]
+                        };
+                        assert_eq!(
+                            selections
+                                .iter()
+                                .map(|selection| selection.range())
+                                .collect::<Vec<_>>(),
+                            columns
+                                .into_iter()
+                                .map(|(row, column)| Point::new(row, column)
+                                    ..Point::new(row, column + 1))
+                                .collect::<Vec<_>>(),
+                            "settled ranges: restore={restore}, interrupt={interrupt}"
+                        );
+                    }
+                });
+            }
+        }
     }
 
     #[gpui::test]

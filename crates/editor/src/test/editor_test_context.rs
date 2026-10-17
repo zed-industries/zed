@@ -1,6 +1,6 @@
 use crate::{
     DisplayPoint, Editor, MultiBuffer, MultiBufferSnapshot, RowExt,
-    display_map::{HighlightKey, ToDisplayPoint},
+    display_map::{HighlightKey, PendingRowGeometry, ToDisplayPoint},
 };
 use buffer_diff::DiffHunkStatusKind;
 use collections::BTreeMap;
@@ -195,6 +195,35 @@ impl EditorTestContext {
         self.editor.update_in(&mut self.cx, update)
     }
 
+    pub async fn editor_geometry<T>(
+        &mut self,
+        mut read: impl FnMut(
+            &Editor,
+            &mut Window,
+            &mut Context<Editor>,
+        ) -> Result<T, PendingRowGeometry>,
+    ) -> T {
+        loop {
+            let result = self.update_editor(|editor, window, cx| {
+                let result = read(editor, window, cx);
+                if let Err(pending) = &result {
+                    assert!(editor.request_row_geometry(pending.clone(), cx));
+                }
+                result
+            });
+            match result {
+                Ok(value) => return value,
+                Err(pending) => pending.wait().await,
+            }
+        }
+    }
+
+    pub async fn wait_for_input_completion(&mut self) {
+        self.update_editor(|editor, _, cx| editor.input_completion(cx))
+            .await
+            .expect("editor input must complete");
+    }
+
     pub fn multibuffer<F, T>(&mut self, read: F) -> T
     where
         F: FnOnce(&MultiBuffer, &App) -> T,
@@ -287,35 +316,33 @@ impl EditorTestContext {
         MultiBufferOffset(ranges[0].start).to_display_point(&snapshot)
     }
 
-    pub fn pixel_position(&mut self, marked_text: &str) -> Point<Pixels> {
+    pub async fn pixel_position(&mut self, marked_text: &str) -> Point<Pixels> {
         let display_point = self.display_point(marked_text);
-        self.pixel_position_for(display_point)
+        self.pixel_position_for(display_point).await
     }
 
-    pub fn pixel_position_for(&mut self, display_point: DisplayPoint) -> Point<Pixels> {
-        self.update_editor(|editor, window, cx| {
+    pub async fn pixel_position_for(&mut self, display_point: DisplayPoint) -> Point<Pixels> {
+        self.editor_geometry(|editor, window, cx| {
             let newest_point = editor
                 .selections
                 .newest_display(&editor.display_snapshot(cx))
                 .head();
-            let pixel_position = editor.pixel_position_of_newest_cursor.unwrap();
-            let line_height = editor
-                .style(cx)
-                .text
-                .line_height_in_pixels(window.rem_size());
             let snapshot = editor.snapshot(window, cx);
             let details = editor.text_layout_details(window, cx);
-
+            let horizontal_offset = snapshot.x_for_display_point(display_point, &details)?
+                - snapshot.x_for_display_point(newest_point, &details)?;
+            let pixel_position = editor.pixel_position_of_newest_cursor.unwrap();
+            let line_height = details
+                .editor_style
+                .text
+                .line_height_in_pixels(details.rem_size);
             let y = pixel_position.y
                 + f32::from(line_height)
                     * Pixels::from(display_point.row().as_f64() - newest_point.row().as_f64());
-            let x = pixel_position.x
-                + Pixels::from(
-                    snapshot.x_for_display_point(display_point, &details)
-                        - snapshot.x_for_display_point(newest_point, &details),
-                );
-            Point::new(x, y)
+            let x = pixel_position.x + Pixels::from(horizontal_offset);
+            Ok(Point::new(x, y))
         })
+        .await
     }
 
     // Returns anchors for the current buffer using `«` and `»`

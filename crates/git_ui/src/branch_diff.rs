@@ -551,6 +551,14 @@ impl Item for BranchDiff {
         self.diff.read(cx).is_dirty(cx)
     }
 
+    fn has_pending_input(&self, cx: &App) -> bool {
+        self.diff.read(cx).editor().has_pending_input(cx)
+    }
+
+    fn pending_input(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        self.diff.read(cx).editor().clone().pending_input(cx)
+    }
+
     fn has_conflict(&self, cx: &App) -> bool {
         self.diff.read(cx).has_conflict(cx)
     }

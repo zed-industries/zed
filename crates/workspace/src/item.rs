@@ -9,7 +9,7 @@ use crate::{
 };
 use anyhow::Result;
 use client::{Client, proto};
-use futures::channel::mpsc;
+use futures::{channel::mpsc, future::try_join_all};
 use gpui::{
     Action, AnyElement, AnyEntity, AnyView, App, AppContext, Context, Entity, EntityId,
     EventEmitter, FocusHandle, Focusable, Font, Pixels, Point, Render, SharedString, Task, TaskExt,
@@ -279,6 +279,12 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     fn is_dirty(&self, _: &App) -> bool {
         false
     }
+    fn has_pending_input(&self, _cx: &App) -> bool {
+        false
+    }
+    fn pending_input(&mut self, _cx: &mut Context<Self>) -> Task<Result<()>> {
+        Task::ready(Ok(()))
+    }
     fn capability(&self, _: &App) -> Capability {
         Capability::ReadWrite
     }
@@ -526,6 +532,8 @@ pub trait ItemHandle: 'static + Send {
     fn item_id(&self) -> EntityId;
     fn to_any_view(&self) -> AnyView;
     fn is_dirty(&self, cx: &App) -> bool;
+    fn has_pending_input(&self, cx: &App) -> bool;
+    fn pending_input(&self, cx: &mut App) -> Task<Result<()>>;
     fn capability(&self, cx: &App) -> Capability;
     fn toggle_read_only(&self, window: &mut Window, cx: &mut App);
     fn has_deleted_file(&self, cx: &App) -> bool;
@@ -587,6 +595,27 @@ pub trait ItemHandle: 'static + Send {
         let is_deleted = self.project_entry_ids(cx).is_empty();
         self.is_dirty(cx) && !self.has_conflict(cx) && self.can_save(cx) && !is_deleted
     }
+}
+
+pub fn complete_pending_input(
+    items: impl IntoIterator<Item = Box<dyn ItemHandle>>,
+    cx: &mut App,
+) -> Option<Task<Result<()>>> {
+    let items = items.into_iter().collect::<Vec<_>>();
+    let mut tasks = Vec::new();
+    for item in &items {
+        if item.has_pending_input(cx) {
+            tasks.push(item.pending_input(cx));
+        }
+    }
+    if tasks.is_empty() {
+        return None;
+    }
+    Some(cx.background_spawn(async move {
+        let result = try_join_all(tasks).await.map(|_| ());
+        drop(items);
+        result
+    }))
 }
 
 pub trait WeakItemHandle: Send + Sync {
@@ -1037,6 +1066,14 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn is_dirty(&self, cx: &App) -> bool {
         self.read(cx).is_dirty(cx)
+    }
+
+    fn has_pending_input(&self, cx: &App) -> bool {
+        self.read(cx).has_pending_input(cx)
+    }
+
+    fn pending_input(&self, cx: &mut App) -> Task<Result<()>> {
+        self.update(cx, |item, cx| item.pending_input(cx))
     }
 
     fn capability(&self, cx: &App) -> Capability {

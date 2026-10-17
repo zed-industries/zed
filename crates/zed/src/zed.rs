@@ -43,8 +43,8 @@ use gpui::{
     Action, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, DismissEvent,
     Element, Entity, FocusHandle, Focusable, Image, ImageFormat, KeyBinding, ParentElement,
     PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Size, Task, TaskExt, TitlebarOptions,
-    UpdateGlobal, WeakEntity, Window, WindowBounds, WindowHandle, WindowKind, WindowOptions,
-    actions, image_cache, img, point, px, retain_all,
+    UpdateGlobal, WeakEntity, Window, WindowBounds, WindowKind, WindowOptions, actions,
+    image_cache, img, point, px, retain_all,
 };
 use image_viewer::ImageInfo;
 use language::Capability;
@@ -1756,20 +1756,17 @@ fn quit(_: &Quit, cx: &mut App) {
     }
 
     let should_confirm = WorkspaceSettings::get_global(cx).confirm_quit;
+    let mut workspace_windows = cx
+        .windows()
+        .into_iter()
+        .filter_map(|window| window.downcast::<MultiWorkspace>())
+        .collect::<Vec<_>>();
+
+    // If multiple windows have unsaved changes, and need a save prompt,
+    // prompt in the active window before switching to a different window.
+    workspace_windows.sort_by_key(|window| window.is_active(cx) == Some(false));
+    let prepare_to_quit = workspace::prepare_windows_to_quit_from_app(&workspace_windows, cx);
     cx.spawn(async move |cx| {
-        let mut workspace_windows: Vec<WindowHandle<MultiWorkspace>> = cx.update(|cx| {
-            cx.windows()
-                .into_iter()
-                .filter_map(|window| window.downcast::<MultiWorkspace>())
-                .collect::<Vec<_>>()
-        });
-
-        // If multiple windows have unsaved changes, and need a save prompt,
-        // prompt in the active window before switching to a different window.
-        cx.update(|cx| {
-            workspace_windows.sort_by_key(|window| window.is_active(cx) == Some(false));
-        });
-
         if should_confirm && let Some(multi_workspace) = workspace_windows.first() {
             let answer = multi_workspace
                 .update(cx, |_, window, cx| {
@@ -1793,7 +1790,7 @@ fn quit(_: &Quit, cx: &mut App) {
             }
         }
 
-        if !workspace::prepare_windows_to_quit(&workspace_windows, cx).await {
+        if !prepare_to_quit.await {
             return Ok(());
         }
 

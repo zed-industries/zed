@@ -197,6 +197,7 @@ pub struct BufferSnapshot {
     pub(crate) syntax: SyntaxSnapshot,
     tree_sitter_data: Arc<TreeSitterData>,
     diagnostics: TreeMap<LanguageServerId, DiagnosticSet>,
+    diagnostics_timestamp: clock::Lamport,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
     language: Option<Arc<Language>>,
     file: Option<Arc<dyn File>>,
@@ -1253,6 +1254,7 @@ impl Buffer {
                 syntax,
                 file: None,
                 diagnostics: Default::default(),
+                diagnostics_timestamp: Lamport::MIN,
                 remote_selections: Default::default(),
                 tree_sitter_data: Arc::new(tree_sitter_data),
                 language,
@@ -1282,6 +1284,7 @@ impl Buffer {
             tree_sitter_data: Arc::new(tree_sitter_data),
             file: None,
             diagnostics: Default::default(),
+            diagnostics_timestamp: Lamport::MIN,
             remote_selections: Default::default(),
             language: None,
             non_text_state_update_count: 0,
@@ -1314,6 +1317,7 @@ impl Buffer {
             tree_sitter_data: Arc::new(tree_sitter_data),
             file: None,
             diagnostics: Default::default(),
+            diagnostics_timestamp: Lamport::MIN,
             remote_selections: Default::default(),
             language,
             non_text_state_update_count: 0,
@@ -1347,6 +1351,7 @@ impl Buffer {
             file: self.file.clone(),
             remote_selections: self.remote_selections.clone(),
             diagnostics: self.diagnostics.clone(),
+            diagnostics_timestamp: self.diagnostics_timestamp,
             language: self.language.clone(),
             non_text_state_update_count: self.non_text_state_update_count,
             capability: self.capability,
@@ -5508,6 +5513,10 @@ impl BufferSnapshot {
         self.syntax.update_count()
     }
 
+    pub fn diagnostics_timestamp(&self) -> clock::Lamport {
+        self.diagnostics_timestamp
+    }
+
     /// Returns a snapshot of underlying file.
     pub fn file(&self) -> Option<&Arc<dyn File>> {
         self.file.as_ref()
@@ -5589,7 +5598,7 @@ impl BufferSnapshot {
 }
 
 /// A configuration to use when producing styled text chunks.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct LanguageAwareStyling {
     /// Whether to highlight text chunks using tree-sitter.
     pub tree_sitter: bool,
@@ -5634,6 +5643,7 @@ impl Clone for BufferSnapshot {
             file: self.file.clone(),
             remote_selections: self.remote_selections.clone(),
             diagnostics: self.diagnostics.clone(),
+            diagnostics_timestamp: self.diagnostics_timestamp,
             language: self.language.clone(),
             tree_sitter_data: self.tree_sitter_data.clone(),
             non_text_state_update_count: self.non_text_state_update_count,

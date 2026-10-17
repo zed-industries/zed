@@ -21,10 +21,12 @@ use search::{BufferSearchBar, SearchOptions};
 use serde::Deserialize;
 use settings::{Settings, SettingsStore};
 use std::{
+    cell::Cell,
     iter::Peekable,
     ops::{Deref, Range},
     path::{Path, PathBuf},
     process::Stdio,
+    rc::Rc,
     str::Chars,
     sync::OnceLock,
     time::Instant,
@@ -49,7 +51,7 @@ use crate::{
     },
     object::Object,
     rewrap::Rewrap,
-    state::{Mark, Mode},
+    state::{Mark, Mode, VimGlobals},
     visual::VisualDeleteLine,
 };
 
@@ -74,6 +76,12 @@ pub struct WithRange {
     restore_selection: bool,
     range: CommandRange,
     action: WrappedAction,
+}
+
+impl WithRange {
+    pub(crate) fn register_access(&self, vim: &Vim, cx: &App) -> Option<editor::NativeInput> {
+        vim.action_register_access(&*self.action, cx)
+    }
 }
 
 /// Executes a command with the specified count.
@@ -813,34 +821,70 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         });
         let had_range = action.range.is_some();
         let had_override = action.override_rows.is_some();
+        let focus = window.focused(cx);
+        let cancelled = Rc::new(Cell::new(false));
+        let focus_out = focus.as_ref().map(|focus| {
+            let cancelled = cancelled.clone();
+            Rc::new(window.on_focus_out(focus, cx, move |_, _, _| cancelled.set(true)))
+        });
+        let workspace = workspace.downgrade();
 
         cx.spawn_in(window, async move |vim, cx| {
             task.await;
             vim.update_in(cx, |vim, window, cx| {
-                if matches!(vim.mode, Mode::Insert | Mode::Replace) {
-                    vim.normal_before(&Default::default(), window, cx);
-                } else {
-                    vim.switch_mode(Mode::Normal, true, window, cx);
-                }
-                if had_override || had_range {
-                    vim.update_editor(cx, |_, editor, cx| {
-                        editor.change_selections(SelectionEffects::default(), window, cx, |s| {
-                            s.select_anchor_ranges([s.newest_anchor().range()]);
-                        });
-                        if let Some(tx_id) = editor
-                            .buffer()
-                            .update(cx, |multi, cx| multi.last_transaction_id(cx))
-                        {
-                            let last_sel = editor.selections.disjoint_anchors_arc();
-                            editor.modify_transaction_selection_history(tx_id, |old| {
-                                old.undo = old.undo.get(..1).unwrap_or(&[]).into();
-                                old.redo = Some(last_sel);
+                let finish = move |vim: &mut Vim, window: &mut Window, cx: &mut Context<Vim>| {
+                    drop(focus_out);
+                    if cancelled.get()
+                        || window.focused(cx) != focus
+                        || workspace
+                            .upgrade()
+                            .and_then(|workspace| workspace.read(cx).active_item(cx))
+                            .and_then(|item| item.act_as::<Editor>(cx))
+                            != vim.editor()
+                    {
+                        return;
+                    }
+                    VimGlobals::with_input(vim.input.clone(), cx, |cx| {
+                        if matches!(vim.mode, Mode::Insert | Mode::Replace) {
+                            vim.normal_before(&Default::default(), window, cx);
+                        } else {
+                            vim.switch_mode(Mode::Normal, true, window, cx);
+                        }
+                        if had_override || had_range {
+                            vim.update_editor(cx, |_, editor, cx| {
+                                editor.change_selections(
+                                    SelectionEffects::default(),
+                                    window,
+                                    cx,
+                                    |selections| {
+                                        selections.select_anchor_ranges([selections
+                                            .newest_anchor()
+                                            .range()]);
+                                    },
+                                );
+                                if let Some(transaction) = editor
+                                    .buffer()
+                                    .update(cx, |buffer, cx| buffer.last_transaction_id(cx))
+                                {
+                                    let selections = editor.selections.disjoint_anchors_arc();
+                                    editor.modify_transaction_selection_history(
+                                        transaction,
+                                        |history| {
+                                            history.undo =
+                                                history.undo.get(..1).unwrap_or(&[]).into();
+                                            history.redo = Some(selections);
+                                        },
+                                    );
+                                }
                             });
                         }
                     });
+                };
+                if !vim.defer_input(finish.clone(), cx) {
+                    finish(vim, window, cx);
                 }
             })
-            .log_err();
+            .ok();
         })
         .detach();
     });
@@ -904,7 +948,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                     vec![Point::new(range.start.0, 0)..end],
                     window,
                     cx,
-                )
+                );
             }
         });
     });
@@ -2347,48 +2391,61 @@ impl Vim {
         ret
     }
 
-    pub fn shell_command_motion(
+    pub(crate) fn plan_shell_command_motion(
         &mut self,
         motion: Motion,
         times: Option<usize>,
         forced_motion: bool,
         window: &mut Window,
         cx: &mut Context<Vim>,
-    ) {
-        self.stop_recording(cx);
-        let Some(workspace) = self.workspace(window, cx) else {
-            return;
-        };
-        let command = self.update_editor(cx, |_, editor, cx| {
-            let snapshot = editor.snapshot(window, cx);
-            let start = editor
-                .selections
-                .newest_display(&editor.display_snapshot(cx));
-            let text_layout_details = editor.text_layout_details(window, cx);
-            let (mut range, _) = motion
-                .range(&snapshot, start, times, &text_layout_details, forced_motion)
-                .unwrap_or((start.range(), MotionKind::Exclusive));
-            if range.start != start.start {
-                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.select_ranges([
-                        range.start.to_point(&snapshot)..range.start.to_point(&snapshot)
-                    ]);
-                })
+    ) -> Result<crate::GeometryCommit, editor::display_map::PendingRowGeometry> {
+        let planned = self
+            .update_editor(
+                cx,
+                |_, editor, cx| -> Result<_, editor::display_map::PendingRowGeometry> {
+                    let snapshot = editor.snapshot(window, cx);
+                    let start = editor.selections.newest_display(&snapshot);
+                    let details = editor.text_layout_details(window, cx);
+                    let (mut range, _) = motion
+                        .range(&snapshot, start, times, &details, forced_motion)?
+                        .unwrap_or((start.range(), MotionKind::Exclusive));
+                    let cursor =
+                        (range.start != start.start).then(|| range.start.to_point(&snapshot));
+                    if range.end.row() > range.start.row() && range.end.column() != 0 {
+                        *range.end.row_mut() -= 1;
+                    }
+                    let command = if range.end.row() == range.start.row() {
+                        String::from(".!")
+                    } else {
+                        format!(".,.+{}!", (range.end.row() - range.start.row()).0)
+                    };
+                    Ok((cursor, command))
+                },
+            )
+            .transpose()?;
+        Ok(Box::new(move |vim, window, cx| {
+            vim.stop_recording(cx);
+            let Some(workspace) = vim.workspace(window, cx) else {
+                return;
+            };
+            if let Some((cursor, command)) = planned {
+                if let Some(cursor) = cursor {
+                    vim.update_editor(cx, |_, editor, cx| {
+                        editor.change_selections(
+                            SelectionEffects::no_scroll(),
+                            window,
+                            cx,
+                            |selections| {
+                                selections.select_ranges([cursor..cursor]);
+                            },
+                        );
+                    });
+                }
+                workspace.update(cx, |workspace, cx| {
+                    command_palette::CommandPalette::toggle(workspace, &command, window, cx);
+                });
             }
-            if range.end.row() > range.start.row() && range.end.column() != 0 {
-                *range.end.row_mut() -= 1
-            }
-            if range.end.row() == range.start.row() {
-                ".!".to_string()
-            } else {
-                format!(".,.+{}!", (range.end.row() - range.start.row()).0)
-            }
-        });
-        if let Some(command) = command {
-            workspace.update(cx, |workspace, cx| {
-                command_palette::CommandPalette::toggle(workspace, &command, window, cx);
-            });
-        }
+        }))
     }
 
     pub fn shell_command_object(
@@ -2633,19 +2690,22 @@ impl ShellExec {
 #[cfg(test)]
 mod test {
     use std::{
+        cell::Cell,
         path::{Path, PathBuf},
+        rc::Rc,
         slice,
     };
 
-    use super::{CommandRange, OnMatchingLines, VimNorm, WrappedAction};
+    use super::{CommandRange, OnMatchingLines, Position, VimNorm, WrappedAction};
     use crate::{
         VimAddon,
         state::Mode,
-        test::{NeovimBackedTestContext, VimTestContext},
+        test::{NeovimBackedTestContext, VimTestContext, add_background_editor},
         visual::VisualDeleteLine,
     };
     use editor::{Editor, EditorSettings, display_map::ToDisplayPoint};
-    use gpui::{Action, AppContext as _, Context, TestAppContext};
+    use futures::FutureExt;
+    use gpui::{Action, AppContext as _, Context, Focusable, TestAppContext};
     use indoc::indoc;
     use language::Point;
     use multi_buffer::{MultiBuffer, PathKey};
@@ -3397,6 +3457,154 @@ mod test {
         "});
 
         // Once ctrl-v to input character literals is added there should be a test for redo
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_normal_command_waits_for_geometry(cx: &mut TestAppContext) {
+        for cold in [false, true] {
+            for (command, override_rows) in [("jx", false), ("jiQ", false), ("jx", true)] {
+                let mut cx = VimTestContext::new(cx, true).await;
+                cx.update_editor(|editor, _, cx| {
+                    editor.set_soft_wrap_mode(settings::SoftWrap::None, cx);
+                });
+                let line = "b".repeat(2_000);
+                if cold {
+                    cx.set_state("ˇaa\nbbbb\ncc\ndd", Mode::Normal);
+                } else {
+                    cx.set_state(&format!("ˇaa\n{line}\ncc\ndd"), Mode::Normal);
+                    cx.simulate_keystrokes("j k");
+                }
+                let pending = Rc::new(Cell::new(false));
+                let interceptor = cold.then(|| {
+                    cx.background_executor.set_block_on_ticks(0..=0);
+                    let editor = cx.editor.clone();
+                    let pending = pending.clone();
+                    cx.update(|_, cx| {
+                        let mut prepared = false;
+                        cx.intercept_keystrokes(move |event, _, cx| {
+                            if !prepared && event.keystroke.key == "j" {
+                                prepared = true;
+                                editor.update(cx, |editor, cx| {
+                                    editor.buffer().update(cx, |buffer, cx| {
+                                        let end = Point::new(1, 4);
+                                        buffer.edit([(end..end, "b".repeat(1_996))], None, cx);
+                                        buffer.finalize_last_transaction(cx);
+                                    });
+                                });
+                            } else if prepared && !pending.get() {
+                                let completion =
+                                    editor.update(cx, |editor, cx| editor.input_completion(cx));
+                                assert!(completion.now_or_never().is_none());
+                                pending.set(true);
+                            }
+                        })
+                    })
+                });
+                let editor = cx.editor.clone();
+                cx.update(|window, cx| {
+                    editor.focus_handle(cx).dispatch_action(
+                        &VimNorm {
+                            range: (!override_rows).then_some(CommandRange {
+                                start: Position::Line { row: 1, offset: 0 },
+                                end: Some(Position::Line { row: 2, offset: 0 }),
+                            }),
+                            command: String::from(command),
+                            override_rows: override_rows.then_some(vec![0, 1]),
+                        },
+                        window,
+                        cx,
+                    );
+                });
+                cx.run_until_parked();
+                drop(interceptor);
+                assert_eq!(pending.get(), cold);
+                cx.background_executor.set_block_on_ticks(0..=50);
+                let expected = if command == "jx" {
+                    format!("aa\n{}\nˇc\ndd", "b".repeat(1_999))
+                } else {
+                    format!("aa\nQ{line}\nˇQcc\ndd")
+                };
+                cx.assert_state(&expected, Mode::Normal);
+                cx.simulate_keystrokes("u");
+                cx.assert_state(&format!("aa\nˇ{line}\ncc\ndd"), Mode::Normal);
+                cx.simulate_keystrokes("ctrl-r");
+                cx.assert_state(&expected, Mode::Normal);
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_normal_command_completion_cancels_on_focus_change(cx: &mut TestAppContext) {
+        for return_to_origin in [false, true] {
+            let mut cx = VimTestContext::new(cx, true).await;
+            cx.update_editor(|editor, _, cx| {
+                editor.set_soft_wrap_mode(settings::SoftWrap::None, cx);
+            });
+            cx.set_state("ˇaa\nbbbb\ncc\ndd", Mode::Normal);
+            let origin = cx.editor.clone();
+            let (workspace, other) = add_background_editor("KEEP", &mut cx);
+            cx.run_until_parked();
+            cx.background_executor.set_block_on_ticks(0..=0);
+            let interceptor = cx.update(|_, cx| {
+                let origin = origin.clone();
+                let other = other.clone();
+                let mut prepared = false;
+                let mut switched = false;
+                cx.intercept_keystrokes(move |event, window, cx| {
+                    if !prepared && event.keystroke.key == "j" {
+                        prepared = true;
+                        origin.update(cx, |editor, cx| {
+                            editor.buffer().update(cx, |buffer, cx| {
+                                let end = Point::new(1, 4);
+                                buffer.edit([(end..end, "b".repeat(1_996))], None, cx);
+                            });
+                        });
+                    } else if !switched && event.keystroke.key == "x" {
+                        switched = true;
+                        let completion =
+                            origin.update(cx, |editor, cx| editor.input_completion(cx));
+                        assert!(completion.now_or_never().is_none());
+                        let origin = origin.clone();
+                        let other = other.clone();
+                        let workspace = workspace.clone();
+                        window.defer(cx, move |window, cx| {
+                            workspace.update(cx, |workspace, cx| {
+                                assert!(workspace.activate_item(&other, true, true, window, cx));
+                            });
+                            window.draw(cx).clear(cx);
+                            if return_to_origin {
+                                workspace.update(cx, |workspace, cx| {
+                                    assert!(
+                                        workspace.activate_item(&origin, true, true, window, cx)
+                                    );
+                                });
+                            }
+                        });
+                    }
+                })
+            });
+            cx.update(|window, cx| {
+                origin.focus_handle(cx).dispatch_action(
+                    &VimNorm {
+                        range: Some(CommandRange {
+                            start: Position::Line { row: 1, offset: 0 },
+                            end: Some(Position::Line { row: 2, offset: 0 }),
+                        }),
+                        command: String::from("jx"),
+                        override_rows: None,
+                    },
+                    window,
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+            drop(interceptor);
+            cx.background_executor.set_block_on_ticks(0..=50);
+            cx.assert_state(&format!("aa\nˇ{}\nˇc\ndd", "b".repeat(1_999)), Mode::Normal);
+            cx.update(|_, cx| {
+                assert_eq!(other.read(cx).text(cx), "KEEP");
+            });
+        }
     }
 
     #[gpui::test]

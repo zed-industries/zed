@@ -36,9 +36,10 @@ use crate::linux::{
     select_backend,
 };
 use gpui::{
-    Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle,
-    ForegroundExecutor, GraphicalEnvironment, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions,
-    Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, ClipboardRevision,
+    ClipboardSnapshot, ClipboardSnapshotRead, CursorStyle, ForegroundExecutor,
+    GraphicalEnvironment, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform,
+    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
     PlatformWindow, Result, RunnableVariant, Task, ThermalState, WindowAppearance,
     WindowButtonLayout, WindowParams, WindowingModes, WindowingRequest,
 };
@@ -1104,11 +1105,11 @@ impl Platform for LinuxPlatform {
     }
 
     fn write_to_primary(&self, item: ClipboardItem) {
-        self.connection.borrow().write_to_primary(item)
+        self.write_to_primary_with_revision(item).log_err();
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
-        self.connection.borrow().write_to_clipboard(item)
+        self.write_to_clipboard_with_revision(item).log_err();
     }
 
     fn read_from_primary(&self) -> Option<ClipboardItem> {
@@ -1117,6 +1118,40 @@ impl Platform for LinuxPlatform {
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         self.connection.borrow().read_from_clipboard()
+    }
+
+    fn read_clipboard_snapshot(&self) -> ClipboardSnapshot {
+        self.connection.borrow().read_clipboard_snapshot()
+    }
+
+    fn read_primary_snapshot(&self) -> ClipboardSnapshot {
+        self.connection.borrow().read_primary_snapshot()
+    }
+
+    fn capture_clipboard_snapshot(&self) -> ClipboardSnapshotRead {
+        self.connection.borrow().capture_clipboard_snapshot()
+    }
+
+    fn capture_primary_snapshot(&self) -> ClipboardSnapshotRead {
+        self.connection.borrow().capture_primary_snapshot()
+    }
+
+    fn write_to_clipboard_with_revision(
+        &self,
+        item: ClipboardItem,
+    ) -> Result<Option<ClipboardRevision>> {
+        self.connection
+            .borrow()
+            .write_to_clipboard_with_revision(item)
+    }
+
+    fn write_to_primary_with_revision(
+        &self,
+        item: ClipboardItem,
+    ) -> Result<Option<ClipboardRevision>> {
+        self.connection
+            .borrow()
+            .write_to_primary_with_revision(item)
     }
 
     fn add_recent_document(&self, _path: &Path) {}

@@ -12,6 +12,7 @@ use crate::{
     state::Mode,
 };
 
+#[derive(Clone, Copy)]
 pub enum ConvertTarget {
     LowerCase,
     UpperCase,
@@ -21,7 +22,7 @@ pub enum ConvertTarget {
 }
 
 impl Vim {
-    pub fn convert_motion(
+    pub(crate) fn plan_convert_motion(
         &mut self,
         motion: Motion,
         times: Option<usize>,
@@ -29,52 +30,50 @@ impl Vim {
         mode: ConvertTarget,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
-        self.stop_recording(cx);
-        self.update_editor(cx, |_, editor, cx| {
-            editor.set_clip_at_line_ends(false, cx);
-            let text_layout_details = editor.text_layout_details(window, cx);
-            editor.transact(window, cx, |editor, window, cx| {
-                let mut selection_starts: HashMap<_, _> = Default::default();
-                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.move_with(&mut |map, selection| {
-                        let anchor = map.display_point_to_anchor(selection.head(), Bias::Left);
-                        selection_starts.insert(selection.id, anchor);
-                        motion.expand_selection(
-                            map,
-                            selection,
-                            times,
-                            &text_layout_details,
-                            forced_motion,
-                        );
+    ) -> Result<crate::GeometryCommit, editor::display_map::PendingRowGeometry> {
+        let planned =
+            self.expanded_motion(&motion, times, forced_motion, Some(false), window, cx)?;
+        Ok(Box::new(move |vim, window, cx| {
+            vim.stop_recording(cx);
+            vim.update_editor(cx, |_, editor, cx| {
+                editor.set_clip_at_line_ends(false, cx);
+                editor.transact(window, cx, |editor, window, cx| {
+                    let mut selection_starts: HashMap<_, _> = Default::default();
+                    editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                        s.move_with(&mut |map, selection| {
+                            let anchor = map.display_point_to_anchor(selection.head(), Bias::Left);
+                            selection_starts.insert(selection.id, anchor);
+                            planned.apply(selection);
+                        });
+                    });
+                    match mode {
+                        ConvertTarget::LowerCase => {
+                            editor.convert_to_lower_case(&Default::default(), window, cx)
+                        }
+                        ConvertTarget::UpperCase => {
+                            editor.convert_to_upper_case(&Default::default(), window, cx)
+                        }
+                        ConvertTarget::OppositeCase => {
+                            editor.convert_to_opposite_case(&Default::default(), window, cx)
+                        }
+                        ConvertTarget::Rot13 => {
+                            editor.convert_to_rot13(&Default::default(), window, cx)
+                        }
+                        ConvertTarget::Rot47 => {
+                            editor.convert_to_rot47(&Default::default(), window, cx)
+                        }
+                    }
+                    editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                        s.move_with(&mut |map, selection| {
+                            let anchor = selection_starts.remove(&selection.id).unwrap();
+                            selection
+                                .collapse_to(anchor.to_display_point(map), SelectionGoal::None);
+                        });
                     });
                 });
-                match mode {
-                    ConvertTarget::LowerCase => {
-                        editor.convert_to_lower_case(&Default::default(), window, cx)
-                    }
-                    ConvertTarget::UpperCase => {
-                        editor.convert_to_upper_case(&Default::default(), window, cx)
-                    }
-                    ConvertTarget::OppositeCase => {
-                        editor.convert_to_opposite_case(&Default::default(), window, cx)
-                    }
-                    ConvertTarget::Rot13 => {
-                        editor.convert_to_rot13(&Default::default(), window, cx)
-                    }
-                    ConvertTarget::Rot47 => {
-                        editor.convert_to_rot47(&Default::default(), window, cx)
-                    }
-                }
-                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.move_with(&mut |map, selection| {
-                        let anchor = selection_starts.remove(&selection.id).unwrap();
-                        selection.collapse_to(anchor.to_display_point(map), SelectionGoal::None);
-                    });
-                });
+                editor.set_clip_at_line_ends(true, cx);
             });
-            editor.set_clip_at_line_ends(true, cx);
-        });
+        }))
     }
 
     pub fn convert_object(

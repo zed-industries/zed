@@ -10,11 +10,12 @@ use anyhow::Result;
 use futures::channel::oneshot;
 use gpui::{
     Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem,
-    ClipboardReadError, ClipboardString, CursorStyle, DummyKeyboardMapper, ForegroundExecutor,
-    GestureTuning, Image, ImageFormat, Keymap, Menu, MenuItem, PathPromptOptions, Platform,
-    PlatformDisplay, PlatformGestures, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformTextSystem, PlatformWindow, ScrollPhysics, Task, ThermalState, WindowAppearance,
-    WindowKind, WindowParams, popup::PopupNotSupportedError,
+    ClipboardReadError, ClipboardRevision, ClipboardSnapshot, ClipboardSnapshotRead,
+    ClipboardString, CursorStyle, DummyKeyboardMapper, ForegroundExecutor, GestureTuning, Image,
+    ImageFormat, Keymap, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
+    PlatformGestures, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    PlatformWindow, ScrollPhysics, Task, ThermalState, WindowAppearance, WindowKind, WindowParams,
+    popup::PopupNotSupportedError,
 };
 use gpui_wgpu::{PreparedWebGraphics, WebBackendPreference, WgpuContext, wgpu};
 use std::{
@@ -612,6 +613,18 @@ impl Platform for WebPlatform {
         None
     }
 
+    fn capture_clipboard_snapshot(&self) -> ClipboardSnapshotRead {
+        let task = self.read_from_clipboard_async();
+        let (read, resolver) = ClipboardSnapshotRead::pending();
+        resolver.resolve_async(&self.foreground_executor, async move {
+            Ok(Arc::new(ClipboardSnapshot {
+                item: task.await?,
+                revision: None,
+            }))
+        });
+        read
+    }
+
     fn read_from_clipboard_async(&self) -> Task<Result<Option<ClipboardItem>, ClipboardReadError>> {
         let navigator = self.browser_window.navigator();
         // `navigator.clipboard` is undefined outside secure contexts; probing
@@ -681,6 +694,32 @@ impl Platform for WebPlatform {
             // event, which satisfies the browser's user-activation requirement.
             drop(window.navigator().clipboard().write_text(&text));
         }
+    }
+
+    fn write_to_clipboard_async(
+        &self,
+        item: ClipboardItem,
+    ) -> Task<Result<Option<ClipboardRevision>>> {
+        let Some(text) = item.text() else {
+            return Task::ready(Err(anyhow::anyhow!(
+                "Clipboard item has no text to publish"
+            )));
+        };
+        let navigator = self.browser_window.navigator();
+        let clipboard_available = js_sys::Reflect::get(navigator.as_ref(), &"clipboard".into())
+            .is_ok_and(|clipboard| !clipboard.is_undefined() && !clipboard.is_null());
+        if !clipboard_available {
+            return Task::ready(Err(anyhow::anyhow!("Clipboard publication is unavailable")));
+        }
+        let write = navigator.clipboard().write_text(&text);
+        self.foreground_executor.spawn(async move {
+            wasm_bindgen_futures::JsFuture::from(write)
+                .await
+                .map_err(|error| {
+                    anyhow::anyhow!("Clipboard publication failed: {}", js_error_message(&error))
+                })?;
+            Ok(None)
+        })
     }
 
     fn write_credentials(&self, _url: &str, _username: &str, _password: &[u8]) -> Task<Result<()>> {

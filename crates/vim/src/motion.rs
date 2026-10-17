@@ -1,7 +1,7 @@
 use editor::{
     Anchor, Bias, BufferOffset, DisplayPoint, Editor, MultiBufferOffset, RowExt, ToOffset,
     ToPoint as _,
-    display_map::{DisplayRow, DisplaySnapshot, FoldPoint, ToDisplayPoint},
+    display_map::{DisplayRow, DisplaySnapshot, FoldPoint, PendingRowGeometry, ToDisplayPoint},
     movement::{
         self, FindRange, TextLayoutDetails, find_boundary, find_preceding_boundary_display_point,
     },
@@ -691,20 +691,16 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
 impl Vim {
     pub(crate) fn search_motion(&mut self, m: Motion, window: &mut Window, cx: &mut Context<Self>) {
-        if let Motion::ZedSearchResult {
-            prior_selections, ..
-        } = &m
-        {
+        let retry = m.clone();
+        if self.defer_input(
+            move |vim, window, cx| vim.search_motion(retry, window, cx),
+            cx,
+        ) {
+            return;
+        }
+        if let Motion::ZedSearchResult { .. } = &m {
             match self.mode {
-                Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
-                    if !prior_selections.is_empty() {
-                        self.update_editor(cx, |_, editor, cx| {
-                            editor.change_selections(Default::default(), window, cx, |s| {
-                                s.select_ranges(prior_selections.iter().cloned())
-                            })
-                        });
-                    }
-                }
+                Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {}
                 Mode::Normal | Mode::Replace | Mode::Insert => {
                     if self.active_operator().is_none() {
                         return;
@@ -718,40 +714,82 @@ impl Vim {
     }
 
     pub(crate) fn motion(&mut self, motion: Motion, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(Operator::FindForward { .. })
-        | Some(Operator::Sneak { .. })
-        | Some(Operator::SneakBackward { .. })
-        | Some(Operator::FindBackward { .. }) = self.active_operator()
-        {
-            self.pop_operator(window, cx);
+        let plan = move |vim: &mut Vim, window: &mut Window, cx: &mut Context<Vim>| {
+            vim.plan_motion(motion.clone(), window, cx)
+        };
+        if let Some(required) = self.operator_register_access(cx) {
+            self.with_shared_input(
+                required,
+                move |vim, window, cx| vim.with_geometry(plan, window, cx),
+                window,
+                cx,
+            );
+        } else {
+            self.with_geometry(plan, window, cx);
         }
+    }
 
-        let count = Vim::take_count(cx);
-        let forced_motion = Vim::take_forced_motion(cx);
-        let active_operator = self.active_operator();
-        let mut waiting_operator: Option<Operator> = None;
-        match self.mode {
+    fn plan_motion(
+        &mut self,
+        motion: Motion,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<crate::GeometryCommit, PendingRowGeometry> {
+        let waiting_find = matches!(
+            self.active_operator(),
+            Some(
+                Operator::FindForward { .. }
+                    | Operator::FindBackward { .. }
+                    | Operator::Sneak { .. }
+                    | Operator::SneakBackward { .. }
+            )
+        );
+        let active_operator = if waiting_find {
+            self.operator_stack.iter().rev().nth(1).cloned()
+        } else {
+            self.active_operator()
+        };
+        let count = Self::peek_count(cx);
+        let forced_motion = Vim::globals(cx).forced_motion();
+        let mut waiting_operator = None;
+        let commit = match self.mode {
             Mode::Normal | Mode::Replace | Mode::Insert => {
                 if active_operator == Some(Operator::AddSurrounds { target: None }) {
                     waiting_operator = Some(Operator::AddSurrounds {
                         target: Some(SurroundsType::Motion(motion)),
                     });
+                    Box::new(|_: &mut Vim, _: &mut Window, _: &mut Context<Vim>| {})
+                        as crate::GeometryCommit
                 } else {
-                    self.normal_motion(motion, active_operator, count, forced_motion, window, cx)
+                    self.plan_normal_motion(
+                        motion,
+                        active_operator,
+                        count,
+                        forced_motion,
+                        window,
+                        cx,
+                    )?
                 }
             }
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
-                self.visual_motion(motion, count, window, cx)
+                self.plan_visual_motion(motion, count, window, cx)?
             }
-
-            Mode::HelixNormal => self.helix_normal_motion(motion, count, window, cx),
-            Mode::HelixSelect => self.helix_select_motion(motion, count, window, cx),
-        }
-        self.clear_operator(window, cx);
-        if let Some(operator) = waiting_operator {
-            self.push_operator(operator, window, cx);
-            Vim::globals(cx).pre_count = count
-        }
+            Mode::HelixNormal => self.plan_helix_move_cursor(motion, count, window, cx)?,
+            Mode::HelixSelect => self.plan_helix_select_motion(motion, count, window, cx)?,
+        };
+        Ok(Box::new(move |vim, window, cx| {
+            if waiting_find {
+                vim.pop_operator(window, cx);
+            }
+            Vim::take_count(cx);
+            Vim::take_forced_motion(cx);
+            commit(vim, window, cx);
+            vim.clear_operator(window, cx);
+            if let Some(operator) = waiting_operator {
+                vim.push_operator(operator, window, cx);
+                Vim::globals(cx).pre_count = count;
+            }
+        }))
     }
 }
 
@@ -969,7 +1007,7 @@ impl Motion {
         goal: SelectionGoal,
         maybe_times: Option<usize>,
         text_layout_details: &TextLayoutDetails,
-    ) -> Option<(DisplayPoint, SelectionGoal)> {
+    ) -> Result<Option<(DisplayPoint, SelectionGoal)>, PendingRowGeometry> {
         let times = maybe_times.unwrap_or(1);
         use Motion::*;
         let infallible = self.infallible();
@@ -978,16 +1016,16 @@ impl Motion {
             WrappingLeft => (wrapping_left(map, point, times), SelectionGoal::None),
             Down {
                 display_lines: false,
-            } => up_down_buffer_rows(map, point, goal, times as isize, text_layout_details),
+            } => up_down_buffer_rows(map, point, goal, times as isize, text_layout_details)?,
             Down {
                 display_lines: true,
-            } => down_display(map, point, goal, times, text_layout_details),
+            } => down_display(map, point, goal, times, text_layout_details)?,
             Up {
                 display_lines: false,
-            } => up_down_buffer_rows(map, point, goal, 0 - times as isize, text_layout_details),
+            } => up_down_buffer_rows(map, point, goal, 0 - times as isize, text_layout_details)?,
             Up {
                 display_lines: true,
-            } => up_display(map, point, goal, times, text_layout_details),
+            } => up_display(map, point, goal, times, text_layout_details)?,
             Right => (right(map, point, times), SelectionGoal::None),
             WrappingRight => (wrapping_right(map, point, times), SelectionGoal::None),
             NextWordStart { ignore_punctuation } => (
@@ -1071,8 +1109,10 @@ impl Motion {
                 mode,
                 smartcase,
             } => {
-                return find_forward(map, point, *before, *char, times, *mode, *smartcase)
-                    .map(|new_point| (new_point, SelectionGoal::None));
+                return Ok(
+                    find_forward(map, point, *before, *char, times, *mode, *smartcase)
+                        .map(|new_point| (new_point, SelectionGoal::None)),
+                );
             }
             // T F
             FindBackward {
@@ -1089,16 +1129,25 @@ impl Motion {
                 second_char,
                 smartcase,
             } => {
-                return sneak(map, point, *first_char, *second_char, times, *smartcase)
-                    .map(|new_point| (new_point, SelectionGoal::None));
+                return Ok(
+                    sneak(map, point, *first_char, *second_char, times, *smartcase)
+                        .map(|new_point| (new_point, SelectionGoal::None)),
+                );
             }
             SneakBackward {
                 first_char,
                 second_char,
                 smartcase,
             } => {
-                return sneak_backward(map, point, *first_char, *second_char, times, *smartcase)
-                    .map(|new_point| (new_point, SelectionGoal::None));
+                return Ok(sneak_backward(
+                    map,
+                    point,
+                    *first_char,
+                    *second_char,
+                    times,
+                    *smartcase,
+                )
+                .map(|new_point| (new_point, SelectionGoal::None)));
             }
             // ; -- repeat the last find done with t, f, T, F
             RepeatFind { last_find } => match **last_find {
@@ -1115,7 +1164,7 @@ impl Motion {
                             find_forward(map, point, before, char, times + 1, mode, smartcase);
                     }
 
-                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
+                    return Ok(new_point.map(|new_point| (new_point, SelectionGoal::None)));
                 }
 
                 Motion::FindBackward {
@@ -1145,7 +1194,7 @@ impl Motion {
                             sneak(map, point, first_char, second_char, times + 1, smartcase);
                     }
 
-                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
+                    return Ok(new_point.map(|new_point| (new_point, SelectionGoal::None)));
                 }
 
                 Motion::SneakBackward {
@@ -1166,9 +1215,9 @@ impl Motion {
                         );
                     }
 
-                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
+                    return Ok(new_point.map(|new_point| (new_point, SelectionGoal::None)));
                 }
-                _ => return None,
+                _ => return Ok(None),
             },
             // , -- repeat the last find done with t, f, T, F, s, S, in opposite direction
             RepeatFindReversed { last_find } => match **last_find {
@@ -1201,7 +1250,7 @@ impl Motion {
                             find_forward(map, point, after, char, times + 1, mode, smartcase);
                     }
 
-                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
+                    return Ok(new_point.map(|new_point| (new_point, SelectionGoal::None)));
                 }
 
                 Motion::Sneak {
@@ -1222,7 +1271,7 @@ impl Motion {
                         );
                     }
 
-                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
+                    return Ok(new_point.map(|new_point| (new_point, SelectionGoal::None)));
                 }
 
                 Motion::SneakBackward {
@@ -1237,9 +1286,9 @@ impl Motion {
                             sneak(map, point, first_char, second_char, times + 1, smartcase);
                     }
 
-                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
+                    return Ok(new_point.map(|new_point| (new_point, SelectionGoal::None)));
                 }
-                _ => return None,
+                _ => return Ok(None),
             },
             NextLineStart => (next_line_start(map, point, times), SelectionGoal::None),
             PreviousLineStart => (previous_line_start(map, point, times), SelectionGoal::None),
@@ -1259,7 +1308,7 @@ impl Motion {
                         SelectionGoal::None,
                     )
                 } else {
-                    return None;
+                    return Ok(None);
                 }
             }
             NextSectionStart => (
@@ -1328,7 +1377,7 @@ impl Motion {
                 SelectionGoal::None,
             ),
         };
-        (new_point != point || infallible).then_some((new_point, goal))
+        Ok((new_point != point || infallible).then_some((new_point, goal)))
     }
 
     // Get the range value after self is applied to the specified selection.
@@ -1339,7 +1388,7 @@ impl Motion {
         times: Option<usize>,
         text_layout_details: &TextLayoutDetails,
         forced_motion: bool,
-    ) -> Option<(Range<DisplayPoint>, MotionKind)> {
+    ) -> Result<Option<(Range<DisplayPoint>, MotionKind)>, PendingRowGeometry> {
         if let Motion::ZedSearchResult {
             prior_selections,
             new_selections,
@@ -1358,12 +1407,12 @@ impl Motion {
                     .max(prior_selection.end.to_display_point(map));
 
                 if start < end {
-                    return Some((start..end, MotionKind::Exclusive));
+                    return Ok(Some((start..end, MotionKind::Exclusive)));
                 } else {
-                    return Some((end..start, MotionKind::Exclusive));
+                    return Ok(Some((end..start, MotionKind::Exclusive)));
                 }
             } else {
-                return None;
+                return Ok(None);
             }
         }
         let maybe_new_point = self.move_point(
@@ -1372,13 +1421,13 @@ impl Motion {
             selection.goal,
             times,
             text_layout_details,
-        );
+        )?;
 
         let (new_head, goal) = match (maybe_new_point, forced_motion) {
-            (Some((p, g)), _) => Some((p, g)),
-            (None, false) => None,
-            (None, true) => Some((selection.head(), selection.goal)),
-        }?;
+            (Some(result), _) => result,
+            (None, false) => return Ok(None),
+            (None, true) => (selection.head(), selection.goal),
+        };
 
         selection.set_head(new_head, goal);
 
@@ -1408,7 +1457,7 @@ impl Motion {
                 // but dw on a blank line should. The `Linewise` returned from this method
                 // causes the `d` operator to include the trailing newline.
                 if selection.start == selection.end {
-                    return Some((selection.start..selection.end, MotionKind::Linewise));
+                    return Ok(Some((selection.start..selection.end, MotionKind::Linewise)));
                 }
             }
         } else if kind == MotionKind::Exclusive && !self.skip_exclusive_special_case() {
@@ -1465,7 +1514,7 @@ impl Motion {
             selection.start = map.prev_line_boundary(selection.start.to_point(map)).1;
             selection.end = map.next_line_boundary(selection.end.to_point(map)).1;
         }
-        Some((selection.start..selection.end, kind))
+        Ok(Some((selection.start..selection.end, kind)))
     }
 
     // Expands a selection using self for an operator
@@ -1476,12 +1525,15 @@ impl Motion {
         times: Option<usize>,
         text_layout_details: &TextLayoutDetails,
         forced_motion: bool,
-    ) -> Option<MotionKind> {
-        let (range, kind) =
-            self.range(map, *selection, times, text_layout_details, forced_motion)?;
+    ) -> Result<Option<MotionKind>, PendingRowGeometry> {
+        let Some((range, kind)) =
+            self.range(map, *selection, times, text_layout_details, forced_motion)?
+        else {
+            return Ok(None);
+        };
         selection.start = range.start;
         selection.end = range.end;
-        Some(kind)
+        Ok(Some(kind))
     }
 }
 
@@ -1540,15 +1592,15 @@ fn up_down_buffer_rows(
     mut goal: SelectionGoal,
     mut times: isize,
     text_layout_details: &TextLayoutDetails,
-) -> (DisplayPoint, SelectionGoal) {
+) -> Result<(DisplayPoint, SelectionGoal), PendingRowGeometry> {
     let bias = if times < 0 { Bias::Left } else { Bias::Right };
 
     while map.is_folded_buffer_header(point.row()) {
         if times < 0 {
-            (point, _) = movement::up(map, point, goal, true, text_layout_details);
+            (point, _) = movement::up(map, point, goal, true, text_layout_details)?;
             times += 1;
         } else if times > 0 {
-            (point, _) = movement::down(map, point, goal, true, text_layout_details);
+            (point, _) = movement::down(map, point, goal, true, text_layout_details)?;
             times -= 1;
         } else {
             break;
@@ -1567,7 +1619,7 @@ fn up_down_buffer_rows(
         SelectionGoal::HorizontalRange { end, .. } => (select_nth_wrapped_row, end),
         SelectionGoal::HorizontalPosition(x) => (select_nth_wrapped_row, x),
         _ => {
-            let x = map.x_for_display_point(point, text_layout_details);
+            let x = map.x_for_display_point(point, text_layout_details)?;
             goal = SelectionGoal::WrappedHorizontalPosition((select_nth_wrapped_row, x));
             (select_nth_wrapped_row, x)
         }
@@ -1597,7 +1649,7 @@ fn up_down_buffer_rows(
     }
 
     let new_col = if i == goal_wrap {
-        map.display_column_for_x(begin_folded_line.row(), goal_x, text_layout_details)
+        map.display_column_for_x(begin_folded_line.row(), goal_x, text_layout_details)?
     } else {
         map.line_len(begin_folded_line.row())
     };
@@ -1615,7 +1667,7 @@ fn up_down_buffer_rows(
         clipped_point = map.clip_point(point, Bias::Left);
     }
 
-    (clipped_point, goal)
+    Ok((clipped_point, goal))
 }
 
 fn down_display(
@@ -1624,12 +1676,12 @@ fn down_display(
     mut goal: SelectionGoal,
     times: usize,
     text_layout_details: &TextLayoutDetails,
-) -> (DisplayPoint, SelectionGoal) {
+) -> Result<(DisplayPoint, SelectionGoal), PendingRowGeometry> {
     for _ in 0..times {
-        (point, goal) = movement::down(map, point, goal, true, text_layout_details);
+        (point, goal) = movement::down(map, point, goal, true, text_layout_details)?;
     }
 
-    (point, goal)
+    Ok((point, goal))
 }
 
 fn up_display(
@@ -1638,12 +1690,12 @@ fn up_display(
     mut goal: SelectionGoal,
     times: usize,
     text_layout_details: &TextLayoutDetails,
-) -> (DisplayPoint, SelectionGoal) {
+) -> Result<(DisplayPoint, SelectionGoal), PendingRowGeometry> {
     for _ in 0..times {
-        (point, goal) = movement::up(map, point, goal, true, text_layout_details);
+        (point, goal) = movement::up(map, point, goal, true, text_layout_details)?;
     }
 
-    (point, goal)
+    Ok((point, goal))
 }
 
 pub(crate) fn right(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> DisplayPoint {
@@ -3058,29 +3110,27 @@ fn window_top(
     text_layout_details: &TextLayoutDetails,
     mut times: usize,
 ) -> (DisplayPoint, SelectionGoal) {
-    let first_visible_line = text_layout_details
-        .scroll_anchor
-        .scroll_top_display_point(map);
+    let first_visible_row = text_layout_details.scroll_anchor.scroll_top_row(map);
 
-    if first_visible_line.row() != DisplayRow(0)
+    if first_visible_row != DisplayRow(0)
         && text_layout_details.vertical_scroll_margin as usize > times
     {
         times = text_layout_details.vertical_scroll_margin.ceil() as usize;
     }
 
     if let Some(visible_rows) = text_layout_details.visible_rows {
-        let bottom_row = first_visible_line.row().0 + visible_rows as u32;
-        let new_row = (first_visible_line.row().0 + (times as u32))
+        let bottom_row = first_visible_row.0 + visible_rows as u32;
+        let new_row = (first_visible_row.0 + (times as u32))
             .min(bottom_row)
             .min(map.max_point().row().0);
-        let new_col = point.column().min(map.line_len(first_visible_line.row()));
+        let new_col = point.column().min(map.line_len(first_visible_row));
 
         let new_point = DisplayPoint::new(DisplayRow(new_row), new_col);
         (map.clip_point(new_point, Bias::Left), SelectionGoal::None)
     } else {
         let new_row =
-            DisplayRow((first_visible_line.row().0 + (times as u32)).min(map.max_point().row().0));
-        let new_col = point.column().min(map.line_len(first_visible_line.row()));
+            DisplayRow((first_visible_row.0 + (times as u32)).min(map.max_point().row().0));
+        let new_col = point.column().min(map.line_len(first_visible_row));
 
         let new_point = DisplayPoint::new(new_row, new_col);
         (map.clip_point(new_point, Bias::Left), SelectionGoal::None)
@@ -3093,15 +3143,12 @@ fn window_middle(
     text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
     if let Some(visible_rows) = text_layout_details.visible_rows {
-        let first_visible_line = text_layout_details
-            .scroll_anchor
-            .scroll_top_display_point(map);
+        let first_visible_row = text_layout_details.scroll_anchor.scroll_top_row(map);
 
         let max_visible_rows =
-            (visible_rows as u32).min(map.max_point().row().0 - first_visible_line.row().0);
+            (visible_rows as u32).min(map.max_point().row().0 - first_visible_row.0);
 
-        let new_row =
-            (first_visible_line.row().0 + (max_visible_rows / 2)).min(map.max_point().row().0);
+        let new_row = (first_visible_row.0 + (max_visible_rows / 2)).min(map.max_point().row().0);
         let new_row = DisplayRow(new_row);
         let new_col = point.column().min(map.line_len(new_row));
         let new_point = DisplayPoint::new(new_row, new_col);
@@ -3118,10 +3165,8 @@ fn window_bottom(
     mut times: usize,
 ) -> (DisplayPoint, SelectionGoal) {
     if let Some(visible_rows) = text_layout_details.visible_rows {
-        let first_visible_line = text_layout_details
-            .scroll_anchor
-            .scroll_top_display_point(map);
-        let bottom_row = first_visible_line.row().0
+        let first_visible_row = text_layout_details.scroll_anchor.scroll_top_row(map);
+        let bottom_row = first_visible_row.0
             + (visible_rows + text_layout_details.scroll_anchor.scroll_anchor.offset.y - 1.).floor()
                 as u32;
         if bottom_row < map.max_point().row().0
@@ -3130,9 +3175,8 @@ fn window_bottom(
             times = text_layout_details.vertical_scroll_margin.ceil() as usize;
         }
         let bottom_row_capped = bottom_row.min(map.max_point().row().0);
-        let new_row = if bottom_row_capped.saturating_sub(times as u32) < first_visible_line.row().0
-        {
-            first_visible_line.row()
+        let new_row = if bottom_row_capped.saturating_sub(times as u32) < first_visible_row.0 {
+            first_visible_row
         } else {
             DisplayRow(bottom_row_capped.saturating_sub(times as u32))
         };

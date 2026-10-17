@@ -4,7 +4,7 @@ use gpui::{
 use ui::text_for_keystrokes;
 use workspace::{HideStatusItem, StatusItemView, item::ItemHandle, ui::prelude::*};
 
-use crate::{Vim, VimEvent, VimGlobals};
+use crate::{Vim, VimEvent};
 
 /// The ModeIndicator displays the current mode in the status bar.
 pub struct ModeIndicator {
@@ -69,19 +69,12 @@ impl ModeIndicator {
             .into_iter();
 
         let vim = vim.read(cx);
+        let (pre_count, post_count) = vim.input_counts(cx);
         recording
-            .chain(
-                cx.global::<VimGlobals>()
-                    .pre_count
-                    .map(|count| format!("{}", count)),
-            )
+            .chain(pre_count.map(|count| format!("{count}")))
             .chain(vim.selected_register.map(|reg| format!("\"{reg}")))
             .chain(vim.operator_stack.iter().map(|item| item.status()))
-            .chain(
-                cx.global::<VimGlobals>()
-                    .post_count
-                    .map(|count| format!("{}", count)),
-            )
+            .chain(post_count.map(|count| format!("{count}")))
             .collect::<Vec<_>>()
             .concat()
     }

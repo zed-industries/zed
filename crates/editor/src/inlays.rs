@@ -19,7 +19,7 @@ pub mod inlay_hints;
 
 use std::sync::OnceLock;
 
-use gpui::{Context, HighlightStyle, Hsla, Rgba, Task};
+use gpui::{Context, HighlightStyle, Hsla, Rgba, SharedString, Task};
 use multi_buffer::Anchor;
 use project::{InlayHint, InlayId};
 use text::Rope;
@@ -54,6 +54,10 @@ pub struct Inlay {
 pub enum InlayContent {
     Text(text::Rope),
     Color(Hsla),
+    ReplResult {
+        output: SharedString,
+        placeholder: text::Rope,
+    },
 }
 
 impl Inlay {
@@ -107,11 +111,15 @@ impl Inlay {
         }
     }
 
-    pub fn repl_result<T: Into<Rope>>(id: usize, position: Anchor, text: T) -> Self {
+    pub fn repl_result(id: usize, position: Anchor, output: impl Into<SharedString>) -> Self {
+        static PLACEHOLDER: OnceLock<Rope> = OnceLock::new();
         Self {
             id: InlayId::ReplResult(id),
             position,
-            content: InlayContent::Text(text.into()),
+            content: InlayContent::ReplResult {
+                output: output.into(),
+                placeholder: PLACEHOLDER.get_or_init(|| Rope::from("⋯")).clone(),
+            },
         }
     }
 
@@ -120,6 +128,7 @@ impl Inlay {
         match &self.content {
             InlayContent::Text(text) => text,
             InlayContent::Color(_) => COLOR_TEXT.get_or_init(|| Rope::from("◼")),
+            InlayContent::ReplResult { placeholder, .. } => placeholder,
         }
     }
 
@@ -128,6 +137,18 @@ impl Inlay {
         match self.content {
             InlayContent::Color(color) => Some(color),
             _ => None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn mock_repl_result(id: usize, position: Anchor, placeholder: &str) -> Self {
+        Self {
+            id: InlayId::ReplResult(id),
+            position,
+            content: InlayContent::ReplResult {
+                output: SharedString::from(placeholder.to_string()),
+                placeholder: Rope::from(placeholder),
+            },
         }
     }
 }

@@ -5,7 +5,9 @@ mod paste;
 mod select;
 mod surround;
 
-use editor::display_map::{DisplayRow, DisplaySnapshot};
+pub(crate) use paste::HelixPaste;
+
+use editor::display_map::{DisplayRow, DisplaySnapshot, PendingRowGeometry};
 use editor::{
     Anchor, DisplayPoint, Editor, EditorSettings, MultiBufferOffset, NavigationOverlayLabel,
     NavigationTargetOverlay, SelectionEffects, ToOffset, ToPoint, movement,
@@ -16,7 +18,7 @@ use language::{CharClassifier, CharKind, Point, Selection};
 use multi_buffer::MultiBufferSnapshot;
 use search::{BufferSearchBar, SearchOptions};
 use settings::Settings;
-use text::{Bias, LineEnding, SelectionGoal};
+use text::{Bias, LineEnding, SelectionGoal, is_word_character};
 use theme::ActiveTheme as _;
 use ui::px;
 use workspace::searchable::{self, Direction, FilteredSearchRange};
@@ -144,117 +146,93 @@ fn end_of_document(map: &DisplaySnapshot) -> DisplayPoint {
 }
 
 impl Vim {
-    pub fn helix_normal_motion(
+    pub(crate) fn plan_helix_select_motion(
         &mut self,
         motion: Motion,
         times: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
-        self.helix_move_cursor(motion, times, window, cx);
-    }
+    ) -> Result<crate::GeometryCommit, editor::display_map::PendingRowGeometry> {
+        if let Motion::ZedSearchResult { new_selections, .. } = motion {
+            return Ok(Box::new(move |vim, window, cx| {
+                vim.update_editor(cx, |_, editor, cx| {
+                    editor.change_selections(Default::default(), window, cx, |selections| {
+                        selections.select_anchor_ranges(new_selections)
+                    });
+                });
+            }));
+        }
+        let selections =
+            self.plan_selections(None, window, cx, |map, details, mut planned_selection| {
+                let selection = &mut planned_selection;
+                let was_reversed = selection.reversed;
+                let mut current_head = selection.head();
 
-    pub fn helix_select_motion(
-        &mut self,
-        motion: Motion,
-        times: Option<usize>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.update_editor(cx, |_, editor, cx| {
-            let text_layout_details = editor.text_layout_details(window, cx);
-            editor.change_selections(Default::default(), window, cx, |s| {
-                if let Motion::ZedSearchResult { new_selections, .. } = &motion {
-                    s.select_anchor_ranges(new_selections.clone());
-                    return;
+                // our motions assume the current character is after the cursor,
+                // but in (forward) visual mode the current character is just
+                // before the end of the selection.
+                if !selection.reversed && !selection.is_empty() {
+                    current_head = movement::left(map, selection.end)
+                }
+
+                let (new_head, goal) = match motion {
+                    Motion::StartOfDocument => (start_of_document(map, times), SelectionGoal::None),
+                    Motion::EndOfDocument => (end_of_document(map), SelectionGoal::None),
+                    // EndOfLine positions after the last character, but in
+                    // helix visual mode we want the selection to end ON the
+                    // last character. Adjust left here so the subsequent
+                    // right-expansion (below) includes the last char without
+                    // spilling into the newline.
+                    Motion::EndOfLine { .. } => {
+                        let (point, goal) = motion
+                            .move_point(map, current_head, selection.goal, times, details)?
+                            .unwrap_or((current_head, selection.goal));
+                        (movement::saturating_left(map, point), goal)
+                    }
+                    // Going to next word start is special cased
+                    // since Vim differs from Helix in that motion
+                    // Vim: `w` goes to the first character of a word
+                    // Helix: `w` goes to the character before a word
+                    Motion::NextWordStart { ignore_punctuation } => {
+                        let mut head = movement::right(map, current_head);
+                        let classifier =
+                            map.buffer_snapshot().char_classifier_at(head.to_point(map));
+                        for _ in 0..times.unwrap_or(1) {
+                            let (_, new_head) =
+                                movement::find_boundary_trail(map, head, &mut |left, right| {
+                                    Self::is_boundary_right(ignore_punctuation)(
+                                        left,
+                                        right,
+                                        &classifier,
+                                    )
+                                });
+                            head = new_head;
+                        }
+                        head = movement::left(map, head);
+                        (head, SelectionGoal::None)
+                    }
+                    _ => motion
+                        .move_point(map, current_head, selection.goal, times, details)?
+                        .unwrap_or((current_head, selection.goal)),
                 };
-
-                s.move_with(&mut |map, selection| {
-                    let was_reversed = selection.reversed;
-                    let mut current_head = selection.head();
-
-                    // our motions assume the current character is after the cursor,
-                    // but in (forward) visual mode the current character is just
-                    // before the end of the selection.
-                    if !selection.reversed && !selection.is_empty() {
-                        current_head = movement::left(map, selection.end)
-                    }
-
-                    let (new_head, goal) = match motion {
-                        Motion::StartOfDocument => {
-                            (start_of_document(map, times), SelectionGoal::None)
-                        }
-                        Motion::EndOfDocument => (end_of_document(map), SelectionGoal::None),
-                        // EndOfLine positions after the last character, but in
-                        // helix visual mode we want the selection to end ON the
-                        // last character. Adjust left here so the subsequent
-                        // right-expansion (below) includes the last char without
-                        // spilling into the newline.
-                        Motion::EndOfLine { .. } => {
-                            let (point, goal) = motion
-                                .move_point(
-                                    map,
-                                    current_head,
-                                    selection.goal,
-                                    times,
-                                    &text_layout_details,
-                                )
-                                .unwrap_or((current_head, selection.goal));
-                            (movement::saturating_left(map, point), goal)
-                        }
-                        // Going to next word start is special cased
-                        // since Vim differs from Helix in that motion
-                        // Vim: `w` goes to the first character of a word
-                        // Helix: `w` goes to the character before a word
-                        Motion::NextWordStart { ignore_punctuation } => {
-                            let mut head = movement::right(map, current_head);
-                            let classifier =
-                                map.buffer_snapshot().char_classifier_at(head.to_point(map));
-                            for _ in 0..times.unwrap_or(1) {
-                                let (_, new_head) =
-                                    movement::find_boundary_trail(map, head, &mut |left, right| {
-                                        Self::is_boundary_right(ignore_punctuation)(
-                                            left,
-                                            right,
-                                            &classifier,
-                                        )
-                                    });
-                                head = new_head;
-                            }
-                            head = movement::left(map, head);
-                            (head, SelectionGoal::None)
-                        }
-                        _ => motion
-                            .move_point(
-                                map,
-                                current_head,
-                                selection.goal,
-                                times,
-                                &text_layout_details,
-                            )
-                            .unwrap_or((current_head, selection.goal)),
-                    };
-
-                    selection.set_head(new_head, goal);
-
-                    // ensure the current character is included in the selection.
-                    if !selection.reversed {
-                        let next_point = movement::right(map, selection.end);
-
-                        selection.end = next_point;
-                    }
-
-                    // vim always ensures the anchor character stays selected.
-                    // if our selection has reversed, we need to move the opposite end
-                    // to ensure the anchor is still selected.
-                    if was_reversed && !selection.reversed {
-                        selection.start = movement::left(map, selection.start);
-                    } else if !was_reversed && selection.reversed {
-                        selection.end = movement::right(map, selection.end);
-                    }
-                })
+                selection.set_head(new_head, goal);
+                if !selection.reversed {
+                    selection.end = movement::right(map, selection.end);
+                }
+                if was_reversed && !selection.reversed {
+                    selection.start = movement::left(map, selection.start);
+                } else if !was_reversed && selection.reversed {
+                    selection.end = movement::right(map, selection.end);
+                }
+                Ok(selection.map(|point| point.to_point(map)))
+            })?;
+        Ok(Box::new(move |vim, window, cx| {
+            vim.update_editor(cx, |_, editor, cx| {
+                editor.change_selections(Default::default(), window, cx, |collection| {
+                    collection.select(selections)
+                });
             });
-        });
+        }))
     }
 
     /// Updates all selections based on where the cursors are.
@@ -364,25 +342,42 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.update_editor(cx, |_, editor, cx| {
-            let text_layout_details = editor.text_layout_details(window, cx);
-            editor.change_selections(Default::default(), window, cx, |s| {
-                s.move_with(&mut |map, selection| {
-                    let goal = selection.goal;
-                    let cursor = if selection.is_empty() || selection.reversed {
-                        selection.head()
-                    } else {
-                        movement::left(map, selection.head())
-                    };
+        self.with_geometry(
+            move |vim, window, cx| {
+                vim.plan_helix_move_and_collapse(motion.clone(), times, window, cx)
+            },
+            window,
+            cx,
+        );
+    }
 
-                    let (point, goal) = motion
-                        .move_point(map, cursor, selection.goal, times, &text_layout_details)
-                        .unwrap_or((cursor, goal));
-
-                    selection.collapse_to(point, goal)
-                })
+    pub(crate) fn plan_helix_move_and_collapse(
+        &mut self,
+        motion: Motion,
+        times: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<crate::GeometryCommit, editor::display_map::PendingRowGeometry> {
+        let selections =
+            self.plan_selections(None, window, cx, |map, details, mut selection| {
+                let cursor = if selection.is_empty() || selection.reversed {
+                    selection.head()
+                } else {
+                    movement::left(map, selection.head())
+                };
+                let (point, goal) = motion
+                    .move_point(map, cursor, selection.goal, times, details)?
+                    .unwrap_or((cursor, selection.goal));
+                selection.collapse_to(point, goal);
+                Ok(selection.map(|point| point.to_point(map)))
+            })?;
+        Ok(Box::new(move |vim, window, cx| {
+            vim.update_editor(cx, |_, editor, cx| {
+                editor.change_selections(Default::default(), window, cx, |collection| {
+                    collection.select(selections)
+                });
             });
-        });
+        }))
     }
 
     fn is_boundary_right(
@@ -466,6 +461,36 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.with_geometry(
+            move |vim, window, cx| vim.plan_helix_move_cursor(motion.clone(), times, window, cx),
+            window,
+            cx,
+        );
+    }
+
+    pub(crate) fn plan_helix_move_cursor(
+        &mut self,
+        motion: Motion,
+        times: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<crate::GeometryCommit, editor::display_map::PendingRowGeometry> {
+        if matches!(motion, Motion::Up { .. } | Motion::Down { .. }) {
+            self.plan_helix_move_and_collapse(motion, times, window, cx)
+        } else {
+            Ok(Box::new(move |vim, window, cx| {
+                vim.helix_move_cursor_ready(motion, times, window, cx)
+            }))
+        }
+    }
+
+    fn helix_move_cursor_ready(
+        &mut self,
+        motion: Motion,
+        times: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         match motion {
             Motion::NextWordStart { ignore_punctuation } => {
                 let mut is_boundary = Self::is_boundary_right(ignore_punctuation);
@@ -525,23 +550,20 @@ impl Vim {
                     });
                 });
             }
-            Motion::EndOfLine { .. } => {
+            Motion::EndOfLine { display_lines } => {
                 // In Helix mode, EndOfLine should position cursor ON the last character,
                 // not after it. We therefore need special handling for it.
                 self.update_editor(cx, |_, editor, cx| {
-                    let text_layout_details = editor.text_layout_details(window, cx);
                     editor.change_selections(Default::default(), window, cx, |s| {
                         s.move_with(&mut |map, selection| {
-                            let goal = selection.goal;
                             let cursor = if selection.is_empty() || selection.reversed {
                                 selection.head()
                             } else {
                                 movement::left(map, selection.head())
                             };
 
-                            let (point, _goal) = motion
-                                .move_point(map, cursor, goal, times, &text_layout_details)
-                                .unwrap_or((cursor, goal));
+                            let point =
+                                motion::end_of_line(map, display_lines, cursor, times.unwrap_or(1));
 
                             // Move left by one character to position on the last character
                             let adjusted_point = movement::saturating_left(map, point);
@@ -604,7 +626,9 @@ impl Vim {
     }
 
     pub fn helix_yank(&mut self, _: &HelixYank, window: &mut Window, cx: &mut Context<Self>) {
+        let mut copied = true;
         self.update_editor(cx, |vim, editor, cx| {
+            let original_selections = editor.selections.clone();
             let has_selection = editor
                 .selections
                 .all_adjusted(&editor.display_snapshot(cx))
@@ -621,12 +645,16 @@ impl Vim {
                         selection.set_head(new_head, SelectionGoal::None);
                     });
                 });
-                vim.yank_selections_content(
+                copied = vim.yank_selections_content(
                     editor,
                     crate::motion::MotionKind::Exclusive,
                     window,
                     cx,
                 );
+                if !copied {
+                    editor.selections = original_selections;
+                    return;
+                }
                 editor.change_selections(Default::default(), window, cx, |s| {
                     s.move_with(&mut |_map, selection| {
                         selection.collapse_to(selection.start, SelectionGoal::None);
@@ -634,7 +662,7 @@ impl Vim {
                 });
             } else {
                 // Yank the selection(s)
-                vim.yank_selections_content(
+                copied = vim.yank_selections_content(
                     editor,
                     crate::motion::MotionKind::Exclusive,
                     window,
@@ -644,7 +672,9 @@ impl Vim {
         });
 
         // Drop back to normal mode after yanking
-        self.switch_mode(Mode::HelixNormal, true, window, cx);
+        if copied {
+            self.switch_mode(Mode::HelixNormal, true, window, cx);
+        }
     }
 
     fn helix_insert(&mut self, _: &HelixInsert, window: &mut Window, cx: &mut Context<Self>) {
@@ -1019,7 +1049,10 @@ impl Vim {
     }
 
     fn do_helix_substitute(&mut self, yank: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let mut copied = true;
         self.update_editor(cx, |vim, editor, cx| {
+            let original_selections = editor.selections.clone();
+            let clip_at_line_ends = editor.clip_at_line_ends(cx);
             editor.set_clip_at_line_ends(false, cx);
             editor.transact(window, cx, |editor, window, cx| {
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
@@ -1038,7 +1071,12 @@ impl Vim {
                     })
                 });
                 if yank {
-                    vim.copy_selections_content(editor, MotionKind::Exclusive, window, cx);
+                    copied = vim.copy_selections_content(editor, MotionKind::Exclusive, window, cx);
+                    if !copied {
+                        editor.selections = original_selections;
+                        editor.set_clip_at_line_ends(clip_at_line_ends, cx);
+                        return;
+                    }
                 }
                 let selections = editor
                     .selections
@@ -1048,7 +1086,9 @@ impl Vim {
                 editor.edit(edits, cx);
             });
         });
-        self.switch_mode(Mode::Insert, true, window, cx);
+        if copied {
+            self.switch_mode(Mode::Insert, true, window, cx);
+        }
     }
 
     fn helix_substitute(
@@ -1144,47 +1184,42 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let behaviour = match self.mode {
-            // Vim normal mode treats jump-to-word as a cursor motion, while Helix
-            // normal mode treats the cursor as a single-character selection.
-            Mode::Normal => HelixJumpBehaviour::MoveToWordStart,
-            // Vim visual mode extends like a motion, so the cursor stops at the
-            // same word boundary as normal mode instead of selecting the word.
-            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
-                HelixJumpBehaviour::ExtendToWordStart
-            }
-            Mode::HelixSelect => HelixJumpBehaviour::Extend,
-            _ => HelixJumpBehaviour::Move,
-        };
-        self.start_helix_jump(behaviour, window, cx);
-    }
-
-    fn start_helix_jump(
-        &mut self,
-        behaviour: HelixJumpBehaviour,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let allow_targets_in_selection = self.mode.has_selection();
-        let Some(data) = self.collect_helix_jump_data(allow_targets_in_selection, window, cx)
-        else {
-            return;
-        };
-
-        if data.labels.is_empty() {
-            self.clear_helix_jump_ui(window, cx);
-            return;
-        }
-
-        if !self.apply_helix_jump_ui(data.overlays, window, cx) {
-            return;
-        }
-
-        self.push_operator(
-            Operator::HelixJump {
-                behaviour,
-                first_char: None,
-                labels: data.labels,
+        self.with_geometry(
+            |vim, window, cx| {
+                let behaviour = match vim.mode {
+                    // Vim normal mode treats jump-to-word as a cursor motion, while Helix
+                    // normal mode treats the cursor as a single-character selection.
+                    Mode::Normal => HelixJumpBehaviour::MoveToWordStart,
+                    // Vim visual mode extends like a motion, so the cursor stops at the
+                    // same word boundary as normal mode instead of selecting the word.
+                    Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+                        HelixJumpBehaviour::ExtendToWordStart
+                    }
+                    Mode::HelixSelect => HelixJumpBehaviour::Extend,
+                    _ => HelixJumpBehaviour::Move,
+                };
+                let data = vim.collect_helix_jump_data(vim.mode.has_selection(), window, cx)?;
+                Ok(Box::new(move |vim, window, cx| {
+                    let Some(data) = data else {
+                        return;
+                    };
+                    if data.labels.is_empty() {
+                        vim.clear_helix_jump_ui(window, cx);
+                        return;
+                    }
+                    if !vim.apply_helix_jump_ui(data.overlays, window, cx) {
+                        return;
+                    }
+                    vim.push_operator(
+                        Operator::HelixJump {
+                            behaviour,
+                            first_char: None,
+                            labels: data.labels,
+                        },
+                        window,
+                        cx,
+                    );
+                }))
             },
             window,
             cx,
@@ -1196,18 +1231,19 @@ impl Vim {
         allow_targets_in_selection: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<HelixJumpUiData> {
+    ) -> Result<Option<HelixJumpUiData>, PendingRowGeometry> {
         self.update_editor(cx, |_, editor, cx| {
             let snapshot = editor.snapshot(window, cx);
             let display_snapshot = &snapshot.display_snapshot;
             let buffer_snapshot = display_snapshot.buffer_snapshot();
-            let visible_ranges = Self::visible_jump_ranges(editor, &snapshot, display_snapshot, cx)
-                .into_iter()
-                .map(|range| {
-                    buffer_snapshot.point_to_offset(range.start)
-                        ..buffer_snapshot.point_to_offset(range.end)
-                })
-                .collect::<Vec<_>>();
+            let visible_ranges =
+                Self::visible_jump_ranges(editor, &snapshot, display_snapshot, cx)?
+                    .into_iter()
+                    .map(|range| {
+                        buffer_snapshot.point_to_offset(range.start)
+                            ..buffer_snapshot.point_to_offset(range.end)
+                    })
+                    .collect::<Vec<_>>();
 
             let selections = editor.selections.all::<Point>(&display_snapshot);
             let skip_data = Self::selection_skip_offsets(
@@ -1228,7 +1264,7 @@ impl Vim {
             let font_size = style.text.font_size.to_pixels(window.rem_size());
             let label_color = cx.theme().colors().vim_helix_jump_label_foreground;
 
-            Self::build_helix_jump_ui_data(
+            Ok(Self::build_helix_jump_ui_data(
                 buffer_snapshot,
                 &visible_ranges,
                 cursor_offset,
@@ -1237,8 +1273,9 @@ impl Vim {
                 window.text_system(),
                 font,
                 font_size,
-            )
+            ))
         })
+        .transpose()
     }
 
     fn visible_jump_ranges(
@@ -1246,9 +1283,12 @@ impl Vim {
         snapshot: &editor::EditorSnapshot,
         display_snapshot: &DisplaySnapshot,
         cx: &App,
-    ) -> Vec<Range<Point>> {
+    ) -> Result<Vec<Range<Point>>, PendingRowGeometry> {
+        if editor.visible_line_count().is_some() {
+            return editor.visible_text_ranges(display_snapshot, cx);
+        }
         let visible_range = editor.multi_buffer_visible_range(display_snapshot, cx);
-        if editor.visible_line_count().is_some() || visible_range.start != visible_range.end {
+        if visible_range.start != visible_range.end {
             return editor.visible_text_ranges(display_snapshot, cx);
         }
 
@@ -1264,10 +1304,10 @@ impl Vim {
         let end_display_point =
             DisplayPoint::new(DisplayRow(top_row.saturating_add(visible_rows)), 0);
 
-        vec![
+        Ok(vec![
             display_snapshot.display_point_to_point(start_display_point, Bias::Left)
                 ..display_snapshot.display_point_to_point(end_display_point, Bias::Right),
-        ]
+        ])
     }
 
     fn build_helix_jump_ui_data(
@@ -1374,7 +1414,7 @@ impl Vim {
         let starts_mid_word = buffer
             .reversed_chars_at(start_offset)
             .next()
-            .is_some_and(is_jump_word_char);
+            .is_some_and(is_word_character);
         let mut offset = start_offset;
         let mut in_word = false;
         let mut partial_word = false;
@@ -1385,7 +1425,7 @@ impl Vim {
         for chunk in buffer.text_for_range(start_offset..end_offset) {
             for (idx, ch) in chunk.char_indices() {
                 let absolute = offset + idx;
-                let is_word = is_jump_word_char(ch);
+                let is_word = is_word_character(ch);
                 if is_word {
                     if !in_word {
                         in_word = true;
@@ -1423,13 +1463,15 @@ impl Vim {
                 && let Some(next) = buffer
                     .chars_at(end_offset)
                     .next()
-                    .filter(|next| is_jump_word_char(*next))
+                    .filter(|next| is_word_character(*next))
             {
                 first_two_end = end_offset + next.len_utf8();
                 char_count += 1;
             }
             let word_end = end_offset.max(first_two_end);
-            if char_count >= 2 && !Self::should_skip_jump_candidate(word_start, word_end, skip_data)
+            if char_count >= 2
+                && !Self::should_skip_jump_candidate(word_start, word_end, skip_data)
+                && !Self::word_continues_into_skip(buffer, word_end, skip_data)
             {
                 candidates.push(JumpCandidate {
                     word_start,
@@ -1443,17 +1485,43 @@ impl Vim {
         candidates
     }
 
+    fn word_continues_into_skip(
+        buffer: &MultiBufferSnapshot,
+        visible_end: MultiBufferOffset,
+        skip_data: &HelixJumpSkipData,
+    ) -> bool {
+        let next_point = skip_data
+            .points
+            .get(
+                skip_data
+                    .points
+                    .partition_point(|offset| *offset < visible_end),
+            )
+            .copied();
+        let next_range = skip_data
+            .ranges
+            .get(
+                skip_data
+                    .ranges
+                    .partition_point(|range| range.end <= visible_end),
+            )
+            .map(|range| range.start.max(visible_end));
+        let Some(skip) = next_point.into_iter().chain(next_range).min() else {
+            return false;
+        };
+        let Some(skipped_character) = buffer.chars_at(skip).next() else {
+            return false;
+        };
+        buffer.word_run_end(visible_end) >= skip + skipped_character.len_utf8()
+    }
+
     pub(crate) fn jump_target_word_end(buffer: &MultiBufferSnapshot, end: Anchor) -> Anchor {
         let offset = end.to_offset(buffer);
-        let continuation = buffer
-            .chars_at(offset)
-            .take_while(|ch| is_jump_word_char(*ch))
-            .map(char::len_utf8)
-            .sum::<usize>();
-        if continuation == 0 {
+        let word_end = buffer.word_run_end(offset);
+        if word_end == offset {
             end
         } else {
-            buffer.anchor_after(offset + continuation)
+            buffer.anchor_after(word_end)
         }
     }
 
@@ -1761,7 +1829,7 @@ impl Vim {
 
         if ws_count > 0 {
             let next_is_word = match next_non_ws {
-                Some(ch) => is_jump_word_char(ch),
+                Some(ch) => is_word_character(ch),
                 None => false,
             };
 
@@ -1794,10 +1862,6 @@ const HELIX_JUMP_MONOSPACE_TOLERANCE: Pixels = px(0.5);
 const HELIX_JUMP_MIN_LABEL_SCALE: f32 = 1.0;
 const HELIX_JUMP_MAX_HIDDEN_CHARS: usize = 16;
 const HELIX_JUMP_MAX_LEFT_WS_CHARS: usize = 32;
-
-fn is_jump_word_char(ch: char) -> bool {
-    ch == '_' || ch.is_alphanumeric()
-}
 
 /// A word candidate for jump labels, before label assignment.
 #[derive(Clone)]
@@ -1882,7 +1946,7 @@ impl HiddenPrefixFitState {
                 self.text.push(ch);
                 let end_offset = absolute + ch.len_utf8();
 
-                if absolute < word_end && is_jump_word_char(ch) {
+                if absolute < word_end && is_word_character(ch) {
                     self.word_char_count += 1;
                 }
 
@@ -1918,15 +1982,15 @@ struct HelixJumpUiData {
 #[cfg(test)]
 mod test {
     use futures::StreamExt;
-    use std::{fmt::Write, time::Duration};
+    use std::{fmt::Write, ops::Range, time::Duration};
 
-    use editor::{HighlightKey, MultiBufferOffset, ToOffset};
+    use editor::{HighlightKey, MultiBufferOffset, SelectionEffects, ToOffset};
     use gpui::{
         Bounds, DispatchEventResult, ElementInputHandler, KeyBinding, KeyDownEvent, Keystroke,
         PlatformInput, PlatformInputHandler, UpdateGlobal, VisualTestContext,
     };
     use indoc::indoc;
-    use language::{CursorShape, Point};
+    use language::{CursorShape, Point, language_settings::SoftWrap};
     use project::FakeFs;
     use search::{ProjectSearchView, project_search};
     use serde_json::json;
@@ -3722,6 +3786,45 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_pending_helix_jump_waits_before_installing_labels(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.set_state("ˇ\nalpha beta", Mode::HelixNormal);
+        cx.update_editor(|editor, _, cx| editor.set_soft_wrap_mode(SoftWrap::None, cx));
+        cx.run_until_parked();
+        cx.background_executor.set_block_on_ticks(0..=0);
+        let vim =
+            cx.update_editor(|editor, _, _| editor.addon::<VimAddon>().unwrap().entity.clone());
+        let completion = cx.update(|window, cx| {
+            vim.update(cx, |vim, cx| {
+                vim.update_editor(cx, |_, editor, cx| {
+                    editor.set_text(format!("\nalpha beta{}", " ".repeat(2_000)), window, cx);
+                    editor.change_selections(
+                        SelectionEffects::no_scroll(),
+                        window,
+                        cx,
+                        |selections| {
+                            selections.select_ranges([Point::zero()..Point::zero()]);
+                        },
+                    );
+                });
+                vim.helix_jump_to_word(&HelixJumpToWord, window, cx);
+                assert_eq!(vim.active_operator(), None);
+                vim.update_editor(cx, |_, editor, cx| editor.input_completion(cx))
+                    .unwrap()
+            })
+        });
+        completion.await.expect("Helix jump geometry completed");
+        assert_eq!(
+            active_helix_jump_labels(&mut cx)
+                .into_iter()
+                .map(|(_, word)| word)
+                .collect::<Vec<_>>(),
+            ["alpha", "beta"],
+        );
+    }
+
+    #[gpui::test]
     async fn test_helix_jump_cancels_on_escape(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.enable_helix();
@@ -4840,25 +4943,65 @@ mod test {
 
     #[gpui::test]
     fn test_helix_jump_candidates_stay_within_range_edges(cx: &mut gpui::App) {
+        let candidate_words =
+            |text: &str, range: Range<usize>, skipped_point: Option<usize>, cx: &mut gpui::App| {
+                let buffer = MultiBuffer::build_simple(text, cx).read(cx).snapshot(cx);
+                Vim::collect_jump_candidates(
+                    &buffer,
+                    MultiBufferOffset(range.start),
+                    MultiBufferOffset(range.end),
+                    &HelixJumpSkipData {
+                        points: skipped_point.map(MultiBufferOffset).into_iter().collect(),
+                        ranges: Vec::new(),
+                    },
+                )
+                .iter()
+                .map(|candidate| candidate.word_start.0..candidate.word_end.0)
+                .collect::<Vec<_>>()
+            };
+        assert_eq!(
+            [
+                candidate_words("foobar baz qux", 3..12, None, cx),
+                candidate_words("left aaaaaaaaaa right", 0..8, Some(6), cx),
+                candidate_words("left aaaaaaaaaa right", 0..8, Some(12), cx),
+                candidate_words("left aaaaaaaaaa right", 0..8, Some(15), cx),
+                candidate_words("left aaaaaaaaaa right", 0..8, Some(20), cx),
+                candidate_words("left aaaaaaaaaa\nright", 0..8, Some(17), cx),
+                candidate_words(
+                    &format!("left {} right", "é".repeat(40)),
+                    0..9,
+                    Some(65),
+                    cx
+                ),
+                candidate_words(
+                    &format!("left {} right", "a".repeat(70_000)),
+                    0..80,
+                    Some(66_000),
+                    cx
+                ),
+                candidate_words(
+                    &format!("left {} right", "a".repeat(3 * 1024 * 1024)),
+                    0..80,
+                    Some(3 * 1024 * 1024),
+                    cx
+                ),
+            ],
+            [
+                vec![7..10, 11..13],
+                vec![0..4],
+                vec![0..4],
+                vec![0..4, 5..8],
+                vec![0..4, 5..8],
+                vec![0..4, 5..8],
+                vec![0..4],
+                vec![0..4],
+                vec![0..4],
+            ]
+        );
+
         let buffer = MultiBuffer::build_simple("foobar baz qux", cx)
             .read(cx)
             .snapshot(cx);
-        let candidates = Vim::collect_jump_candidates(
-            &buffer,
-            MultiBufferOffset(3),
-            MultiBufferOffset(12),
-            &HelixJumpSkipData {
-                points: Vec::new(),
-                ranges: Vec::new(),
-            },
-        );
-        assert_eq!(
-            candidates
-                .iter()
-                .map(|candidate| candidate.word_start.0..candidate.word_end.0)
-                .collect::<Vec<_>>(),
-            [7..10, 11..13]
-        );
         let word_end = |offset| {
             Vim::jump_target_word_end(&buffer, buffer.anchor_after(MultiBufferOffset(offset)))
                 .to_offset(&buffer)

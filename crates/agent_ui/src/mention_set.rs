@@ -1037,8 +1037,10 @@ pub(crate) fn paste_images_as_context(
     workspace: WeakEntity<Workspace>,
     window: &mut Window,
     cx: &mut App,
-) -> Option<Task<()>> {
-    let clipboard = cx.read_from_clipboard()?;
+) -> Result<Option<Task<()>>> {
+    let Some(clipboard) = editor.read(cx).read_from_clipboard(cx)? else {
+        return Ok(None);
+    };
 
     // Only handle paste if the first clipboard entry is an image or file path.
     // If text comes first, return None so the caller falls through to text paste.
@@ -1047,10 +1049,10 @@ pub(crate) fn paste_images_as_context(
         clipboard.entries().first(),
         Some(ClipboardEntry::String(_)) | None
     ) {
-        return None;
+        return Ok(None);
     }
 
-    Some(window.spawn(cx, async move |mut cx| {
+    Ok(Some(window.spawn(cx, async move |mut cx| {
         use itertools::Itertools;
         let default_name: SharedString = "Image".into();
         let (mut images, paths): (Vec<(gpui::Image, SharedString)>, Vec<_>) = clipboard
@@ -1078,7 +1080,7 @@ pub(crate) fn paste_images_as_context(
         if !images.is_empty() {
             insert_images_as_context(images, editor, mention_set, workspace, &mut cx).await;
         }
-    }))
+    })))
 }
 
 pub(crate) fn insert_crease_for_mention(

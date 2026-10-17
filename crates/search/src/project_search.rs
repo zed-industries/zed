@@ -1184,6 +1184,15 @@ impl Item for ProjectSearchView {
         self.results_editor.read(cx).is_dirty(cx)
     }
 
+    fn has_pending_input(&self, cx: &App) -> bool {
+        self.results_editor.read(cx).has_pending_input(cx)
+    }
+
+    fn pending_input(&mut self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
+        self.results_editor
+            .update(cx, |editor, cx| editor.pending_input(cx))
+    }
+
     fn has_conflict(&self, cx: &App) -> bool {
         self.results_editor.read(cx).has_conflict(cx)
     }

@@ -1198,26 +1198,37 @@ impl HoverState {
             })?;
         let mut point = anchor.to_display_point(&snapshot.display_snapshot);
         // Clamp the point within the visible rows in case the popup source spans multiple lines
-        if visible_rows.end <= point.row() {
-            point = crate::movement::up_by_rows(
+        let movement = if visible_rows.end <= point.row() {
+            Some(crate::movement::up_by_rows(
                 &snapshot.display_snapshot,
                 point,
                 1 + (point.row() - visible_rows.end).0,
                 text::SelectionGoal::None,
                 true,
                 text_layout_details,
-            )
-            .0;
+            ))
         } else if point.row() < visible_rows.start {
-            point = crate::movement::down_by_rows(
+            Some(crate::movement::down_by_rows(
                 &snapshot.display_snapshot,
                 point,
                 (visible_rows.start - point.row()).0,
                 text::SelectionGoal::None,
                 true,
                 text_layout_details,
-            )
-            .0;
+            ))
+        } else {
+            None
+        };
+        if let Some(movement) = movement {
+            match movement {
+                Ok((destination, _)) => point = destination,
+                Err(pending) => {
+                    cx.defer_in(window, move |editor, _, cx| {
+                        editor.request_row_geometry(pending, cx);
+                    });
+                    return None;
+                }
+            }
         }
 
         if !visible_rows.contains(&point.row()) {
@@ -2903,7 +2914,9 @@ mod tests {
             Duration::from_millis(EditorSettings::get_global(cx).hover_popover_hiding_delay.0 + 100)
         });
 
-        let hint_a_point = cx.pixel_position_for(DisplayPoint::new(DisplayRow(0), 18));
+        let hint_a_point = cx
+            .pixel_position_for(DisplayPoint::new(DisplayRow(0), 18))
+            .await;
         cx.simulate_mouse_move(hint_a_point, None, Modifiers::none());
         cx.background_executor.advance_clock(hover_delay);
         cx.update_editor(|editor, _, cx| {
@@ -2912,7 +2925,9 @@ mod tests {
 
         let (release_resolve, gate) = oneshot::channel();
         *resolve_gate.lock() = Some(gate);
-        let hint_b_point = cx.pixel_position_for(DisplayPoint::new(DisplayRow(0), 33));
+        let hint_b_point = cx
+            .pixel_position_for(DisplayPoint::new(DisplayRow(0), 33))
+            .await;
         cx.simulate_mouse_move(hint_b_point, None, Modifiers::none());
         cx.background_executor.advance_clock(hiding_delay);
         cx.update_editor(|editor, _, cx| {
@@ -2926,7 +2941,9 @@ mod tests {
 
         let (release_resolve, gate) = oneshot::channel();
         *resolve_gate.lock() = Some(gate);
-        let hint_c_point = cx.pixel_position_for(DisplayPoint::new(DisplayRow(0), 46));
+        let hint_c_point = cx
+            .pixel_position_for(DisplayPoint::new(DisplayRow(0), 46))
+            .await;
         cx.simulate_mouse_move(hint_c_point, None, Modifiers::none());
         cx.dispatch_action(Cancel);
         release_resolve.send(()).expect("pending resolve gate");
@@ -2947,7 +2964,9 @@ mod tests {
         });
         let (release_resolve, gate) = oneshot::channel();
         *resolve_gate.lock() = Some(gate);
-        let hint_d_point = cx.pixel_position_for(DisplayPoint::new(DisplayRow(0), 60));
+        let hint_d_point = cx
+            .pixel_position_for(DisplayPoint::new(DisplayRow(0), 60))
+            .await;
         cx.simulate_mouse_move(hint_d_point, None, Modifiers::none());
         cx.update_editor(|editor, _, _| {
             assert!(editor.hover_state.hint_hover_task.is_some());
@@ -2963,7 +2982,9 @@ mod tests {
             );
         });
 
-        let hint_e_point = cx.pixel_position_for(DisplayPoint::new(DisplayRow(0), 74));
+        let hint_e_point = cx
+            .pixel_position_for(DisplayPoint::new(DisplayRow(0), 74))
+            .await;
         cx.simulate_mouse_move(hint_e_point, None, Modifiers::none());
         cx.update_editor(|editor, _, _| {
             assert!(editor.hover_state.hint_hover_task.is_some());
@@ -2980,7 +3001,9 @@ mod tests {
 
         let (release_resolve, gate) = oneshot::channel();
         *resolve_gate.lock() = Some(gate);
-        let hint_f_point = cx.pixel_position_for(DisplayPoint::new(DisplayRow(0), 88));
+        let hint_f_point = cx
+            .pixel_position_for(DisplayPoint::new(DisplayRow(0), 88))
+            .await;
         cx.simulate_mouse_move(hint_f_point, None, Modifiers::none());
         release_resolve.send(()).expect("pending resolve gate");
         cx.run_until_parked();
@@ -2998,7 +3021,9 @@ mod tests {
             );
         });
 
-        let text_point = cx.pixel_position_for(DisplayPoint::new(DisplayRow(0), 4));
+        let text_point = cx
+            .pixel_position_for(DisplayPoint::new(DisplayRow(0), 4))
+            .await;
         cx.simulate_mouse_move(text_point, None, Modifiers::none());
         cx.background_executor.advance_clock(hover_delay);
         cx.update_editor(|editor, _, cx| {
@@ -3006,7 +3031,9 @@ mod tests {
         });
         let (release_resolve, gate) = oneshot::channel();
         *resolve_gate.lock() = Some(gate);
-        let hint_g_point = cx.pixel_position_for(DisplayPoint::new(DisplayRow(0), 102));
+        let hint_g_point = cx
+            .pixel_position_for(DisplayPoint::new(DisplayRow(0), 102))
+            .await;
         cx.simulate_mouse_move(hint_g_point, None, Modifiers::none());
         release_resolve.send(()).expect("pending resolve gate");
         cx.run_until_parked();
@@ -3054,7 +3081,9 @@ mod tests {
         });
         let (release_resolve, gate) = oneshot::channel();
         *resolve_gate.lock() = Some(gate);
-        let hint_h_point = cx.pixel_position_for(DisplayPoint::new(DisplayRow(0), 116));
+        let hint_h_point = cx
+            .pixel_position_for(DisplayPoint::new(DisplayRow(0), 116))
+            .await;
         cx.simulate_mouse_move(hint_h_point, None, Modifiers::none());
         release_resolve.send(()).expect("pending resolve gate");
         cx.run_until_parked();

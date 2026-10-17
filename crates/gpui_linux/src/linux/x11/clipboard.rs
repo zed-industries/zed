@@ -47,7 +47,8 @@ use x11rb::{
     wrapper::ConnectionExt as _,
 };
 
-use gpui::{ClipboardItem, Image, ImageFormat, hash};
+use gpui::{ClipboardItem, ClipboardRevision, ClipboardSnapshot, Image, ImageFormat, hash};
+use gpui_util::ResultExt;
 use strum::IntoEnumIterator;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -235,7 +236,7 @@ impl Inner {
         data: Vec<ClipboardData>,
         selection: ClipboardKind,
         wait: WaitConfig,
-    ) -> Result<()> {
+    ) -> Result<Option<ClipboardRevision>> {
         if self.serve_stopped.load(Ordering::Relaxed) {
             return Err(Error::unknown(
                 "The clipboard handler thread seems to have stopped. Logging messages may reveal the cause. (See the `log` crate.)",
@@ -243,13 +244,16 @@ impl Inner {
         }
 
         let server_win = self.server.win_id;
+        let selection_atom = self.atom_of(selection);
 
         // ICCCM version 2, section 2.6.1.3 states that we should re-assert ownership whenever data
         // changes.
         self.server
             .conn
-            .set_selection_owner(server_win, self.atom_of(selection), Time::CURRENT_TIME)
-            .map_err(|_| Error::ClipboardOccupied)?;
+            .set_selection_owner(server_win, selection_atom, Time::CURRENT_TIME)
+            .map_err(|_| Error::ClipboardOccupied)?
+            .check()
+            .map_err(into_unknown)?;
 
         self.server.conn.flush().map_err(into_unknown)?;
 
@@ -279,7 +283,7 @@ impl Inner {
             }
         }
 
-        Ok(())
+        Ok(None)
     }
 
     /// `formats` must be a slice of atoms, where each atom represents a target format.
@@ -986,7 +990,7 @@ impl Clipboard {
         message: Cow<'_, str>,
         selection: ClipboardKind,
         wait: WaitConfig,
-    ) -> Result<()> {
+    ) -> Result<Option<ClipboardRevision>> {
         let data = vec![ClipboardData {
             bytes: message.into_owned().into_bytes(),
             format: self.inner.atoms.UTF8_STRING,
@@ -1020,7 +1024,23 @@ impl Clipboard {
             bytes: image.bytes,
             format: self.inner.atoms.PNG__MIME,
         }];
-        self.inner.write(data, selection, wait)
+        self.inner.write(data, selection, wait).map(|_| ())
+    }
+
+    pub(crate) fn read_snapshot(
+        &self,
+        selection: ClipboardKind,
+        owned_item: Option<&ClipboardItem>,
+    ) -> ClipboardSnapshot {
+        let item = if self.is_owner(selection) && owned_item.is_some() {
+            owned_item.cloned()
+        } else {
+            self.get_any(selection).log_with_level(log::Level::Debug)
+        };
+        ClipboardSnapshot {
+            item,
+            revision: None,
+        }
     }
 
     pub(crate) fn get_any(&self, selection: ClipboardKind) -> Result<ClipboardItem> {

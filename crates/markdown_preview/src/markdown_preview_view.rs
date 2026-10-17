@@ -1715,6 +1715,23 @@ impl Item for MarkdownPreviewView {
         }
     }
 
+    fn has_pending_input(&self, cx: &App) -> bool {
+        self.active_editor
+            .as_ref()
+            .is_some_and(|editor_state| editor_state.editor.read(cx).has_pending_input(cx))
+    }
+
+    fn pending_input(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        self.active_editor
+            .as_ref()
+            .map(|editor_state| {
+                editor_state
+                    .editor
+                    .update(cx, |editor, cx| editor.pending_input(cx))
+            })
+            .unwrap_or_else(|| Task::ready(Ok(())))
+    }
+
     fn can_save(&self, cx: &App) -> bool {
         self.active_editor
             .as_ref()

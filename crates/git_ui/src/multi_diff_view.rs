@@ -367,6 +367,15 @@ impl Item for MultiDiffView {
         });
     }
 
+    fn has_pending_input(&self, cx: &App) -> bool {
+        self.editor.read(cx).has_pending_input(cx)
+    }
+
+    fn pending_input(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        self.editor
+            .update(cx, |editor, cx| editor.pending_input(cx))
+    }
+
     fn can_save(&self, cx: &App) -> bool {
         self.editor.read(cx).can_save(cx)
     }

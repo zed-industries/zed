@@ -6,6 +6,7 @@ use super::{
 use crate::{
     EditorStyle, GutterDimensions,
     display_map::{Companion, dimensions::RowDelta, wrap_map::WrapRow},
+    scroll::ScrollPixelOffset,
 };
 use collections::{Bound, HashMap, HashSet};
 use gpui::{AnyElement, App, EntityId, Pixels, Window};
@@ -21,7 +22,7 @@ use std::{
     fmt::Debug,
     ops::{Deref, DerefMut, Not, Range, RangeBounds, RangeInclusive},
     sync::{
-        Arc,
+        Arc, OnceLock,
         atomic::{AtomicUsize, Ordering::SeqCst},
     },
 };
@@ -41,6 +42,7 @@ pub struct BlockMap {
     custom_blocks: Vec<Arc<CustomBlock>>,
     custom_blocks_by_id: TreeMap<CustomBlockId, Arc<CustomBlock>>,
     transforms: RefCell<SumTree<Transform>>,
+    replaced_rows: RefCell<Arc<ReplacedRows>>,
     buffer_header_height: u32,
     excerpt_header_height: u32,
     pub(super) folded_buffers: HashSet<BufferId>,
@@ -75,10 +77,17 @@ struct BlockMapInverseWriter<'a> {
 pub struct BlockSnapshot {
     pub(super) wrap_snapshot: WrapSnapshot,
     transforms: SumTree<Transform>,
+    pub(super) replaced_rows: Arc<ReplacedRows>,
     custom_blocks_by_id: TreeMap<CustomBlockId, Arc<CustomBlock>>,
     pub(super) buffer_header_height: u32,
     pub(super) excerpt_header_height: u32,
     pub(super) buffers_with_disabled_headers: HashSet<BufferId>,
+}
+
+#[derive(Default)]
+pub(super) struct ReplacedRows {
+    rows: OnceLock<Arc<[Range<WrapRow>]>>,
+    pub(super) renderers_settled_at: Mutex<Option<usize>>,
 }
 
 impl Deref for BlockSnapshot {
@@ -325,7 +334,7 @@ pub struct BlockContext<'a, 'b> {
     #[app]
     pub app: &'b mut App,
     pub anchor_x: Pixels,
-    pub max_width: Pixels,
+    pub max_width: ScrollPixelOffset,
     pub margins: &'b EditorMargins,
     pub em_width: Pixels,
     pub line_height: Pixels,
@@ -666,6 +675,7 @@ impl BlockMap {
             folded_buffers: HashSet::default(),
             buffers_with_disabled_headers: HashSet::default(),
             transforms: RefCell::new(transforms),
+            replaced_rows: RefCell::default(),
             wrap_snapshot: RefCell::new(wrap_snapshot.clone()),
             buffer_header_height,
             excerpt_header_height,
@@ -696,6 +706,7 @@ impl BlockMap {
             snapshot: BlockSnapshot {
                 wrap_snapshot,
                 transforms: self.transforms.borrow().clone(),
+                replaced_rows: self.replaced_rows.borrow().clone(),
                 custom_blocks_by_id: self.custom_blocks_by_id.clone(),
                 buffer_header_height: self.buffer_header_height,
                 excerpt_header_height: self.excerpt_header_height,
@@ -1197,6 +1208,7 @@ impl BlockMap {
 
         drop(cursor);
         *transforms = new_transforms;
+        *self.replaced_rows.borrow_mut() = Arc::default();
     }
 
     #[ztracing::instrument(skip_all)]
@@ -2630,15 +2642,26 @@ impl BlockSnapshot {
         item?.block.as_ref()?.is_replacement().then_some(start..end)
     }
 
-    pub(super) fn ascending_wrap_row_replaced_checker(&self) -> impl FnMut(WrapRow) -> bool + '_ {
-        let mut cursor = self.transforms.cursor::<WrapRow>(());
-        move |row| {
-            cursor.seek_forward(&row, Bias::Right);
-            cursor
-                .item()
-                .and_then(|transform| transform.block.as_ref())
-                .is_some_and(Block::is_replacement)
-        }
+    pub(super) fn replaced_wrap_rows(&self) -> Arc<[Range<WrapRow>]> {
+        self.replaced_rows
+            .rows
+            .get_or_init(|| {
+                let mut cursor = self
+                    .transforms
+                    .filter::<_, WrapRow>((), |summary: &TransformSummary| {
+                        summary.has_replacement_blocks
+                    });
+                cursor.next();
+                let mut rows = Vec::new();
+                while let Some(transform) = cursor.item() {
+                    if transform.block.as_ref().is_some_and(Block::is_replacement) {
+                        rows.push(*cursor.start()..cursor.end());
+                    }
+                    cursor.next();
+                }
+                rows.into()
+            })
+            .clone()
     }
 }
 

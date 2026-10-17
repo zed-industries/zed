@@ -28,7 +28,7 @@ const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 use crate::open_remote_project_with_existing_connection;
 use crate::{
     CloseIntent, CloseWindow, DockPosition, Event as WorkspaceEvent, Item, ModalView, OpenMode,
-    Panel, Workspace, WorkspaceId, client_side_decorations,
+    Panel, Workspace, WorkspaceId, client_side_decorations, item::complete_pending_input,
     persistence::model::MultiWorkspaceState,
 };
 
@@ -557,7 +557,15 @@ impl MultiWorkspace {
             log::error!("cannot close a window whose root is not a MultiWorkspace");
             return;
         };
+        let items = self
+            .workspaces()
+            .flat_map(|workspace| workspace.read(cx).items(cx).cloned())
+            .collect::<Vec<_>>();
+        let pending_input = complete_pending_input(items, cx);
         cx.spawn(async move |_, cx| {
+            if let Some(pending_input) = pending_input {
+                pending_input.await?;
+            }
             if !crate::prepare_window_to_close(window_handle, CloseIntent::CloseWindow, cx)
                 .await
                 .context("preparing the window to close")?
@@ -1029,17 +1037,32 @@ impl MultiWorkspace {
 
         let app_state = self.workspace().read(cx).app_state().clone();
 
-        let workspaces: Vec<_> = self.workspaces_for_project_group(key, cx);
-        let mut serialization_tasks = Vec::new();
-        for workspace in &workspaces {
-            serialization_tasks.push(workspace.update(cx, |workspace, inner_cx| {
-                workspace.flush_serialization(window, inner_cx)
-            }));
-        }
-
-        let remove_task = self.remove_project_group(key, window, cx);
-
-        cx.spawn(async move |_this, cx| {
+        let workspaces = self.workspaces_for_project_group(key, cx);
+        let items = workspaces
+            .iter()
+            .flat_map(|workspace| workspace.read(cx).items(cx).cloned())
+            .collect::<Vec<_>>();
+        let pending_input = complete_pending_input(items, cx);
+        let key = key.clone();
+        cx.spawn_in(window, async move |multi_workspace, cx| {
+            if let Some(pending_input) = pending_input {
+                pending_input.await?;
+            }
+            let (serialization_tasks, remove_task) =
+                multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+                    let serialization_tasks = workspaces
+                        .iter()
+                        .map(|workspace| {
+                            workspace.update(cx, |workspace, cx| {
+                                workspace.flush_serialization(window, cx)
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    (
+                        serialization_tasks,
+                        multi_workspace.remove_project_group(&key, window, cx),
+                    )
+                })?;
             futures::future::join_all(serialization_tasks).await;
 
             let removed = remove_task.await?;
@@ -1047,9 +1070,9 @@ impl MultiWorkspace {
                 return Ok(());
             }
 
-            cx.update(|cx| {
+            cx.update(|_, cx| {
                 Workspace::new_local(paths, app_state, None, None, None, OpenMode::NewWindow, cx)
-            })
+            })?
             .await?;
 
             Ok(())
@@ -1777,6 +1800,11 @@ impl MultiWorkspace {
             return Task::ready(Ok(false));
         }
 
+        let items = workspaces
+            .iter()
+            .flat_map(|workspace| workspace.read(cx).items(cx).cloned())
+            .collect::<Vec<_>>();
+        let pending_input = complete_pending_input(items, cx);
         let original_active = self.workspace().clone();
         let group_key = original_active.read(cx).project_group_key(cx);
 
@@ -1800,6 +1828,9 @@ impl MultiWorkspace {
         });
 
         cx.spawn_in(window, async move |this, cx| {
+            if let Some(pending_input) = pending_input {
+                pending_input.await?;
+            }
             // Consent phase: run the standard close lifecycle for every
             // workspace being removed. Prompts only; no state changes.
             for workspace in &workspaces {
@@ -1934,7 +1965,15 @@ impl MultiWorkspace {
                 None
             };
 
+            let items = empty_workspace
+                .iter()
+                .flat_map(|workspace| workspace.read(cx).items(cx).cloned())
+                .collect::<Vec<_>>();
+            let pending_input = complete_pending_input(items, cx);
             cx.spawn_in(window, async move |this, cx| {
+                if let Some(pending_input) = pending_input {
+                    pending_input.await?;
+                }
                 if let Some(empty_workspace) = empty_workspace.as_ref() {
                     let should_continue = empty_workspace
                         .update_in(cx, |workspace, window, cx| {
@@ -1973,7 +2012,12 @@ impl MultiWorkspace {
             })
         } else {
             let workspace = self.workspace().clone();
+            let items = workspace.read(cx).items(cx).cloned().collect::<Vec<_>>();
+            let pending_input = complete_pending_input(items, cx);
             cx.spawn_in(window, async move |_this, cx| {
+                if let Some(pending_input) = pending_input {
+                    pending_input.await?;
+                }
                 let should_continue = workspace
                     .update_in(cx, |workspace, window, cx| {
                         workspace.prepare_to_close(crate::CloseIntent::ReplaceWindow, window, cx)

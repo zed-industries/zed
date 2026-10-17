@@ -5525,6 +5525,8 @@ name = "editor_benchmarks"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "assets",
+ "criterion",
  "editor",
  "gpui",
  "gpui_platform",
@@ -5535,7 +5537,9 @@ dependencies = [
  "semver",
  "settings",
  "theme",
+ "theme_settings",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -7471,6 +7475,7 @@ dependencies = [
  "pathfinder_geometry",
  "smallvec",
  "thiserror 2.0.17",
+ "unicode-segmentation",
  "zed-font-kit",
 ]
 
@@ -7690,6 +7695,7 @@ dependencies = [
  "raw-window-handle",
  "scheduler",
  "smallvec",
+ "unicode-segmentation",
  "uuid",
  "windows 0.62.2",
  "windows-core 0.62.2",
@@ -11783,6 +11789,7 @@ checksum = "0cde0dfb48d25d2b4862161a4d5fcc0e3c24367869ad306b0c9ec0073bfed92d"
 dependencies = [
  "bitflags 2.13.1",
  "objc2-core-foundation",
+ "objc2-core-graphics",
 ]
 
 [[package]]

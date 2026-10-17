@@ -1,12 +1,19 @@
-use std::sync::Arc;
+use std::{ops::Range, sync::Arc};
 
-use collections::{HashMap, HashSet};
+use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use futures::{StreamExt as _, future::join_all, stream::FuturesUnordered};
-use gpui::{FontId, MouseButton, SharedString, Task, TaskExt, TextSystem, WeakEntity};
+use futures_lite::future::yield_now;
+use gpui::{FontRun, MouseButton, SharedString, Task, TaskExt, WeakEntity};
 use itertools::Itertools;
-use language::{BufferId, ClientCommand};
-use multi_buffer::{Anchor, BufferOffset, MultiBufferRow, MultiBufferSnapshot, ToPoint as _};
-use project::{CodeAction, TaskSourceKind, lsp_store::code_lens::CodeLensActions};
+use language::{BufferId, BufferSnapshot, ClientCommand};
+use multi_buffer::{
+    Anchor, BufferOffset, ExcerptRange, MultiBufferRow, MultiBufferSnapshot, ToPoint as _,
+};
+use parking_lot::Mutex;
+use project::{
+    CodeAction, TaskSourceKind,
+    lsp_store::code_lens::{CodeLensActionId, CodeLensActions, CodeLensResolveTask},
+};
 use task::TaskContext;
 use text::ToOffset as _;
 
@@ -23,16 +30,18 @@ use crate::{
 static EMPTY_LENS_FALLBACK_TITLE: SharedString = SharedString::new_static("0 references");
 const CODE_LENS_SEPARATOR: &str = " | ";
 const CODE_LENS_FONT_SCALE: f32 = 0.9;
+const CODE_LENS_RESOLVE_BATCH_SIZE: usize = 32;
 
 #[derive(Clone, Debug)]
 struct CodeLensLine {
     position: Anchor,
     indent_column: u32,
-    items: Vec<CodeLensItem>,
+    items: Arc<Mutex<Vec<CodeLensItem>>>,
 }
 
 #[derive(Clone, Debug)]
 struct CodeLensItem {
+    id: CodeLensActionId,
     title: Option<SharedString>,
     action: CodeAction,
 }
@@ -41,11 +50,14 @@ pub(super) struct CodeLensBlock {
     block_id: CustomBlockId,
     anchor: Anchor,
     line: CodeLensLine,
+    pending_line: Option<CodeLensLine>,
 }
 
 pub(super) struct CodeLensState {
     pub(super) blocks: HashMap<BufferId, Vec<CodeLensBlock>>,
     actions: HashMap<BufferId, CodeLensActions>,
+    indices: HashMap<BufferId, CodeLensIndex>,
+    pending_resolves: HashMap<(BufferId, CodeLensActionId), CodeLensResolveTask>,
     resolve_task: Task<()>,
 }
 
@@ -54,9 +66,31 @@ impl Default for CodeLensState {
         Self {
             blocks: HashMap::default(),
             actions: HashMap::default(),
+            indices: HashMap::default(),
+            pending_resolves: HashMap::default(),
             resolve_task: Task::ready(()),
         }
     }
+}
+
+struct CodeLensIndex {
+    positions: Arc<[(text::Anchor, CodeLensActionId)]>,
+    items: HashMap<CodeLensActionId, (usize, usize)>,
+    edit_count: usize,
+}
+
+struct VisibleLensRow {
+    buffer_id: BufferId,
+    lenses: Vec<CodeLensActionId>,
+    next: usize,
+    remaining: usize,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LensSlot {
+    Displayed,
+    Unresolved,
+    Hidden,
 }
 
 pub(super) fn try_handle_client_command(
@@ -304,7 +338,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let mut all_lenses = Vec::new();
-        for (_, action) in actions.iter().sorted_by_key(|(id, _)| **id) {
+        for (id, action) in actions.iter().sorted_by_key(|(id, _)| **id) {
             let Some(position) = snapshot.anchor_in_excerpt(action.range.start) else {
                 continue;
             };
@@ -317,6 +351,7 @@ impl Editor {
                 all_lenses.push((
                     position,
                     CodeLensItem {
+                        id: *id,
                         title,
                         action: action.clone(),
                     },
@@ -335,33 +370,37 @@ impl Editor {
         let mut kept_blocks = Vec::new();
         let mut renderers_to_replace = HashMap::default();
         let mut blocks_to_remove = HashSet::default();
-        let mut covered_rows = HashSet::default();
 
-        for old in old_blocks {
+        for mut old in old_blocks {
             let row = MultiBufferRow(old.anchor.to_point(snapshot).row);
             let Some(new_line) = new_lines_by_row.remove(&row) else {
                 blocks_to_remove.insert(old.block_id);
                 continue;
             };
-            covered_rows.insert(row);
             let new_all_pending = new_line
                 .items
+                .lock()
                 .iter()
                 .all(|item| item.title.is_none() && !item.action.resolved);
             let old_has_rendered = old
                 .line
                 .items
+                .lock()
                 .iter()
                 .any(|item| displayed_title(item).is_some());
             if new_all_pending && old_has_rendered {
+                old.pending_line = Some(new_line);
                 kept_blocks.push(old);
                 continue;
             }
             if rendered_text_matches(&old.line, &new_line) {
+                *old.line.items.lock() = std::mem::take(&mut *new_line.items.lock());
+                old.pending_line = None;
                 kept_blocks.push(old);
             } else {
                 let mut updated = old;
                 updated.line = new_line.clone();
+                updated.pending_line = None;
                 renderers_to_replace.insert(
                     updated.block_id,
                     build_code_lens_renderer(new_line, editor_handle.clone()),
@@ -371,10 +410,7 @@ impl Editor {
         }
 
         let mut to_insert = Vec::new();
-        for (row, new_line) in new_lines_by_row {
-            if covered_rows.contains(&row) {
-                continue;
-            }
+        for new_line in new_lines_by_row.into_values() {
             let anchor = new_line.position;
             let props = BlockProperties {
                 placement: BlockPlacement::Above(anchor),
@@ -405,11 +441,43 @@ impl Editor {
                     block_id,
                     anchor,
                     line,
+                    pending_line: None,
                 });
             }
         }
 
         let code_lens = self.code_lens.get_or_insert_with(CodeLensState::default);
+        match snapshot.buffer_for_id(buffer_id) {
+            Some(buffer_snapshot) if !actions.is_empty() => {
+                let positions = actions
+                    .iter()
+                    .map(|(lens_id, action)| {
+                        let anchor = action.range.start;
+                        (anchor.to_offset(buffer_snapshot), *lens_id, anchor)
+                    })
+                    .sorted_unstable_by_key(|(offset, lens_id, _)| (*offset, *lens_id))
+                    .map(|(_, lens_id, anchor)| (anchor, lens_id))
+                    .collect::<Arc<[_]>>();
+                let mut items = HashMap::default();
+                for (block_index, block) in kept_blocks.iter().enumerate() {
+                    let line = block.pending_line.as_ref().unwrap_or(&block.line);
+                    for (item_index, item) in line.items.lock().iter().enumerate() {
+                        items.insert(item.id, (block_index, item_index));
+                    }
+                }
+                code_lens.indices.insert(
+                    buffer_id,
+                    CodeLensIndex {
+                        positions,
+                        items,
+                        edit_count: snapshot.edit_count(),
+                    },
+                );
+            }
+            _ => {
+                code_lens.indices.remove(&buffer_id);
+            }
+        }
         if actions.is_empty() {
             code_lens.actions.remove(&buffer_id);
         } else {
@@ -463,100 +531,297 @@ impl Editor {
     }
 
     pub(super) fn resolve_visible_code_lenses(&mut self, cx: &mut Context<Self>) {
-        if !self.lsp_data_enabled() || self.code_lens.is_none() {
-            return;
-        }
-        let Some(project) = self.project.clone() else {
+        let Some(code_lens) = self.code_lens.as_mut() else {
             return;
         };
-
+        code_lens.resolve_task = Task::ready(());
+        if !self.lsp_data_enabled() || self.project.is_none() {
+            return;
+        }
         let Some(max_items_per_row) = self.max_visible_code_lens_items(cx) else {
             return;
         };
-        let lsp_store = project.read(cx).lsp_store();
 
-        let mut pending_resolves = Vec::new();
-        for (buffer_snapshot, visible_range, _) in self.visible_buffer_ranges(cx) {
-            let buffer_id = buffer_snapshot.remote_id();
-            let Some(buffer) = self.buffer.read(cx).buffer(buffer_id) else {
-                continue;
-            };
-            let Some(actions) = self
-                .code_lens
-                .as_ref()
-                .and_then(|state| state.actions.get(&buffer_id))
-            else {
-                continue;
-            };
-            let mut items_per_row = HashMap::<u32, usize>::default();
-            for (lens_id, action) in actions.iter().sorted_by_key(|(id, _)| **id) {
-                let project::LspAction::CodeLens(lens) = &action.lsp_action else {
-                    continue;
-                };
-                let action_offset = action.range.start.to_offset(&buffer_snapshot);
-                if action_offset < visible_range.start.0 || action_offset > visible_range.end.0 {
-                    continue;
+        let inputs = self
+            .visible_buffer_ranges(cx)
+            .into_iter()
+            .filter_map(|(snapshot, range, _)| {
+                let positions = self
+                    .code_lens
+                    .as_ref()?
+                    .indices
+                    .get(&snapshot.remote_id())?
+                    .positions
+                    .clone();
+                Some((snapshot, range, positions))
+            })
+            .collect::<Vec<_>>();
+        let rows = cx.background_spawn(async move {
+            let mut lenses_by_row = BTreeMap::<(BufferId, u32), Vec<CodeLensActionId>>::default();
+            for (snapshot, range, positions) in inputs {
+                let first = positions
+                    .partition_point(|(anchor, _)| anchor.to_offset(&snapshot) < range.start.0);
+                for (index, (anchor, lens_id)) in positions[first..].iter().enumerate() {
+                    let offset = anchor.to_offset(&snapshot);
+                    if offset > range.end.0 {
+                        break;
+                    }
+                    lenses_by_row
+                        .entry((snapshot.remote_id(), snapshot.offset_to_point(offset).row))
+                        .or_default()
+                        .push(*lens_id);
+                    if index % CODE_LENS_RESOLVE_BATCH_SIZE == CODE_LENS_RESOLVE_BATCH_SIZE - 1 {
+                        yield_now().await;
+                    }
                 }
-                let row = buffer_snapshot.offset_to_point(action_offset).row;
-                let row_items = items_per_row.entry(row).or_default();
-                *row_items += 1;
-                if *row_items > max_items_per_row || action.resolved || lens.command.is_some() {
-                    continue;
-                }
-                let resolve_task = lsp_store.update(cx, |lsp_store, cx| {
-                    lsp_store.resolve_code_lens(&buffer, action.server_id, *lens_id, cx)
-                });
-                pending_resolves.push((buffer_id, resolve_task));
             }
-        }
-        if pending_resolves.is_empty() {
-            return;
-        }
+            let rows = lenses_by_row
+                .into_iter()
+                .map(|((buffer_id, _), mut lenses)| {
+                    lenses.sort_unstable();
+                    lenses.dedup();
+                    VisibleLensRow {
+                        buffer_id,
+                        next: 0,
+                        remaining: max_items_per_row,
+                        lenses,
+                    }
+                })
+                .collect::<Vec<_>>();
+            let queue = (0..rows.len()).collect::<VecDeque<_>>();
+            (rows, queue)
+        });
 
         let code_lens = self.code_lens.get_or_insert_with(CodeLensState::default);
+        let mut resolves = code_lens
+            .pending_resolves
+            .iter()
+            .map(|(&(buffer_id, lens_id), task)| {
+                await_code_lens_resolve(buffer_id, lens_id, task.clone())
+            })
+            .collect::<FuturesUnordered<_>>();
         code_lens.resolve_task = cx.spawn(async move |editor, cx| {
-            let mut resolves_in_progress = pending_resolves
-                .into_iter()
-                .map(|(buffer_id, task)| async move { (buffer_id, task.await) })
-                .collect::<FuturesUnordered<_>>();
-            while let Some((buffer_id, resolve_result)) = resolves_in_progress.next().await {
-                let Some((resolved_id, resolved)) = resolve_result else {
-                    continue;
-                };
-                editor
+            let (mut rows, mut queue) = rows.await;
+            let mut resolving_rows = HashMap::default();
+            loop {
+                yield_now().await;
+                if editor
                     .update(cx, |editor, cx| {
-                        let snapshot = editor.buffer().read(cx).snapshot(cx);
-                        let Some(mut actions) = editor
-                            .code_lens
-                            .as_ref()
-                            .and_then(|state| state.actions.get(&buffer_id))
-                            .cloned()
-                        else {
-                            return;
-                        };
-                        if let Some(slot) = actions.get_mut(&resolved_id) {
-                            *slot = resolved;
+                        let visible_ranges = editor.visible_buffer_ranges(cx);
+                        for _ in 0..CODE_LENS_RESOLVE_BATCH_SIZE {
+                            if resolves.len() == CODE_LENS_RESOLVE_BATCH_SIZE {
+                                break;
+                            }
+                            let Some(row_index) = queue.pop_front() else {
+                                break;
+                            };
+                            let row = &mut rows[row_index];
+                            if row.remaining == 0 {
+                                continue;
+                            }
+                            let Some(&lens_id) = row.lenses.get(row.next) else {
+                                continue;
+                            };
+                            row.next += 1;
+                            let (slot, task) = editor.resolve_code_lens_candidate(
+                                row.buffer_id,
+                                lens_id,
+                                &visible_ranges,
+                                cx,
+                            );
+                            if slot != LensSlot::Hidden {
+                                row.remaining -= 1;
+                            }
+                            if slot == LensSlot::Unresolved {
+                                resolving_rows.insert((row.buffer_id, lens_id), row_index);
+                            }
+                            if let Some(task) = task {
+                                resolves.push(await_code_lens_resolve(
+                                    row.buffer_id,
+                                    lens_id,
+                                    task,
+                                ));
+                            }
+                            if row.remaining > 0 && row.next < row.lenses.len() {
+                                queue.push_back(row_index);
+                            }
                         }
-                        editor.apply_lens_actions_for_buffer(buffer_id, actions, &snapshot, cx);
                     })
-                    .ok();
+                    .is_err()
+                {
+                    return;
+                }
+                if !queue.is_empty() && resolves.len() < CODE_LENS_RESOLVE_BATCH_SIZE {
+                    continue;
+                }
+                let Some((buffer_id, lens_id, result)) = resolves.next().await else {
+                    return;
+                };
+                let row_index = resolving_rows.remove(&(buffer_id, lens_id));
+                if result.is_none()
+                    && let Some(row_index) = row_index
+                {
+                    let row = &mut rows[row_index];
+                    if row.remaining == 0 && row.next < row.lenses.len() {
+                        queue.push_back(row_index);
+                    }
+                    row.remaining += 1;
+                }
+                if editor
+                    .update(cx, |editor, cx| {
+                        if let Some(code_lens) = &mut editor.code_lens {
+                            code_lens.pending_resolves.remove(&(buffer_id, lens_id));
+                        }
+                        if let Some((resolved_id, resolved)) = result {
+                            editor.apply_resolved_code_lens(buffer_id, resolved_id, resolved, cx);
+                        }
+                    })
+                    .is_err()
+                {
+                    return;
+                }
             }
         });
     }
 
+    fn resolve_code_lens_candidate(
+        &mut self,
+        buffer_id: BufferId,
+        lens_id: CodeLensActionId,
+        visible_ranges: &[(
+            BufferSnapshot,
+            Range<BufferOffset>,
+            ExcerptRange<text::Anchor>,
+        )],
+        cx: &mut Context<Self>,
+    ) -> (LensSlot, Option<CodeLensResolveTask>) {
+        let Some(code_lens) = self.code_lens.as_mut() else {
+            return (LensSlot::Hidden, None);
+        };
+        let Some(action) = code_lens
+            .actions
+            .get(&buffer_id)
+            .and_then(|actions| actions.get(&lens_id))
+        else {
+            return (LensSlot::Hidden, None);
+        };
+        let slot = lens_slot(action);
+        if slot != LensSlot::Unresolved {
+            return (slot, None);
+        }
+        if !visible_ranges.iter().any(|(snapshot, range, _)| {
+            snapshot.remote_id() == buffer_id
+                && (range.start.0..=range.end.0).contains(&action.range.start.to_offset(snapshot))
+        }) {
+            return (LensSlot::Hidden, None);
+        }
+        if code_lens
+            .pending_resolves
+            .contains_key(&(buffer_id, lens_id))
+        {
+            return (LensSlot::Unresolved, None);
+        }
+        let Some(buffer) = self.buffer.read(cx).buffer(buffer_id) else {
+            return (LensSlot::Hidden, None);
+        };
+        let Some(project) = &self.project else {
+            return (LensSlot::Hidden, None);
+        };
+        let server_id = action.server_id;
+        let task = project.read(cx).lsp_store().update(cx, |lsp_store, cx| {
+            lsp_store.resolve_code_lens(&buffer, server_id, lens_id, cx)
+        });
+        code_lens
+            .pending_resolves
+            .insert((buffer_id, lens_id), task.clone());
+        (LensSlot::Unresolved, Some(task))
+    }
+
+    fn apply_resolved_code_lens(
+        &mut self,
+        buffer_id: BufferId,
+        resolved_id: CodeLensActionId,
+        resolved: CodeAction,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.buffer().read(cx).snapshot(cx);
+        let Some(code_lens) = &mut self.code_lens else {
+            return;
+        };
+        let Some(index) = code_lens.indices.get(&buffer_id) else {
+            return;
+        };
+        if index.edit_count != snapshot.edit_count() {
+            let Some(mut actions) = code_lens.actions.remove(&buffer_id) else {
+                return;
+            };
+            if let Some(slot) = actions.get_mut(&resolved_id) {
+                *slot = resolved;
+            }
+            self.apply_lens_actions_for_buffer(buffer_id, actions, &snapshot, cx);
+            return;
+        }
+        let Some(&(block_index, item_index)) = index.items.get(&resolved_id) else {
+            return;
+        };
+        let Some(action) = code_lens
+            .actions
+            .get_mut(&buffer_id)
+            .and_then(|actions| actions.get_mut(&resolved_id))
+        else {
+            return;
+        };
+        *action = resolved.clone();
+        let Some(block) = code_lens
+            .blocks
+            .get_mut(&buffer_id)
+            .and_then(|blocks| blocks.get_mut(block_index))
+        else {
+            return;
+        };
+        let replace_renderer = if let Some(line) = block.pending_line.take() {
+            block.line = line;
+            true
+        } else {
+            false
+        };
+        if let Some(item) = block.line.items.lock().get_mut(item_index) {
+            item.title = match &resolved.lsp_action {
+                project::LspAction::CodeLens(lens) => lens
+                    .command
+                    .as_ref()
+                    .filter(|command| !command.title.is_empty())
+                    .map(|command| SharedString::from(&command.title)),
+                _ => None,
+            };
+            item.action = resolved;
+        }
+        if replace_renderer {
+            let block_id = block.block_id;
+            let renderer = build_code_lens_renderer(block.line.clone(), cx.entity().downgrade());
+            self.replace_blocks(HashMap::from_iter([(block_id, renderer)]), None, cx);
+        }
+        cx.notify();
+    }
+
     fn max_visible_code_lens_items(&mut self, cx: &mut Context<Self>) -> Option<usize> {
-        let visible_columns = self.visible_column_count()?;
-        let font = self.style(cx).text.font();
-        let text_system = cx.text_system();
-        let font_id = text_system.resolve_font(&font);
-        let font_size = px(16.);
-        let em_advance = text_system.em_advance(font_id, font_size).ok()?;
-        let separator_width =
-            code_lens_separator_width(text_system, font_id, font_size * CODE_LENS_FONT_SCALE)?;
-        Some(max_code_lens_items(
-            em_advance * visible_columns as f32,
-            separator_width,
-        ))
+        let display_snapshot = self.display_snapshot(cx);
+        let right_edge = *self.visible_x_range(&display_snapshot, cx)?.end();
+        let (font, font_size) = self.display_map.read(cx).font_with_size(cx);
+        let wrapper = cx
+            .text_system()
+            .line_wrapper(font.clone(), *font_size * CODE_LENS_FONT_SCALE);
+        let separator_width = wrapper
+            .layout_line(
+                CODE_LENS_SEPARATOR,
+                &[FontRun {
+                    len: CODE_LENS_SEPARATOR.len(),
+                    font_id: wrapper.font_id(),
+                }],
+            )
+            .width;
+        (separator_width > Pixels::ZERO)
+            .then(|| (right_edge / f64::from(separator_width)).max(0.).floor() as usize + 1)
     }
 
     pub(super) fn clear_code_lenses(&mut self, cx: &mut Context<Self>) {
@@ -574,6 +839,39 @@ impl Editor {
         }
         self.refresh_code_lens_task = Task::ready(());
     }
+
+    fn activate_code_lens(
+        &mut self,
+        position: Anchor,
+        action: CodeAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.input_is_deferred(cx) {
+            self.defer_input(
+                move |editor, window, cx| editor.activate_code_lens(position, action, window, cx),
+                window,
+                cx,
+            );
+            return;
+        }
+        self.change_selections(SelectionEffects::default(), window, cx, |selections| {
+            selections.select_anchor_ranges([position..position]);
+        });
+        if let Some(workspace) = self.workspace() {
+            if try_handle_client_command(&action, self, &workspace, window, cx) {
+                return;
+            }
+            let project = workspace.read(cx).project().clone();
+            if let Some(buffer) = self.buffer().read(cx).buffer(action.range.start.buffer_id) {
+                project
+                    .update(cx, |project, cx| {
+                        project.apply_code_action(buffer, action, true, cx)
+                    })
+                    .detach_and_log_err(cx);
+            }
+        }
+    }
 }
 
 /// Whether two lens lines would render the same on screen — same indent
@@ -582,12 +880,15 @@ impl Editor {
 /// changed; the captured [`CodeAction`] inside the existing renderer keeps
 /// pointing at the right spot because its anchors track buffer edits.
 fn rendered_text_matches(a: &CodeLensLine, b: &CodeLensLine) -> bool {
-    a.indent_column == b.indent_column
-        && a.items.len() == b.items.len()
-        && a.items
-            .iter()
-            .zip(&b.items)
-            .all(|(x, y)| displayed_title(x) == displayed_title(y))
+    a.indent_column == b.indent_column && {
+        let left = a.items.lock();
+        let right = b.items.lock();
+        left.len() == right.len()
+            && left
+                .iter()
+                .zip(right.iter())
+                .all(|(left, right)| displayed_title(left) == displayed_title(right))
+    }
 }
 
 /// Text rendered for a code lens item, or `None` if it should not render
@@ -609,10 +910,11 @@ fn group_lenses_by_row(
             MultiBufferRow(row)
         })
         .into_iter()
-        .sorted_by_key(|(row, _)| *row)
         .filter_map(|(row, entries)| {
             let position = entries.first()?.0;
-            let items = entries.into_iter().map(|(_, item)| item).collect();
+            let items = Arc::new(Mutex::new(
+                entries.into_iter().map(|(_, item)| item).collect(),
+            ));
             let indent_column = snapshot.indent_size_for_line(row).len;
             Some(CodeLensLine {
                 position,
@@ -622,50 +924,51 @@ fn group_lenses_by_row(
         })
 }
 
-fn code_lens_separator_width(
-    text_system: &TextSystem,
-    font_id: FontId,
-    font_size: Pixels,
-) -> Option<Pixels> {
-    CODE_LENS_SEPARATOR
-        .chars()
-        .try_fold(Pixels::ZERO, |width, character| {
-            Some(
-                width
-                    + text_system
-                        .advance(font_id, font_size, character)
-                        .ok()?
-                        .width,
-            )
-        })
-        .filter(|width| *width > Pixels::ZERO)
+async fn await_code_lens_resolve(
+    buffer_id: BufferId,
+    lens_id: CodeLensActionId,
+    task: CodeLensResolveTask,
+) -> (
+    BufferId,
+    CodeLensActionId,
+    Option<(CodeLensActionId, CodeAction)>,
+) {
+    (buffer_id, lens_id, task.await)
 }
 
-fn max_code_lens_items(available_width: Pixels, separator_width: Pixels) -> usize {
-    (available_width / separator_width).max(0.).floor() as usize + 1
+fn lens_slot(action: &CodeAction) -> LensSlot {
+    let project::LspAction::CodeLens(lens) = &action.lsp_action else {
+        return LensSlot::Hidden;
+    };
+    let has_title = lens
+        .command
+        .as_ref()
+        .is_some_and(|command| !command.title.is_empty());
+    if has_title || action.resolved {
+        LensSlot::Displayed
+    } else if lens.command.is_none() {
+        LensSlot::Unresolved
+    } else {
+        LensSlot::Hidden
+    }
 }
 
 fn build_code_lens_renderer(line: CodeLensLine, editor: WeakEntity<Editor>) -> RenderBlock {
     Arc::new(move |cx| {
-        let text_style = &cx.editor_style.text;
-        let font = text_style.font();
-        let font_size = text_style.font_size.to_pixels(cx.window.rem_size()) * CODE_LENS_FONT_SCALE;
-        let font_id = cx.window.text_system().resolve_font(&font);
-        let max_items = code_lens_separator_width(cx.window.text_system(), font_id, font_size)
-            .map_or(line.items.len(), |separator_width| {
-                max_code_lens_items(cx.max_width, separator_width)
-            });
         let resolved_items = line
             .items
+            .lock()
             .iter()
             .filter_map(|item| {
                 let title = displayed_title(item)?;
                 let action = item.title.is_some().then(|| item.action.clone());
-                Some((title, action))
+                Some((title.clone(), action))
             })
-            .take(max_items)
             .collect::<Vec<_>>();
         let mut children = Vec::with_capacity((2 * resolved_items.len()).saturating_sub(1));
+        let text_style = &cx.editor_style.text;
+        let font = text_style.font();
+        let font_size = text_style.font_size.to_pixels(cx.window.rem_size()) * CODE_LENS_FONT_SCALE;
         let colors = cx.app.theme().colors();
         let code_lens_color = colors
             .editor_code_lens_foreground
@@ -689,7 +992,7 @@ fn build_code_lens_renderer(line: CodeLensLine, editor: WeakEntity<Editor>) -> R
                     .font(font.clone())
                     .text_size(font_size)
                     .text_color(code_lens_color)
-                    .child(title.clone())
+                    .child(title)
                     .when_some(action, |code_lens_div, action| {
                         let position = line.position;
                         let editor_handle = editor.clone();
@@ -707,38 +1010,12 @@ fn build_code_lens_renderer(line: CodeLensLine, editor: WeakEntity<Editor>) -> R
                                 move |_event, window, cx| {
                                     if let Some(editor) = editor_handle.upgrade() {
                                         editor.update(cx, |editor, cx| {
-                                            editor.change_selections(
-                                                SelectionEffects::default(),
+                                            editor.activate_code_lens(
+                                                position,
+                                                action.clone(),
                                                 window,
                                                 cx,
-                                                |s| {
-                                                    s.select_anchor_ranges([position..position]);
-                                                },
                                             );
-
-                                            let action = action.clone();
-                                            if let Some(workspace) = editor.workspace() {
-                                                if try_handle_client_command(
-                                                    &action, editor, &workspace, window, cx,
-                                                ) {
-                                                    return;
-                                                }
-
-                                                let project = workspace.read(cx).project().clone();
-                                                if let Some(buffer) = editor
-                                                    .buffer()
-                                                    .read(cx)
-                                                    .buffer(action.range.start.buffer_id)
-                                                {
-                                                    project
-                                                        .update(cx, |project, cx| {
-                                                            project.apply_code_action(
-                                                                buffer, action, true, cx,
-                                                            )
-                                                        })
-                                                        .detach_and_log_err(cx);
-                                                }
-                                            }
                                         });
                                     }
                                 }
@@ -768,9 +1045,10 @@ mod tests {
     };
 
     use collections::HashSet;
-    use futures::StreamExt;
-    use gpui::TestAppContext;
+    use futures::{FutureExt as _, StreamExt};
+    use gpui::{TestAppContext, VisualTestContext, px};
     use indoc::indoc;
+    use language::language_settings::SoftWrap;
     use settings::CodeLens;
     use util::path;
 
@@ -781,8 +1059,69 @@ mod tests {
     use crate::{
         Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT,
         editor_tests::{init_test, update_test_editor_settings},
-        test::editor_lsp_test_context::EditorLspTestContext,
+        test::{
+            editor_lsp_test_context::EditorLspTestContext, editor_test_context::EditorTestContext,
+        },
     };
+
+    #[gpui::test]
+    async fn test_captured_input_code_lens_ordering(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorTestContext::new(cx).await;
+        let completion = cx.update_editor(|editor, window, cx| {
+            editor.set_soft_wrap_mode(SoftWrap::None, cx);
+            editor.set_text(
+                format!("ab\n{}\ntarget\ntail", "x".repeat(2_000)),
+                window,
+                cx,
+            );
+            editor.change_selections(
+                crate::SelectionEffects::no_scroll(),
+                window,
+                cx,
+                |selections| {
+                    selections.select_ranges([Point::new(0, 1)..Point::new(0, 1)]);
+                },
+            );
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let position = snapshot.anchor_after(Point::new(2, 0));
+            let buffer_position = snapshot
+                .anchor_to_buffer_anchor(position)
+                .expect("lens position")
+                .0;
+            let action = project::CodeAction {
+                server_id: lsp::LanguageServerId(0),
+                range: buffer_position..buffer_position,
+                lsp_action: project::LspAction::Command(lsp::Command {
+                    title: String::from("lens"),
+                    command: String::from("lens"),
+                    arguments: None,
+                }),
+                resolved: true,
+            };
+            editor.move_down(&crate::MoveDown, window, cx);
+            assert!(editor.input_is_deferred(cx));
+            editor.activate_code_lens(position, action, window, cx);
+            assert_eq!(
+                editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx))
+                    .head(),
+                Point::new(0, 1)
+            );
+            editor.input_completion(cx)
+        });
+        completion.await.expect("lens input completed");
+        cx.editor(|editor, _, cx| {
+            assert_eq!(
+                editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx))
+                    .head(),
+                Point::new(2, 0)
+            );
+        });
+    }
 
     #[gpui::test]
     async fn test_code_lens_blocks(cx: &mut TestAppContext) {
@@ -1891,16 +2230,65 @@ mod tests {
             "/*{}*/function f() {{}}\n",
             "x".repeat(lens_column as usize - 4)
         );
-        let (resolved, _) = resolve_single_row_code_lenses(text, vec![lens_column], cx).await;
+        let (resolved, _) =
+            resolve_single_row_code_lenses(text, vec![lens_column], ViewportChange::None, 0, cx)
+                .await;
         assert_eq!(resolved, 1);
     }
 
     #[gpui::test]
-    async fn test_code_lens_resolve_is_bounded_by_visible_items(cx: &mut TestAppContext) {
+    async fn test_code_lens_failed_resolves_do_not_use_visible_slots(cx: &mut TestAppContext) {
+        let lens_columns = (0..2_000).map(|index| index * 2).collect::<Vec<_>>();
+        let text = format!("{}\n", "x".repeat(5_000));
+        let failing_resolves = 5;
+        let (resolved, visible_columns) = resolve_single_row_code_lenses(
+            text,
+            lens_columns,
+            ViewportChange::None,
+            failing_resolves,
+            cx,
+        )
+        .await;
+        let separator_columns = CODE_LENS_SEPARATOR.len() as f64 * 0.9;
+        assert_eq!(
+            resolved,
+            (visible_columns / separator_columns).floor() as usize + 1 + failing_resolves
+        );
+    }
+
+    #[gpui::test]
+    async fn test_code_lens_failed_resolves_retry_on_later_visibility_passes(
+        cx: &mut TestAppContext,
+    ) {
+        let text = format!("{}\n", "x".repeat(5_000));
+        let (resolved, _) =
+            resolve_single_row_code_lenses(text, vec![0], ViewportChange::Scroll(600.), 1, cx)
+                .await;
+        assert_eq!(resolved, 2);
+    }
+
+    #[gpui::test]
+    async fn test_code_lens_failed_resolves_stop_after_their_row_leaves_view(
+        cx: &mut TestAppContext,
+    ) {
+        let lens_columns = (0..2_000).map(|index| index * 2).collect::<Vec<_>>();
+        let text = format!("{}{}", "x".repeat(5_000), "\n".repeat(500));
+        resolve_single_row_code_lenses(
+            text,
+            lens_columns,
+            ViewportChange::ScrollAwayWhileResolving,
+            2_000,
+            cx,
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_code_lens_resolve_follows_viewport_growth(cx: &mut TestAppContext) {
         let lens_columns = (0..2_000).map(|index| index * 2).collect::<Vec<_>>();
         let text = format!("{}\n", "x".repeat(5_000));
         let (resolved, visible_columns) =
-            resolve_single_row_code_lenses(text, lens_columns, cx).await;
+            resolve_single_row_code_lenses(text, lens_columns, ViewportChange::Widen, 0, cx).await;
         let separator_columns = CODE_LENS_SEPARATOR.len() as f64 * 0.9;
         assert_eq!(
             resolved,
@@ -1908,9 +2296,45 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_code_lens_resolve_follows_horizontal_scroll(cx: &mut TestAppContext) {
+        let lens_columns = (0..2_000).map(|index| index * 2).collect::<Vec<_>>();
+        let text = format!("{}\n", "x".repeat(5_000));
+        let scroll_columns = 600.;
+        let (resolved, visible_columns) = resolve_single_row_code_lenses(
+            text,
+            lens_columns,
+            ViewportChange::Scroll(scroll_columns),
+            0,
+            cx,
+        )
+        .await;
+        let separator_columns = CODE_LENS_SEPARATOR.len() as f64 * 0.9;
+        assert_eq!(
+            resolved,
+            ((scroll_columns + visible_columns) / separator_columns).floor() as usize + 1
+        );
+    }
+
+    #[gpui::test]
+    async fn test_code_lens_dense_row_resolves_in_bounded_batches(cx: &mut TestAppContext) {
+        let lens_columns = (0..97).rev().map(|index| index * 2).collect::<Vec<_>>();
+        let (resolved, _) = resolve_single_row_code_lenses(
+            format!("{}{}x", "x".repeat(5_000), "\n".repeat(100)),
+            lens_columns,
+            ViewportChange::BoundedScroll(600.),
+            0,
+            cx,
+        )
+        .await;
+        assert_eq!(resolved, 98);
+    }
+
     async fn resolve_single_row_code_lenses(
         text: String,
         lens_columns: Vec<u32>,
+        viewport_change: ViewportChange,
+        failing_resolves: usize,
         cx: &mut TestAppContext,
     ) -> (usize, f64) {
         init_test(cx, |_| {});
@@ -1918,56 +2342,29 @@ mod tests {
             settings.code_lens = Some(CodeLens::On);
         });
         let resolved = Arc::new(Mutex::new(0));
+        let (release_tx, release_rx) = futures::channel::oneshot::channel::<()>();
+        let release = release_rx.shared();
+        let bounded = matches!(viewport_change, ViewportChange::BoundedScroll(_));
+        let expected_columns = bounded.then(|| lens_columns.clone());
+        let hold_resolves =
+            bounded || matches!(viewport_change, ViewportChange::ScrollAwayWhileResolving);
 
-        let fs = project::FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/dir"), serde_json::json!({ "main.ts": text }))
-            .await;
-
-        let project = project::Project::test(fs, [path!("/dir").as_ref()], cx).await;
-        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
-            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
-        });
-        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
-
-        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-        language_registry.add(Arc::new(language::Language::new(
-            language::LanguageConfig {
-                name: "TypeScript".into(),
-                matcher: (language::LanguageMatcher {
-                    path_suffixes: vec!["ts".into()],
-                    ..language::LanguageMatcher::default()
-                })
-                .into(),
-                ..language::LanguageConfig::default()
+        let mut context = EditorLspTestContext::new_typescript(
+            lsp::ServerCapabilities {
+                code_lens_provider: Some(lsp::CodeLensOptions {
+                    resolve_provider: Some(true),
+                }),
+                ..lsp::ServerCapabilities::default()
             },
-            Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
-        )));
-
-        let mut fake_servers = language_registry.register_fake_lsp(
-            "TypeScript",
-            language::FakeLspAdapter {
-                capabilities: lsp::ServerCapabilities {
-                    code_lens_provider: Some(lsp::CodeLensOptions {
-                        resolve_provider: Some(true),
-                    }),
-                    ..lsp::ServerCapabilities::default()
-                },
-                ..language::FakeLspAdapter::default()
-            },
-        );
-
-        workspace
-            .update_in(cx, |workspace, window, cx| {
-                workspace.open_abs_path(
-                    std::path::PathBuf::from(path!("/dir/main.ts")),
-                    workspace::OpenOptions::default(),
-                    window,
-                    cx,
-                )
-            })
-            .await
-            .unwrap();
-        let fake_server = fake_servers.next().await.unwrap();
+            cx,
+        )
+        .await;
+        if let ViewportChange::Widen = viewport_change {
+            context.simulate_resize(gpui::size(px(600.), px(800.)));
+        } else if bounded {
+            context.simulate_resize(gpui::size(px(2_400.), px(800.)));
+        }
+        let fake_server = &context.lsp;
 
         fake_server.set_request_handler::<lsp::request::CodeLensRequest, _, _>(move |_, _| {
             let lens_columns = lens_columns.clone();
@@ -1983,6 +2380,14 @@ mod tests {
                             command: None,
                             data: Some(serde_json::json!({ "column": column })),
                         })
+                        .chain(bounded.then(|| lsp::CodeLens {
+                            range: lsp::Range::new(
+                                lsp::Position::new(100, 0),
+                                lsp::Position::new(100, 1),
+                            ),
+                            command: None,
+                            data: Some(serde_json::json!({ "column": 0 })),
+                        }))
                         .collect(),
                 ))
             }
@@ -1991,11 +2396,29 @@ mod tests {
             let resolved = resolved.clone();
             fake_server.set_request_handler::<lsp::request::CodeLensResolve, _, _>(
                 move |lens, _| {
-                    *resolved.lock().unwrap() += 1;
+                    let request_count = {
+                        let mut resolved = resolved.lock().unwrap();
+                        *resolved += 1;
+                        *resolved
+                    };
+                    let release = release.clone();
                     async move {
+                        if hold_resolves {
+                            release.await.ok();
+                        }
+                        if request_count <= failing_resolves {
+                            return Err(anyhow::anyhow!("Simulated resolve failure"));
+                        }
                         Ok(lsp::CodeLens {
                             command: Some(lsp::Command {
-                                title: "1 reference".to_string(),
+                                title: if bounded {
+                                    format!(
+                                        "lens {}:{}",
+                                        lens.range.start.line, lens.range.start.character
+                                    )
+                                } else {
+                                    "1 reference".to_string()
+                                },
                                 command: "show_refs".to_string(),
                                 arguments: None,
                             }),
@@ -2006,15 +2429,155 @@ mod tests {
             );
         }
 
+        context.set_state(&format!("ˇ{text}"));
+        let editor = context.editor.clone();
+        let cx = &mut context.cx.cx;
+        if bounded {
+            editor.update(cx, |editor, cx| {
+                editor.set_soft_wrap_mode(SoftWrap::None, cx)
+            });
+        }
         cx.executor().advance_clock(Duration::from_millis(500));
         cx.run_until_parked();
 
-        let visible_columns = workspace
-            .update(cx, |workspace, cx| workspace.active_item_as::<Editor>(cx))
-            .and_then(|editor| editor.read_with(cx, |editor, _| editor.visible_column_count()))
-            .expect("a rendered editor");
+        let visible_columns = |cx: &mut VisualTestContext| {
+            editor
+                .read_with(cx, |editor, _| editor.visible_column_count())
+                .expect("a rendered editor")
+        };
+        match viewport_change {
+            ViewportChange::None => {}
+            ViewportChange::Scroll(scroll_columns) => {
+                editor.update_in(cx, |editor, window, cx| {
+                    editor.set_scroll_position(gpui::point(scroll_columns, 0.), window, cx);
+                });
+                cx.executor().advance_clock(Duration::from_millis(500));
+                cx.run_until_parked();
+                let scrolled = editor.update(cx, |editor, cx| editor.scroll_manager.offset(cx).x);
+                assert!(
+                    (scrolled - scroll_columns).abs() < 0.01,
+                    "{scrolled} != {scroll_columns}"
+                );
+            }
+            ViewportChange::BoundedScroll(scroll_columns) => {
+                assert_eq!(*resolved.lock().unwrap(), 32);
+                let positions = editor.read_with(cx, |editor, _| {
+                    editor
+                        .code_lens
+                        .as_ref()
+                        .expect("code lenses enabled")
+                        .indices
+                        .values()
+                        .next()
+                        .expect("a lens index")
+                        .positions
+                        .clone()
+                });
+                editor.update_in(cx, |editor, window, cx| {
+                    editor.move_to_end(&crate::actions::MoveToEnd, window, cx);
+                });
+                cx.executor().advance_clock(Duration::from_millis(500));
+                cx.run_until_parked();
+                assert_eq!(*resolved.lock().unwrap(), 32);
+                release_tx.send(()).expect("resolves are waiting");
+                cx.run_until_parked();
+                assert_eq!(*resolved.lock().unwrap(), 33);
+                editor.update_in(cx, |editor, window, cx| {
+                    editor.set_scroll_position(gpui::point(scroll_columns, 0.), window, cx);
+                });
+                cx.executor().advance_clock(Duration::from_millis(500));
+                cx.run_until_parked();
+                editor.update_in(cx, |editor, window, cx| {
+                    let em_width = f64::from(
+                        editor
+                            .last_position_map
+                            .as_ref()
+                            .expect("painted editor")
+                            .em_layout_width,
+                    );
+                    let expected_x = window.pixel_snap_f64(scroll_columns * em_width) / em_width;
+                    assert_eq!(editor.scroll_position(cx), gpui::point(expected_x, 0.));
+                });
+                editor.read_with(cx, |editor, cx| {
+                    let code_lens = editor.code_lens.as_ref().expect("code lenses enabled");
+                    assert_eq!(code_lens.pending_resolves.len(), 0);
+                    assert!(Arc::ptr_eq(
+                        &positions,
+                        &code_lens
+                            .indices
+                            .values()
+                            .next()
+                            .expect("a lens index")
+                            .positions,
+                    ));
+                    let snapshot = editor.buffer().read(cx).snapshot(cx);
+                    let mut blocks = code_lens.blocks.values().flatten().collect::<Vec<_>>();
+                    blocks.sort_by_key(|block| block.anchor.to_point(&snapshot).row);
+                    assert_eq!(blocks.len(), 2);
+                    assert_eq!(
+                        blocks
+                            .iter()
+                            .map(|block| {
+                                block
+                                    .line
+                                    .items
+                                    .lock()
+                                    .iter()
+                                    .map(|item| {
+                                        displayed_title(item).expect("a resolved title").to_string()
+                                    })
+                                    .collect::<Vec<_>>()
+                            })
+                            .collect::<Vec<_>>(),
+                        vec![
+                            expected_columns
+                                .as_ref()
+                                .expect("expected lens columns")
+                                .iter()
+                                .map(|column| format!("lens 0:{column}"))
+                                .collect::<Vec<_>>(),
+                            vec!["lens 100:0".to_string()],
+                        ],
+                    );
+                });
+            }
+            ViewportChange::Widen => {
+                let narrow_columns = visible_columns(cx);
+                cx.simulate_resize(gpui::size(px(2_400.), px(800.)));
+                cx.run_until_parked();
+                cx.executor().advance_clock(Duration::from_millis(500));
+                cx.run_until_parked();
+                assert!(
+                    visible_columns(cx) > 2. * narrow_columns,
+                    "{} <= 2 * {narrow_columns}",
+                    visible_columns(cx)
+                );
+            }
+            ViewportChange::ScrollAwayWhileResolving => {
+                let requested = *resolved.lock().unwrap();
+                assert!(requested > 0);
+                editor.update_in(cx, |editor, window, cx| {
+                    editor.move_to_end(&crate::actions::MoveToEnd, window, cx);
+                });
+                cx.executor().advance_clock(Duration::from_millis(500));
+                cx.run_until_parked();
+                release_tx.send(()).ok();
+                cx.run_until_parked();
+                cx.executor().advance_clock(Duration::from_millis(500));
+                cx.run_until_parked();
+                assert_eq!(*resolved.lock().unwrap(), requested);
+            }
+        }
         let resolved = *resolved.lock().unwrap();
-        (resolved, visible_columns)
+        (resolved, visible_columns(cx))
+    }
+
+    enum ViewportChange {
+        None,
+        Scroll(f64),
+        BoundedScroll(f64),
+        Widen,
+        ScrollAwayWhileResolving,
     }
 
     fn code_lens_assertion_text(editor: &Editor, cx: &ui::App) -> String {
@@ -2039,6 +2602,7 @@ mod tests {
                 let lens_text = block
                     .line
                     .items
+                    .lock()
                     .iter()
                     .map(|item| {
                         displayed_title(item)

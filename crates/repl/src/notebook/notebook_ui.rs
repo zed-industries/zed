@@ -19,7 +19,7 @@ use log;
 use project::{Project, ProjectEntryId, ProjectPath};
 use settings::Settings as _;
 use ui::{CommonAnimationExt, KeyBinding, Tooltip, prelude::*};
-use workspace::item::{ItemEvent, SaveOptions, TabContentParams};
+use workspace::item::{ItemEvent, SaveOptions, TabContentParams, complete_pending_input};
 use workspace::searchable::SearchableItemHandle;
 use workspace::{Item, ItemHandle, Pane, ProjectItem, ToolbarItemLocation};
 
@@ -1994,6 +1994,23 @@ impl Item for NotebookEditor {
 
     fn is_dirty(&self, cx: &App) -> bool {
         self.has_structural_changes() || self.has_content_changes(cx)
+    }
+
+    fn has_pending_input(&self, cx: &App) -> bool {
+        self.cell_map
+            .values()
+            .filter_map(|cell| cell.editor(cx))
+            .any(|editor| editor.read(cx).has_pending_input(cx))
+    }
+
+    fn pending_input(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let editors = self
+            .cell_map
+            .values()
+            .filter_map(|cell| cell.editor(cx))
+            .map(ItemHandle::boxed_clone)
+            .collect::<Vec<_>>();
+        complete_pending_input(editors, cx).unwrap_or_else(|| Task::ready(Ok(())))
     }
 }
 

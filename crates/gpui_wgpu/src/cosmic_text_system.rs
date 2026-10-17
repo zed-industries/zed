@@ -6,22 +6,23 @@ use cosmic_text::{
 };
 use gpui::{
     Bounds, DevicePixels, FallbackFontClass, Font, FontFallbacks, FontFeatures, FontId,
-    FontMetrics, FontRun, GlyphId, IsZero as _, LineLayout, MissingGlyph, MissingGlyphSink, Pixels,
-    PlatformTextSystem, RenderGlyphParams, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ShapedGlyph,
-    ShapedRun, SharedString, Size, TextRenderingMode, point, size,
+    FontMetrics, FontRun, GlyphId, LineLayout, MissingGlyph, MissingGlyphSink, Pixels,
+    PlatformTextSystem, RenderGlyphParams, RetainedLineLayout, SUBPIXEL_VARIANTS_X,
+    SUBPIXEL_VARIANTS_Y, ShapedGlyph, ShapedRun, SharedString, Size, TextRenderingMode, point,
+    size,
 };
 
 use itertools::Itertools;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, MutexGuard, RwLock};
 use smallvec::SmallVec;
 use std::{borrow::Cow, ops::Range, sync::Arc};
 use swash::{
-    scale::{Render, ScaleContext, Source, StrikeWith},
+    scale::{Render, ScaleContext, Source, StrikeWith, image::Image},
     zeno::{Format, Vector},
 };
 use unicode_segmentation::UnicodeSegmentation;
 
-pub struct CosmicTextSystem(RwLock<CosmicTextSystemState>);
+pub struct CosmicTextSystem(RwLock<CosmicTextSystemState>, Mutex<CosmicTextSystemState>);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct FontKey {
@@ -48,9 +49,12 @@ struct LoadedFontKey {
 
 struct CosmicTextSystemState {
     font_system: FontSystem,
+    font_database_generation: Arc<()>,
+    loaded_fonts_generation: Arc<()>,
     scratch: ShapeBuffer,
     swash_scale_context: ScaleContext,
-    pending_glyph_images: HashMap<RenderGlyphParams, swash::scale::image::Image>,
+    #[cfg(test)]
+    rendered_glyphs: usize,
     /// Contains all already loaded fonts, including all faces. Indexed by `FontId`.
     loaded_fonts: Vec<LoadedFont>,
     loaded_font_ids_by_key: HashMap<LoadedFontKey, FontId>,
@@ -61,6 +65,13 @@ struct CosmicTextSystemState {
     missing_glyph_sink: Option<Arc<dyn MissingGlyphSink>>,
 }
 
+#[derive(Default)]
+struct PreciseLayout {
+    glyph_x_positions: Vec<f64>,
+    width: f64,
+}
+
+#[derive(Clone)]
 struct LoadedFont {
     font: Arc<CosmicTextFont>,
     features: CosmicFontFeatures,
@@ -129,19 +140,7 @@ impl CosmicTextSystem {
     }
 
     pub fn new(system_font_fallback: &str) -> Self {
-        let font_system = FontSystem::new();
-
-        Self(RwLock::new(CosmicTextSystemState {
-            font_system,
-            scratch: ShapeBuffer::default(),
-            swash_scale_context: ScaleContext::new(),
-            pending_glyph_images: HashMap::default(),
-            loaded_fonts: Vec::new(),
-            loaded_font_ids_by_key: HashMap::default(),
-            font_ids_by_family_cache: HashMap::default(),
-            system_font_fallback: system_font_fallback.to_string(),
-            missing_glyph_sink: None,
-        }))
+        Self::with_font_system(FontSystem::new(), system_font_fallback)
     }
 
     pub fn new_without_system_fonts(system_font_fallback: &str) -> Self {
@@ -150,17 +149,87 @@ impl CosmicTextSystem {
             cosmic_text::fontdb::Database::new(),
         );
 
-        Self(RwLock::new(CosmicTextSystemState {
-            font_system,
-            scratch: ShapeBuffer::default(),
-            swash_scale_context: ScaleContext::new(),
-            pending_glyph_images: HashMap::default(),
-            loaded_fonts: Vec::new(),
-            loaded_font_ids_by_key: HashMap::default(),
-            font_ids_by_family_cache: HashMap::default(),
-            system_font_fallback: system_font_fallback.to_string(),
-            missing_glyph_sink: None,
-        }))
+        Self::with_font_system(font_system, system_font_fallback)
+    }
+
+    pub fn layout_line_with_precise_geometry(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        runs: &[FontRun],
+        for_retention: bool,
+    ) -> (LineLayout, Vec<f64>, f64) {
+        let mut precise = PreciseLayout::default();
+        let layout = if for_retention {
+            let mut worker = self.retained_snapshot();
+            let font_count = worker.loaded_fonts.len();
+            let mut layout = worker.layout_line(text, font_size, runs, Some(&mut precise));
+            let font_ids = self.publish_retained_fonts(worker.loaded_fonts.drain(font_count..));
+            drop(worker);
+            for run in &mut layout.runs {
+                if run.font_id.0 >= font_count {
+                    run.font_id = font_ids[run.font_id.0 - font_count];
+                }
+            }
+            layout
+        } else {
+            self.0
+                .write()
+                .layout_line(text, font_size, runs, Some(&mut precise))
+        };
+        (layout, precise.glyph_x_positions, precise.width)
+    }
+
+    fn with_font_system(font_system: FontSystem, system_font_fallback: &str) -> Self {
+        let retained_font_system = FontSystem::new_with_locale_and_db(
+            font_system.locale().to_owned(),
+            font_system.db().clone(),
+        );
+        let state = CosmicTextSystemState::new(font_system, system_font_fallback);
+        let mut worker = CosmicTextSystemState::new(retained_font_system, system_font_fallback);
+        worker.font_database_generation = Arc::clone(&state.font_database_generation);
+        worker.loaded_fonts_generation = Arc::clone(&state.loaded_fonts_generation);
+        Self(RwLock::new(state), Mutex::new(worker))
+    }
+
+    fn retained_snapshot(&self) -> MutexGuard<'_, CosmicTextSystemState> {
+        let mut worker = self.1.lock();
+        let state = self.0.read();
+        if !Arc::ptr_eq(
+            &worker.font_database_generation,
+            &state.font_database_generation,
+        ) {
+            *worker.font_system.db_mut() = state.font_system.db().clone();
+            worker.font_database_generation = Arc::clone(&state.font_database_generation);
+        }
+        if !Arc::ptr_eq(
+            &worker.loaded_fonts_generation,
+            &state.loaded_fonts_generation,
+        ) {
+            worker.loaded_fonts.clone_from(&state.loaded_fonts);
+            worker.loaded_fonts_generation = Arc::clone(&state.loaded_fonts_generation);
+        }
+        worker.missing_glyph_sink = state.missing_glyph_sink.clone();
+        worker
+    }
+
+    fn publish_retained_fonts(&self, fonts: impl Iterator<Item = LoadedFont>) -> Vec<FontId> {
+        fonts
+            .map(|font| {
+                let mut state = self.0.write();
+                if let Some(index) = state
+                    .loaded_fonts
+                    .iter()
+                    .position(|loaded| loaded.font.id() == font.font.id())
+                {
+                    FontId(index)
+                } else {
+                    let font_id = FontId(state.loaded_fonts.len());
+                    state.loaded_fonts_mut().push(font);
+                    font_id
+                }
+            })
+            .collect()
     }
 }
 
@@ -262,6 +331,18 @@ impl PlatformTextSystem for CosmicTextSystem {
         self.0.write().raster_bounds(params)
     }
 
+    fn glyph_raster_bounds_with_image(
+        &self,
+        params: &RenderGlyphParams,
+    ) -> Result<(Bounds<DevicePixels>, Option<Vec<u8>>)> {
+        let image = self.0.write().render_glyph_image(params)?;
+        let bounds = CosmicTextSystemState::glyph_image_bounds(&image);
+        Ok((
+            bounds,
+            Some(CosmicTextSystemState::glyph_image_pixels(params, image)),
+        ))
+    }
+
     fn rasterize_glyph(
         &self,
         params: &RenderGlyphParams,
@@ -271,7 +352,27 @@ impl PlatformTextSystem for CosmicTextSystem {
     }
 
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
-        self.0.write().layout_line(text, font_size, runs)
+        self.0.write().layout_line(text, font_size, runs, None)
+    }
+
+    fn layout_line_for_retention(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        runs: &[FontRun],
+    ) -> RetainedLineLayout {
+        let (layout, positions, width) =
+            self.layout_line_with_precise_geometry(text, font_size, runs, true);
+        RetainedLineLayout::Dense(layout, positions, width)
+    }
+
+    fn layout_line_with_precise_positions(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        runs: &[FontRun],
+    ) -> (LineLayout, Vec<f64>, f64) {
+        self.layout_line_with_precise_geometry(text, font_size, runs, false)
     }
 
     fn recommended_rendering_mode(
@@ -284,8 +385,30 @@ impl PlatformTextSystem for CosmicTextSystem {
 }
 
 impl CosmicTextSystemState {
+    fn new(font_system: FontSystem, system_font_fallback: &str) -> Self {
+        Self {
+            font_system,
+            font_database_generation: Arc::new(()),
+            loaded_fonts_generation: Arc::new(()),
+            scratch: ShapeBuffer::default(),
+            swash_scale_context: ScaleContext::new(),
+            #[cfg(test)]
+            rendered_glyphs: 0,
+            loaded_fonts: Vec::new(),
+            loaded_font_ids_by_key: HashMap::default(),
+            font_ids_by_family_cache: HashMap::default(),
+            system_font_fallback: system_font_fallback.to_owned(),
+            missing_glyph_sink: None,
+        }
+    }
+
     fn loaded_font(&self, font_id: FontId) -> &LoadedFont {
         &self.loaded_fonts[font_id.0]
+    }
+
+    fn loaded_fonts_mut(&mut self) -> &mut Vec<LoadedFont> {
+        self.loaded_fonts_generation = Arc::new(());
+        &mut self.loaded_fonts
     }
 
     fn font_match_properties(&self, font_id: FontId) -> Option<FontMatchProperties> {
@@ -327,12 +450,20 @@ impl CosmicTextSystemState {
 
     #[profiling::function]
     fn add_fonts(&mut self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
-        self.font_ids_by_family_cache.clear();
-        let db = self.font_system.db_mut();
+        if fonts.is_empty() {
+            return Ok(());
+        }
+        let database = self.font_database_mut();
         for bytes in fonts {
-            db.load_font_source(cosmic_text::fontdb::Source::Binary(Arc::new(bytes)));
+            database.load_font_source(cosmic_text::fontdb::Source::Binary(Arc::new(bytes)));
         }
         Ok(())
+    }
+
+    fn font_database_mut(&mut self) -> &mut cosmic_text::fontdb::Database {
+        self.font_database_generation = Arc::new(());
+        self.font_ids_by_family_cache.clear();
+        self.font_system.db_mut()
     }
 
     #[profiling::function]
@@ -402,7 +533,8 @@ impl CosmicTextSystemState {
                 font: loaded_font_key.clone(),
             };
             if let Some(&font_id) = self.loaded_font_ids_by_key.get(&key) {
-                self.loaded_fonts[font_id.0].user_fallback_chain = Arc::clone(&user_fallback_chain);
+                self.loaded_fonts_mut()[font_id.0].user_fallback_chain =
+                    Arc::clone(&user_fallback_chain);
                 loaded_font_ids.push(font_id);
                 continue;
             }
@@ -434,7 +566,7 @@ impl CosmicTextSystemState {
 
             let font_id = FontId(self.loaded_fonts.len());
             loaded_font_ids.push(font_id);
-            self.loaded_fonts.push(LoadedFont {
+            self.loaded_fonts_mut().push(LoadedFont {
                 font,
                 features: cosmic_features.clone(),
                 is_known_emoji_font: check_is_known_emoji_font(&postscript_name),
@@ -465,14 +597,7 @@ impl CosmicTextSystemState {
 
     fn raster_bounds(&mut self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         let image = self.render_glyph_image(params)?;
-        let bounds = Bounds {
-            origin: point(image.placement.left.into(), (-image.placement.top).into()),
-            size: size(image.placement.width.into(), image.placement.height.into()),
-        };
-        if !bounds.is_zero() {
-            self.pending_glyph_images.insert(params.clone(), image);
-        }
-        Ok(bounds)
+        Ok(Self::glyph_image_bounds(&image))
     }
 
     #[profiling::function]
@@ -485,35 +610,42 @@ impl CosmicTextSystemState {
             anyhow::bail!("glyph bounds are empty");
         }
 
-        let mut image = match self.pending_glyph_images.remove(params) {
-            Some(image) => image,
-            None => self.render_glyph_image(params)?,
-        };
-        let bitmap_size = glyph_bounds.size;
+        let image = self.render_glyph_image(params)?;
+        Ok((glyph_bounds.size, Self::glyph_image_pixels(params, image)))
+    }
+
+    fn glyph_image_bounds(image: &Image) -> Bounds<DevicePixels> {
+        Bounds {
+            origin: point(image.placement.left.into(), (-image.placement.top).into()),
+            size: size(image.placement.width.into(), image.placement.height.into()),
+        }
+    }
+
+    fn glyph_image_pixels(params: &RenderGlyphParams, mut image: Image) -> Vec<u8> {
         match image.content {
             swash::scale::image::Content::Color | swash::scale::image::Content::SubpixelMask => {
                 // Convert from RGBA to BGRA.
                 for pixel in image.data.chunks_exact_mut(4) {
                     pixel.swap(0, 2);
                 }
-                Ok((bitmap_size, image.data))
+                image.data
             }
             swash::scale::image::Content::Mask => {
                 if params.subpixel_rendering {
                     // We must always return RGBA data when subpixel rendering is requested.
-                    let expanded = image.data.iter().flat_map(|&a| [a, a, a, a]).collect();
-                    Ok((bitmap_size, expanded))
+                    image.data.iter().flat_map(|&alpha| [alpha; 4]).collect()
                 } else {
-                    Ok((bitmap_size, image.data))
+                    image.data
                 }
             }
         }
     }
 
-    fn render_glyph_image(
-        &mut self,
-        params: &RenderGlyphParams,
-    ) -> Result<swash::scale::image::Image> {
+    fn render_glyph_image(&mut self, params: &RenderGlyphParams) -> Result<Image> {
+        #[cfg(test)]
+        {
+            self.rendered_glyphs += 1;
+        }
         let loaded_font = &self.loaded_fonts[params.font_id.0];
         let font_ref = loaded_font.font.as_swash();
         let pixel_size = f32::from(params.font_size);
@@ -583,23 +715,30 @@ impl CosmicTextSystemState {
                 .context("fallback font face not found in cosmic-text database")?;
 
             let font_id = FontId(self.loaded_fonts.len());
-            self.loaded_fonts.push(LoadedFont {
+            let font = LoadedFont {
                 font,
                 features: CosmicFontFeatures::new(),
                 is_known_emoji_font: check_is_known_emoji_font(&face.post_script_name),
                 user_fallback_chain: Arc::from(Vec::new()),
-            });
+            };
+            self.loaded_fonts_mut().push(font);
 
             Ok(font_id)
         }
     }
 
     #[profiling::function]
-    fn layout_line(&mut self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
+    fn layout_line(
+        &mut self,
+        text: &str,
+        font_size: Pixels,
+        font_runs: &[FontRun],
+        precise_layout: Option<&mut PreciseLayout>,
+    ) -> LineLayout {
         if contains_paragraph_separator(text) {
-            self.layout_line_with_separators(text, font_size, font_runs)
+            self.layout_line_with_separators(text, font_size, font_runs, precise_layout)
         } else {
-            self.layout_line_no_separators(text, font_size, font_runs)
+            self.layout_line_no_separators(text, font_size, font_runs, precise_layout)
         }
     }
 
@@ -608,6 +747,7 @@ impl CosmicTextSystemState {
         text: &str,
         font_size: Pixels,
         font_runs: &[FontRun],
+        mut precise_layout: Option<&mut PreciseLayout>,
     ) -> LineLayout {
         let mut layout = LineLayout {
             font_size,
@@ -627,6 +767,7 @@ impl CosmicTextSystemState {
                 font_size,
                 font_runs,
                 &mut layout,
+                precise_layout.as_deref_mut(),
             );
             self.shape_segment(
                 text,
@@ -634,6 +775,7 @@ impl CosmicTextSystemState {
                 font_size,
                 font_runs,
                 &mut layout,
+                precise_layout.as_deref_mut(),
             );
             paragraph_start = separator_end;
         }
@@ -644,6 +786,7 @@ impl CosmicTextSystemState {
             font_size,
             font_runs,
             &mut layout,
+            precise_layout,
         );
 
         layout
@@ -656,20 +799,41 @@ impl CosmicTextSystemState {
         font_size: Pixels,
         font_runs: &[FontRun],
         layout: &mut LineLayout,
+        precise_layout: Option<&mut PreciseLayout>,
     ) {
         if range.is_empty() {
             return;
         }
 
+        let is_precise = precise_layout.is_some();
         let segment_font_runs = clip_font_runs(font_runs, range.clone());
-        let segment =
-            self.layout_line_no_separators(&text[range.clone()], font_size, &segment_font_runs);
+        let segment = self.layout_line_no_separators(
+            &text[range.clone()],
+            font_size,
+            &segment_font_runs,
+            precise_layout,
+        );
 
+        if layout
+            .caret_positions
+            .last()
+            .is_some_and(|(index, _)| *index == range.start)
+        {
+            layout.caret_positions.pop();
+        }
+        for (index, mut position) in segment.caret_positions {
+            if !is_precise {
+                position = f64::from(layout.width + Pixels::from(position));
+            }
+            layout.caret_positions.push((index + range.start, position));
+        }
         let mut segment_runs = segment.runs;
         for run in &mut segment_runs {
             for glyph in &mut run.glyphs {
                 glyph.index += range.start;
-                glyph.position.x += layout.width;
+                if !is_precise {
+                    glyph.position.x += layout.width;
+                }
             }
         }
 
@@ -685,7 +849,11 @@ impl CosmicTextSystemState {
             }
         }
 
-        layout.width += segment.width;
+        if is_precise {
+            layout.width = segment.width;
+        } else {
+            layout.width += segment.width;
+        }
         layout.ascent = layout.ascent.max(segment.ascent);
         layout.descent = layout.descent.max(segment.descent);
     }
@@ -695,6 +863,7 @@ impl CosmicTextSystemState {
         text: &str,
         font_size: Pixels,
         font_runs: &[FontRun],
+        mut precise_layout: Option<&mut PreciseLayout>,
     ) -> LineLayout {
         let mut attrs_list = AttrsList::new(&Attrs::new());
         let mut offs = 0;
@@ -752,6 +921,7 @@ impl CosmicTextSystemState {
             cosmic_text::Shaping::Advanced,
             4,
         );
+        let right_to_left = line.rtl;
         let mut layout_lines = Vec::with_capacity(1);
         line.layout_to_buffer(
             &mut self.scratch,
@@ -764,15 +934,19 @@ impl CosmicTextSystemState {
             None,
             cosmic_text::Hinting::Disabled,
         );
+        drop(line);
 
         let Some(layout) = layout_lines.first() else {
             return LineLayout {
                 font_size,
-                width: Pixels::ZERO,
+                width: precise_layout
+                    .as_ref()
+                    .map_or(Pixels::ZERO, |precise| Pixels::from(precise.width)),
                 ascent: Pixels::ZERO,
                 descent: Pixels::ZERO,
                 runs: Vec::new(),
                 len: text.len(),
+                caret_positions: Vec::new(),
             };
         };
 
@@ -788,8 +962,51 @@ impl CosmicTextSystemState {
             )
         });
 
+        if let Some(precise) = precise_layout.as_mut() {
+            precise.glyph_x_positions.reserve(layout.glyphs.len());
+        }
+        let segment_width = if precise_layout.is_some() && right_to_left {
+            layout
+                .glyphs
+                .iter()
+                .map(|glyph| f64::from(glyph.w))
+                .sum::<f64>()
+        } else {
+            0.0
+        };
+        let mut pen_x = segment_width;
+        let mut caret_positions = Vec::new();
+        let mut graphemes = text
+            .grapheme_indices(true)
+            .map(|(index, _)| index)
+            .peekable();
         let mut runs: Vec<ShapedRun> = Vec::new();
         for glyph in &layout.glyphs {
+            let precise_position = precise_layout.as_ref().map(|precise| {
+                let advance = f64::from(glyph.w);
+                if right_to_left {
+                    pen_x -= advance;
+                }
+                let pen_position = precise.width + pen_x;
+                let position =
+                    pen_position + f64::from(glyph.font_size) * f64::from(glyph.x_offset);
+                if !right_to_left {
+                    pen_x += advance;
+                }
+                (pen_position, position)
+            });
+            if !right_to_left {
+                while graphemes.peek().is_some_and(|index| *index < glyph.start) {
+                    graphemes.next();
+                }
+                if graphemes.peek() == Some(&glyph.start) {
+                    caret_positions.push((
+                        glyph.start,
+                        precise_position.map_or(f64::from(glyph.x), |(pen, _)| pen),
+                    ));
+                    graphemes.next();
+                }
+            }
             let mut font_id = FontId(glyph.metadata);
             let mut loaded_font = self.loaded_font(font_id);
             if loaded_font.font.id() != glyph.font_id {
@@ -814,9 +1031,20 @@ impl CosmicTextSystemState {
                 continue;
             }
 
+            if let Some(precise) = precise_layout.as_mut()
+                && let Some((_, position)) = precise_position
+            {
+                precise.glyph_x_positions.push(position);
+            }
             let shaped_glyph = ShapedGlyph {
                 id: GlyphId(glyph.glyph_id as u32),
-                position: point(glyph.x.into(), glyph.y.into()),
+                position: point(
+                    Pixels::from(precise_position.map_or(
+                        glyph.x + glyph.font_size * glyph.x_offset,
+                        |(_, position)| position as f32,
+                    )),
+                    Pixels::from(glyph.y - glyph.font_size * glyph.y_offset),
+                ),
                 index: glyph.start,
                 is_emoji,
             };
@@ -838,13 +1066,23 @@ impl CosmicTextSystemState {
             sink.report(missing_glyphs);
         }
 
+        let width = if let Some(precise) = precise_layout {
+            precise.width += if right_to_left { segment_width } else { pen_x };
+            precise.width
+        } else {
+            f64::from(layout.w)
+        };
+        if !right_to_left && !text.is_empty() {
+            caret_positions.push((text.len(), width));
+        }
         LineLayout {
             font_size,
-            width: layout.w.into(),
+            width: Pixels::from(width),
             ascent: layout.max_ascent.into(),
             descent: layout.max_descent.into(),
             runs,
             len: text.len(),
+            caret_positions,
         }
     }
 
@@ -1207,8 +1445,474 @@ fn check_is_known_emoji_font(postscript_name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::{GlyphRasterConfig, TextSystem, font, px};
     #[cfg(feature = "test-support")]
     use std::{cell::RefCell, rc::Rc};
+
+    #[test]
+    fn raster_envelopes_do_not_retain_images() -> Result<()> {
+        let native = Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
+        native.add_fonts(vec![Cow::Borrowed(LILEX)])?;
+        let font_id = native.font_id(&font("Lilex"))?;
+        let glyph_id = native.glyph_for_char(font_id, 'f').expect("test glyph");
+        let font_size = px(16.);
+        let text_system = TextSystem::new(native.clone());
+        for scale_factor in [1., 1.5, 2.] {
+            for subpixel_rendering in [false, true] {
+                let config = GlyphRasterConfig {
+                    scale_factor,
+                    rendering_mode: if subpixel_rendering {
+                        TextRenderingMode::Subpixel
+                    } else {
+                        TextRenderingMode::Grayscale
+                    },
+                    max_dilation: 0,
+                };
+                let mut expected = Vec::new();
+                for phase in 0..SUBPIXEL_VARIANTS_X {
+                    let params = RenderGlyphParams {
+                        font_id,
+                        glyph_id,
+                        font_size,
+                        subpixel_variant: point(phase, 0),
+                        scale_factor,
+                        is_emoji: false,
+                        subpixel_rendering,
+                        dilation: 0,
+                    };
+                    let before = native.0.read().rendered_glyphs;
+                    let (bounds, image) = native.glyph_raster_bounds_with_image(&params)?;
+                    assert_eq!(native.0.read().rendered_glyphs, before + 1);
+                    assert!(!bounds.is_empty());
+                    let image = image.expect("foreground bitmap");
+                    let channels = if subpixel_rendering { 4 } else { 1 };
+                    assert_eq!(
+                        image.len(),
+                        bounds.size.width.0 as usize * bounds.size.height.0 as usize * channels
+                    );
+                    expected.push((params, bounds, image));
+                }
+                let before = native.0.read().rendered_glyphs;
+                let envelope =
+                    text_system.glyph_raster_envelope(font_id, glyph_id, font_size, config, false);
+                assert!(envelope.is_some());
+                assert_eq!(
+                    native.0.read().rendered_glyphs,
+                    before + usize::from(SUBPIXEL_VARIANTS_X)
+                );
+                assert_eq!(
+                    text_system.glyph_raster_envelope(font_id, glyph_id, font_size, config, false),
+                    envelope
+                );
+                assert_eq!(
+                    native.0.read().rendered_glyphs,
+                    before + usize::from(SUBPIXEL_VARIANTS_X)
+                );
+                for (params, bounds, image) in expected {
+                    let before = native.0.read().rendered_glyphs;
+                    assert_eq!(
+                        native.rasterize_glyph(&params, bounds)?,
+                        (bounds.size, image)
+                    );
+                    assert_eq!(native.0.read().rendered_glyphs, before + 1);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn retained_layout_preserves_font_caches_until_database_changes() -> Result<()> {
+        let text_system = CosmicTextSystem::new_without_system_fonts("Lilex");
+        text_system.add_fonts(vec![Cow::Borrowed(LILEX)])?;
+        let font_id = text_system.font_id(&gpui::font("Lilex"))?;
+        let database_id = text_system.0.read().loaded_font(font_id).font.id();
+        let attributes = Attrs::new().family(Family::Name("Lilex"));
+        let matches = text_system
+            .retained_snapshot()
+            .font_system
+            .get_font_matches(&attributes);
+        text_system.add_fonts(Vec::new())?;
+        for _ in 0..2 {
+            text_system.layout_line_for_retention(
+                "m",
+                gpui::px(16.),
+                &[FontRun { font_id, len: 1 }],
+            );
+            let cached_matches = text_system
+                .retained_snapshot()
+                .font_system
+                .get_font_matches(&attributes);
+            assert!(Arc::ptr_eq(&matches, &cached_matches));
+        }
+
+        text_system.add_fonts(vec![Cow::Borrowed(IBM_PLEX)])?;
+        let fallback_id = text_system.font_id(&gpui::font("IBM Plex Sans"))?;
+        let fallback_database_id = text_system.0.read().loaded_font(fallback_id).font.id();
+        let (updated_matches, mut actual_ids) = {
+            let mut worker = text_system.retained_snapshot();
+            assert_eq!(
+                worker.loaded_font(fallback_id).font.id(),
+                fallback_database_id
+            );
+            (
+                worker.font_system.get_font_matches(&attributes),
+                worker
+                    .font_system
+                    .db()
+                    .faces()
+                    .map(|face| face.id)
+                    .collect::<Vec<_>>(),
+            )
+        };
+        assert!(!Arc::ptr_eq(&matches, &updated_matches));
+        let mut expected_ids = [database_id, fallback_database_id];
+        expected_ids.sort_unstable();
+        actual_ids.sort_unstable();
+        assert_eq!(actual_ids, expected_ids);
+
+        let replacement_id = {
+            let mut state = text_system.0.write();
+            let database = state.font_database_mut();
+            database.remove_face(fallback_database_id);
+            let replacements =
+                database.load_font_source(cosmic_text::fontdb::Source::Binary(Arc::new(LILEX)));
+            assert_eq!(database.len(), 2);
+            *replacements
+                .first()
+                .context("replacement font was not loaded")?
+        };
+        let (replaced_matches, mut actual_ids) = {
+            let mut worker = text_system.retained_snapshot();
+            (
+                worker.font_system.get_font_matches(&attributes),
+                worker
+                    .font_system
+                    .db()
+                    .faces()
+                    .map(|face| face.id)
+                    .collect::<Vec<_>>(),
+            )
+        };
+        assert!(!Arc::ptr_eq(&updated_matches, &replaced_matches));
+        let mut expected_ids = [database_id, replacement_id];
+        expected_ids.sort_unstable();
+        actual_ids.sort_unstable();
+        assert_eq!(actual_ids, expected_ids);
+        let cached_matches = text_system
+            .retained_snapshot()
+            .font_system
+            .get_font_matches(&attributes);
+        assert!(Arc::ptr_eq(&replaced_matches, &cached_matches));
+        Ok(())
+    }
+
+    #[test]
+    fn retained_layout_isolated_from_foreground_state() -> Result<()> {
+        let text_system = CosmicTextSystem::new_without_system_fonts("Lilex");
+        text_system.add_fonts(vec![Cow::Borrowed(LILEX), Cow::Borrowed(IBM_PLEX)])?;
+        let primary = text_system.font_id(&gpui::font("Lilex"))?;
+        let mut worker = text_system.retained_snapshot();
+        let font_count = worker.loaded_fonts.len();
+        let attributes = Attrs::new().family(Family::Name("Lilex"));
+        let cached_matches = worker.font_system.get_font_matches(&attributes);
+        let database_id = worker
+            .font_system
+            .db()
+            .faces()
+            .find(|face| {
+                face.families
+                    .iter()
+                    .any(|(family, _)| family == "IBM Plex Sans")
+            })
+            .unwrap()
+            .id;
+        let local_font_id = worker.font_id_for_cosmic_id(database_id)?;
+        let mut configured = gpui::font("Lilex");
+        configured.features = FontFeatures(Arc::new(vec![("calt".to_owned(), 0)]));
+        let competing_font_id = text_system.font_id(&configured)?;
+        assert_eq!(local_font_id, competing_font_id);
+        let text = "hello //->...++ x\u{0301}";
+        let font_size = gpui::px(16.1);
+        let mut precise = PreciseLayout::default();
+        let foreground = text_system.0.write();
+        let mut layout = worker.layout_line(
+            text,
+            font_size,
+            &[FontRun {
+                font_id: local_font_id,
+                len: text.len(),
+            }],
+            Some(&mut precise),
+        );
+        drop(foreground);
+        let font_ids = text_system.publish_retained_fonts(worker.loaded_fonts.drain(font_count..));
+        drop(worker);
+        let published_font_id = font_ids[local_font_id.0 - font_count];
+        assert_ne!(published_font_id, competing_font_id);
+        assert_eq!(
+            text_system
+                .0
+                .read()
+                .loaded_font(published_font_id)
+                .font
+                .id(),
+            database_id
+        );
+        {
+            let mut worker = text_system.retained_snapshot();
+            assert!(Arc::ptr_eq(
+                &cached_matches,
+                &worker.font_system.get_font_matches(&attributes),
+            ));
+            assert_eq!(
+                worker.loaded_fonts.len(),
+                text_system.0.read().loaded_fonts.len()
+            );
+            assert_eq!(worker.loaded_font(published_font_id).font.id(), database_id);
+            assert_eq!(
+                worker.loaded_font(competing_font_id).features,
+                cosmic_font_features(&configured.features)?,
+            );
+        }
+        for run in &mut layout.runs {
+            if run.font_id.0 >= font_count {
+                run.font_id = font_ids[run.font_id.0 - font_count];
+            }
+        }
+        assert_retained_layout_eq(
+            RetainedLineLayout::Dense(layout, precise.glyph_x_positions, precise.width),
+            text_system.layout_line_with_precise_positions(
+                text,
+                font_size,
+                &[FontRun {
+                    font_id: published_font_id,
+                    len: text.len(),
+                }],
+            ),
+        );
+        for font_id in [primary, competing_font_id] {
+            for text in ["", "hello //->...++", "x\u{0301} नमस्ते 😀", "abc\u{001c}xyz"]
+            {
+                let runs = [FontRun {
+                    font_id,
+                    len: text.len(),
+                }];
+                let retained = text_system.layout_line_for_retention(text, font_size, &runs);
+                assert_retained_layout_eq(
+                    retained,
+                    text_system.layout_line_with_precise_positions(text, font_size, &runs),
+                );
+            }
+        }
+        configured.fallbacks = Some(FontFallbacks(Arc::new(vec!["IBM Plex Sans".to_owned()])));
+        let configured_font_id = text_system.font_id(&configured)?;
+        let runs = [
+            FontRun {
+                font_id: primary,
+                len: 6,
+            },
+            FontRun {
+                font_id: configured_font_id,
+                len: text.len() - 6,
+            },
+        ];
+        assert_retained_layout_eq(
+            text_system.layout_line_for_retention(text, font_size, &runs),
+            text_system.layout_line_with_precise_positions(text, font_size, &runs),
+        );
+        let loaded_font_count = text_system.0.read().loaded_fonts.len();
+        text_system
+            .0
+            .write()
+            .font_database_mut()
+            .remove_face(database_id);
+        drop(text_system.retained_snapshot());
+        assert_eq!(text_system.font_id(&configured)?, configured_font_id);
+        assert_eq!(text_system.0.read().loaded_fonts.len(), loaded_font_count);
+        assert_eq!(
+            text_system
+                .retained_snapshot()
+                .loaded_font(configured_font_id)
+                .user_fallback_chain
+                .len(),
+            0,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn layout_line_with_precise_positions() -> Result<()> {
+        let text_system = CosmicTextSystem::new_without_system_fonts("Lilex");
+        text_system.add_fonts(vec![Cow::Borrowed(LILEX)])?;
+        let font_id = text_system.font_id(&gpui::font("Lilex"))?;
+        let font_size = gpui::px(16.1);
+        let advance = f64::from(
+            text_system
+                .layout_line("m", font_size, &[FontRun { font_id, len: 1 }])
+                .width,
+        );
+        let separator_width = f64::from(
+            text_system
+                .layout_line("\u{001c}", font_size, &[FontRun { font_id, len: 1 }])
+                .width,
+        );
+        let count = 1_000_000;
+        let text = format!("{}\u{001c}mm", "m".repeat(count));
+        let (layout, positions, width) = text_system.layout_line_with_precise_geometry(
+            &text,
+            font_size,
+            &[FontRun {
+                font_id,
+                len: text.len(),
+            }],
+            false,
+        );
+        assert_eq!(width, advance * (count + 2) as f64 + separator_width);
+        assert_eq!(layout.width, Pixels::from(width));
+        assert_eq!(
+            positions.len(),
+            layout
+                .runs
+                .iter()
+                .map(|run| run.glyphs.len())
+                .sum::<usize>()
+        );
+        for index in [0, 65_535, 65_536, count - 1] {
+            assert_eq!(positions[index], advance * index as f64);
+            assert_eq!(layout.caret_x_for_index(index), advance * index as f64);
+        }
+        assert_eq!(
+            positions[positions.len() - 2],
+            advance * count as f64 + separator_width
+        );
+        assert_eq!(
+            positions[positions.len() - 1],
+            advance * (count + 1) as f64 + separator_width
+        );
+        let (empty, positions, width) =
+            text_system.layout_line_with_precise_positions("", font_size, &[]);
+        assert_eq!((empty.len, positions, width), (0, Vec::new(), 0.0));
+        Ok(())
+    }
+
+    #[test]
+    fn precise_layout_uses_native_glyph_offsets() -> Result<()> {
+        let text_system = text_system()?;
+        let font_id = text_system.font_id(&gpui::font("IBM Plex Sans"))?;
+        let font_size = gpui::px(16.1);
+        let text = " X\u{0301} ";
+        let attrs = AttrsList::new(&Attrs::new().family(Family::Name("IBM Plex Sans")));
+        let native = ShapeLine::new(
+            &mut text_system.0.write().font_system,
+            text,
+            &attrs,
+            cosmic_text::Shaping::Advanced,
+            4,
+        );
+        let glyphs = native
+            .spans
+            .iter()
+            .flat_map(|span| &span.words)
+            .flat_map(|word| &word.glyphs)
+            .collect::<Vec<_>>();
+        assert_eq!(glyphs.len(), 4);
+        assert_eq!([glyphs[0].glyph_id, glyphs[3].glyph_id], [3, 3]);
+        assert_eq!(glyphs[2].x_offset, -0.306);
+        assert_eq!(glyphs[2].x_advance, 0.0);
+        assert_eq!(glyphs[2].y_offset, 0.158);
+        let leading_advance = glyphs[0].width(f32::from(font_size));
+        let advance = glyphs[1].width(f32::from(font_size));
+        let trailing_advance = glyphs[3].width(f32::from(font_size));
+        assert!(leading_advance > 0.0);
+        assert!(trailing_advance > 0.0);
+        let mark_y = px(-f32::from(font_size) * 0.158);
+        let runs = [FontRun {
+            font_id,
+            len: text.len(),
+        }];
+        let layout = text_system.layout_line(text, font_size, &runs);
+        assert_eq!(
+            layout
+                .runs
+                .iter()
+                .flat_map(|run| &run.glyphs)
+                .map(|glyph| glyph.position)
+                .collect::<Vec<_>>(),
+            [
+                point(px(0.), px(0.)),
+                point(px(leading_advance), px(0.)),
+                point(
+                    px(leading_advance + advance - f32::from(font_size) * 0.306),
+                    mark_y,
+                ),
+                point(px(leading_advance + advance), px(0.)),
+            ],
+        );
+        assert_eq!(
+            layout.width,
+            px(leading_advance + advance + trailing_advance)
+        );
+        assert_eq!(layout.x_for_index(1), px(leading_advance));
+        assert_eq!(layout.x_for_index(4), px(leading_advance + advance));
+        assert_eq!(layout.x_for_index(text.len()), layout.width);
+        assert_eq!(layout.index_for_x(px(10.)), Some(1));
+        assert_eq!(layout.closest_index_for_x(px(10.)), 4);
+        assert_eq!(
+            layout.caret_positions,
+            [
+                (0, 0.),
+                (1, f64::from(leading_advance)),
+                (4, f64::from(leading_advance + advance)),
+                (5, f64::from(leading_advance + advance + trailing_advance))
+            ],
+        );
+        text_system.0.write().loaded_fonts[font_id.0].is_known_emoji_font = true;
+        let leading_advance = f64::from(leading_advance);
+        let advance = f64::from(advance);
+        let trailing_advance = f64::from(trailing_advance);
+        let expected_positions = [
+            leading_advance,
+            leading_advance + advance + f64::from(font_size) * f64::from(glyphs[2].x_offset),
+        ];
+        for for_retention in [false, true] {
+            let (layout, positions, width) = text_system.layout_line_with_precise_geometry(
+                text,
+                font_size,
+                &runs,
+                for_retention,
+            );
+            assert_eq!(
+                layout
+                    .runs
+                    .iter()
+                    .flat_map(|run| &run.glyphs)
+                    .map(|glyph| glyph.position)
+                    .collect::<Vec<_>>(),
+                [
+                    point(Pixels::from(expected_positions[0]), px(0.)),
+                    point(Pixels::from(expected_positions[1]), mark_y),
+                ],
+            );
+            assert_eq!(positions, expected_positions);
+            assert_eq!(layout.closest_index_for_x(px(10.)), 4);
+            assert_eq!(
+                layout.caret_positions,
+                [
+                    (0, 0.),
+                    (1, leading_advance),
+                    (4, leading_advance + advance),
+                    (5, leading_advance + advance + trailing_advance)
+                ],
+            );
+            assert_eq!(width, leading_advance + advance + trailing_advance);
+            let (empty, positions, width) =
+                text_system.layout_line_with_precise_geometry("", font_size, &[], for_retention);
+            assert_eq!((empty.len, positions, width), (0, Vec::new(), 0.0));
+            assert!(empty.caret_positions.is_empty());
+        }
+        Ok(())
+    }
 
     #[test]
     fn all_font_names_tracks_available_families() -> Result<()> {
@@ -1801,5 +2505,67 @@ mod tests {
         let covers = |_: FontId, _: char| true;
         let spans = compute_run_spans("anything", 3, 0, primary, &fb, &covers);
         assert!(spans.is_empty());
+    }
+
+    fn assert_retained_layout_eq(
+        retained: RetainedLineLayout,
+        expected: (LineLayout, Vec<f64>, f64),
+    ) {
+        let RetainedLineLayout::Dense(actual, positions, width) = retained else {
+            panic!("expected dense layout")
+        };
+        let (expected, expected_positions, expected_width) = expected;
+        assert_eq!(width.to_bits(), expected_width.to_bits());
+        assert_eq!(actual.caret_positions, expected.caret_positions);
+        assert_eq!(
+            positions
+                .iter()
+                .map(|position| position.to_bits())
+                .collect::<Vec<_>>(),
+            expected_positions
+                .iter()
+                .map(|position| position.to_bits())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            (
+                actual.font_size,
+                actual.width,
+                actual.ascent,
+                actual.descent,
+                actual.len
+            ),
+            (
+                expected.font_size,
+                expected.width,
+                expected.ascent,
+                expected.descent,
+                expected.len
+            )
+        );
+        let glyphs = |layout: &LineLayout| {
+            layout
+                .runs
+                .iter()
+                .map(|run| {
+                    (
+                        run.font_id,
+                        run.glyphs
+                            .iter()
+                            .map(|glyph| {
+                                (
+                                    glyph.id,
+                                    glyph.index,
+                                    f32::from(glyph.position.x).to_bits(),
+                                    f32::from(glyph.position.y).to_bits(),
+                                    glyph.is_emoji,
+                                )
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(glyphs(&actual), glyphs(&expected));
     }
 }

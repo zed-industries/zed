@@ -511,6 +511,51 @@ async fn test_diff_hunks_in_range(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_word_run_end(cx: &mut TestAppContext) {
+    let word_run_ends = |snapshot: &MultiBufferSnapshot, offsets: &[usize]| {
+        offsets
+            .iter()
+            .map(|offset| snapshot.word_run_end(MultiBufferOffset(*offset)).0)
+            .collect::<Vec<_>>()
+    };
+
+    let multibuffer = cx.update(|cx| {
+        MultiBuffer::build_multi(
+            [(
+                "alpha beta gamma",
+                vec![
+                    Point::new(0, 0)..Point::new(0, 8),
+                    Point::new(0, 11)..Point::new(0, 16),
+                ],
+            )],
+            cx,
+        )
+    });
+    let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+    assert_eq!(snapshot.text(), "alpha be\ngamma");
+    assert_eq!(
+        word_run_ends(&snapshot, &[1, 5, 6, 8, 9, 14]),
+        [5, 5, 8, 8, 14, 14]
+    );
+
+    let base_text = "keep\nremoved_word here\nlast\n";
+    let buffer = cx.new(|cx| Buffer::local("keep\nlast\n", cx));
+    let diff = cx
+        .new(|cx| BufferDiff::new_with_base_text(base_text, &buffer.read(cx).text_snapshot(), cx));
+    let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.add_diff(diff, cx);
+        multibuffer.expand_diff_hunks(Vec::from([Anchor::Min..Anchor::Max]), cx);
+    });
+    let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+    assert_eq!(snapshot.text(), base_text);
+    assert_eq!(
+        word_run_ends(&snapshot, &[0, 5, 7, 17, 18, 23, 28]),
+        [4, 17, 17, 17, 22, 27, 28]
+    );
+}
+
+#[gpui::test]
 async fn test_diff_hunks_in_range_query_starting_at_added_row(cx: &mut TestAppContext) {
     let base_text = "one\ntwo\nthree\n";
     let text = "one\nTWO\nthree\n";

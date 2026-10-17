@@ -53,7 +53,7 @@ use std::{
 };
 use sum_tree::{Bias, Cursor, Dimension, Dimensions, SumTree, TreeMap};
 use text::{
-    BufferId, Edit, LineIndent, TextSummary,
+    BufferId, Edit, LineIndent, TextSummary, WordRuns,
     subscription::{Subscription, Topic},
 };
 use theme::SyntaxTheme;
@@ -512,6 +512,7 @@ struct DiffState {
     diff: Entity<BufferDiff>,
     main_buffer: Option<Entity<language::Buffer>>,
     _subscription: gpui::Subscription,
+    _base_text_subscription: gpui::Subscription,
 }
 
 impl DiffState {
@@ -611,8 +612,13 @@ fn remove_diff_state(diffs: &mut SumTree<DiffStateSnapshot>, buffer_id: BufferId
 }
 
 impl DiffState {
-    fn new(diff: Entity<BufferDiff>, cx: &mut Context<MultiBuffer>) -> Self {
+    fn new(
+        diff: Entity<BufferDiff>,
+        changed: &Rc<Cell<bool>>,
+        cx: &mut Context<MultiBuffer>,
+    ) -> Self {
         DiffState {
+            _base_text_subscription: Self::observe_base_text(&diff, changed, cx),
             _subscription: cx.subscribe(&diff, |this, diff, event, cx| match event {
                 BufferDiffEvent::DiffChanged(DiffChanged {
                     changed_range,
@@ -639,10 +645,12 @@ impl DiffState {
     fn new_inverted(
         diff: Entity<BufferDiff>,
         main_buffer: Entity<language::Buffer>,
+        changed: &Rc<Cell<bool>>,
         cx: &mut Context<MultiBuffer>,
     ) -> Self {
         let weak_main_buffer = main_buffer.downgrade();
         DiffState {
+            _base_text_subscription: Self::observe_base_text(&diff, changed, cx),
             _subscription: cx.subscribe(&diff, {
                 move |this, diff, event, cx| {
                     let Some(main_buffer) = weak_main_buffer.upgrade() else {
@@ -670,6 +678,21 @@ impl DiffState {
             diff,
             main_buffer: Some(main_buffer),
         }
+    }
+
+    fn observe_base_text(
+        diff: &Entity<BufferDiff>,
+        changed: &Rc<Cell<bool>>,
+        cx: &mut Context<MultiBuffer>,
+    ) -> gpui::Subscription {
+        let base_text = diff.read(cx).base_text_buffer().clone();
+        base_text.update(cx, |buffer, _| {
+            buffer.record_changes(Rc::downgrade(changed))
+        });
+        cx.observe(&base_text, |buffer, _, cx| {
+            buffer.buffer_changed_since_sync.set(true);
+            cx.notify();
+        })
     }
 }
 
@@ -952,12 +975,15 @@ pub struct MBTextSummary {
     pub longest_row: u32,
     /// How many `char`s are in the longest row
     pub longest_row_chars: u32,
+    pub word_runs: WordRuns,
+    pub has_tabs: bool,
 }
 
 impl From<TextSummary> for MBTextSummary {
     fn from(summary: TextSummary) -> Self {
         MBTextSummary {
             len: MultiBufferOffset(summary.len),
+            has_tabs: summary.has_tabs,
             chars: summary.chars,
             len_utf16: summary.len_utf16,
             lines: summary.lines,
@@ -966,6 +992,7 @@ impl From<TextSummary> for MBTextSummary {
             last_line_len_utf16: summary.last_line_len_utf16,
             longest_row: summary.longest_row,
             longest_row_chars: summary.longest_row_chars,
+            word_runs: summary.word_runs,
         }
     }
 }
@@ -974,6 +1001,7 @@ impl From<MBTextSummary> for TextSummary {
     fn from(summary: MBTextSummary) -> Self {
         TextSummary {
             len: summary.len.0,
+            has_tabs: summary.has_tabs,
             chars: summary.chars,
             len_utf16: summary.len_utf16,
             lines: summary.lines,
@@ -982,6 +1010,7 @@ impl From<MBTextSummary> for TextSummary {
             last_line_len_utf16: summary.last_line_len_utf16,
             longest_row: summary.longest_row,
             longest_row_chars: summary.longest_row_chars,
+            word_runs: summary.word_runs,
         }
     }
 }
@@ -1036,6 +1065,8 @@ impl AddAssign for MBTextSummary {
         self.len += other.len;
         self.len_utf16 += other.len_utf16;
         self.lines += other.lines;
+        self.word_runs += &other.word_runs;
+        self.has_tabs |= other.has_tabs;
     }
 }
 
@@ -1311,7 +1342,10 @@ impl MultiBuffer {
         }
         let mut diff_bases = HashMap::default();
         for (buffer_id, diff) in self.diffs.iter() {
-            diff_bases.insert(*buffer_id, DiffState::new(diff.diff.clone(), new_cx));
+            diff_bases.insert(
+                *buffer_id,
+                DiffState::new(diff.diff.clone(), &buffer_changed_since_sync, new_cx),
+            );
         }
         Self {
             snapshot: RefCell::new(self.snapshot.borrow().clone()),
@@ -2077,6 +2111,7 @@ impl MultiBuffer {
         let base_text_changed = find_diff_state(&snapshot.diffs, buffer_id)
             .is_none_or(|old_diff| !new_diff.base_texts_definitely_eq(old_diff));
         snapshot.diffs.insert_or_replace(new_diff, ());
+        snapshot.non_text_state_update_count += 1;
 
         let buffer = buffer.read(cx);
         let Some(range) = range else {
@@ -2124,6 +2159,7 @@ impl MultiBuffer {
         };
         let snapshot = self.snapshot.get_mut();
         snapshot.diffs.insert_or_replace(new_diff, ());
+        snapshot.non_text_state_update_count += 1;
 
         let Some(diff_change_range) = diff_change_range else {
             return;
@@ -2294,7 +2330,10 @@ impl MultiBuffer {
             Some(text::Anchor::min_max_range_for_buffer(buffer_id)),
             cx,
         );
-        self.diffs.insert(buffer_id, DiffState::new(diff, cx));
+        self.diffs.insert(
+            buffer_id,
+            DiffState::new(diff, &self.buffer_changed_since_sync, cx),
+        );
     }
 
     pub fn add_inverted_diff(
@@ -2315,7 +2354,7 @@ impl MultiBuffer {
         );
         self.diffs.insert(
             base_text_buffer_id,
-            DiffState::new_inverted(diff, main_buffer, cx),
+            DiffState::new_inverted(diff, main_buffer, &self.buffer_changed_since_sync, cx),
         );
     }
 
@@ -2566,18 +2605,19 @@ impl MultiBuffer {
         *has_deleted_file = false;
         *has_conflict = false;
 
+        let mut non_text_state_updated = false;
         if !diffs.is_empty() {
             let mut diffs_to_add = Vec::new();
             for (id, diff) in diffs {
                 if find_diff_state(buffer_diff, *id).is_none_or(|existing_diff| {
-                    if existing_diff.main_buffer.is_none() {
-                        return false;
-                    }
                     let base_text = diff.diff.read(cx).base_text_buffer().read(cx);
-                    base_text.remote_id() != existing_diff.base_text().remote_id()
-                        || base_text
-                            .version()
-                            .changed_since(existing_diff.base_text().version())
+                    if base_text.remote_id() != existing_diff.base_text().remote_id()
+                        || base_text.version() != *existing_diff.base_text().version()
+                    {
+                        return existing_diff.main_buffer.is_some();
+                    }
+                    base_text.non_text_state_update_count()
+                        != existing_diff.base_text().non_text_state_update_count()
                 }) {
                     if diffs_to_add.capacity() == 0 {
                         diffs_to_add.reserve(diffs.len());
@@ -2585,11 +2625,11 @@ impl MultiBuffer {
                     diffs_to_add.push(sum_tree::Edit::Insert(diff.snapshot(*id, cx)));
                 }
             }
+            non_text_state_updated = !diffs_to_add.is_empty();
             buffer_diff.edit(diffs_to_add, ());
         }
 
         let mut paths_to_edit = Vec::new();
-        let mut non_text_state_updated = false;
         let mut edited = false;
         for buffer_state in buffers.values() {
             let buffer = buffer_state.buffer.read(cx);
@@ -4632,6 +4672,11 @@ impl MultiBufferSnapshot {
 
     pub fn text_summary(&self) -> MBTextSummary {
         self.diff_transforms.summary().output
+    }
+
+    pub fn word_run_end(&self, offset: MultiBufferOffset) -> MultiBufferOffset {
+        let summary = self.text_summary_for_range::<MBTextSummary, _>(offset..self.len());
+        offset + summary.word_runs.leading as usize
     }
 
     pub fn text_summary_for_range<MBD, O>(&self, range: Range<O>) -> MBD
@@ -6942,6 +6987,31 @@ impl MultiBufferSnapshot {
             })
             .into_iter()
             .flatten()
+    }
+
+    pub fn text_styles_eq(&self, other: &Self) -> bool {
+        let revision = |buffer: &BufferSnapshot| {
+            (
+                buffer.remote_id(),
+                buffer.syntax_update_count(),
+                buffer.diagnostics_timestamp(),
+            )
+        };
+        self.buffers
+            .values()
+            .map(|state| revision(&state.buffer_snapshot))
+            .eq(other
+                .buffers
+                .values()
+                .map(|state| revision(&state.buffer_snapshot)))
+            && self
+                .diffs
+                .iter()
+                .map(|state| (state.buffer_id, revision(state.base_text())))
+                .eq(other
+                    .diffs
+                    .iter()
+                    .map(|state| (state.buffer_id, revision(state.base_text()))))
     }
 
     pub fn buffers_with_paths<'a>(

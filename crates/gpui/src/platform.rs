@@ -40,9 +40,9 @@ use crate::{
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Edges, ExternalDragPayload, Font,
     FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap,
     LineLayout, MissingGlyphSink, Pixels, PlatformGestures, PlatformInput, Point, Priority,
-    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene, ShapedGlyph,
-    ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, Window, WindowControlArea,
-    hash, point, px, size,
+    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, RetainedLineLayout, Scene,
+    ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, Window,
+    WindowControlArea, hash, point, px, size,
 };
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use anyhow::bail;
@@ -62,6 +62,7 @@ use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::borrow::Cow;
+use std::cell::{OnceCell, RefCell};
 use std::collections::hash_map::Entry;
 use std::hash::{Hash, Hasher};
 use std::io::Cursor;
@@ -573,6 +574,35 @@ pub trait Platform: 'static {
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
     fn write_to_clipboard(&self, item: ClipboardItem);
 
+    #[expect(missing_docs)]
+    fn read_clipboard_snapshot(&self) -> ClipboardSnapshot {
+        ClipboardSnapshot {
+            item: self.read_from_clipboard(),
+            revision: None,
+        }
+    }
+
+    /// Captures clipboard state with an immutable completion result.
+    fn capture_clipboard_snapshot(&self) -> ClipboardSnapshotRead {
+        ClipboardSnapshotRead::ready(self.read_clipboard_snapshot())
+    }
+
+    #[expect(missing_docs)]
+    fn write_to_clipboard_with_revision(
+        &self,
+        _item: ClipboardItem,
+    ) -> Result<Option<ClipboardRevision>> {
+        anyhow::bail!("Synchronous clipboard publication is unavailable")
+    }
+
+    #[expect(missing_docs)]
+    fn write_to_clipboard_async(
+        &self,
+        item: ClipboardItem,
+    ) -> Task<Result<Option<ClipboardRevision>>> {
+        Task::ready(self.write_to_clipboard_with_revision(item))
+    }
+
     /// Reads the clipboard, resolving once its contents are available.
     ///
     /// Most platforms read synchronously and return a ready task. Platforms
@@ -588,6 +618,30 @@ pub trait Platform: 'static {
     fn read_from_primary(&self) -> Option<ClipboardItem>;
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     fn write_to_primary(&self, item: ClipboardItem);
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[expect(missing_docs)]
+    fn read_primary_snapshot(&self) -> ClipboardSnapshot {
+        ClipboardSnapshot {
+            item: self.read_from_primary(),
+            revision: None,
+        }
+    }
+
+    /// Captures primary selection state with an immutable completion result.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    fn capture_primary_snapshot(&self) -> ClipboardSnapshotRead {
+        ClipboardSnapshotRead::ready(self.read_primary_snapshot())
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[expect(missing_docs)]
+    fn write_to_primary_with_revision(
+        &self,
+        _item: ClipboardItem,
+    ) -> Result<Option<ClipboardRevision>> {
+        anyhow::bail!("Synchronous primary selection publication is unavailable")
+    }
 
     #[cfg(target_os = "macos")]
     fn read_from_find_pasteboard(&self) -> Option<ClipboardItem>;
@@ -1511,6 +1565,12 @@ pub trait PlatformTextSystem: Send + Sync {
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId>;
     /// Get raster bounds for a glyph.
     fn glyph_raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>>;
+    fn glyph_raster_bounds_with_image(
+        &self,
+        params: &RenderGlyphParams,
+    ) -> Result<(Bounds<DevicePixels>, Option<Vec<u8>>)> {
+        Ok((self.glyph_raster_bounds(params)?, None))
+    }
     /// Rasterize a glyph.
     fn rasterize_glyph(
         &self,
@@ -1519,6 +1579,32 @@ pub trait PlatformTextSystem: Send + Sync {
     ) -> Result<(Size<DevicePixels>, Vec<u8>)>;
     /// Layout a line of text with the given font runs.
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout;
+    fn layout_line_for_retention(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        runs: &[FontRun],
+    ) -> RetainedLineLayout {
+        let (layout, positions, width) =
+            self.layout_line_with_precise_positions(text, font_size, runs);
+        RetainedLineLayout::Dense(layout, positions, width)
+    }
+    fn layout_line_with_precise_positions(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        runs: &[FontRun],
+    ) -> (LineLayout, Vec<f64>, f64) {
+        let layout = self.layout_line(text, font_size, runs);
+        let glyph_x_positions = layout
+            .runs
+            .iter()
+            .flat_map(|run| &run.glyphs)
+            .map(|glyph| f64::from(glyph.position.x))
+            .collect::<Vec<_>>();
+        let width = layout.caret_x_for_index(layout.len);
+        (layout, glyph_x_positions, width)
+    }
     /// Returns the recommended text rendering mode for the given font and size.
     fn recommended_rendering_mode(&self, _font_id: FontId, _font_size: Pixels)
     -> TextRenderingMode;
@@ -1536,6 +1622,96 @@ impl NoopTextSystem {
     #[allow(dead_code)]
     pub fn new() -> Self {
         Self
+    }
+
+    fn layout_line_inner(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        mut glyph_x_positions: Option<&mut Vec<f64>>,
+    ) -> (LineLayout, f64) {
+        let mut position = px(0.);
+        let mut precise_position = 0.0;
+        let metrics = self.font_metrics(FontId(0));
+        let em_width = font_size
+            * self
+                .advance(FontId(0), self.glyph_for_char(FontId(0), 'm').unwrap())
+                .unwrap()
+                .width
+            / metrics.units_per_em as f32;
+        let mut glyphs = Vec::new();
+        let mut caret_positions = Vec::new();
+        for (ix, c) in text.char_indices() {
+            if let Some(glyph) = self.glyph_for_char(FontId(0), c) {
+                let glyph_position = if let Some(positions) = glyph_x_positions.as_mut() {
+                    positions.push(precise_position);
+                    Pixels::from(precise_position)
+                } else {
+                    position
+                };
+                caret_positions.push((
+                    ix,
+                    if glyph_x_positions.is_some() {
+                        precise_position
+                    } else {
+                        f64::from(position)
+                    },
+                ));
+                glyphs.push(ShapedGlyph {
+                    id: glyph,
+                    position: point(glyph_position, px(0.)),
+                    index: ix,
+                    is_emoji: glyph.0 == 2,
+                });
+                let advance = if glyph.0 == 2 {
+                    em_width * 2.0
+                } else {
+                    em_width
+                };
+                position += advance;
+                precise_position += f64::from(advance);
+            } else {
+                position += em_width;
+                precise_position += f64::from(em_width);
+            }
+        }
+        let mut runs = Vec::new();
+        if !glyphs.is_empty() {
+            runs.push(ShapedRun {
+                font_id: FontId(0),
+                glyphs,
+            });
+        } else {
+            position = px(0.);
+            precise_position = 0.0;
+        }
+        if !text.is_empty() {
+            caret_positions.push((
+                text.len(),
+                if glyph_x_positions.is_some() {
+                    precise_position
+                } else {
+                    f64::from(position)
+                },
+            ));
+        }
+
+        (
+            LineLayout {
+                font_size,
+                width: if glyph_x_positions.is_some() {
+                    Pixels::from(precise_position)
+                } else {
+                    position
+                },
+                ascent: font_size * (metrics.ascent / metrics.units_per_em as f32),
+                descent: font_size * (metrics.descent / metrics.units_per_em as f32),
+                runs,
+                len: text.len(),
+                caret_positions,
+            },
+            precise_position,
+        )
     }
 }
 
@@ -1603,50 +1779,18 @@ impl PlatformTextSystem for NoopTextSystem {
     }
 
     fn layout_line(&self, text: &str, font_size: Pixels, _runs: &[FontRun]) -> LineLayout {
-        let mut position = px(0.);
-        let metrics = self.font_metrics(FontId(0));
-        let em_width = font_size
-            * self
-                .advance(FontId(0), self.glyph_for_char(FontId(0), 'm').unwrap())
-                .unwrap()
-                .width
-            / metrics.units_per_em as f32;
-        let mut glyphs = Vec::new();
-        for (ix, c) in text.char_indices() {
-            if let Some(glyph) = self.glyph_for_char(FontId(0), c) {
-                glyphs.push(ShapedGlyph {
-                    id: glyph,
-                    position: point(position, px(0.)),
-                    index: ix,
-                    is_emoji: glyph.0 == 2,
-                });
-                if glyph.0 == 2 {
-                    position += em_width * 2.0;
-                } else {
-                    position += em_width;
-                }
-            } else {
-                position += em_width
-            }
-        }
-        let mut runs = Vec::default();
-        if !glyphs.is_empty() {
-            runs.push(ShapedRun {
-                font_id: FontId(0),
-                glyphs,
-            });
-        } else {
-            position = px(0.);
-        }
+        self.layout_line_inner(text, font_size, None).0
+    }
 
-        LineLayout {
-            font_size,
-            width: position,
-            ascent: font_size * (metrics.ascent / metrics.units_per_em as f32),
-            descent: font_size * (metrics.descent / metrics.units_per_em as f32),
-            runs,
-            len: text.len(),
-        }
+    fn layout_line_with_precise_positions(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        _runs: &[FontRun],
+    ) -> (LineLayout, Vec<f64>, f64) {
+        let mut glyph_x_positions = Vec::new();
+        let (layout, width) = self.layout_line_inner(text, font_size, Some(&mut glyph_x_positions));
+        (layout, glyph_x_positions, width)
     }
 
     fn recommended_rendering_mode(
@@ -2964,6 +3108,199 @@ pub enum CursorStyle {
     ContextualMenu,
 }
 
+#[expect(missing_docs)]
+#[derive(Clone, Debug)]
+pub enum ClipboardRevision {
+    Native(u64),
+    Local(Arc<()>),
+}
+
+impl Default for ClipboardRevision {
+    fn default() -> Self {
+        Self::Local(Arc::new(()))
+    }
+}
+
+impl PartialEq for ClipboardRevision {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Native(left), Self::Native(right)) => left == right,
+            (Self::Local(left), Self::Local(right)) => Arc::ptr_eq(left, right),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for ClipboardRevision {}
+
+#[expect(missing_docs)]
+#[derive(Clone, Debug, Default)]
+pub struct ClipboardSnapshot {
+    pub item: Option<ClipboardItem>,
+    pub revision: Option<ClipboardRevision>,
+}
+
+/// A single-assignment native clipboard capture.
+#[derive(Clone)]
+pub struct ClipboardSnapshotRead(Rc<ClipboardSnapshotState>);
+
+#[expect(missing_docs)]
+#[derive(Clone)]
+pub struct WeakClipboardSnapshotRead(std::rc::Weak<ClipboardSnapshotState>);
+
+/// Completes a native clipboard capture, or fails it when dropped.
+pub struct ClipboardSnapshotResolver(Option<std::rc::Weak<ClipboardSnapshotState>>);
+
+impl ClipboardSnapshotRead {
+    /// Creates a completed capture.
+    pub fn ready(snapshot: ClipboardSnapshot) -> Self {
+        let (read, resolver) = Self::pending();
+        resolver.resolve(Ok(Arc::new(snapshot)));
+        read
+    }
+
+    /// Creates a failed capture.
+    pub fn failed(error: ClipboardReadError) -> Self {
+        let (read, resolver) = Self::pending();
+        resolver.resolve(Err(error));
+        read
+    }
+
+    /// Creates a capture and its completion endpoint.
+    pub fn pending() -> (Self, ClipboardSnapshotResolver) {
+        let state = Rc::new(ClipboardSnapshotState::default());
+        (
+            Self(state.clone()),
+            ClipboardSnapshotResolver(Some(Rc::downgrade(&state))),
+        )
+    }
+
+    #[expect(missing_docs)]
+    pub fn downgrade(&self) -> WeakClipboardSnapshotRead {
+        WeakClipboardSnapshotRead(Rc::downgrade(&self.0))
+    }
+
+    /// Returns whether the capture has completed, including failure.
+    pub fn is_ready(&self) -> bool {
+        self.0.contents.get().is_some()
+    }
+
+    #[expect(missing_docs)]
+    pub fn is_failed(&self) -> bool {
+        self.0.contents.get().is_some_and(Result::is_err)
+    }
+
+    /// Invokes the observer synchronously on completion, or immediately if already complete.
+    pub fn on_ready(
+        &self,
+        callback: impl FnOnce(Result<Arc<ClipboardSnapshot>, ClipboardReadError>) + 'static,
+    ) {
+        if let Some(result) = self.0.contents.get() {
+            callback(result.clone());
+        } else {
+            self.0
+                .contents_callbacks
+                .borrow_mut()
+                .push(Box::new(callback));
+        }
+    }
+
+    /// Waits for this capture without reading the native clipboard again.
+    pub async fn wait(&self) -> Result<Arc<ClipboardSnapshot>, ClipboardReadError> {
+        if let Some(result) = self.0.contents.get() {
+            return result.clone();
+        }
+        let (sender, receiver) = oneshot::channel();
+        self.on_ready(move |result| {
+            sender.send(result).ok();
+        });
+        receiver
+            .await
+            .unwrap_or(Err(ClipboardReadError::Unavailable))
+    }
+}
+
+impl From<ClipboardSnapshot> for ClipboardSnapshotRead {
+    fn from(snapshot: ClipboardSnapshot) -> Self {
+        Self::ready(snapshot)
+    }
+}
+
+impl WeakClipboardSnapshotRead {
+    #[expect(missing_docs)]
+    pub fn upgrade(&self) -> Option<ClipboardSnapshotRead> {
+        self.0.upgrade().map(ClipboardSnapshotRead)
+    }
+}
+
+impl ClipboardSnapshotResolver {
+    #[expect(missing_docs)]
+    pub fn is_canceled(&self) -> bool {
+        self.0
+            .as_ref()
+            .is_none_or(|state| state.strong_count() == 0)
+    }
+
+    /// Publishes the immutable result before waking its consumers.
+    pub fn resolve(mut self, result: Result<Arc<ClipboardSnapshot>, ClipboardReadError>) {
+        if let Some(state) = self.0.take().and_then(|state| state.upgrade()) {
+            state.complete(result);
+        }
+    }
+
+    #[expect(missing_docs)]
+    pub fn resolve_async(
+        mut self,
+        executor: &ForegroundExecutor,
+        future: impl Future<Output = Result<Arc<ClipboardSnapshot>, ClipboardReadError>> + 'static,
+    ) {
+        if let Some(weak) = self.0.take()
+            && let Some(state) = weak.upgrade()
+        {
+            let task = executor.spawn(async move {
+                let result = future.await;
+                if let Some(state) = weak.upgrade() {
+                    state.complete(result);
+                }
+            });
+            *state.task.borrow_mut() = Some(task);
+        }
+    }
+}
+
+impl Drop for ClipboardSnapshotResolver {
+    fn drop(&mut self) {
+        if let Some(state) = self.0.take().and_then(|state| state.upgrade()) {
+            state.complete(Err(ClipboardReadError::Unavailable));
+        }
+    }
+}
+
+type ClipboardSnapshotCallbacks =
+    RefCell<Vec<Box<dyn FnOnce(Result<Arc<ClipboardSnapshot>, ClipboardReadError>)>>>;
+
+#[derive(Default)]
+struct ClipboardSnapshotState {
+    contents: OnceCell<Result<Arc<ClipboardSnapshot>, ClipboardReadError>>,
+    contents_callbacks: ClipboardSnapshotCallbacks,
+    task: RefCell<Option<Task<()>>>,
+}
+
+impl ClipboardSnapshotState {
+    fn complete(&self, snapshot: Result<Arc<ClipboardSnapshot>, ClipboardReadError>) {
+        if self.contents.set(snapshot).is_err() {
+            return;
+        }
+        let Some(result) = self.contents.get() else {
+            return;
+        };
+        let callbacks = std::mem::take(&mut *self.contents_callbacks.borrow_mut());
+        for callback in callbacks {
+            callback(result.clone());
+        }
+    }
+}
+
 /// A clipboard item that should be copied to the clipboard
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClipboardItem {
@@ -3430,6 +3767,130 @@ impl From<String> for ClipboardString {
             text: value,
             metadata: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod clipboard_snapshot_tests {
+    use super::*;
+    use crate::TestAppContext;
+    use futures::FutureExt;
+
+    #[gpui::test]
+    async fn test_clipboard_async_publication(cx: &mut TestAppContext) {
+        let item = ClipboardItem::new_string(String::from("published"));
+        cx.update(|cx| cx.fail_next_checked_clipboard_write());
+        assert!(
+            cx.update(|cx| cx.write_to_clipboard_async(item.clone()))
+                .await
+                .is_err()
+        );
+        assert_eq!(cx.update(|cx| cx.read_from_clipboard()), None);
+        let revision = cx
+            .update(|cx| cx.write_to_clipboard_async(item.clone()))
+            .await
+            .expect("publication");
+        let snapshot = cx.update(|cx| cx.read_clipboard_snapshot());
+        assert_eq!(snapshot.item, Some(item));
+        assert_eq!(snapshot.revision, revision);
+    }
+
+    #[gpui::test]
+    fn test_clipboard_snapshot_async_cancellation(cx: &mut TestAppContext) {
+        let (read, resolver) = ClipboardSnapshotRead::pending();
+        let (sender, receiver) = oneshot::channel::<()>();
+        resolver.resolve_async(&cx.foreground_executor, async move {
+            let _sender = sender;
+            futures::future::pending::<()>().await;
+            Ok(Arc::new(ClipboardSnapshot::default()))
+        });
+        cx.run_until_parked();
+        assert!(!read.is_ready());
+        drop(read);
+        cx.run_until_parked();
+        assert!(receiver.now_or_never().expect("cancelled task").is_err());
+        let (read, resolver) = ClipboardSnapshotRead::pending();
+        let weak = read.downgrade();
+        drop(read);
+        assert!(resolver.is_canceled());
+        assert!(weak.upgrade().is_none());
+    }
+
+    #[test]
+    fn test_clipboard_snapshot_shared_completion() {
+        let (read, resolver) = ClipboardSnapshotRead::pending();
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        for _ in 0..3 {
+            let observed = observed.clone();
+            read.on_ready(move |snapshot| observed.borrow_mut().push(snapshot.expect("snapshot")));
+        }
+        let snapshot = Arc::new(ClipboardSnapshot {
+            item: Some(ClipboardItem::new_string("shared".to_owned())),
+            revision: Some(ClipboardRevision::Native(1)),
+        });
+        resolver.resolve(Ok(snapshot.clone()));
+        let waited = read
+            .wait()
+            .now_or_never()
+            .expect("completed")
+            .expect("snapshot");
+        assert!(Arc::ptr_eq(&snapshot, &waited));
+        assert_eq!(observed.borrow().len(), 3);
+        for observed in observed.borrow().iter() {
+            assert!(Arc::ptr_eq(&snapshot, observed));
+        }
+        read.on_ready(move |ready| assert!(Arc::ptr_eq(&snapshot, &ready.expect("snapshot"))));
+    }
+
+    #[test]
+    fn test_clipboard_snapshot_completion_and_cancellation() {
+        let (read, resolver) = ClipboardSnapshotRead::pending();
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        assert!(!read.is_ready());
+        assert!(read.wait().now_or_never().is_none());
+        for index in 0..2 {
+            let observed = observed.clone();
+            read.on_ready(move |snapshot| {
+                observed
+                    .borrow_mut()
+                    .push((index, snapshot.expect("snapshot").revision.clone()));
+            });
+        }
+        let revision = ClipboardRevision::default();
+        resolver.resolve(Ok(Arc::new(ClipboardSnapshot {
+            item: None,
+            revision: Some(revision.clone()),
+        })));
+        assert_eq!(
+            *observed.borrow(),
+            [(0, Some(revision.clone())), (1, Some(revision.clone()))]
+        );
+        assert_eq!(
+            read.wait()
+                .now_or_never()
+                .expect("completed")
+                .expect("snapshot")
+                .revision,
+            Some(revision)
+        );
+        let (read, resolver) = ClipboardSnapshotRead::pending();
+        resolver.resolve(Err(ClipboardReadError::Unavailable));
+        assert_eq!(
+            read.wait()
+                .now_or_never()
+                .expect("completed contents")
+                .expect_err("failed contents"),
+            ClipboardReadError::Unavailable,
+        );
+        let (read, resolver) = ClipboardSnapshotRead::pending();
+        drop(resolver);
+        assert_eq!(
+            read.wait()
+                .now_or_never()
+                .expect("cancelled")
+                .expect_err("unavailable"),
+            ClipboardReadError::Unavailable
+        );
     }
 }
 

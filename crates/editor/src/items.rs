@@ -5,7 +5,7 @@ use crate::{
     display_map::HighlightKey,
     editor_settings::SeedQuerySetting,
     persistence::{EditorDb, SerializedEditor},
-    scroll::{ScrollAnchor, ScrollOffset},
+    scroll::{ScrollAnchor, SerializedScrollPosition},
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
@@ -18,8 +18,8 @@ use gpui::{
     IntoElement, ParentElement, Pixels, SharedString, Styled, Task, WeakEntity, Window, point,
 };
 use language::{
-    Bias, Buffer, BufferRow, CharKind, CharScopeContext, HighlightedText, LocalFile, PLAIN_TEXT,
-    Point, SelectionGoal,
+    Bias, Buffer, CharKind, CharScopeContext, HighlightedText, LocalFile, PLAIN_TEXT, Point,
+    SelectionGoal,
     language_settings::{FormatOnSave, LanguageSettings},
     proto::serialize_anchor as serialize_text_anchor,
 };
@@ -47,7 +47,7 @@ use std::{
 use text::{BufferId, BufferSnapshot, OffsetRangeExt, Selection, ToPoint as _};
 use ui::{IconDecorationKind, prelude::*};
 use util::{
-    ResultExt, TryFutureExt, debug_panic,
+    ResultExt, debug_panic,
     paths::{PathExt, UrlExt as _},
     rel_path::RelPath,
 };
@@ -672,12 +672,20 @@ impl Item for Editor {
                 );
             }
 
+            let horizontal_scroll = data.horizontal_scroll.map(|(anchor, position, offset)| {
+                let position = if buffer.can_resolve(&anchor) {
+                    anchor.to_point(&buffer)
+                } else {
+                    position
+                };
+                (position, offset)
+            });
             drop(buffer);
 
             if newest_selection.head() == offset {
                 false
             } else {
-                self.set_scroll_anchor(scroll_anchor, window, cx);
+                self.restore_native_scroll_position(scroll_anchor, horizontal_scroll, window, cx);
                 self.change_selections(
                     SelectionEffects::default().nav_history(false),
                     window,
@@ -909,6 +917,14 @@ impl Item for Editor {
         self.buffer().read(cx).read(cx).is_dirty()
     }
 
+    fn has_pending_input(&self, cx: &App) -> bool {
+        self.has_pending_document_input(cx)
+    }
+
+    fn pending_input(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        self.pending_document_input(cx)
+    }
+
     fn capability(&self, cx: &App) -> Capability {
         self.capability(cx)
     }
@@ -959,71 +975,78 @@ impl Item for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        if self.read_only(cx) {
-            return Task::ready(Ok(()));
-        }
-        // Add meta data tracking # of auto saves
-        if options.autosave {
-            self.report_editor_event(ReportEditorEvent::Saved { auto_saved: true }, None, cx);
-        } else {
-            self.report_editor_event(ReportEditorEvent::Saved { auto_saved: false }, None, cx);
-        }
+        self.after_document_input(window, cx, move |editor, window, cx| {
+            if editor.read_only(cx) {
+                return Task::ready(Ok(()));
+            }
+            editor.report_editor_event(
+                ReportEditorEvent::Saved {
+                    auto_saved: options.autosave,
+                },
+                None,
+                cx,
+            );
 
-        let buffers = self.buffer().clone().read(cx).all_buffers();
-        let buffers = buffers
-            .into_iter()
-            .map(|handle| handle.read(cx).base_buffer().unwrap_or(handle.clone()))
-            .collect::<HashSet<_>>();
-
-        let buffers_to_save = if self.buffer.read(cx).is_singleton() && !options.autosave {
-            buffers
-        } else {
-            buffers
+            let buffers = editor.buffer().read(cx).all_buffers();
+            let buffers = buffers
                 .into_iter()
-                // Skip untitled buffers: a multi-buffer (e.g. project search results) can
-                // excerpt a buffer with no file on disk, which can only be persisted via
-                // `save_as`. Trying to save it here errors and aborts the whole save.
-                .filter(|buffer| {
-                    let buffer = buffer.read(cx);
-                    buffer.is_dirty() && !buffer.read_only() && buffer.file().is_some()
-                })
-                .collect()
-        };
+                .map(|handle| handle.read(cx).base_buffer().unwrap_or(handle.clone()))
+                .collect::<HashSet<_>>();
 
-        let format_trigger = if options.force_format {
-            FormatTrigger::Manual
-        } else {
-            FormatTrigger::Save
-        };
-
-        cx.spawn_in(window, async move |this, cx| {
-            if options.format {
-                let format_task = this.update_in(cx, |editor, window, cx| {
-                    let format_target = compute_format_target(
-                        &buffers_to_save,
-                        format_trigger,
-                        editor.buffer(),
-                        project.read(cx).git_store(),
-                        cx,
-                    );
-                    format_target.map(|target| {
-                        editor.perform_format(project.clone(), format_trigger, target, window, cx)
+            let buffers_to_save = if editor.buffer.read(cx).is_singleton() && !options.autosave {
+                buffers
+            } else {
+                buffers
+                    .into_iter()
+                    // Skip untitled buffers: a multi-buffer (e.g. project search results) can
+                    // excerpt a buffer with no file on disk, which can only be persisted via
+                    // `save_as`. Trying to save it here errors and aborts the whole save.
+                    .filter(|buffer| {
+                        let buffer = buffer.read(cx);
+                        buffer.is_dirty() && !buffer.read_only() && buffer.file().is_some()
                     })
-                })?;
-                if let Some(format_task) = format_task {
-                    format_task.await?;
+                    .collect()
+            };
+
+            let format_trigger = if options.force_format {
+                FormatTrigger::Manual
+            } else {
+                FormatTrigger::Save
+            };
+
+            cx.spawn_in(window, async move |editor, cx| {
+                if options.format {
+                    let format_task = editor.update_in(cx, |editor, window, cx| {
+                        let format_target = compute_format_target(
+                            &buffers_to_save,
+                            format_trigger,
+                            editor.buffer(),
+                            project.read(cx).git_store(),
+                            cx,
+                        );
+                        format_target.map(|target| {
+                            editor.perform_format(
+                                project.clone(),
+                                format_trigger,
+                                target,
+                                window,
+                                cx,
+                            )
+                        })
+                    })?;
+                    if let Some(format_task) = format_task {
+                        format_task.await?;
+                    }
                 }
-            }
 
-            if !buffers_to_save.is_empty() {
-                project
-                    .update(cx, |project, cx| {
-                        project.save_buffers(buffers_to_save.clone(), cx)
-                    })
-                    .await?;
-            }
+                if !buffers_to_save.is_empty() {
+                    project
+                        .update(cx, |project, cx| project.save_buffers(buffers_to_save, cx))
+                        .await?;
+                }
 
-            Ok(())
+                Ok(())
+            })
         })
     }
 
@@ -1031,23 +1054,25 @@ impl Item for Editor {
         &mut self,
         project: Entity<Project>,
         path: ProjectPath,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let buffer = self
-            .buffer()
-            .read(cx)
-            .as_singleton()
-            .expect("cannot call save_as on an excerpt list");
+        self.after_document_input(window, cx, move |editor, _, cx| {
+            let buffer = editor
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .expect("cannot call save_as on an excerpt list");
 
-        let file_extension = path.path.extension().map(|a| a.to_string());
-        self.report_editor_event(
-            ReportEditorEvent::Saved { auto_saved: false },
-            file_extension,
-            cx,
-        );
+            let file_extension = path.path.extension().map(|extension| extension.to_string());
+            editor.report_editor_event(
+                ReportEditorEvent::Saved { auto_saved: false },
+                file_extension,
+                cx,
+            );
 
-        project.update(cx, |project, cx| project.save_buffer_as(buffer, path, cx))
+            project.update(cx, |project, cx| project.save_buffer_as(buffer, path, cx))
+        })
     }
 
     fn reload(
@@ -1056,23 +1081,23 @@ impl Item for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let buffer = self.buffer().clone();
-        let buffers = self.buffer.read(cx).all_buffers();
-        let reload_buffers =
-            project.update(cx, |project, cx| project.reload_buffers(buffers, true, cx));
-        cx.spawn_in(window, async move |this, cx| {
-            let transaction = reload_buffers.log_err().await;
-            this.update(cx, |editor, cx| {
-                editor.request_autoscroll(Autoscroll::fit(), cx)
-            })?;
-            buffer.update(cx, |buffer, cx| {
-                if let Some(transaction) = transaction
-                    && !buffer.is_singleton()
-                {
-                    buffer.push_transaction(&transaction.0, cx);
-                }
-            });
-            Ok(())
+        self.after_document_input(window, cx, move |editor, window, cx| {
+            let buffer = editor.buffer().clone();
+            let buffers = buffer.read(cx).all_buffers();
+            let reload_buffers =
+                project.update(cx, |project, cx| project.reload_buffers(buffers, true, cx));
+            cx.spawn_in(window, async move |editor, cx| {
+                let transaction = reload_buffers.await?;
+                editor.update(cx, |editor, cx| {
+                    editor.request_autoscroll(Autoscroll::fit(), cx)
+                })?;
+                buffer.update(cx, |buffer, cx| {
+                    if !buffer.is_singleton() {
+                        buffer.push_transaction(&transaction.0, cx);
+                    }
+                });
+                Ok(())
+            })
         })
     }
 
@@ -1561,7 +1586,7 @@ struct EditorRestorationData {
 
 #[derive(Default, Debug)]
 pub struct RestorationData {
-    pub scroll_position: (BufferRow, gpui::Point<ScrollOffset>),
+    pub scroll_position: SerializedScrollPosition,
     pub folds: Vec<Range<Point>>,
     pub selections: Vec<Range<Point>>,
 }
@@ -1581,7 +1606,6 @@ impl ProjectItem for Editor {
         cx: &mut Context<Self>,
     ) -> Self {
         let mut editor = Self::for_buffer(buffer.clone(), Some(project), window, cx);
-        let multibuffer_snapshot = editor.buffer().read(cx).snapshot(cx);
 
         if let Some(buffer_snapshot) = editor.buffer().read(cx).snapshot(cx).as_singleton()
             && WorkspaceSettings::get(None, cx).restore_on_file_reopen
@@ -1606,9 +1630,7 @@ impl ProjectItem for Editor {
                     s.select_ranges(clip_ranges(&restoration_data.selections, buffer_snapshot));
                 });
             }
-            let (top_row, offset) = restoration_data.scroll_position;
-            let anchor = multibuffer_snapshot.anchor_before(Point::new(top_row, 0));
-            editor.set_scroll_anchor(ScrollAnchor { anchor, offset }, window, cx);
+            editor.restore_scroll_position(restoration_data.scroll_position, window, cx);
         }
 
         editor
@@ -1677,6 +1699,22 @@ impl Editor {
                 })
             });
         });
+    }
+
+    fn after_document_input(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        operation: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) -> Task<Result<()>> + 'static,
+    ) -> Task<Result<()>> {
+        if !self.has_pending_document_input(cx) {
+            return operation(self, window, cx);
+        }
+        let pending_input = self.pending_document_input(cx);
+        cx.spawn_in(window, async move |editor, cx| {
+            pending_input.await?;
+            editor.update_in(cx, operation)?.await
+        })
     }
 }
 

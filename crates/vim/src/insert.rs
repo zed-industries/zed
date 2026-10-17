@@ -22,7 +22,7 @@ actions!(
 );
 
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
-    Vim::action(editor, cx, Vim::normal_before);
+    Vim::recovery_action(editor, cx, Vim::normal_before);
     Vim::action(editor, cx, Vim::temporary_normal);
     Vim::action(editor, cx, |vim, _: &InsertFromAbove, window, cx| {
         vim.insert_around(Direction::Prev, window, cx)
@@ -39,6 +39,14 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self
+            .update_editor(cx, |_, editor, cx| editor.has_unrepresentable_rows(cx))
+            .unwrap_or(true)
+        {
+            self.stop_recording_immediately(action.boxed_clone(), cx);
+            self.switch_mode(Mode::Normal, true, window, cx);
+            return;
+        }
         if self.active_operator().is_some() {
             self.operator_stack.clear();
             self.sync_vim_settings(window, cx);
@@ -47,7 +55,7 @@ impl Vim {
         let count = Vim::take_count(cx).unwrap_or(1);
         Vim::take_forced_motion(cx);
         self.stop_recording_immediately(action.boxed_clone(), cx);
-        if count <= 1 || Vim::globals(cx).dot_replaying {
+        if count <= 1 || Vim::globals(cx).is_dot_replaying() {
             self.create_mark("^".into(), window, cx);
 
             if HelixModeSetting::get_global(cx).0 {

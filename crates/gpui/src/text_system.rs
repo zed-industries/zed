@@ -3,12 +3,14 @@ mod font_features;
 mod line;
 mod line_layout;
 mod line_wrapper;
+mod retained_line;
 
 pub use font_fallbacks::*;
 pub use font_features::*;
 pub use line::*;
 pub use line_layout::*;
 pub use line_wrapper::*;
+pub use retained_line::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -20,6 +22,7 @@ use anyhow::{Context as _, anyhow};
 use collections::{FxHashMap, FxHashSet};
 use core::fmt;
 use derive_more::{Add, Deref, FromStr, Sub};
+use gpui_util::ResultExt;
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::{SmallVec, smallvec};
@@ -558,6 +561,78 @@ impl TextSystem {
         }
     }
 
+    #[expect(missing_docs)]
+    pub fn glyph_raster_envelope(
+        &self,
+        font_id: FontId,
+        glyph_id: GlyphId,
+        font_size: Pixels,
+        config: GlyphRasterConfig,
+        is_emoji: bool,
+    ) -> Option<Bounds<f64>> {
+        let mode = match config.rendering_mode {
+            TextRenderingMode::PlatformDefault => {
+                self.recommended_rendering_mode(font_id, font_size)
+            }
+            mode => mode,
+        };
+        let variants = if is_emoji {
+            Point::new(1, 1)
+        } else {
+            Point::new(SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y)
+        };
+        let mut envelope: Option<Bounds<f64>> = None;
+        for x in 0..variants.x {
+            for y in 0..variants.y {
+                for dilation in 0..=if is_emoji { 0 } else { config.max_dilation } {
+                    let params = RenderGlyphParams {
+                        font_id,
+                        glyph_id,
+                        font_size,
+                        subpixel_variant: Point::new(x, y),
+                        scale_factor: config.scale_factor,
+                        is_emoji,
+                        subpixel_rendering: !is_emoji && mode == TextRenderingMode::Subpixel,
+                        dilation,
+                    };
+                    let Some(bounds) = self
+                        .raster_bounds(&params)
+                        .with_context(|| format!("computing raster envelope for {params:?}"))
+                        .log_err()
+                        .filter(|bounds| !bounds.is_empty())
+                    else {
+                        continue;
+                    };
+                    let phase = Point::new(
+                        f64::from(x) / f64::from(variants.x),
+                        f64::from(y) / f64::from(variants.y),
+                    );
+                    let rounding = variants.map(|count| 0.5 / f64::from(count));
+                    let negative_origin = Point::new(
+                        if x == 0 {
+                            f64::from(variants.x - 1) / f64::from(variants.x)
+                        } else {
+                            0.
+                        },
+                        if y == 0 {
+                            f64::from(variants.y - 1) / f64::from(variants.y)
+                        } else {
+                            0.
+                        },
+                    );
+                    let bounds = Bounds::from_corners(
+                        bounds.origin.map(|value| f64::from(value.0)) - phase - rounding,
+                        bounds.bottom_right().map(|value| f64::from(value.0)) - phase
+                            + rounding
+                            + negative_origin,
+                    );
+                    envelope = Some(envelope.map_or(bounds, |envelope| envelope.union(&bounds)));
+                }
+            }
+        }
+        envelope
+    }
+
     /// Get the rasterized size and location of a specific, rendered glyph.
     pub(crate) fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         let raster_bounds = self.raster_bounds.upgradable_read();
@@ -568,6 +643,23 @@ impl TextSystem {
             let bounds = self.platform_text_system.glyph_raster_bounds(params)?;
             raster_bounds.insert(params.clone(), bounds);
             Ok(bounds)
+        }
+    }
+
+    pub(crate) fn raster_bounds_with_image(
+        &self,
+        params: &RenderGlyphParams,
+    ) -> Result<(Bounds<DevicePixels>, Option<Vec<u8>>)> {
+        let raster_bounds = self.raster_bounds.upgradable_read();
+        if let Some(bounds) = raster_bounds.get(params) {
+            Ok((*bounds, None))
+        } else {
+            let mut raster_bounds = RwLockUpgradableReadGuard::upgrade(raster_bounds);
+            let (bounds, image) = self
+                .platform_text_system
+                .glyph_raster_bounds_with_image(params)?;
+            raster_bounds.insert(params.clone(), bounds);
+            Ok((bounds, image))
         }
     }
 
@@ -647,33 +739,8 @@ impl WindowTextSystem {
             "text argument should not contain newlines"
         );
 
-        let mut decoration_runs = SmallVec::<[DecorationRun; 32]>::new();
-        for run in runs {
-            if let Some(last_run) = decoration_runs.last_mut()
-                && last_run.color == run.color
-                && last_run.underline == run.underline
-                && last_run.strikethrough == run.strikethrough
-                && last_run.background_color == run.background_color
-            {
-                last_run.len += run.len as u32;
-                continue;
-            }
-            decoration_runs.push(DecorationRun {
-                len: run.len as u32,
-                color: run.color,
-                background_color: run.background_color,
-                underline: run.underline,
-                strikethrough: run.strikethrough,
-            });
-        }
-
         let layout = self.layout_line(&text, font_size, runs, force_width);
-
-        ShapedLine {
-            layout,
-            text,
-            decoration_runs,
-        }
+        ShapedLine::new(layout, text, runs)
     }
 
     /// Shape the given line using a caller-provided content hash as the cache key.
@@ -695,53 +762,22 @@ impl WindowTextSystem {
         force_width: Option<Pixels>,
         materialize_text: impl FnOnce() -> SharedString,
     ) -> ShapedLine {
-        let mut decoration_runs = SmallVec::<[DecorationRun; 32]>::new();
-        for run in runs {
-            if let Some(last_run) = decoration_runs.last_mut()
-                && last_run.color == run.color
-                && last_run.underline == run.underline
-                && last_run.strikethrough == run.strikethrough
-                && last_run.background_color == run.background_color
-            {
-                last_run.len += run.len as u32;
-                continue;
-            }
-            decoration_runs.push(DecorationRun {
-                len: run.len as u32,
-                color: run.color,
-                background_color: run.background_color,
-                underline: run.underline,
-                strikethrough: run.strikethrough,
-            });
-        }
-
-        let mut used_force_width = force_width;
-        let layout = self.layout_line_by_hash(
-            text_hash,
-            text_len,
-            font_size,
-            runs,
-            used_force_width,
-            || {
+        let layout =
+            self.layout_line_by_hash(text_hash, text_len, font_size, runs, force_width, || {
                 let text = materialize_text();
                 debug_assert!(
                     text.find('\n').is_none(),
                     "text argument should not contain newlines"
                 );
                 text
-            },
-        );
+            });
 
         // We only materialize actual text on cache miss; on hit we avoid allocations.
         // Since `ShapedLine` carries a `SharedString`, use an empty placeholder for hits.
         // NOTE: Callers must not rely on `ShapedLine.text` for content when using this API.
         let text: SharedString = SharedString::new_static("");
 
-        ShapedLine {
-            layout,
-            text,
-            decoration_runs,
-        }
+        ShapedLine::new(layout, text, runs)
     }
 
     /// Shape a multi line string of text, at the given font_size, for painting to the screen.
@@ -904,13 +940,6 @@ impl WindowTextSystem {
         self.font_runs_pool.lock().push(font_runs);
 
         layout
-    }
-
-    /// Returns the font runs that [`Self::layout_line`] shapes the given text runs with.
-    pub fn font_runs(&self, runs: &[TextRun]) -> Vec<FontRun> {
-        let mut font_runs = Vec::new();
-        self.push_font_runs(runs, &mut font_runs);
-        font_runs
     }
 
     fn push_font_runs(&self, runs: &[TextRun], font_runs: &mut Vec<FontRun>) {
@@ -1263,6 +1292,24 @@ impl TextRun {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(C)]
 pub struct GlyphId(pub u32);
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[expect(missing_docs)]
+pub struct GlyphRasterConfig {
+    pub scale_factor: f32,
+    pub rendering_mode: TextRenderingMode,
+    pub max_dilation: u8,
+}
+
+impl Default for GlyphRasterConfig {
+    fn default() -> Self {
+        Self {
+            scale_factor: 1.,
+            rendering_mode: TextRenderingMode::Grayscale,
+            max_dilation: 0,
+        }
+    }
+}
 
 /// Parameters for rendering a glyph, used as cache keys for raster bounds.
 ///
