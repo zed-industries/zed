@@ -1048,6 +1048,7 @@ impl TerminalBuilder {
             selection_head: None,
             breadcrumb_text: String::new(),
             scroll_px: px(0.),
+            wheel_notches: 0.,
             next_link_id: 0,
             selection_phase: SelectionPhase::Ended,
             hyperlink_regex_searches: RegexSearches::default(),
@@ -1335,6 +1336,7 @@ impl TerminalBuilder {
                 selection_head: None,
                 breadcrumb_text: String::new(),
                 scroll_px: px(0.),
+                wheel_notches: 0.,
                 next_link_id: 0,
                 selection_phase: SelectionPhase::Ended,
                 hyperlink_regex_searches: RegexSearches::new(
@@ -1543,6 +1545,7 @@ pub struct Terminal {
     pub breadcrumb_text: String,
     title_override: Option<String>,
     scroll_px: Pixels,
+    wheel_notches: f32,
     next_link_id: usize,
     selection_phase: SelectionPhase,
     hyperlink_regex_searches: RegexSearches,
@@ -2037,6 +2040,7 @@ impl Terminal {
         self.selection_head = None;
         self.breadcrumb_text.clear();
         self.scroll_px = px(0.);
+        self.wheel_notches = 0.;
         self.next_link_id = 0;
         self.selection_phase = SelectionPhase::Ended;
         self.hyperlink_regex_searches = RegexSearches::new(
@@ -2899,7 +2903,18 @@ impl Terminal {
         let mouse_mode = self.mouse_mode(e.shift, mode);
         let scroll_multiplier = if mouse_mode { 1. } else { scroll_multiplier };
 
-        if let Some(scroll_lines) = self.determine_scroll_lines(e, scroll_multiplier)
+        // Applications in mouse mode expect one report per wheel notch, not one per
+        // line that the platform would scroll for it (e.g. 3 on Windows by default).
+        let scroll_lines = if mouse_mode && let Some(wheel_notches) = e.wheel_notches {
+            Some(take_whole_wheel_notches(
+                &mut self.wheel_notches,
+                wheel_notches.y,
+            ))
+        } else {
+            self.determine_scroll_lines(e, scroll_multiplier)
+        };
+
+        if let Some(scroll_lines) = scroll_lines
             && scroll_lines != 0
         {
             if mouse_mode {
@@ -3365,6 +3380,23 @@ fn convert_lf_to_crlf(bytes: &[u8], previous_byte_was_cr: &mut bool) -> Vec<u8> 
         *previous_byte_was_cr = byte == b'\r';
     }
     converted
+}
+
+/// Adds `notches` to the wheel notches accumulated so far and returns how many
+/// whole notches to report. The remainder is kept for high-resolution wheels,
+/// which report fractions of a notch. Changing direction drops the remainder.
+fn take_whole_wheel_notches(accumulated: &mut f32, notches: f32) -> i32 {
+    if notches == 0. {
+        return 0;
+    }
+    if accumulated.signum() != notches.signum() {
+        *accumulated = 0.;
+    }
+    *accumulated += notches;
+    // Allow for rounding, so that e.g. three thirds of a notch add up to one.
+    let whole = (*accumulated + accumulated.signum() * 1e-4).trunc();
+    *accumulated -= whole;
+    whole as i32
 }
 
 /// Owns a non-PTY task subprocess and the background task pumping its output
@@ -4193,6 +4225,105 @@ mod tests {
             assert_eq!(display_offset(&terminal.term.lock()), 0);
             assert!(terminal.take_input_log().is_empty());
             assert!(terminal.take_pty_write_log().is_empty());
+        });
+    }
+
+    #[test]
+    fn test_take_whole_wheel_notches() {
+        let mut accumulated = 0.;
+        assert_eq!(take_whole_wheel_notches(&mut accumulated, 1.), 1);
+        assert_eq!(take_whole_wheel_notches(&mut accumulated, -2.), -2);
+
+        // High-resolution wheels report fractions of a notch.
+        let mut accumulated = 0.;
+        let quarters: Vec<i32> = (0..4)
+            .map(|_| take_whole_wheel_notches(&mut accumulated, 0.25))
+            .collect();
+        assert_eq!(quarters, [0, 0, 0, 1]);
+        let thirds: Vec<i32> = (0..3)
+            .map(|_| take_whole_wheel_notches(&mut accumulated, 1. / 3.))
+            .collect();
+        assert_eq!(thirds, [0, 0, 1]);
+
+        // Changing direction drops the remainder.
+        let mut accumulated = 0.;
+        assert_eq!(take_whole_wheel_notches(&mut accumulated, 0.5), 0);
+        assert_eq!(take_whole_wheel_notches(&mut accumulated, -0.5), 0);
+        assert_eq!(take_whole_wheel_notches(&mut accumulated, -0.5), -1);
+    }
+
+    #[gpui::test]
+    async fn test_mouse_mode_reports_one_scroll_per_wheel_notch(cx: &mut TestAppContext) {
+        // `?1000h` enables mouse tracking, `?1006h` selects SGR encoding.
+        let terminal = init_terminal_test(cx, b"\x1b[?1000h\x1b[?1006h");
+
+        terminal.update(cx, |terminal, _cx| {
+            assert!(terminal.last_content.mode.intersects(Modes::MOUSE_MODE));
+            let wheel_event = |lines: f32, notches: Option<f32>| ScrollWheelEvent {
+                position: point(px(50.0), px(10.0)),
+                delta: ScrollDelta::Lines(point(0.0, lines)),
+                wheel_notches: notches.map(|notches| point(0.0, notches)),
+                ..Default::default()
+            };
+
+            // One notch that the platform scales to 3 lines is a single report.
+            terminal.scroll_wheel(
+                &wheel_event(3.0, Some(1.0)),
+                1.0,
+                MouseInputMode::ReportToTerminal,
+            );
+            assert_eq!(
+                terminal.take_pty_write_log(),
+                vec![b"\x1b[<64;6;1M".to_vec()]
+            );
+
+            // Two notches in one event are two reports, in the right direction.
+            terminal.scroll_wheel(
+                &wheel_event(-6.0, Some(-2.0)),
+                1.0,
+                MouseInputMode::ReportToTerminal,
+            );
+            assert_eq!(
+                terminal.take_pty_write_log(),
+                vec![b"\x1b[<65;6;1M".to_vec(), b"\x1b[<65;6;1M".to_vec()]
+            );
+
+            // Quarter notches from a high-resolution wheel add up to one report.
+            for _ in 0..3 {
+                terminal.scroll_wheel(
+                    &wheel_event(0.75, Some(0.25)),
+                    1.0,
+                    MouseInputMode::ReportToTerminal,
+                );
+                assert!(terminal.take_pty_write_log().is_empty());
+            }
+            terminal.scroll_wheel(
+                &wheel_event(0.75, Some(0.25)),
+                1.0,
+                MouseInputMode::ReportToTerminal,
+            );
+            assert_eq!(terminal.take_pty_write_log().len(), 1);
+
+            // Without a notch count (e.g. on macOS), each line is still reported.
+            terminal.scroll_wheel(
+                &wheel_event(3.0, None),
+                1.0,
+                MouseInputMode::ReportToTerminal,
+            );
+            assert_eq!(terminal.take_pty_write_log().len(), 3);
+
+            // Scrolling Zed's own scrollback still moves by lines.
+            terminal.events.clear();
+            terminal.scroll_wheel(
+                &wheel_event(3.0, Some(1.0)),
+                1.0,
+                MouseInputMode::LocalSelection,
+            );
+            assert!(terminal.take_pty_write_log().is_empty());
+            assert!(matches!(
+                terminal.events.back(),
+                Some(InternalEvent::Scroll(Scroll::Delta(3)))
+            ));
         });
     }
 
