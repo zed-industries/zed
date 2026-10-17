@@ -6,9 +6,10 @@ use crate::{
     actions::{Format, FormatSelections},
     selections_collection::SelectionsCollection,
 };
+use git::FileHistory;
 use gpui::prelude::FluentBuilder;
 use gpui::{Context, DismissEvent, Entity, Focusable as _, Pixels, Point, Subscription, Window};
-use project::DisableAiSettings;
+use project::{DisableAiSettings, File, ProjectPath};
 use std::ops::Range;
 use text::PointUtf16;
 use workspace::OpenInTerminal;
@@ -205,6 +206,7 @@ pub fn deploy_context_menu(
             .all::<PointUtf16>(&display_map)
             .into_iter()
             .any(|s| !s.is_empty());
+
         let has_git_repo =
             buffer
                 .anchor_to_buffer_anchor(anchor)
@@ -242,6 +244,32 @@ pub fn deploy_context_menu(
                     .extension()
                     .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
             });
+
+        let file = editor
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .and_then(|buffer| File::from_dyn(buffer.read(cx).file()));
+
+        let project_path = file.and_then(|file| {
+            Some(ProjectPath {
+                worktree_id: file.worktree_id(cx),
+                path: file.path.clone(),
+            })
+        });
+
+        let has_history = has_git_repo
+            && project_path.is_some_and(|project_path| {
+                !project
+                    .read(cx)
+                    .git_store()
+                    .read(cx)
+                    .project_path_git_status(&project_path, cx)
+                    .is_some_and(|status| status.is_created())
+            });
+
+        let is_path_ignored =
+            file.is_some_and(|file| file.worktree.read(cx).is_path_ignored(&file.path));
 
         ui::ContextMenu::build(window, cx, |menu, _window, _cx| {
             let builder = menu
@@ -316,16 +344,12 @@ pub fn deploy_context_menu(
                     "Open in Terminal",
                     Box::new(OpenInTerminal),
                 )
-                .action_disabled_when(
-                    !has_git_repo,
-                    "Copy Permalink to Line",
-                    Box::new(CopyPermalinkToLine),
-                )
-                .action_disabled_when(
-                    !has_git_repo,
-                    "View File History",
-                    Box::new(git::FileHistory),
-                );
+                .when(has_history && !is_path_ignored, |builder| {
+                    builder
+                        .action("Copy Permalink to Line", Box::new(CopyPermalinkToLine))
+                        .action("View File History", Box::new(FileHistory))
+                });
+
             match focus {
                 Some(focus) => builder.context(focus),
                 None => builder,
