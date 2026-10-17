@@ -14504,6 +14504,118 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_terminal_permission_buttons_remain_visible_in_small_window(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let terminal_id = acp_v1::TerminalId::new("terminal-permission-overflow");
+        let tool_call_id = acp_v2::ToolCallId::new("terminal-permission-overflow");
+        let permission_options =
+            ToolPermissionContext::new(TerminalTool::NAME, vec!["printf output".to_string()])
+                .build_permission_options();
+        let connection =
+            StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
+                tool_call_id.clone(),
+                permission_options,
+            )]));
+        connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::ToolCall(
+            acp_v1::ToolCall::new(
+                acp_v1::ToolCallId::new(tool_call_id.0.clone()),
+                "Run a command with long output",
+            )
+            .kind(acp_v1::ToolKind::Execute)
+            .status(acp_v1::ToolCallStatus::Pending)
+            .content(vec![acp_v1::ToolCallContent::Terminal(
+                acp_v1::Terminal::new(terminal_id.clone()),
+            )]),
+        )]);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection), cx).await;
+        cx.simulate_resize(size(px(480.), px(320.)));
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        let lower_terminal = cx.new(|cx| {
+            terminal::TerminalBuilder::new_display_only(
+                Default::default(),
+                terminal::terminal_settings::AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                util::paths::PathStyle::local(),
+            )
+            .subscribe(cx)
+        });
+        thread.update(cx, |thread, cx| {
+            thread.register_terminal_created(
+                acp_v2::TerminalId::new(terminal_id.0.clone()),
+                "printf output".into(),
+                None,
+                None,
+                lower_terminal,
+                cx,
+            );
+        });
+
+        message_editor(&conversation_view, cx).update_in(cx, |editor, window, cx| {
+            editor.set_text(&"Earlier context\n".repeat(100), window, cx);
+        });
+        thread_view.update_in(cx, |view, window, cx| view.send(window, cx));
+        cx.run_until_parked();
+
+        let entry_view_state = thread_view.read_with(cx, |view, _| view.entry_view_state.clone());
+        entry_view_state.update(cx, |state, cx| {
+            state.expand_tool_call(tool_call_id);
+            cx.notify();
+        });
+        thread_view.update(cx, |view, cx| {
+            view.list_state.scroll_to(ListOffset {
+                item_ix: 0,
+                offset_in_item: px(0.),
+            });
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        let session_id = thread.read_with(cx, |thread, _| {
+            let tool_call = thread
+                .entries()
+                .iter()
+                .find_map(|entry| match entry {
+                    acp_thread::AgentThreadEntry::ToolCall(tool_call) => Some(tool_call),
+                    _ => None,
+                })
+                .expect("terminal tool call should be present");
+            assert_eq!(
+                tool_call.terminals().count(),
+                1,
+                "terminal content should resolve before rendering",
+            );
+            thread.session_id().clone()
+        });
+        let permission_buttons_selector = format!("PERMISSION_BUTTONS-{session_id}-Only this time");
+        let permission_buttons = cx
+            .debug_bounds(Box::leak(permission_buttons_selector.into_boxed_str()))
+            .expect("terminal permission buttons should be rendered");
+        let floating_body = cx
+            .debug_bounds("floating-terminal-tool-call-body")
+            .expect("terminal output should render in a bounded floating body");
+        let viewport = cx.update(|window, _| window.viewport_size());
+
+        assert!(
+            floating_body.bottom() <= permission_buttons.top(),
+            "the scrollable terminal body must end before the permission buttons, got {floating_body:?} and {permission_buttons:?}",
+        );
+        assert!(
+            permission_buttons.bottom() <= viewport.height,
+            "terminal permission buttons should remain inside the viewport, got {permission_buttons:?} in {viewport:?}",
+        );
+    }
+
+    #[gpui::test]
     async fn test_tool_permission_buttons_terminal_with_pattern(cx: &mut TestAppContext) {
         init_test(cx);
 
