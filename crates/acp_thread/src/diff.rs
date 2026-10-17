@@ -12,7 +12,14 @@ use language::{
 };
 use markdown::Markdown;
 use multi_buffer::{MultiBuffer, PathKey, excerpt_context_lines};
-use std::{cell::OnceCell, cmp::Reverse, ops::Range, path::Path, sync::Arc};
+use std::{
+    cell::{Cell, OnceCell},
+    cmp::Reverse,
+    ops::Range,
+    path::Path,
+    rc::Rc,
+    sync::Arc,
+};
 use util::ResultExt;
 
 #[derive(Debug)]
@@ -444,13 +451,7 @@ impl Diff {
             }
             Self::Finalized(finalized) => {
                 let buffer_text = match finalized.resolved.get() {
-                    Some(resolved) => resolved
-                        .multibuffer
-                        .read(cx)
-                        .all_buffers()
-                        .iter()
-                        .map(|buffer| buffer.read(cx).text())
-                        .join("\n"),
+                    Some(resolved) => finalized.export_resolved(resolved, cx),
                     None => finalized.export_before_resolve(),
                 };
                 (Some(finalized.path.as_str().into()), buffer_text)
@@ -478,7 +479,7 @@ impl Diff {
         match self {
             Self::Pending(_) => !self.multibuffer().read(cx).is_empty(),
             Self::Finalized(finalized) => match finalized.resolved.get() {
-                Some(resolved) => !resolved.multibuffer.read(cx).is_empty(),
+                Some(resolved) => finalized.resolved_has_changes(resolved, cx),
                 None => finalized.deferred_has_changes(),
             },
         }
@@ -616,6 +617,7 @@ impl PendingDiff {
                 new_buffer: self.new_buffer.clone(),
                 multibuffer: self.multibuffer.clone(),
                 _update_diff: update_diff,
+                populated: Rc::new(Cell::new(true)),
             }),
             deferred: None,
         }
@@ -695,6 +697,8 @@ struct ResolvedFinalized {
     new_buffer: Entity<Buffer>,
     multibuffer: Entity<MultiBuffer>,
     _update_diff: Task<Result<()>>,
+    /// Whether the async diff build has populated the multibuffer.
+    populated: Rc<Cell<bool>>,
 }
 
 impl FinalizedDiff {
@@ -716,8 +720,33 @@ impl FinalizedDiff {
 
     fn normalized_new_text(&self) -> Option<String> {
         let deferred = self.deferred.as_ref()?;
-        let base_text = LineEnding::normalize_arc(self.base_text.clone());
-        let mut new_text = deferred.new_text.clone();
+        Self::normalized_changed_text(&self.base_text, deferred.new_text.clone())
+    }
+
+    fn resolved_has_changes(&self, resolved: &ResolvedFinalized, cx: &App) -> bool {
+        if resolved.populated.get() {
+            return !resolved.multibuffer.read(cx).is_empty();
+        }
+        Self::normalized_changed_text(&self.base_text, resolved.new_buffer.read(cx).text())
+            .is_some()
+    }
+
+    fn export_resolved(&self, resolved: &ResolvedFinalized, cx: &App) -> String {
+        if resolved.populated.get() {
+            return resolved
+                .multibuffer
+                .read(cx)
+                .all_buffers()
+                .iter()
+                .map(|buffer| buffer.read(cx).text())
+                .join("\n");
+        }
+        Self::normalized_changed_text(&self.base_text, resolved.new_buffer.read(cx).text())
+            .unwrap_or_default()
+    }
+
+    fn normalized_changed_text(base_text: &str, mut new_text: String) -> Option<String> {
+        let base_text = LineEnding::normalize_arc(Arc::from(base_text));
         LineEnding::normalize(&mut new_text);
         (new_text.as_str() != base_text.as_ref()).then_some(new_text)
     }
@@ -733,9 +762,11 @@ fn build_finalized(
 ) -> ResolvedFinalized {
     let multibuffer = cx.new(|_cx| MultiBuffer::without_headers(Capability::ReadOnly));
     let new_buffer = cx.new(|cx| Buffer::local(new_text, cx));
+    let populated = Rc::new(Cell::new(false));
     let task = cx.spawn({
         let multibuffer = multibuffer.clone();
         let buffer = new_buffer.clone();
+        let populated = populated.clone();
         async move |_, cx| {
             if let Some(language_registry) = language_registry {
                 let language = language_registry
@@ -772,6 +803,7 @@ fn build_finalized(
                 multibuffer.add_diff(diff, cx);
             });
 
+            populated.set(true);
             anyhow::Ok(())
         }
     });
@@ -780,6 +812,7 @@ fn build_finalized(
         new_buffer,
         multibuffer,
         _update_diff: task,
+        populated,
     }
 }
 
@@ -1109,6 +1142,18 @@ mod tests {
             );
 
             diff.update(cx, |diff, cx| diff.resolve(cx));
+
+            assert_eq!(
+                cx.update(|cx| diff.read(cx).has_changes(cx)),
+                expected_changes,
+                "has_changes must not wait for the async build {old_text:?} -> {new_text:?}"
+            );
+            assert_eq!(
+                cx.update(|cx| diff.read(cx).to_markdown(cx)),
+                exported_before,
+                "export must not wait for the async build {old_text:?} -> {new_text:?}"
+            );
+
             cx.run_until_parked();
 
             let exported_after = cx.update(|cx| diff.read(cx).to_markdown(cx));
@@ -1148,6 +1193,10 @@ mod tests {
         assert_eq!(
             diff.read_with(cx, |diff, cx| diff.buffer().read(cx).text()),
             "before"
+        );
+        assert!(
+            !diff.read_with(cx, |diff, cx| diff.has_changes(cx)),
+            "discarding should clear has_changes before the async build completes"
         );
     }
 }
