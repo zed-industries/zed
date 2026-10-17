@@ -13,6 +13,7 @@ use futures::future::BoxFuture;
 use futures::io::BufWriter;
 use futures::{AsyncWriteExt, FutureExt as _, select_biased};
 use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, SharedString, Task};
+use itertools::Itertools as _;
 use parking_lot::Mutex;
 use rope::Rope;
 use schemars::JsonSchema;
@@ -552,6 +553,7 @@ pub struct CommitFile {
     pub old_content: Option<Vec<u8>>,
     pub new_content: Option<Vec<u8>>,
     pub is_binary: bool,
+    pub is_generated: bool,
 }
 
 impl CommitFile {
@@ -621,6 +623,51 @@ async fn load_commit_object<R: smol::io::AsyncBufRead + Unpin>(
         Some(_) => Ok(Some(read_commit_blob(stdout, info_line, newline).await?)),
         None => Ok(None),
     }
+}
+
+async fn load_generated_paths(
+    git: &GitBinary,
+    commit: &str,
+    paths: impl Iterator<Item = &str>,
+) -> Result<HashSet<String>> {
+    let mut process = git
+        .build_command(&[
+            "check-attr",
+            &format!("--source={commit}"),
+            "--stdin",
+            "-z",
+            "linguist-generated",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("starting git check-attr process")?;
+    let mut stdin = BufWriter::new(process.stdin.take().context("no stdin")?);
+    // Write paths while reading output so a large commit can't deadlock on full pipes.
+    let write_paths = async move {
+        for path in paths {
+            stdin.write_all(path.as_bytes()).await?;
+            stdin.write_all(b"\0").await?;
+        }
+        stdin.close().await
+    };
+    let ((), output) = futures::try_join!(write_paths, process.output())?;
+    anyhow::ensure!(
+        output.status.success(),
+        "git check-attr failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Records are `<path> NUL <attribute> NUL <value> NUL`. Like GitHub Linguist, any value
+    // other than `false` marks a path as generated, while Git reports `-linguist-generated`
+    // as `unset` and a path with no rule as `unspecified`.
+    Ok(stdout
+        .split_terminator('\0')
+        .tuples()
+        .filter(|(_, _, value)| !matches!(*value, "unspecified" | "unset" | "false"))
+        .map(|(path, _, _)| path.to_string())
+        .collect())
 }
 
 async fn read_shallow_file(shallow_file_path: &Path) -> Result<Option<String>> {
@@ -1498,7 +1545,13 @@ impl GitRepository for RealGitRepository {
             );
 
             let show_stdout = String::from_utf8_lossy(&show_output.stdout);
-            let changes = parse_git_diff_raw(&show_stdout);
+            let changes = parse_git_diff_raw(&show_stdout).collect::<Result<Vec<_>>>()?;
+            // Git older than 2.40 lacks `check-attr --source`, so a failure only skips collapsing.
+            let generated_paths =
+                load_generated_paths(&git, &commit, changes.iter().map(|change| change.path))
+                    .await
+                    .log_with_level(log::Level::Debug)
+                    .unwrap_or_default();
 
             let mut cat_file_process = git
                 .build_command(&["cat-file", "--batch=%(objectsize)"])
@@ -1522,7 +1575,6 @@ impl GitRepository for RealGitRepository {
             let mut info_line = String::new();
             let mut newline = [b'\0'];
             for change in changes {
-                let change = change?;
                 let path = change.path;
                 // git-show outputs `/`-delimited paths even on Windows.
                 let Some(rel_path) = RelPath::from_unix_str(path).log_err() else {
@@ -1559,6 +1611,7 @@ impl GitRepository for RealGitRepository {
                     old_content,
                     new_content,
                     is_binary,
+                    is_generated: generated_paths.contains(path),
                 })
             }
 
@@ -4752,6 +4805,63 @@ mod tests {
         );
         assert_eq!(file.new_content.as_deref(), Some(b"target".as_slice()));
         assert_eq!(file.status(), CommitFileStatus::Modified);
+    }
+
+    #[gpui::test]
+    async fn test_load_commit_resolves_generated_attribute(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().expect("failed to create temporary repository");
+        let repo_path = repo_dir.path();
+        git_init_repo(repo_path);
+        fs::create_dir_all(repo_path.join("gen")).expect("failed to create directory");
+        fs::write(
+            repo_path.join(".gitattributes"),
+            "gen/** linguist-generated\ngen/false.txt linguist-generated=false\ngen/unset.txt -linguist-generated\n",
+        )
+        .expect("failed to write attributes");
+        for path in ["gen/set.txt", "gen/false.txt", "gen/unset.txt", "plain.txt"] {
+            fs::write(repo_path.join(path), "contents\n").expect("failed to write file");
+        }
+        git_command(repo_path, ["add", "-A"]);
+        git_command(repo_path, ["commit", "-m", "initial"]);
+
+        // Uncommitted worktree attributes must not affect the commit's diff.
+        fs::write(
+            repo_path.join(".gitattributes"),
+            "plain.txt linguist-generated\n",
+        )
+        .expect("failed to write attributes");
+
+        let repository = RealGitRepository::new(
+            &repo_path.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .expect("failed to open repository");
+
+        let commit_diff = repository
+            .load_commit("HEAD".to_string(), false, cx.to_async())
+            .await
+            .expect("failed to load commit");
+        let mut generated_files = commit_diff
+            .files
+            .iter()
+            .map(|file| (file.path.as_unix_str().to_string(), file.is_generated))
+            .collect::<Vec<_>>();
+        generated_files.sort();
+        assert_eq!(
+            generated_files,
+            [
+                (".gitattributes".to_string(), false),
+                ("gen/false.txt".to_string(), false),
+                ("gen/set.txt".to_string(), true),
+                ("gen/unset.txt".to_string(), false),
+                ("plain.txt".to_string(), false),
+            ]
+        );
     }
 
     #[gpui::test]
