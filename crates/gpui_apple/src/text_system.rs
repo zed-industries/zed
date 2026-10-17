@@ -545,7 +545,11 @@ impl AppleTextSystemState {
 
         {
             let mut text = text;
-            let mut break_ligature = true;
+            // CoreText merges adjacent runs of one font, so a run that continues the previous
+            // run's font is set a hair larger to keep ligatures from forming across them. Only
+            // those runs: SF tracks by its exact point size, and a nudged size draws wider or
+            // narrower than AppKit sets the same text.
+            let mut previous: Option<(FontId, bool)> = None;
             for run in font_runs {
                 let text_run;
                 (text_run, text) = text.split_at(run.len);
@@ -564,7 +568,9 @@ impl AppleTextSystemState {
                 max_ascent = max_ascent.max(font_metrics.ascent * font_scale);
                 max_descent = max_descent.max(-font_metrics.descent * font_scale);
 
-                let font_size = if break_ligature {
+                let nudge = previous == Some((run.font_id, false));
+                previous = Some((run.font_id, nudge));
+                let font_size = if nudge {
                     px(f32::from(font_size).next_up())
                 } else {
                     font_size
@@ -576,7 +582,6 @@ impl AppleTextSystemState {
                         &font.native_font().clone_with_font_size(font_size.into()),
                     );
                 }
-                break_ligature = !break_ligature;
             }
         }
         // Retrieve the glyphs from the shaped line, converting UTF16 offsets to UTF8 offsets.
@@ -799,6 +804,39 @@ mod tests {
         );
         assert_eq!(layout.len, 6);
         assert!(!layout.runs.is_empty());
+    }
+
+    #[test]
+    fn test_layout_line_sets_a_lone_run_at_its_exact_size() {
+        use core_foundation::attributed_string::CFMutableAttributedString;
+        use core_foundation::base::{CFRange, TCFType};
+        use core_foundation::string::CFString;
+        use core_text::line::CTLine;
+        use core_text::string_attributes::kCTFontAttributeName;
+
+        let fonts = AppleTextSystem::new();
+        let font_id = fonts.font_id(&font(".SystemUIFont")).unwrap();
+        let text = "Hamburgefonstiv 0123 Wafer";
+        for size in [11., 17., 22.] {
+            let layout = fonts.layout_line(
+                text,
+                px(size),
+                &[FontRun {
+                    font_id,
+                    len: text.len(),
+                }],
+            );
+            let exact = fonts.0.read().fonts[font_id.0]
+                .native_font()
+                .clone_with_font_size(size as f64);
+            let mut string = CFMutableAttributedString::new();
+            string.replace_str(&CFString::new(text), CFRange::init(0, 0));
+            let range = CFRange::init(0, string.char_len());
+            unsafe { string.set_attribute(range, kCTFontAttributeName, &exact) };
+            let line = CTLine::new_with_attributed_string(string.as_concrete_TypeRef());
+            let width = line.get_typographic_bounds().width as f32;
+            assert_eq!(f32::from(layout.width), width, "{size} px");
+        }
     }
 
     #[test]
