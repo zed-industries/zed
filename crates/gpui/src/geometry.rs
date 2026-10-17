@@ -18,6 +18,7 @@ use std::{
 };
 use taffy::prelude::{TaffyGridLine, TaffyGridSpan};
 
+use crate::util::round_half_toward_zero;
 use crate::{App, DisplayId};
 
 /// Axis in a 2D cartesian space.
@@ -1655,6 +1656,11 @@ impl Size<Pixels> {
             DevicePixels((self.width.0 * scale_factor).round() as i32),
             DevicePixels((self.height.0 * scale_factor).round() as i32),
         )
+    }
+
+    /// Like [`Self::to_device_pixels`], but halves round toward zero.
+    pub fn to_device_pixels_toward_zero(self, scale_factor: f32) -> Size<DevicePixels> {
+        self.map(|length| DevicePixels(round_half_toward_zero(length.0 * scale_factor) as i32))
     }
 }
 
@@ -4016,5 +4022,27 @@ mod tests {
 
         // Test Case 3: Bounds intersecting with themselves
         assert!(bounds1.intersects(&bounds1));
+    }
+
+    #[test]
+    fn test_to_device_pixels_toward_zero() {
+        // 1033 * 1.5 = 1549.5. Layout snaps toward zero; `to_device_pixels` rounds away.
+        let logical = size(Pixels(1704.0), Pixels(1033.0));
+        assert_eq!(
+            logical.to_device_pixels_toward_zero(1.5),
+            size(DevicePixels(2556), DevicePixels(1549))
+        );
+        assert_eq!(
+            logical.to_device_pixels(1.5),
+            size(DevicePixels(2556), DevicePixels(1550))
+        );
+        assert_eq!(
+            size(Pixels(1065.0), Pixels(100.0)).to_device_pixels_toward_zero(1.5),
+            size(DevicePixels(1597), DevicePixels(150))
+        );
+        assert_eq!(
+            size(Pixels(100.0), Pixels(100.0)).to_device_pixels_toward_zero(2.0),
+            size(DevicePixels(200), DevicePixels(200))
+        );
     }
 }

@@ -1518,9 +1518,9 @@ impl WaylandWindowStatePtr {
             if let Some(scale) = scale {
                 state.scale = scale;
             }
-            let device_bounds = state.bounds.to_device_pixels(state.scale);
+            let device_size = state.bounds.size.to_device_pixels_toward_zero(state.scale);
             if let Some(renderer) = &mut state.renderer {
-                renderer.update_drawable_size(device_bounds.size);
+                renderer.update_drawable_size(device_size);
             }
             (state.bounds.size, state.scale)
         };
