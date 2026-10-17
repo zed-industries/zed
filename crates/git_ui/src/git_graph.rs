@@ -14,7 +14,9 @@ use file_icons::FileIcons;
 use git::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, Oid, ParsedGitRemote,
     parse_git_remote_url,
-    repository::{InitialGraphCommitData, LogOrder, LogSource, RepoPath, SearchCommitArgs},
+    repository::{
+        GRAPH_CHUNK_SIZE, InitialGraphCommitData, LogOrder, LogSource, RepoPath, SearchCommitArgs,
+    },
     status::{FileStatus, StatusCode, TrackedStatus},
 };
 use gpui::{
@@ -1794,7 +1796,7 @@ impl GitGraph {
                             repository.update(cx, |repository, cx| {
                                 let GraphDataResponse {
                                     commits,
-                                    is_loading,
+                                    is_loading: _,
                                     error: _,
                                 } = repository.graph_data(
                                     source.clone(),
@@ -1810,8 +1812,19 @@ impl GitGraph {
                                     )
                                 });
 
-                                if !is_loading && pending_sha_index.is_none() {
-                                    self.pending_select_sha.take();
+                                if self.pending_select_sha.is_some() && pending_sha_index.is_none()
+                                {
+                                    let is_loading = repository
+                                        .graph_data(
+                                            source.clone(),
+                                            *order,
+                                            0..commit_count.saturating_add(GRAPH_CHUNK_SIZE),
+                                            cx,
+                                        )
+                                        .is_loading;
+                                    if !is_loading {
+                                        self.pending_select_sha.take();
+                                    }
                                 }
 
                                 pending_sha_index
@@ -1854,7 +1867,12 @@ impl GitGraph {
         if let Some(repository) = self.get_repository(cx) {
             repository.update(cx, |repository, cx| {
                 let commits = repository
-                    .graph_data(self.log_source.clone(), self.log_order, 0..usize::MAX, cx)
+                    .graph_data(
+                        self.log_source.clone(),
+                        self.log_order,
+                        0..GRAPH_CHUNK_SIZE,
+                        cx,
+                    )
                     .commits;
                 self.graph_data.add_commits(commits);
             });
@@ -2529,13 +2547,18 @@ impl GitGraph {
                 return;
             };
 
-            let Some(index) = selected_repository
+            let graph_data = selected_repository
                 .read(cx)
-                .get_graph_data(this.log_source.clone(), this.log_order)
+                .get_graph_data(this.log_source.clone(), this.log_order);
+            let loaded_count = graph_data.map_or(0, |data| data.commit_data.len());
+            let Some(index) = graph_data
                 .and_then(|data| data.commit_oid_to_index.get(&oid))
                 .copied()
             else {
                 this.pending_select_sha = Some(oid);
+                if !this.load_commits_up_to(loaded_count.saturating_add(GRAPH_CHUNK_SIZE), cx) {
+                    this.pending_select_sha = None;
+                }
                 return;
             };
 
@@ -4147,6 +4170,26 @@ impl GitGraph {
         }
     }
 
+    fn load_commits_near_viewport(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let scroll_top = -self.table_interaction_state.read(cx).scroll_offset().y;
+        let first_visible_row = (scroll_top / Self::row_height(window, cx)).floor() as usize;
+        let wanted = first_visible_row
+            .saturating_add(self.visible_row_count(window, cx))
+            .saturating_add(GRAPH_CHUNK_SIZE);
+        self.load_commits_up_to(wanted, cx);
+    }
+
+    fn load_commits_up_to(&mut self, wanted: usize, cx: &mut Context<Self>) -> bool {
+        let Some(repository) = self.get_repository(cx) else {
+            return false;
+        };
+        repository.update(cx, |repository, cx| {
+            repository
+                .graph_data(self.log_source.clone(), self.log_order, 0..wanted, cx)
+                .is_loading
+        })
+    }
+
     fn commit_count_and_loading_state(&mut self, cx: &mut Context<Self>) -> (usize, bool) {
         match self.graph_data.max_commit_count {
             AllCommitCount::FullyLoaded(count) => (count, false),
@@ -4175,7 +4218,7 @@ impl GitGraph {
                         } = repository.graph_data(
                             self.log_source.clone(),
                             self.log_order,
-                            0..usize::MAX,
+                            0..GRAPH_CHUNK_SIZE,
                             cx,
                         );
                         self.graph_data.add_commits(commits);
@@ -4308,6 +4351,7 @@ impl Render for GitGraph {
             self.search(query, cx);
         }
         let (commit_count, is_loading) = self.commit_count_and_loading_state(cx);
+        self.load_commits_near_viewport(window, cx);
 
         let error = self.get_repository(cx).and_then(|repo| {
             repo.read(cx)
