@@ -690,9 +690,11 @@ impl Render for StagedDiffToolbar {
 #[cfg(test)]
 mod tests {
     use crate::project_diff::{self, ProjectDiff};
+    use editor::{MultiBufferOffset, ToPoint as _, actions::GoToDefinition};
+    use futures::StreamExt as _;
     use git::repository::RepoPath;
-    use gpui::TestAppContext;
-    use language::Point;
+    use gpui::{TestAppContext, VisualTestContext};
+    use language::{FakeLspAdapter, Point, rust_lang};
     use project::{FakeFs, Fs as _};
     use serde_json::json;
     use settings::{DiffViewStyle, SettingsStore};
@@ -1043,6 +1045,138 @@ mod tests {
             assert_eq!(
                 diff.read_with(cx, |diff, cx| diff.diff_base(cx).clone()),
                 DiffBase::Staged
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_go_to_definition_from_staged_diff(cx: &mut TestAppContext) {
+        init_test(cx);
+        // The unstaged leading line puts every worktree row one below its index row.
+        let committed_contents = "fn main() {\n    println!(\"hello\");\n}\n\nfn helper() {}\n";
+        let staged_contents = "fn main() {\n    helper();\n}\n\nfn helper() {}\n";
+        let file_contents = format!("// unstaged comment\n{staged_contents}");
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({ ".git": {}, "src": { "main.rs": file_contents, "lib.rs": "" } }),
+        )
+        .await;
+        fs.set_head_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("src/main.rs", committed_contents.into())],
+            "deadbeef",
+        );
+        fs.set_index_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("src/main.rs", staged_contents.into())],
+        );
+
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang());
+        let mut fake_servers = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    definition_provider: Some(lsp::OneOf::Left(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                ..FakeLspAdapter::default()
+            },
+        );
+        // Start the language server from another file, as it would already be
+        // running while editing, so only the staged diff opens `main.rs`.
+        project
+            .update(cx, |project, cx| {
+                project.open_local_buffer_with_lsp(path!("/project/src/lib.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let requested_position = Arc::new(std::sync::Mutex::new(None));
+        fake_servers
+            .next()
+            .await
+            .unwrap()
+            .set_request_handler::<lsp::request::GotoDefinition, _, _>({
+                let requested_position = requested_position.clone();
+                move |params, _| {
+                    *requested_position.lock().unwrap() =
+                        Some(params.text_document_position_params.position);
+                    async move {
+                        Ok(Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location {
+                            uri: lsp::Uri::from_file_path(path!("/project/src/main.rs")).unwrap(),
+                            range: lsp::Range::new(
+                                lsp::Position::new(5, 3),
+                                lsp::Position::new(5, 9),
+                            ),
+                        })))
+                    }
+                }
+            });
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        cx.run_until_parked();
+        workspace.update_in(cx, |workspace, window, cx| {
+            StagedDiff::deploy_at(workspace, None, window, cx);
+        });
+        cx.run_until_parked();
+        let editor = workspace.update(cx, |workspace, cx| {
+            let staged_diff = workspace.active_item_as::<StagedDiff>(cx).unwrap();
+            let editor = staged_diff.read(cx).diff.read(cx).editor().read(cx);
+            editor.rhs_editor().clone()
+        });
+        let go_to_definition_at = |text: &str, cx: &mut VisualTestContext| {
+            editor.update_in(cx, |editor, window, cx| {
+                let multibuffer_text = editor.buffer().read(cx).snapshot(cx).text();
+                let offset = MultiBufferOffset(multibuffer_text.find(text).unwrap());
+                editor.change_selections(Default::default(), window, cx, |selections| {
+                    selections.select_ranges([offset..offset]);
+                });
+            });
+            cx.focus(&editor);
+            cx.update(|window, cx| {
+                window.dispatch_action(GoToDefinition::default().boxed_clone(), cx);
+            });
+            cx.run_until_parked();
+        };
+
+        // Like in a regular editor, there is nowhere to go from the definition
+        // the language server points back at.
+        go_to_definition_at("helper() {}", cx);
+        assert_eq!(
+            *requested_position.lock().unwrap(),
+            Some(lsp::Position::new(5, 3))
+        );
+        assert_eq!(
+            workspace.read_with(cx, |workspace, cx| workspace
+                .items_of_type::<Editor>(cx)
+                .count()),
+            0
+        );
+
+        go_to_definition_at("helper();", cx);
+        assert_eq!(
+            *requested_position.lock().unwrap(),
+            Some(lsp::Position::new(2, 4))
+        );
+        workspace.update(cx, |workspace, cx| {
+            let editor = workspace.active_item_as::<Editor>(cx).unwrap();
+            let editor = editor.read(cx);
+            let buffer = editor.buffer().read(cx).as_singleton().unwrap();
+            assert_eq!(
+                buffer.read(cx).file().unwrap().path().as_ref(),
+                rel_path("src/main.rs")
+            );
+            assert!(!editor.read_only(cx));
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let selection = editor.selections.newest_anchor();
+            assert_eq!(
+                selection.start.to_point(&snapshot)..selection.end.to_point(&snapshot),
+                Point::new(5, 3)..Point::new(5, 9)
             );
         });
     }

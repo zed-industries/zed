@@ -87,7 +87,7 @@ use std::{
 };
 use sum_tree::{Edit, SumTree, TreeMap};
 use task::Shell;
-use text::{Bias, BufferId, OffsetRangeExt, Rope, ToOffset};
+use text::{Bias, BufferId, OffsetRangeExt, Rope, ToOffset, ToPoint as _};
 use util::{
     ResultExt, debug_panic,
     paths::{PathStyle, SanitizedPath},
@@ -2047,6 +2047,35 @@ impl GitStore {
             rx
         })??
         .await
+    }
+
+    /// Maps a position in an index text buffer (as displayed by the staged
+    /// diff) to the matching position in the worktree buffer, which is what
+    /// language servers know about.
+    pub fn worktree_position_for_index_text(
+        &mut self,
+        index_text_buffer: &Entity<Buffer>,
+        position: Anchor,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<(Entity<Buffer>, Anchor)>>> {
+        let buffer_id = self
+            .buffer_ids_by_index_text_buffer_id
+            .get(&index_text_buffer.read(cx).remote_id())?;
+        let buffer = self.buffer_store.read(cx).get(*buffer_id)?;
+        let unstaged_diff = self.open_unstaged_diff(buffer.clone(), cx);
+        let index_point = position.to_point(index_text_buffer.read(cx));
+        Some(cx.spawn(async move |_, cx| {
+            let unstaged_diff = unstaged_diff.await?;
+            Ok(cx.update(|cx| {
+                let snapshot = buffer.read(cx).text_snapshot();
+                let point = unstaged_diff
+                    .read(cx)
+                    .snapshot(cx)
+                    .base_text_point_to_buffer_point(index_point, &snapshot);
+                let position = snapshot.anchor_before(point);
+                (buffer, position)
+            }))
+        }))
     }
 
     pub fn get_unstaged_diff(&self, buffer_id: BufferId, cx: &App) -> Option<Entity<BufferDiff>> {
