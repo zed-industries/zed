@@ -217,6 +217,7 @@ impl Editor {
         let push_to_lsp_host_history = true;
         // If this is not the host, append its history with new edits.
         let push_to_client_history = project.read(cx).is_via_collab();
+        let is_newline = input == "\n";
 
         let on_type_formatting = project.update(cx, |project, cx| {
             project.on_type_format(
@@ -241,16 +242,32 @@ impl Editor {
 
         Some(cx.spawn_in(window, async move |editor, cx| {
             if let Some(transaction) = on_type_formatting.await? {
-                let (formatted_buffer_id, formatted_ranges) = buffer.update(cx, |buffer, _| {
-                    let formatted_ranges = buffer
-                        .edited_ranges_for_transaction::<usize>(&transaction)
-                        .collect::<Vec<_>>();
-                    if push_to_client_history {
-                        buffer.push_transaction(transaction, Instant::now());
-                        buffer.finalize_last_transaction();
-                    }
-                    (buffer.remote_id(), formatted_ranges)
-                });
+                let (formatted_buffer_id, formatted_ranges, newline_insertions) =
+                    buffer.update(cx, |buffer, _| {
+                        let formatted_ranges = buffer
+                            .edited_ranges_for_transaction::<usize>(&transaction)
+                            .collect::<Vec<_>>();
+                        let newline_insertions = if is_newline {
+                            buffer
+                                .edits_since::<usize>(&transaction.start)
+                                .filter(|edit| {
+                                    edit.old.is_empty()
+                                        && !edit.new.is_empty()
+                                        && buffer
+                                            .chars_for_range(edit.new.clone())
+                                            .all(|character| character != '\n' && character != '\r')
+                                })
+                                .map(|edit| edit.new)
+                                .collect::<Vec<_>>()
+                        } else {
+                            Vec::new()
+                        };
+                        if push_to_client_history {
+                            buffer.push_transaction(transaction, Instant::now());
+                            buffer.finalize_last_transaction();
+                        }
+                        (buffer.remote_id(), formatted_ranges, newline_insertions)
+                    });
                 editor.update_in(cx, |editor, window, cx| {
                     let snapshot = editor.buffer.read(cx).snapshot(cx);
                     let pinned_cursor = |selection: &Selection<Anchor>| {
@@ -284,6 +301,9 @@ impl Editor {
                                 break;
                             }
                             formatted_end = range.end;
+                        }
+                        if newline_insertions.contains(&(cursor_offset..head_offset)) {
+                            return None;
                         }
                         (formatted_end == head_offset).then_some(cursor)
                     };
