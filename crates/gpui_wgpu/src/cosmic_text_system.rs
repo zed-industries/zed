@@ -434,10 +434,11 @@ impl CosmicTextSystemState {
 
             let font_id = FontId(self.loaded_fonts.len());
             loaded_font_ids.push(font_id);
+            let color = font.has_color();
             self.loaded_fonts.push(LoadedFont {
                 font,
                 features: cosmic_features.clone(),
-                is_known_emoji_font: check_is_known_emoji_font(&postscript_name),
+                is_known_emoji_font: color,
                 user_fallback_chain: Arc::clone(&user_fallback_chain),
             });
             self.loaded_font_ids_by_key.insert(key, font_id);
@@ -576,17 +577,13 @@ impl CosmicTextSystemState {
                 .font_system
                 .get_font(id, cosmic_text::Weight::NORMAL)
                 .context("failed to get fallback font from cosmic-text font system")?;
-            let face = self
-                .font_system
-                .db()
-                .face(id)
-                .context("fallback font face not found in cosmic-text database")?;
 
+            let color = font.has_color();
             let font_id = FontId(self.loaded_fonts.len());
             self.loaded_fonts.push(LoadedFont {
                 font,
                 features: CosmicFontFeatures::new(),
-                is_known_emoji_font: check_is_known_emoji_font(&face.post_script_name),
+                is_known_emoji_font: color,
                 user_fallback_chain: Arc::from(Vec::new()),
             });
 
@@ -751,6 +748,7 @@ impl CosmicTextSystemState {
             &attrs_list,
             cosmic_text::Shaping::Advanced,
             4,
+            cosmic_text::Direction::Auto,
         );
         let mut layout_lines = Vec::with_capacity(1);
         line.layout_to_buffer(
@@ -1197,11 +1195,6 @@ fn face_info_into_properties(
             cosmic_text::Stretch::UltraExpanded => font_kit::properties::Stretch::ULTRA_EXPANDED,
         },
     }
-}
-
-fn check_is_known_emoji_font(postscript_name: &str) -> bool {
-    // TODO: Include other common emoji fonts
-    postscript_name == "NotoColorEmoji"
 }
 
 #[cfg(test)]
