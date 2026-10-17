@@ -161,6 +161,7 @@ impl DiffHunkRenderer for SplitLhsDiffHunkRenderer {
         hunk_range: Range<Anchor>,
         is_created_file: bool,
         line_height: Pixels,
+        row_count: u32,
         editor: &Entity<Editor>,
         window: &mut Window,
         cx: &mut App,
@@ -175,6 +176,7 @@ impl DiffHunkRenderer for SplitLhsDiffHunkRenderer {
             hunk_range,
             is_created_file,
             line_height,
+            row_count,
             editor,
             window,
             cx,
@@ -187,6 +189,14 @@ impl DiffHunkRenderer for SplitLhsDiffHunkRenderer {
         };
         let renderer = splittable.read(cx).rhs_editor.read(cx).diff_hunk_renderer();
         renderer.render_hunk_as_staged(status, cx)
+    }
+
+    fn supports_compact_controls(&self, cx: &App) -> bool {
+        let Some(splittable) = self.splittable.upgrade() else {
+            return false;
+        };
+        let renderer = splittable.read(cx).rhs_editor.read(cx).diff_hunk_renderer();
+        renderer.supports_compact_controls(cx)
     }
 }
 
