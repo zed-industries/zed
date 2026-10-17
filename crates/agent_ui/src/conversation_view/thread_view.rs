@@ -2121,6 +2121,7 @@ impl ThreadView {
             })?;
 
             let _ = this.update(cx, |this, cx| {
+                this.clear_scroll_restore();
                 this.list_state.scroll_to_end();
                 cx.notify();
             });
@@ -4296,6 +4297,7 @@ impl ThreadView {
                                     ),
                                 )
                                 .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.clear_scroll_restore();
                                     this.list_state.scroll_to(ListOffset {
                                         item_ix: entry_ix,
                                         offset_in_item: px(0.0),
@@ -4381,6 +4383,7 @@ impl ThreadView {
                             .color(Color::Default),
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
+                        this.clear_scroll_restore();
                         this.list_state.scroll_to(ListOffset {
                             item_ix: entry_ix,
                             offset_in_item: px(0.0),
@@ -7795,6 +7798,8 @@ impl ThreadView {
         user_message_index: Option<usize>,
         cx: &mut Context<Self>,
     ) {
+        self.clear_scroll_restore();
+
         let thread = self.thread.read(cx);
         let entries = thread.entries();
         if entries.is_empty() {
@@ -7819,6 +7824,7 @@ impl ThreadView {
     }
 
     pub fn scroll_to_end(&mut self, cx: &mut Context<Self>) {
+        self.clear_scroll_restore();
         self.list_state.scroll_to_end();
         cx.notify();
     }
@@ -7841,6 +7847,7 @@ impl ThreadView {
     }
 
     pub(crate) fn scroll_to_top(&mut self, cx: &mut Context<Self>) {
+        self.clear_scroll_restore();
         self.list_state.scroll_to(ListOffset::default());
         cx.notify();
     }
@@ -7911,6 +7918,7 @@ impl ThreadView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.clear_scroll_restore();
         let thread = self.thread.read(cx);
         let entries = thread.entries();
         let current_ix = self.list_state.logical_scroll_top().item_ix;
@@ -7933,6 +7941,7 @@ impl ThreadView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.clear_scroll_restore();
         let thread = self.thread.read(cx);
         let entries = thread.entries();
         let current_ix = self.list_state.logical_scroll_top().item_ix;
@@ -7995,6 +8004,7 @@ impl ThreadView {
                     let view = view.clone();
                     cx.defer(move |cx| {
                         view.update(cx, |this, cx| {
+                            this.clear_scroll_restore();
                             this.list_state.scroll_to(gpui::ListOffset {
                                 item_ix: entry_ix,
                                 offset_in_item: gpui::px(0.),
