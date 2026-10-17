@@ -1247,6 +1247,7 @@ impl Markdown {
                         languages_by_path: TreeMap::default(),
                         root_block_starts: Arc::default(),
                         html_blocks: BTreeMap::default(),
+                        inline_images: BTreeMap::default(),
                         metadata_blocks: BTreeMap::default(),
                         mermaid_diagrams: BTreeMap::default(),
                         heading_slugs: HashMap::default(),
@@ -1270,6 +1271,7 @@ impl Markdown {
             let paths = parsed.language_paths;
             let root_block_starts = parsed.root_block_starts;
             let html_blocks = parsed.html_blocks;
+            let inline_images = parsed.inline_images;
             let metadata_blocks = parsed.metadata_blocks;
             let heading_slugs = parsed.heading_slugs;
             let footnote_definitions = parsed.footnote_definitions;
@@ -1344,6 +1346,7 @@ impl Markdown {
                 languages_by_path,
                 root_block_starts: Arc::from(root_block_starts),
                 html_blocks,
+                inline_images,
                 metadata_blocks,
                 mermaid_diagrams,
                 heading_slugs,
@@ -1493,6 +1496,7 @@ pub struct ParsedMarkdown {
     pub languages_by_path: TreeMap<Arc<str>, Arc<Language>>,
     pub root_block_starts: Arc<[usize]>,
     pub(crate) html_blocks: BTreeMap<usize, html::html_parser::ParsedHtmlBlock>,
+    pub(crate) inline_images: BTreeMap<usize, html::html_parser::HtmlImage>,
     pub(crate) metadata_blocks: BTreeMap<usize, ParsedMetadataBlock>,
     pub(crate) mermaid_diagrams: BTreeMap<usize, ParsedMarkdownMermaidDiagram>,
     pub heading_slugs: HashMap<SharedString, usize>,
@@ -1574,6 +1578,11 @@ impl ParsedMarkdown {
             }
         }
 
+        ranges.extend(
+            self.inline_images
+                .values()
+                .map(|image| image.source_range.clone()),
+        );
         ranges.extend(self.link_definition_spans.iter().cloned());
         // Callers binary search these ranges, which requires them to be sorted and disjoint.
         ranges.sort_by_key(|range| range.start);
@@ -3311,6 +3320,10 @@ impl Element for MarkdownElement {
                     builder.push_text(html, range.clone());
                 }
                 MarkdownEvent::InlineHtml => {
+                    if let Some(image) = parsed_markdown.inline_images.get(&range.start) {
+                        self.render_html_image(image, &mut builder, cx);
+                        continue;
+                    }
                     let html = &parsed_markdown.source[range.clone()];
                     if let Some(code) = html
                         .strip_prefix("<code>")
@@ -5576,6 +5589,28 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_non_rendered_source_ranges_for_inline_html_images(cx: &mut TestAppContext) {
+        let source = r#"before <img src="badge.svg" alt="version"> after"#;
+        let markdown = cx.new(|cx| {
+            Markdown::new_with_options(
+                source.into(),
+                None,
+                None,
+                MarkdownOptions {
+                    parse_html: true,
+                    ..Default::default()
+                },
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            markdown.read_with(cx, |markdown, _| markdown.non_rendered_source_ranges()),
+            vec![7..42],
+        );
+    }
+
+    #[gpui::test]
     fn test_non_rendered_source_ranges_for_linked_images(cx: &mut TestAppContext) {
         let source = "[![alt](https://example.com/img.png)](https://example.com/dest)";
         let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
@@ -6691,6 +6726,43 @@ mod tests {
             .debug_bounds("inner")
             .expect("markdown container should be rendered");
         (image, container)
+    }
+
+    #[gpui::test]
+    fn test_inline_html_images_render_in_paragraphs_and_badge_rows(cx: &mut TestAppContext) {
+        for source in [
+            r#"[<img src="icon.png">](https://example.com/one) [<img src="icon.png">](https://example.com/two)"#,
+            r#"Before <img src="icon.png"> between <img src="icon.png"> after."#,
+            "<div align=\"center\">\n\n# Heading\n\n[<img src=\"icon.png\">](https://example.com/one) [<img src=\"icon.png\">](https://example.com/two)\n\n</div>",
+        ] {
+            let mut cx = render_image_layout(source, cx);
+            let bounds = source
+                .match_indices("<img")
+                .map(|(offset, _)| {
+                    let selector: &'static str =
+                        Box::leak(format!("markdown_image_{offset}").into_boxed_str());
+                    cx.debug_bounds(selector)
+                        .expect("inline HTML image should render")
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(bounds.len(), 2);
+            assert!(bounds[0].left() < bounds[1].left());
+            assert_eq!(bounds[0].top(), bounds[1].top());
+        }
+    }
+
+    #[gpui::test]
+    fn test_inline_html_image_click_opens_enclosing_link(cx: &mut TestAppContext) {
+        let source = r#"[<img src="icon.png" width="40" height="20">](https://example.com/link)"#;
+        let mut cx = render_image_layout(source, cx);
+        let bounds = cx
+            .debug_bounds("markdown_image_1")
+            .expect("inline image should render");
+        cx.simulate_click(bounds.center(), gpui::Modifiers::default());
+        assert_eq!(
+            cx.opened_url(),
+            Some("https://example.com/link".to_string())
+        );
     }
 
     #[gpui::test]

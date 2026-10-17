@@ -37,6 +37,7 @@ pub(crate) struct ParsedMarkdownData {
     pub language_paths: HashSet<Arc<str>>,
     pub root_block_starts: Vec<usize>,
     pub html_blocks: BTreeMap<usize, html::html_parser::ParsedHtmlBlock>,
+    pub inline_images: BTreeMap<usize, html::html_parser::HtmlImage>,
     pub metadata_blocks: BTreeMap<usize, ParsedMetadataBlock>,
     pub heading_slugs: HashMap<SharedString, usize>,
     pub footnote_definitions: HashMap<SharedString, usize>,
@@ -217,7 +218,7 @@ fn trim_metadata_range(source: &str, range: Range<usize>) -> Range<usize> {
     start..end
 }
 
-fn is_br_tag(html: &str) -> bool {
+fn is_html_tag(html: &str, tag: &str) -> bool {
     let Some(inner) = html
         .trim()
         .strip_prefix('<')
@@ -229,7 +230,7 @@ fn is_br_tag(html: &str) -> bool {
     inner
         .split_ascii_whitespace()
         .next()
-        .is_some_and(|name| name.eq_ignore_ascii_case("br"))
+        .is_some_and(|name| name.eq_ignore_ascii_case(tag))
 }
 
 fn yaml_frontmatter_candidate(text: &str) -> Option<&str> {
@@ -284,6 +285,7 @@ pub(crate) fn parse_markdown_with_options(
     let mut language_paths = HashSet::default();
     let mut has_untagged_code_block = false;
     let mut html_blocks = BTreeMap::default();
+    let mut inline_images = BTreeMap::default();
     let mut metadata_blocks = BTreeMap::default();
     let mut within_link = false;
     let mut within_code_block = false;
@@ -583,7 +585,7 @@ pub(crate) fn parse_markdown_with_options(
                 while match parser.peek() {
                     Some((pulldown_cmark::Event::Text(_), _)) => true,
                     Some((pulldown_cmark::Event::InlineHtml(html), _)) => {
-                        parse_html && !is_br_tag(html)
+                        parse_html && !is_html_tag(html, "br") && !is_html_tag(html, "img")
                     }
                     _ => false,
                 } {
@@ -715,9 +717,18 @@ pub(crate) fn parse_markdown_with_options(
             }
             pulldown_cmark::Event::Html(_) => state.push_event(range, MarkdownEvent::Html),
             pulldown_cmark::Event::InlineHtml(html) => {
-                if parse_html && is_br_tag(&html) {
+                if parse_html && is_html_tag(&html, "br") {
                     state.push_event(range, MarkdownEvent::HardBreak)
                 } else {
+                    if parse_html
+                        && is_html_tag(&html, "img")
+                        && let Some(block) =
+                            html::html_parser::parse_html_block(&html, range.clone())
+                        && let Some(html::html_parser::ParsedHtmlElement::Image(image)) =
+                            block.children.into_iter().next()
+                    {
+                        inline_images.insert(range.start, image);
+                    }
                     state.push_event(range, MarkdownEvent::InlineHtml)
                 }
             }
@@ -748,6 +759,7 @@ pub(crate) fn parse_markdown_with_options(
         language_paths,
         root_block_starts: state.root_block_starts,
         html_blocks,
+        inline_images,
         metadata_blocks,
         heading_slugs,
         footnote_definitions,
@@ -1995,6 +2007,73 @@ mod tests {
                 None,
             ]
         );
+    }
+
+    #[test]
+    fn test_inline_html_images() {
+        for source in [
+            r#"[<img src="badge.svg" alt="version &amp; status" width="100" height="20" />](https://example.com)"#,
+            r#"Before <img src="badge.svg" alt="version &amp; status" width="100" height="20"> after."#,
+            r#"[label <IMG SRC="badge.svg" ALT="version &amp; status" WIDTH="100" HEIGHT="20"/> suffix](https://example.com)"#,
+            "<div align=\"center\">\n\n# Heading\n\n[<img src=\"badge.svg\" alt=\"version &amp; status\" width=\"100\" height=\"20\">](https://example.com)\n\n</div>",
+        ] {
+            let parsed = parse_markdown_with_options(source, true, false, false);
+            assert_eq!(parsed.inline_images.len(), 1, "{source}");
+            let (&offset, image) = parsed
+                .inline_images
+                .first_key_value()
+                .expect("inline image should be parsed");
+            assert_eq!(image.dest_url, "badge.svg");
+            assert_eq!(image.alt_text.as_deref(), Some("version & status"));
+            assert_eq!(image.width, Some(gpui::px(100.).into()));
+            assert_eq!(image.height, Some(gpui::px(20.).into()));
+            assert_eq!(offset, image.source_range.start);
+            assert!(
+                parsed
+                    .events
+                    .contains(&(image.source_range.clone(), InlineHtml))
+            );
+
+            let unparsed = parse_markdown_with_options(source, false, false, false);
+            assert!(unparsed.inline_images.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_inline_html_badge_row() {
+        let source = r#"[<img src="one.svg">](https://example.com/one) [<img src="two.svg">][two]
+
+[two]: https://example.com/two"#;
+        let parsed = parse_markdown_with_options(source, true, false, false);
+        let destinations = parsed
+            .inline_images
+            .values()
+            .map(|image| image.dest_url.as_ref())
+            .collect::<Vec<_>>();
+        assert_eq!(destinations, ["one.svg", "two.svg"]);
+        let links = parsed
+            .events
+            .iter()
+            .filter_map(|(_, event)| match event {
+                Start(Link { dest_url, .. }) => Some(dest_url.as_ref()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            links,
+            ["https://example.com/one", "https://example.com/two"]
+        );
+    }
+
+    #[test]
+    fn test_inline_html_image_requires_img_tag_and_source() {
+        for source in [
+            "before <img alt='missing source'> after",
+            "before <img-custom src='badge.svg'> after",
+        ] {
+            let parsed = parse_markdown_with_options(source, true, false, false);
+            assert!(parsed.inline_images.is_empty());
+        }
     }
 
     #[test]
