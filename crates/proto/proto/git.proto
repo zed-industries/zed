@@ -329,7 +329,8 @@ message GitCheckoutFiles {
   uint64 project_id = 1;
   reserved 2;
   uint64 repository_id = 3;
-  string commit = 4;
+  // When unset, restores the working tree from the index, keeping staged changes.
+  optional string commit = 4;
   repeated string paths = 5;
 }
 
