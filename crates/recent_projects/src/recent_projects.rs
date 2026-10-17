@@ -1375,7 +1375,9 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .unzip();
 
                 let highlighted_match = HighlightedMatchWithPaths {
-                    prefix: None,
+                    prefix: key
+                        .host()
+                        .map(|host| SharedString::from(host.display_name())),
                     match_label: HighlightedMatch::join(match_labels.into_iter().flatten(), ", "),
                     paths: path_highlights,
                     active: is_active,
