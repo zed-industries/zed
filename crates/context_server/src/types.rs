@@ -381,7 +381,7 @@ pub enum MessageContent {
     },
     #[serde(rename = "resource")]
     Resource {
-        resource: ResourceContents,
+        resource: ResourceContentsType,
         #[serde(skip_serializing_if = "Option::is_none")]
         annotations: Option<MessageAnnotations>,
     },
@@ -748,7 +748,7 @@ pub enum ToolResponseContent {
     #[serde(rename = "audio", rename_all = "camelCase")]
     Audio { data: String, mime_type: String },
     #[serde(rename = "resource")]
-    Resource { resource: ResourceContents },
+    Resource { resource: ResourceContentsType },
     /// Link to an MCP resource on the server, without inlining its contents.
     /// Added in MCP 2025-06-18.
     #[serde(rename = "resource_link", rename_all = "camelCase")]

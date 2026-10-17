@@ -2070,6 +2070,146 @@ async fn test_mcp_tool_names_are_sanitized_for_providers(cx: &mut TestAppContext
 }
 
 #[gpui::test]
+async fn test_mcp_tool_resource_content_response(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model,
+        fake,
+        thread,
+        context_server_store,
+        fs,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+
+    fs.insert_file(
+        paths::settings_file(),
+        json!({
+            "agent": {
+                "tool_permissions": { "default": "allow" },
+                "profiles": {
+                    "test": {
+                        "name": "Test Profile",
+                        "enable_all_context_servers": true,
+                        "tools": {}
+                    },
+                }
+            }
+        })
+        .to_string()
+        .into_bytes(),
+    )
+    .await;
+    cx.run_until_parked();
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("test".into()), cx)
+    });
+
+    let mut mcp_tool_calls = setup_context_server(
+        "resource_content_server",
+        vec![context_server::types::Tool {
+            name: "resource_content".into(),
+            title: None,
+            description: None,
+            input_schema: json!({"type": "object", "properties": {}}),
+            output_schema: None,
+            annotations: None,
+        }],
+        &context_server_store,
+        cx,
+    );
+
+    let events = thread.update(cx, |thread, cx| {
+        thread
+            .send(
+                ClientUserMessageId::new(),
+                ["Use the resource_content tool"],
+                cx,
+            )
+            .unwrap()
+    });
+    cx.run_until_parked();
+
+    let completion = fake.pending_completions().pop().unwrap();
+    fake.send_last_event(
+        &model,
+        LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+            id: "tool_1".into(),
+            name: "resource_content".into(),
+            raw_input: json!({}).to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(json!({})),
+            is_input_complete: true,
+            thought_signature: None,
+        }),
+    );
+    fake.end_last(&model);
+    cx.run_until_parked();
+    let _ = completion;
+
+    let (_, tool_call_response) = mcp_tool_calls.next().await.unwrap();
+    let first_text_message = "successfully downloaded text file (SHA: abc123)";
+    tool_call_response
+        .send(context_server::types::CallToolResponse {
+            content: vec![
+                context_server::types::ToolResponseContent::Text {
+                    text: first_text_message.into(),
+                },
+                context_server::types::ToolResponseContent::Resource {
+                    resource: context_server::types::ResourceContentsType::Text(
+                        context_server::types::TextResourceContents {
+                            uri: "file:///repo/main.rs".parse().unwrap(),
+                            mime_type: Some("text/plain".into()),
+                            text: "fn main() {}".into(),
+                        },
+                    ),
+                },
+                context_server::types::ToolResponseContent::Resource {
+                    resource: context_server::types::ResourceContentsType::Blob(
+                        context_server::types::BlobResourceContents {
+                            uri: "file:///repo/logo.png".parse().unwrap(),
+                            mime_type: Some("image/png".into()),
+                            blob: "iVBORw0KGgo=".into(),
+                        },
+                    ),
+                },
+            ],
+            is_error: None,
+            meta: None,
+            structured_content: None,
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let completion = fake.pending_completions().pop().unwrap();
+    let tool_result = completion
+        .messages
+        .last()
+        .unwrap()
+        .content
+        .iter()
+        .find_map(|c| match c {
+            MessageContent::ToolResult(r) => Some(r.clone()),
+            _ => None,
+        })
+        .expect("expected a tool result");
+
+    assert_eq!(tool_result.content.len(), 3);
+    assert_eq!(
+        tool_result.content[0],
+        language_model::LanguageModelToolResultContent::Text(Arc::from(first_text_message))
+    );
+    assert_eq!(
+        tool_result.content[1],
+        language_model::LanguageModelToolResultContent::Text(Arc::from("fn main() {}"))
+    );
+    let blob_text = tool_result.content[2]
+        .to_str()
+        .expect("expected blob resource to be passed as text");
+    assert!(blob_text.contains("file:///repo/logo.png"), "{blob_text}");
+    assert!(!blob_text.contains("iVBORw0KGgo="), "{blob_text}");
+    fake.end_last(&model);
+    events.collect::<Vec<_>>().await;
+}
+
+#[gpui::test]
 async fn test_mcp_tool_multi_content_response(cx: &mut TestAppContext) {
     let ThreadTest {
         model,
