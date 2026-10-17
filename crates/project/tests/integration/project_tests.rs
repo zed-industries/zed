@@ -12796,6 +12796,146 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
 }
 
 #[gpui::test]
+async fn test_search_with_file_search_exclusions(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_search_exclusions =
+                    Some(SplicingVec::from(vec!["vendor".to_string()]));
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "src": {
+                "main.txt": "key",
+            },
+            "vendor": {
+                "lib.txt": "key",
+                "open.txt": "key",
+            },
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let _open_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/vendor/open.txt"), cx)
+        })
+        .await
+        .unwrap();
+
+    let query = |include_ignored| {
+        SearchQuery::text(
+            "key",
+            false,
+            false,
+            include_ignored,
+            Default::default(),
+            Default::default(),
+            false,
+            None,
+        )
+        .unwrap()
+    };
+
+    assert_eq!(
+        search(&project, query(false), cx).await.unwrap(),
+        HashMap::from_iter([(path!("dir/src/main.txt").to_string(), vec![0..3])]),
+        "Excluded files should not be searched, even when opened"
+    );
+    assert_eq!(
+        search(&project, query(true), cx).await.unwrap(),
+        HashMap::from_iter([
+            (path!("dir/src/main.txt").to_string(), vec![0..3]),
+            (path!("dir/vendor/lib.txt").to_string(), vec![0..3]),
+            (path!("dir/vendor/open.txt").to_string(), vec![0..3]),
+        ]),
+        "Including ignored files should also include excluded files"
+    );
+    project.read_with(cx, |project, cx| {
+        let worktree = project.worktrees(cx).next().unwrap();
+        let entry = worktree
+            .read(cx)
+            .entry_for_path(rel_path("vendor/lib.txt"))
+            .unwrap();
+        assert!(entry.exclusions.contains(EntryExclusions::SEARCH));
+        assert!(
+            !entry.is_ignored,
+            "Exclusions do not mark entries as ignored"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_path_match_candidates_skip_excluded_entries(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_finder_exclusions =
+                    Some(SplicingVec::from(vec!["deps".to_string()]));
+            });
+        });
+    });
+    let files = |prefix: &str| {
+        (0..10)
+            .map(|index| (format!("{prefix}_{index}.rs"), json!("")))
+            .collect::<serde_json::Map<_, _>>()
+    };
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "deps": files("dependency"),
+            "src": files("source"),
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let candidate_sets = project.read_with(cx, |project, cx| {
+        project
+            .worktrees(cx)
+            .map(|worktree| PathMatchCandidateSet {
+                snapshot: worktree.read(cx).snapshot(),
+                include_ignored: false,
+                exclusions: EntryExclusions::FINDER,
+                include_root_name: false,
+                candidates: Candidates::Files,
+            })
+            .collect::<Vec<_>>()
+    });
+
+    // Matching is split into segments by candidate position, so skipping excluded
+    // entries must not shift the candidates each segment covers.
+    let matches = fuzzy_nucleo::match_path_sets(
+        candidate_sets.as_slice(),
+        "rs",
+        &None,
+        fuzzy_nucleo::Case::Ignore,
+        100,
+        &atomic::AtomicBool::new(false),
+        cx.background_executor.clone(),
+    )
+    .await;
+    let mut matched_paths = matches
+        .iter()
+        .map(|path_match| path_match.path.as_unix_str().to_string())
+        .collect::<Vec<_>>();
+    matched_paths.sort();
+    assert_eq!(
+        matched_paths,
+        (0..10)
+            .map(|index| format!("src/source_{index}.rs"))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[gpui::test]
 async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 

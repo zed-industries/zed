@@ -1182,6 +1182,126 @@ async fn test_toggle_action_include_ignored_param(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_file_finder_exclusions(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_finder_exclusions =
+                    Some(SplicingVec::from(vec!["deps".to_string()]));
+            });
+        });
+    });
+    let files = |prefix: &str| {
+        (0..10)
+            .map(|index| (format!("{prefix}_{index}.rs"), json!("")))
+            .collect::<serde_json::Map<_, _>>()
+    };
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "deps": files("dependency"),
+                "src": files("source"),
+            }),
+        )
+        .await;
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (picker, _workspace, cx) = build_find_picker(project, cx);
+
+    let source_matches = (0..10)
+        .map(|index| format!("root/src/source_{index}.rs"))
+        .collect::<Vec<_>>();
+    let all_matches = (0..10)
+        .map(|index| format!("root/deps/dependency_{index}.rs"))
+        .chain(source_matches.iter().cloned())
+        .collect::<Vec<_>>();
+    let assert_matches = |picker: &Entity<Picker<FileFinderDelegate>>,
+                          expected_matches: &[String],
+                          cx: &mut VisualTestContext| {
+        picker.update(cx, |picker, _| {
+            let mut matches = collect_search_matches(picker)
+                .search
+                .into_iter()
+                .map(|path| path.as_unix_str().to_string())
+                .collect::<Vec<_>>();
+            matches.sort();
+            assert_eq!(matches, expected_matches);
+        });
+    };
+
+    picker
+        .update_in(cx, |picker, window, cx| {
+            picker
+                .delegate
+                .spawn_search(test_path_position("rs"), window, cx)
+        })
+        .await;
+    assert_matches(&picker, &source_matches, cx);
+
+    cx.dispatch_action(ToggleIncludeIgnored);
+    picker
+        .update_in(cx, |picker, window, cx| {
+            picker
+                .delegate
+                .spawn_search(test_path_position("rs"), window, cx)
+        })
+        .await;
+    assert_matches(&picker, &all_matches, cx);
+}
+
+#[gpui::test]
+async fn test_file_finder_exclusions_in_ignored_root(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_finder_exclusions =
+                    Some(SplicingVec::from(vec!["dependency.rs".to_string()]));
+            });
+        });
+    });
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/ancestor"),
+            json!({
+                ".gitignore": "ignored-root",
+                "ignored-root": {
+                    "dependency.rs": "",
+                    "source.rs": "",
+                },
+            }),
+        )
+        .await;
+    let project = Project::test(
+        app_state.fs.clone(),
+        [Path::new(path!("/ancestor/ignored-root"))],
+        cx,
+    )
+    .await;
+    let (picker, _workspace, cx) = build_find_picker(project, cx);
+
+    picker
+        .update_in(cx, |picker, window, cx| {
+            picker
+                .delegate
+                .spawn_search(test_path_position("rs"), window, cx)
+        })
+        .await;
+    picker.update(cx, |picker, _| {
+        assert_eq!(
+            collect_search_matches(picker).search,
+            vec![rel_path("ignored-root/source.rs").into()],
+            "Exclusions still apply when ignored files are only included because the root is ignored"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_ignored_root(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
     app_state

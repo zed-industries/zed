@@ -1012,7 +1012,7 @@ pub struct SearchSettingsContent {
     pub whole_word: Option<bool>,
     /// Whether to match case sensitively.
     pub case_sensitive: Option<bool>,
-    /// Whether to include gitignored files in search results.
+    /// Whether to include gitignored files and files matching `file_search_exclusions` in search results.
     pub include_ignored: Option<bool>,
     /// Whether to interpret the search query as a regular expression.
     pub regex: Option<bool>,

@@ -22077,6 +22077,7 @@ dependencies = [
  "anyhow",
  "async-channel 2.5.0",
  "async-lock",
+ "bitflags 2.13.1",
  "clock",
  "collections",
  "encoding_rs",

@@ -1110,11 +1110,17 @@ impl FileFinderDelegate {
             .into_iter()
             .map(|worktree| {
                 let worktree = worktree.read(cx);
+                let include_ignored = self.include_ignored.unwrap_or_else(|| {
+                    worktree.root_entry().is_some_and(|entry| entry.is_ignored)
+                });
                 PathMatchCandidateSet {
                     snapshot: worktree.snapshot(),
-                    include_ignored: self.include_ignored.unwrap_or_else(|| {
-                        worktree.root_entry().is_some_and(|entry| entry.is_ignored)
-                    }),
+                    include_ignored,
+                    exclusions: if self.include_ignored == Some(true) {
+                        project::EntryExclusions::empty()
+                    } else {
+                        project::EntryExclusions::FINDER
+                    },
                     include_root_name,
                     candidates: project::Candidates::Files,
                 }

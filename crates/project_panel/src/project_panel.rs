@@ -4559,6 +4559,7 @@ impl ProjectPanel {
                 size: parent_entry.size,
                 is_ignored: parent_entry.is_ignored,
                 is_hidden: parent_entry.is_hidden,
+                exclusions: parent_entry.exclusions,
                 is_external: false,
                 is_private: false,
                 is_always_included: parent_entry.is_always_included,
