@@ -1900,6 +1900,14 @@ impl Vim {
                     s.select_anchor_ranges([candidate.range.start..candidate.range.start])
                 });
             }
+            HelixJumpBehaviour::MoveToWordEnd => {
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    let map = s.display_snapshot();
+                    let word_end = candidate.range.end.to_display_point(&map);
+                    let word_end = movement::left(&map, word_end);
+                    s.select_display_ranges([word_end..word_end]);
+                });
+            }
             HelixJumpBehaviour::ExtendToWordStart => {
                 editor.change_selections(Default::default(), window, cx, |s| {
                     s.move_with(&mut |map, selection| {
@@ -1911,6 +1919,25 @@ impl Vim {
                                 .set_head(motion::right(map, word_start, 1), SelectionGoal::None);
                         } else {
                             selection.set_head_tail(word_start, selection.end, SelectionGoal::None);
+                        }
+                    });
+                });
+            }
+            HelixJumpBehaviour::ExtendToWordEnd => {
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.move_with(&mut |map, selection| {
+                        let word_end = candidate.range.end.to_display_point(map);
+                        let word_end_start = movement::left(map, word_end);
+                        let tail = selection.tail();
+
+                        if word_end_start >= tail {
+                            selection.set_head(word_end, SelectionGoal::None);
+                        } else {
+                            selection.set_head_tail(
+                                word_end_start,
+                                selection.end,
+                                SelectionGoal::None,
+                            );
                         }
                     });
                 });
