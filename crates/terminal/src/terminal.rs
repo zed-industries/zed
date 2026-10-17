@@ -27,7 +27,7 @@ use collections::{HashMap, VecDeque};
 use futures::StreamExt;
 use pty_info::{ProcessIdGetter, PtyProcessInfo};
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{Settings, TerminalTabTitle};
 use task::{HideStrategy, Shell, ShellKind, SpawnInTerminal};
 use terminal_settings::{AlternateScroll, CursorShape as SettingsCursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
@@ -3064,7 +3064,7 @@ impl Terminal {
         history_size.saturating_add(line)
     }
 
-    pub fn title(&self, truncate: bool) -> String {
+    pub fn title(&self, truncate: bool, cx: &App) -> String {
         const MAX_CHARS: usize = 25;
         match &self.task {
             Some(task_state) => {
@@ -3084,6 +3084,16 @@ impl Terminal {
                         .read()
                         .as_ref()
                         .map(|fpi| {
+                            if TerminalSettings::get_global(cx).tab_title
+                                == TerminalTabTitle::ProcessName
+                            {
+                                return if truncate {
+                                    truncate_and_trailoff(&fpi.name, MAX_CHARS)
+                                } else {
+                                    fpi.name.clone()
+                                };
+                            }
+
                             let process_file = fpi
                                 .cwd
                                 .file_name()
@@ -3679,8 +3689,8 @@ mod tests {
     };
     use collections::HashMap;
     use gpui::{
-        ClipboardItem, Entity, Pixels, ScrollDelta, TestAppContext, VisualContext,
-        VisualTestContext, bounds, point, size,
+        BorrowAppContext, ClipboardItem, Entity, Pixels, ScrollDelta, TestAppContext,
+        VisualContext, VisualTestContext, bounds, point, size,
     };
     use parking_lot::Mutex;
     use rand::{Rng, distr, rngs::StdRng};
@@ -4346,6 +4356,48 @@ mod tests {
             exit_status.await.is_some(),
             "expected terminal completion after sleep exits"
         );
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_tab_title_setting(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        let terminal =
+            build_test_terminal_with_arguments(cx, "sleep".to_string(), vec!["5".to_string()])
+                .await;
+
+        terminal.update(cx, |terminal, cx| {
+            terminal.task = None;
+            let TerminalType::Pty { info, .. } = &terminal.terminal_type else {
+                panic!("expected a PTY terminal");
+            };
+            // Set the process info and read the titles within the same update so that a
+            // background refresh of the foreground process can't race with the assertions.
+            *info.current.write() = Some(pty_info::ProcessInfo {
+                name: "claude".to_string(),
+                cwd: PathBuf::from("/projects/zed"),
+                argv: vec![
+                    "claude".to_string(),
+                    "--dangerously-skip-permissions".to_string(),
+                ],
+            });
+
+            assert_eq!(
+                terminal.title(false, cx),
+                "zed — claude --dangerously-skip-permissions"
+            );
+
+            cx.update_global(|store: &mut settings::SettingsStore, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.terminal.get_or_insert_default().tab_title =
+                        Some(TerminalTabTitle::ProcessName);
+                });
+            });
+            assert_eq!(terminal.title(false, cx), "claude");
+            assert_eq!(terminal.title(true, cx), "claude");
+        });
     }
 
     // TODO should be tested on Linux too, but does not work there well

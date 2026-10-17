@@ -5249,6 +5249,34 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 }
 ```
 
+### Terminal: Tab Title
+
+- Description: What to show in the title of terminal tabs. Tabs that you rename, and tabs running tasks, keep their own titles.
+- Setting: `tab_title`
+- Default: `cwd_and_command`
+
+**Options**
+
+1. Show the working directory name followed by the running command and its arguments:
+
+```json [settings]
+{
+  "terminal": {
+    "tab_title": "cwd_and_command"
+  }
+}
+```
+
+2. Show only the name of the running process, e.g. `claude`:
+
+```json [settings]
+{
+  "terminal": {
+    "tab_title": "process_name"
+  }
+}
+```
+
 ### Terminal: Working Directory
 
 - Description: What working directory to use when launching the terminal.
