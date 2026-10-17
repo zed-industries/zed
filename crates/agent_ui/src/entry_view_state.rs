@@ -37,6 +37,18 @@ fn reindex_after_removal(index: usize, removed: &Range<usize>) -> Option<usize> 
     }
 }
 
+/// How much of a tool call's content to materialize while syncing an entry.
+#[derive(Clone, Copy)]
+enum ToolCallSync {
+    /// Live updates: materialize visible content and run terminal lifecycle.
+    Live,
+    /// Thread restore: skip content that is not visible.
+    Restore,
+    /// First view after expansion: materialize without re-running terminal
+    /// lifecycle, which would collapse the card again.
+    Materialize,
+}
+
 pub struct EntryViewState {
     workspace: WeakEntity<Workspace>,
     project: WeakEntity<Project>,
@@ -236,7 +248,7 @@ impl EntryViewState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.sync_entry_inner(index, thread, window, true, true, cx);
+        self.sync_entry_inner(index, thread, window, ToolCallSync::Live, cx);
     }
 
     /// Like [`Self::sync_entry`], but skips the views of tool calls that are not
@@ -248,7 +260,7 @@ impl EntryViewState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.sync_entry_inner(index, thread, window, false, true, cx);
+        self.sync_entry_inner(index, thread, window, ToolCallSync::Restore, cx);
     }
 
     /// Materializes a tool call's diff and terminal views without running the
@@ -260,7 +272,7 @@ impl EntryViewState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.sync_entry_inner(index, thread, window, true, false, cx);
+        self.sync_entry_inner(index, thread, window, ToolCallSync::Materialize, cx);
     }
 
     fn sync_entry_inner(
@@ -268,10 +280,15 @@ impl EntryViewState {
         index: usize,
         thread: &Entity<AcpThread>,
         window: &mut Window,
-        materialize_tool_calls: bool,
-        run_terminal_lifecycle: bool,
+        tool_call_sync: ToolCallSync,
         cx: &mut Context<Self>,
     ) {
+        let materialize_tool_calls = matches!(
+            tool_call_sync,
+            ToolCallSync::Live | ToolCallSync::Materialize
+        );
+        let run_terminal_lifecycle =
+            matches!(tool_call_sync, ToolCallSync::Live | ToolCallSync::Restore);
         let Some(thread_entry) = thread.read(cx).entries().get(index) else {
             return;
         };
@@ -959,7 +976,6 @@ mod tests {
                 .clone()
         });
 
-        // Restoring history leaves the collapsed card's diff view unbuilt.
         view_state.read_with(cx, |view_state, _cx| {
             assert!(
                 view_state
@@ -971,7 +987,6 @@ mod tests {
             );
         });
 
-        // Expanding the card builds it.
         view_state.update_in(cx, |view_state, window, cx| {
             view_state.sync_entry(0, &thread, window, cx)
         });

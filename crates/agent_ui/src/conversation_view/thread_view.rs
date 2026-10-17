@@ -1306,8 +1306,13 @@ impl ThreadView {
         !self.message_queue.is_empty()
     }
 
-    /// Re-syncs a single entry's tool-call views after its expansion is toggled.
-    fn resync_entry(&mut self, entry_ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+    /// Materializes the tool-call views skipped when restoring the thread.
+    fn materialize_tool_call_views(
+        &mut self,
+        entry_ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let thread = self.thread.clone();
         self.entry_view_state.update(cx, |state, cx| {
             state.materialize_entry(entry_ix, &thread, window, cx);
@@ -8592,7 +8597,7 @@ impl ThreadView {
                 this.entry_view_state.update(cx, |state, _cx| {
                     state.toggle_tool_call_expansion(&id);
                 });
-                this.resync_entry(entry_ix, window, cx);
+                this.materialize_tool_call_views(entry_ix, window, cx);
                 this.refresh_thread_search(window, cx);
                 cx.notify();
             }
@@ -9189,7 +9194,7 @@ impl ThreadView {
                                                                             );
                                                                     },
                                                                 );
-                                                                this.resync_entry(entry_ix, window, cx);
+                                                                this.materialize_tool_call_views(entry_ix, window, cx);
                                                                 this.refresh_thread_search(window, cx);
                                                                 cx.notify();
                                                             }
@@ -11595,7 +11600,7 @@ impl ThreadView {
                                                     state.toggle_tool_call_expansion(&tool_call_id);
                                                     state.is_tool_call_expanded(&tool_call_id)
                                                 });
-                                            this.resync_entry(entry_ix, window, cx);
+                                            this.materialize_tool_call_views(entry_ix, window, cx);
                                             this.refresh_thread_search(window, cx);
                                             telemetry::event!("Subagent Toggled", expanded);
                                             cx.notify();

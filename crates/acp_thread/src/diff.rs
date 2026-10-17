@@ -660,8 +660,7 @@ pub struct FinalizedDiff {
     base_text: Arc<str>,
     base_text_exists: bool,
     resolved: OnceCell<ResolvedFinalized>,
-    /// Retained until [`Diff::resolve`] builds the diff; `None` afterwards or
-    /// when finalized from a pending diff.
+    /// Export inputs retained until [`Diff::resolve`] builds the render state.
     deferred: Option<DeferredSource>,
 }
 
@@ -677,11 +676,7 @@ struct ResolvedFinalized {
 }
 
 impl FinalizedDiff {
-    /// Reproduces [`Diff::to_markdown`]'s output for a diff that has not been
-    /// built yet. That output is the multibuffer's buffers, which is render
-    /// state: it holds the new text, with normalized line endings, only once the
-    /// edit produced hunks. The diff normalizes the base text too, so compare
-    /// both sides normalized.
+    /// Mirrors [`Diff::to_markdown`] for a diff that has not been built yet.
     fn export_before_resolve(&self) -> String {
         let Some(deferred) = &self.deferred else {
             return String::new();
