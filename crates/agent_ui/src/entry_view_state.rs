@@ -385,32 +385,41 @@ impl EntryViewState {
                     .map(|buffer| buffer.entity_id())
                     .collect();
 
-                let views = if let Some(Entry::ToolCall(tool_call)) = self.entries.get_mut(index) {
-                    &mut tool_call.content
-                } else {
-                    self.set_entry(
-                        index,
-                        Entry::ToolCall(ToolCallEntry {
-                            content: HashMap::default(),
-                            patch_hunk_ids: HashSet::default(),
-                            focus_handle: cx.focus_handle(),
-                        }),
-                    );
-                    let Some(Entry::ToolCall(tool_call)) = self.entries.get_mut(index) else {
-                        unreachable!()
+                let tool_call_entry =
+                    if let Some(Entry::ToolCall(tool_call)) = self.entries.get_mut(index) {
+                        tool_call
+                    } else {
+                        self.set_entry(
+                            index,
+                            Entry::ToolCall(ToolCallEntry {
+                                content: HashMap::default(),
+                                patch_hunk_ids: HashSet::default(),
+                                restored_view_ids: HashSet::default(),
+                                focus_handle: cx.focus_handle(),
+                            }),
+                        );
+                        let Some(Entry::ToolCall(tool_call)) = self.entries.get_mut(index) else {
+                            unreachable!()
+                        };
+                        tool_call
                     };
-                    &mut tool_call.content
-                };
+                let ToolCallEntry {
+                    content: views,
+                    restored_view_ids,
+                    ..
+                } = tool_call_entry;
 
                 let is_tool_call_completed =
                     matches!(tool_call.status(), acp_thread::ToolCallStatus::Completed);
+                let emit_new_view_events = matches!(tool_call_sync, ToolCallSync::Live);
 
                 if materialize_content {
                     thread.update(cx, |thread, cx| {
                         thread.resolve_tool_call_diffs(index, cx);
                     });
                     for terminal in terminals {
-                        match views.entry(terminal.entity_id()) {
+                        let terminal_id = terminal.entity_id();
+                        match views.entry(terminal_id) {
                             collections::hash_map::Entry::Vacant(entry) => {
                                 let element = create_terminal(
                                     self.workspace.clone(),
@@ -420,10 +429,12 @@ impl EntryViewState {
                                     cx,
                                 )
                                 .into_any();
-                                cx.emit(EntryViewEvent {
-                                    entry_index: index,
-                                    view_event: ViewEvent::NewTerminal(id.clone()),
-                                });
+                                if emit_new_view_events && !restored_view_ids.remove(&terminal_id) {
+                                    cx.emit(EntryViewEvent {
+                                        entry_index: index,
+                                        view_event: ViewEvent::NewTerminal(id.clone()),
+                                    });
+                                }
                                 entry.insert(element);
                             }
                             collections::hash_map::Entry::Occupied(_entry) => {
@@ -445,7 +456,8 @@ impl EntryViewState {
                     }
 
                     for diff in diffs {
-                        views.entry(diff.entity_id()).or_insert_with(|| {
+                        let diff_id = diff.entity_id();
+                        if let collections::hash_map::Entry::Vacant(entry) = views.entry(diff_id) {
                             let editor = create_editor_diff(diff.clone(), window, cx);
                             cx.subscribe(&editor, {
                                 let diff = diff.clone();
@@ -486,23 +498,33 @@ impl EntryViewState {
                                 }
                             })
                             .detach();
-                            cx.emit(EntryViewEvent {
-                                entry_index: index,
-                                view_event: ViewEvent::NewDiff(id.clone()),
-                            });
-                            editor.into_any()
-                        });
+                            if emit_new_view_events && !restored_view_ids.remove(&diff_id) {
+                                cx.emit(EntryViewEvent {
+                                    entry_index: index,
+                                    view_event: ViewEvent::NewDiff(id.clone()),
+                                });
+                            }
+                            entry.insert(editor.into_any());
+                        }
                     }
                     for buffer in patch_hunk_buffers {
-                        views.entry(buffer.entity_id()).or_insert_with(|| {
+                        let buffer_id = buffer.entity_id();
+                        if let collections::hash_map::Entry::Vacant(entry) = views.entry(buffer_id)
+                        {
                             let editor = create_multibuffer_diff_editor(buffer, window, cx);
-                            cx.emit(EntryViewEvent {
-                                entry_index: index,
-                                view_event: ViewEvent::NewDiff(id.clone()),
-                            });
-                            editor.into_any()
-                        });
+                            if emit_new_view_events && !restored_view_ids.remove(&buffer_id) {
+                                cx.emit(EntryViewEvent {
+                                    entry_index: index,
+                                    view_event: ViewEvent::NewDiff(id.clone()),
+                                });
+                            }
+                            entry.insert(editor.into_any());
+                        }
                     }
+                } else {
+                    restored_view_ids.extend(terminals.iter().map(|terminal| terminal.entity_id()));
+                    restored_view_ids.extend(diffs.iter().map(|diff| diff.entity_id()));
+                    restored_view_ids.extend(patch_hunk_ids.iter().copied());
                 }
                 if let Some(Entry::ToolCall(entry)) = self.entries.get_mut(index) {
                     for stale_id in entry.patch_hunk_ids.difference(&patch_hunk_ids) {
@@ -659,6 +681,9 @@ impl AssistantMessageEntry {
 pub struct ToolCallEntry {
     content: HashMap<EntityId, AnyEntity>,
     patch_hunk_ids: HashSet<EntityId>,
+    /// Views skipped when the thread was restored. Creating them later must not
+    /// be treated as new content.
+    restored_view_ids: HashSet<EntityId>,
     focus_handle: FocusHandle,
 }
 
@@ -871,6 +896,7 @@ fn diff_editor_text_style_refinement(cx: &mut App) -> TextStyleRefinement {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::path::Path;
     use std::rc::Rc;
     use std::sync::Arc;
@@ -883,7 +909,7 @@ mod tests {
     use gpui::{AppContext as _, TestAppContext};
     use parking_lot::RwLock;
 
-    use crate::entry_view_state::{Entry, EntryViewState};
+    use crate::entry_view_state::{Entry, EntryViewEvent, EntryViewState, ViewEvent};
     use crate::message_editor::SessionCapabilities;
     use multi_buffer::MultiBufferRow;
     use pretty_assertions::assert_matches;
@@ -987,11 +1013,26 @@ mod tests {
             );
         });
 
+        let saw_new_diff = Rc::new(Cell::new(false));
+        let _subscription = cx.update(|_, cx| {
+            let saw_new_diff = saw_new_diff.clone();
+            cx.subscribe(&view_state, move |_, event: &EntryViewEvent, _| {
+                if matches!(event.view_event, ViewEvent::NewDiff(_)) {
+                    saw_new_diff.set(true);
+                }
+            })
+        });
+
         view_state.update_in(cx, |view_state, window, cx| {
             view_state.sync_entry(0, &thread, window, cx)
         });
 
         cx.run_until_parked();
+
+        assert!(
+            !saw_new_diff.get(),
+            "materializing a restored diff must not emit NewDiff"
+        );
 
         let diff_editor = view_state.read_with(cx, |view_state, _cx| {
             view_state.entry(0).unwrap().editor_for_diff(&diff).unwrap()
