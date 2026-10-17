@@ -522,6 +522,12 @@ impl LineWrapper {
         // Bengali (https://en.wikipedia.org/wiki/Bengali_(Unicode_block))
         matches!(c, '\u{0980}'..='\u{09FF}') ||
 
+        // Myanmar (https://commons.wikimedia.org/wiki/Category:Unicode_1000-109F_Myanmar)
+        matches!(c, '\u{1000}'..='\u{109F}') || // Core Myanmar Block (Standard Burmese, Mon, Shan, Karen)
+        matches!(c, '\u{A9E0}'..='\u{A9FF}') || // Myanmar Extended-B
+        matches!(c, '\u{AA60}'..='\u{AA7F}') || // Myanmar Extended-A
+        matches!(c, '\u{116D0}'..='\u{116FF}') || // Myanmar Extended-C
+
         // Some other known special characters that should be treated as word characters,
         // e.g. `a-b`, `var_name`, `I'm`/`won’t`, '@mention`, `#hashtag`, `100%`, `3.1415`,
         // `2^3`, `a~b`, `a=1`, `Self::new`, etc. Trailing punctuation like `,`, `.`, `:`, `;`
@@ -1260,6 +1266,14 @@ mod tests {
         assert_word("গিয়েছিলেন");
         assert_word("ছেলে");
         assert_word("হচ্ছিল");
+
+        // Myanmar (Ensure unbroken text is kept together, wrapping only at user-defined spaces)
+        assert_word("မြန်မာနိုင်ငံ");
+        assert_word("မင်္ဂလာပါ");
+
+        // Myanmar (Ensure that strings containing spaces are correctly recognized as wrap-points)
+        assert_not_word("မြန်မာနိုင်ငံသည် အရှေ့တောင် အာရှတွင် တည်ရှိသည်");
+        assert_not_word("မင်္ဂလာ နံနက်ခင်းပါ ခင်ဗျာ");
 
         // non-word characters
         assert_not_word("你好");
