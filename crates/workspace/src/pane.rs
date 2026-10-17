@@ -1206,11 +1206,10 @@ impl Pane {
         cx: &mut Context<Self>,
     ) -> Option<usize> {
         let item_idx = self.preview_item_idx()?;
-        let id = self.preview_item_id()?;
         self.preview_item_id = None;
 
         let prev_active_item_index = self.active_item_index;
-        self.remove_item(id, false, false, window, cx);
+        self._remove_item(item_idx, false, false, None, false, window, cx);
         self.active_item_index = prev_active_item_index;
         if item_idx < prev_active_item_index {
             self.active_item_index -= 1;
@@ -1894,7 +1893,7 @@ impl Pane {
         index_list
             .iter()
             .rev()
-            .for_each(|&index| self._remove_item(index, false, false, None, window, cx));
+            .for_each(|&index| self._remove_item(index, false, false, None, true, window, cx));
     }
 
     // Usually when you close an item that has unsaved changes, we prompt you to
@@ -2109,6 +2108,7 @@ impl Pane {
             activate_pane,
             close_pane_if_empty,
             None,
+            true,
             window,
             cx,
         )
@@ -2127,6 +2127,7 @@ impl Pane {
             activate_pane,
             true,
             Some(focus_on_pane_if_closed),
+            true,
             window,
             cx,
         )
@@ -2138,6 +2139,7 @@ impl Pane {
         activate_pane: bool,
         close_pane_if_empty: bool,
         focus_on_pane_if_closed: Option<Entity<Pane>>,
+        record_in_closed_history: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2208,7 +2210,11 @@ impl Pane {
         }
 
         let mode = self.nav_history.mode();
-        self.nav_history.set_mode(NavigationMode::ClosingItem);
+        self.nav_history.set_mode(if record_in_closed_history {
+            NavigationMode::ClosingItem
+        } else {
+            NavigationMode::Disabled
+        });
         item.deactivated(window, cx);
         item.on_removed(cx);
         self.nav_history.set_mode(mode);
@@ -4919,7 +4925,6 @@ impl NavHistory {
                     row,
                 });
             }
-            NavigationMode::ClosingItem if is_preview => return,
             NavigationMode::ClosingItem => {
                 if state.closed_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
                     state.closed_stack.pop_front();
