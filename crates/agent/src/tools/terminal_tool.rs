@@ -1245,6 +1245,55 @@ fn wsl_interop_blocked(content: &str) -> bool {
     content.contains("UtilGetPpid") || content.contains("Failed to parse: /proc/1/stat")
 }
 
+/// Recovers the exit code that [`process_content`] records in the persisted
+/// output string of a failed command. The terminal tool's output is a plain
+/// string, so after a thread is reloaded from disk this sentinel is the only
+/// remaining failure signal; the UI uses it to restore the failure indicator
+/// on replayed terminal cards.
+/// The sentinel is not always the whole of the first paragraph: [`run_terminal_tool`]
+/// prepends a sandbox note when one applies, the command is interpolated verbatim
+/// and may itself contain a blank line, and on Windows an explanatory note follows
+/// the code on the same line.
+pub fn parse_failed_exit_code(output: &str) -> Option<u32> {
+    const OPENING: &str = "Command \"";
+    const NOTE_OPENING: &str = "Note: ";
+    const MARKER: &str = "\" failed with exit code ";
+
+    // Reject on a prefix test before scanning anything. This runs for every
+    // Execute tool call on every frame, and the overwhelmingly common input is a
+    // successful command's fenced output, which begins with neither prefix.
+    let sentinel = match output.strip_prefix(OPENING) {
+        Some(rest) => rest,
+        // `run_terminal_tool` prepends at most one sandbox note, which always
+        // begins "Note: " and is always separated from the sentinel by a blank
+        // line.
+        None if output.starts_with(NOTE_OPENING) => output
+            .split_once("\n\n")
+            .and_then(|(_, rest)| rest.strip_prefix(OPENING))?,
+        None => return None,
+    };
+
+    // Both the command and the captured output can quote the marker followed by
+    // arbitrary text, so a match only counts where it is followed by exactly what
+    // `process_content` writes after the real code: nothing, the fenced (possibly
+    // truncated) output, or the Windows interop note. The first such match wins
+    // because the captured output always comes after the real sentinel.
+    sentinel.match_indices(MARKER).find_map(|(index, _)| {
+        let (code, rest) = sentinel[index + MARKER.len()..].split_once('.')?;
+        let starts_output = |rest: &str| {
+            rest.starts_with("```\n") || rest.starts_with("Command output too long. The first ")
+        };
+        let ends_sentinel = rest.is_empty()
+            || rest.strip_prefix("\n\n").is_some_and(starts_output)
+            || rest
+                .strip_prefix(' ')
+                .and_then(|rest| rest.strip_prefix(WSL_INTEROP_BLOCKED_NOTE))
+                .and_then(|rest| rest.strip_prefix("\n\n"))
+                .is_some_and(starts_output);
+        ends_sentinel.then(|| code.parse::<u32>().ok())?
+    })
+}
+
 fn process_content(
     output: ProcessOutput,
     command: &str,
@@ -2066,6 +2115,109 @@ mod tests {
             "Expected failure message, got: {}",
             result
         );
+    }
+
+    #[test]
+    fn test_parse_failed_exit_code_round_trips_process_content() {
+        let failed = |output: &str, command: &str, exit_code: u32| {
+            process_content(
+                ProcessOutput::new(output.to_string(), false)
+                    .exit_status(acp_v2::TerminalExitStatus::new().exit_code(exit_code)),
+                command,
+                false,
+                false,
+                TerminalOutputSelection::default(),
+            )
+        };
+
+        assert_eq!(
+            parse_failed_exit_code(&failed("error output", "false", 137)),
+            Some(137)
+        );
+        assert_eq!(parse_failed_exit_code(&failed("", "false", 1)), Some(1));
+        // Quotes in the command must not break the parse.
+        assert_eq!(
+            parse_failed_exit_code(&failed("oops", "echo \"a b\" && false", 2)),
+            Some(2)
+        );
+        // Success and non-terminal-shaped outputs carry no exit code.
+        assert_eq!(parse_failed_exit_code(&failed("fine", "true", 0)), None);
+        assert_eq!(
+            parse_failed_exit_code("Command executed successfully."),
+            None
+        );
+        assert_eq!(parse_failed_exit_code("arbitrary tool output"), None);
+
+        // `run_terminal_tool` prepends a sandbox note to what `process_content`
+        // returned, so the string reaching the UI is not always the sentinel.
+        let note = "Note: this command ran WITHOUT an OS sandbox because the user allowed \
+                    unsandboxed execution for the rest of this thread.";
+        assert_eq!(
+            parse_failed_exit_code(&format!("{note}\n\n{}", failed("boom", "cargo build", 101))),
+            Some(101)
+        );
+        // A note with no sentinel after it is still a success.
+        assert_eq!(
+            parse_failed_exit_code(&format!("{note}\n\n{}", failed("fine", "true", 0))),
+            None
+        );
+
+        // Exit codes are u32 at the source, so Windows NTSTATUS values must survive.
+        assert_eq!(
+            parse_failed_exit_code(&failed("crash", "app.exe", 3221225477)),
+            Some(3221225477)
+        );
+
+        // The command is interpolated verbatim, so a blank line inside it must not
+        // be mistaken for the one separating the sentinel from the output.
+        assert_eq!(
+            parse_failed_exit_code(&failed("oops", "python3 - <<'EOF'\n\nprint(1)\nEOF", 2)),
+            Some(2)
+        );
+
+        // On Windows the interop note follows the code on the same line.
+        assert_eq!(
+            parse_failed_exit_code(&format!(
+                "Command \"foo.exe\" failed with exit code 1. {WSL_INTEROP_BLOCKED_NOTE}\n\n```\n```"
+            )),
+            Some(1)
+        );
+
+        // A command quoting the marker must not shadow the real code.
+        assert_eq!(
+            parse_failed_exit_code(&failed("oops", "echo '\" failed with exit code 9.'", 4)),
+            Some(4)
+        );
+    }
+
+    #[test]
+    fn test_parse_failed_exit_code_ignores_marker_followed_by_space_in_command() {
+        let command = "echo '\" failed with exit code 9. fake'; exit 4";
+        let output = process_content(
+            ProcessOutput::new("oops".to_string(), false)
+                .exit_status(acp_v2::TerminalExitStatus::new().exit_code(4)),
+            command,
+            false,
+            false,
+            TerminalOutputSelection::default(),
+        );
+
+        assert_eq!(parse_failed_exit_code(&output), Some(4));
+    }
+
+    #[test]
+    fn test_parse_failed_exit_code_ignores_marker_followed_by_newline_in_command() {
+        let command = "cat <<'EOF'\n\" failed with exit code 9.\nEOF\nexit 4";
+        let output = process_content(
+            ProcessOutput::new("oops".to_string(), false)
+                .exit_status(acp_v2::TerminalExitStatus::new().exit_code(4)),
+            command,
+            false,
+            false,
+            TerminalOutputSelection::default(),
+        );
+
+        assert_eq!(parse_failed_exit_code(&output), Some(4));
     }
 
     #[test]

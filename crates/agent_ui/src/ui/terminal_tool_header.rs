@@ -25,6 +25,7 @@ pub struct TerminalToolHeader {
     truncated_tooltip: Option<SharedString>,
     failed: bool,
     exit_code: Option<u32>,
+    failure_tooltip: Option<SharedString>,
     sandbox_warning: Option<TerminalSandboxWarning>,
     on_toggle_expand: Option<ClickHandler>,
     on_stop: Option<ClickHandler>,
@@ -48,6 +49,7 @@ impl TerminalToolHeader {
             truncated_tooltip: None,
             failed: false,
             exit_code: None,
+            failure_tooltip: None,
             sandbox_warning: None,
             on_toggle_expand: None,
             on_stop: None,
@@ -73,6 +75,14 @@ impl TerminalToolHeader {
     pub fn failed(mut self, exit_code: Option<u32>) -> Self {
         self.failed = true;
         self.exit_code = exit_code;
+        self
+    }
+
+    /// Describes the failure when no exit code is available. A replayed call, or
+    /// one from an external agent, often has only a status to go on, and without
+    /// this the indicator would carry no tooltip at all.
+    pub fn failure_tooltip(mut self, tooltip: impl Into<SharedString>) -> Self {
+        self.failure_tooltip = Some(tooltip.into());
         self
     }
 
@@ -119,6 +129,7 @@ impl RenderOnce for TerminalToolHeader {
             truncated_tooltip,
             failed,
             exit_code,
+            failure_tooltip,
             sandbox_warning,
             on_toggle_expand,
             on_stop,
@@ -151,13 +162,18 @@ impl RenderOnce for TerminalToolHeader {
                         .truncate_start(),
                 ),
             )
-            .child(
-                Disclosure::new(child_id("disclosure"), is_expanded)
-                    .opened_icon(IconName::ChevronUp)
-                    .closed_icon(IconName::ChevronDown)
-                    .visible_on_hover(&hover_group)
-                    .when_some(on_toggle_expand, |this, handler| this.on_click(handler)),
-            )
+            // Only when there is somewhere for the click to go. A replayed card
+            // whose header exists solely to carry a failure indicator has nothing
+            // to expand, and a chevron that toggles nothing reads as broken.
+            .when_some(on_toggle_expand, |header, handler| {
+                header.child(
+                    Disclosure::new(child_id("disclosure"), is_expanded)
+                        .opened_icon(IconName::ChevronUp)
+                        .closed_icon(IconName::ChevronDown)
+                        .visible_on_hover(&hover_group)
+                        .on_click(handler),
+                )
+            })
             .when(show_elapsed, |header| {
                 let elapsed = elapsed.unwrap_or_default();
                 header.child(
@@ -217,9 +233,14 @@ impl RenderOnce for TerminalToolHeader {
                             .style(ButtonStyle::Transparent)
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Error)
-                            .when_some(exit_code, |this, code| {
-                                this.tooltip(Tooltip::text(format!("Exited with code {code}")))
-                            }),
+                            .when_some(
+                                exit_code
+                                    .map(|code| {
+                                        SharedString::from(format!("Exited with code {code}"))
+                                    })
+                                    .or(failure_tooltip),
+                                |this, tooltip| this.tooltip(Tooltip::text(tooltip)),
+                            ),
                     )
             })
             .when_some(sandbox_warning, |header, warning| {
