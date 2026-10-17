@@ -246,6 +246,13 @@ split_structs!(
     SplitVertical => "Splits the pane vertically."
 );
 
+/// Transposes the orientation of the active pane's parent split group,
+/// swapping its axis between horizontal and vertical.
+#[derive(Default, Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = pane)]
+#[serde(deny_unknown_fields)]
+pub struct TransposePaneGroup;
+
 /// Activates the previous item in the pane.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = pane)]
