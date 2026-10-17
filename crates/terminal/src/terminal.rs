@@ -2487,7 +2487,10 @@ impl Terminal {
     ///Paste text into the terminal
     pub fn paste(&mut self, text: &str) {
         let paste_text = if self.last_content.mode.contains(Modes::BRACKETED_PASTE) {
-            format!("{}{}{}", "\x1b[200~", text.replace('\x1b', ""), "\x1b[201~")
+            // Line breaks are forwarded as they are, except `\r\n` (Windows clipboards),
+            // which programs would otherwise see as two line breaks.
+            let text = text.replace("\r\n", "\r").replace('\x1b', "");
+            format!("{}{}{}", "\x1b[200~", text, "\x1b[201~")
         } else {
             text.replace("\r\n", "\r").replace('\n', "\r")
         };
@@ -3917,6 +3920,43 @@ mod tests {
             b"\nthree"
         );
         assert!(!previous_byte_was_cr);
+    }
+
+    #[gpui::test]
+    async fn test_paste_converts_line_endings_to_cr(cx: &mut TestAppContext) {
+        let terminal = init_terminal_test(cx, b"");
+
+        terminal.update(cx, |terminal, _cx| {
+            terminal.paste("one\r\ntwo\nthree\r");
+            assert_eq!(
+                terminal.take_pty_write_log(),
+                vec![b"one\rtwo\rthree\r".to_vec()]
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_bracketed_paste_converts_only_crlf(cx: &mut TestAppContext) {
+        // `?2004h` enables bracketed paste mode.
+        let terminal = init_terminal_test(cx, b"\x1b[?2004h");
+
+        terminal.update(cx, |terminal, _cx| {
+            assert!(terminal.last_content.mode.contains(Modes::BRACKETED_PASTE));
+
+            // `\r\n` from Windows clipboards becomes one line break; `\n` and `\r` are kept.
+            terminal.paste("one\r\ntwo\nthree\r");
+            assert_eq!(
+                terminal.take_pty_write_log(),
+                vec![b"\x1b[200~one\rtwo\nthree\r\x1b[201~".to_vec()]
+            );
+
+            // ESC is removed, so the pasted text can't end the paste early.
+            terminal.paste("a\x1b[201~b");
+            assert_eq!(
+                terminal.take_pty_write_log(),
+                vec![b"\x1b[200~a[201~b\x1b[201~".to_vec()]
+            );
+        });
     }
 
     /// Regression test for the agent terminal failing with `Not a tty (os error
