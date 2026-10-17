@@ -67,6 +67,7 @@ impl ProcessIdGetter {
 
 #[derive(Clone, Debug)]
 pub(crate) struct ProcessInfo {
+    pub(crate) pid: Pid,
     pub(crate) name: String,
     pub(crate) cwd: PathBuf,
     pub(crate) argv: Vec<String>,
@@ -179,6 +180,7 @@ impl PtyProcessInfo {
         let cwd = process.cwd().map_or(PathBuf::new(), |p| p.to_owned());
 
         let info = ProcessInfo {
+            pid: process.pid(),
             name: process.name().to_str()?.to_owned(),
             cwd,
             argv: process
@@ -207,7 +209,9 @@ impl PtyProcessInfo {
             let current = this.load();
             let has_changed = match (previous.as_ref(), current.as_ref()) {
                 (None, None) => false,
-                (Some(prev), Some(now)) => prev.cwd != now.cwd || prev.name != now.name,
+                (Some(prev), Some(now)) => {
+                    prev.pid != now.pid || prev.cwd != now.cwd || prev.name != now.name
+                }
                 _ => true,
             };
             if has_changed {

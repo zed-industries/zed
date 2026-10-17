@@ -3078,6 +3078,14 @@ impl Terminal {
                 .title_override
                 .as_ref()
                 .map(|title_override| title_override.to_string())
+                .or_else(|| {
+                    let program_title = self.program_title()?;
+                    Some(if truncate {
+                        truncate_and_trailoff(program_title, MAX_CHARS)
+                    } else {
+                        program_title.to_string()
+                    })
+                })
                 .unwrap_or_else(|| match &self.terminal_type {
                     TerminalType::Pty { info, .. } => info
                         .current
@@ -3113,6 +3121,28 @@ impl Terminal {
                         .unwrap_or_else(|| "Terminal".to_string()),
                     TerminalType::DisplayOnly => "Terminal".to_string(),
                 }),
+        }
+    }
+
+    /// The title set by the program via OSC 0/2, while a program other than
+    /// the shell is in the foreground. Shells often keep setting the title at
+    /// the prompt, so it is ignored once the shell is back in the foreground.
+    fn program_title(&self) -> Option<&str> {
+        let program_title = self.breadcrumb_text.trim();
+        if program_title.is_empty() {
+            return None;
+        }
+        match &self.terminal_type {
+            TerminalType::Pty { info, .. } => {
+                let shell_pid = info.pid_getter().fallback_pid();
+                let program_running = info
+                    .current
+                    .read()
+                    .as_ref()
+                    .is_some_and(|process| process.pid != shell_pid);
+                program_running.then_some(program_title)
+            }
+            TerminalType::DisplayOnly => None,
         }
     }
 
@@ -4346,6 +4376,78 @@ mod tests {
             exit_status.await.is_some(),
             "expected terminal completion after sleep exits"
         );
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_title_shows_program_title_while_program_runs(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        // `set -m` gives the child its own foreground process group, like an
+        // interactive shell does. Once the child exits, the shell is back in the
+        // foreground while the title it set is still the terminal's title.
+        let script = r#"set -m; sh -c 'printf "\033]0;agent-title\007"; sleep 1'; read -t 30 _"#;
+        let builder = cx
+            .update(|cx| {
+                TerminalBuilder::new(
+                    None,
+                    TerminalMode::interactive(),
+                    task::Shell::WithArguments {
+                        program: "bash".to_string(),
+                        args: vec!["-c".to_string(), script.to_string()],
+                        title_override: None,
+                    },
+                    HashMap::default(),
+                    SettingsCursorShape::default(),
+                    AlternateScroll::On,
+                    None,
+                    vec![],
+                    Duration::ZERO,
+                    false,
+                    0,
+                    cx,
+                    Vec::new(),
+                    PathStyle::local(),
+                )
+            })
+            .await
+            .expect("terminal should spawn");
+        let terminal = cx.new(|cx| builder.subscribe(cx));
+
+        assert_title_eventually(&terminal, |title| title == "agent-title", cx).await;
+        assert_title_eventually(&terminal, |title| title != "agent-title", cx).await;
+        terminal.read_with(cx, |terminal, _| {
+            assert_eq!(terminal.breadcrumb_text, "agent-title");
+            assert_eq!(
+                terminal.foreground_process_command_name().as_deref(),
+                Some("bash")
+            );
+        });
+    }
+
+    #[cfg(unix)]
+    async fn assert_title_eventually(
+        terminal: &Entity<Terminal>,
+        predicate: impl Fn(&str) -> bool,
+        cx: &mut TestAppContext,
+    ) {
+        let mut title = String::new();
+        for _ in 0..500 {
+            title = terminal.update(cx, |terminal, _| {
+                if let TerminalType::Pty { info, .. } = &terminal.terminal_type {
+                    info.load_for_test();
+                }
+                terminal.title(true)
+            });
+            if predicate(&title) {
+                return;
+            }
+            cx.background_executor
+                .timer(Duration::from_millis(10))
+                .await;
+        }
+        panic!("Terminal title never matched, last title: {title:?}");
     }
 
     // TODO should be tested on Linux too, but does not work there well
