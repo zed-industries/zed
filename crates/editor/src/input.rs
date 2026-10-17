@@ -2356,7 +2356,15 @@ pub(super) fn is_list_prefix_row(
             Err(_) => continue,
         };
         if let Some(captures) = regex.captures(&ordered_list_candidate) {
-            return captures.get(0).is_some();
+            let Some(full_match) = captures.get(0) else {
+                continue;
+            };
+            // The candidate already skips leading whitespace, so a list marker only counts
+            // when the match starts at the beginning of the line. Without this check a
+            // marker in the middle of a line (`foo 1. bar`) is read as a list row.
+            if full_match.start() == 0 {
+                return true;
+            }
         }
     }
 
@@ -2759,7 +2767,16 @@ fn list_delimiter_for_newline(
         };
 
         if let Some(captures) = regex.captures(&candidate) {
-            let full_match = captures.get(0)?;
+            let Some(full_match) = captures.get(0) else {
+                continue;
+            };
+            // The candidate already skips leading whitespace, so a list marker only counts
+            // when the match starts at the beginning of the line. Without this check a
+            // marker in the middle of a line (`foo 1. bar`) is read as a list item and a
+            // spurious `2. ` is inserted on the next line.
+            if full_match.start() != 0 {
+                continue;
+            }
             let marker_len = full_match.len();
             let end_of_prefix = num_of_whitespaces + marker_len;
             let cursor_is_after_prefix = end_of_prefix <= start_point.column as usize;
