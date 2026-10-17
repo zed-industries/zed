@@ -7,7 +7,8 @@ use collections::{HashMap, HashSet};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task};
 use itertools::Itertools;
 use language::{
-    Anchor, Buffer, Capability, LanguageRegistry, OffsetRangeExt as _, Point, TextBuffer,
+    Anchor, Buffer, Capability, LanguageRegistry, LineEnding, OffsetRangeExt as _, Point,
+    TextBuffer,
 };
 use markdown::Markdown;
 use multi_buffer::{MultiBuffer, PathKey, excerpt_context_lines};
@@ -286,10 +287,7 @@ impl Diff {
         language_registry: Arc<LanguageRegistry>,
         _cx: &mut Context<Self>,
     ) -> Self {
-        // Building the diff body (buffer, multibuffer, tree-sitter parse) is
-        // deferred to `resolve`, which the UI calls once the card is first
-        // shown. Restoring a thread therefore never builds a diff for an edit
-        // the user has not opened, which is the dominant cost of a long thread.
+        // The buffer, multibuffer and syntax tree are built lazily by `resolve`.
         Self::Finalized(FinalizedDiff {
             path,
             base_text: old_text.clone().unwrap_or_default().into(),
@@ -302,9 +300,8 @@ impl Diff {
         })
     }
 
-    /// Builds the diff's buffer, multibuffer and syntax tree if not already
-    /// built. Cheap and idempotent. Call this before `multibuffer`, `buffer` or
-    /// `has_revealed_range` on a finalized diff.
+    /// Builds the buffer, multibuffer and syntax tree if not built already. Must
+    /// be called before [`Self::buffer`] or [`Self::multibuffer`].
     pub(crate) fn resolve(&mut self, cx: &mut Context<Self>) {
         let Self::Finalized(finalized) = self else {
             return;
@@ -435,26 +432,19 @@ impl Diff {
                     .map(|file| file.path().display(file.path_style(cx)));
                 (path, buffer_text)
             }
-            Self::Finalized(finalized) => match finalized.resolved.get() {
-                Some(resolved) => {
-                    let buffer_text = resolved
+            Self::Finalized(finalized) => {
+                let buffer_text = match finalized.resolved.get() {
+                    Some(resolved) => resolved
                         .multibuffer
                         .read(cx)
                         .all_buffers()
                         .iter()
                         .map(|buffer| buffer.read(cx).text())
-                        .join("\n");
-                    (Some(finalized.path.as_str().into()), buffer_text)
-                }
-                None => (
-                    Some(finalized.path.as_str().into()),
-                    finalized
-                        .deferred
-                        .as_ref()
-                        .map(|source| source.new_text.clone())
-                        .unwrap_or_default(),
-                ),
-            },
+                        .join("\n"),
+                    None => finalized.export_before_resolve(),
+                };
+                (Some(finalized.path.as_str().into()), buffer_text)
+            }
         };
         format!(
             "Diff: {}\n```\n{}\n```\n",
@@ -670,13 +660,11 @@ pub struct FinalizedDiff {
     base_text: Arc<str>,
     base_text_exists: bool,
     resolved: OnceCell<ResolvedFinalized>,
-    /// The full new text and language registry needed to build the
-    /// resolved state, retained only until [`Diff::resolve`] consumes
-    /// them. `None` for a diff built eagerly (`PendingDiff::finalize`).
+    /// Retained until [`Diff::resolve`] builds the diff; `None` afterwards or
+    /// when finalized from a pending diff.
     deferred: Option<DeferredSource>,
 }
 
-/// Retained source for a finalized diff that has not been built yet.
 struct DeferredSource {
     new_text: String,
     language_registry: Option<Arc<LanguageRegistry>>,
@@ -688,8 +676,25 @@ struct ResolvedFinalized {
     _update_diff: Task<Result<()>>,
 }
 
-/// Builds a finalized diff's buffer, multibuffer and syntax tree. Split out of
-/// `Diff::finalized` so it only runs when the diff is first shown.
+impl FinalizedDiff {
+    /// Reproduces [`Diff::to_markdown`]'s output for a diff that has not been
+    /// built yet. That output is the multibuffer's buffers, which is render
+    /// state: it holds the new text, with normalized line endings, only once the
+    /// edit produced hunks.
+    fn export_before_resolve(&self) -> String {
+        let Some(deferred) = &self.deferred else {
+            return String::new();
+        };
+        let mut new_text = deferred.new_text.clone();
+        LineEnding::normalize(&mut new_text);
+        if new_text.as_str() == self.base_text.as_ref() {
+            String::new()
+        } else {
+            new_text
+        }
+    }
+}
+
 fn build_finalized(
     path: String,
     base_text_exists: bool,
@@ -1045,5 +1050,39 @@ mod tests {
             buffer.set_text("HELLO!", cx);
         });
         cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_finalized_diff_export_survives_resolution(cx: &mut TestAppContext) {
+        let languages =
+            cx.update(|cx| Arc::new(LanguageRegistry::test(cx.background_executor().clone())));
+        for (old_text, new_text) in [
+            (Some("same"), "same"),
+            (Some("before"), "after"),
+            (Some("a\r\nb"), "a\r\nb"),
+            (Some("a\nb"), "a\r\nb"),
+            (None, "added"),
+            (Some("removed"), ""),
+        ] {
+            let diff = cx.new(|cx| {
+                Diff::finalized(
+                    "test.rs".into(),
+                    old_text.map(str::to_string),
+                    new_text.to_string(),
+                    languages.clone(),
+                    cx,
+                )
+            });
+            let exported_before = cx.update(|cx| diff.read(cx).to_markdown(cx));
+
+            diff.update(cx, |diff, cx| diff.resolve(cx));
+            cx.run_until_parked();
+
+            let exported_after = cx.update(|cx| diff.read(cx).to_markdown(cx));
+            assert_eq!(
+                exported_after, exported_before,
+                "export changed when resolving {old_text:?} -> {new_text:?}"
+            );
+        }
     }
 }

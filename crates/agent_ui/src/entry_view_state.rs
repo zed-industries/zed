@@ -239,13 +239,8 @@ impl EntryViewState {
         self.sync_entry_inner(index, thread, window, true, true, cx);
     }
 
-    /// Like [`Self::sync_entry`], but does not materialize the diff/terminal
-    /// views of tool calls whose content is not currently visible.
-    ///
-    /// This is used when restoring a thread's history. Opening a long thread
-    /// should not eagerly build a full diff [`Editor`] and [`TerminalView`] for
-    /// every past tool call; those views are materialized later via
-    /// [`Self::sync_entry`] once the corresponding card is expanded.
+    /// Like [`Self::sync_entry`], but skips the views of tool calls that are not
+    /// visible. Used when restoring a thread's history.
     pub fn sync_entry_initial(
         &mut self,
         index: usize,
@@ -256,10 +251,8 @@ impl EntryViewState {
         self.sync_entry_inner(index, thread, window, false, true, cx);
     }
 
-    /// Materializes a tool call's diff/terminal views (used when a card is
-    /// expanded) without re-running the terminal lifecycle, so that expanding
-    /// a card whose process is still running is not immediately collapsed
-    /// again by a `TerminalMovedToBackground` event.
+    /// Materializes a tool call's diff and terminal views without running the
+    /// terminal lifecycle, which would collapse an expanded card again.
     pub fn materialize_entry(
         &mut self,
         index: usize,
@@ -354,10 +347,6 @@ impl EntryViewState {
             }
             AgentThreadEntry::ToolCall(tool_call) => {
                 let id = tool_call.id.clone();
-                // When restoring history we skip building the (potentially very
-                // expensive) diff editors and terminal views for tool calls the
-                // user cannot see yet. They are created on demand by a later
-                // `sync_entry` call once the card is expanded.
                 let materialize_content =
                     materialize_tool_calls || self.is_tool_call_content_visible(tool_call);
                 let terminals = tool_call.terminals().cloned().collect::<Vec<_>>();
@@ -970,7 +959,7 @@ mod tests {
                 .clone()
         });
 
-        // Restoring a thread must not eagerly materialize tool-call diff views.
+        // Restoring history leaves the collapsed card's diff view unbuilt.
         view_state.read_with(cx, |view_state, _cx| {
             assert!(
                 view_state
@@ -982,7 +971,7 @@ mod tests {
             );
         });
 
-        // Expanding the card materializes its views.
+        // Expanding the card builds it.
         view_state.update_in(cx, |view_state, window, cx| {
             view_state.sync_entry(0, &thread, window, cx)
         });

@@ -1306,10 +1306,7 @@ impl ThreadView {
         !self.message_queue.is_empty()
     }
 
-    /// Re-syncs a single entry, materializing its tool-call content views when
-    /// the card is expanded. Called after toggling a tool call's expansion so
-    /// that cards restored in a collapsed state build their diff editors and
-    /// terminal views lazily instead of eagerly on thread load.
+    /// Re-syncs a single entry's tool-call views after its expansion is toggled.
     fn resync_entry(&mut self, entry_ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         let thread = self.thread.clone();
         self.entry_view_state.update(cx, |state, cx| {
