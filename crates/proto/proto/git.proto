@@ -577,6 +577,15 @@ message GetDefaultBranchResponse {
   optional string branch = 1;
 }
 
+message GetParentBranch {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+}
+
+message GetParentBranchResponse {
+  optional string branch = 1;
+}
+
 message GetTreeDiff {
   uint64 project_id = 1;
   uint64 repository_id = 2;

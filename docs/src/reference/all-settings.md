@@ -2864,7 +2864,7 @@ Example:
 
 ### Diff Base
 
-- Description: Whether git features show changes relative to HEAD (uncommitted changes) or to the default branch (all changes on the current branch). Also available in the editor controls menu as "Diff Against Default Branch".
+- Description: Whether git features show changes relative to HEAD (uncommitted changes), to the default branch, or to the nearest parent branch (all changes on the current branch). Also available in the editor controls menu as "Diff Against Default Branch" or "Diff Against Parent Branch".
 - Setting: `diff_base`
 - Default:
 
@@ -2897,6 +2897,19 @@ Example:
   }
 }
 ```
+
+3. Show all branch changes relative to the merge base with the nearest inferred parent branch:
+
+```json [settings]
+{
+  "git": {
+    "diff_base": "parent_branch"
+  }
+}
+```
+
+Zed chooses the nearest parent branch by merge-base. If no parent is found, Zed
+uses the default branch, then falls back to HEAD.
 
 ## Go to Definition Fallback
 

@@ -8213,6 +8213,26 @@ async fn test_remote_git_branches(
         .unwrap()
         .unwrap();
     assert_eq!(default_branch_with_remote_b.as_deref(), Some("origin/main"));
+
+    client_a
+        .fs()
+        .with_git_state(Path::new("/project/.git"), true, |state| {
+            state.parent_branch_name = Some("topic".into());
+        })
+        .expect("set host parent branch");
+    let parent_branch_b = cx_b
+        .update(|cx| repo_b.update(cx, |repository, _| repository.parent_branch()))
+        .await
+        .expect("receive guest parent branch")
+        .expect("resolve guest parent branch");
+    assert_eq!(parent_branch_b.as_deref(), Some("topic"));
+
+    let default_branch_b = cx_b
+        .update(|cx| repo_b.update(cx, |repository, _| repository.default_branch(true)))
+        .await
+        .expect("receive guest default branch")
+        .expect("resolve guest default branch");
+    assert_eq!(default_branch_b.as_deref(), Some("origin/main"));
 }
 
 #[gpui::test]

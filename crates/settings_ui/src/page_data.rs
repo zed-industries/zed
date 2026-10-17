@@ -8538,7 +8538,7 @@ fn version_control_page() -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Diff Base",
-                description: "Whether git features show changes relative to HEAD (uncommitted changes) or to the default branch (all changes on the current branch).",
+                description: "Whether git features show changes relative to HEAD (uncommitted changes), to the default branch, or to the nearest parent branch (all changes on the current branch).",
                 field: Box::new(SettingField {
                     organization_override: None,
                     json_path: Some("git.diff_base"),
