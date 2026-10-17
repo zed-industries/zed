@@ -38,7 +38,10 @@ fn vs_subpixel_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_i
 
 @fragment
 fn fs_subpixel_sprite(input: SubpixelSpriteOutput) -> SubpixelSpriteFragmentOutput {
-    let sample = textureSample(t_sprite, s_sprite, input.tile_position).rgb;
+    var sample = textureSample(t_sprite, s_sprite, input.tile_position).rgb;
+    if (gamma_params.is_bgr != 0u) {
+        sample = sample.bgr;
+    }
     let alpha_corrected = apply_contrast_and_gamma_correction3(sample, input.color.rgb, gamma_params.subpixel_enhanced_contrast, gamma_params.gamma_ratios);
 
     // Alpha clip after using the derivatives.

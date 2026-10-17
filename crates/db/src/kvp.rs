@@ -11,6 +11,12 @@ use crate::{
 
 pub struct KeyValueStore(crate::sqlez::thread_safe_connection::ThreadSafeConnection);
 
+impl KeyValueStore {
+    pub fn from_app_db(db: &crate::AppDatabase) -> Self {
+        Self(db.0.clone())
+    }
+}
+
 impl Domain for KeyValueStore {
     const NAME: &str = stringify!(KeyValueStore);
 
@@ -32,26 +38,25 @@ impl Domain for KeyValueStore {
     ];
 }
 
-crate::static_connection!(KEY_VALUE_STORE, KeyValueStore, []);
+crate::static_connection!(KeyValueStore, []);
 
 pub trait Dismissable {
     const KEY: &'static str;
 
-    fn dismissed() -> bool {
-        KEY_VALUE_STORE
+    fn dismissed(cx: &App) -> bool {
+        KeyValueStore::global(cx)
             .read_kvp(Self::KEY)
             .log_err()
             .is_some_and(|s| s.is_some())
     }
 
     fn set_dismissed(is_dismissed: bool, cx: &mut App) {
+        let db = KeyValueStore::global(cx);
         write_and_log(cx, move || async move {
             if is_dismissed {
-                KEY_VALUE_STORE
-                    .write_kvp(Self::KEY.into(), "1".into())
-                    .await
+                db.write_kvp(Self::KEY.into(), "1".into()).await
             } else {
-                KEY_VALUE_STORE.delete_kvp(Self::KEY.into()).await
+                db.delete_kvp(Self::KEY.into()).await
             }
         })
     }
@@ -228,9 +233,27 @@ impl Domain for GlobalKeyValueStore {
     )];
 }
 
-crate::static_connection!(GLOBAL_KEY_VALUE_STORE, GlobalKeyValueStore, [], global);
+impl std::ops::Deref for GlobalKeyValueStore {
+    type Target = ThreadSafeConnection;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+static GLOBAL_KEY_VALUE_STORE: std::sync::LazyLock<GlobalKeyValueStore> =
+    std::sync::LazyLock::new(|| {
+        let db_dir = crate::database_dir();
+        GlobalKeyValueStore(gpui::block_on(crate::open_db::<GlobalKeyValueStore>(
+            db_dir,
+            crate::GlobalDbScope,
+        )))
+    });
 
 impl GlobalKeyValueStore {
+    pub fn global() -> &'static Self {
+        &GLOBAL_KEY_VALUE_STORE
+    }
+
     query! {
         pub fn read_kvp(key: &str) -> Result<Option<String>> {
             SELECT value FROM kv_store WHERE key = (?)

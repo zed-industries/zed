@@ -17,7 +17,7 @@ Here's how to make Zed feel like home:
 
 2. **Toggle light/dark mode quickly**: Press {#kb theme::ToggleMode}. If you currently use a static `"theme": "..."` value, the first toggle converts it to dynamic mode settings with default themes.
 
-3. **Choose an icon theme**: Run `icon theme selector: toggle` from the command palette to browse icon themes.
+3. **Choose an icon theme**: Run {#action icon_theme_selector::Toggle} from the command palette to browse icon themes.
 
 4. **Set your font**: Open the Settings Editor with {#kb zed::OpenSettings} and search for `buffer_font_family`. Set it to your preferred coding font.
 
@@ -47,7 +47,7 @@ You can also override specific theme attributes for fine-grained control.
 
 ## Icon Themes
 
-Customize file and folder icons in the Project Panel and tabs. Browse available icon themes with the Icon Theme Selector (`icon theme selector: toggle` in the command palette).
+Customize file and folder icons in the Project Panel and tabs. Browse available icon themes with the Icon Theme Selector ({#action icon_theme_selector::Toggle} in the command palette).
 
 Like color themes, icon themes support separate light and dark variants:
 
@@ -65,24 +65,30 @@ Like color themes, icon themes support separate light and dark variants:
 
 ## Fonts
 
-Zed uses three font settings for different contexts:
+Zed uses three font settings and their fallback counterparts for different contexts:
 
-| Setting                | Used for                  |
-| ---------------------- | ------------------------- |
-| `buffer_font_family`   | Editor text               |
-| `ui_font_family`       | Interface elements        |
-| `terminal.font_family` | [Terminal](./terminal.md) |
+| Setting                   | Used for                  |
+| ------------------------- | ------------------------- |
+| `buffer_font_family`      | Editor text               |
+| `buffer_font_fallbacks`   | Editor text               |
+| `ui_font_family`          | Interface elements        |
+| `ui_font_fallbacks`       | Interface elements        |
+| `terminal.font_family`    | [Terminal](./terminal.md) |
+| `terminal.font_fallbacks` | [Terminal](./terminal.md) |
 
 Example configuration:
 
 ```json [settings]
 {
   "buffer_font_family": "JetBrains Mono",
+  "buffer_font_fallbacks": ["Nerd Font"],
   "buffer_font_size": 14,
   "ui_font_family": "Inter",
+  "ui_font_fallbacks": ["Nerd Font"],
   "ui_font_size": 16,
   "terminal": {
     "font_family": "JetBrains Mono",
+    "font_fallbacks": ["Nerd Font"],
     "font_size": 14
   }
 }

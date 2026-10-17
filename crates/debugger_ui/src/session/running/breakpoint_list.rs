@@ -1,12 +1,7 @@
-use std::{
-    ops::Range,
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
-};
+use std::{ops::Range, path::Path, sync::Arc, time::Duration};
 
 use dap::{Capabilities, ExceptionBreakpointsFilter, adapters::DebugAdapterName};
-use db::kvp::KEY_VALUE_STORE;
+use db::kvp::KeyValueStore;
 use editor::Editor;
 use gpui::{
     Action, AppContext, ClickEvent, Entity, FocusHandle, Focusable, MouseButton, ScrollStrategy,
@@ -27,7 +22,7 @@ use ui::{
     Divider, DividerColor, FluentBuilder as _, Indicator, IntoElement, ListItem, Render,
     ScrollAxes, StatefulInteractiveElement, Tooltip, WithScrollbar, prelude::*,
 };
-use util::rel_path::RelPath;
+use util::paths::PathExt;
 use workspace::Workspace;
 use zed_actions::{ToggleEnableBreakpoint, UnsetBreakpoint};
 
@@ -520,8 +515,9 @@ impl BreakpointList {
             });
             let value = serde_json::to_string(&settings);
 
+            let kvp = KeyValueStore::global(cx);
             cx.background_executor()
-                .spawn(async move { KEY_VALUE_STORE.write_kvp(key, value?).await })
+                .spawn(async move { kvp.write_kvp(key, value?).await })
         } else {
             Task::ready(Result::Ok(()))
         }
@@ -532,7 +528,7 @@ impl BreakpointList {
         adapter_name: DebugAdapterName,
         cx: &mut Context<Self>,
     ) -> anyhow::Result<()> {
-        let Some(val) = KEY_VALUE_STORE.read_kvp(&Self::kvp_key(&adapter_name))? else {
+        let Some(val) = KeyValueStore::global(cx).read_kvp(&Self::kvp_key(&adapter_name))? else {
             return Ok(());
         };
         let value: PersistedAdapterOptions = serde_json::from_str(&val)?;
@@ -667,7 +663,7 @@ impl Render for BreakpointList {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         let breakpoints = self.breakpoint_store.read(cx).all_source_breakpoints(cx);
         self.breakpoints.clear();
-        let path_style = self.worktree_store.read(cx).path_style();
+        let multiple_worktrees = self.worktree_store.read(cx).visible_worktrees(cx).count() > 1;
         let weak = cx.weak_entity();
         let breakpoints = breakpoints.into_iter().flat_map(|(path, mut breakpoints)| {
             let relative_worktree_path = self
@@ -675,23 +671,26 @@ impl Render for BreakpointList {
                 .read(cx)
                 .find_worktree(&path, cx)
                 .and_then(|(worktree, relative_path)| {
-                    worktree
-                        .read(cx)
-                        .is_visible()
-                        .then(|| worktree.read(cx).root_name().join(&relative_path))
+                    worktree.read(cx).is_visible().then(|| {
+                        if multiple_worktrees {
+                            worktree.read(cx).root_name().join(&relative_path)
+                        } else {
+                            relative_path.to_rel_path_buf()
+                        }
+                    })
                 });
             breakpoints.sort_by_key(|breakpoint| breakpoint.row);
             let weak = weak.clone();
             breakpoints.into_iter().filter_map(move |breakpoint| {
                 debug_assert_eq!(&path, &breakpoint.path);
                 let file_name = breakpoint.path.file_name()?;
-                let breakpoint_path = RelPath::new(&breakpoint.path, path_style).ok();
 
                 let dir = relative_worktree_path
                     .as_deref()
-                    .or(breakpoint_path.as_deref())?
+                    .map(|rel_path| rel_path.as_std_path())
+                    .unwrap_or(&breakpoint.path.as_ref().compact())
                     .parent()
-                    .map(|parent| SharedString::from(parent.display(path_style).to_string()));
+                    .map(|parent| SharedString::from(parent.display().to_string()));
                 let name = file_name
                     .to_str()
                     .map(ToOwned::to_owned)
@@ -906,7 +905,7 @@ impl LineBreakpoint {
                 )))
                 .w_full()
                 .gap_1()
-                .min_h(rems_from_px(26.))
+                .min_h(rems_from_px(26_f32))
                 .justify_between()
                 .on_click({
                     let weak = weak.clone();
@@ -927,19 +926,12 @@ impl LineBreakpoint {
                                 .size(LabelSize::Small)
                                 .line_height_style(ui::LineHeightStyle::UiLabel),
                         )
-                        .children(self.dir.as_ref().and_then(|dir| {
-                            let path_without_root = Path::new(dir.as_ref())
-                                .components()
-                                .skip(1)
-                                .collect::<PathBuf>();
-                            path_without_root.components().next()?;
-                            Some(
-                                Label::new(path_without_root.to_string_lossy().into_owned())
-                                    .color(Color::Muted)
-                                    .size(LabelSize::Small)
-                                    .line_height_style(ui::LineHeightStyle::UiLabel)
-                                    .truncate(),
-                            )
+                        .children(self.dir.as_ref().map(|dir| {
+                            Label::new(dir)
+                                .color(Color::Muted)
+                                .size(LabelSize::Small)
+                                .line_height_style(ui::LineHeightStyle::UiLabel)
+                                .truncate()
                         }))
                         .when_some(self.dir.as_ref(), |this, parent_dir| {
                             this.tooltip(Tooltip::text(format!(
@@ -1036,7 +1028,7 @@ impl DataBreakpoint {
             h_flex()
                 .w_full()
                 .gap_1()
-                .min_h(rems_from_px(26.))
+                .min_h(rems_from_px(26_f32))
                 .justify_between()
                 .child(
                     v_flex()
@@ -1139,7 +1131,7 @@ impl ExceptionBreakpoint {
             h_flex()
                 .w_full()
                 .gap_1()
-                .min_h(rems_from_px(26.))
+                .min_h(rems_from_px(26_f32))
                 .justify_between()
                 .child(
                     v_flex()

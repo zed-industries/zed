@@ -1,12 +1,9 @@
-use super::Axis;
 use crate::{
-    Autoscroll, Editor, EditorMode, EditorSettings, NextScreen, NextScrollCursorCenterTopBottom,
+    Autoscroll, Editor, EditorMode, NextScreen, NextScrollCursorCenterTopBottom,
     SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT, ScrollCursorBottom, ScrollCursorCenter,
     ScrollCursorCenterTopBottom, ScrollCursorTop, display_map::DisplayRow, scroll::ScrollOffset,
 };
 use gpui::{Context, Point, Window};
-use settings::Settings;
-use text::ToOffset;
 
 impl Editor {
     pub fn next_screen(&mut self, _: &NextScreen, window: &mut Window, cx: &mut Context<Editor>) {
@@ -28,11 +25,9 @@ impl Editor {
     pub fn scroll(
         &mut self,
         scroll_position: Point<ScrollOffset>,
-        axis: Option<Axis>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.scroll_manager.update_ongoing_scroll(axis);
         self.set_scroll_position(scroll_position, window, cx);
     }
 
@@ -77,23 +72,9 @@ impl Editor {
         let scroll_margin_rows = self.vertical_scroll_margin() as u32;
         let selection_head = self.selections.newest_display(&display_snapshot).head();
 
-        let sticky_headers_len = if EditorSettings::get_global(cx).sticky_scroll.enabled
-            && let Some((_, _, buffer_snapshot)) = display_snapshot.buffer_snapshot().as_singleton()
-        {
-            let select_head_point =
-                rope::Point::new(selection_head.to_point(&display_snapshot).row, 0);
-            buffer_snapshot
-                .outline_items_containing(select_head_point..select_head_point, false, None)
-                .iter()
-                .filter(|outline| {
-                    outline.range.start.offset
-                        < select_head_point.to_offset(&buffer_snapshot) as u32
-                })
-                .collect::<Vec<_>>()
-                .len()
-        } else {
-            0
-        } as u32;
+        let sticky_headers_len =
+            self.visible_sticky_header_count_for_point(&display_snapshot, selection_head, cx)
+                as u32;
 
         let new_screen_top = selection_head.row().0;
         let header_offset = display_snapshot

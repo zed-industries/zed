@@ -13,6 +13,7 @@ pub struct Model {
     pub host_connection_id: Option<i32>,
     pub host_connection_server_id: Option<ServerId>,
     pub windows_paths: bool,
+    pub features: String,
 }
 
 impl Model {

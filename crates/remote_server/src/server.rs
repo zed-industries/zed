@@ -3,9 +3,6 @@ mod headless_project;
 #[cfg(test)]
 mod remote_editing_tests;
 
-#[cfg(windows)]
-pub mod windows;
-
 pub use headless_project::{HeadlessAppState, HeadlessProject};
 
 use anyhow::{Context as _, Result, anyhow};
@@ -30,6 +27,8 @@ use paths::logs_dir;
 use project::{project_settings::ProjectSettings, trusted_worktrees};
 use proto::CrashReport;
 use release_channel::{AppCommitSha, AppVersion, RELEASE_CHANNEL, ReleaseChannel};
+#[cfg(unix)]
+use remote::command::RemoteCommand;
 use remote::{
     RemoteClient,
     json_log::LogRecord,
@@ -41,12 +40,12 @@ use rpc::proto::{self, Envelope, REMOTE_SERVER_PROJECT_ID};
 use rpc::{AnyProtoClient, TypedEnvelope};
 use settings::{Settings, SettingsStore, watch_config_file};
 use smol::{
+    Timer,
     channel::{Receiver, Sender},
     io::AsyncReadExt,
     stream::StreamExt as _,
 };
 use std::{
-    env,
     ffi::OsStr,
     fs::File,
     io::Write,
@@ -55,6 +54,14 @@ use std::{
     str::FromStr,
     sync::{Arc, LazyLock},
     time::Instant,
+};
+#[cfg(unix)]
+use std::{
+    ffi::OsString,
+    os::{
+        fd::AsFd as _,
+        unix::{ffi::OsStrExt as _, process::CommandExt as _},
+    },
 };
 use thiserror::Error;
 use util::{ResultExt, command::new_command};
@@ -80,6 +87,8 @@ pub enum Commands {
         identifier: String,
     },
     Version,
+    #[cfg(unix)]
+    Exec,
 }
 
 pub fn run(command: Commands) -> anyhow::Result<()> {
@@ -104,6 +113,8 @@ pub fn run(command: Commands) -> anyhow::Result<()> {
             identifier,
             reconnect,
         } => execute_proxy(identifier, reconnect).context("running proxy on the remote server"),
+        #[cfg(unix)]
+        Commands::Exec => execute_command(),
         Commands::Version => {
             let release_channel = *RELEASE_CHANNEL;
             match release_channel {
@@ -139,6 +150,105 @@ pub static VERSION: LazyLock<String> = LazyLock::new(|| match *RELEASE_CHANNEL {
     }
 });
 
+#[cfg(unix)]
+fn execute_command() -> Result<()> {
+    let mut stdin = File::from(std::io::stdin().as_fd().try_clone_to_owned()?);
+    let descriptor = RemoteCommand::read(&mut stdin)?;
+    drop(stdin);
+
+    let working_dir = descriptor
+        .working_dir
+        .as_deref()
+        .map(|working_dir| shellexpand::tilde(working_dir).into_owned());
+    if let Some(working_dir) = &working_dir {
+        std::env::set_current_dir(working_dir)
+            .with_context(|| format!("Failed to change directory to {working_dir}"))?;
+    }
+    let error = exec_with_script_fallback(&descriptor, working_dir.as_deref(), |mut command| {
+        command.exec()
+    });
+    Err(error).with_context(|| format!("Failed to execute {}", descriptor.program))
+}
+
+#[cfg(unix)]
+fn exec_with_script_fallback(
+    descriptor: &RemoteCommand,
+    working_dir: Option<&str>,
+    mut exec: impl FnMut(std::process::Command) -> std::io::Error,
+) -> std::io::Error {
+    let error = exec(exec_command(
+        descriptor,
+        working_dir,
+        &descriptor.program,
+        &descriptor.args,
+    ));
+    if error.raw_os_error() != Some(libc::ENOEXEC) {
+        return error;
+    }
+    let path = descriptor
+        .env
+        .get("PATH")
+        .map(OsString::from)
+        .or_else(|| std::env::var_os("PATH"));
+    for candidate in script_candidates(&descriptor.program, path.as_deref()) {
+        let candidate_error = exec(exec_command(
+            descriptor,
+            working_dir,
+            &candidate,
+            &descriptor.args,
+        ));
+        match candidate_error.raw_os_error() {
+            Some(libc::ENOEXEC) => {
+                let args = std::iter::once(candidate.into_os_string())
+                    .chain(descriptor.args.iter().map(OsString::from))
+                    .collect::<Vec<_>>();
+                return exec(exec_command(descriptor, working_dir, "/bin/sh", &args));
+            }
+            Some(libc::ENOENT | libc::ENOTDIR | libc::EACCES) => {}
+            _ => return candidate_error,
+        }
+    }
+    error
+}
+
+#[cfg(unix)]
+fn script_candidates(program: &str, path: Option<&OsStr>) -> Vec<PathBuf> {
+    let explicit = |candidate: PathBuf| {
+        if candidate.is_absolute() {
+            candidate
+        } else {
+            Path::new(".").join(candidate)
+        }
+    };
+    if program.contains('/') {
+        return vec![explicit(PathBuf::from(program))];
+    }
+    path.unwrap_or(OsStr::new(DEFAULT_PATH))
+        .as_bytes()
+        .split(|byte| *byte == b':')
+        .map(|directory| explicit(Path::new(OsStr::from_bytes(directory)).join(program)))
+        .collect()
+}
+
+#[cfg(unix)]
+const DEFAULT_PATH: &str = "/usr/local/bin:/bin:/usr/bin";
+
+#[cfg(unix)]
+fn exec_command(
+    descriptor: &RemoteCommand,
+    working_dir: Option<&str>,
+    program: impl AsRef<OsStr>,
+    args: impl IntoIterator<Item = impl AsRef<OsStr>>,
+) -> std::process::Command {
+    let mut command = std::process::Command::new(program);
+    command.args(args);
+    if let Some(working_dir) = working_dir {
+        command.env("PWD", working_dir);
+    }
+    command.envs(&descriptor.env);
+    command
+}
+
 fn init_logging_proxy() {
     env_logger::builder()
         .format(|buf, record| {
@@ -152,18 +262,102 @@ fn init_logging_proxy() {
         .init();
 }
 
+const REMOTE_SERVER_LOG_MAX_BYTES: u64 = 1024 * 1024;
+
+struct RotatingLogFile {
+    path: PathBuf,
+    file: File,
+    size_bytes: u64,
+}
+
+impl RotatingLogFile {
+    fn open(path: &Path) -> Result<Self> {
+        if std::fs::metadata(path)
+            .map(|metadata| metadata.len() >= REMOTE_SERVER_LOG_MAX_BYTES)
+            .unwrap_or(false)
+        {
+            rotate_log_file(path, &rotated_log_path(path))
+                .context("failed to rotate existing remote server log")?;
+        }
+
+        let file = open_log_file(path).context("failed to open remote server log")?;
+        let size_bytes = file
+            .metadata()
+            .context("failed to read remote server log metadata")?
+            .len();
+
+        Ok(Self {
+            path: path.to_path_buf(),
+            file,
+            size_bytes,
+        })
+    }
+
+    fn rotate(&mut self) -> std::io::Result<()> {
+        self.file.flush()?;
+        rotate_log_file(&self.path, &rotated_log_path(&self.path))?;
+        self.file = open_log_file(&self.path)?;
+        self.size_bytes = 0;
+        Ok(())
+    }
+}
+
+impl Write for RotatingLogFile {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.size_bytes.saturating_add(buf.len() as u64) > REMOTE_SERVER_LOG_MAX_BYTES {
+            self.rotate()?;
+        }
+
+        self.file.write_all(buf)?;
+        self.size_bytes += buf.len() as u64;
+
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.file.flush()
+    }
+}
+
+fn open_log_file(path: &Path) -> std::io::Result<File> {
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+}
+
+fn rotated_log_path(path: &Path) -> PathBuf {
+    path.with_extension("1.log")
+}
+
+fn rotate_log_file(path: &Path, rotated_path: &Path) -> std::io::Result<()> {
+    match std::fs::remove_file(rotated_path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+
+    match std::fs::rename(path, rotated_path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+
+    Ok(())
+}
+
 fn init_logging_server(log_file_path: &Path) -> Result<Receiver<Vec<u8>>> {
     struct MultiWrite {
-        file: File,
+        file: RotatingLogFile,
         channel: Sender<Vec<u8>>,
         buffer: Vec<u8>,
     }
 
     impl Write for MultiWrite {
         fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            let written = self.file.write(buf)?;
-            self.buffer.extend_from_slice(&buf[..written]);
-            Ok(written)
+            self.file.write_all(buf)?;
+            self.buffer.extend_from_slice(buf);
+            Ok(buf.len())
         }
 
         fn flush(&mut self) -> std::io::Result<()> {
@@ -175,13 +369,10 @@ fn init_logging_server(log_file_path: &Path) -> Result<Receiver<Vec<u8>>> {
         }
     }
 
-    let log_file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_file_path)
-        .context("Failed to open log file in append mode")?;
+    let log_file = RotatingLogFile::open(log_file_path)
+        .context("Failed to open rotating remote server log file")?;
 
-    let (tx, rx) = smol::channel::unbounded();
+    let (tx, rx) = async_channel::unbounded();
 
     let target = Box::new(MultiWrite {
         file: log_file,
@@ -200,8 +391,6 @@ fn init_logging_server(log_file_path: &Path) -> Result<Receiver<Vec<u8>>> {
         let thread_name = current_thread.name().unwrap_or("<unnamed>");
 
         let msg = format!("thread '{thread_name}' panicked at {location}:\n{message}\n{backtrace}");
-        // NOTE: This log never reaches the client, as the communication is handled on a main thread task
-        // which will never run once we panic.
         log::error!("{msg}");
         old_hook(info);
     }));
@@ -220,6 +409,34 @@ fn init_logging_server(log_file_path: &Path) -> Result<Receiver<Vec<u8>>> {
         .init();
 
     Ok(rx)
+}
+
+/// Initializes the telemetry queue on the remote server, forwarding every
+/// emitted event to the connected client over the proto channel.
+///
+/// The remote server cannot upload telemetry itself (it has no logged-in user,
+/// no checksum seed, and no Telemetry instance), so without this its
+/// `telemetry::event!` calls are silently dropped. The client attributes these
+/// events to the remote host using the platform it already detected during
+/// connection setup, so no OS metadata needs to be sent here.
+fn init_telemetry_forwarding(session: AnyProtoClient, cx: &mut App) {
+    let (tx, mut rx) = mpsc::unbounded::<telemetry::Event>();
+    telemetry::init(tx);
+
+    cx.background_spawn(async move {
+        while let Some(event) = rx.next().await {
+            let Some(event_json) = serde_json::to_string(&event).log_err() else {
+                continue;
+            };
+            session
+                .send(proto::TelemetryEvent {
+                    project_id: REMOTE_SERVER_PROJECT_ID,
+                    event_json,
+                })
+                .log_err();
+        }
+    })
+    .detach();
 }
 
 fn handle_crash_files_requests(project: &Entity<HeadlessProject>, client: &AnyProtoClient) {
@@ -351,76 +568,74 @@ fn start_server(
                 break;
             };
 
+            let _log_task = cx.background_spawn({
+                let log_rx = log_rx.clone();
+                async move {
+                    while let Ok(log_message) = log_rx.recv().await {
+                        if let Err(error) = stderr_stream.write_all(&log_message).await {
+                            log::error!("failed to write log message to stderr: {error:?}");
+                            break;
+                        }
+                        if let Err(error) = stderr_stream.flush().await {
+                            log::error!("failed to flush stderr stream: {error:?}");
+                            break;
+                        }
+                    }
+                }
+            });
+
             let mut input_buffer = Vec::new();
             let mut output_buffer = Vec::new();
 
-            let (mut stdin_msg_tx, mut stdin_msg_rx) = mpsc::unbounded::<Envelope>();
-            cx.background_spawn(async move {
+            let stdin_task = cx.background_spawn({
+                let incoming_tx = incoming_tx.clone();
+                async move {
+                    loop {
+                        match read_message(&mut stdin_stream, &mut input_buffer).await {
+                            Ok(msg) => {
+                                if let Err(error) = incoming_tx.unbounded_send(msg) {
+                                    log::error!("failed to send message to application: {error:?}. exiting.");
+                                    return Err(anyhow!(error));
+                                }
+                            }
+                            Err(error) => {
+                                log::warn!("stdin read failed: {error:?}");
+                                break;
+                            }
+                        }
+                    }
+                    anyhow::Ok(())
+                }
+            });
+
+            let stdout_task = async {
                 loop {
-                    match read_message(&mut stdin_stream, &mut input_buffer).await {
-                        Ok(msg) => {
-                            if (stdin_msg_tx.send(msg).await).is_err() {
-                                log::info!("stdin message channel closed, stopping stdin reader");
-                                break;
-                            }
-                        }
-                        Err(error) => {
-                            log::warn!("stdin read failed: {error:?}");
-                            break;
-                        }
+                    let Some(message) = outgoing_rx.next().await else {
+                        log::error!("stdout handler, no message");
+                        break;
+                    };
+
+                    if let Err(error) =
+                        write_message(&mut stdout_stream, &mut output_buffer, message).await
+                    {
+                        log::error!("failed to write stdout message: {:?}", error);
+                        break;
+                    }
+                    if let Err(error) = stdout_stream.flush().await {
+                        log::error!("failed to flush stdout message: {:?}", error);
+                        break;
                     }
                 }
-            }).detach();
+            };
 
-            loop {
-
-                select_biased! {
-                    _ = app_quit_rx.next().fuse() => {
-                        return anyhow::Ok(());
-                    }
-
-                    stdin_message = stdin_msg_rx.next().fuse() => {
-                        let Some(message) = stdin_message else {
-                            log::warn!("error reading message on stdin, dropping connection.");
-                            break;
-                        };
-                        if let Err(error) = incoming_tx.unbounded_send(message) {
-                            log::error!("failed to send message to application: {error:?}. exiting.");
-                            return Err(anyhow!(error));
-                        }
-                    }
-
-                    outgoing_message  = outgoing_rx.next().fuse() => {
-                        let Some(message) = outgoing_message else {
-                            log::error!("stdout handler, no message");
-                            break;
-                        };
-
-                        if let Err(error) =
-                            write_message(&mut stdout_stream, &mut output_buffer, message).await
-                        {
-                            log::error!("failed to write stdout message: {:?}", error);
-                            break;
-                        }
-                        if let Err(error) = stdout_stream.flush().await {
-                            log::error!("failed to flush stdout message: {:?}", error);
-                            break;
-                        }
-                    }
-
-                    log_message = log_rx.recv().fuse() => {
-                        if let Ok(log_message) = log_message {
-                            if let Err(error) = stderr_stream.write_all(&log_message).await {
-                                log::error!("failed to write log message to stderr: {:?}", error);
-                                break;
-                            }
-                            if let Err(error) = stderr_stream.flush().await {
-                                log::error!("failed to flush stderr stream: {:?}", error);
-                                break;
-                            }
-                        }
-                    }
+            select_biased! {
+                _ = app_quit_rx.next().fuse() => {
+                    return anyhow::Ok(());
                 }
+                result = stdin_task.fuse() => {
+                    result?;
+                }
+                _ = stdout_task.fuse() => {}
             }
         }
         anyhow::Ok(())
@@ -461,18 +676,33 @@ pub fn execute_run(
     let app = gpui_platform::headless();
     let pid = std::process::id();
     let id = pid.to_string();
-    crashes::init(
-        crashes::InitCrashHandler {
-            session_id: id,
-            zed_version: VERSION.to_owned(),
-            binary: "zed-remote-server".to_string(),
-            release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
-            commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
-        },
-        |task| {
-            app.background_executor().spawn(task).detach();
-        },
-    );
+    let should_install_crash_handler =
+        client::telemetry::should_install_crash_handler(*RELEASE_CHANNEL);
+
+    let crash_handler = if should_install_crash_handler {
+        Some(app.background_executor().spawn(crashes::init(
+            crashes::InitCrashHandler {
+                session_id: id,
+                zed_version: VERSION.to_owned(),
+                binary: "zed-remote-server".to_string(),
+                release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
+                commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
+            },
+            {
+                let background_executor = app.background_executor();
+                move |task| {
+                    background_executor.spawn(task).detach();
+                }
+            },
+            |pid| paths::temp_dir().join(format!("zed-remote-server-crash-handler-{pid}")),
+            // we are running outside gpui
+            #[allow(clippy::disallowed_methods)]
+            |duration| FutureExt::map(Timer::after(duration), |_| ()),
+        )))
+    } else {
+        crashes::force_backtrace();
+        None
+    };
     let log_rx = init_logging_server(&log_file)?;
     log::info!(
         "starting up with PID {}:\npid_file: {:?}, log_file: {:?}, stdin_socket: {:?}, stdout_socket: {:?}, stderr_socket: {:?}",
@@ -485,7 +715,7 @@ pub fn execute_run(
     );
 
     write_pid_file(&pid_file, pid)
-        .with_context(|| format!("failed to write pid file: {:?}", &pid_file))?;
+        .with_context(|| format!("failed to write pid file: {pid_file:?}"))?;
 
     let listeners = ServerListeners::new(stdin_socket, stdout_socket, stderr_socket)?;
 
@@ -511,7 +741,14 @@ pub fn execute_run(
     let shell_env_loaded_rx: Option<oneshot::Receiver<()>> = None;
 
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
-    let run = move |cx: &mut _| {
+    let run = move |cx: &mut App| {
+        if let Some(crash_handler) = crash_handler {
+            cx.spawn(async move |_cx| {
+                let _crash_handler = crash_handler.await;
+                // cx.update(|cx| cx.set_global(CrashHandler(crash_handler)))
+            })
+            .detach();
+        }
         settings::init(cx);
         let app_commit_sha = option_env!("ZED_COMMIT_SHA").map(|s| AppCommitSha::new(s.to_owned()));
         let app_version = AppVersion::load(
@@ -533,6 +770,7 @@ pub fn execute_run(
 
         log::info!("gpui app started, initializing server");
         let session = start_server(listeners, log_rx, cx, is_wsl_interop);
+        init_telemetry_forwarding(session.clone(), cx);
         trusted_worktrees::init(HashMap::default(), cx);
 
         GitHostingProviderRegistry::set_global(git_hosting_provider_registry, cx);
@@ -545,7 +783,7 @@ pub fn execute_run(
         json_schema_store::init(cx);
 
         let project = cx.new(|cx| {
-            let fs = Arc::new(RealFs::new(None, cx.background_executor().clone()));
+            let fs = RealFs::new(None, cx.background_executor().clone());
             let node_settings_rx = initialize_settings(session.clone(), fs.clone(), cx);
 
             let proxy_url = read_proxy_settings(cx);
@@ -716,19 +954,28 @@ pub(crate) fn execute_proxy(
     let server_paths = ServerPaths::new(&identifier)?;
 
     let id = std::process::id().to_string();
-    crashes::init(
-        crashes::InitCrashHandler {
-            session_id: id,
-            zed_version: VERSION.to_owned(),
-            binary: "zed-remote-server".to_string(),
-            release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
-            commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
-        },
-        |task| {
-            smol::spawn(task).detach();
-        },
-    );
+    let should_install_crash_handler =
+        client::telemetry::should_install_crash_handler(*RELEASE_CHANNEL);
 
+    if should_install_crash_handler {
+        smol::spawn(crashes::init(
+            crashes::InitCrashHandler {
+                session_id: id,
+                zed_version: VERSION.to_owned(),
+                binary: "zed-remote-proxy".to_string(),
+                release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
+                commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
+            },
+            |task| {
+                smol::spawn(task).detach();
+            },
+            |pid| paths::temp_dir().join(format!("zed-remote-server-proxy-crash-handler-{pid}")),
+            // we are running outside gpui
+            #[allow(clippy::disallowed_methods)]
+            |duration| FutureExt::map(Timer::after(duration), |_| ()),
+        ))
+        .detach();
+    };
     log::info!("starting proxy process. PID: {}", std::process::id());
     let server_pid = {
         let server_pid = check_pid_file(&server_paths.pid_file).map_err(|source| {
@@ -755,7 +1002,7 @@ pub(crate) fn execute_proxy(
                 );
                 kill_running_server(pid, &server_paths)?;
             }
-            smol::block_on(spawn_server(&server_paths)).map_err(ExecuteProxyError::SpawnServer)?;
+            gpui::block_on(spawn_server(&server_paths)).map_err(ExecuteProxyError::SpawnServer)?;
             std::fs::read_to_string(&server_paths.pid_file)
                 .and_then(|contents| {
                     contents.parse::<u32>().map_err(|_| {
@@ -826,7 +1073,7 @@ pub(crate) fn execute_proxy(
         }
     });
 
-    if let Err(forwarding_result) = smol::block_on(async move {
+    if let Err(forwarding_result) = gpui::block_on(async move {
         futures::select! {
             result = stdin_task.fuse() => result.map_err(ExecuteProxyError::StdinTask),
             result = stdout_task.fuse() => result.map_err(ExecuteProxyError::StdoutTask),
@@ -834,7 +1081,7 @@ pub(crate) fn execute_proxy(
         }
     }) {
         log::error!("encountered error while forwarding messages: {forwarding_result:#}",);
-        if !matches!(smol::block_on(check_server_running(server_pid)), Ok(true)) {
+        if !matches!(gpui::block_on(check_server_running(server_pid)), Ok(true)) {
             log::error!("server exited unexpectedly");
             return Err(ExecuteProxyError::ServerNotRunning(
                 ProxyLaunchError::ServerNotRunning,
@@ -941,24 +1188,28 @@ async fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
 
 #[cfg(windows)]
 fn spawn_server_windows(binary_name: &Path, paths: &ServerPaths) -> Result<(), SpawnServerError> {
-    let binary_path = binary_name.to_string_lossy().to_string();
-    let parameters = format!(
-        "run --log-file \"{}\" --pid-file \"{}\" --stdin-socket \"{}\" --stdout-socket \"{}\" --stderr-socket \"{}\"",
-        paths.log_file.to_string_lossy(),
-        paths.pid_file.to_string_lossy(),
-        paths.stdin_socket.to_string_lossy(),
-        paths.stdout_socket.to_string_lossy(),
-        paths.stderr_socket.to_string_lossy()
-    );
-
-    let directory = binary_name
-        .parent()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default();
-
-    crate::windows::shell_execute_from_explorer(&binary_path, &parameters, &directory)
-        .map_err(|e| SpawnServerError::ProcessStatus(std::io::Error::other(e)))?;
-
+    use smol::process::windows::CommandExt;
+    // Detach from the console and break away from sshd's job so closing the SSH session doesn't kill the daemon.
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
+    const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+    smol::process::Command::new(binary_name)
+        .stdin(util::command::Stdio::null())
+        .stdout(util::command::Stdio::null())
+        .stderr(util::command::Stdio::null())
+        .arg("run")
+        .arg("--log-file")
+        .arg(&paths.log_file)
+        .arg("--pid-file")
+        .arg(&paths.pid_file)
+        .arg("--stdin-socket")
+        .arg(&paths.stdin_socket)
+        .arg("--stdout-socket")
+        .arg(&paths.stdout_socket)
+        .arg("--stderr-socket")
+        .arg(&paths.stderr_socket)
+        .creation_flags(DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB)
+        .spawn()
+        .map_err(SpawnServerError::ProcessStatus)?;
     Ok(())
 }
 
@@ -1227,4 +1478,330 @@ fn is_file_in_use(file_name: &OsStr) -> bool {
     }
 
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    mod unix {
+        use super::*;
+        use gpui::TestAppContext;
+        use proto::EnvelopedMessage as _;
+
+        // Windows did not reproduce socket backpressure.
+        #[gpui::test]
+        async fn rpc_responds_when_stderr_is_blocked(cx: &mut TestAppContext) {
+            cx.executor().allow_parking();
+
+            let temp_dir = tempfile::tempdir().expect("create socket directory");
+            let stdin_path = temp_dir.path().join("stdin.sock");
+            let stdout_path = temp_dir.path().join("stdout.sock");
+            let stderr_path = temp_dir.path().join("stderr.sock");
+            let listeners =
+                ServerListeners::new(stdin_path.clone(), stdout_path.clone(), stderr_path.clone())
+                    .expect("bind server sockets");
+
+            let (log_tx, log_rx) = async_channel::unbounded();
+
+            let handler = cx.new(|_| ());
+            let server = cx.update(|cx| start_server(listeners, log_rx, cx, false));
+            server.add_request_handler::<proto::Ping, _, _, _>(
+                handler.downgrade(),
+                |_, _, _| async { Ok(proto::Ack {}) },
+            );
+
+            select! {
+                _ = async {
+                    let (mut stdin, mut stdout, mut stderr) = futures::future::try_join3(
+                        UnixStream::connect(&stdin_path),
+                        UnixStream::connect(&stdout_path),
+                        UnixStream::connect(&stderr_path),
+                    ).await.expect("connect server sockets");
+
+                    log_tx
+                        .try_send(vec![b'x'; 16 * 1024 * 1024])
+                        .expect("queue a log larger than the socket buffer");
+
+                    stderr
+                        .read_exact(&mut [0])
+                        .await
+                        .expect("wait until log forwarding starts");
+
+                    let mut buffer = Vec::new();
+                    write_message(
+                        &mut stdin,
+                        &mut buffer,
+                        proto::Ping {}.into_envelope(1, None, None),
+                    ).await.expect("send ping");
+
+                    loop {
+                        let response = read_message(&mut stdout, &mut buffer)
+                            .await
+                            .expect("read server message");
+
+                        if response.responding_to == Some(1) {
+                            assert!(matches!(response.payload, Some(proto::envelope::Payload::Ack(_))));
+                            break;
+                        }
+                    }
+                }.fuse() => {}
+
+                _ = cx.executor().timer(std::time::Duration::from_secs(2)).fuse() => {
+                    panic!("RPC response blocked by an unread log stream");
+                }
+            }
+        }
+
+        #[gpui::test]
+        async fn ping_is_handled_while_stdout_is_blocked(cx: &mut TestAppContext) {
+            cx.executor().allow_parking();
+
+            let temp_dir = tempfile::tempdir().expect("create socket directory");
+            let stdin_path = temp_dir.path().join("stdin.sock");
+            let stdout_path = temp_dir.path().join("stdout.sock");
+            let stderr_path = temp_dir.path().join("stderr.sock");
+            let listeners =
+                ServerListeners::new(stdin_path.clone(), stdout_path.clone(), stderr_path.clone())
+                    .expect("bind server sockets");
+
+            let (_log_tx, log_rx) = async_channel::unbounded();
+            let (ping_tx, mut ping_rx) = mpsc::unbounded();
+            let handler = cx.new(|_| ());
+            let server = cx.update(|cx| start_server(listeners, log_rx, cx, false));
+            server.add_request_handler::<proto::Ping, _, _, _>(
+                handler.downgrade(),
+                move |_, _, _| {
+                    ping_tx.unbounded_send(()).expect("report handled ping");
+                    async { Ok(proto::Ack {}) }
+                },
+            );
+
+            select! {
+                _ = async {
+                    let (mut stdin, mut stdout, _stderr) = futures::future::try_join3(
+                        UnixStream::connect(&stdin_path),
+                        UnixStream::connect(&stdout_path),
+                        UnixStream::connect(&stderr_path),
+                    ).await.expect("connect server sockets");
+
+                    let mut buffer = Vec::new();
+                    read_message(&mut stdout, &mut buffer)
+                        .await
+                        .expect("read server startup message");
+
+                    server.send(proto::CreateBufferForPeer {
+                        variant: Some(proto::create_buffer_for_peer::Variant::State(proto::BufferState {
+                            base_text: "x".repeat(16 * 1024 * 1024),
+                            ..Default::default()
+                        })),
+                        ..Default::default()
+                    }).expect("queue a buffer larger than the socket buffer");
+
+                    stdout.read_exact(&mut [0]).await.expect("wait until buffer forwarding starts");
+
+                    write_message(
+                        &mut stdin,
+                        &mut buffer,
+                        proto::Ping {}.into_envelope(1, None, None),
+                    ).await.expect("send ping");
+
+                    ping_rx.next().await.expect("ping handled without draining stdout");
+                }.fuse() => {}
+
+                _ = cx.executor().timer(std::time::Duration::from_secs(2)).fuse() => {
+                    panic!("Ping handling blocked by an unread stdout stream");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rotated_remote_log_path_uses_numbered_log_suffix() {
+        assert_eq!(
+            rotated_log_path(Path::new("server-workspace-12.log")),
+            PathBuf::from("server-workspace-12.1.log")
+        );
+    }
+
+    #[test]
+    fn opening_remote_log_rotates_existing_oversized_log() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let log_path = temp_dir.path().join("server-workspace-12.log");
+        let rotated_path = temp_dir.path().join("server-workspace-12.1.log");
+        let existing_contents = vec![b'x'; REMOTE_SERVER_LOG_MAX_BYTES as usize];
+        std::fs::write(&log_path, &existing_contents).expect("write oversized log");
+
+        let _log_file = RotatingLogFile::open(&log_path).expect("open rotating log file");
+
+        assert_eq!(
+            std::fs::read(&rotated_path).expect("read rotated log"),
+            existing_contents
+        );
+        assert_eq!(
+            std::fs::metadata(&log_path)
+                .expect("active log metadata")
+                .len(),
+            0
+        );
+    }
+
+    #[test]
+    fn writing_remote_log_rotates_before_exceeding_size_limit() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let log_path = temp_dir.path().join("server-workspace-12.log");
+        let rotated_path = temp_dir.path().join("server-workspace-12.1.log");
+        let existing_contents = vec![b'x'; REMOTE_SERVER_LOG_MAX_BYTES as usize - 1];
+        let new_contents = b"yz";
+        std::fs::write(&log_path, &existing_contents).expect("write existing log contents");
+        let mut log_file = RotatingLogFile::open(&log_path).expect("open rotating log file");
+
+        log_file
+            .write_all(new_contents)
+            .expect("write log contents");
+        log_file.flush().expect("flush log file");
+
+        assert_eq!(
+            std::fs::read(&rotated_path).expect("read rotated log"),
+            existing_contents
+        );
+        assert_eq!(
+            std::fs::read(&log_path).expect("read active log"),
+            new_contents
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn script_candidates_never_start_with_a_dash() {
+        assert_eq!(
+            script_candidates("agent", Some(OsStr::new("/usr/bin:bin::-bin"))),
+            [
+                PathBuf::from("/usr/bin/agent"),
+                PathBuf::from("./bin/agent"),
+                PathBuf::from("./agent"),
+                PathBuf::from("./-bin/agent"),
+            ]
+        );
+        assert_eq!(
+            script_candidates("-a", Some(OsStr::new("/opt/bin"))),
+            [PathBuf::from("/opt/bin/-a")]
+        );
+        assert_eq!(
+            script_candidates("-x/agent", Some(OsStr::new("/opt/bin"))),
+            [PathBuf::from("./-x/agent")]
+        );
+        assert_eq!(
+            script_candidates("/srv/agent", Some(OsStr::new("/opt/bin"))),
+            [PathBuf::from("/srv/agent")]
+        );
+        assert_eq!(
+            script_candidates("agent", Some(OsStr::from_bytes(b"/not-utf8-\xff"))),
+            [PathBuf::from(OsStr::from_bytes(b"/not-utf8-\xff/agent"))]
+        );
+        assert_eq!(
+            script_candidates("agent", None),
+            [
+                PathBuf::from("/usr/local/bin/agent"),
+                PathBuf::from("/bin/agent"),
+                PathBuf::from("/usr/bin/agent"),
+            ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn script_fallback_runs_option_like_wrapper_instead_of_its_arguments() {
+        use std::cell::RefCell;
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let directory = tempfile::tempdir().expect("create temp dir");
+        let missing_directory = directory.path().join("missing");
+        let binary_directory = directory.path().join("bin");
+        std::fs::create_dir(&binary_directory).expect("create bin dir");
+        let wrapper = binary_directory.join("-a");
+        std::fs::write(
+            &wrapper,
+            "printf 'WRAPPER_RAN|%s|%s|%s|%s\\n' \"$TOKEN\" \"$#\" \"$1\" \"$2\"\n",
+        )
+        .expect("write wrapper");
+        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod wrapper");
+        let descriptor = RemoteCommand {
+            program: String::from("-a"),
+            args: vec![
+                String::from("spoofed-argv0"),
+                String::from("/usr/bin/printf"),
+                String::from("OPTION_INTERPRETED"),
+            ],
+            env: HashMap::from_iter([
+                (String::from("TOKEN"), String::from("controlled")),
+                (
+                    String::from("PATH"),
+                    format!(
+                        "{}:{}",
+                        missing_directory.display(),
+                        binary_directory.display()
+                    ),
+                ),
+            ]),
+            working_dir: None,
+        };
+
+        let attempts = RefCell::new(Vec::new());
+        let shell_output = RefCell::new(None);
+        let error = exec_with_script_fallback(&descriptor, None, |command| {
+            let program = command.get_program().to_owned();
+            if program == "/bin/sh" {
+                let output = smol::block_on(smol::process::Command::from(command).output())
+                    .expect("run /bin/sh");
+                *shell_output.borrow_mut() = Some(output);
+                return std::io::Error::from_raw_os_error(libc::EIO);
+            }
+            attempts.borrow_mut().push(program.clone());
+            if program == "-a" || program == wrapper.as_os_str() {
+                std::io::Error::from_raw_os_error(libc::ENOEXEC)
+            } else {
+                std::io::Error::from_raw_os_error(libc::ENOENT)
+            }
+        });
+        assert_eq!(error.raw_os_error(), Some(libc::EIO));
+        assert_eq!(
+            attempts.into_inner(),
+            [
+                OsString::from("-a"),
+                missing_directory.join("-a").into_os_string(),
+                wrapper.into_os_string(),
+            ]
+        );
+        let shell_output = shell_output.into_inner().expect("shell fallback ran");
+        assert_eq!(
+            String::from_utf8_lossy(&shell_output.stderr),
+            "",
+            "{shell_output:?}"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&shell_output.stdout),
+            "WRAPPER_RAN|controlled|3|spoofed-argv0|/usr/bin/printf\n"
+        );
+        assert_eq!(shell_output.status.code(), Some(0));
+
+        let attempts = RefCell::new(0);
+        let error = exec_with_script_fallback(&descriptor, None, |_| {
+            *attempts.borrow_mut() += 1;
+            std::io::Error::from_raw_os_error(libc::EACCES)
+        });
+        assert_eq!(error.raw_os_error(), Some(libc::EACCES));
+        assert_eq!(attempts.into_inner(), 1);
+
+        let error = exec_with_script_fallback(&descriptor, None, |command| {
+            if command.get_program() == "-a" {
+                std::io::Error::from_raw_os_error(libc::ENOEXEC)
+            } else {
+                std::io::Error::from_raw_os_error(libc::ELOOP)
+            }
+        });
+        assert_eq!(error.raw_os_error(), Some(libc::ELOOP));
+    }
 }

@@ -9,6 +9,7 @@ use anyhow::{Context as _, Result};
 use chrono::Local;
 use collections::{HashMap, HashSet};
 use edit_prediction::{
+    data_collection::format_cursor_excerpt,
     example_spec::ExampleSpec,
     udiff::{apply_diff_to_string, edits_for_diff},
 };
@@ -783,24 +784,25 @@ async fn build_example(
         truncate_message(&commit.message, 60),
         response.reasoning
     );
-    let mut spec = ExampleSpec {
+    let spec = ExampleSpec {
         name: response.name.clone(),
         repository_url: repo_url.to_string(),
         revision: commit.parent_sha.clone(),
         tags: Vec::new(),
         reasoning: Some(reasoning_with_source),
         uncommitted_diff: String::new(),
+        recently_opened_files: Vec::new(),
+        recently_viewed_files: Vec::new(),
+        uncommitted_diff_contains_edit_history: false,
         cursor_path: Arc::from(Path::new(&cursor_file)),
-        cursor_position: String::new(),
+        cursor_position: format_cursor_excerpt(&excerpt, cursor_offset, comment_prefix),
         edit_history,
         expected_patches: vec![expected_patch_with_header],
         rejected_patch: None,
-
         telemetry: None,
         human_feedback: Vec::new(),
         rating: None,
     };
-    spec.set_cursor_excerpt(&excerpt, cursor_offset, comment_prefix);
 
     Ok(spec)
 }

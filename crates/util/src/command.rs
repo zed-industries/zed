@@ -11,22 +11,10 @@ pub use darwin::{Child, Command, Stdio};
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000_u32;
 
+pub use gpui_util::new_std_command;
+
 pub fn new_command(program: impl AsRef<OsStr>) -> Command {
     Command::new(program)
-}
-
-#[cfg(target_os = "windows")]
-pub fn new_std_command(program: impl AsRef<OsStr>) -> std::process::Command {
-    use std::os::windows::process::CommandExt;
-
-    let mut command = std::process::Command::new(program);
-    command.creation_flags(CREATE_NO_WINDOW);
-    command
-}
-
-#[cfg(not(target_os = "windows"))]
-pub fn new_std_command(program: impl AsRef<OsStr>) -> std::process::Command {
-    std::process::Command::new(program)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -66,6 +54,10 @@ impl Command {
     {
         self.0.args(args);
         self
+    }
+
+    pub fn get_args(&self) -> impl Iterator<Item = &OsStr> {
+        self.0.get_args()
     }
 
     pub fn env(&mut self, key: impl AsRef<OsStr>, val: impl AsRef<OsStr>) -> &mut Self {
@@ -128,5 +120,9 @@ impl Command {
 
     pub async fn status(&mut self) -> std::io::Result<std::process::ExitStatus> {
         self.0.status().await
+    }
+
+    pub fn get_program(&self) -> &OsStr {
+        self.0.get_program()
     }
 }

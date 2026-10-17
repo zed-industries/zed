@@ -1,9 +1,9 @@
 use crate::{OffsetUtf16, Point, PointUtf16, TextSummary, Unclipped};
-use arrayvec::ArrayString;
+use gpui_util::{debug_panic, is_utf8_char_boundary};
+use heapless::String as ArrayString;
 use std::{cmp, ops::Range};
 use sum_tree::Bias;
 use unicode_segmentation::GraphemeCursor;
-use util::debug_panic;
 
 #[cfg(not(all(test, not(rust_analyzer))))]
 pub(crate) type Bitmap = u128;
@@ -29,7 +29,7 @@ pub struct Chunk {
     newlines: Bitmap,
     /// If bit[i] is set, then the character at index i is an ascii tab.
     tabs: Bitmap,
-    pub text: ArrayString<MAX_BASE>,
+    pub text: ArrayString<MAX_BASE, u8>,
 }
 
 #[inline(always)]
@@ -47,7 +47,11 @@ impl Chunk {
 
     #[inline(always)]
     pub fn new(text: &str) -> Self {
-        let text = ArrayString::from(text).unwrap();
+        let text = {
+            let mut buf = ArrayString::new();
+            buf.push_str(text).unwrap();
+            buf
+        };
 
         const CHUNK_SIZE: usize = 8;
 
@@ -69,7 +73,7 @@ impl Chunk {
             let mut chars_utf16 = 0;
 
             for (ix, &b) in chunk.iter().enumerate() {
-                chars |= (util::is_utf8_char_boundary(b) as u8) << ix;
+                chars |= (is_utf8_char_boundary(b) as u8) << ix;
                 newlines |= ((b == b'\n') as u8) << ix;
                 tabs |= ((b == b'\t') as u8) << ix;
                 // b >= 240 when we are at the first byte of the 4 byte encoded
@@ -118,7 +122,7 @@ impl Chunk {
         self.chars_utf16 |= slice.chars_utf16 << base_ix;
         self.newlines |= slice.newlines << base_ix;
         self.tabs |= slice.tabs << base_ix;
-        self.text.push_str(slice.text);
+        self.text.push_str(slice.text).unwrap();
     }
 
     #[inline(always)]
@@ -137,9 +141,9 @@ impl Chunk {
         self.newlines = slice.newlines | (self.newlines << shift);
         self.tabs = slice.tabs | (self.tabs << shift);
 
-        let mut new_text = ArrayString::<MAX_BASE>::new();
-        new_text.push_str(slice.text);
-        new_text.push_str(&self.text);
+        let mut new_text = ArrayString::<MAX_BASE, u8>::new();
+        new_text.push_str(slice.text).unwrap();
+        new_text.push_str(&self.text).unwrap();
         self.text = new_text;
     }
 
@@ -185,7 +189,7 @@ impl Chunk {
         } else {
             let mut i = index;
             while i > 0 {
-                if util::is_utf8_char_boundary(self.text.as_bytes()[i]) {
+                if is_utf8_char_boundary(self.text.as_bytes()[i]) {
                     break;
                 }
                 i -= 1;

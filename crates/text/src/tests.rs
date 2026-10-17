@@ -9,7 +9,7 @@ use std::{
 };
 
 #[cfg(test)]
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init_logger() {
     zlog::init_test();
 }
@@ -28,6 +28,143 @@ fn test_edit() {
     assert_eq!(buffer.text(), "ghiabjlcdef");
     buffer.edit([(4..9, "mno")]);
     assert_eq!(buffer.text(), "ghiamnoef");
+}
+
+#[test]
+fn test_summaries_for_unordered_anchors() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "ab\ncdef");
+    let old_right = buffer.anchor_before(6);
+    let old_left = buffer.anchor_before(2);
+    buffer.edit([(3..3, "é\n")]);
+
+    let snapshot = buffer.snapshot();
+    let anchors = [
+        snapshot.anchor_before(6),
+        snapshot.anchor_before(5),
+        old_right,
+        snapshot.anchor_after(snapshot.len()),
+        old_left,
+        snapshot.anchor_before(0),
+        snapshot.anchor_before(5),
+    ];
+    assert_eq!(
+        anchors
+            .iter()
+            .map(|anchor| snapshot.offset_for_anchor(anchor))
+            .collect::<Vec<_>>(),
+        [6, 5, 9, 10, 2, 0, 5]
+    );
+    assert_eq!(
+        snapshot
+            .summaries_for_anchors_unordered::<Point, _>(anchors)
+            .collect::<Vec<_>>(),
+        anchors
+            .iter()
+            .map(|anchor| snapshot.summary_for_anchor::<Point>(anchor))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        snapshot
+            .summaries_for_anchors_unordered::<usize, _>(anchors)
+            .collect::<Vec<_>>(),
+        [6, 5, 9, 10, 2, 0, 5]
+    );
+
+    let ordered = [old_left, snapshot.anchor_before(5), old_right];
+    assert_eq!(
+        snapshot
+            .summaries_for_anchors_unordered::<Point, _>(ordered)
+            .collect::<Vec<_>>(),
+        snapshot
+            .summaries_for_anchors::<Point, _>(ordered)
+            .collect::<Vec<_>>()
+    );
+
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "abcdefgh");
+    let deleted_anchor = buffer.anchor_before(5);
+    buffer.edit([(3..6, "")]);
+    let snapshot = buffer.snapshot();
+    let anchors = [
+        snapshot.anchor_before(4),
+        deleted_anchor,
+        snapshot.anchor_before(1),
+    ];
+    assert_eq!(
+        snapshot
+            .summaries_for_anchors_unordered::<Point, _>(anchors)
+            .collect::<Vec<_>>(),
+        anchors
+            .iter()
+            .map(|anchor| snapshot.summary_for_anchor::<Point>(anchor))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_summaries_for_unordered_anchors_across_chunks() {
+    let mut buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(1).unwrap(),
+        "abcdefghij\n".repeat(100),
+    );
+    let deleted_anchor = buffer.anchor_before(6);
+    let old_anchor = buffer.anchor_after(310);
+    buffer.edit([(4..8, ""), (120..120, "é")]);
+
+    let snapshot = buffer.snapshot();
+    let mut anchors = (0..100)
+        .flat_map(|row| {
+            [
+                snapshot.anchor_before(Point::new(row, 1)),
+                snapshot.anchor_after(Point::new(row, 1)),
+            ]
+        })
+        .collect::<Vec<_>>();
+    anchors.extend([
+        deleted_anchor,
+        old_anchor,
+        snapshot.anchor_before(0),
+        snapshot.anchor_after(snapshot.len()),
+        deleted_anchor,
+    ]);
+    anchors.shuffle(&mut StdRng::seed_from_u64(42));
+
+    assert_eq!(
+        snapshot
+            .summaries_for_anchors_unordered::<Point, _>(anchors.iter().copied())
+            .collect::<Vec<_>>(),
+        anchors
+            .iter()
+            .map(|anchor| snapshot.summary_for_anchor::<Point>(anchor))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        snapshot
+            .summaries_for_anchors_unordered::<usize, _>(anchors.iter().copied())
+            .collect::<Vec<_>>(),
+        anchors
+            .iter()
+            .map(|anchor| snapshot.offset_for_anchor(anchor))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_point_for_row_and_column_from_external_source() {
+    let buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(1).unwrap(),
+        "aéøbcdef\nsecond",
+    );
+    let snapshot = buffer.snapshot();
+
+    assert_eq!(snapshot.point_from_external_input(0, 0), Point::new(0, 0));
+    assert_eq!(snapshot.point_from_external_input(0, 4), Point::new(0, 6));
+    assert_eq!(
+        snapshot.point_from_external_input(0, 100),
+        Point::new(0, 10)
+    );
+    assert_eq!(snapshot.point_from_external_input(1, 3), Point::new(1, 3));
 }
 
 #[gpui::test(iterations = 100)]
@@ -729,6 +866,48 @@ fn test_concurrent_edits() {
     assert_eq!(buffer1.text(), "a12c34e56");
     assert_eq!(buffer2.text(), "a12c34e56");
     assert_eq!(buffer3.text(), "a12c34e56");
+}
+
+// Regression test: applying a remote edit whose FullOffset range partially
+// overlaps a fragment that was already deleted (observed but not visible)
+// used to leave the fragment unsplit, causing the rope builder to read past
+// the end of the rope.
+#[test]
+fn test_edit_partially_intersecting_a_deleted_fragment() {
+    let mut buffer = Buffer::new(ReplicaId::new(1), BufferId::new(1).unwrap(), "abcdefgh");
+
+    // Delete "cde", creating a single deleted fragment at FullOffset 2..5.
+    // After this the fragment layout is:
+    //   "ab"(vis, FullOffset 0..2)  "cde"(del, 2..5)  "fgh"(vis, 5..8)
+    buffer.edit([(2..5, "")]);
+    assert_eq!(buffer.text(), "abfgh");
+
+    // Construct a synthetic remote edit whose version includes the deletion (so
+    // the "cde" fragment is observed + deleted → !was_visible) but whose
+    // FullOffset range only partially overlaps it. This state arises in
+    // production when concurrent edits cause different fragment splits on
+    // different replicas.
+    let synthetic_timestamp = clock::Lamport {
+        replica_id: ReplicaId::new(2),
+        value: 10,
+    };
+    let synthetic_edit = Operation::Edit(EditOperation {
+        timestamp: synthetic_timestamp,
+        version: buffer.version(),
+        // Range 1..4 partially overlaps the deleted "cde" (FullOffset 2..5):
+        // it covers "b" (1..2) and only "cd" (2..4), leaving "e" (4..5) out.
+        ranges: vec![FullOffset(1)..FullOffset(4)],
+        new_text: vec!["".into()],
+    });
+
+    // Without the fix this panics with "cannot summarize past end of rope"
+    // because the full 3-byte "cde" fragment is consumed from the deleted
+    // rope instead of only the 2-byte intersection.
+    buffer.apply_ops([synthetic_edit]);
+    assert_eq!(buffer.text(), "afgh");
+
+    buffer.undo_operations([(synthetic_timestamp, u32::MAX)].into_iter().collect());
+    assert_eq!(buffer.text(), "abfgh");
 }
 
 #[gpui::test(iterations = 100)]

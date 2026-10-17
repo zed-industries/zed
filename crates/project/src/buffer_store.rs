@@ -6,12 +6,14 @@ use crate::{
 use anyhow::{Context as _, Result, anyhow};
 use client::Client;
 use collections::{HashMap, HashSet, hash_map};
-use futures::{Future, FutureExt as _, channel::oneshot, future::Shared};
+use futures::{Future, FutureExt as _, StreamExt as _, channel::oneshot, future::Shared};
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, TaskExt,
+    WeakEntity,
 };
 use language::{
-    Buffer, BufferEvent, Capability, DiskState, File as _, Language, Operation,
+    Buffer, BufferEvent, Capability, DiskState, File as _, Language, LineEnding, Operation,
+    language_settings::{AllLanguageSettings, LineEndingSetting},
     proto::{
         deserialize_line_ending, deserialize_version, serialize_line_ending, serialize_version,
         split_operations,
@@ -38,6 +40,8 @@ pub struct BufferStore {
     path_to_buffer_id: HashMap<ProjectPath, BufferId>,
     downstream_client: Option<(AnyProtoClient, u64)>,
     shared_buffers: HashMap<proto::PeerId, HashMap<BufferId, SharedBuffer>>,
+    pending_buffer_shares: HashMap<u64, Task<()>>,
+    next_buffer_share_id: u64,
     non_searchable_buffers: HashSet<BufferId>,
     project_search: RemoteProjectSearchState,
 }
@@ -45,7 +49,7 @@ pub struct BufferStore {
 #[derive(Default)]
 struct RemoteProjectSearchState {
     // List of ongoing project search chunks from our remote host. Used by the side issuing a search RPC request.
-    chunks: HashMap<u64, smol::channel::Sender<BufferId>>,
+    chunks: HashMap<u64, async_channel::Sender<BufferId>>,
     // Monotonously-increasing handle to hand out to remote host in order to identify the project search result chunk.
     next_id: u64,
     // Used by the side running the actual search for match candidates to potentially cancel the search prematurely.
@@ -172,7 +176,7 @@ impl RemoteBufferStore {
             proto::create_buffer_for_peer::Variant::State(mut state) => {
                 let buffer_id = BufferId::new(state.id)?;
 
-                let buffer_result = maybe!({
+                let buffer_file_result = maybe!({
                     let mut buffer_file = None;
                     if let Some(file) = state.file.take() {
                         let worktree_id = worktree::WorktreeId::from_proto(file.worktree_id);
@@ -186,12 +190,15 @@ impl RemoteBufferStore {
                         buffer_file = Some(Arc::new(File::from_proto(file, worktree, cx)?)
                             as Arc<dyn language::File>);
                     }
-                    Buffer::from_proto(replica_id, capability, state, buffer_file)
+                    anyhow::Ok(buffer_file)
                 });
 
-                match buffer_result {
-                    Ok(buffer) => {
-                        let buffer = cx.new(|_| buffer);
+                match buffer_file_result {
+                    Ok(buffer_file) => {
+                        let buffer = cx.new(|cx| {
+                            Buffer::from_proto(replica_id, capability, state, buffer_file, cx)
+                                .expect("buffer_id was validated above")
+                        });
                         self.loading_remote_buffers_by_id.insert(buffer_id, buffer);
                     }
                     Err(error) => {
@@ -310,7 +317,7 @@ impl RemoteBufferStore {
                 .request(proto::OpenBufferByPath {
                     project_id,
                     worktree_id,
-                    path: path.to_proto(),
+                    path: path.as_unix_str().to_owned(),
                 })
                 .await?;
             let buffer_id = BufferId::new(response.buffer_id)?;
@@ -512,6 +519,38 @@ impl LocalBufferStore {
             return None;
         };
 
+        if snapshot.entry_for_id(entry_id).is_none()
+            && snapshot.entry_for_path(path.as_ref()).is_none()
+            && Self::unloaded_ancestor_hides_path(snapshot, path)
+        {
+            let mut refresh = worktree
+                .read(cx)
+                .as_local()?
+                .refresh_entries_for_paths(vec![path.clone()]);
+            cx.spawn({
+                let path = path.clone();
+                let worktree = worktree.clone();
+                async move |this, cx| {
+                    refresh.next().await;
+                    this.update(cx, |this, cx| {
+                        let snapshot = worktree.read(cx).snapshot();
+                        if Self::unloaded_ancestor_hides_path(&snapshot, &path) {
+                            log::warn!(
+                                "buffer path {path:?} is still hidden by an unloaded directory after a refresh"
+                            );
+                        } else {
+                            Self::local_worktree_entry_changed(
+                                this, entry_id, &path, &worktree, &snapshot, cx,
+                            );
+                        }
+                    })
+                    .ok();
+                }
+            })
+            .detach();
+            return None;
+        }
+
         let events = buffer.update(cx, |buffer, cx| {
             let file = buffer.file()?;
             let old_file = File::from_dyn(Some(file))?;
@@ -605,6 +644,13 @@ impl LocalBufferStore {
         None
     }
 
+    fn unloaded_ancestor_hides_path(snapshot: &worktree::Snapshot, path: &RelPath) -> bool {
+        path.ancestors()
+            .skip(1)
+            .find_map(|ancestor| snapshot.entry_for_path(ancestor))
+            .is_some_and(|entry| entry.kind == worktree::EntryKind::UnloadedDir)
+    }
+
     fn save_buffer(
         &self,
         buffer: Entity<Buffer>,
@@ -645,16 +691,27 @@ impl LocalBufferStore {
             let path = path.clone();
             let buffer = match load_file.await {
                 Ok(loaded) => {
+                    let is_writable = loaded.is_writable;
+                    let capability = if is_writable {
+                        Capability::ReadWrite
+                    } else {
+                        Capability::Read
+                    };
                     let reservation = cx.reserve_entity::<Buffer>();
                     let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
                     let text_buffer = cx
                         .background_spawn(async move {
-                            text::Buffer::new(ReplicaId::LOCAL, buffer_id, loaded.text)
+                            text::Buffer::new_normalized(
+                                ReplicaId::LOCAL,
+                                buffer_id,
+                                loaded.line_ending,
+                                loaded.text,
+                            )
                         })
                         .await;
-                    cx.insert_entity(reservation, |_| {
+                    cx.insert_entity(reservation, |cx| {
                         let mut buffer =
-                            Buffer::build(text_buffer, Some(loaded.file), Capability::ReadWrite);
+                            Buffer::build(text_buffer, Some(loaded.file), capability, cx);
                         buffer.set_encoding(loaded.encoding);
                         buffer.set_has_bom(loaded.has_bom);
                         buffer
@@ -663,7 +720,7 @@ impl LocalBufferStore {
                 Err(error) if is_not_found_error(&error) => cx.new(|cx| {
                     let buffer_id = BufferId::from(cx.entity_id().as_non_zero_u64());
                     let text_buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, "");
-                    Buffer::build(
+                    let mut buffer = Buffer::build(
                         text_buffer,
                         Some(Arc::new(File {
                             worktree,
@@ -674,7 +731,10 @@ impl LocalBufferStore {
                             is_private: false,
                         })),
                         Capability::ReadWrite,
-                    )
+                        cx,
+                    );
+                    apply_initial_line_ending(&mut buffer, cx);
+                    buffer
                 }),
                 Err(e) => return Err(e),
             };
@@ -724,8 +784,10 @@ impl LocalBufferStore {
     ) -> Task<Result<Entity<Buffer>>> {
         cx.spawn(async move |buffer_store, cx| {
             let buffer = cx.new(|cx| {
-                Buffer::local("", cx)
-                    .with_language(language.unwrap_or_else(|| language::PLAIN_TEXT.clone()), cx)
+                let mut buffer = Buffer::local("", cx)
+                    .with_language(language.unwrap_or_else(|| language::PLAIN_TEXT.clone()), cx);
+                apply_initial_line_ending(&mut buffer, cx);
+                buffer
             });
             buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.add_buffer(buffer.clone(), cx).log_err();
@@ -790,6 +852,8 @@ impl BufferStore {
             opened_buffers: Default::default(),
             path_to_buffer_id: Default::default(),
             shared_buffers: Default::default(),
+            pending_buffer_shares: HashMap::default(),
+            next_buffer_share_id: 0,
             loading_buffers: Default::default(),
             non_searchable_buffers: Default::default(),
             worktree_store,
@@ -817,6 +881,8 @@ impl BufferStore {
             path_to_buffer_id: Default::default(),
             loading_buffers: Default::default(),
             shared_buffers: Default::default(),
+            pending_buffer_shares: HashMap::default(),
+            next_buffer_share_id: 0,
             non_searchable_buffers: Default::default(),
             worktree_store,
             project_search: Default::default(),
@@ -1344,7 +1410,21 @@ impl BufferStore {
                     let new_path = file.path.clone();
 
                     buffer.file_updated(Arc::new(file), cx);
-                    if old_file.as_ref().is_none_or(|old| *old.path() != new_path) {
+                    if old_file.as_ref().is_none_or(|old| {
+                        if *old.path() == new_path {
+                            return false;
+                        }
+
+                        let old_path = ProjectPath {
+                            worktree_id: old.worktree_id(cx),
+                            path: old.path().clone(),
+                        };
+
+                        if this.path_to_buffer_id.get(&old_path) == Some(&buffer_id) {
+                            this.path_to_buffer_id.remove(&old_path);
+                        }
+                        true
+                    }) {
                         Some(old_file)
                     } else {
                         None
@@ -1442,7 +1522,7 @@ impl BufferStore {
     ) -> Result<()> {
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
         let version = deserialize_version(&envelope.payload.version);
-        let mtime = envelope.payload.mtime.clone().map(|time| time.into());
+        let mtime = envelope.payload.mtime.map(|time| time.into());
         this.update(&mut cx, move |this, cx| {
             if let Some(buffer) = this.get_possibly_incomplete(buffer_id) {
                 buffer.update(cx, |buffer, cx| {
@@ -1471,9 +1551,10 @@ impl BufferStore {
     ) -> Result<()> {
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
         let version = deserialize_version(&envelope.payload.version);
-        let mtime = envelope.payload.mtime.clone().map(|time| time.into());
+        let mtime = envelope.payload.mtime.map(|time| time.into());
         let line_ending = deserialize_line_ending(
-            proto::LineEnding::from_i32(envelope.payload.line_ending)
+            proto::LineEnding::try_from(envelope.payload.line_ending)
+                .ok()
                 .context("missing line ending")?,
         );
         this.update(&mut cx, |this, cx| {
@@ -1560,12 +1641,11 @@ impl BufferStore {
             return Task::ready(Ok(()));
         };
 
-        cx.spawn(async move |this, cx| {
-            let Some(buffer) = this.read_with(cx, |this, _| this.get(buffer_id))? else {
-                return anyhow::Ok(());
-            };
-
-            let operations = buffer.update(cx, |b, cx| b.serialize_ops(None, cx));
+        let buffer = buffer.clone();
+        let share_id = util::post_inc(&mut self.next_buffer_share_id);
+        let (completion_tx, completion_rx) = oneshot::channel();
+        let transfer = cx.spawn(async move |buffer_store, cx| {
+            let operations = buffer.update(cx, |buffer, cx| buffer.serialize_ops(None, cx));
             let operations = operations.await;
             let state = buffer.update(cx, |buffer, cx| buffer.to_proto(cx));
 
@@ -1598,6 +1678,17 @@ impl BufferStore {
                 .await
                 .log_err();
             }
+
+            completion_tx.send(()).ok();
+            buffer_store
+                .update(cx, |store, _| {
+                    store.pending_buffer_shares.remove(&share_id);
+                })
+                .ok();
+        });
+        self.pending_buffer_shares.insert(share_id, transfer);
+        cx.background_spawn(async move {
+            completion_rx.await?;
             Ok(())
         })
     }
@@ -1608,6 +1699,18 @@ impl BufferStore {
 
     pub fn forget_shared_buffers_for(&mut self, peer_id: &proto::PeerId) {
         self.shared_buffers.remove(peer_id);
+    }
+
+    pub fn is_shared(&self, buffer_id: BufferId, cx: &App) -> bool {
+        self.shared_buffers
+            .values()
+            .any(|buffers| buffers.contains_key(&buffer_id))
+            || self.as_remote().is_some_and(|remote| {
+                remote
+                    .shared_with_me
+                    .iter()
+                    .any(|buffer| buffer.read(cx).remote_id() == buffer_id)
+            })
     }
 
     pub fn update_peer_id(&mut self, old_peer_id: &proto::PeerId, new_peer_id: proto::PeerId) {
@@ -1628,8 +1731,10 @@ impl BufferStore {
         cx: &mut Context<Self>,
     ) -> Entity<Buffer> {
         let buffer = cx.new(|cx| {
-            Buffer::local(text, cx)
-                .with_language(language.unwrap_or_else(|| language::PLAIN_TEXT.clone()), cx)
+            let mut buffer = Buffer::local(text, cx)
+                .with_language(language.unwrap_or_else(|| language::PLAIN_TEXT.clone()), cx);
+            apply_initial_line_ending(&mut buffer, cx);
+            buffer
         });
 
         self.add_buffer(buffer.clone(), cx).log_err();
@@ -1709,8 +1814,8 @@ impl BufferStore {
 
     pub(crate) fn register_project_search_result_handle(
         &mut self,
-    ) -> (u64, smol::channel::Receiver<BufferId>) {
-        let (tx, rx) = smol::channel::unbounded();
+    ) -> (u64, async_channel::Receiver<BufferId>) {
+        let (tx, rx) = async_channel::unbounded();
         let handle = util::post_inc(&mut self.project_search.next_id);
         let _old_entry = self.project_search.chunks.insert(handle, tx);
         debug_assert!(_old_entry.is_none());
@@ -1798,4 +1903,25 @@ fn is_not_found_error(error: &anyhow::Error) -> bool {
         .root_cause()
         .downcast_ref::<io::Error>()
         .is_some_and(|err| err.kind() == io::ErrorKind::NotFound)
+}
+
+fn apply_initial_line_ending(buffer: &mut Buffer, cx: &mut Context<Buffer>) {
+    // Only applies for empty rope or a single line with no trailing newline.
+    if buffer.max_point().row > 0 {
+        return;
+    }
+    let location = buffer.file().map(|file| settings::SettingsLocation {
+        worktree_id: file.worktree_id(cx),
+        path: file.path().as_ref(),
+    });
+    let language = buffer.language().map(|l| l.name());
+    let settings = AllLanguageSettings::get(location, cx).language(location, language.as_ref(), cx);
+    let desired = match settings.line_ending {
+        LineEndingSetting::Detect => return,
+        LineEndingSetting::PreferLf | LineEndingSetting::EnforceLf => LineEnding::Unix,
+        LineEndingSetting::PreferCrlf | LineEndingSetting::EnforceCrlf => LineEnding::Windows,
+    };
+    if buffer.line_ending() != desired {
+        buffer.set_line_ending(desired, cx);
+    }
 }

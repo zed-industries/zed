@@ -1,4 +1,3 @@
-use crate::ThreadHistory;
 use agent::ThreadStore;
 use agent_settings::AgentSettings;
 use collections::{HashMap, VecDeque};
@@ -18,13 +17,12 @@ use language_model::{LanguageModel, LanguageModelRegistry};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use parking_lot::Mutex;
 use project::Project;
-use prompt_store::PromptStore;
 use settings::Settings;
 use std::cmp;
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::utils::WithRemSize;
 use ui::{IconButtonShape, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
 use uuid::Uuid;
@@ -64,8 +62,6 @@ pub struct PromptEditor<T> {
     pub editor: Entity<Editor>,
     mode: PromptEditorMode,
     mention_set: Entity<MentionSet>,
-    history: WeakEntity<ThreadHistory>,
-    prompt_store: Option<Entity<PromptStore>>,
     workspace: WeakEntity<Workspace>,
     model_selector: Entity<AgentModelSelector>,
     edited_since_done: bool,
@@ -121,8 +117,8 @@ impl<T: 'static> Render for PromptEditor<T> {
         };
 
         let bottom_padding = match &self.mode {
-            PromptEditorMode::Buffer { .. } => rems_from_px(2.0),
-            PromptEditorMode::Terminal { .. } => rems_from_px(4.0),
+            PromptEditorMode::Buffer { .. } => rems_from_px(2.0_f32),
+            PromptEditorMode::Terminal { .. } => rems_from_px(4.0_f32),
         };
 
         buttons.extend(self.render_buttons(window, cx));
@@ -168,6 +164,7 @@ impl<T: 'static> Render for PromptEditor<T> {
             .child(
                 h_flex()
                     .on_action(cx.listener(Self::confirm))
+                    .on_action(cx.listener(Self::secondary_confirm))
                     .on_action(cx.listener(Self::cancel))
                     .on_action(cx.listener(Self::move_up))
                     .on_action(cx.listener(Self::move_down))
@@ -240,7 +237,7 @@ impl<T: 'static> Render for PromptEditor<T> {
                             div()
                                 .size_full()
                                 .min_w_0()
-                                .pt(rems_from_px(3.))
+                                .pt(rems_from_px(3_f32))
                                 .pl_0p5()
                                 .flex_1()
                                 .border_t_1()
@@ -335,8 +332,6 @@ impl<T: 'static> PromptEditor<T> {
                 PromptEditorCompletionProviderDelegate,
                 cx.weak_entity(),
                 self.mention_set.clone(),
-                self.history.clone(),
-                self.prompt_store.clone(),
                 self.workspace.clone(),
             ))));
         });
@@ -425,6 +420,9 @@ impl<T: 'static> PromptEditor<T> {
                 cx,
             )
         {
+            // Capture-phase actions propagate by default, so stop the editor from also
+            // pasting the clipboard's file paths as text.
+            cx.stop_propagation();
             task.detach();
         }
     }
@@ -533,6 +531,20 @@ impl<T: 'static> PromptEditor<T> {
     }
 
     fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
+        self.handle_confirm(false, cx);
+    }
+
+    fn secondary_confirm(
+        &mut self,
+        _: &menu::SecondaryConfirm,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let execute = matches!(self.mode, PromptEditorMode::Terminal { .. });
+        self.handle_confirm(execute, cx);
+    }
+
+    fn handle_confirm(&mut self, execute: bool, cx: &mut Context<Self>) {
         match self.codegen_status(cx) {
             CodegenStatus::Idle => {
                 self.fire_started_telemetry(cx);
@@ -544,7 +556,7 @@ impl<T: 'static> PromptEditor<T> {
                     self.fire_started_telemetry(cx);
                     cx.emit(PromptEditorEvent::StartRequested);
                 } else {
-                    cx.emit(PromptEditorEvent::ConfirmRequested { execute: false });
+                    cx.emit(PromptEditorEvent::ConfirmRequested { execute });
                 }
             }
             CodegenStatus::Error(_) => {
@@ -559,8 +571,8 @@ impl<T: 'static> PromptEditor<T> {
             return;
         };
 
-        let model_telemetry_id = model.model.telemetry_id();
-        let model_provider_id = model.provider.id().to_string();
+        let model_telemetry_id = model.telemetry_id();
+        let model_provider_id = model.provider_id().to_string();
 
         let (kind, language_name) = match &self.mode {
             PromptEditorMode::Buffer { codegen, .. } => {
@@ -601,16 +613,13 @@ impl<T: 'static> PromptEditor<T> {
             CompletionState::Generated { completion_text } => {
                 let model_info = self.model_selector.read(cx).active_model(cx);
                 let (model_id, use_streaming_tools) = {
-                    let Some(configured_model) = model_info else {
+                    let Some(model) = model_info else {
                         self.toast("No configured model", None, cx);
                         return;
                     };
                     (
-                        configured_model.model.telemetry_id(),
-                        CodegenAlternative::use_streaming_tools(
-                            configured_model.model.as_ref(),
-                            cx,
-                        ),
+                        model.telemetry_id(),
+                        CodegenAlternative::use_streaming_tools(&model, cx),
                     )
                 };
 
@@ -664,16 +673,13 @@ impl<T: 'static> PromptEditor<T> {
             CompletionState::Generated { completion_text } => {
                 let model_info = self.model_selector.read(cx).active_model(cx);
                 let (model_telemetry_id, use_streaming_tools) = {
-                    let Some(configured_model) = model_info else {
+                    let Some(model) = model_info else {
                         self.toast("No configured model", None, cx);
                         return;
                     };
                     (
-                        configured_model.model.telemetry_id(),
-                        CodegenAlternative::use_streaming_tools(
-                            configured_model.model.as_ref(),
-                            cx,
-                        ),
+                        model.telemetry_id(),
+                        CodegenAlternative::use_streaming_tools(&model, cx),
                     )
                 };
 
@@ -1013,11 +1019,11 @@ impl<T: 'static> PromptEditor<T> {
         let disabled = matches!(codegen.status(cx), CodegenStatus::Idle);
 
         let model_registry = LanguageModelRegistry::read_global(cx);
-        let default_model = model_registry.default_model().map(|default| default.model);
+        let default_model = model_registry.default_model();
         let alternative_models = model_registry.inline_alternative_models();
 
         let get_model_name = |index: usize| -> String {
-            let name = |model: &Arc<dyn LanguageModel>| model.name().0.to_string();
+            let name = |model: &LanguageModel| model.name.0.to_string();
 
             match index {
                 0 => default_model.as_ref().map_or_else(String::new, name),
@@ -1151,6 +1157,7 @@ impl<T: 'static> PromptEditor<T> {
 
     fn render_markdown(&self, markdown: Entity<Markdown>, style: MarkdownStyle) -> MarkdownElement {
         MarkdownElement::new(markdown, style)
+            .image_resolver(|dest_url, _cx| crate::resolve_agent_image(dest_url, &[]))
     }
 }
 
@@ -1191,7 +1198,7 @@ struct PromptEditorCompletionProviderDelegate;
 fn inline_assistant_model_supports_images(cx: &App) -> bool {
     LanguageModelRegistry::read_global(cx)
         .inline_assistant_model()
-        .map_or(false, |m| m.model.supports_images())
+        .map_or(false, |m| m.supports_images())
 }
 
 impl PromptCompletionProviderDelegate for PromptEditorCompletionProviderDelegate {
@@ -1201,7 +1208,7 @@ impl PromptCompletionProviderDelegate for PromptEditorCompletionProviderDelegate
             PromptContextType::Symbol,
             PromptContextType::Thread,
             PromptContextType::Fetch,
-            PromptContextType::Rules,
+            PromptContextType::Skill,
         ]
     }
 
@@ -1226,8 +1233,6 @@ impl PromptEditor<BufferCodegen> {
         session_id: Uuid,
         fs: Arc<dyn Fs>,
         thread_store: Entity<ThreadStore>,
-        prompt_store: Option<Entity<PromptStore>>,
-        history: WeakEntity<ThreadHistory>,
         project: WeakEntity<Project>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -1266,16 +1271,13 @@ impl PromptEditor<BufferCodegen> {
             editor
         });
 
-        let mention_set = cx
-            .new(|_cx| MentionSet::new(project, Some(thread_store.clone()), prompt_store.clone()));
+        let mention_set = cx.new(|_cx| MentionSet::new(project, Some(thread_store.clone())));
 
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
         let mut this: PromptEditor<BufferCodegen> = PromptEditor {
             editor: prompt_editor.clone(),
             mention_set,
-            history,
-            prompt_store,
             workspace,
             model_selector: cx.new(|cx| {
                 AgentModelSelector::new(
@@ -1385,8 +1387,6 @@ impl PromptEditor<TerminalCodegen> {
         session_id: Uuid,
         fs: Arc<dyn Fs>,
         thread_store: Entity<ThreadStore>,
-        prompt_store: Option<Entity<PromptStore>>,
-        history: WeakEntity<ThreadHistory>,
         project: WeakEntity<Project>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -1420,16 +1420,13 @@ impl PromptEditor<TerminalCodegen> {
             editor
         });
 
-        let mention_set = cx
-            .new(|_cx| MentionSet::new(project, Some(thread_store.clone()), prompt_store.clone()));
+        let mention_set = cx.new(|_cx| MentionSet::new(project, Some(thread_store.clone())));
 
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
         let mut this = Self {
             editor: prompt_editor.clone(),
             mention_set,
-            history,
-            prompt_store,
             workspace,
             model_selector: cx.new(|cx| {
                 AgentModelSelector::new(
@@ -1533,26 +1530,6 @@ pub enum CodegenStatus {
     Error(anyhow::Error),
 }
 
-/// This is just CodegenStatus without the anyhow::Error, which causes a lifetime issue for rendering the Cancel button.
-#[derive(Copy, Clone)]
-pub enum CancelButtonState {
-    Idle,
-    Pending,
-    Done,
-    Error,
-}
-
-impl Into<CancelButtonState> for &CodegenStatus {
-    fn into(self) -> CancelButtonState {
-        match self {
-            CodegenStatus::Idle => CancelButtonState::Idle,
-            CodegenStatus::Pending => CancelButtonState::Pending,
-            CodegenStatus::Done => CancelButtonState::Done,
-            CodegenStatus::Error(_) => CancelButtonState::Error,
-        }
-    }
-}
-
 #[derive(Copy, Clone)]
 pub enum GenerationMode {
     Generate,
@@ -1635,6 +1612,8 @@ fn insert_message_creases(
                 crease.label.clone(),
                 crease.icon_path.clone(),
                 None,
+                None,
+                None,
                 start..end,
                 cx.weak_entity(),
             )
@@ -1643,4 +1622,305 @@ fn insert_message_creases(
     let ids = editor.insert_creases(creases.clone(), cx);
     editor.fold_creases(creases, false, window, cx);
     ids
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::terminal_codegen::TerminalCodegen;
+    use agent::ThreadStore;
+    use collections::VecDeque;
+    use fs::FakeFs;
+    use gpui::{TestAppContext, VisualTestContext};
+    use language::Buffer;
+    use project::Project;
+    use settings::SettingsStore;
+    use std::cell::RefCell;
+    use std::path::{Path, PathBuf};
+    use std::rc::Rc;
+    use terminal::TerminalBuilder;
+    use terminal::terminal_settings::CursorShape;
+    use util::path;
+    use util::paths::PathStyle;
+    use uuid::Uuid;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+            language_model::LanguageModelRegistry::test(cx);
+            prompt_store::init(cx);
+        });
+    }
+
+    fn build_terminal_prompt_editor(
+        workspace: &Entity<Workspace>,
+        cx: &mut VisualTestContext,
+    ) -> Entity<PromptEditor<TerminalCodegen>> {
+        let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
+        let fs = FakeFs::new(cx.executor());
+
+        let terminal = cx.update(|_window, cx| {
+            cx.new(|cx| {
+                TerminalBuilder::new_display_only(
+                    CursorShape::default(),
+                    settings::AlternateScroll::On,
+                    None,
+                    0,
+                    cx.background_executor(),
+                    PathStyle::local(),
+                )
+                .subscribe(cx)
+            })
+        });
+
+        let session_id = Uuid::new_v4();
+        let codegen =
+            cx.update(|_window, cx| cx.new(|_| TerminalCodegen::new(terminal, session_id)));
+
+        let prompt_buffer = cx.update(|_window, cx| {
+            cx.new(|cx| MultiBuffer::singleton(cx.new(|cx| Buffer::local("", cx)), cx))
+        });
+
+        let project = workspace.update(cx, |workspace, _cx| workspace.project().downgrade());
+
+        cx.update(|window, cx| {
+            cx.new(|cx| {
+                PromptEditor::new_terminal(
+                    TerminalInlineAssistId::default(),
+                    VecDeque::new(),
+                    prompt_buffer,
+                    codegen,
+                    session_id,
+                    fs,
+                    thread_store,
+                    project,
+                    workspace.downgrade(),
+                    window,
+                    cx,
+                )
+            })
+        })
+    }
+
+    #[gpui::test]
+    async fn test_secondary_confirm_emits_execute_true_in_terminal_mode(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", serde_json::json!({"file": ""}))
+            .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let prompt_editor = build_terminal_prompt_editor(&workspace, cx);
+
+        // Set the codegen status to Done so that confirm logic emits ConfirmRequested.
+        prompt_editor.update(cx, |editor, cx| {
+            editor.codegen().update(cx, |codegen, _| {
+                codegen.status = CodegenStatus::Done;
+            });
+            editor.edited_since_done = false;
+        });
+
+        let events: Rc<RefCell<Vec<PromptEditorEvent>>> = Rc::new(RefCell::new(Vec::new()));
+        let events_clone = events.clone();
+        cx.update(|_window, cx| {
+            cx.subscribe(&prompt_editor, move |_, event: &PromptEditorEvent, _cx| {
+                events_clone.borrow_mut().push(match event {
+                    PromptEditorEvent::ConfirmRequested { execute } => {
+                        PromptEditorEvent::ConfirmRequested { execute: *execute }
+                    }
+                    PromptEditorEvent::StartRequested => PromptEditorEvent::StartRequested,
+                    PromptEditorEvent::StopRequested => PromptEditorEvent::StopRequested,
+                    PromptEditorEvent::CancelRequested => PromptEditorEvent::CancelRequested,
+                    PromptEditorEvent::Resized { height_in_lines } => PromptEditorEvent::Resized {
+                        height_in_lines: *height_in_lines,
+                    },
+                });
+            })
+            .detach();
+        });
+
+        // Dispatch menu::SecondaryConfirm (cmd-enter).
+        prompt_editor.update(cx, |editor, cx| {
+            editor.handle_confirm(true, cx);
+        });
+
+        let events = events.borrow();
+        assert_eq!(events.len(), 1, "Expected exactly one event");
+        assert!(
+            matches!(
+                events[0],
+                PromptEditorEvent::ConfirmRequested { execute: true }
+            ),
+            "Expected ConfirmRequested with execute: true, got {:?}",
+            match &events[0] {
+                PromptEditorEvent::ConfirmRequested { execute } =>
+                    format!("ConfirmRequested {{ execute: {} }}", execute),
+                _ => "other event".to_string(),
+            }
+        );
+    }
+
+    #[gpui::test]
+    async fn test_confirm_emits_execute_false_in_terminal_mode(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", serde_json::json!({"file": ""}))
+            .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let prompt_editor = build_terminal_prompt_editor(&workspace, cx);
+
+        prompt_editor.update(cx, |editor, cx| {
+            editor.codegen().update(cx, |codegen, _| {
+                codegen.status = CodegenStatus::Done;
+            });
+            editor.edited_since_done = false;
+        });
+
+        let events: Rc<RefCell<Vec<PromptEditorEvent>>> = Rc::new(RefCell::new(Vec::new()));
+        let events_clone = events.clone();
+        cx.update(|_window, cx| {
+            cx.subscribe(&prompt_editor, move |_, event: &PromptEditorEvent, _cx| {
+                events_clone.borrow_mut().push(match event {
+                    PromptEditorEvent::ConfirmRequested { execute } => {
+                        PromptEditorEvent::ConfirmRequested { execute: *execute }
+                    }
+                    PromptEditorEvent::StartRequested => PromptEditorEvent::StartRequested,
+                    PromptEditorEvent::StopRequested => PromptEditorEvent::StopRequested,
+                    PromptEditorEvent::CancelRequested => PromptEditorEvent::CancelRequested,
+                    PromptEditorEvent::Resized { height_in_lines } => PromptEditorEvent::Resized {
+                        height_in_lines: *height_in_lines,
+                    },
+                });
+            })
+            .detach();
+        });
+
+        // Dispatch menu::Confirm (enter) — should emit execute: false even in terminal mode.
+        prompt_editor.update(cx, |editor, cx| {
+            editor.handle_confirm(false, cx);
+        });
+
+        let events = events.borrow();
+        assert_eq!(events.len(), 1, "Expected exactly one event");
+        assert!(
+            matches!(
+                events[0],
+                PromptEditorEvent::ConfirmRequested { execute: false }
+            ),
+            "Expected ConfirmRequested with execute: false"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_paste_image_does_not_paste_file_paths_as_text(cx: &mut TestAppContext) {
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(1, 1)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .expect("encode png");
+        let prompt = paste_into_prompt_editor(
+            vec![
+                gpui::ClipboardEntry::Image(gpui::Image::from_bytes(
+                    gpui::ImageFormat::Png,
+                    png.into_inner(),
+                )),
+                gpui::ClipboardEntry::ExternalPaths(gpui::ExternalPaths(
+                    vec![PathBuf::from(path!("/tmp/screenshot.png"))].into(),
+                )),
+            ],
+            cx,
+        )
+        .await;
+
+        let image_uri = acp_thread::MentionUri::PastedImage {
+            name: "Image".into(),
+        };
+        assert_eq!(prompt, format!("{} ", image_uri.as_link()));
+    }
+
+    #[gpui::test]
+    async fn test_paste_non_image_file_pastes_path_as_text(cx: &mut TestAppContext) {
+        let path = PathBuf::from(path!("/tmp/notes.txt"));
+        let prompt = paste_into_prompt_editor(
+            vec![gpui::ClipboardEntry::ExternalPaths(gpui::ExternalPaths(
+                vec![path.clone()].into(),
+            ))],
+            cx,
+        )
+        .await;
+
+        assert_eq!(prompt, path.display().to_string());
+    }
+
+    async fn paste_into_prompt_editor(
+        entries: Vec<gpui::ClipboardEntry>,
+        cx: &mut TestAppContext,
+    ) -> String {
+        init_test(cx);
+        cx.update(|cx| {
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                let mut model = registry.default_model().expect("fake default model");
+                model.supports_images = true;
+                registry.set_inline_assistant_model(Some(model), cx);
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", serde_json::json!({"file": ""}))
+            .await;
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let (workspace, _) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace.downgrade();
+        let (prompt_editor, cx) = cx.add_window_view(|window, cx| {
+            let terminal = cx.new(|cx| {
+                TerminalBuilder::new_display_only(
+                    CursorShape::default(),
+                    settings::AlternateScroll::On,
+                    None,
+                    0,
+                    cx.background_executor(),
+                    PathStyle::local(),
+                )
+                .subscribe(cx)
+            });
+            let session_id = Uuid::new_v4();
+            let codegen = cx.new(|_| TerminalCodegen::new(terminal, session_id));
+            let prompt_buffer =
+                cx.new(|cx| MultiBuffer::singleton(cx.new(|cx| Buffer::local("", cx)), cx));
+            PromptEditor::new_terminal(
+                TerminalInlineAssistId::default(),
+                VecDeque::new(),
+                prompt_buffer,
+                codegen,
+                session_id,
+                fs,
+                cx.new(|cx| ThreadStore::new(cx)),
+                project.downgrade(),
+                workspace,
+                window,
+                cx,
+            )
+        });
+
+        cx.write_to_clipboard(ClipboardItem { entries });
+        prompt_editor.update_in(cx, |prompt_editor, window, cx| {
+            prompt_editor.editor.focus_handle(cx).focus(window, cx);
+        });
+        cx.dispatch_action(Paste);
+        cx.run_until_parked();
+
+        prompt_editor.read_with(cx, |prompt_editor, cx| prompt_editor.prompt(cx))
+    }
 }

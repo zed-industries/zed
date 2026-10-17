@@ -5,17 +5,17 @@ use collections::{HashMap, HashSet};
 use editor::items::{
     entry_diagnostic_aware_icon_decoration_and_color, entry_git_aware_label_color,
 };
-use fuzzy::StringMatchCandidate;
+use fuzzy_nucleo::StringMatchCandidate;
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Modifiers, ModifiersChangedEvent, MouseButton, MouseUpEvent, ParentElement, Point,
-    Render, Styled, Task, WeakEntity, Window, actions, rems,
+    Render, Styled, Task, TaskExt, WeakEntity, Window, actions, rems,
 };
 use picker::{Picker, PickerDelegate};
 use project::Project;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use settings::Settings;
+use settings::{RegisterSetting, Settings, SettingsContent, TabSwitcherSettingsContent};
 use std::{cmp::Reverse, sync::Arc};
 use ui::{
     DecoratedIcon, IconDecoration, IconDecorationKind, ListItem, ListItemSpacing, Tooltip,
@@ -27,6 +27,20 @@ use workspace::{
     item::{ItemHandle, ItemSettings, ShowDiagnostics, TabContentParams},
     pane::{render_item_indicator, tab_details},
 };
+
+#[derive(Clone, Copy, Debug, RegisterSetting)]
+pub struct TabSwitcherSettings {
+    pub show_file_preview: bool,
+}
+
+impl Settings for TabSwitcherSettings {
+    fn from_settings(content: &SettingsContent) -> Self {
+        let tab_switcher: &TabSwitcherSettingsContent = content.tab_switcher.as_ref().unwrap();
+        Self {
+            show_file_preview: tab_switcher.show_file_preview.unwrap(),
+        }
+    }
+}
 
 const PANEL_WIDTH_REMS: f32 = 28.;
 
@@ -176,6 +190,7 @@ impl TabSwitcher {
                 } else {
                     Picker::nonsearchable_list(delegate, window, cx)
                 }
+                .initial_width(rems(PANEL_WIDTH_REMS))
             }),
             init_modifiers,
         }
@@ -274,7 +289,9 @@ impl TabMatch {
                 let project = project.read(cx);
                 let entry = project.entry_for_path(&path, cx)?;
                 let git_status = project
-                    .project_path_git_status(&path, cx)
+                    .git_store()
+                    .read(cx)
+                    .display_status_for_project_path(&path, cx)
                     .map(|status| status.summary())
                     .unwrap_or_default();
                 Some(entry_git_aware_label_color(
@@ -441,15 +458,13 @@ impl TabSwitcherDelegate {
                     ))
                 })
                 .collect::<Vec<_>>();
-            smol::block_on(fuzzy::match_strings(
+            fuzzy_nucleo::match_strings(
                 &candidates,
                 &query,
-                true,
-                true,
+                fuzzy_nucleo::Case::Smart,
+                fuzzy_nucleo::LengthPenalty::On,
                 10000,
-                &Default::default(),
-                cx.background_executor().clone(),
-            ))
+            )
             .into_iter()
             .map(|m| all_items[m.candidate_id].clone())
             .collect()
@@ -468,7 +483,11 @@ impl TabSwitcherDelegate {
 
         let selected_item_id = self.selected_item_id();
         self.matches = matches;
-        self.selected_index = self.compute_selected_index(selected_item_id, window, cx);
+        self.selected_index = if query.is_empty() {
+            self.compute_selected_index(selected_item_id, window, cx)
+        } else {
+            0
+        }
     }
 
     fn update_matches(
@@ -527,7 +546,11 @@ impl TabSwitcherDelegate {
             a_score.cmp(&b_score)
         });
 
-        self.selected_index = self.compute_selected_index(selected_item_id, window, cx);
+        self.selected_index = if query.is_empty() {
+            self.compute_selected_index(selected_item_id, window, cx)
+        } else {
+            0
+        }
     }
 
     fn selected_item_id(&self) -> Option<EntityId> {
@@ -711,6 +734,10 @@ impl TabSwitcherDelegate {
 impl PickerDelegate for TabSwitcherDelegate {
     type ListItem = ListItem;
 
+    fn name() -> &'static str {
+        "tab switcher"
+    }
+
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search all tabs…".into()
     }
@@ -727,6 +754,10 @@ impl PickerDelegate for TabSwitcherDelegate {
         self.selected_index
     }
 
+    fn select_on_hover(&self) -> bool {
+        false
+    }
+
     fn set_selected_index(
         &mut self,
         ix: usize,
@@ -735,7 +766,7 @@ impl PickerDelegate for TabSwitcherDelegate {
     ) {
         self.selected_index = ix;
 
-        if !self.open_in_active_pane {
+        if !self.open_in_active_pane && TabSwitcherSettings::get_global(cx).show_file_preview {
             let Some(selected_match) = self.matches.get(self.selected_index()) else {
                 return;
             };
@@ -824,6 +855,8 @@ impl PickerDelegate for TabSwitcherDelegate {
             selected: true,
             preview: tab_match.preview,
             deemphasized: false,
+            max_title_len: Some(usize::MAX),
+            truncate_title_middle: true,
         };
         let label = tab_match.item.tab_content(params, window, cx);
 
@@ -868,14 +901,23 @@ impl PickerDelegate for TabSwitcherDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .inset(true)
                 .toggle_state(selected)
-                .child(h_flex().w_full().child(label))
+                .child(
+                    h_flex()
+                        .when(ix == 0, |row| {
+                            row.debug_selector(|| "tab-switcher-first-item".into())
+                        })
+                        .w_full()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .child(label),
+                )
                 .start_slot::<DecoratedIcon>(icon)
                 .map(|el| {
                     if self.selected_index == ix {
                         el.end_slot::<AnyElement>(close_button)
                     } else {
                         el.end_slot::<AnyElement>(indicator)
-                            .end_hover_slot::<AnyElement>(close_button)
+                            .end_slot_on_hover::<AnyElement>(close_button)
                     }
                 }),
         )

@@ -4,11 +4,25 @@ Welcome to Zed's documentation.
 
 This is built on push to `main` and published automatically to [https://zed.dev/docs](https://zed.dev/docs).
 
-To preview the docs locally you will need to install [mdBook](https://rust-lang.github.io/mdBook/) (`cargo install mdbook@0.4.40`) and then run:
+To preview the docs locally you will need to install [mdBook](https://rust-lang.github.io/mdBook/) (`cargo install mdbook@0.4.40`), generate the action metadata, and then serve:
 
 ```sh
+script/generate-action-metadata
 mdbook serve docs
 ```
+
+The first command dumps an action manifest to `crates/docs_preprocessor/actions.json`. Without it, the preprocessor cannot validate keybinding and action references in the docs and will report errors. You only need to re-run it when actions change.
+
+If you use Nix, the development shell provides a pinned `mdbook` (0.4.40) and a
+prebuilt docs preprocessor, so you can build the docs without installing anything
+or compiling the preprocessor on every run:
+
+```sh
+nix develop -c mdbook build docs
+```
+
+(When `actions.json` has not been generated, action/keybinding validation is
+skipped with a warning rather than failing the build.)
 
 It's important to note the version number above. For an unknown reason, as of 2025-04-23, running 0.4.48 will cause odd URL behavior that breaks things.
 
@@ -22,7 +36,7 @@ cd docs && pnpm dlx prettier@3.5.0 . --write && cd ..
 
 We have a custom mdBook preprocessor for interfacing with our crates (`crates/docs_preprocessor`).
 
-If for some reason you need to bypass the docs preprocessor, you can comment out `[preprocessor.zed_docs_preprocessor]` from the `book.toml`.
+If for some reason you need to bypass the docs preprocessor, you can comment out `[preprocessor.zed-docs-preprocessor]` from the `book.toml`.
 
 ## Images and videos
 
@@ -47,15 +61,23 @@ When referencing keybindings or actions, use the following formats:
 
 ### Keybindings
 
-`{#kb scope::Action}` - e.g., `{#kb zed::OpenSettings}`.
+{#kb scope::Action} - e.g., {#kb zed::OpenSettings}.
 
 This will output a code element like: `<code>Cmd + , | Ctrl + ,</code>`. We then use a client-side plugin to show the actual keybinding based on the user's platform.
 
 By using the action name, we can ensure that the keybinding is always up-to-date rather than hardcoding the keybinding.
 
+#### Keymap Overlays
+
+`{#kb:keymap_name scope::Action}` - e.g., `{#kb:jetbrains editor::GoToDefinition}`.
+
+This resolves the keybinding from a keymap overlay (e.g., JetBrains) first, falling back to the default keymap if the overlay doesn't define a binding for that action. This is useful for sections where the documentation expects a special base keymap to be configured.
+
+Supported overlays: `jetbrains`.
+
 ### Actions
 
-`{#action scope::Action}` - e.g., `{#action zed::OpenSettings}`.
+{#action scope::Action} - e.g., {#action zed::OpenSettings}.
 
 This will render a human-readable version of the action name, e.g., "zed: open settings", and will allow us to implement things like additional context on hover, etc.
 

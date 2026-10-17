@@ -1,30 +1,28 @@
 use std::{
+    ffi::c_void,
+    ptr::NonNull,
     sync::atomic::{AtomicBool, Ordering},
     thread::{ThreadId, current},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use anyhow::Context;
-use util::ResultExt;
-use windows::{
+use gpui_util::ResultExt;
+use windows::Win32::{
+    Foundation::{FILETIME, LPARAM, WPARAM},
+    Media::{timeBeginPeriod, timeEndPeriod},
     System::Threading::{
-        ThreadPool, ThreadPoolTimer, TimerElapsedHandler, WorkItemHandler, WorkItemPriority,
+        CloseThreadpoolTimer, CreateThreadpoolTimer, GetCurrentThread, PTP_CALLBACK_INSTANCE,
+        PTP_TIMER, SetThreadPriority, SetThreadpoolTimer, THREAD_PRIORITY_TIME_CRITICAL,
+        TP_CALLBACK_ENVIRON_V3, TP_CALLBACK_PRIORITY, TP_CALLBACK_PRIORITY_HIGH,
+        TP_CALLBACK_PRIORITY_LOW, TP_CALLBACK_PRIORITY_NORMAL, TrySubmitThreadpoolCallback,
     },
-    Win32::{
-        Foundation::{LPARAM, WPARAM},
-        Media::{timeBeginPeriod, timeEndPeriod},
-        System::Threading::{
-            GetCurrentThread, HIGH_PRIORITY_CLASS, SetPriorityClass, SetThreadPriority,
-            THREAD_PRIORITY_TIME_CRITICAL,
-        },
-        UI::WindowsAndMessaging::PostMessageW,
-    },
+    UI::WindowsAndMessaging::PostMessageW,
 };
 
 use crate::{HWND, SafeHwnd, WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD};
 use gpui::{
-    GLOBAL_THREAD_TIMINGS, PlatformDispatcher, Priority, PriorityQueueSender, RunnableVariant,
-    THREAD_TIMINGS, TaskTiming, ThreadTaskTimings, TimerResolutionGuard,
+    PlatformDispatcher, Priority, PriorityQueueSender, RunnableVariant, TimerResolutionGuard,
 };
 
 pub(crate) struct WindowsDispatcher {
@@ -53,80 +51,54 @@ impl WindowsDispatcher {
         }
     }
 
-    fn dispatch_on_threadpool(&self, priority: WorkItemPriority, runnable: RunnableVariant) {
-        let handler = {
-            let mut task_wrapper = Some(runnable);
-            WorkItemHandler::new(move |_| {
-                let runnable = task_wrapper.take().unwrap();
-                Self::execute_runnable(runnable);
-                Ok(())
-            })
+    fn dispatch_on_threadpool(&self, priority: TP_CALLBACK_PRIORITY, runnable: RunnableVariant) {
+        let environ = TP_CALLBACK_ENVIRON_V3 {
+            Version: 3,
+            CallbackPriority: priority,
+            Size: size_of::<TP_CALLBACK_ENVIRON_V3>() as u32,
+            ..Default::default()
         };
 
-        ThreadPool::RunWithPriorityAsync(&handler, priority).log_err();
+        // If the thread pool never runs our callback, the matching `from_raw` is never called, which leaks the runnable.
+        // Dropping the scheduled runnable would cancel its task and make the next poll of any awaiter panic. Since we expect
+        // the scenario to usually happen during shutdown, this leak is acceptable.
+        let context = runnable.into_raw().as_ptr() as *mut c_void;
+
+        unsafe {
+            TrySubmitThreadpoolCallback(Some(run_work_callback), Some(context), Some(&environ))
+                .log_err();
+        }
     }
 
     fn dispatch_on_threadpool_after(&self, runnable: RunnableVariant, duration: Duration) {
-        let handler = {
-            let mut task_wrapper = Some(runnable);
-            TimerElapsedHandler::new(move |_| {
-                let runnable = task_wrapper.take().unwrap();
-                Self::execute_runnable(runnable);
-                Ok(())
-            })
-        };
-        ThreadPoolTimer::CreateTimer(&handler, duration.into()).log_err();
+        let context = runnable.into_raw().as_ptr() as *mut c_void;
+
+        unsafe {
+            if let Ok(timer) = CreateThreadpoolTimer(Some(run_timer_callback), Some(context), None)
+            {
+                // Negative FILETIME expresses a relative delay in 100ns ticks
+                let ticks = (duration.as_nanos() / 100).min(i64::MAX as u128) as i64;
+                let due = (-ticks) as u64;
+                let due_time = FILETIME {
+                    dwLowDateTime: due as u32,
+                    dwHighDateTime: (due >> 32) as u32,
+                };
+                SetThreadpoolTimer(timer, Some(&due_time), 0, None);
+            }
+        }
     }
 
     #[inline(always)]
     pub(crate) fn execute_runnable(runnable: RunnableVariant) {
-        let start = Instant::now();
-
         let location = runnable.metadata().location;
-        let mut timing = TaskTiming {
-            location,
-            start,
-            end: None,
-        };
-        gpui::profiler::add_task_timing(timing);
-
+        let spawned = runnable.metadata().spawned;
+        gpui::profiler::update_running_task(spawned, location);
         runnable.run();
-
-        let end = Instant::now();
-        timing.end = Some(end);
-
-        gpui::profiler::add_task_timing(timing);
+        gpui::profiler::save_task_timing();
     }
 }
 
 impl PlatformDispatcher for WindowsDispatcher {
-    fn get_all_timings(&self) -> Vec<ThreadTaskTimings> {
-        let global_thread_timings = GLOBAL_THREAD_TIMINGS.lock();
-        ThreadTaskTimings::convert(&global_thread_timings)
-    }
-
-    fn get_current_thread_timings(&self) -> gpui::ThreadTaskTimings {
-        THREAD_TIMINGS.with(|timings| {
-            let timings = timings.lock();
-            let thread_name = timings.thread_name.clone();
-            let total_pushed = timings.total_pushed;
-            let timings = &timings.timings;
-
-            let mut vec = Vec::with_capacity(timings.len());
-
-            let (s1, s2) = timings.as_slices();
-            vec.extend_from_slice(s1);
-            vec.extend_from_slice(s2);
-
-            gpui::ThreadTaskTimings {
-                thread_name,
-                thread_id: std::thread::current().id(),
-                timings: vec,
-                total_pushed,
-            }
-        })
-    }
-
     fn is_main_thread(&self) -> bool {
         current().id() == self.main_thread_id
     }
@@ -136,9 +108,9 @@ impl PlatformDispatcher for WindowsDispatcher {
             Priority::RealtimeAudio => {
                 panic!("RealtimeAudio priority should use spawn_realtime, not dispatch")
             }
-            Priority::High => WorkItemPriority::High,
-            Priority::Medium => WorkItemPriority::Normal,
-            Priority::Low => WorkItemPriority::Low,
+            Priority::High => TP_CALLBACK_PRIORITY_HIGH,
+            Priority::Medium => TP_CALLBACK_PRIORITY_NORMAL,
+            Priority::Low => TP_CALLBACK_PRIORITY_LOW,
         };
         self.dispatch_on_threadpool(priority, runnable);
     }
@@ -181,12 +153,7 @@ impl PlatformDispatcher for WindowsDispatcher {
             // SAFETY: always safe to call
             let thread_handle = unsafe { GetCurrentThread() };
 
-            // SAFETY: thread_handle is a valid handle to a thread
-            unsafe { SetPriorityClass(thread_handle, HIGH_PRIORITY_CLASS) }
-                .context("thread priority class")
-                .log_err();
-
-            // SAFETY: thread_handle is a valid handle to a thread
+            // SAFETY: thread_handle is a valid handle to the current thread
             unsafe { SetThreadPriority(thread_handle, THREAD_PRIORITY_TIME_CRITICAL) }
                 .context("thread priority")
                 .log_err();
@@ -199,8 +166,26 @@ impl PlatformDispatcher for WindowsDispatcher {
         unsafe {
             timeBeginPeriod(1);
         }
-        util::defer(Box::new(|| unsafe {
+        gpui_util::defer(Box::new(|| unsafe {
             timeEndPeriod(1);
         }))
     }
+}
+
+unsafe extern "system" fn run_work_callback(
+    _instance: PTP_CALLBACK_INSTANCE,
+    context: *mut c_void,
+) {
+    let runnable = unsafe { RunnableVariant::from_raw(NonNull::new_unchecked(context as *mut ())) };
+    WindowsDispatcher::execute_runnable(runnable);
+}
+
+unsafe extern "system" fn run_timer_callback(
+    _instance: PTP_CALLBACK_INSTANCE,
+    context: *mut c_void,
+    timer: PTP_TIMER,
+) {
+    let runnable = unsafe { RunnableVariant::from_raw(NonNull::new_unchecked(context as *mut ())) };
+    WindowsDispatcher::execute_runnable(runnable);
+    unsafe { CloseThreadpoolTimer(timer) };
 }

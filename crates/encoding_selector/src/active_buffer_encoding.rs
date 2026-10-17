@@ -3,13 +3,13 @@ use crate::{EncodingSelector, Toggle};
 use editor::Editor;
 use encoding_rs::{Encoding, UTF_8};
 use gpui::{
-    Context, Entity, IntoElement, ParentElement, Render, Styled, Subscription, WeakEntity, Window,
-    div,
+    App, Context, Entity, IntoElement, ParentElement, Render, Styled, Subscription, WeakEntity,
+    Window, div,
 };
 use project::Project;
 use ui::{Button, ButtonCommon, Clickable, LabelSize, Tooltip};
 use workspace::{
-    StatusBarSettings, StatusItemView, Workspace,
+    EncodingDisplayOptions, HideStatusItem, StatusBarSettings, StatusItemView, Workspace,
     item::{ItemHandle, Settings},
 };
 
@@ -47,7 +47,7 @@ impl ActiveBufferEncoding {
         self.is_shared = project.is_shared();
         self.is_via_remote_server = project.is_via_remote_server();
 
-        if let Some((_, buffer, _)) = editor.read(cx).active_excerpt(cx) {
+        if let Some(buffer) = editor.read(cx).active_buffer(cx) {
             let buffer = buffer.read(cx);
             self.active_encoding = Some(buffer.encoding());
             self.has_bom = buffer.has_bom();
@@ -88,6 +88,7 @@ impl Render for ActiveBufferEncoding {
         div().child(
             Button::new("change-encoding", text)
                 .label_size(LabelSize::Small)
+                .tab_index(0isize)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     if disabled {
                         return;
@@ -130,5 +131,14 @@ impl StatusItemView for ActiveBufferEncoding {
         }
 
         cx.notify();
+    }
+
+    fn hide_setting(&self, _: &App) -> Option<HideStatusItem> {
+        Some(HideStatusItem::new(|settings| {
+            settings
+                .status_bar
+                .get_or_insert_default()
+                .active_encoding_button = Some(EncodingDisplayOptions::Disabled);
+        }))
     }
 }

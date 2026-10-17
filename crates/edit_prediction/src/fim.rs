@@ -1,28 +1,26 @@
 use crate::{
-    EditPredictionId, EditPredictionModelInput, cursor_excerpt,
+    EditPredictionId, EditPredictionInputs, EditPredictionModelInput, cursor_excerpt,
     open_ai_compatible::{self, load_open_ai_compatible_api_key_if_needed},
     prediction::EditPredictionResult,
 };
 use anyhow::{Context as _, Result, anyhow};
 use gpui::{App, AppContext as _, Entity, Task};
 use language::{
-    Anchor, Buffer, BufferSnapshot, ToOffset, ToPoint as _,
-    language_settings::all_language_settings,
+    Anchor, Buffer, BufferSnapshot, EditPredictionPromptFormat, ToOffset, ToPoint as _,
+    ZetaVersion, language_settings::all_language_settings,
 };
-use settings::EditPredictionPromptFormat;
 use std::{path::Path, sync::Arc, time::Instant};
-use zeta_prompt::{ZetaPromptInput, compute_editable_and_context_ranges};
+use zeta_prompt::{Zeta2PromptInput, compute_editable_and_context_ranges};
 
 const FIM_CONTEXT_TOKENS: usize = 512;
 
 struct FimRequestOutput {
     request_id: String,
     edits: Vec<(std::ops::Range<Anchor>, Arc<str>)>,
+    editable_range: std::ops::Range<Anchor>,
     snapshot: BufferSnapshot,
-    response_received_at: Instant,
-    inputs: ZetaPromptInput,
+    inputs: Zeta2PromptInput,
     buffer: Entity<Buffer>,
-    buffer_snapshotted_at: Instant,
 }
 
 pub fn request_prediction(
@@ -31,6 +29,7 @@ pub fn request_prediction(
         snapshot,
         position,
         events,
+        trigger,
         ..
     }: EditPredictionModelInput,
     prompt_format: EditPredictionPromptFormat,
@@ -47,7 +46,7 @@ pub fn request_prediction(
 
     let http_client = cx.http_client();
     let cursor_point = position.to_point(&snapshot);
-    let buffer_snapshotted_at = Instant::now();
+    let request_start = cx.background_executor().now();
 
     let Some(settings) = (match provider {
         settings::EditPredictionProvider::Ollama => settings.ollama.clone(),
@@ -79,7 +78,7 @@ pub fn request_prediction(
             0,
         );
 
-        let inputs = ZetaPromptInput {
+        let inputs = Zeta2PromptInput {
             events,
             related_files: Some(Vec::new()),
             active_buffer_diagnostics: Vec::new(),
@@ -89,7 +88,6 @@ pub fn request_prediction(
             cursor_excerpt,
             excerpt_ranges: Default::default(),
             syntax_ranges: None,
-            experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
             repo_url: None,
@@ -100,7 +98,10 @@ pub fn request_prediction(
         let prefix = editable_text[..cursor_in_editable].to_string();
         let suffix = editable_text[cursor_in_editable..].to_string();
         let prompt = format_fim_prompt(prompt_format, &prefix, &suffix);
-        let stop_tokens = get_fim_stop_tokens();
+        let stop_tokens = fim_stop_tokens(prompt_format)
+            .iter()
+            .map(|token| token.to_string())
+            .collect();
 
         let max_tokens = settings.max_output_tokens;
 
@@ -119,7 +120,7 @@ pub fn request_prediction(
 
         log::debug!(
             "fim: completion received ({:.2}s)",
-            (response_received_at - buffer_snapshotted_at).as_secs_f64()
+            (response_received_at - request_start).as_secs_f64()
         );
 
         let completion: Arc<str> = clean_fim_completion(&response_text).into();
@@ -131,14 +132,18 @@ pub fn request_prediction(
             vec![(anchor..anchor, completion)]
         };
 
+        let editable_range = snapshot.anchor_range_inside(
+            (excerpt_offset_range.start + editable_range.start)
+                ..(excerpt_offset_range.start + editable_range.end),
+        );
+
         anyhow::Ok(FimRequestOutput {
             request_id,
             edits,
+            editable_range,
             snapshot,
-            response_received_at,
             inputs,
             buffer,
-            buffer_snapshotted_at,
         })
     });
 
@@ -151,14 +156,39 @@ pub fn request_prediction(
                 &output.snapshot,
                 output.edits.into(),
                 None,
-                output.buffer_snapshotted_at,
-                output.response_received_at,
-                output.inputs,
+                Some(output.editable_range),
+                EditPredictionInputs::V2(output.inputs),
                 None,
+                trigger,
+                cx.background_executor().now() - request_start,
                 cx,
             )
             .await,
         ))
+    })
+}
+
+/// Infers the FIM prompt format from an Ollama/OpenAI-compatible model name.
+/// Returns `None` if the model isn't a known FIM-capable model.
+pub fn infer_prompt_format(model: &str) -> Option<EditPredictionPromptFormat> {
+    let model_base = model.split(':').next().unwrap_or(model);
+
+    Some(match model_base {
+        "zeta2" => EditPredictionPromptFormat::Zeta(ZetaVersion::Zeta2),
+        "zeta2.1" => EditPredictionPromptFormat::Zeta(ZetaVersion::Zeta2_1),
+        model_base if model_base.to_ascii_lowercase().contains("sweep-next-edit") => {
+            EditPredictionPromptFormat::Sweep
+        }
+        "codellama" | "code-llama" => EditPredictionPromptFormat::CodeLlama,
+        "starcoder" | "starcoder2" | "starcoderbase" => EditPredictionPromptFormat::StarCoder,
+        "deepseek-coder" | "deepseek-coder-v2" => EditPredictionPromptFormat::DeepseekCoder,
+        "qwen2.5-coder" | "qwen-coder" | "qwen" => EditPredictionPromptFormat::Qwen,
+        "codegemma" => EditPredictionPromptFormat::CodeGemma,
+        "codestral" | "mistral" => EditPredictionPromptFormat::Codestral,
+        "glm" | "glm-4" | "glm-4.5" => EditPredictionPromptFormat::Glm,
+        _ => {
+            return None;
+        }
     })
 }
 
@@ -192,23 +222,40 @@ fn format_fim_prompt(
     }
 }
 
-fn get_fim_stop_tokens() -> Vec<String> {
-    vec![
-        "<|endoftext|>".to_string(),
-        "<|file_separator|>".to_string(),
-        "<|fim_pad|>".to_string(),
-        "<|fim_prefix|>".to_string(),
-        "<|fim_middle|>".to_string(),
-        "<|fim_suffix|>".to_string(),
-        "<fim_prefix>".to_string(),
-        "<fim_middle>".to_string(),
-        "<fim_suffix>".to_string(),
-        "<PRE>".to_string(),
-        "<SUF>".to_string(),
-        "<MID>".to_string(),
-        "[PREFIX]".to_string(),
-        "[SUFFIX]".to_string(),
-    ]
+// OpenAI-compatible servers such as vLLM reject requests with more than 4 stop
+// sequences, so each format may only list up to 4 tokens.
+fn fim_stop_tokens(prompt_format: EditPredictionPromptFormat) -> &'static [&'static str] {
+    match prompt_format {
+        EditPredictionPromptFormat::CodeLlama => &["<PRE>", "<SUF>", "<MID>"],
+        EditPredictionPromptFormat::DeepseekCoder => {
+            &["<｜fim▁begin｜>", "<｜fim▁hole｜>", "<｜fim▁end｜>"]
+        }
+        EditPredictionPromptFormat::Qwen => &[
+            "<|endoftext|>",
+            "<|fim_prefix|>",
+            "<|fim_middle|>",
+            "<|fim_suffix|>",
+        ],
+        EditPredictionPromptFormat::CodeGemma => &[
+            "<|file_separator|>",
+            "<|fim_prefix|>",
+            "<|fim_middle|>",
+            "<|fim_suffix|>",
+        ],
+        EditPredictionPromptFormat::Codestral => &["[PREFIX]", "[SUFFIX]"],
+        EditPredictionPromptFormat::Glm => &[
+            "<|endoftext|>",
+            "<|code_prefix|>",
+            "<|code_suffix|>",
+            "<|code_middle|>",
+        ],
+        _ => &[
+            "<|endoftext|>",
+            "<fim_prefix>",
+            "<fim_middle>",
+            "<fim_suffix>",
+        ],
+    }
 }
 
 fn clean_fim_completion(response: &str) -> String {
@@ -238,4 +285,100 @@ fn clean_fim_completion(response: &str) -> String {
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn infer_prompt_format_matches_known_model_families() {
+        assert_eq!(
+            infer_prompt_format("qwen2.5-coder:3b"),
+            Some(EditPredictionPromptFormat::Qwen)
+        );
+        assert_eq!(
+            infer_prompt_format("codellama:7b"),
+            Some(EditPredictionPromptFormat::CodeLlama)
+        );
+        assert_eq!(
+            infer_prompt_format("deepseek-coder-v2:16b"),
+            Some(EditPredictionPromptFormat::DeepseekCoder)
+        );
+        assert_eq!(
+            infer_prompt_format("starcoder2:3b"),
+            Some(EditPredictionPromptFormat::StarCoder)
+        );
+        assert_eq!(
+            infer_prompt_format("codestral:latest"),
+            Some(EditPredictionPromptFormat::Codestral)
+        );
+        assert_eq!(
+            infer_prompt_format("glm-4:9b"),
+            Some(EditPredictionPromptFormat::Glm)
+        );
+    }
+
+    #[test]
+    fn infer_prompt_format_matches_zeta_and_sweep() {
+        assert_eq!(
+            infer_prompt_format("zeta2"),
+            Some(EditPredictionPromptFormat::Zeta(ZetaVersion::Zeta2))
+        );
+        assert_eq!(
+            infer_prompt_format("zeta2.1"),
+            Some(EditPredictionPromptFormat::Zeta(ZetaVersion::Zeta2_1))
+        );
+        assert_eq!(
+            infer_prompt_format("my-sweep-next-edit-v1"),
+            Some(EditPredictionPromptFormat::Sweep)
+        );
+    }
+
+    const FIM_PROMPT_FORMATS: [EditPredictionPromptFormat; 7] = [
+        EditPredictionPromptFormat::CodeLlama,
+        EditPredictionPromptFormat::StarCoder,
+        EditPredictionPromptFormat::DeepseekCoder,
+        EditPredictionPromptFormat::Qwen,
+        EditPredictionPromptFormat::CodeGemma,
+        EditPredictionPromptFormat::Codestral,
+        EditPredictionPromptFormat::Glm,
+    ];
+
+    #[test]
+    fn fim_stop_tokens_respect_openai_stop_limit() {
+        for format in FIM_PROMPT_FORMATS {
+            let stop_tokens = fim_stop_tokens(format);
+            assert!(!stop_tokens.is_empty(), "{format:?} has no stop tokens");
+            assert!(
+                stop_tokens.len() <= 4,
+                "{format:?} has {} stop tokens, but OpenAI allows at most 4",
+                stop_tokens.len()
+            );
+        }
+    }
+
+    #[test]
+    fn fim_stop_tokens_match_prompt_markers() {
+        let end_of_text_tokens = ["<|endoftext|>", "<|file_separator|>"];
+        for format in FIM_PROMPT_FORMATS {
+            let prompt = format_fim_prompt(format, "a", "b");
+            for token in fim_stop_tokens(format) {
+                if end_of_text_tokens.contains(token) {
+                    continue;
+                }
+                assert!(
+                    prompt.contains(token),
+                    "stop token {token:?} for {format:?} does not appear in prompt {prompt:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn infer_prompt_format_returns_none_for_unsupported_models() {
+        assert_eq!(infer_prompt_format("llama3:70b"), None);
+        assert_eq!(infer_prompt_format("phi3:mini"), None);
+        assert_eq!(infer_prompt_format("nomic-embed-text"), None);
+    }
 }

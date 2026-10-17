@@ -1,8 +1,8 @@
 use crate::{
     AnyView, AnyWindowHandle, App, AppCell, AppContext, BackgroundExecutor, BorrowAppContext,
-    Entity, EventEmitter, Focusable, ForegroundExecutor, Global, GpuiBorrow, PromptButton,
-    PromptLevel, Render, Reservation, Result, Subscription, Task, VisualContext, Window,
-    WindowHandle,
+    Entity, EntityId, EventEmitter, Focusable, ForegroundExecutor, Global, GpuiBorrow,
+    PromptButton, PromptLevel, Render, Reservation, Result, Subscription, Task, VisualContext,
+    Window, WindowHandle,
 };
 use anyhow::{Context as _, bail};
 use derive_more::{Deref, DerefMut};
@@ -56,6 +56,7 @@ impl AppContext for AsyncApp {
         app.insert_entity(reservation, build_entity)
     }
 
+    #[inline(always)]
     fn update_entity<T: 'static, R>(
         &mut self,
         handle: &Entity<T>,
@@ -73,6 +74,7 @@ impl AppContext for AsyncApp {
         panic!("Cannot as_mut with an async context. Try calling update() first")
     }
 
+    #[inline(always)]
     fn read_entity<T, R>(&self, handle: &Entity<T>, callback: impl FnOnce(&T, &App) -> R) -> R
     where
         T: 'static,
@@ -82,6 +84,7 @@ impl AppContext for AsyncApp {
         lock.read_entity(handle, callback)
     }
 
+    #[inline(always)]
     fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
     where
         F: FnOnce(AnyView, &mut Window, &mut App) -> T,
@@ -92,6 +95,20 @@ impl AppContext for AsyncApp {
             bail!("app is quitting");
         }
         lock.update_window(window, f)
+    }
+
+    #[inline(always)]
+    fn with_window<R>(
+        &mut self,
+        entity_id: EntityId,
+        f: impl FnOnce(&mut Window, &mut App) -> R,
+    ) -> Option<R> {
+        let app = self.app.upgrade()?;
+        let mut lock = app.try_borrow_mut().ok()?;
+        if lock.quitting {
+            return None;
+        }
+        lock.with_window(entity_id, f)
     }
 
     fn read_window<T, R>(
@@ -133,12 +150,20 @@ impl AsyncApp {
     pub fn refresh(&self) {
         let app = self.app();
         let mut lock = app.borrow_mut();
-        lock.refresh_windows();
+        // A direct call would leave the refresh effect queued, which cannot wake
+        // a platform render loop that has already parked.
+        lock.update(|cx| cx.refresh_windows());
     }
 
     /// Get an executor which can be used to spawn futures in the background.
     pub fn background_executor(&self) -> &BackgroundExecutor {
         &self.background_executor
+    }
+
+    /// Whether this app runs on the deterministic test scheduler. See
+    /// [`BackgroundExecutor::is_test`].
+    pub fn is_test(&self) -> bool {
+        self.background_executor.is_test()
     }
 
     /// Get an executor which can be used to spawn futures in the foreground.
@@ -147,6 +172,7 @@ impl AsyncApp {
     }
 
     /// Invoke the given function in the context of the app, then flush any effects produced during its invocation.
+    #[inline(always)]
     pub fn update<R>(&self, f: impl FnOnce(&mut App) -> R) -> R {
         let app = self.app();
         let mut lock = app.borrow_mut();
@@ -188,6 +214,7 @@ impl AsyncApp {
 
     /// Schedule a future to be polled in the foreground.
     #[track_caller]
+    #[inline(always)]
     pub fn spawn<AsyncFn, R>(&self, f: AsyncFn) -> Task<R>
     where
         AsyncFn: AsyncFnOnce(&mut AsyncApp) -> R + 'static,
@@ -208,6 +235,7 @@ impl AsyncApp {
     /// Reads the global state of the specified type, passing it to the given callback.
     ///
     /// Panics if no global state of the specified type has been assigned.
+    #[inline(always)]
     pub fn read_global<G: Global, R>(&self, read: impl FnOnce(&G, &App) -> R) -> R {
         let app = self.app();
         let app = app.borrow_mut();
@@ -283,12 +311,14 @@ impl AsyncWindowContext {
     }
 
     /// A convenience method for [`App::update_window`].
+    #[inline(always)]
     pub fn update<R>(&mut self, update: impl FnOnce(&mut Window, &mut App) -> R) -> Result<R> {
         self.app
             .update_window(self.window, |_, window, cx| update(window, cx))
     }
 
     /// A convenience method for [`App::update_window`].
+    #[inline(always)]
     pub fn update_root<R>(
         &mut self,
         update: impl FnOnce(AnyView, &mut Window, &mut App) -> R,
@@ -329,6 +359,7 @@ impl AsyncWindowContext {
     /// Schedule a future to be executed on the main thread. This is used for collecting
     /// the results of background tasks and updating the UI.
     #[track_caller]
+    #[inline(always)]
     pub fn spawn<AsyncFn, R>(&self, f: AsyncFn) -> Task<R>
     where
         AsyncFn: AsyncFnOnce(&mut AsyncWindowContext) -> R + 'static,
@@ -365,7 +396,21 @@ impl AppContext for AsyncWindowContext {
     where
         T: 'static,
     {
-        self.app.new(build_entity)
+        let mut build_entity = Some(build_entity);
+        match self.app.update_window(self.window, |_, _, cx| {
+            cx.new(
+                build_entity
+                    .take()
+                    .expect("build_entity is taken exactly once"),
+            )
+        }) {
+            Ok(entity) => entity,
+            Err(_) => self.app.new(
+                build_entity
+                    .take()
+                    .expect("update_window returned Err without invoking the closure"),
+            ),
+        }
     }
 
     fn reserve_entity<T: 'static>(&mut self) -> Reservation<T> {
@@ -377,9 +422,22 @@ impl AppContext for AsyncWindowContext {
         reservation: Reservation<T>,
         build_entity: impl FnOnce(&mut Context<T>) -> T,
     ) -> Entity<T> {
-        self.app.insert_entity(reservation, build_entity)
+        let mut args = Some((reservation, build_entity));
+        match self.app.update_window(self.window, |_, _, cx| {
+            let (reservation, build_entity) = args.take().expect("args are taken exactly once");
+            cx.insert_entity(reservation, build_entity)
+        }) {
+            Ok(entity) => entity,
+            Err(_) => {
+                let (reservation, build_entity) = args
+                    .take()
+                    .expect("update_window returned Err without invoking the closure");
+                self.app.insert_entity(reservation, build_entity)
+            }
+        }
     }
 
+    #[inline(always)]
     fn update_entity<T: 'static, R>(
         &mut self,
         handle: &Entity<T>,
@@ -395,6 +453,7 @@ impl AppContext for AsyncWindowContext {
         panic!("Cannot use as_mut() from an async context, call `update`")
     }
 
+    #[inline(always)]
     fn read_entity<T, R>(&self, handle: &Entity<T>, read: impl FnOnce(&T, &App) -> R) -> R
     where
         T: 'static,
@@ -402,11 +461,21 @@ impl AppContext for AsyncWindowContext {
         self.app.read_entity(handle, read)
     }
 
+    #[inline(always)]
     fn update_window<T, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<T>
     where
         F: FnOnce(AnyView, &mut Window, &mut App) -> T,
     {
         self.app.update_window(window, update)
+    }
+
+    #[inline(always)]
+    fn with_window<R>(
+        &mut self,
+        entity_id: EntityId,
+        f: impl FnOnce(&mut Window, &mut App) -> R,
+    ) -> Option<R> {
+        self.app.with_window(entity_id, f)
     }
 
     fn read_window<T, R>(
@@ -457,9 +526,12 @@ impl VisualContext for AsyncWindowContext {
         view: &Entity<T>,
         update: impl FnOnce(&mut T, &mut Window, &mut Context<T>) -> R,
     ) -> Result<R> {
-        self.app.update_window(self.window, |_, window, cx| {
-            view.update(cx, |entity, cx| update(entity, window, cx))
-        })
+        let view = view.clone();
+        self.app
+            .with_window(view.entity_id(), |window, app| {
+                view.update(app, |entity, cx| update(entity, window, cx))
+            })
+            .context("entity has no current window")
     }
 
     fn replace_root_view<V>(

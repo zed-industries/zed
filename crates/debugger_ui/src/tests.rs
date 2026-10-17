@@ -41,7 +41,7 @@ pub fn init_test(cx: &mut gpui::TestAppContext) {
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
         terminal_view::init(cx);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
         command_palette_hooks::init(cx);
         editor::init(cx);
         crate::init(cx);

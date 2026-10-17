@@ -41,7 +41,7 @@ pub fn main() {
         cx.bind_keys([KeyBinding::new("cmd-c", markdown::Copy, None)]);
 
         let node_runtime = NodeRuntime::unavailable();
-        theme::init(LoadThemes::JustBase, cx);
+        theme_settings::init(LoadThemes::JustBase, cx);
 
         let fs = fs::FakeFs::new(cx.background_executor().clone());
         let language_registry = LanguageRegistry::new(cx.background_executor().clone());

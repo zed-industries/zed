@@ -23,7 +23,7 @@ impl Domain for ComponentPreviewDb {
     )];
 }
 
-db::static_connection!(COMPONENT_PREVIEW_DB, ComponentPreviewDb, [WorkspaceDb]);
+db::static_connection!(ComponentPreviewDb, [WorkspaceDb]);
 
 impl ComponentPreviewDb {
     pub async fn save_active_page(

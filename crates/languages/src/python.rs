@@ -1,18 +1,20 @@
+use anyhow::Result;
 use anyhow::{Context as _, ensure};
-use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::future::BoxFuture;
 use futures::lock::OwnedMutexGuard;
 use futures::{AsyncBufReadExt, StreamExt as _};
-use gpui::{App, AsyncApp, SharedString, Task};
+use gpui::{App, AsyncApp, Entity, SharedString, Task};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, latest_github_release};
-use language::language_settings::language_settings;
-use language::{ContextLocation, DynLspInstaller, LanguageToolchainStore, LspInstaller, Symbol};
+use language::language_settings::LanguageSettings;
+use language::{
+    Buffer, ContextLocation, DynLspInstaller, LanguageToolchainStore, LspInstaller, Symbol,
+};
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
 use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
 use language::{Toolchain, ToolchainList, ToolchainLister, ToolchainMetadata};
-use lsp::{LanguageServerBinary, Uri};
+use lsp::{CompletionItemKind, LanguageServerBinary, Uri};
 use lsp::{LanguageServerBinaryOptions, LanguageServerName};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use pet_core::Configuration;
@@ -24,7 +26,7 @@ use project::lsp_store::language_server_settings;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use settings::Settings;
+use settings::{SemanticTokenRules, Settings};
 use terminal::terminal_settings::TerminalSettings;
 
 use smol::lock::OnceCell;
@@ -43,11 +45,20 @@ use std::str::FromStr;
 use std::{
     borrow::Cow,
     fmt::Write,
+    future::Future,
     path::{Path, PathBuf},
     sync::Arc,
 };
 use task::{ShellKind, TaskTemplate, TaskTemplates, VariableName};
 use util::{ResultExt, maybe};
+
+pub(crate) fn semantic_token_rules() -> SemanticTokenRules {
+    let content = grammars::get_file("python/semantic_token_rules.json")
+        .expect("missing python/semantic_token_rules.json");
+    let json = std::str::from_utf8(&content.data).expect("invalid utf-8 in semantic_token_rules");
+    settings::parse_json_with_comments::<SemanticTokenRules>(json)
+        .expect("failed to parse python semantic_token_rules.json")
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct PythonToolchainData {
@@ -72,14 +83,30 @@ impl ManifestProvider for PyprojectTomlManifestProvider {
             delegate,
         }: ManifestQuery,
     ) -> Option<Arc<RelPath>> {
+        const WORKSPACE_LOCKFILES: &[&str] =
+            &["uv.lock", "poetry.lock", "pdm.lock", "Pipfile.lock"];
+
+        let mut innermost_pyproject = None;
+        let mut outermost_workspace_root = None;
+
         for path in path.ancestors().take(depth) {
-            let p = path.join(RelPath::unix("pyproject.toml").unwrap());
-            if delegate.exists(&p, Some(false)) {
-                return Some(path.into());
+            let pyproject_path = path.join(RelPath::from_unix_str("pyproject.toml").unwrap());
+            if delegate.exists(&pyproject_path, Some(false)) {
+                if innermost_pyproject.is_none() {
+                    innermost_pyproject = Some(Arc::from(path));
+                }
+
+                let has_lockfile = WORKSPACE_LOCKFILES.iter().any(|lockfile| {
+                    let lockfile_path = path.join(RelPath::from_unix_str(lockfile).unwrap());
+                    delegate.exists(&lockfile_path, Some(false))
+                });
+                if has_lockfile {
+                    outermost_workspace_root = Some(Arc::from(path));
+                }
             }
         }
 
-        None
+        outermost_workspace_root.or(innermost_pyproject)
     }
 }
 
@@ -166,16 +193,8 @@ fn label_for_pyright_completion(
     let label = &item.label;
     let label_len = label.len();
     let grammar = language.grammar()?;
-    let highlight_id = match item.kind? {
-        lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method"),
-        lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function"),
-        lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type"),
-        lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant"),
-        lsp::CompletionItemKind::VARIABLE => grammar.highlight_id_for_name("variable"),
-        _ => {
-            return None;
-        }
-    };
+    let highlight_id = highlight_id_for_completion(item.kind?, grammar)?;
+
     let mut text = label.clone();
     if let Some(completion_details) = item
         .label_details
@@ -201,19 +220,19 @@ fn label_for_python_symbol(
 ) -> Option<language::CodeLabel> {
     let name = &symbol.name;
     let (text, filter_range, display_range) = match symbol.kind {
-        lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
+        language::SymbolKind::Method | language::SymbolKind::Function => {
             let text = format!("def {}():\n", name);
             let filter_range = 4..4 + name.len();
             let display_range = 0..filter_range.end;
             (text, filter_range, display_range)
         }
-        lsp::SymbolKind::CLASS => {
+        language::SymbolKind::Class => {
             let text = format!("class {}:", name);
             let filter_range = 6..6 + name.len();
             let display_range = 0..filter_range.end;
             (text, filter_range, display_range)
         }
-        lsp::SymbolKind::CONSTANT => {
+        language::SymbolKind::Constant => {
             let text = format!("{} = 0", name);
             let filter_range = 0..name.len();
             let display_range = 0..filter_range.end;
@@ -224,8 +243,78 @@ fn label_for_python_symbol(
     Some(language::CodeLabel::new(
         text[display_range.clone()].to_string(),
         filter_range,
-        language.highlight_text(&text.as_str().into(), display_range),
+        language
+            .highlight_text(text.as_str(), display_range)
+            .collect(),
     ))
+}
+
+/// Returns the highlight ID for the given completion item kind, if it is supported.
+///
+/// The outer `Option` is `None` if the item kind returned by the language server is not covered.
+/// The inner `Option` is `None` if the item kind is covered, but the highlight name is not present in the grammar.
+fn highlight_id_for_completion(
+    item_kind: CompletionItemKind,
+    grammar: &Arc<language::Grammar>,
+) -> Option<Option<language::HighlightId>> {
+    match item_kind {
+        CompletionItemKind::METHOD => Some(grammar.highlight_id_for_name("function.method.call")),
+        CompletionItemKind::FUNCTION => Some(grammar.highlight_id_for_name("function.call")),
+        CompletionItemKind::CLASS => Some(grammar.highlight_id_for_name("type")),
+        CompletionItemKind::CONSTANT => Some(grammar.highlight_id_for_name("constant")),
+        CompletionItemKind::VARIABLE => Some(grammar.highlight_id_for_name("variable")),
+        _ => None,
+    }
+}
+
+/// Older pyright-derived servers request a literal `<configuration section>.analysis` section,
+/// while new versions request `<configuration section>` and read its nested `analysis` object.
+///
+/// Basedpyright changed this behavior in v1.39.10, context: https://github.com/DetachHead/basedpyright/pull/1847
+/// Pyright itself changed this behavior in v1.1.411 context: https://github.com/microsoft/pyright/pull/11480
+fn normalize_pyright_analysis_configuration(
+    workspace_configuration: &mut Value,
+    configuration_section: &str,
+) {
+    let Some(workspace_configuration) = workspace_configuration.as_object_mut() else {
+        return;
+    };
+
+    let flat_analysis_section = format!("{configuration_section}.analysis");
+
+    let nested_analysis = workspace_configuration
+        .get(configuration_section)
+        .and_then(Value::as_object)
+        .and_then(|server_configuration| server_configuration.get("analysis"))
+        .and_then(Value::as_object);
+    let flat_analysis = workspace_configuration
+        .get(&flat_analysis_section)
+        .and_then(Value::as_object);
+
+    let nested_analysis = match (nested_analysis, flat_analysis) {
+        (Some(nested_analysis), Some(flat_analysis)) => {
+            let mut merged_analysis = nested_analysis.clone();
+            for (key, value) in flat_analysis {
+                merged_analysis
+                    .entry(key.clone())
+                    .or_insert_with(|| value.clone());
+            }
+            Value::Object(merged_analysis)
+        }
+        (Some(nested_analysis), None) => Value::Object(nested_analysis.clone()),
+        (None, Some(flat_analysis)) => Value::Object(flat_analysis.clone()),
+        (None, None) => return,
+    };
+
+    let server_configuration = workspace_configuration
+        .entry(configuration_section)
+        .or_insert_with(|| Value::Object(serde_json::Map::default()));
+    let Some(server_configuration) = server_configuration.as_object_mut() else {
+        return;
+    };
+    server_configuration.insert("analysis".to_owned(), nested_analysis.clone());
+
+    workspace_configuration.insert(flat_analysis_section, nested_analysis);
 }
 
 pub struct TyLspAdapter {
@@ -285,6 +374,10 @@ impl LspAdapter for TyLspAdapter {
         Self::SERVER_NAME
     }
 
+    fn is_opt_in_for(&self, language: &LanguageName) -> bool {
+        language == "Python"
+    }
+
     async fn label_for_completion(
         &self,
         item: &lsp::CompletionItem,
@@ -293,16 +386,7 @@ impl LspAdapter for TyLspAdapter {
         let label = &item.label;
         let label_len = label.len();
         let grammar = language.grammar()?;
-        let highlight_id = match item.kind? {
-            lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method"),
-            lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function"),
-            lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type"),
-            lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant"),
-            lsp::CompletionItemKind::VARIABLE => grammar.highlight_id_for_name("variable"),
-            _ => {
-                return None;
-            }
-        };
+        let highlight_id = highlight_id_for_completion(item.kind?, grammar)?;
 
         let mut text = label.clone();
         if let Some(completion_details) = item
@@ -372,7 +456,7 @@ impl LspInstaller for TyLspAdapter {
     type BinaryVersion = GitHubLspBinaryVersion;
     async fn fetch_latest_server_version(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         _: bool,
         _: &mut AsyncApp,
     ) -> Result<Self::BinaryVersion> {
@@ -393,7 +477,7 @@ impl LspInstaller for TyLspAdapter {
 
     async fn check_if_user_installed(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
@@ -421,92 +505,98 @@ impl LspInstaller for TyLspAdapter {
         None
     }
 
-    async fn fetch_server_binary(
+    fn fetch_server_binary(
         &self,
         latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Result<LanguageServerBinary> {
-        let GitHubLspBinaryVersion {
-            name,
-            url,
-            digest: expected_digest,
-        } = latest_version;
-        let destination_path = container_dir.join(format!("ty-{name}"));
+        delegate: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
+        let delegate = delegate.clone();
 
-        async_fs::create_dir_all(&destination_path).await?;
-
-        let server_path = match Self::GITHUB_ASSET_KIND {
-            AssetKind::TarGz | AssetKind::Gz => destination_path
-                .join(Self::build_asset_name()?.0)
-                .join("ty"),
-            AssetKind::Zip => destination_path.clone().join("ty.exe"),
-        };
-
-        let binary = LanguageServerBinary {
-            path: server_path.clone(),
-            env: None,
-            arguments: vec!["server".into()],
-        };
-
-        let metadata_path = destination_path.with_extension("metadata");
-        let metadata = GithubBinaryMetadata::read_from_file(&metadata_path)
-            .await
-            .ok();
-        if let Some(metadata) = metadata {
-            let validity_check = async || {
-                delegate
-                    .try_exec(LanguageServerBinary {
-                        path: server_path.clone(),
-                        arguments: vec!["--version".into()],
-                        env: None,
-                    })
-                    .await
-                    .inspect_err(|err| {
-                        log::warn!("Unable to run {server_path:?} asset, redownloading: {err:#}",)
-                    })
-            };
-            if let (Some(actual_digest), Some(expected_digest)) =
-                (&metadata.digest, &expected_digest)
-            {
-                if actual_digest == expected_digest {
-                    if validity_check().await.is_ok() {
-                        return Ok(binary);
-                    }
-                } else {
-                    log::info!(
-                        "SHA-256 mismatch for {destination_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
-                    );
-                }
-            } else if validity_check().await.is_ok() {
-                return Ok(binary);
-            }
-        }
-
-        download_server_binary(
-            &*delegate.http_client(),
-            &url,
-            expected_digest.as_deref(),
-            &destination_path,
-            Self::GITHUB_ASSET_KIND,
-        )
-        .await?;
-        make_file_executable(&server_path).await?;
-        remove_matching(&container_dir, |path| path != destination_path).await;
-        GithubBinaryMetadata::write_to_file(
-            &GithubBinaryMetadata {
-                metadata_version: 1,
+        async move {
+            let GitHubLspBinaryVersion {
+                name,
+                url,
                 digest: expected_digest,
-            },
-            &metadata_path,
-        )
-        .await?;
+            } = latest_version;
+            let destination_path = container_dir.join(format!("ty-{name}"));
 
-        Ok(LanguageServerBinary {
-            path: server_path,
-            env: None,
-            arguments: vec!["server".into()],
-        })
+            async_fs::create_dir_all(&destination_path).await?;
+
+            let server_path = match Self::GITHUB_ASSET_KIND {
+                AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Gz => destination_path
+                    .join(Self::build_asset_name()?.0)
+                    .join("ty"),
+                AssetKind::Zip => destination_path.clone().join("ty.exe"),
+            };
+
+            let binary = LanguageServerBinary {
+                path: server_path.clone(),
+                env: None,
+                arguments: vec!["server".into()],
+            };
+
+            let metadata_path = destination_path.with_extension("metadata");
+            let metadata = GithubBinaryMetadata::read_from_file(&metadata_path)
+                .await
+                .ok();
+            if let Some(metadata) = metadata {
+                let validity_check = async || {
+                    delegate
+                        .try_exec(LanguageServerBinary {
+                            path: server_path.clone(),
+                            arguments: vec!["--version".into()],
+                            env: None,
+                        })
+                        .await
+                        .inspect_err(|err| {
+                            log::warn!(
+                                "Unable to run {server_path:?} asset, redownloading: {err:#}",
+                            )
+                        })
+                };
+                if let (Some(actual_digest), Some(expected_digest)) =
+                    (&metadata.digest, &expected_digest)
+                {
+                    if actual_digest == expected_digest {
+                        if validity_check().await.is_ok() {
+                            return Ok(binary);
+                        }
+                    } else {
+                        log::info!(
+                            "SHA-256 mismatch for {destination_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
+                        );
+                    }
+                } else if validity_check().await.is_ok() {
+                    return Ok(binary);
+                }
+            }
+
+            download_server_binary(
+                &*delegate.http_client(),
+                &url,
+                expected_digest.as_deref(),
+                &destination_path,
+                Self::GITHUB_ASSET_KIND,
+            )
+            .await?;
+            make_file_executable(&server_path).await?;
+            remove_matching(&container_dir, |path| path != destination_path).await;
+            GithubBinaryMetadata::write_to_file(
+                &GithubBinaryMetadata {
+                    metadata_version: 1,
+                    digest: expected_digest,
+                },
+                &metadata_path,
+            )
+            .await?;
+
+            Ok(LanguageServerBinary {
+                path: server_path,
+                env: None,
+                arguments: vec!["server".into()],
+            })
+        }
     }
 
     async fn cached_server_binary(
@@ -527,7 +617,7 @@ impl LspInstaller for TyLspAdapter {
 
             let path = last.context("no cached binary")?;
             let path = match TyLspAdapter::GITHUB_ASSET_KIND {
-                AssetKind::TarGz | AssetKind::Gz => {
+                AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Gz => {
                     path.join(Self::build_asset_name()?.0).join("ty")
                 }
                 AssetKind::Zip => path.join("ty.exe"),
@@ -581,6 +671,10 @@ impl LspAdapter for PyrightLspAdapter {
         Self::SERVER_NAME
     }
 
+    fn is_opt_in_for(&self, language: &LanguageName) -> bool {
+        language == "Python"
+    }
+
     async fn initialization_options(
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,
@@ -632,40 +726,28 @@ impl LspAdapter for PyrightLspAdapter {
                     .and_then(|s| s.settings.clone())
                     .unwrap_or_default();
 
-            // If we have a detected toolchain, configure Pyright to use it
+            if !user_settings.is_object() {
+                user_settings = Value::Object(serde_json::Map::default());
+            }
+            let object = user_settings.as_object_mut().unwrap();
+
+            // If we have a detected toolchain, configure Pyright to use it - unless the user sets it themselves.
+            let should_insert_toolchain = || {
+                object
+                    .get("python")
+                    .and_then(Value::as_object)
+                    .is_none_or(|python| {
+                        !["pythonPath", "venvPath"]
+                            .into_iter()
+                            .any(|known_key| python.contains_key(known_key))
+                    })
+            };
             if let Some(toolchain) = toolchain
-                && let Ok(env) =
-                    serde_json::from_value::<PythonToolchainData>(toolchain.as_json.clone())
+                && should_insert_toolchain()
+                && serde_json::from_value::<PythonToolchainData>(toolchain.as_json.clone()).is_ok()
             {
-                if !user_settings.is_object() {
-                    user_settings = Value::Object(serde_json::Map::default());
-                }
-                let object = user_settings.as_object_mut().unwrap();
-
                 let interpreter_path = toolchain.path.to_string();
-                if let Some(venv_dir) = &env.environment.prefix {
-                    // Set venvPath and venv at the root level
-                    // This matches the format of a pyrightconfig.json file
-                    if let Some(parent) = venv_dir.parent() {
-                        // Use relative path if the venv is inside the workspace
-                        let venv_path = if parent == adapter.worktree_root_path() {
-                            ".".to_string()
-                        } else {
-                            parent.to_string_lossy().into_owned()
-                        };
-                        object.insert("venvPath".to_string(), Value::String(venv_path));
-                    }
 
-                    if let Some(venv_name) = venv_dir.file_name() {
-                        object.insert(
-                            "venv".to_owned(),
-                            Value::String(venv_name.to_string_lossy().into_owned()),
-                        );
-                    }
-                }
-
-                // Always set the python interpreter path
-                // Get or create the python section
                 let python = object
                     .entry("python")
                     .and_modify(|v| {
@@ -676,17 +758,10 @@ impl LspAdapter for PyrightLspAdapter {
                     .or_insert(Value::Object(serde_json::Map::default()));
                 let python = python.as_object_mut().unwrap();
 
-                // Set both pythonPath and defaultInterpreterPath for compatibility
-                python.insert(
-                    "pythonPath".to_owned(),
-                    Value::String(interpreter_path.clone()),
-                );
-                python.insert(
-                    "defaultInterpreterPath".to_owned(),
-                    Value::String(interpreter_path),
-                );
+                python.insert("pythonPath".to_owned(), Value::String(interpreter_path));
             }
 
+            normalize_pyright_analysis_configuration(&mut user_settings, "python");
             user_settings
         }))
     }
@@ -697,7 +772,7 @@ impl LspInstaller for PyrightLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        _: &dyn LspAdapterDelegate,
+        _: &Arc<dyn LspAdapterDelegate>,
         _: bool,
         _: &mut AsyncApp,
     ) -> Result<Self::BinaryVersion> {
@@ -708,7 +783,7 @@ impl LspInstaller for PyrightLspAdapter {
 
     async fn check_if_user_installed(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
@@ -737,57 +812,62 @@ impl LspInstaller for PyrightLspAdapter {
         }
     }
 
-    async fn fetch_server_binary(
+    fn fetch_server_binary(
         &self,
-        latest_version: Self::BinaryVersion,
+        _latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Result<LanguageServerBinary> {
-        let server_path = container_dir.join(Self::SERVER_PATH);
-        let latest_version = latest_version.to_string();
+        delegate: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
+        let delegate = delegate.clone();
+        let node = self.node.clone();
 
-        self.node
-            .npm_install_packages(
-                &container_dir,
-                &[(Self::SERVER_NAME.as_ref(), latest_version.as_str())],
-            )
-            .await?;
+        async move {
+            let server_path = container_dir.join(Self::SERVER_PATH);
+            node.npm_install_latest_packages(&container_dir, &[Self::SERVER_NAME.as_ref()])
+                .await?;
 
-        let env = delegate.shell_env().await;
-        Ok(LanguageServerBinary {
-            path: self.node.binary_path().await?,
-            env: Some(env),
-            arguments: vec![server_path.into(), "--stdio".into()],
-        })
-    }
-
-    async fn check_if_version_installed(
-        &self,
-        version: &Self::BinaryVersion,
-        container_dir: &PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Option<LanguageServerBinary> {
-        let server_path = container_dir.join(Self::SERVER_PATH);
-
-        let should_install_language_server = self
-            .node
-            .should_install_npm_package(
-                Self::SERVER_NAME.as_ref(),
-                &server_path,
-                container_dir,
-                VersionStrategy::Latest(version),
-            )
-            .await;
-
-        if should_install_language_server {
-            None
-        } else {
             let env = delegate.shell_env().await;
-            Some(LanguageServerBinary {
-                path: self.node.binary_path().await.ok()?,
+            Ok(LanguageServerBinary {
+                path: node.binary_path().await?,
                 env: Some(env),
                 arguments: vec![server_path.into(), "--stdio".into()],
             })
+        }
+    }
+
+    fn check_if_version_installed(
+        &self,
+        version: &Self::BinaryVersion,
+        container_dir: &PathBuf,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = Option<LanguageServerBinary>> + use<> {
+        let delegate = delegate.clone();
+        let node = self.node.clone();
+        let version = version.clone();
+        let container_dir = container_dir.clone();
+
+        async move {
+            let server_path = container_dir.join(Self::SERVER_PATH);
+
+            let should_install_language_server = node
+                .should_install_npm_package(
+                    Self::SERVER_NAME.as_ref(),
+                    &server_path,
+                    &container_dir,
+                    VersionStrategy::Latest(&version),
+                )
+                .await;
+
+            if should_install_language_server {
+                None
+            } else {
+                let env = delegate.shell_env().await;
+                Some(LanguageServerBinary {
+                    path: node.binary_path().await.ok()?,
+                    env: Some(env),
+                    arguments: vec![server_path.into(), "--stdio".into()],
+                })
+            }
         }
     }
 
@@ -822,11 +902,10 @@ impl ContextProvider for PythonContextProvider {
         toolchains: Arc<dyn LanguageToolchainStore>,
         cx: &mut gpui::App,
     ) -> Task<Result<task::TaskVariables>> {
-        let test_target =
-            match selected_test_runner(location.file_location.buffer.read(cx).file(), cx) {
-                TestRunner::UNITTEST => self.build_unittest_target(variables),
-                TestRunner::PYTEST => self.build_pytest_target(variables),
-            };
+        let test_target = match selected_test_runner(Some(&location.file_location.buffer), cx) {
+            TestRunner::UNITTEST => self.build_unittest_target(variables),
+            TestRunner::PYTEST => self.build_pytest_target(variables),
+        };
 
         let module_target = self.build_module_target(variables);
         let location_file = location.file_location.buffer.read(cx).file().cloned();
@@ -838,7 +917,7 @@ impl ContextProvider for PythonContextProvider {
                     .as_ref()
                     .and_then(|f| f.path().parent())
                     .map(Arc::from)
-                    .unwrap_or_else(|| RelPath::empty().into());
+                    .unwrap_or_else(|| RelPath::empty_arc());
 
                 toolchains
                     .active_toolchain(worktree_id, file_path, "Python".into(), cx)
@@ -856,7 +935,7 @@ impl ContextProvider for PythonContextProvider {
             Ok(task::TaskVariables::from_iter(
                 test_target
                     .into_iter()
-                    .chain(module_target.into_iter())
+                    .chain(module_target)
                     .chain([toolchain]),
             ))
         })
@@ -864,10 +943,10 @@ impl ContextProvider for PythonContextProvider {
 
     fn associated_tasks(
         &self,
-        file: Option<Arc<dyn language::File>>,
+        buffer: Option<Entity<Buffer>>,
         cx: &App,
     ) -> Task<Option<TaskTemplates>> {
-        let test_runner = selected_test_runner(file.as_ref(), cx);
+        let test_runner = selected_test_runner(buffer.as_ref(), cx);
 
         let mut tasks = vec![
             // Execute a selection
@@ -974,9 +1053,11 @@ impl ContextProvider for PythonContextProvider {
     }
 }
 
-fn selected_test_runner(location: Option<&Arc<dyn language::File>>, cx: &App) -> TestRunner {
+fn selected_test_runner(location: Option<&Entity<Buffer>>, cx: &App) -> TestRunner {
     const TEST_RUNNER_VARIABLE: &str = "TEST_RUNNER";
-    language_settings(Some(LanguageName::new_static("Python")), location, cx)
+    let language = LanguageName::new_static("Python");
+    let settings = LanguageSettings::resolve(location.map(|b| b.read(cx)), Some(&language), cx);
+    settings
         .tasks
         .variables
         .get(TEST_RUNNER_VARIABLE)
@@ -1060,7 +1141,7 @@ impl PythonContextProvider {
 
 fn python_module_name_from_relative_path(relative_path: &str) -> Option<String> {
     let rel_path = RelPath::new(relative_path.as_ref(), PathStyle::local()).ok()?;
-    let path_with_dots = rel_path.display(PathStyle::Posix).replace('/', ".");
+    let path_with_dots = rel_path.display(PathStyle::Unix).replace('/', ".");
     Some(
         path_with_dots
             .strip_suffix(".py")
@@ -1094,6 +1175,7 @@ fn python_env_kind_display(k: &PythonEnvironmentKind) -> &'static str {
         PythonEnvironmentKind::PyenvVirtualEnv => "Pyenv",
         PythonEnvironmentKind::Pipenv => "Pipenv",
         PythonEnvironmentKind::Poetry => "Poetry",
+        PythonEnvironmentKind::Hatch => "Hatch",
         PythonEnvironmentKind::MacPythonOrg => "global (Python.org)",
         PythonEnvironmentKind::MacCommandLineTools => "global (Command Line Tools for Xcode)",
         PythonEnvironmentKind::LinuxGlobal => "global",
@@ -1101,6 +1183,7 @@ fn python_env_kind_display(k: &PythonEnvironmentKind) -> &'static str {
         PythonEnvironmentKind::Venv => "venv",
         PythonEnvironmentKind::VirtualEnv => "virtualenv",
         PythonEnvironmentKind::VirtualEnvWrapper => "virtualenvwrapper",
+        PythonEnvironmentKind::WinPython => "WinPython",
         PythonEnvironmentKind::WindowsStore => "global (Windows Store)",
         PythonEnvironmentKind::WindowsRegistry => "global (Windows Registry)",
         PythonEnvironmentKind::Uv => "uv",
@@ -1108,7 +1191,15 @@ fn python_env_kind_display(k: &PythonEnvironmentKind) -> &'static str {
     }
 }
 
-pub(crate) struct PythonToolchainProvider;
+pub(crate) struct PythonToolchainProvider {
+    fs: Arc<dyn Fs>,
+}
+
+impl PythonToolchainProvider {
+    pub fn new(fs: Arc<dyn Fs>) -> Self {
+        Self { fs }
+    }
+}
 
 static ENV_PRIORITY_LIST: &[PythonEnvironmentKind] = &[
     // Prioritize non-Conda environments.
@@ -1209,7 +1300,7 @@ fn micromamba_shell_name(kind: ShellKind) -> &'static str {
         ShellKind::Csh => "csh",
         ShellKind::Fish => "fish",
         ShellKind::Nushell => "nu",
-        ShellKind::PowerShell => "powershell",
+        ShellKind::PowerShell | ShellKind::Pwsh => "powershell",
         ShellKind::Cmd => "cmd.exe",
         // default / catch-all:
         _ => "posix",
@@ -1223,8 +1314,8 @@ impl ToolchainLister for PythonToolchainProvider {
         worktree_root: PathBuf,
         subroot_relative_path: Arc<RelPath>,
         project_env: Option<HashMap<String, String>>,
-        fs: &dyn Fs,
     ) -> ToolchainList {
+        let fs = &*self.fs;
         let env = project_env.unwrap_or_default();
         let environment = EnvironmentApi::from_env(&env);
         let locators = pet::locators::create_locators(
@@ -1256,7 +1347,7 @@ impl ToolchainLister for PythonToolchainProvider {
         }
 
         let reporter = pet_reporter::collect::create_reporter();
-        pet::find::find_and_report_envs(&reporter, config, &locators, &environment, None);
+        pet::find::find_and_report_envs(&reporter, config, &locators, &environment, None, None);
 
         let mut toolchains = reporter
             .environments
@@ -1355,8 +1446,8 @@ impl ToolchainLister for PythonToolchainProvider {
         &self,
         path: PathBuf,
         env: Option<HashMap<String, String>>,
-        fs: &dyn Fs,
     ) -> anyhow::Result<Toolchain> {
+        let fs = &*self.fs;
         let env = env.unwrap_or_default();
         let environment = EnvironmentApi::from_env(&env);
         let locators = pet::locators::create_locators(
@@ -1420,23 +1511,36 @@ impl ToolchainLister for PythonToolchainProvider {
                     // Activate micromamba shell in the child shell
                     // [required for micromamba]
                     if manager == "micromamba" {
-                        let shell = micromamba_shell_name(shell);
-                        activation_script
-                            .push(format!(r#"eval "$({manager} shell hook --shell {shell})""#));
+                        match shell {
+                            ShellKind::PowerShell | ShellKind::Pwsh => {
+                                activation_script.push(format!(r#"(& {manager} shell hook --shell powershell) | Out-String | Invoke-Expression"#));
+                            }
+                            _ => {
+                                let shell_name = micromamba_shell_name(shell);
+                                activation_script.push(format!(
+                                    r#"eval "$({manager} shell hook --shell {shell_name})""#
+                                ));
+                            }
+                        }
                     }
 
+                    // Only inject `{manager} activate <name>` when we have a
+                    // safely-quotable name. Never silently fall back to
+                    // `activate base`: a user with miniforge installed but a
+                    // local uv/venv project should not have their terminal
+                    // hijacked just because we couldn't resolve a name.
                     if let Some(name) = &toolchain.environment.name {
                         if let Some(quoted_name) = shell.try_quote(name) {
                             activation_script.push(format!("{manager} activate {quoted_name}"));
                         } else {
                             log::warn!(
-                                "Could not safely quote environment name {:?}, falling back to base",
+                                "Conda environment name {:?} could not be safely quoted; \
+                                 skipping terminal activation",
                                 name
                             );
-                            activation_script.push(format!("{manager} activate base"));
                         }
                     } else {
-                        activation_script.push(format!("{manager} activate base"));
+                        log::warn!("Conda toolchain has no name; skipping terminal activation");
                     }
                 }
                 Some(
@@ -1722,6 +1826,10 @@ impl LspAdapter for PyLspAdapter {
         Self::SERVER_NAME
     }
 
+    fn is_opt_in_for(&self, language: &LanguageName) -> bool {
+        language == "Python"
+    }
+
     async fn process_completions(&self, items: &mut [lsp::CompletionItem]) {
         for item in items {
             let is_named_argument = item.label.ends_with('=');
@@ -1739,13 +1847,7 @@ impl LspAdapter for PyLspAdapter {
         let label = &item.label;
         let label_len = label.len();
         let grammar = language.grammar()?;
-        let highlight_id = match item.kind? {
-            lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method")?,
-            lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function")?,
-            lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type")?,
-            lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant")?,
-            _ => return None,
-        };
+        let highlight_id = highlight_id_for_completion(item.kind?, grammar)??;
         Some(language::CodeLabel::filtered(
             label.clone(),
             label_len,
@@ -1835,7 +1937,7 @@ impl LspInstaller for PyLspAdapter {
     type BinaryVersion = ();
     async fn check_if_user_installed(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
@@ -1884,53 +1986,57 @@ impl LspInstaller for PyLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        _: &dyn LspAdapterDelegate,
+        _: &Arc<dyn LspAdapterDelegate>,
         _: bool,
         _: &mut AsyncApp,
     ) -> Result<()> {
         Ok(())
     }
 
-    async fn fetch_server_binary(
+    fn fetch_server_binary(
         &self,
         _: (),
         _: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Result<LanguageServerBinary> {
-        let venv = self.base_venv(delegate).await.map_err(|e| anyhow!(e))?;
-        let pip_path = venv.join(BINARY_DIR).join("pip3");
-        ensure!(
-            util::command::new_command(pip_path.as_path())
-                .arg("install")
-                .arg("python-lsp-server[all]")
-                .arg("--upgrade")
-                .output()
-                .await?
-                .status
-                .success(),
-            "python-lsp-server[all] installation failed"
-        );
-        ensure!(
-            util::command::new_command(pip_path)
-                .arg("install")
-                .arg("pylsp-mypy")
-                .arg("--upgrade")
-                .output()
-                .await?
-                .status
-                .success(),
-            "pylsp-mypy installation failed"
-        );
-        let pylsp = venv.join(BINARY_DIR).join("pylsp");
-        ensure!(
-            delegate.which(pylsp.as_os_str()).await.is_some(),
-            "pylsp installation was incomplete"
-        );
-        Ok(LanguageServerBinary {
-            path: pylsp,
-            env: None,
-            arguments: vec![],
-        })
+        delegate: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
+        let delegate = delegate.clone();
+
+        async move {
+            let venv = Self::ensure_venv(delegate.as_ref()).await?;
+            let pip_path = venv.join(BINARY_DIR).join("pip3");
+            ensure!(
+                util::command::new_command(pip_path.as_path())
+                    .arg("install")
+                    .arg("python-lsp-server[all]")
+                    .arg("--upgrade")
+                    .output()
+                    .await?
+                    .status
+                    .success(),
+                "python-lsp-server[all] installation failed"
+            );
+            ensure!(
+                util::command::new_command(pip_path)
+                    .arg("install")
+                    .arg("pylsp-mypy")
+                    .arg("--upgrade")
+                    .output()
+                    .await?
+                    .status
+                    .success(),
+                "pylsp-mypy installation failed"
+            );
+            let pylsp = venv.join(BINARY_DIR).join("pylsp");
+            ensure!(
+                delegate.which(pylsp.as_os_str()).await.is_some(),
+                "pylsp installation was incomplete"
+            );
+            Ok(LanguageServerBinary {
+                path: pylsp,
+                env: None,
+                arguments: vec![],
+            })
+        }
     }
 
     async fn cached_server_binary(
@@ -2037,75 +2143,68 @@ impl LspAdapter for BasedPyrightLspAdapter {
                 language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
                     .and_then(|s| s.settings.clone())
                     .unwrap_or_default();
+            if !user_settings.is_object() {
+                user_settings = Value::Object(serde_json::Map::default());
+            }
+            let object = user_settings.as_object_mut().unwrap();
 
-            // If we have a detected toolchain, configure Pyright to use it
+            // Basedpyright by default uses `strict` type checking, we tone it down as to not surpris users
+            maybe!({
+                let analysis = object
+                    .entry("basedpyright.analysis")
+                    .or_insert(Value::Object(serde_json::Map::default()));
+                if let serde_json::map::Entry::Vacant(v) =
+                    analysis.as_object_mut()?.entry("typeCheckingMode")
+                {
+                    v.insert(Value::String("standard".to_owned()));
+                }
+                Some(())
+            });
+
+            // Disable basedpyright's organizeImports so ruff handles it instead
+            maybe!({
+                let basedpyright = object
+                    .entry("basedpyright")
+                    .or_insert(Value::Object(serde_json::Map::default()))
+                    .as_object_mut()?;
+                if let serde_json::map::Entry::Vacant(v) =
+                    basedpyright.entry("disableOrganizeImports")
+                {
+                    v.insert(Value::Bool(true));
+                }
+                Some(())
+            });
+
+            // If we have a detected toolchain, configure BasedPyright to use it - unless the user sets it themselves.
+            let should_insert_toolchain = || {
+                object
+                    .get("python")
+                    .and_then(Value::as_object)
+                    .is_none_or(|python| {
+                        !["pythonPath", "venvPath"]
+                            .into_iter()
+                            .any(|known_key| python.contains_key(known_key))
+                    })
+            };
             if let Some(toolchain) = toolchain
-                && let Ok(env) = serde_json::from_value::<
-                    pet_core::python_environment::PythonEnvironment,
-                >(toolchain.as_json.clone())
+                && should_insert_toolchain()
+                && serde_json::from_value::<pet_core::python_environment::PythonEnvironment>(
+                    toolchain.as_json.clone(),
+                )
+                .is_ok()
             {
-                if !user_settings.is_object() {
-                    user_settings = Value::Object(serde_json::Map::default());
-                }
-                let object = user_settings.as_object_mut().unwrap();
-
                 let interpreter_path = toolchain.path.to_string();
-                if let Some(venv_dir) = env.prefix {
-                    // Set venvPath and venv at the root level
-                    // This matches the format of a pyrightconfig.json file
-                    if let Some(parent) = venv_dir.parent() {
-                        // Use relative path if the venv is inside the workspace
-                        let venv_path = if parent == adapter.worktree_root_path() {
-                            ".".to_string()
-                        } else {
-                            parent.to_string_lossy().into_owned()
-                        };
-                        object.insert("venvPath".to_string(), Value::String(venv_path));
-                    }
 
-                    if let Some(venv_name) = venv_dir.file_name() {
-                        object.insert(
-                            "venv".to_owned(),
-                            Value::String(venv_name.to_string_lossy().into_owned()),
-                        );
-                    }
-                }
-
-                // Set both pythonPath and defaultInterpreterPath for compatibility
                 if let Some(python) = object
                     .entry("python")
                     .or_insert(Value::Object(serde_json::Map::default()))
                     .as_object_mut()
                 {
-                    python.insert(
-                        "pythonPath".to_owned(),
-                        Value::String(interpreter_path.clone()),
-                    );
-                    python.insert(
-                        "defaultInterpreterPath".to_owned(),
-                        Value::String(interpreter_path),
-                    );
-                }
-                // Basedpyright by default uses `strict` type checking, we tone it down as to not surpris users
-                maybe!({
-                    let analysis = object
-                        .entry("basedpyright.analysis")
-                        .or_insert(Value::Object(serde_json::Map::default()));
-                    if let serde_json::map::Entry::Vacant(v) =
-                        analysis.as_object_mut()?.entry("typeCheckingMode")
-                    {
-                        v.insert(Value::String("standard".to_owned()));
-                    }
-                    Some(())
-                });
-                // Disable basedpyright's organizeImports so ruff handles it instead
-                if let serde_json::map::Entry::Vacant(v) =
-                    object.entry("basedpyright.disableOrganizeImports")
-                {
-                    v.insert(Value::Bool(true));
+                    python.insert("pythonPath".to_owned(), Value::String(interpreter_path));
                 }
             }
 
+            normalize_pyright_analysis_configuration(&mut user_settings, "basedpyright");
             user_settings
         }))
     }
@@ -2116,7 +2215,7 @@ impl LspInstaller for BasedPyrightLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        _: &dyn LspAdapterDelegate,
+        _: &Arc<dyn LspAdapterDelegate>,
         _: bool,
         _: &mut AsyncApp,
     ) -> Result<Self::BinaryVersion> {
@@ -2127,7 +2226,7 @@ impl LspInstaller for BasedPyrightLspAdapter {
 
     async fn check_if_user_installed(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
@@ -2157,57 +2256,62 @@ impl LspInstaller for BasedPyrightLspAdapter {
         }
     }
 
-    async fn fetch_server_binary(
+    fn fetch_server_binary(
         &self,
-        latest_version: Self::BinaryVersion,
+        _latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Result<LanguageServerBinary> {
-        let server_path = container_dir.join(Self::SERVER_PATH);
-        let latest_version = latest_version.to_string();
+        delegate: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
+        let delegate = delegate.clone();
+        let node = self.node.clone();
 
-        self.node
-            .npm_install_packages(
-                &container_dir,
-                &[(Self::SERVER_NAME.as_ref(), latest_version.as_str())],
-            )
-            .await?;
+        async move {
+            let server_path = container_dir.join(Self::SERVER_PATH);
+            node.npm_install_latest_packages(&container_dir, &[Self::SERVER_NAME.as_ref()])
+                .await?;
 
-        let env = delegate.shell_env().await;
-        Ok(LanguageServerBinary {
-            path: self.node.binary_path().await?,
-            env: Some(env),
-            arguments: vec![server_path.into(), "--stdio".into()],
-        })
-    }
-
-    async fn check_if_version_installed(
-        &self,
-        version: &Self::BinaryVersion,
-        container_dir: &PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Option<LanguageServerBinary> {
-        let server_path = container_dir.join(Self::SERVER_PATH);
-
-        let should_install_language_server = self
-            .node
-            .should_install_npm_package(
-                Self::SERVER_NAME.as_ref(),
-                &server_path,
-                container_dir,
-                VersionStrategy::Latest(version),
-            )
-            .await;
-
-        if should_install_language_server {
-            None
-        } else {
             let env = delegate.shell_env().await;
-            Some(LanguageServerBinary {
-                path: self.node.binary_path().await.ok()?,
+            Ok(LanguageServerBinary {
+                path: node.binary_path().await?,
                 env: Some(env),
                 arguments: vec![server_path.into(), "--stdio".into()],
             })
+        }
+    }
+
+    fn check_if_version_installed(
+        &self,
+        version: &Self::BinaryVersion,
+        container_dir: &PathBuf,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = Option<LanguageServerBinary>> + use<> {
+        let delegate = delegate.clone();
+        let node = self.node.clone();
+        let version = version.clone();
+        let container_dir = container_dir.clone();
+
+        async move {
+            let server_path = container_dir.join(Self::SERVER_PATH);
+
+            let should_install_language_server = node
+                .should_install_npm_package(
+                    Self::SERVER_NAME.as_ref(),
+                    &server_path,
+                    &container_dir,
+                    VersionStrategy::Latest(&version),
+                )
+                .await;
+
+            if should_install_language_server {
+                None
+            } else {
+                let env = delegate.shell_env().await;
+                Some(LanguageServerBinary {
+                    path: node.binary_path().await.ok()?,
+                    env: Some(env),
+                    arguments: vec![server_path.into(), "--stdio".into()],
+                })
+            }
         }
     }
 
@@ -2445,7 +2549,7 @@ impl LspInstaller for RuffLspAdapter {
     type BinaryVersion = GitHubLspBinaryVersion;
     async fn check_if_user_installed(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
@@ -2475,7 +2579,7 @@ impl LspInstaller for RuffLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         _: bool,
         _: &mut AsyncApp,
     ) -> Result<GitHubLspBinaryVersion> {
@@ -2494,89 +2598,95 @@ impl LspInstaller for RuffLspAdapter {
         })
     }
 
-    async fn fetch_server_binary(
+    fn fetch_server_binary(
         &self,
         latest_version: GitHubLspBinaryVersion,
         container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Result<LanguageServerBinary> {
-        let GitHubLspBinaryVersion {
-            name,
-            url,
-            digest: expected_digest,
-        } = latest_version;
-        let destination_path = container_dir.join(format!("ruff-{name}"));
-        let server_path = match Self::GITHUB_ASSET_KIND {
-            AssetKind::TarGz | AssetKind::Gz => destination_path
-                .join(Self::build_asset_name()?.0)
-                .join("ruff"),
-            AssetKind::Zip => destination_path.clone().join("ruff.exe"),
-        };
+        delegate: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
+        let delegate = delegate.clone();
 
-        let binary = LanguageServerBinary {
-            path: server_path.clone(),
-            env: None,
-            arguments: vec!["server".into()],
-        };
-
-        let metadata_path = destination_path.with_extension("metadata");
-        let metadata = GithubBinaryMetadata::read_from_file(&metadata_path)
-            .await
-            .ok();
-        if let Some(metadata) = metadata {
-            let validity_check = async || {
-                delegate
-                    .try_exec(LanguageServerBinary {
-                        path: server_path.clone(),
-                        arguments: vec!["--version".into()],
-                        env: None,
-                    })
-                    .await
-                    .inspect_err(|err| {
-                        log::warn!("Unable to run {server_path:?} asset, redownloading: {err:#}",)
-                    })
-            };
-            if let (Some(actual_digest), Some(expected_digest)) =
-                (&metadata.digest, &expected_digest)
-            {
-                if actual_digest == expected_digest {
-                    if validity_check().await.is_ok() {
-                        return Ok(binary);
-                    }
-                } else {
-                    log::info!(
-                        "SHA-256 mismatch for {destination_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
-                    );
-                }
-            } else if validity_check().await.is_ok() {
-                return Ok(binary);
-            }
-        }
-
-        download_server_binary(
-            &*delegate.http_client(),
-            &url,
-            expected_digest.as_deref(),
-            &destination_path,
-            Self::GITHUB_ASSET_KIND,
-        )
-        .await?;
-        make_file_executable(&server_path).await?;
-        remove_matching(&container_dir, |path| path != destination_path).await;
-        GithubBinaryMetadata::write_to_file(
-            &GithubBinaryMetadata {
-                metadata_version: 1,
+        async move {
+            let GitHubLspBinaryVersion {
+                name,
+                url,
                 digest: expected_digest,
-            },
-            &metadata_path,
-        )
-        .await?;
+            } = latest_version;
+            let destination_path = container_dir.join(format!("ruff-{name}"));
+            let server_path = match Self::GITHUB_ASSET_KIND {
+                AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Gz => destination_path
+                    .join(Self::build_asset_name()?.0)
+                    .join("ruff"),
+                AssetKind::Zip => destination_path.clone().join("ruff.exe"),
+            };
 
-        Ok(LanguageServerBinary {
-            path: server_path,
-            env: None,
-            arguments: vec!["server".into()],
-        })
+            let binary = LanguageServerBinary {
+                path: server_path.clone(),
+                env: None,
+                arguments: vec!["server".into()],
+            };
+
+            let metadata_path = destination_path.with_extension("metadata");
+            let metadata = GithubBinaryMetadata::read_from_file(&metadata_path)
+                .await
+                .ok();
+            if let Some(metadata) = metadata {
+                let validity_check = async || {
+                    delegate
+                        .try_exec(LanguageServerBinary {
+                            path: server_path.clone(),
+                            arguments: vec!["--version".into()],
+                            env: None,
+                        })
+                        .await
+                        .inspect_err(|err| {
+                            log::warn!(
+                                "Unable to run {server_path:?} asset, redownloading: {err:#}",
+                            )
+                        })
+                };
+                if let (Some(actual_digest), Some(expected_digest)) =
+                    (&metadata.digest, &expected_digest)
+                {
+                    if actual_digest == expected_digest {
+                        if validity_check().await.is_ok() {
+                            return Ok(binary);
+                        }
+                    } else {
+                        log::info!(
+                            "SHA-256 mismatch for {destination_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
+                        );
+                    }
+                } else if validity_check().await.is_ok() {
+                    return Ok(binary);
+                }
+            }
+
+            download_server_binary(
+                &*delegate.http_client(),
+                &url,
+                expected_digest.as_deref(),
+                &destination_path,
+                Self::GITHUB_ASSET_KIND,
+            )
+            .await?;
+            make_file_executable(&server_path).await?;
+            remove_matching(&container_dir, |path| path != destination_path).await;
+            GithubBinaryMetadata::write_to_file(
+                &GithubBinaryMetadata {
+                    metadata_version: 1,
+                    digest: expected_digest,
+                },
+                &metadata_path,
+            )
+            .await?;
+
+            Ok(LanguageServerBinary {
+                path: server_path,
+                env: None,
+                arguments: vec!["server".into()],
+            })
+        }
     }
 
     async fn cached_server_binary(
@@ -2597,7 +2707,7 @@ impl LspInstaller for RuffLspAdapter {
 
             let path = last.context("no cached binary")?;
             let path = match Self::GITHUB_ASSET_KIND {
-                AssetKind::TarGz | AssetKind::Gz => {
+                AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Gz => {
                     path.join(Self::build_asset_name()?.0).join("ruff")
                 }
                 AssetKind::Zip => path.join("ruff.exe"),
@@ -2614,6 +2724,306 @@ impl LspInstaller for RuffLspAdapter {
     }
 }
 
+pub(crate) struct PyreflyLspAdapter {
+    fs: Arc<dyn Fs>,
+}
+
+#[cfg(target_os = "macos")]
+impl PyreflyLspAdapter {
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
+    const ARCH_SERVER_NAME: &str = "macos";
+}
+
+#[cfg(target_os = "linux")]
+impl PyreflyLspAdapter {
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
+    const ARCH_SERVER_NAME: &str = "linux";
+}
+
+#[cfg(target_os = "windows")]
+impl PyreflyLspAdapter {
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Zip;
+    const ARCH_SERVER_NAME: &str = "windows";
+}
+
+impl PyreflyLspAdapter {
+    const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("pyrefly");
+
+    pub(crate) fn new(fs: Arc<dyn Fs>) -> Self {
+        Self { fs }
+    }
+
+    fn build_asset_name() -> Result<(String, String)> {
+        let arch = match consts::ARCH {
+            "aarch64" => "arm64",
+            "x86" => "i686",
+            _ => consts::ARCH,
+        };
+        let os = Self::ARCH_SERVER_NAME;
+        let suffix = match consts::OS {
+            "windows" => "zip",
+            _ => "tar.gz",
+        };
+        let asset_name = format!("pyrefly-{os}-{arch}.{suffix}");
+        let asset_stem = format!("pyrefly-{os}-{arch}");
+        Ok((asset_stem, asset_name))
+    }
+}
+
+#[async_trait(?Send)]
+impl LspAdapter for PyreflyLspAdapter {
+    fn name(&self) -> LanguageServerName {
+        Self::SERVER_NAME
+    }
+
+    async fn process_completions(&self, _items: &mut [lsp::CompletionItem]) {}
+
+    async fn label_for_completion(
+        &self,
+        item: &lsp::CompletionItem,
+        language: &Arc<language::Language>,
+    ) -> Option<language::CodeLabel> {
+        let label = &item.label;
+        let label_len = label.len();
+        let grammar = language.grammar()?;
+        let highlight_id = match item.kind? {
+            lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method")?,
+            lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function")?,
+            lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type")?,
+            lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant")?,
+            _ => return None,
+        };
+        Some(language::CodeLabel::filtered(
+            label.clone(),
+            label_len,
+            item.filter_text.as_deref(),
+            vec![(0..label.len(), highlight_id)],
+        ))
+    }
+
+    async fn label_for_symbol(
+        &self,
+        symbol: &Symbol,
+        language: &Arc<language::Language>,
+    ) -> Option<language::CodeLabel> {
+        label_for_python_symbol(symbol, language)
+    }
+
+    async fn workspace_configuration(
+        self: Arc<Self>,
+        adapter: &Arc<dyn LspAdapterDelegate>,
+        toolchain: Option<Toolchain>,
+        _: Option<Uri>,
+        cx: &mut AsyncApp,
+    ) -> Result<Value> {
+        let mut user_settings = cx
+            .update(move |cx| {
+                language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
+                    .and_then(|s| s.settings.clone())
+            })
+            .unwrap_or_default();
+
+        if let Some(toolchain) = toolchain
+            && let Ok(env) = serde_json::from_value::<PythonToolchainData>(toolchain.as_json)
+        {
+            if !user_settings.is_object() {
+                user_settings = Value::Object(serde_json::Map::default());
+            }
+            let object = user_settings.as_object_mut().unwrap();
+
+            if let Some(interpreter_path) = &env.environment.executable {
+                object.insert(
+                    "pythonPath".to_owned(),
+                    Value::String(interpreter_path.to_string_lossy().into_owned()),
+                );
+            }
+        }
+
+        Ok(user_settings)
+    }
+}
+
+impl LspInstaller for PyreflyLspAdapter {
+    type BinaryVersion = GitHubLspBinaryVersion;
+
+    async fn check_if_user_installed(
+        &self,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        toolchain: Option<Toolchain>,
+        _: &AsyncApp,
+    ) -> Option<LanguageServerBinary> {
+        let pyrefly_in_venv = if let Some(toolchain) = toolchain
+            && toolchain.language_name.as_ref() == "Python"
+        {
+            Path::new(toolchain.path.as_str())
+                .parent()
+                .map(|path| path.join("pyrefly"))
+        } else {
+            None
+        };
+
+        for path in pyrefly_in_venv.into_iter().chain(["pyrefly".into()]) {
+            if let Some(pyrefly_bin) = delegate.which(path.as_os_str()).await {
+                let env = delegate.shell_env().await;
+                return Some(LanguageServerBinary {
+                    path: pyrefly_bin,
+                    env: Some(env),
+                    arguments: vec!["lsp".into()],
+                });
+            }
+        }
+
+        None
+    }
+
+    async fn fetch_latest_server_version(
+        &self,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        _: bool,
+        _: &mut AsyncApp,
+    ) -> Result<GitHubLspBinaryVersion> {
+        let release =
+            latest_github_release("facebook/pyrefly", true, false, delegate.http_client()).await?;
+        let (_, asset_name) = Self::build_asset_name()?;
+        let asset = release
+            .assets
+            .into_iter()
+            .find(|asset| asset.name == asset_name)
+            .with_context(|| format!("no asset found matching `{asset_name:?}`"))?;
+        Ok(GitHubLspBinaryVersion {
+            name: release.tag_name,
+            url: asset.browser_download_url,
+            digest: asset.digest,
+        })
+    }
+
+    fn fetch_server_binary(
+        &self,
+        latest_version: GitHubLspBinaryVersion,
+        container_dir: PathBuf,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
+        let delegate = delegate.clone();
+
+        async move {
+            let GitHubLspBinaryVersion {
+                name,
+                url,
+                digest: expected_digest,
+            } = latest_version;
+            let destination_path = container_dir.join(format!("pyrefly-{name}"));
+
+            async_fs::create_dir_all(&destination_path).await?;
+
+            let server_path = match Self::GITHUB_ASSET_KIND {
+                AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Gz => {
+                    destination_path.join("pyrefly")
+                }
+                AssetKind::Zip => destination_path.join("pyrefly.exe"),
+            };
+
+            let binary = LanguageServerBinary {
+                path: server_path.clone(),
+                env: None,
+                arguments: vec!["lsp".into()],
+            };
+
+            let metadata_path = destination_path.with_extension("metadata");
+            let metadata = GithubBinaryMetadata::read_from_file(&metadata_path)
+                .await
+                .ok();
+            if let Some(metadata) = metadata {
+                let validity_check = async || {
+                    delegate
+                        .try_exec(LanguageServerBinary {
+                            path: server_path.clone(),
+                            arguments: vec!["--version".into()],
+                            env: None,
+                        })
+                        .await
+                        .inspect_err(|err| {
+                            log::warn!(
+                                "Unable to run {server_path:?} asset, redownloading: {err:#}",
+                            )
+                        })
+                };
+                if let (Some(actual_digest), Some(expected_digest)) =
+                    (&metadata.digest, &expected_digest)
+                {
+                    if actual_digest == expected_digest {
+                        if validity_check().await.is_ok() {
+                            return Ok(binary);
+                        }
+                    } else {
+                        log::info!(
+                            "SHA-256 mismatch for {destination_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
+                        );
+                    }
+                } else if validity_check().await.is_ok() {
+                    return Ok(binary);
+                }
+            }
+
+            download_server_binary(
+                &*delegate.http_client(),
+                &url,
+                expected_digest.as_deref(),
+                &destination_path,
+                Self::GITHUB_ASSET_KIND,
+            )
+            .await?;
+            make_file_executable(&server_path).await?;
+            remove_matching(&container_dir, |path| path != destination_path).await;
+            GithubBinaryMetadata::write_to_file(
+                &GithubBinaryMetadata {
+                    metadata_version: 1,
+                    digest: expected_digest,
+                },
+                &metadata_path,
+            )
+            .await?;
+
+            Ok(LanguageServerBinary {
+                path: server_path,
+                env: None,
+                arguments: vec!["lsp".into()],
+            })
+        }
+    }
+
+    async fn cached_server_binary(
+        &self,
+        container_dir: PathBuf,
+        _: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        maybe!(async {
+            let mut last = None;
+            let mut entries = self.fs.read_dir(&container_dir).await?;
+            while let Some(entry) = entries.next().await {
+                let path = entry?;
+                if path.extension().is_some_and(|ext| ext == "metadata") {
+                    continue;
+                }
+                last = Some(path);
+            }
+
+            let path = last.context("no cached binary")?;
+            let path = match Self::GITHUB_ASSET_KIND {
+                AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Gz => path.join("pyrefly"),
+                AssetKind::Zip => path.join("pyrefly.exe"),
+            };
+
+            anyhow::Ok(LanguageServerBinary {
+                path,
+                env: None,
+                arguments: vec!["lsp".into()],
+            })
+        })
+        .await
+        .log_err()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use gpui::{AppContext as _, BorrowAppContext, Context, TestAppContext};
@@ -2621,7 +3031,128 @@ mod tests {
     use settings::SettingsStore;
     use std::num::NonZeroU32;
 
-    use crate::python::python_module_name_from_relative_path;
+    use crate::python::{
+        normalize_pyright_analysis_configuration, python_module_name_from_relative_path,
+    };
+
+    #[test]
+    fn test_normalize_legacy_basedpyright_analysis_configuration() {
+        let mut workspace_configuration = serde_json::json!({
+            "basedpyright.analysis": {
+                "diagnosticMode": "workspace",
+                "typeCheckingMode": "basic"
+            }
+        });
+
+        normalize_pyright_analysis_configuration(&mut workspace_configuration, "basedpyright");
+
+        assert_eq!(
+            workspace_configuration,
+            serde_json::json!({
+                "basedpyright": {
+                    "analysis": {
+                        "diagnosticMode": "workspace",
+                        "typeCheckingMode": "basic"
+                    }
+                },
+                "basedpyright.analysis": {
+                    "diagnosticMode": "workspace",
+                    "typeCheckingMode": "basic"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn test_normalize_nested_basedpyright_analysis_configuration() {
+        let mut workspace_configuration = serde_json::json!({
+            "basedpyright": {
+                "analysis": {
+                    "diagnosticMode": "workspace"
+                },
+                "unrelated": true
+            }
+        });
+
+        normalize_pyright_analysis_configuration(&mut workspace_configuration, "basedpyright");
+
+        assert_eq!(
+            workspace_configuration,
+            serde_json::json!({
+                "basedpyright": {
+                    "analysis": {
+                        "diagnosticMode": "workspace"
+                    },
+                    "unrelated": true
+                },
+                "basedpyright.analysis": {
+                    "diagnosticMode": "workspace"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn test_normalize_merges_both_analysis_configuration_with_conflicts() {
+        let mut workspace_configuration = serde_json::json!({
+            "basedpyright": {
+                "analysis": {
+                    "diagnosticMode": "workspace",
+                }
+            },
+            "basedpyright.analysis": {
+                "typeCheckingMode": "standard",
+                "diagnosticMode": "openFilesOnly"
+            }
+        });
+
+        normalize_pyright_analysis_configuration(&mut workspace_configuration, "basedpyright");
+
+        // Settings from both forms survive, with the nested form winning on conflicting keys.
+        assert_eq!(
+            workspace_configuration,
+            serde_json::json!({
+                "basedpyright": {
+                    "analysis": {
+                        "diagnosticMode": "workspace",
+                        "typeCheckingMode": "standard",
+                    }
+                },
+                "basedpyright.analysis": {
+                    "diagnosticMode": "workspace",
+                    "typeCheckingMode": "standard",
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn test_normalize_pyright_analysis_configuration() {
+        let mut workspace_configuration = serde_json::json!({
+            "python.analysis": {
+                "diagnosticMode": "workspace",
+                "typeCheckingMode": "basic"
+            }
+        });
+
+        normalize_pyright_analysis_configuration(&mut workspace_configuration, "python");
+
+        assert_eq!(
+            workspace_configuration,
+            serde_json::json!({
+                "python": {
+                    "analysis": {
+                        "diagnosticMode": "workspace",
+                        "typeCheckingMode": "basic"
+                    }
+                },
+                "python.analysis": {
+                    "diagnosticMode": "workspace",
+                    "typeCheckingMode": "basic"
+                }
+            })
+        );
+    }
 
     #[gpui::test]
     async fn test_conda_activation_script_injection(cx: &mut TestAppContext) {
@@ -2651,7 +3182,8 @@ mod tests {
             });
         });
 
-        let provider = PythonToolchainProvider;
+        let fs = project::FakeFs::new(cx.executor());
+        let provider = PythonToolchainProvider::new(fs);
         let malicious_name = "foo; rm -rf /";
 
         let manager_executable = std::env::current_exe().unwrap();
@@ -2689,6 +3221,143 @@ mod tests {
                 .iter()
                 .any(|s| s.contains("conda activate 'foo; rm -rf /'")),
             "Script should contain quoted malicious name, actual: {:?}",
+            script
+        );
+    }
+
+    #[gpui::test]
+    async fn test_conda_activation_skips_when_name_missing(cx: &mut TestAppContext) {
+        use language::{LanguageName, Toolchain, ToolchainLister};
+        use settings::{CondaManager, VenvSettings};
+        use task::ShellKind;
+
+        use crate::python::PythonToolchainProvider;
+
+        cx.executor().allow_parking();
+
+        cx.update(|cx| {
+            let test_settings = SettingsStore::test(cx);
+            cx.set_global(test_settings);
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |s| {
+                    s.terminal
+                        .get_or_insert_with(Default::default)
+                        .project
+                        .detect_venv = Some(VenvSettings::On {
+                        activate_script: None,
+                        venv_name: None,
+                        directories: None,
+                        conda_manager: Some(CondaManager::Conda),
+                    });
+                });
+            });
+        });
+
+        let fs = project::FakeFs::new(cx.executor());
+        let provider = PythonToolchainProvider::new(fs);
+        let manager_executable = std::env::current_exe().unwrap();
+
+        let data = serde_json::json!({
+            "name": serde_json::Value::Null,
+            "kind": "Conda",
+            "executable": "/tmp/conda/bin/python",
+            "version": serde_json::Value::Null,
+            "prefix": serde_json::Value::Null,
+            "arch": serde_json::Value::Null,
+            "displayName": serde_json::Value::Null,
+            "project": serde_json::Value::Null,
+            "symlinks": serde_json::Value::Null,
+            "manager": {
+                "executable": manager_executable,
+                "version": serde_json::Value::Null,
+                "tool": "Conda",
+            },
+        });
+
+        let toolchain = Toolchain {
+            name: "test".into(),
+            path: "/tmp/conda".into(),
+            language_name: LanguageName::new_static("Python"),
+            as_json: data,
+        };
+
+        let script = cx
+            .update(|cx| provider.activation_script(&toolchain, ShellKind::Posix, cx))
+            .await;
+
+        assert!(
+            script.is_empty(),
+            "Nameless conda toolchains must not fall back to `conda activate base`, actual: {:?}",
+            script
+        );
+    }
+
+    #[gpui::test]
+    async fn test_conda_activation_skips_unquotable_name(cx: &mut TestAppContext) {
+        use language::{LanguageName, Toolchain, ToolchainLister};
+        use settings::{CondaManager, VenvSettings};
+        use task::ShellKind;
+
+        use crate::python::PythonToolchainProvider;
+
+        cx.executor().allow_parking();
+
+        cx.update(|cx| {
+            let test_settings = SettingsStore::test(cx);
+            cx.set_global(test_settings);
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |s| {
+                    s.terminal
+                        .get_or_insert_with(Default::default)
+                        .project
+                        .detect_venv = Some(VenvSettings::On {
+                        activate_script: None,
+                        venv_name: None,
+                        directories: None,
+                        conda_manager: Some(CondaManager::Conda),
+                    });
+                });
+            });
+        });
+
+        let fs = project::FakeFs::new(cx.executor());
+        let provider = PythonToolchainProvider::new(fs);
+        // shlex::try_quote rejects strings containing a NUL byte, so this name
+        // is guaranteed to fail the Posix quoting path.
+        let unquotable_name = "foo\0bar";
+        let manager_executable = std::env::current_exe().unwrap();
+
+        let data = serde_json::json!({
+            "name": unquotable_name,
+            "kind": "Conda",
+            "executable": "/tmp/conda/bin/python",
+            "version": serde_json::Value::Null,
+            "prefix": serde_json::Value::Null,
+            "arch": serde_json::Value::Null,
+            "displayName": serde_json::Value::Null,
+            "project": serde_json::Value::Null,
+            "symlinks": serde_json::Value::Null,
+            "manager": {
+                "executable": manager_executable,
+                "version": serde_json::Value::Null,
+                "tool": "Conda",
+            },
+        });
+
+        let toolchain = Toolchain {
+            name: "test".into(),
+            path: "/tmp/conda".into(),
+            language_name: LanguageName::new_static("Python"),
+            as_json: data,
+        };
+
+        let script = cx
+            .update(|cx| provider.activation_script(&toolchain, ShellKind::Posix, cx))
+            .await;
+
+        assert!(
+            !script.iter().any(|s| s.contains("conda activate")),
+            "Unquotable conda env names must not emit any `conda activate` line, actual: {:?}",
             script
         );
     }
@@ -2996,5 +3665,149 @@ mod tests {
         assert!(enum_values.contains(&serde_json::json!("double")));
         assert!(enum_values.contains(&serde_json::json!("single")));
         assert!(enum_values.contains(&serde_json::json!("preserve")));
+    }
+
+    mod pyproject_manifest_tests {
+        use std::collections::HashSet;
+        use std::sync::Arc;
+
+        use language::{ManifestDelegate, ManifestProvider, ManifestQuery};
+        use settings::WorktreeId;
+        use util::rel_path::RelPath;
+
+        use crate::python::PyprojectTomlManifestProvider;
+
+        struct FakeManifestDelegate {
+            existing_files: HashSet<&'static str>,
+        }
+
+        impl ManifestDelegate for FakeManifestDelegate {
+            fn worktree_id(&self) -> WorktreeId {
+                WorktreeId::from_usize(0)
+            }
+
+            fn exists(&self, path: &RelPath, _is_dir: Option<bool>) -> bool {
+                self.existing_files.contains(path.as_unix_str())
+            }
+        }
+
+        fn search(files: &[&'static str], query_path: &str) -> Option<Arc<RelPath>> {
+            let delegate = Arc::new(FakeManifestDelegate {
+                existing_files: files.iter().copied().collect(),
+            });
+            let provider = PyprojectTomlManifestProvider;
+            provider.search(ManifestQuery {
+                path: RelPath::from_unix_str(query_path).unwrap().into(),
+                depth: 10,
+                delegate,
+            })
+        }
+
+        #[test]
+        fn test_simple_project_no_lockfile() {
+            let result = search(&["project/pyproject.toml"], "project/src/main.py");
+            assert_eq!(result.as_deref(), RelPath::from_unix_str("project").ok());
+        }
+
+        #[test]
+        fn test_uv_workspace_returns_root() {
+            let result = search(
+                &[
+                    "pyproject.toml",
+                    "uv.lock",
+                    "packages/subproject/pyproject.toml",
+                ],
+                "packages/subproject/src/main.py",
+            );
+            assert_eq!(result.as_deref(), RelPath::from_unix_str("").ok());
+        }
+
+        #[test]
+        fn test_poetry_workspace_returns_root() {
+            let result = search(
+                &["pyproject.toml", "poetry.lock", "libs/mylib/pyproject.toml"],
+                "libs/mylib/src/main.py",
+            );
+            assert_eq!(result.as_deref(), RelPath::from_unix_str("").ok());
+        }
+
+        #[test]
+        fn test_pdm_workspace_returns_root() {
+            let result = search(
+                &[
+                    "pyproject.toml",
+                    "pdm.lock",
+                    "packages/mypackage/pyproject.toml",
+                ],
+                "packages/mypackage/src/main.py",
+            );
+            assert_eq!(result.as_deref(), RelPath::from_unix_str("").ok());
+        }
+
+        #[test]
+        fn test_independent_subprojects_no_lockfile_at_root() {
+            let result_a = search(
+                &["project-a/pyproject.toml", "project-b/pyproject.toml"],
+                "project-a/src/main.py",
+            );
+            assert_eq!(
+                result_a.as_deref(),
+                RelPath::from_unix_str("project-a").ok()
+            );
+
+            let result_b = search(
+                &["project-a/pyproject.toml", "project-b/pyproject.toml"],
+                "project-b/src/main.py",
+            );
+            assert_eq!(
+                result_b.as_deref(),
+                RelPath::from_unix_str("project-b").ok()
+            );
+        }
+
+        #[test]
+        fn test_no_pyproject_returns_none() {
+            let result = search(&[], "src/main.py");
+            assert_eq!(result, None);
+        }
+
+        #[test]
+        fn test_subproject_with_own_lockfile_and_workspace_root() {
+            // Both root and subproject have lockfiles; should return root (outermost)
+            let result = search(
+                &[
+                    "pyproject.toml",
+                    "uv.lock",
+                    "packages/sub/pyproject.toml",
+                    "packages/sub/uv.lock",
+                ],
+                "packages/sub/src/main.py",
+            );
+            assert_eq!(result.as_deref(), RelPath::from_unix_str("").ok());
+        }
+
+        #[test]
+        fn test_depth_limits_search() {
+            let delegate = Arc::new(FakeManifestDelegate {
+                existing_files: ["pyproject.toml", "uv.lock", "deep/nested/pyproject.toml"]
+                    .into_iter()
+                    .collect(),
+            });
+            let provider = PyprojectTomlManifestProvider;
+            // depth=3 from "deep/nested/src/main.py" searches:
+            //   "deep/nested/src/main.py", "deep/nested/src", and "deep/nested"
+            // It won't reach "deep" or root ""
+            let result = provider.search(ManifestQuery {
+                path: RelPath::from_unix_str("deep/nested/src/main.py")
+                    .unwrap()
+                    .into(),
+                depth: 3,
+                delegate,
+            });
+            assert_eq!(
+                result.as_deref(),
+                RelPath::from_unix_str("deep/nested").ok()
+            );
+        }
     }
 }

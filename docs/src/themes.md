@@ -9,13 +9,13 @@ Zed comes with a number of built-in themes, with more themes available as extens
 
 ## Selecting a Theme
 
-See what themes are installed and preview them via the Theme Selector, which you can open from the command palette with the `theme selector: toggle` (bound to {#kb theme_selector::Toggle}) action.
+See what themes are installed and preview them via the Theme Selector, which you can open from the command palette with the {#action theme_selector::Toggle} (bound to {#kb theme_selector::Toggle}) action.
 
 Navigating through the theme list by moving up and down will change the theme in real time and hitting enter will save the selected one to your settings file.
 
 ## Installing New Themes
 
-You can find hundreds of different theme options in Zed's extensions store, which you can access via the command palette with `zed: extensions` or the [Zed website](https://zed.dev/extensions?filter=themes).
+You can find hundreds of different theme options in Zed's extensions store, which you can access via the command palette with {#action zed::Extensions} or the [Zed website](https://zed.dev/extensions?filter=themes).
 
 Many popular themes have been ported to Zed, and if you're struggling to choose one, visit [zed-themes.com](https://zed-themes.com), a third-party gallery with visible previews for many of them.
 
@@ -106,7 +106,7 @@ For example, add the following to your `settings.json` if you wish to override t
 }
 ```
 
-To see a comprehensive list of list of captures (like `comment` and `comment.doc`) see [Language Extensions: Syntax highlighting](./extensions/languages.md#syntax-highlighting).
+To see a comprehensive list of captures (like `comment` and `comment.doc`) see [Language Extensions: Syntax highlighting](./extensions/languages.md#syntax-highlighting).
 
 To see a list of available theme attributes look at the JSON file for your theme.
 For example, [assets/themes/one/one.json](https://github.com/zed-industries/zed/blob/main/assets/themes/one/one.json) for the default One Dark and One Light themes.

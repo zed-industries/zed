@@ -3,12 +3,12 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use fs::Fs;
-use gpui::{App, Global, ReadGlobal, SharedString, Task};
-use language::{BinaryStatus, LanguageMatcher, LanguageName, LoadedLanguage};
+use gpui::{App, EntityId, Global, ReadGlobal, SharedString, Task};
+use language::{BinaryStatus, LanguageLoader, LanguageMatcher, LanguageName};
 use lsp::LanguageServerName;
 use parking_lot::RwLock;
 
-use crate::{Extension, SlashCommand};
+use crate::Extension;
 
 #[derive(Default)]
 struct GlobalExtensionHostProxy(Arc<ExtensionHostProxy>);
@@ -29,7 +29,6 @@ pub struct ExtensionHostProxy {
     language_proxy: RwLock<Option<Arc<dyn ExtensionLanguageProxy>>>,
     language_server_proxy: RwLock<Option<Arc<dyn ExtensionLanguageServerProxy>>>,
     snippet_proxy: RwLock<Option<Arc<dyn ExtensionSnippetProxy>>>,
-    slash_command_proxy: RwLock<Option<Arc<dyn ExtensionSlashCommandProxy>>>,
     context_server_proxy: RwLock<Option<Arc<dyn ExtensionContextServerProxy>>>,
     debug_adapter_provider_proxy: RwLock<Option<Arc<dyn ExtensionDebugAdapterProviderProxy>>>,
     language_model_provider_proxy: RwLock<Option<Arc<dyn ExtensionLanguageModelProviderProxy>>>,
@@ -55,7 +54,6 @@ impl ExtensionHostProxy {
             language_proxy: RwLock::default(),
             language_server_proxy: RwLock::default(),
             snippet_proxy: RwLock::default(),
-            slash_command_proxy: RwLock::default(),
             context_server_proxy: RwLock::default(),
             debug_adapter_provider_proxy: RwLock::default(),
             language_model_provider_proxy: RwLock::default(),
@@ -80,10 +78,6 @@ impl ExtensionHostProxy {
 
     pub fn register_snippet_proxy(&self, proxy: impl ExtensionSnippetProxy) {
         self.snippet_proxy.write().replace(Arc::new(proxy));
-    }
-
-    pub fn register_slash_command_proxy(&self, proxy: impl ExtensionSlashCommandProxy) {
-        self.slash_command_proxy.write().replace(Arc::new(proxy));
     }
 
     pub fn register_context_server_proxy(&self, proxy: impl ExtensionContextServerProxy) {
@@ -238,10 +232,12 @@ pub trait ExtensionLanguageProxy: Send + Sync + 'static {
         &self,
         language: LanguageName,
         grammar: Option<Arc<str>>,
-        matcher: LanguageMatcher,
+        matcher: Arc<LanguageMatcher>,
         hidden: bool,
-        load: Arc<dyn Fn() -> Result<LoadedLanguage> + Send + Sync + 'static>,
-    );
+        load: LanguageLoader,
+    ) -> bool;
+
+    fn is_language_registered(&self, language: &LanguageName) -> bool;
 
     fn remove_languages(
         &self,
@@ -256,15 +252,23 @@ impl ExtensionLanguageProxy for ExtensionHostProxy {
         &self,
         language: LanguageName,
         grammar: Option<Arc<str>>,
-        matcher: LanguageMatcher,
+        matcher: Arc<LanguageMatcher>,
         hidden: bool,
-        load: Arc<dyn Fn() -> Result<LoadedLanguage> + Send + Sync + 'static>,
-    ) {
+        load: LanguageLoader,
+    ) -> bool {
         let Some(proxy) = self.language_proxy.read().clone() else {
-            return;
+            return false;
         };
 
         proxy.register_language(language, grammar, matcher, hidden, load)
+    }
+
+    fn is_language_registered(&self, language: &LanguageName) -> bool {
+        let Some(proxy) = self.language_proxy.read().clone() else {
+            return false;
+        };
+
+        proxy.is_language_registered(language)
     }
 
     fn remove_languages(
@@ -297,6 +301,7 @@ pub trait ExtensionLanguageServerProxy: Send + Sync + 'static {
 
     fn update_language_server_status(
         &self,
+        source: Option<EntityId>,
         language_server_id: LanguageServerName,
         status: BinaryStatus,
     );
@@ -331,6 +336,7 @@ impl ExtensionLanguageServerProxy for ExtensionHostProxy {
 
     fn update_language_server_status(
         &self,
+        source: Option<EntityId>,
         language_server_id: LanguageServerName,
         status: BinaryStatus,
     ) {
@@ -338,7 +344,7 @@ impl ExtensionLanguageServerProxy for ExtensionHostProxy {
             return;
         };
 
-        proxy.update_language_server_status(language_server_id, status)
+        proxy.update_language_server_status(source, language_server_id, status)
     }
 }
 
@@ -353,30 +359,6 @@ impl ExtensionSnippetProxy for ExtensionHostProxy {
         };
 
         proxy.register_snippet(path, snippet_contents)
-    }
-}
-
-pub trait ExtensionSlashCommandProxy: Send + Sync + 'static {
-    fn register_slash_command(&self, extension: Arc<dyn Extension>, command: SlashCommand);
-
-    fn unregister_slash_command(&self, command_name: Arc<str>);
-}
-
-impl ExtensionSlashCommandProxy for ExtensionHostProxy {
-    fn register_slash_command(&self, extension: Arc<dyn Extension>, command: SlashCommand) {
-        let Some(proxy) = self.slash_command_proxy.read().clone() else {
-            return;
-        };
-
-        proxy.register_slash_command(extension, command)
-    }
-
-    fn unregister_slash_command(&self, command_name: Arc<str>) {
-        let Some(proxy) = self.slash_command_proxy.read().clone() else {
-            return;
-        };
-
-        proxy.unregister_slash_command(command_name)
     }
 }
 

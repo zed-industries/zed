@@ -8,6 +8,7 @@ pub enum BedrockAdaptiveThinkingEffort {
     Medium,
     #[default]
     High,
+    XHigh,
     Max,
 }
 
@@ -17,6 +18,7 @@ impl BedrockAdaptiveThinkingEffort {
             Self::Low => "low",
             Self::Medium => "medium",
             Self::High => "high",
+            Self::XHigh => "xhigh",
             Self::Max => "max",
         }
     }
@@ -33,6 +35,9 @@ pub enum BedrockModelMode {
     AdaptiveThinking {
         effort: BedrockAdaptiveThinkingEffort,
     },
+    Reasoning {
+        effort: BedrockAdaptiveThinkingEffort,
+    },
 }
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
@@ -43,54 +48,114 @@ pub struct BedrockModelCacheConfiguration {
 }
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct BedrockThinkingConfig {
+    #[serde(default)]
+    pub adaptive: bool,
+    #[serde(default)]
+    pub has_xhigh: bool,
+    #[serde(default)]
+    pub budget_tokens: Option<u64>,
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
-pub enum Model {
+pub enum ConverseModel {
     // Anthropic Claude 4+ models
-    #[serde(rename = "claude-haiku-4-5", alias = "claude-haiku-4-5-latest")]
-    ClaudeHaiku4_5,
-    #[serde(rename = "claude-sonnet-4", alias = "claude-sonnet-4-latest")]
-    ClaudeSonnet4,
     #[serde(
-        rename = "claude-sonnet-4-thinking",
-        alias = "claude-sonnet-4-thinking-latest"
+        rename = "claude-fable-5-1",
+        alias = "claude-fable-5-1-latest",
+        alias = "claude-fable-5-1-thinking",
+        alias = "claude-fable-5-1-thinking-latest"
     )]
-    ClaudeSonnet4Thinking,
-    #[default]
-    #[serde(rename = "claude-sonnet-4-5", alias = "claude-sonnet-4-5-latest")]
-    ClaudeSonnet4_5,
+    ClaudeFable5_1,
     #[serde(
-        rename = "claude-sonnet-4-5-thinking",
-        alias = "claude-sonnet-4-5-thinking-latest"
+        rename = "claude-fable-5",
+        alias = "claude-fable-5-latest",
+        alias = "claude-fable-5-thinking",
+        alias = "claude-fable-5-thinking-latest"
     )]
-    ClaudeSonnet4_5Thinking,
-    #[serde(rename = "claude-opus-4-1", alias = "claude-opus-4-1-latest")]
-    ClaudeOpus4_1,
+    ClaudeFable5,
     #[serde(
-        rename = "claude-opus-4-1-thinking",
-        alias = "claude-opus-4-1-thinking-latest"
+        rename = "claude-opus-5-5",
+        alias = "claude-opus-5-5-latest",
+        alias = "claude-opus-5-5-thinking",
+        alias = "claude-opus-5-5-thinking-latest"
     )]
-    ClaudeOpus4_1Thinking,
-    #[serde(rename = "claude-opus-4-5", alias = "claude-opus-4-5-latest")]
-    ClaudeOpus4_5,
+    ClaudeOpus5_5,
     #[serde(
-        rename = "claude-opus-4-5-thinking",
-        alias = "claude-opus-4-5-thinking-latest"
+        rename = "claude-opus-5",
+        alias = "claude-opus-5-latest",
+        alias = "claude-opus-5-thinking",
+        alias = "claude-opus-5-thinking-latest"
     )]
-    ClaudeOpus4_5Thinking,
-    #[serde(rename = "claude-opus-4-6", alias = "claude-opus-4-6-latest")]
-    ClaudeOpus4_6,
+    ClaudeOpus5,
     #[serde(
-        rename = "claude-opus-4-6-thinking",
+        rename = "claude-opus-4-8",
+        alias = "claude-opus-4-8-latest",
+        alias = "claude-opus-4-8-thinking",
+        alias = "claude-opus-4-8-thinking-latest"
+    )]
+    ClaudeOpus4_8,
+    #[serde(
+        rename = "claude-opus-4-7",
+        alias = "claude-opus-4-7-latest",
+        alias = "claude-opus-4-7-thinking",
+        alias = "claude-opus-4-7-thinking-latest"
+    )]
+    ClaudeOpus4_7,
+    #[serde(
+        rename = "claude-opus-4-6",
+        alias = "claude-opus-4-6-latest",
+        alias = "claude-opus-4-6-thinking",
         alias = "claude-opus-4-6-thinking-latest"
     )]
-    ClaudeOpus4_6Thinking,
-    #[serde(rename = "claude-sonnet-4-6", alias = "claude-sonnet-4-6-latest")]
-    ClaudeSonnet4_6,
+    ClaudeOpus4_6,
     #[serde(
-        rename = "claude-sonnet-4-6-thinking",
+        rename = "claude-opus-4-5",
+        alias = "claude-opus-4-5-latest",
+        alias = "claude-opus-4-5-thinking",
+        alias = "claude-opus-4-5-thinking-latest"
+    )]
+    ClaudeOpus4_5,
+    #[serde(
+        rename = "claude-opus-4-1",
+        alias = "claude-opus-4-1-latest",
+        alias = "claude-opus-4-1-thinking",
+        alias = "claude-opus-4-1-thinking-latest"
+    )]
+    ClaudeOpus4_1,
+    #[serde(
+        rename = "claude-sonnet-5",
+        alias = "claude-sonnet-5-latest",
+        alias = "claude-sonnet-5-thinking",
+        alias = "claude-sonnet-5-thinking-latest"
+    )]
+    ClaudeSonnet5,
+    #[serde(
+        rename = "claude-sonnet-4-6",
+        alias = "claude-sonnet-4-6-latest",
+        alias = "claude-sonnet-4-6-thinking",
         alias = "claude-sonnet-4-6-thinking-latest"
     )]
-    ClaudeSonnet4_6Thinking,
+    ClaudeSonnet4_6,
+    #[default]
+    #[serde(
+        rename = "claude-sonnet-4-5",
+        alias = "claude-sonnet-4-5-latest",
+        alias = "claude-sonnet-4-5-thinking",
+        alias = "claude-sonnet-4-5-thinking-latest"
+    )]
+    ClaudeSonnet4_5,
+    #[serde(
+        rename = "claude-sonnet-4",
+        alias = "claude-sonnet-4-latest",
+        alias = "claude-sonnet-4-thinking",
+        alias = "claude-sonnet-4-thinking-latest"
+    )]
+    ClaudeSonnet4,
+    #[serde(rename = "claude-haiku-4-5", alias = "claude-haiku-4-5-latest")]
+    ClaudeHaiku4_5,
 
     // Meta Llama 4 models
     #[serde(rename = "llama-4-scout-17b")]
@@ -113,6 +178,10 @@ pub enum Model {
     MistralLarge3,
     #[serde(rename = "pixtral-large")]
     PixtralLarge,
+    #[serde(rename = "devstral-2-123b")]
+    Devstral2_123B,
+    #[serde(rename = "ministral-14b")]
+    Ministral14B,
 
     // Qwen models
     #[serde(rename = "qwen3-32b")]
@@ -140,15 +209,35 @@ pub enum Model {
     #[serde(rename = "nova-2-lite")]
     Nova2Lite,
 
-    // OpenAI GPT OSS models
+    // OpenAI models
+    #[serde(rename = "gpt-6-astra")]
+    Gpt6Astra,
     #[serde(rename = "gpt-oss-20b")]
     GptOss20B,
     #[serde(rename = "gpt-oss-120b")]
     GptOss120B,
 
+    // NVIDIA Nemotron models
+    #[serde(rename = "nemotron-super-3-120b")]
+    NemotronSuper3_120B,
+    #[serde(rename = "nemotron-nano-3-30b")]
+    NemotronNano3_30B,
+
     // MiniMax models
     #[serde(rename = "minimax-m2")]
     MiniMaxM2,
+    #[serde(rename = "minimax-m2-1")]
+    MiniMaxM2_1,
+    #[serde(rename = "minimax-m2-5")]
+    MiniMaxM2_5,
+
+    // Z.AI GLM models
+    #[serde(rename = "glm-5")]
+    GLM5,
+    #[serde(rename = "glm-4-7")]
+    GLM4_7,
+    #[serde(rename = "glm-4-7-flash")]
+    GLM4_7Flash,
 
     // Moonshot models
     #[serde(rename = "kimi-k2-thinking")]
@@ -172,37 +261,47 @@ pub enum Model {
         max_output_tokens: Option<u64>,
         default_temperature: Option<f32>,
         cache_configuration: Option<BedrockModelCacheConfiguration>,
+        #[serde(default)]
+        supports_tool_use: Option<bool>,
+        #[serde(default)]
+        supports_images: Option<bool>,
+        #[serde(default)]
+        thinking: Option<BedrockThinkingConfig>,
     },
 }
 
-impl Model {
+impl ConverseModel {
     pub fn default_fast(_region: &str) -> Self {
         Self::ClaudeHaiku4_5
     }
 
     pub fn from_id(id: &str) -> anyhow::Result<Self> {
-        if id.starts_with("claude-opus-4-6-thinking") {
-            Ok(Self::ClaudeOpus4_6Thinking)
+        if id == "gpt-6-astra" {
+            Ok(Self::Gpt6Astra)
+        } else if id.starts_with("claude-fable-5-1") {
+            Ok(Self::ClaudeFable5_1)
+        } else if id.starts_with("claude-fable-5") {
+            Ok(Self::ClaudeFable5)
+        } else if id.starts_with("claude-opus-5-5") {
+            Ok(Self::ClaudeOpus5_5)
+        } else if id.starts_with("claude-opus-5") {
+            Ok(Self::ClaudeOpus5)
+        } else if id.starts_with("claude-opus-4-8") {
+            Ok(Self::ClaudeOpus4_8)
+        } else if id.starts_with("claude-opus-4-7") {
+            Ok(Self::ClaudeOpus4_7)
         } else if id.starts_with("claude-opus-4-6") {
             Ok(Self::ClaudeOpus4_6)
-        } else if id.starts_with("claude-opus-4-5-thinking") {
-            Ok(Self::ClaudeOpus4_5Thinking)
         } else if id.starts_with("claude-opus-4-5") {
             Ok(Self::ClaudeOpus4_5)
-        } else if id.starts_with("claude-opus-4-1-thinking") {
-            Ok(Self::ClaudeOpus4_1Thinking)
         } else if id.starts_with("claude-opus-4-1") {
             Ok(Self::ClaudeOpus4_1)
-        } else if id.starts_with("claude-sonnet-4-6-thinking") {
-            Ok(Self::ClaudeSonnet4_6Thinking)
+        } else if id.starts_with("claude-sonnet-5") {
+            Ok(Self::ClaudeSonnet5)
         } else if id.starts_with("claude-sonnet-4-6") {
             Ok(Self::ClaudeSonnet4_6)
-        } else if id.starts_with("claude-sonnet-4-5-thinking") {
-            Ok(Self::ClaudeSonnet4_5Thinking)
         } else if id.starts_with("claude-sonnet-4-5") {
             Ok(Self::ClaudeSonnet4_5)
-        } else if id.starts_with("claude-sonnet-4-thinking") {
-            Ok(Self::ClaudeSonnet4Thinking)
         } else if id.starts_with("claude-sonnet-4") {
             Ok(Self::ClaudeSonnet4)
         } else if id.starts_with("claude-haiku-4-5") {
@@ -214,19 +313,20 @@ impl Model {
 
     pub fn id(&self) -> &str {
         match self {
-            Self::ClaudeHaiku4_5 => "claude-haiku-4-5",
-            Self::ClaudeSonnet4 => "claude-sonnet-4",
-            Self::ClaudeSonnet4Thinking => "claude-sonnet-4-thinking",
-            Self::ClaudeSonnet4_5 => "claude-sonnet-4-5",
-            Self::ClaudeSonnet4_5Thinking => "claude-sonnet-4-5-thinking",
-            Self::ClaudeOpus4_1 => "claude-opus-4-1",
-            Self::ClaudeOpus4_1Thinking => "claude-opus-4-1-thinking",
-            Self::ClaudeOpus4_5 => "claude-opus-4-5",
-            Self::ClaudeOpus4_5Thinking => "claude-opus-4-5-thinking",
+            Self::ClaudeFable5_1 => "claude-fable-5-1",
+            Self::ClaudeFable5 => "claude-fable-5",
+            Self::ClaudeOpus5_5 => "claude-opus-5-5",
+            Self::ClaudeOpus5 => "claude-opus-5",
+            Self::ClaudeOpus4_8 => "claude-opus-4-8",
+            Self::ClaudeOpus4_7 => "claude-opus-4-7",
             Self::ClaudeOpus4_6 => "claude-opus-4-6",
-            Self::ClaudeOpus4_6Thinking => "claude-opus-4-6-thinking",
+            Self::ClaudeOpus4_5 => "claude-opus-4-5",
+            Self::ClaudeOpus4_1 => "claude-opus-4-1",
+            Self::ClaudeSonnet5 => "claude-sonnet-5",
             Self::ClaudeSonnet4_6 => "claude-sonnet-4-6",
-            Self::ClaudeSonnet4_6Thinking => "claude-sonnet-4-6-thinking",
+            Self::ClaudeSonnet4_5 => "claude-sonnet-4-5",
+            Self::ClaudeSonnet4 => "claude-sonnet-4",
+            Self::ClaudeHaiku4_5 => "claude-haiku-4-5",
             Self::Llama4Scout17B => "llama-4-scout-17b",
             Self::Llama4Maverick17B => "llama-4-maverick-17b",
             Self::Gemma3_4B => "gemma-3-4b",
@@ -235,6 +335,8 @@ impl Model {
             Self::MagistralSmall => "magistral-small",
             Self::MistralLarge3 => "mistral-large-3",
             Self::PixtralLarge => "pixtral-large",
+            Self::Devstral2_123B => "devstral-2-123b",
+            Self::Ministral14B => "ministral-14b",
             Self::Qwen3_32B => "qwen3-32b",
             Self::Qwen3VL235B => "qwen3-vl-235b",
             Self::Qwen3_235B => "qwen3-235b",
@@ -246,9 +348,17 @@ impl Model {
             Self::NovaPro => "nova-pro",
             Self::NovaPremier => "nova-premier",
             Self::Nova2Lite => "nova-2-lite",
+            Self::Gpt6Astra => "gpt-6-astra",
             Self::GptOss20B => "gpt-oss-20b",
             Self::GptOss120B => "gpt-oss-120b",
+            Self::NemotronSuper3_120B => "nemotron-super-3-120b",
+            Self::NemotronNano3_30B => "nemotron-nano-3-30b",
             Self::MiniMaxM2 => "minimax-m2",
+            Self::MiniMaxM2_1 => "minimax-m2-1",
+            Self::MiniMaxM2_5 => "minimax-m2-5",
+            Self::GLM5 => "glm-5",
+            Self::GLM4_7 => "glm-4-7",
+            Self::GLM4_7Flash => "glm-4-7-flash",
             Self::KimiK2Thinking => "kimi-k2-thinking",
             Self::KimiK2_5 => "kimi-k2-5",
             Self::DeepSeekR1 => "deepseek-r1",
@@ -260,21 +370,20 @@ impl Model {
 
     pub fn request_id(&self) -> &str {
         match self {
+            Self::ClaudeFable5_1 => "anthropic.claude-fable-5-1",
+            Self::ClaudeFable5 => "anthropic.claude-fable-5",
+            Self::ClaudeOpus5_5 => "anthropic.claude-opus-5-5",
+            Self::ClaudeOpus5 => "anthropic.claude-opus-5",
+            Self::ClaudeOpus4_8 => "anthropic.claude-opus-4-8",
+            Self::ClaudeOpus4_7 => "anthropic.claude-opus-4-7",
+            Self::ClaudeOpus4_6 => "anthropic.claude-opus-4-6-v1",
+            Self::ClaudeOpus4_5 => "anthropic.claude-opus-4-5-20251101-v1:0",
+            Self::ClaudeOpus4_1 => "anthropic.claude-opus-4-1-20250805-v1:0",
+            Self::ClaudeSonnet5 => "anthropic.claude-sonnet-5",
+            Self::ClaudeSonnet4_6 => "anthropic.claude-sonnet-4-6",
+            Self::ClaudeSonnet4_5 => "anthropic.claude-sonnet-4-5-20250929-v1:0",
+            Self::ClaudeSonnet4 => "anthropic.claude-sonnet-4-20250514-v1:0",
             Self::ClaudeHaiku4_5 => "anthropic.claude-haiku-4-5-20251001-v1:0",
-            Self::ClaudeSonnet4 | Self::ClaudeSonnet4Thinking => {
-                "anthropic.claude-sonnet-4-20250514-v1:0"
-            }
-            Self::ClaudeSonnet4_5 | Self::ClaudeSonnet4_5Thinking => {
-                "anthropic.claude-sonnet-4-5-20250929-v1:0"
-            }
-            Self::ClaudeOpus4_1 | Self::ClaudeOpus4_1Thinking => {
-                "anthropic.claude-opus-4-1-20250805-v1:0"
-            }
-            Self::ClaudeOpus4_5 | Self::ClaudeOpus4_5Thinking => {
-                "anthropic.claude-opus-4-5-20251101-v1:0"
-            }
-            Self::ClaudeOpus4_6 | Self::ClaudeOpus4_6Thinking => "anthropic.claude-opus-4-6-v1",
-            Self::ClaudeSonnet4_6 | Self::ClaudeSonnet4_6Thinking => "anthropic.claude-sonnet-4-6",
             Self::Llama4Scout17B => "meta.llama4-scout-17b-instruct-v1:0",
             Self::Llama4Maverick17B => "meta.llama4-maverick-17b-instruct-v1:0",
             Self::Gemma3_4B => "google.gemma-3-4b-it",
@@ -283,6 +392,8 @@ impl Model {
             Self::MagistralSmall => "mistral.magistral-small-2509",
             Self::MistralLarge3 => "mistral.mistral-large-3-675b-instruct",
             Self::PixtralLarge => "mistral.pixtral-large-2502-v1:0",
+            Self::Devstral2_123B => "mistral.devstral-2-123b",
+            Self::Ministral14B => "mistral.ministral-3-14b-instruct",
             Self::Qwen3VL235B => "qwen.qwen3-vl-235b-a22b",
             Self::Qwen3_32B => "qwen.qwen3-32b-v1:0",
             Self::Qwen3_235B => "qwen.qwen3-235b-a22b-2507-v1:0",
@@ -294,9 +405,17 @@ impl Model {
             Self::NovaPro => "amazon.nova-pro-v1:0",
             Self::NovaPremier => "amazon.nova-premier-v1:0",
             Self::Nova2Lite => "amazon.nova-2-lite-v1:0",
+            Self::Gpt6Astra => "openai.gpt-6-astra",
             Self::GptOss20B => "openai.gpt-oss-20b-1:0",
             Self::GptOss120B => "openai.gpt-oss-120b-1:0",
+            Self::NemotronSuper3_120B => "nvidia.nemotron-super-3-120b",
+            Self::NemotronNano3_30B => "nvidia.nemotron-nano-3-30b",
             Self::MiniMaxM2 => "minimax.minimax-m2",
+            Self::MiniMaxM2_1 => "minimax.minimax-m2.1",
+            Self::MiniMaxM2_5 => "minimax.minimax-m2.5",
+            Self::GLM5 => "zai.glm-5",
+            Self::GLM4_7 => "zai.glm-4.7",
+            Self::GLM4_7Flash => "zai.glm-4.7-flash",
             Self::KimiK2Thinking => "moonshot.kimi-k2-thinking",
             Self::KimiK2_5 => "moonshotai.kimi-k2.5",
             Self::DeepSeekR1 => "deepseek.r1-v1:0",
@@ -308,19 +427,20 @@ impl Model {
 
     pub fn display_name(&self) -> &str {
         match self {
-            Self::ClaudeHaiku4_5 => "Claude Haiku 4.5",
-            Self::ClaudeSonnet4 => "Claude Sonnet 4",
-            Self::ClaudeSonnet4Thinking => "Claude Sonnet 4 Thinking",
-            Self::ClaudeSonnet4_5 => "Claude Sonnet 4.5",
-            Self::ClaudeSonnet4_5Thinking => "Claude Sonnet 4.5 Thinking",
-            Self::ClaudeOpus4_1 => "Claude Opus 4.1",
-            Self::ClaudeOpus4_1Thinking => "Claude Opus 4.1 Thinking",
-            Self::ClaudeOpus4_5 => "Claude Opus 4.5",
-            Self::ClaudeOpus4_5Thinking => "Claude Opus 4.5 Thinking",
+            Self::ClaudeFable5_1 => "Claude Fable 5.1",
+            Self::ClaudeFable5 => "Claude Fable 5",
+            Self::ClaudeOpus5_5 => "Claude Opus 5.5",
+            Self::ClaudeOpus5 => "Claude Opus 5",
+            Self::ClaudeOpus4_8 => "Claude Opus 4.8",
+            Self::ClaudeOpus4_7 => "Claude Opus 4.7",
             Self::ClaudeOpus4_6 => "Claude Opus 4.6",
-            Self::ClaudeOpus4_6Thinking => "Claude Opus 4.6 Thinking",
+            Self::ClaudeOpus4_5 => "Claude Opus 4.5",
+            Self::ClaudeOpus4_1 => "Claude Opus 4.1",
+            Self::ClaudeSonnet5 => "Claude Sonnet 5",
             Self::ClaudeSonnet4_6 => "Claude Sonnet 4.6",
-            Self::ClaudeSonnet4_6Thinking => "Claude Sonnet 4.6 Thinking",
+            Self::ClaudeSonnet4_5 => "Claude Sonnet 4.5",
+            Self::ClaudeSonnet4 => "Claude Sonnet 4",
+            Self::ClaudeHaiku4_5 => "Claude Haiku 4.5",
             Self::Llama4Scout17B => "Llama 4 Scout 17B",
             Self::Llama4Maverick17B => "Llama 4 Maverick 17B",
             Self::Gemma3_4B => "Gemma 3 4B",
@@ -329,6 +449,8 @@ impl Model {
             Self::MagistralSmall => "Magistral Small",
             Self::MistralLarge3 => "Mistral Large 3",
             Self::PixtralLarge => "Pixtral Large",
+            Self::Devstral2_123B => "Devstral 2 123B",
+            Self::Ministral14B => "Ministral 14B",
             Self::Qwen3VL235B => "Qwen3 VL 235B",
             Self::Qwen3_32B => "Qwen3 32B",
             Self::Qwen3_235B => "Qwen3 235B",
@@ -340,9 +462,17 @@ impl Model {
             Self::NovaPro => "Amazon Nova Pro",
             Self::NovaPremier => "Amazon Nova Premier",
             Self::Nova2Lite => "Amazon Nova 2 Lite",
+            Self::Gpt6Astra => "GPT-6 Astra",
             Self::GptOss20B => "GPT OSS 20B",
             Self::GptOss120B => "GPT OSS 120B",
+            Self::NemotronSuper3_120B => "Nemotron Super 3 120B",
+            Self::NemotronNano3_30B => "Nemotron Nano 3 30B",
             Self::MiniMaxM2 => "MiniMax M2",
+            Self::MiniMaxM2_1 => "MiniMax M2.1",
+            Self::MiniMaxM2_5 => "MiniMax M2.5",
+            Self::GLM5 => "GLM 5",
+            Self::GLM4_7 => "GLM 4.7",
+            Self::GLM4_7Flash => "GLM 4.7 Flash",
             Self::KimiK2Thinking => "Kimi K2 Thinking",
             Self::KimiK2_5 => "Kimi K2.5",
             Self::DeepSeekR1 => "DeepSeek R1",
@@ -355,27 +485,25 @@ impl Model {
     }
 
     pub fn max_token_count(&self) -> u64 {
-        self.max_tokens()
-    }
-
-    pub fn max_tokens(&self) -> u64 {
         match self {
-            Self::ClaudeHaiku4_5
-            | Self::ClaudeSonnet4
-            | Self::ClaudeSonnet4Thinking
-            | Self::ClaudeSonnet4_5
-            | Self::ClaudeSonnet4_5Thinking
-            | Self::ClaudeOpus4_1
-            | Self::ClaudeOpus4_1Thinking
-            | Self::ClaudeOpus4_5
-            | Self::ClaudeOpus4_5Thinking
+            Self::ClaudeFable5_1
+            | Self::ClaudeFable5
+            | Self::ClaudeOpus5_5
+            | Self::ClaudeOpus5
+            | Self::ClaudeOpus4_8
+            | Self::ClaudeOpus4_7
             | Self::ClaudeOpus4_6
-            | Self::ClaudeOpus4_6Thinking
+            | Self::ClaudeOpus4_5
+            | Self::ClaudeSonnet5
             | Self::ClaudeSonnet4_6
-            | Self::ClaudeSonnet4_6Thinking => 200_000,
+            | Self::ClaudeSonnet4_5
+            | Self::ClaudeSonnet4
+            | Self::ClaudeHaiku4_5 => 1_000_000,
+            Self::ClaudeOpus4_1 => 200_000,
             Self::Llama4Scout17B | Self::Llama4Maverick17B => 128_000,
             Self::Gemma3_4B | Self::Gemma3_12B | Self::Gemma3_27B => 128_000,
             Self::MagistralSmall | Self::MistralLarge3 | Self::PixtralLarge => 128_000,
+            Self::Devstral2_123B | Self::Ministral14B => 256_000,
             Self::Qwen3_32B
             | Self::Qwen3VL235B
             | Self::Qwen3_235B
@@ -386,8 +514,11 @@ impl Model {
             Self::NovaLite | Self::NovaPro => 300_000,
             Self::NovaPremier => 1_000_000,
             Self::Nova2Lite => 300_000,
+            Self::Gpt6Astra => 1_050_000,
             Self::GptOss20B | Self::GptOss120B => 128_000,
-            Self::MiniMaxM2 => 128_000,
+            Self::NemotronSuper3_120B | Self::NemotronNano3_30B => 262_000,
+            Self::MiniMaxM2 | Self::MiniMaxM2_1 | Self::MiniMaxM2_5 => 196_000,
+            Self::GLM5 | Self::GLM4_7 | Self::GLM4_7Flash => 203_000,
             Self::KimiK2Thinking | Self::KimiK2_5 => 128_000,
             Self::DeepSeekR1 | Self::DeepSeekV3_1 | Self::DeepSeekV3_2 => 128_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
@@ -396,16 +527,20 @@ impl Model {
 
     pub fn max_output_tokens(&self) -> u64 {
         match self {
-            Self::ClaudeHaiku4_5
-            | Self::ClaudeSonnet4_5
-            | Self::ClaudeSonnet4_5Thinking
-            | Self::ClaudeOpus4_5
-            | Self::ClaudeOpus4_5Thinking
+            Self::ClaudeFable5_1
+            | Self::ClaudeFable5
+            | Self::ClaudeOpus5_5
+            | Self::ClaudeOpus5
+            | Self::ClaudeOpus4_8
+            | Self::ClaudeOpus4_7
+            | Self::ClaudeOpus4_6
+            | Self::ClaudeSonnet5 => 128_000,
+            Self::ClaudeOpus4_5
             | Self::ClaudeSonnet4_6
-            | Self::ClaudeSonnet4_6Thinking => 64_000,
-            Self::ClaudeSonnet4 | Self::ClaudeSonnet4Thinking => 64_000,
-            Self::ClaudeOpus4_1 | Self::ClaudeOpus4_1Thinking => 32_000,
-            Self::ClaudeOpus4_6 | Self::ClaudeOpus4_6Thinking => 128_000,
+            | Self::ClaudeSonnet4_5
+            | Self::ClaudeSonnet4
+            | Self::ClaudeHaiku4_5 => 64_000,
+            Self::ClaudeOpus4_1 => 32_000,
             Self::Llama4Scout17B
             | Self::Llama4Maverick17B
             | Self::Gemma3_4B
@@ -414,6 +549,7 @@ impl Model {
             | Self::MagistralSmall
             | Self::MistralLarge3
             | Self::PixtralLarge => 8_192,
+            Self::Devstral2_123B | Self::Ministral14B => 131_000,
             Self::Qwen3_32B
             | Self::Qwen3VL235B
             | Self::Qwen3_235B
@@ -422,8 +558,11 @@ impl Model {
             | Self::Qwen3CoderNext
             | Self::Qwen3Coder480B => 8_192,
             Self::NovaLite | Self::NovaPro | Self::NovaPremier | Self::Nova2Lite => 5_000,
+            Self::Gpt6Astra => 128_000,
             Self::GptOss20B | Self::GptOss120B => 16_000,
-            Self::MiniMaxM2 => 16_000,
+            Self::NemotronSuper3_120B | Self::NemotronNano3_30B => 131_000,
+            Self::MiniMaxM2 | Self::MiniMaxM2_1 | Self::MiniMaxM2_5 => 98_000,
+            Self::GLM5 | Self::GLM4_7 | Self::GLM4_7Flash => 101_000,
             Self::KimiK2Thinking | Self::KimiK2_5 => 16_000,
             Self::DeepSeekR1 | Self::DeepSeekV3_1 | Self::DeepSeekV3_2 => 16_000,
             Self::Custom {
@@ -432,46 +571,35 @@ impl Model {
         }
     }
 
-    pub fn default_temperature(&self) -> f32 {
+    pub fn default_temperature(&self) -> Option<f32> {
         match self {
-            Self::ClaudeHaiku4_5
-            | Self::ClaudeSonnet4
-            | Self::ClaudeSonnet4Thinking
-            | Self::ClaudeSonnet4_5
-            | Self::ClaudeSonnet4_5Thinking
-            | Self::ClaudeOpus4_1
-            | Self::ClaudeOpus4_1Thinking
-            | Self::ClaudeOpus4_5
-            | Self::ClaudeOpus4_5Thinking
-            | Self::ClaudeOpus4_6
-            | Self::ClaudeOpus4_6Thinking
-            | Self::ClaudeSonnet4_6
-            | Self::ClaudeSonnet4_6Thinking => 1.0,
             Self::Custom {
                 default_temperature,
                 ..
-            } => default_temperature.unwrap_or(1.0),
-            _ => 1.0,
+            } => *default_temperature,
+            _ => Some(1.0),
         }
     }
 
     pub fn supports_tool_use(&self) -> bool {
         match self {
-            Self::ClaudeHaiku4_5
-            | Self::ClaudeSonnet4
-            | Self::ClaudeSonnet4Thinking
-            | Self::ClaudeSonnet4_5
-            | Self::ClaudeSonnet4_5Thinking
-            | Self::ClaudeOpus4_1
-            | Self::ClaudeOpus4_1Thinking
-            | Self::ClaudeOpus4_5
-            | Self::ClaudeOpus4_5Thinking
+            Self::ClaudeFable5_1
+            | Self::ClaudeFable5
+            | Self::ClaudeOpus5_5
+            | Self::ClaudeOpus5
+            | Self::ClaudeOpus4_8
+            | Self::ClaudeOpus4_7
             | Self::ClaudeOpus4_6
-            | Self::ClaudeOpus4_6Thinking
+            | Self::ClaudeOpus4_5
+            | Self::ClaudeOpus4_1
+            | Self::ClaudeSonnet5
             | Self::ClaudeSonnet4_6
-            | Self::ClaudeSonnet4_6Thinking => true,
+            | Self::ClaudeSonnet4_5
+            | Self::ClaudeSonnet4
+            | Self::ClaudeHaiku4_5 => true,
             Self::NovaLite | Self::NovaPro | Self::NovaPremier | Self::Nova2Lite => true,
             Self::MistralLarge3 | Self::PixtralLarge | Self::MagistralSmall => true,
+            Self::Devstral2_123B | Self::Ministral14B => true,
             // Gemma accepts toolConfig without error but produces unreliable tool
             // calls -- malformed JSON args, hallucinated tool names, dropped calls.
             Self::Qwen3_32B
@@ -481,67 +609,63 @@ impl Model {
             | Self::Qwen3Coder30B
             | Self::Qwen3CoderNext
             | Self::Qwen3Coder480B => true,
-            Self::MiniMaxM2 => true,
+            Self::MiniMaxM2 | Self::MiniMaxM2_1 | Self::MiniMaxM2_5 => true,
+            Self::NemotronSuper3_120B | Self::NemotronNano3_30B => true,
+            Self::GLM5 | Self::GLM4_7 | Self::GLM4_7Flash => true,
             Self::KimiK2Thinking | Self::KimiK2_5 => true,
             Self::DeepSeekR1 | Self::DeepSeekV3_1 | Self::DeepSeekV3_2 => true,
+            Self::Gpt6Astra => true,
+            Self::Custom {
+                supports_tool_use, ..
+            } => supports_tool_use.unwrap_or(false),
             _ => false,
         }
     }
 
     pub fn supports_images(&self) -> bool {
         match self {
-            Self::ClaudeHaiku4_5
-            | Self::ClaudeSonnet4
-            | Self::ClaudeSonnet4Thinking
-            | Self::ClaudeSonnet4_5
-            | Self::ClaudeSonnet4_5Thinking
-            | Self::ClaudeOpus4_1
-            | Self::ClaudeOpus4_1Thinking
-            | Self::ClaudeOpus4_5
-            | Self::ClaudeOpus4_5Thinking
+            Self::ClaudeFable5_1
+            | Self::ClaudeFable5
+            | Self::ClaudeOpus5_5
+            | Self::ClaudeOpus5
+            | Self::ClaudeOpus4_8
+            | Self::ClaudeOpus4_7
             | Self::ClaudeOpus4_6
-            | Self::ClaudeOpus4_6Thinking
+            | Self::ClaudeOpus4_5
+            | Self::ClaudeOpus4_1
+            | Self::ClaudeSonnet5
             | Self::ClaudeSonnet4_6
-            | Self::ClaudeSonnet4_6Thinking => true,
+            | Self::ClaudeSonnet4_5
+            | Self::ClaudeSonnet4
+            | Self::ClaudeHaiku4_5 => true,
             Self::NovaLite | Self::NovaPro => true,
             Self::PixtralLarge => true,
             Self::Qwen3VL235B => true,
             Self::KimiK2_5 => true,
+            Self::Gpt6Astra => true,
+            Self::Custom {
+                supports_images, ..
+            } => supports_images.unwrap_or(false),
             _ => false,
         }
     }
 
-    pub fn supports_extended_context(&self) -> bool {
-        matches!(
-            self,
-            Self::ClaudeSonnet4
-                | Self::ClaudeSonnet4Thinking
-                | Self::ClaudeSonnet4_5
-                | Self::ClaudeSonnet4_5Thinking
-                | Self::ClaudeOpus4_5
-                | Self::ClaudeOpus4_5Thinking
-                | Self::ClaudeOpus4_6
-                | Self::ClaudeOpus4_6Thinking
-                | Self::ClaudeSonnet4_6
-                | Self::ClaudeSonnet4_6Thinking
-        )
-    }
-
     pub fn supports_caching(&self) -> bool {
         match self {
-            Self::ClaudeHaiku4_5
-            | Self::ClaudeSonnet4
-            | Self::ClaudeSonnet4Thinking
-            | Self::ClaudeSonnet4_5
-            | Self::ClaudeSonnet4_5Thinking
-            | Self::ClaudeOpus4_1
-            | Self::ClaudeOpus4_1Thinking
-            | Self::ClaudeOpus4_5
-            | Self::ClaudeOpus4_5Thinking
+            Self::ClaudeFable5_1
+            | Self::ClaudeFable5
+            | Self::ClaudeOpus5_5
+            | Self::ClaudeOpus5
+            | Self::ClaudeOpus4_8
+            | Self::ClaudeOpus4_7
             | Self::ClaudeOpus4_6
-            | Self::ClaudeOpus4_6Thinking
+            | Self::ClaudeOpus4_5
+            | Self::ClaudeOpus4_1
+            | Self::ClaudeSonnet5
             | Self::ClaudeSonnet4_6
-            | Self::ClaudeSonnet4_6Thinking => true,
+            | Self::ClaudeSonnet4_5
+            | Self::ClaudeSonnet4
+            | Self::ClaudeHaiku4_5 => true,
             Self::Custom {
                 cache_configuration,
                 ..
@@ -550,54 +674,92 @@ impl Model {
         }
     }
 
-    pub fn cache_configuration(&self) -> Option<BedrockModelCacheConfiguration> {
+    pub fn supports_thinking(&self) -> bool {
         match self {
-            Self::ClaudeSonnet4
-            | Self::ClaudeSonnet4Thinking
-            | Self::ClaudeSonnet4_5
-            | Self::ClaudeSonnet4_5Thinking
-            | Self::ClaudeOpus4_1
-            | Self::ClaudeOpus4_1Thinking
-            | Self::ClaudeOpus4_5
-            | Self::ClaudeOpus4_5Thinking
+            Self::Gpt6Astra
+            | Self::ClaudeFable5_1
+            | Self::ClaudeFable5
+            | Self::ClaudeOpus5_5
+            | Self::ClaudeOpus5
+            | Self::ClaudeOpus4_8
+            | Self::ClaudeOpus4_7
             | Self::ClaudeOpus4_6
-            | Self::ClaudeOpus4_6Thinking
+            | Self::ClaudeOpus4_5
+            | Self::ClaudeOpus4_1
+            | Self::ClaudeSonnet5
             | Self::ClaudeSonnet4_6
-            | Self::ClaudeSonnet4_6Thinking => Some(BedrockModelCacheConfiguration {
-                max_cache_anchors: 4,
-                min_total_token: 1024,
-            }),
-            Self::ClaudeHaiku4_5 => Some(BedrockModelCacheConfiguration {
-                max_cache_anchors: 4,
-                min_total_token: 2048,
-            }),
-            Self::Custom {
-                cache_configuration,
-                ..
-            } => cache_configuration.clone(),
-            _ => None,
+            | Self::ClaudeSonnet4_5
+            | Self::ClaudeSonnet4
+            | Self::ClaudeHaiku4_5 => true,
+            Self::Custom { thinking, .. } => thinking.is_some(),
+            _ => false,
         }
     }
 
-    pub fn mode(&self) -> BedrockModelMode {
+    pub fn supports_adaptive_thinking(&self) -> bool {
         match self {
-            Self::ClaudeSonnet4Thinking | Self::ClaudeSonnet4_5Thinking => {
-                BedrockModelMode::Thinking {
-                    budget_tokens: Some(4096),
-                }
+            Self::ClaudeFable5_1
+            | Self::ClaudeFable5
+            | Self::ClaudeOpus5_5
+            | Self::ClaudeOpus5
+            | Self::ClaudeOpus4_8
+            | Self::ClaudeOpus4_7
+            | Self::ClaudeOpus4_6
+            | Self::ClaudeSonnet5
+            | Self::ClaudeSonnet4_6 => true,
+            Self::Custom { thinking, .. } => {
+                thinking.as_ref().is_some_and(|thinking| thinking.adaptive)
             }
-            Self::ClaudeOpus4_1Thinking | Self::ClaudeOpus4_5Thinking => {
-                BedrockModelMode::Thinking {
-                    budget_tokens: Some(4096),
-                }
+            _ => false,
+        }
+    }
+
+    pub fn supports_xhigh_adaptive_thinking(&self) -> bool {
+        match self {
+            Self::ClaudeFable5_1
+            | Self::ClaudeFable5
+            | Self::ClaudeOpus5_5
+            | Self::ClaudeOpus5
+            | Self::ClaudeOpus4_8
+            | Self::ClaudeSonnet5 => true,
+            Self::Custom { thinking, .. } => {
+                thinking.as_ref().is_some_and(|thinking| thinking.has_xhigh)
             }
-            Self::ClaudeOpus4_6Thinking => BedrockModelMode::AdaptiveThinking {
+            _ => false,
+        }
+    }
+
+    pub fn thinking_mode(&self) -> BedrockModelMode {
+        if let Self::Custom {
+            thinking: Some(thinking),
+            ..
+        } = self
+        {
+            return if thinking.adaptive {
+                BedrockModelMode::AdaptiveThinking {
+                    effort: BedrockAdaptiveThinkingEffort::default(),
+                }
+            } else {
+                BedrockModelMode::Thinking {
+                    budget_tokens: Some(thinking.budget_tokens.unwrap_or(4096)),
+                }
+            };
+        }
+
+        if matches!(self, Self::Gpt6Astra) {
+            BedrockModelMode::Reasoning {
+                effort: BedrockAdaptiveThinkingEffort::Medium,
+            }
+        } else if self.supports_adaptive_thinking() {
+            BedrockModelMode::AdaptiveThinking {
                 effort: BedrockAdaptiveThinkingEffort::default(),
-            },
-            Self::ClaudeSonnet4_6Thinking => BedrockModelMode::AdaptiveThinking {
-                effort: BedrockAdaptiveThinkingEffort::default(),
-            },
-            _ => BedrockModelMode::Default,
+            }
+        } else if self.supports_thinking() {
+            BedrockModelMode::Thinking {
+                budget_tokens: Some(4096),
+            }
+        } else {
+            BedrockModelMode::Default
         }
     }
 
@@ -607,20 +769,87 @@ impl Model {
         allow_global: bool,
     ) -> anyhow::Result<String> {
         let model_id = self.request_id();
+        // custom models return the name exactly
+        if matches!(self, Self::Custom { .. }) {
+            return Ok(model_id.into());
+        }
+
+        if matches!(self, Self::Gpt6Astra | Self::ClaudeFable5_1) {
+            if matches!(self, Self::ClaudeFable5_1)
+                && matches!(region, "us-gov-east-1" | "us-gov-west-1")
+            {
+                return Ok(format!("us-gov.{model_id}"));
+            }
+
+            let in_us_profile = matches!(
+                region,
+                "us-east-1"
+                    | "us-east-2"
+                    | "us-west-1"
+                    | "us-west-2"
+                    | "ca-central-1"
+                    | "ca-west-1"
+            );
+            let supports_global = in_us_profile
+                || matches!(
+                    region,
+                    "eu-central-1"
+                        | "eu-north-1"
+                        | "eu-west-1"
+                        | "eu-west-2"
+                        | "eu-west-3"
+                        | "ap-northeast-1"
+                        | "ap-northeast-2"
+                        | "ap-northeast-3"
+                        | "ap-south-1"
+                        | "ap-southeast-1"
+                        | "ap-southeast-2"
+                        | "sa-east-1"
+                )
+                || matches!(self, Self::ClaudeFable5_1)
+                    && matches!(
+                        region,
+                        "eu-central-2"
+                            | "eu-south-1"
+                            | "eu-south-2"
+                            | "ap-east-2"
+                            | "ap-south-2"
+                            | "ap-southeast-3"
+                            | "ap-southeast-4"
+                            | "ap-southeast-5"
+                            | "ap-southeast-6"
+                            | "ap-southeast-7"
+                            | "il-central-1"
+                            | "me-central-1"
+                            | "me-south-1"
+                            | "af-south-1"
+                            | "mx-central-1"
+                    );
+            if !supports_global {
+                anyhow::bail!("Unsupported Region {region}");
+            }
+            let prefix = if in_us_profile && !allow_global {
+                "us"
+            } else {
+                "global"
+            };
+            return Ok(format!("{prefix}.{model_id}"));
+        }
 
         let supports_global = matches!(
             self,
-            Self::ClaudeHaiku4_5
-                | Self::ClaudeSonnet4
-                | Self::ClaudeSonnet4Thinking
-                | Self::ClaudeSonnet4_5
-                | Self::ClaudeSonnet4_5Thinking
-                | Self::ClaudeOpus4_5
-                | Self::ClaudeOpus4_5Thinking
+            Self::ClaudeFable5
+                | Self::ClaudeOpus5_5
+                | Self::ClaudeOpus5
+                | Self::ClaudeOpus4_8
+                | Self::ClaudeOpus4_7
                 | Self::ClaudeOpus4_6
-                | Self::ClaudeOpus4_6Thinking
+                | Self::ClaudeOpus4_5
+                | Self::ClaudeSonnet5
                 | Self::ClaudeSonnet4_6
-                | Self::ClaudeSonnet4_6Thinking
+                | Self::ClaudeSonnet4_5
+                | Self::ClaudeSonnet4
+                | Self::ClaudeHaiku4_5
                 | Self::Nova2Lite
         );
 
@@ -670,45 +899,44 @@ impl Model {
         };
 
         match (self, region_group) {
-            (Self::Custom { .. }, _) => Ok(model_id.into()),
-
             // Global inference profiles
             (
-                Self::ClaudeHaiku4_5
-                | Self::ClaudeSonnet4
-                | Self::ClaudeSonnet4Thinking
-                | Self::ClaudeSonnet4_5
-                | Self::ClaudeSonnet4_5Thinking
-                | Self::ClaudeOpus4_5
-                | Self::ClaudeOpus4_5Thinking
+                Self::ClaudeFable5
+                | Self::ClaudeOpus5_5
+                | Self::ClaudeOpus5
+                | Self::ClaudeOpus4_8
+                | Self::ClaudeOpus4_7
                 | Self::ClaudeOpus4_6
-                | Self::ClaudeOpus4_6Thinking
+                | Self::ClaudeOpus4_5
+                | Self::ClaudeSonnet5
                 | Self::ClaudeSonnet4_6
-                | Self::ClaudeSonnet4_6Thinking
+                | Self::ClaudeSonnet4_5
+                | Self::ClaudeSonnet4
+                | Self::ClaudeHaiku4_5
                 | Self::Nova2Lite,
                 "global",
             ) => Ok(format!("{}.{}", region_group, model_id)),
 
             // US Government region inference profiles
-            (Self::ClaudeSonnet4_5 | Self::ClaudeSonnet4_5Thinking, "us-gov") => {
+            (Self::ClaudeOpus5_5 | Self::ClaudeSonnet4_5, "us-gov") => {
                 Ok(format!("{}.{}", region_group, model_id))
             }
 
             // US region inference profiles
             (
-                Self::ClaudeHaiku4_5
-                | Self::ClaudeSonnet4
-                | Self::ClaudeSonnet4Thinking
-                | Self::ClaudeSonnet4_5
-                | Self::ClaudeSonnet4_5Thinking
-                | Self::ClaudeOpus4_1
-                | Self::ClaudeOpus4_1Thinking
-                | Self::ClaudeOpus4_5
-                | Self::ClaudeOpus4_5Thinking
+                Self::ClaudeFable5
+                | Self::ClaudeOpus5_5
+                | Self::ClaudeOpus5
+                | Self::ClaudeOpus4_8
+                | Self::ClaudeOpus4_7
                 | Self::ClaudeOpus4_6
-                | Self::ClaudeOpus4_6Thinking
+                | Self::ClaudeOpus4_5
+                | Self::ClaudeOpus4_1
+                | Self::ClaudeSonnet5
                 | Self::ClaudeSonnet4_6
-                | Self::ClaudeSonnet4_6Thinking
+                | Self::ClaudeSonnet4_5
+                | Self::ClaudeSonnet4
+                | Self::ClaudeHaiku4_5
                 | Self::Llama4Scout17B
                 | Self::Llama4Maverick17B
                 | Self::NovaLite
@@ -723,16 +951,29 @@ impl Model {
             // Canada region inference profiles
             (Self::NovaLite, "ca") => Ok(format!("{}.{}", region_group, model_id)),
 
+            // Canada has no Claude-specific `ca.` profiles. AWS instead lists
+            // ca-central-1 and ca-west-1 as source regions of the US geo
+            // profiles for these models, which keep data within US and Canada
+            // regions:
+            // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5.html>
+            // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-4-8.html>
+            // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-4-7.html>
+            (
+                Self::ClaudeOpus5_5 | Self::ClaudeOpus5 | Self::ClaudeOpus4_8 | Self::ClaudeOpus4_7,
+                "ca",
+            ) => Ok(format!("us.{}", model_id)),
+
             // EU region inference profiles
             (
-                Self::ClaudeHaiku4_5
-                | Self::ClaudeSonnet4
-                | Self::ClaudeSonnet4_5
-                | Self::ClaudeSonnet4_5Thinking
+                Self::ClaudeOpus5_5
+                | Self::ClaudeOpus5
+                | Self::ClaudeOpus4_8
+                | Self::ClaudeOpus4_7
                 | Self::ClaudeOpus4_6
-                | Self::ClaudeOpus4_6Thinking
                 | Self::ClaudeSonnet4_6
-                | Self::ClaudeSonnet4_6Thinking
+                | Self::ClaudeSonnet4_5
+                | Self::ClaudeSonnet4
+                | Self::ClaudeHaiku4_5
                 | Self::NovaLite
                 | Self::NovaPro
                 | Self::Nova2Lite,
@@ -741,38 +982,48 @@ impl Model {
 
             // Australia region inference profiles
             (
-                Self::ClaudeHaiku4_5
-                | Self::ClaudeSonnet4_5
-                | Self::ClaudeSonnet4_5Thinking
+                Self::ClaudeOpus5_5
+                | Self::ClaudeOpus5
+                | Self::ClaudeOpus4_8
+                | Self::ClaudeOpus4_7
                 | Self::ClaudeOpus4_6
-                | Self::ClaudeOpus4_6Thinking
                 | Self::ClaudeSonnet4_6
-                | Self::ClaudeSonnet4_6Thinking,
+                | Self::ClaudeSonnet4_5
+                | Self::ClaudeHaiku4_5,
                 "au",
             ) => Ok(format!("{}.{}", region_group, model_id)),
 
-            // Japan region inference profiles
+            // Japan region inference profiles. Claude Opus 5 is deliberately
+            // absent: its model card lists only `us.`/`eu.`/`au.` geo profiles
+            // (plus `global.`). Claude Opus 5.5, unlike Opus 5, does publish a
+            // `jp.` geo profile:
+            // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5.html>
+            // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5-5.html>
             (
-                Self::ClaudeHaiku4_5
-                | Self::ClaudeSonnet4_5
-                | Self::ClaudeSonnet4_5Thinking
+                Self::ClaudeOpus5_5
+                | Self::ClaudeOpus4_8
+                | Self::ClaudeOpus4_7
                 | Self::ClaudeSonnet4_6
-                | Self::ClaudeSonnet4_6Thinking
+                | Self::ClaudeSonnet4_5
+                | Self::ClaudeHaiku4_5
                 | Self::Nova2Lite,
                 "jp",
             ) => Ok(format!("{}.{}", region_group, model_id)),
 
             // APAC region inference profiles (other than AU/JP)
             (
-                Self::ClaudeHaiku4_5
+                Self::ClaudeSonnet4_5
                 | Self::ClaudeSonnet4
-                | Self::ClaudeSonnet4_5
-                | Self::ClaudeSonnet4_5Thinking
+                | Self::ClaudeHaiku4_5
                 | Self::NovaLite
                 | Self::NovaPro
                 | Self::Nova2Lite,
                 "apac",
             ) => Ok(format!("{}.{}", region_group, model_id)),
+
+            (Self::ClaudeFable5 | Self::ClaudeOpus5_5 | Self::ClaudeSonnet5, _) => {
+                Ok(format!("global.{}", model_id))
+            }
 
             // Default: use model ID directly
             _ => Ok(model_id.into()),
@@ -780,26 +1031,383 @@ impl Model {
     }
 }
 
+/// The wire protocol used to talk to a [`MantleModel`] on the `bedrock-mantle` endpoint.
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
+pub enum MantleProtocol {
+    /// The OpenAI Chat Completions API (`/chat/completions`).
+    #[default]
+    ChatCompletions,
+    /// The OpenAI Responses API (`/responses`).
+    Responses,
+}
+
+/// Models only reachable through the `bedrock-mantle` endpoint's
+/// OpenAI-compatible APIs, i.e. with no `Converse`/`Invoke` support on
+/// `bedrock-runtime`.
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, EnumIter)]
+pub enum MantleModel {
+    #[serde(rename = "gpt-5.6-sol")]
+    Gpt5_6Sol,
+    #[serde(rename = "gpt-5.6-terra")]
+    Gpt5_6Terra,
+    #[serde(rename = "gpt-5.6-luna")]
+    Gpt5_6Luna,
+    #[serde(rename = "gpt-5.5")]
+    Gpt5_5,
+    #[serde(rename = "gpt-5.4")]
+    Gpt5_4,
+    #[serde(rename = "grok-4.3")]
+    Grok4_3,
+    #[serde(rename = "custom")]
+    Custom {
+        name: String,
+        display_name: Option<String>,
+        max_tokens: u64,
+        max_output_tokens: Option<u64>,
+        protocol: MantleProtocol,
+        supports_tools: bool,
+        supports_images: bool,
+        supports_thinking: bool,
+    },
+}
+
+impl MantleModel {
+    /// The model id Zed uses internally (also used as the `name` in settings).
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Gpt5_6Sol => "gpt-5.6-sol",
+            Self::Gpt5_6Terra => "gpt-5.6-terra",
+            Self::Gpt5_6Luna => "gpt-5.6-luna",
+            Self::Gpt5_5 => "gpt-5.5",
+            Self::Gpt5_4 => "gpt-5.4",
+            Self::Grok4_3 => "grok-4.3",
+            Self::Custom { name, .. } => name,
+        }
+    }
+
+    /// The model id as expected in Bedrock Mantle request bodies, e.g. `openai.gpt-5.5`.
+    pub fn request_id(&self) -> &str {
+        match self {
+            Self::Gpt5_6Sol => "openai.gpt-5.6-sol",
+            Self::Gpt5_6Terra => "openai.gpt-5.6-terra",
+            Self::Gpt5_6Luna => "openai.gpt-5.6-luna",
+            Self::Gpt5_5 => "openai.gpt-5.5",
+            Self::Gpt5_4 => "openai.gpt-5.4",
+            Self::Grok4_3 => "xai.grok-4.3",
+            Self::Custom { name, .. } => name,
+        }
+    }
+
+    pub fn display_name(&self) -> &str {
+        match self {
+            Self::Gpt5_6Sol => "GPT-5.6 Sol",
+            Self::Gpt5_6Terra => "GPT-5.6 Terra",
+            Self::Gpt5_6Luna => "GPT-5.6 Luna",
+            Self::Gpt5_5 => "GPT-5.5",
+            Self::Gpt5_4 => "GPT-5.4",
+            Self::Grok4_3 => "Grok 4.3",
+            Self::Custom {
+                display_name, name, ..
+            } => display_name.as_deref().unwrap_or(name.as_str()),
+        }
+    }
+
+    /// Which OpenAI-compatible API this model must be called through.
+    pub fn protocol(&self) -> MantleProtocol {
+        match self {
+            Self::Gpt5_6Sol
+            | Self::Gpt5_6Terra
+            | Self::Gpt5_6Luna
+            | Self::Gpt5_5
+            | Self::Gpt5_4
+            | Self::Grok4_3 => MantleProtocol::Responses,
+            Self::Custom { protocol, .. } => *protocol,
+        }
+    }
+
+    pub fn max_token_count(&self) -> u64 {
+        match self {
+            Self::Gpt5_6Sol | Self::Gpt5_6Terra | Self::Gpt5_6Luna => 1_000_000,
+            Self::Gpt5_5 | Self::Gpt5_4 => 272_000,
+            Self::Grok4_3 => 1_000_000,
+            Self::Custom { max_tokens, .. } => *max_tokens,
+        }
+    }
+
+    pub fn max_output_tokens(&self) -> u64 {
+        match self {
+            // AWS doesn't document a hard cap for the GPT-5.x models on Mantle.
+            Self::Gpt5_6Sol
+            | Self::Gpt5_6Terra
+            | Self::Gpt5_6Luna
+            | Self::Gpt5_5
+            | Self::Gpt5_4 => 128_000,
+            Self::Grok4_3 => 131_072,
+            Self::Custom {
+                max_output_tokens, ..
+            } => max_output_tokens.unwrap_or(4_096),
+        }
+    }
+
+    pub fn supports_tools(&self) -> bool {
+        match self {
+            Self::Gpt5_6Sol
+            | Self::Gpt5_6Terra
+            | Self::Gpt5_6Luna
+            | Self::Gpt5_5
+            | Self::Gpt5_4
+            | Self::Grok4_3 => true,
+            Self::Custom { supports_tools, .. } => *supports_tools,
+        }
+    }
+
+    pub fn supports_images(&self) -> bool {
+        match self {
+            Self::Gpt5_6Sol
+            | Self::Gpt5_6Terra
+            | Self::Gpt5_6Luna
+            | Self::Gpt5_5
+            | Self::Gpt5_4
+            | Self::Grok4_3 => true,
+            Self::Custom {
+                supports_images, ..
+            } => *supports_images,
+        }
+    }
+
+    pub fn supports_thinking(&self) -> bool {
+        match self {
+            Self::Gpt5_6Sol
+            | Self::Gpt5_6Terra
+            | Self::Gpt5_6Luna
+            | Self::Gpt5_5
+            | Self::Gpt5_4
+            | Self::Grok4_3 => true,
+            Self::Custom {
+                supports_thinking, ..
+            } => *supports_thinking,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use strum::IntoEnumIterator;
+
+    #[test]
+    fn test_gpt_6_astra_and_fable_5_1_metadata() -> anyhow::Result<()> {
+        for (model, id, request_id, display_name, context_window, supports_caching) in [
+            (
+                ConverseModel::Gpt6Astra,
+                "gpt-6-astra",
+                "openai.gpt-6-astra",
+                "GPT-6 Astra",
+                1_050_000,
+                false,
+            ),
+            (
+                ConverseModel::ClaudeFable5_1,
+                "claude-fable-5-1",
+                "anthropic.claude-fable-5-1",
+                "Claude Fable 5.1",
+                1_000_000,
+                true,
+            ),
+        ] {
+            assert_eq!(model.id(), id);
+            assert_eq!(model.request_id(), request_id);
+            assert_eq!(model.display_name(), display_name);
+            assert_eq!(model.max_token_count(), context_window);
+            assert_eq!(model.max_output_tokens(), 128_000);
+            assert!(model.supports_tool_use());
+            assert!(model.supports_images());
+            assert!(model.supports_thinking());
+            assert_eq!(model.supports_caching(), supports_caching);
+            assert_eq!(ConverseModel::from_id(id)?, model);
+            for (region, allow_global, prefix) in [
+                ("us-east-1", false, "us"),
+                ("ca-central-1", false, "us"),
+                ("eu-west-1", false, "global"),
+                ("us-east-1", true, "global"),
+            ] {
+                assert_eq!(
+                    model.cross_region_inference_id(region, allow_global)?,
+                    format!("{prefix}.{request_id}")
+                );
+            }
+        }
+        assert_eq!(
+            ConverseModel::from_id("claude-fable-5-1-thinking")?,
+            ConverseModel::ClaudeFable5_1
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_new_model_inference_profiles_match_source_regions() -> anyhow::Result<()> {
+        assert_eq!(
+            ConverseModel::ClaudeFable5_1.cross_region_inference_id("us-gov-west-1", true)?,
+            "us-gov.anthropic.claude-fable-5-1"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeFable5_1.cross_region_inference_id("af-south-1", false)?,
+            "global.anthropic.claude-fable-5-1"
+        );
+        for region in ["af-south-1", "eu-central-2", "ap-east-2", "us-gov-west-1"] {
+            assert!(
+                ConverseModel::Gpt6Astra
+                    .cross_region_inference_id(region, true)
+                    .is_err(),
+                "Astra has no profile in {region}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_builtin_converse_models_have_unique_ids_and_sane_token_limits() {
+        use std::collections::HashSet;
+
+        let mut ids = HashSet::new();
+        let mut request_ids = HashSet::new();
+        for model in
+            ConverseModel::iter().filter(|model| !matches!(model, ConverseModel::Custom { .. }))
+        {
+            assert!(
+                ids.insert(model.id().to_string()),
+                "duplicate ConverseModel id: {}",
+                model.id()
+            );
+            assert!(
+                request_ids.insert(model.request_id().to_string()),
+                "duplicate ConverseModel request_id: {}",
+                model.request_id()
+            );
+            assert!(
+                model.max_output_tokens() <= model.max_token_count(),
+                "{} has max_output_tokens ({}) greater than max_token_count ({})",
+                model.id(),
+                model.max_output_tokens(),
+                model.max_token_count()
+            );
+        }
+    }
+
+    #[test]
+    fn test_builtin_mantle_models_use_responses_protocol() {
+        assert_eq!(MantleModel::Gpt5_6Sol.protocol(), MantleProtocol::Responses);
+        assert_eq!(
+            MantleModel::Gpt5_6Terra.protocol(),
+            MantleProtocol::Responses
+        );
+        assert_eq!(
+            MantleModel::Gpt5_6Luna.protocol(),
+            MantleProtocol::Responses
+        );
+        assert_eq!(MantleModel::Gpt5_5.protocol(), MantleProtocol::Responses);
+        assert_eq!(MantleModel::Gpt5_4.protocol(), MantleProtocol::Responses);
+        assert_eq!(MantleModel::Grok4_3.protocol(), MantleProtocol::Responses);
+    }
+
+    #[test]
+    fn test_gpt_5_6_mantle_model_metadata() {
+        // Values mirror the AWS Bedrock model cards for GPT-5.6 Sol/Terra/Luna,
+        // which are served only through the `bedrock-mantle` Responses API.
+        for (model, id, request_id, display_name) in [
+            (
+                MantleModel::Gpt5_6Sol,
+                "gpt-5.6-sol",
+                "openai.gpt-5.6-sol",
+                "GPT-5.6 Sol",
+            ),
+            (
+                MantleModel::Gpt5_6Terra,
+                "gpt-5.6-terra",
+                "openai.gpt-5.6-terra",
+                "GPT-5.6 Terra",
+            ),
+            (
+                MantleModel::Gpt5_6Luna,
+                "gpt-5.6-luna",
+                "openai.gpt-5.6-luna",
+                "GPT-5.6 Luna",
+            ),
+        ] {
+            assert_eq!(model.id(), id);
+            assert_eq!(model.request_id(), request_id);
+            assert_eq!(model.display_name(), display_name);
+            assert_eq!(model.max_token_count(), 1_000_000);
+            assert!(model.supports_tools());
+            assert!(model.supports_images());
+            assert!(model.supports_thinking());
+        }
+    }
+
+    #[test]
+    fn test_builtin_mantle_models_have_unique_ids_and_sane_token_limits() {
+        use std::collections::HashSet;
+        use strum::IntoEnumIterator;
+
+        let mut ids = HashSet::new();
+        let mut request_ids = HashSet::new();
+        for model in
+            MantleModel::iter().filter(|model| !matches!(model, MantleModel::Custom { .. }))
+        {
+            assert!(
+                ids.insert(model.id().to_string()),
+                "duplicate MantleModel id: {}",
+                model.id()
+            );
+            assert!(
+                request_ids.insert(model.request_id().to_string()),
+                "duplicate MantleModel request_id: {}",
+                model.request_id()
+            );
+            assert!(
+                model.max_output_tokens() <= model.max_token_count(),
+                "{} has max_output_tokens ({}) greater than max_token_count ({})",
+                model.id(),
+                model.max_output_tokens(),
+                model.max_token_count()
+            );
+        }
+    }
 
     #[test]
     fn test_us_region_inference_ids() -> anyhow::Result<()> {
         assert_eq!(
-            Model::ClaudeSonnet4_5.cross_region_inference_id("us-east-1", false)?,
+            ConverseModel::ClaudeSonnet4_5.cross_region_inference_id("us-east-1", false)?,
             "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
         );
         assert_eq!(
-            Model::ClaudeSonnet4.cross_region_inference_id("us-west-2", false)?,
+            ConverseModel::ClaudeSonnet4.cross_region_inference_id("us-west-2", false)?,
             "us.anthropic.claude-sonnet-4-20250514-v1:0"
         );
         assert_eq!(
-            Model::NovaPro.cross_region_inference_id("us-east-2", false)?,
+            ConverseModel::ClaudeFable5.cross_region_inference_id("us-east-1", false)?,
+            "us.anthropic.claude-fable-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeSonnet5.cross_region_inference_id("us-east-1", false)?,
+            "us.anthropic.claude-sonnet-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus5.cross_region_inference_id("us-east-1", false)?,
+            "us.anthropic.claude-opus-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus5_5.cross_region_inference_id("us-east-1", false)?,
+            "us.anthropic.claude-opus-5-5"
+        );
+        assert_eq!(
+            ConverseModel::NovaPro.cross_region_inference_id("us-east-2", false)?,
             "us.amazon.nova-pro-v1:0"
         );
         assert_eq!(
-            Model::DeepSeekR1.cross_region_inference_id("us-east-1", false)?,
+            ConverseModel::DeepSeekR1.cross_region_inference_id("us-east-1", false)?,
             "us.deepseek.r1-v1:0"
         );
         Ok(())
@@ -808,20 +1416,66 @@ mod tests {
     #[test]
     fn test_eu_region_inference_ids() -> anyhow::Result<()> {
         assert_eq!(
-            Model::ClaudeSonnet4.cross_region_inference_id("eu-west-1", false)?,
+            ConverseModel::ClaudeSonnet4.cross_region_inference_id("eu-west-1", false)?,
             "eu.anthropic.claude-sonnet-4-20250514-v1:0"
         );
         assert_eq!(
-            Model::ClaudeSonnet4_5.cross_region_inference_id("eu-west-1", false)?,
+            ConverseModel::ClaudeSonnet4_5.cross_region_inference_id("eu-west-1", false)?,
             "eu.anthropic.claude-sonnet-4-5-20250929-v1:0"
         );
         assert_eq!(
-            Model::NovaLite.cross_region_inference_id("eu-north-1", false)?,
+            ConverseModel::NovaLite.cross_region_inference_id("eu-north-1", false)?,
             "eu.amazon.nova-lite-v1:0"
         );
         assert_eq!(
-            Model::ClaudeOpus4_6.cross_region_inference_id("eu-west-1", false)?,
+            ConverseModel::ClaudeOpus4_6.cross_region_inference_id("eu-west-1", false)?,
             "eu.anthropic.claude-opus-4-6-v1"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus4_7.cross_region_inference_id("eu-west-1", false)?,
+            "eu.anthropic.claude-opus-4-7"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus4_8.cross_region_inference_id("eu-west-1", false)?,
+            "eu.anthropic.claude-opus-4-8"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus5.cross_region_inference_id("eu-west-1", false)?,
+            "eu.anthropic.claude-opus-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus5_5.cross_region_inference_id("eu-west-1", false)?,
+            "eu.anthropic.claude-opus-5-5"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_inference_profile_only_models_fall_back_to_global() -> anyhow::Result<()> {
+        assert_eq!(
+            ConverseModel::ClaudeFable5.cross_region_inference_id("eu-west-1", false)?,
+            "global.anthropic.claude-fable-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeSonnet5.cross_region_inference_id("eu-west-1", false)?,
+            "global.anthropic.claude-sonnet-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeFable5.cross_region_inference_id("ap-southeast-2", false)?,
+            "global.anthropic.claude-fable-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeSonnet5.cross_region_inference_id("ap-northeast-1", false)?,
+            "global.anthropic.claude-sonnet-5"
+        );
+        // Opus 5.5 has no APAC geo profile outside AU and JP.
+        assert_eq!(
+            ConverseModel::ClaudeOpus5_5.cross_region_inference_id("ap-south-1", false)?,
+            "global.anthropic.claude-opus-5-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus5_5.cross_region_inference_id("ap-northeast-2", false)?,
+            "global.anthropic.claude-opus-5-5"
         );
         Ok(())
     }
@@ -829,11 +1483,11 @@ mod tests {
     #[test]
     fn test_apac_region_inference_ids() -> anyhow::Result<()> {
         assert_eq!(
-            Model::ClaudeSonnet4_5.cross_region_inference_id("ap-south-1", false)?,
+            ConverseModel::ClaudeSonnet4_5.cross_region_inference_id("ap-south-1", false)?,
             "apac.anthropic.claude-sonnet-4-5-20250929-v1:0"
         );
         assert_eq!(
-            Model::NovaLite.cross_region_inference_id("ap-south-1", false)?,
+            ConverseModel::NovaLite.cross_region_inference_id("ap-south-1", false)?,
             "apac.amazon.nova-lite-v1:0"
         );
         Ok(())
@@ -842,16 +1496,32 @@ mod tests {
     #[test]
     fn test_au_region_inference_ids() -> anyhow::Result<()> {
         assert_eq!(
-            Model::ClaudeHaiku4_5.cross_region_inference_id("ap-southeast-2", false)?,
+            ConverseModel::ClaudeHaiku4_5.cross_region_inference_id("ap-southeast-2", false)?,
             "au.anthropic.claude-haiku-4-5-20251001-v1:0"
         );
         assert_eq!(
-            Model::ClaudeSonnet4_5.cross_region_inference_id("ap-southeast-4", false)?,
+            ConverseModel::ClaudeSonnet4_5.cross_region_inference_id("ap-southeast-4", false)?,
             "au.anthropic.claude-sonnet-4-5-20250929-v1:0"
         );
         assert_eq!(
-            Model::ClaudeOpus4_6.cross_region_inference_id("ap-southeast-2", false)?,
+            ConverseModel::ClaudeOpus4_6.cross_region_inference_id("ap-southeast-2", false)?,
             "au.anthropic.claude-opus-4-6-v1"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus4_7.cross_region_inference_id("ap-southeast-2", false)?,
+            "au.anthropic.claude-opus-4-7"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus4_8.cross_region_inference_id("ap-southeast-2", false)?,
+            "au.anthropic.claude-opus-4-8"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus5.cross_region_inference_id("ap-southeast-2", false)?,
+            "au.anthropic.claude-opus-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus5_5.cross_region_inference_id("ap-southeast-2", false)?,
+            "au.anthropic.claude-opus-5-5"
         );
         Ok(())
     }
@@ -859,15 +1529,35 @@ mod tests {
     #[test]
     fn test_jp_region_inference_ids() -> anyhow::Result<()> {
         assert_eq!(
-            Model::ClaudeHaiku4_5.cross_region_inference_id("ap-northeast-1", false)?,
+            ConverseModel::ClaudeHaiku4_5.cross_region_inference_id("ap-northeast-1", false)?,
             "jp.anthropic.claude-haiku-4-5-20251001-v1:0"
         );
+        // Claude Opus 5 has no `jp.` geo profile, so it falls through to the
+        // bare model id (which fails at request time with a region hint)
+        // rather than fabricating an undocumented profile.
         assert_eq!(
-            Model::ClaudeSonnet4_5.cross_region_inference_id("ap-northeast-3", false)?,
+            ConverseModel::ClaudeOpus5.cross_region_inference_id("ap-northeast-1", false)?,
+            "anthropic.claude-opus-5"
+        );
+        // Claude Opus 5.5, unlike Opus 5, publishes a `jp.` geo profile.
+        assert_eq!(
+            ConverseModel::ClaudeOpus5_5.cross_region_inference_id("ap-northeast-1", false)?,
+            "jp.anthropic.claude-opus-5-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus4_8.cross_region_inference_id("ap-northeast-1", false)?,
+            "jp.anthropic.claude-opus-4-8"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus4_7.cross_region_inference_id("ap-northeast-3", false)?,
+            "jp.anthropic.claude-opus-4-7"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeSonnet4_5.cross_region_inference_id("ap-northeast-3", false)?,
             "jp.anthropic.claude-sonnet-4-5-20250929-v1:0"
         );
         assert_eq!(
-            Model::Nova2Lite.cross_region_inference_id("ap-northeast-1", false)?,
+            ConverseModel::Nova2Lite.cross_region_inference_id("ap-northeast-1", false)?,
             "jp.amazon.nova-2-lite-v1:0"
         );
         Ok(())
@@ -876,8 +1566,26 @@ mod tests {
     #[test]
     fn test_ca_region_inference_ids() -> anyhow::Result<()> {
         assert_eq!(
-            Model::NovaLite.cross_region_inference_id("ca-central-1", false)?,
+            ConverseModel::NovaLite.cross_region_inference_id("ca-central-1", false)?,
             "ca.amazon.nova-lite-v1:0"
+        );
+        // Canadian regions are source regions of the US geo profile for
+        // recent Opus models; there are no `ca.` Claude profiles.
+        assert_eq!(
+            ConverseModel::ClaudeOpus5.cross_region_inference_id("ca-central-1", false)?,
+            "us.anthropic.claude-opus-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus5_5.cross_region_inference_id("ca-central-1", false)?,
+            "us.anthropic.claude-opus-5-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus4_8.cross_region_inference_id("ca-west-1", false)?,
+            "us.anthropic.claude-opus-4-8"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus4_7.cross_region_inference_id("ca-central-1", false)?,
+            "us.anthropic.claude-opus-4-7"
         );
         Ok(())
     }
@@ -885,12 +1593,16 @@ mod tests {
     #[test]
     fn test_gov_region_inference_ids() -> anyhow::Result<()> {
         assert_eq!(
-            Model::ClaudeSonnet4_5.cross_region_inference_id("us-gov-east-1", false)?,
+            ConverseModel::ClaudeSonnet4_5.cross_region_inference_id("us-gov-east-1", false)?,
             "us-gov.anthropic.claude-sonnet-4-5-20250929-v1:0"
         );
         assert_eq!(
-            Model::ClaudeSonnet4_5Thinking.cross_region_inference_id("us-gov-west-1", false)?,
+            ConverseModel::ClaudeSonnet4_5.cross_region_inference_id("us-gov-west-1", false)?,
             "us-gov.anthropic.claude-sonnet-4-5-20250929-v1:0"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus5_5.cross_region_inference_id("us-gov-west-1", true)?,
+            "us-gov.anthropic.claude-opus-5-5"
         );
         Ok(())
     }
@@ -898,29 +1610,53 @@ mod tests {
     #[test]
     fn test_global_inference_ids() -> anyhow::Result<()> {
         assert_eq!(
-            Model::ClaudeSonnet4.cross_region_inference_id("us-east-1", true)?,
+            ConverseModel::ClaudeSonnet4.cross_region_inference_id("us-east-1", true)?,
             "global.anthropic.claude-sonnet-4-20250514-v1:0"
         );
         assert_eq!(
-            Model::ClaudeSonnet4_5.cross_region_inference_id("eu-west-1", true)?,
+            ConverseModel::ClaudeSonnet4_5.cross_region_inference_id("eu-west-1", true)?,
             "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
         );
         assert_eq!(
-            Model::ClaudeHaiku4_5.cross_region_inference_id("ap-south-1", true)?,
+            ConverseModel::ClaudeHaiku4_5.cross_region_inference_id("ap-south-1", true)?,
             "global.anthropic.claude-haiku-4-5-20251001-v1:0"
         );
         assert_eq!(
-            Model::ClaudeOpus4_6.cross_region_inference_id("us-east-1", true)?,
+            ConverseModel::ClaudeOpus4_6.cross_region_inference_id("us-east-1", true)?,
             "global.anthropic.claude-opus-4-6-v1"
         );
         assert_eq!(
-            Model::Nova2Lite.cross_region_inference_id("us-east-1", true)?,
+            ConverseModel::ClaudeOpus4_7.cross_region_inference_id("us-east-1", true)?,
+            "global.anthropic.claude-opus-4-7"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus4_8.cross_region_inference_id("us-east-1", true)?,
+            "global.anthropic.claude-opus-4-8"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus5.cross_region_inference_id("us-east-1", true)?,
+            "global.anthropic.claude-opus-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus5_5.cross_region_inference_id("us-east-1", true)?,
+            "global.anthropic.claude-opus-5-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeFable5.cross_region_inference_id("us-east-1", true)?,
+            "global.anthropic.claude-fable-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeSonnet5.cross_region_inference_id("us-east-1", true)?,
+            "global.anthropic.claude-sonnet-5"
+        );
+        assert_eq!(
+            ConverseModel::Nova2Lite.cross_region_inference_id("us-east-1", true)?,
             "global.amazon.nova-2-lite-v1:0"
         );
 
         // Models without global support fall back to regional
         assert_eq!(
-            Model::NovaPro.cross_region_inference_id("us-east-1", true)?,
+            ConverseModel::NovaPro.cross_region_inference_id("us-east-1", true)?,
             "us.amazon.nova-pro-v1:0"
         );
         Ok(())
@@ -930,27 +1666,27 @@ mod tests {
     fn test_models_without_cross_region() -> anyhow::Result<()> {
         // Models without cross-region support return their request_id directly
         assert_eq!(
-            Model::Gemma3_4B.cross_region_inference_id("us-east-1", false)?,
+            ConverseModel::Gemma3_4B.cross_region_inference_id("us-east-1", false)?,
             "google.gemma-3-4b-it"
         );
         assert_eq!(
-            Model::MistralLarge3.cross_region_inference_id("eu-west-1", false)?,
+            ConverseModel::MistralLarge3.cross_region_inference_id("eu-west-1", false)?,
             "mistral.mistral-large-3-675b-instruct"
         );
         assert_eq!(
-            Model::Qwen3VL235B.cross_region_inference_id("ap-south-1", false)?,
+            ConverseModel::Qwen3VL235B.cross_region_inference_id("ap-south-1", false)?,
             "qwen.qwen3-vl-235b-a22b"
         );
         assert_eq!(
-            Model::GptOss120B.cross_region_inference_id("us-east-1", false)?,
+            ConverseModel::GptOss120B.cross_region_inference_id("us-east-1", false)?,
             "openai.gpt-oss-120b-1:0"
         );
         assert_eq!(
-            Model::MiniMaxM2.cross_region_inference_id("us-east-1", false)?,
+            ConverseModel::MiniMaxM2.cross_region_inference_id("us-east-1", false)?,
             "minimax.minimax-m2"
         );
         assert_eq!(
-            Model::KimiK2Thinking.cross_region_inference_id("us-east-1", false)?,
+            ConverseModel::KimiK2Thinking.cross_region_inference_id("us-east-1", false)?,
             "moonshot.kimi-k2-thinking"
         );
         Ok(())
@@ -958,13 +1694,16 @@ mod tests {
 
     #[test]
     fn test_custom_model_inference_ids() -> anyhow::Result<()> {
-        let custom_model = Model::Custom {
+        let custom_model = ConverseModel::Custom {
             name: "custom.my-model-v1:0".to_string(),
             max_tokens: 100000,
             display_name: Some("My Custom Model".to_string()),
             max_output_tokens: Some(8192),
             default_temperature: Some(0.7),
             cache_configuration: None,
+            supports_tool_use: None,
+            supports_images: None,
+            thinking: None,
         };
 
         assert_eq!(
@@ -975,90 +1714,368 @@ mod tests {
             custom_model.cross_region_inference_id("eu-west-1", true)?,
             "custom.my-model-v1:0"
         );
+
+        let prefixed = ConverseModel::Custom {
+            name: "us.anthropic.claude-sonnet-4-7".to_string(),
+            max_tokens: 200_000,
+            display_name: None,
+            max_output_tokens: None,
+            default_temperature: None,
+            cache_configuration: None,
+            supports_tool_use: None,
+            supports_images: None,
+            thinking: None,
+        };
+        assert_eq!(
+            prefixed.cross_region_inference_id("us-east-1", false)?,
+            "us.anthropic.claude-sonnet-4-7"
+        );
+        assert_eq!(
+            prefixed.cross_region_inference_id("eu-west-1", false)?,
+            "us.anthropic.claude-sonnet-4-7"
+        );
+
+        let unprefixed = ConverseModel::Custom {
+            name: "anthropic.claude-sonnet-4-7".to_string(),
+            max_tokens: 200_000,
+            display_name: None,
+            max_output_tokens: None,
+            default_temperature: None,
+            cache_configuration: None,
+            supports_tool_use: None,
+            supports_images: None,
+            thinking: None,
+        };
+        assert_eq!(
+            unprefixed.cross_region_inference_id("us-east-1", false)?,
+            "anthropic.claude-sonnet-4-7"
+        );
+
+        let grok = ConverseModel::Custom {
+            name: "xai.grok-4.6".to_string(),
+            max_tokens: 500_000,
+            display_name: None,
+            max_output_tokens: None,
+            default_temperature: None,
+            cache_configuration: None,
+            supports_tool_use: None,
+            supports_images: None,
+            thinking: None,
+        };
+        assert_eq!(
+            grok.cross_region_inference_id("us-east-1", false)?,
+            "xai.grok-4.6"
+        );
+
+        let arn = ConverseModel::Custom {
+            name: "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc"
+                .to_string(),
+            max_tokens: 200_000,
+            display_name: None,
+            max_output_tokens: None,
+            default_temperature: None,
+            cache_configuration: None,
+            supports_tool_use: None,
+            supports_images: None,
+            thinking: None,
+        };
+        assert_eq!(
+            arn.cross_region_inference_id("us-east-1", false)?,
+            "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc"
+        );
         Ok(())
     }
 
     #[test]
     fn test_friendly_id_vs_request_id() {
-        assert_eq!(Model::ClaudeSonnet4_5.id(), "claude-sonnet-4-5");
-        assert_eq!(Model::NovaLite.id(), "nova-lite");
-        assert_eq!(Model::DeepSeekR1.id(), "deepseek-r1");
-        assert_eq!(Model::Llama4Scout17B.id(), "llama-4-scout-17b");
+        assert_eq!(ConverseModel::ClaudeSonnet4_5.id(), "claude-sonnet-4-5");
+        assert_eq!(ConverseModel::NovaLite.id(), "nova-lite");
+        assert_eq!(ConverseModel::DeepSeekR1.id(), "deepseek-r1");
+        assert_eq!(ConverseModel::Llama4Scout17B.id(), "llama-4-scout-17b");
+        assert_eq!(ConverseModel::ClaudeFable5.id(), "claude-fable-5");
+        assert_eq!(ConverseModel::ClaudeOpus5.id(), "claude-opus-5");
+        assert_eq!(ConverseModel::ClaudeOpus5_5.id(), "claude-opus-5-5");
+        assert_eq!(ConverseModel::ClaudeSonnet5.id(), "claude-sonnet-5");
 
         assert_eq!(
-            Model::ClaudeSonnet4_5.request_id(),
+            ConverseModel::ClaudeSonnet4_5.request_id(),
             "anthropic.claude-sonnet-4-5-20250929-v1:0"
         );
-        assert_eq!(Model::NovaLite.request_id(), "amazon.nova-lite-v1:0");
-        assert_eq!(Model::DeepSeekR1.request_id(), "deepseek.r1-v1:0");
         assert_eq!(
-            Model::Llama4Scout17B.request_id(),
+            ConverseModel::NovaLite.request_id(),
+            "amazon.nova-lite-v1:0"
+        );
+        assert_eq!(ConverseModel::DeepSeekR1.request_id(), "deepseek.r1-v1:0");
+        assert_eq!(
+            ConverseModel::Llama4Scout17B.request_id(),
             "meta.llama4-scout-17b-instruct-v1:0"
         );
-
-        // Thinking models have different friendly IDs but same request IDs
-        assert_eq!(Model::ClaudeSonnet4.id(), "claude-sonnet-4");
         assert_eq!(
-            Model::ClaudeSonnet4Thinking.id(),
-            "claude-sonnet-4-thinking"
+            ConverseModel::ClaudeFable5.request_id(),
+            "anthropic.claude-fable-5"
         );
         assert_eq!(
-            Model::ClaudeSonnet4.request_id(),
-            Model::ClaudeSonnet4Thinking.request_id()
+            ConverseModel::ClaudeOpus5.request_id(),
+            "anthropic.claude-opus-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus5_5.request_id(),
+            "anthropic.claude-opus-5-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeSonnet5.request_id(),
+            "anthropic.claude-sonnet-5"
+        );
+
+        // Thinking aliases deserialize to the same model
+        assert_eq!(ConverseModel::ClaudeSonnet4.id(), "claude-sonnet-4");
+        assert_eq!(
+            ConverseModel::from_id("claude-sonnet-4-thinking")
+                .unwrap()
+                .id(),
+            "claude-sonnet-4"
+        );
+        assert_eq!(
+            ConverseModel::from_id("claude-fable-5-thinking")
+                .unwrap()
+                .id(),
+            "claude-fable-5"
+        );
+        assert_eq!(
+            ConverseModel::from_id("claude-opus-5-thinking")
+                .unwrap()
+                .id(),
+            "claude-opus-5"
+        );
+        assert_eq!(
+            ConverseModel::from_id("claude-opus-5-5-thinking")
+                .unwrap()
+                .id(),
+            "claude-opus-5-5"
+        );
+        assert_eq!(
+            ConverseModel::from_id("claude-sonnet-5-thinking")
+                .unwrap()
+                .id(),
+            "claude-sonnet-5"
         );
     }
 
     #[test]
-    fn test_model_modes() {
-        assert_eq!(Model::ClaudeSonnet4.mode(), BedrockModelMode::Default);
+    fn test_thinking_modes() {
+        assert!(ConverseModel::ClaudeHaiku4_5.supports_thinking());
+        assert!(ConverseModel::ClaudeSonnet4.supports_thinking());
+        assert!(ConverseModel::ClaudeSonnet4_5.supports_thinking());
+        assert!(ConverseModel::ClaudeOpus4_6.supports_thinking());
+        assert!(ConverseModel::ClaudeFable5.supports_thinking());
+        assert!(ConverseModel::ClaudeOpus5.supports_thinking());
+
+        assert!(!ConverseModel::ClaudeSonnet4.supports_adaptive_thinking());
+        assert!(ConverseModel::ClaudeOpus4_6.supports_adaptive_thinking());
+        assert!(ConverseModel::ClaudeSonnet4_6.supports_adaptive_thinking());
+        assert!(ConverseModel::ClaudeFable5.supports_adaptive_thinking());
+        assert!(ConverseModel::ClaudeOpus5.supports_adaptive_thinking());
+        assert!(ConverseModel::ClaudeSonnet5.supports_adaptive_thinking());
+        assert!(!ConverseModel::ClaudeOpus4_7.supports_xhigh_adaptive_thinking());
+        assert!(ConverseModel::ClaudeFable5.supports_xhigh_adaptive_thinking());
+        assert!(ConverseModel::ClaudeOpus5.supports_xhigh_adaptive_thinking());
+        assert!(ConverseModel::ClaudeOpus5_5.supports_xhigh_adaptive_thinking());
+        assert!(ConverseModel::ClaudeOpus5_5.supports_adaptive_thinking());
+        assert!(ConverseModel::ClaudeSonnet5.supports_xhigh_adaptive_thinking());
+        assert!(ConverseModel::ClaudeOpus4_8.supports_xhigh_adaptive_thinking());
+        assert_eq!(BedrockAdaptiveThinkingEffort::XHigh.as_str(), "xhigh");
+
         assert_eq!(
-            Model::ClaudeSonnet4Thinking.mode(),
+            ConverseModel::ClaudeSonnet4.thinking_mode(),
             BedrockModelMode::Thinking {
                 budget_tokens: Some(4096)
             }
         );
         assert_eq!(
-            Model::ClaudeOpus4_6Thinking.mode(),
+            ConverseModel::ClaudeOpus4_6.thinking_mode(),
             BedrockModelMode::AdaptiveThinking {
                 effort: BedrockAdaptiveThinkingEffort::High
+            }
+        );
+        assert_eq!(
+            ConverseModel::ClaudeHaiku4_5.thinking_mode(),
+            BedrockModelMode::Thinking {
+                budget_tokens: Some(4096)
             }
         );
     }
 
     #[test]
-    fn test_max_tokens() {
-        assert_eq!(Model::ClaudeSonnet4_5.max_tokens(), 200_000);
-        assert_eq!(Model::ClaudeOpus4_6.max_tokens(), 200_000);
-        assert_eq!(Model::Llama4Scout17B.max_tokens(), 128_000);
-        assert_eq!(Model::NovaPremier.max_tokens(), 1_000_000);
+    fn test_max_token_count() {
+        assert_eq!(ConverseModel::ClaudeSonnet4_5.max_token_count(), 1_000_000);
+        assert_eq!(ConverseModel::ClaudeOpus4_6.max_token_count(), 1_000_000);
+        assert_eq!(ConverseModel::ClaudeFable5.max_token_count(), 1_000_000);
+        assert_eq!(ConverseModel::ClaudeOpus5.max_token_count(), 1_000_000);
+        assert_eq!(ConverseModel::ClaudeOpus5_5.max_token_count(), 1_000_000);
+        assert_eq!(ConverseModel::ClaudeSonnet5.max_token_count(), 1_000_000);
+        assert_eq!(ConverseModel::Llama4Scout17B.max_token_count(), 128_000);
+        assert_eq!(ConverseModel::NovaPremier.max_token_count(), 1_000_000);
     }
 
     #[test]
     fn test_max_output_tokens() {
-        assert_eq!(Model::ClaudeSonnet4_5.max_output_tokens(), 64_000);
-        assert_eq!(Model::ClaudeOpus4_6.max_output_tokens(), 128_000);
-        assert_eq!(Model::ClaudeOpus4_1.max_output_tokens(), 32_000);
-        assert_eq!(Model::Gemma3_4B.max_output_tokens(), 8_192);
+        assert_eq!(ConverseModel::ClaudeSonnet4_5.max_output_tokens(), 64_000);
+        assert_eq!(ConverseModel::ClaudeOpus4_6.max_output_tokens(), 128_000);
+        assert_eq!(ConverseModel::ClaudeFable5.max_output_tokens(), 128_000);
+        assert_eq!(ConverseModel::ClaudeOpus5.max_output_tokens(), 128_000);
+        assert_eq!(ConverseModel::ClaudeOpus5_5.max_output_tokens(), 128_000);
+        assert_eq!(ConverseModel::ClaudeSonnet5.max_output_tokens(), 128_000);
+        assert_eq!(ConverseModel::ClaudeOpus4_1.max_output_tokens(), 32_000);
+        assert_eq!(ConverseModel::Gemma3_4B.max_output_tokens(), 8_192);
     }
 
     #[test]
     fn test_supports_tool_use() {
-        assert!(Model::ClaudeSonnet4_5.supports_tool_use());
-        assert!(Model::NovaPro.supports_tool_use());
-        assert!(Model::MistralLarge3.supports_tool_use());
-        assert!(!Model::Gemma3_4B.supports_tool_use());
-        assert!(Model::Qwen3_32B.supports_tool_use());
-        assert!(Model::MiniMaxM2.supports_tool_use());
-        assert!(Model::KimiK2_5.supports_tool_use());
-        assert!(Model::DeepSeekR1.supports_tool_use());
-        assert!(!Model::Llama4Scout17B.supports_tool_use());
+        assert!(ConverseModel::ClaudeSonnet4_5.supports_tool_use());
+        assert!(ConverseModel::ClaudeFable5.supports_tool_use());
+        assert!(ConverseModel::NovaPro.supports_tool_use());
+        assert!(ConverseModel::MistralLarge3.supports_tool_use());
+        assert!(!ConverseModel::Gemma3_4B.supports_tool_use());
+        assert!(ConverseModel::Qwen3_32B.supports_tool_use());
+        assert!(ConverseModel::MiniMaxM2.supports_tool_use());
+        assert!(ConverseModel::KimiK2_5.supports_tool_use());
+        assert!(ConverseModel::DeepSeekR1.supports_tool_use());
+        assert!(!ConverseModel::Llama4Scout17B.supports_tool_use());
     }
 
     #[test]
     fn test_supports_caching() {
-        assert!(Model::ClaudeSonnet4_5.supports_caching());
-        assert!(Model::ClaudeOpus4_6.supports_caching());
-        assert!(!Model::Llama4Scout17B.supports_caching());
-        assert!(!Model::NovaPro.supports_caching());
+        assert!(ConverseModel::ClaudeSonnet4_5.supports_caching());
+        assert!(ConverseModel::ClaudeOpus4_6.supports_caching());
+        assert!(ConverseModel::ClaudeFable5.supports_caching());
+        assert!(!ConverseModel::Llama4Scout17B.supports_caching());
+        assert!(!ConverseModel::NovaPro.supports_caching());
+    }
+
+    fn custom_model(
+        supports_tool_use: Option<bool>,
+        supports_images: Option<bool>,
+        thinking: Option<BedrockThinkingConfig>,
+    ) -> ConverseModel {
+        ConverseModel::Custom {
+            name: "us.anthropic.claude-custom-v1:0".to_string(),
+            max_tokens: 200_000,
+            display_name: Some("Custom Claude".to_string()),
+            max_output_tokens: Some(8192),
+            default_temperature: None,
+            cache_configuration: None,
+            supports_tool_use,
+            supports_images,
+            thinking,
+        }
+    }
+
+    #[test]
+    fn test_custom_model_defaults_disable_optional_capabilities() {
+        let model = custom_model(None, None, None);
+        assert!(!model.supports_tool_use());
+        assert!(!model.supports_images());
+        assert!(!model.supports_thinking());
+        assert!(!model.supports_adaptive_thinking());
+        assert!(!model.supports_xhigh_adaptive_thinking());
+        assert_eq!(model.thinking_mode(), BedrockModelMode::Default);
+        assert_eq!(model.default_temperature(), None);
+        assert_eq!(
+            ConverseModel::ClaudeSonnet4_5.default_temperature(),
+            Some(1.0)
+        );
+    }
+
+    #[test]
+    fn test_custom_model_optional_capabilities() {
+        let model = custom_model(
+            Some(true),
+            Some(true),
+            Some(BedrockThinkingConfig {
+                adaptive: false,
+                has_xhigh: false,
+                budget_tokens: None,
+            }),
+        );
+        assert!(model.supports_tool_use());
+        assert!(model.supports_images());
+        assert!(model.supports_thinking());
+        assert!(!model.supports_adaptive_thinking());
+        assert_eq!(
+            model.thinking_mode(),
+            BedrockModelMode::Thinking {
+                budget_tokens: Some(4096)
+            }
+        );
+    }
+
+    #[test]
+    fn test_custom_model_thinking_budget_tokens() {
+        let model = custom_model(
+            None,
+            None,
+            Some(BedrockThinkingConfig {
+                adaptive: false,
+                has_xhigh: false,
+                budget_tokens: Some(8192),
+            }),
+        );
+        assert!(model.supports_thinking());
+        assert_eq!(
+            model.thinking_mode(),
+            BedrockModelMode::Thinking {
+                budget_tokens: Some(8192)
+            }
+        );
+    }
+
+    #[test]
+    fn test_custom_model_adaptive_thinking() {
+        let model = custom_model(
+            None,
+            None,
+            Some(BedrockThinkingConfig {
+                adaptive: true,
+                has_xhigh: false,
+                budget_tokens: None,
+            }),
+        );
+        assert!(model.supports_thinking());
+        assert!(model.supports_adaptive_thinking());
+        assert!(!model.supports_xhigh_adaptive_thinking());
+        assert_eq!(
+            model.thinking_mode(),
+            BedrockModelMode::AdaptiveThinking {
+                effort: BedrockAdaptiveThinkingEffort::High
+            }
+        );
+
+        let model = custom_model(
+            None,
+            None,
+            Some(BedrockThinkingConfig {
+                adaptive: true,
+                has_xhigh: true,
+                budget_tokens: None,
+            }),
+        );
+        assert!(model.supports_xhigh_adaptive_thinking());
+    }
+
+    #[test]
+    fn test_custom_model_legacy_config_deserializes() {
+        let model: ConverseModel = serde_json::from_value(serde_json::json!({
+            "custom": {
+                "name": "eu.anthropic.claude-new-v1:0",
+                "max_tokens": 200000
+            }
+        }))
+        .expect("legacy custom model config should deserialize");
+
+        assert_eq!(model.id(), "eu.anthropic.claude-new-v1:0");
+        assert!(!model.supports_tool_use());
+        assert!(!model.supports_images());
+        assert!(!model.supports_thinking());
+        assert_eq!(model.thinking_mode(), BedrockModelMode::Default);
     }
 }

@@ -22,10 +22,8 @@ pub struct EditorSettingsContent {
     ///
     /// Default: bar
     pub cursor_shape: Option<CursorShape>,
-    /// Determines when the mouse cursor should be hidden in an editor or input box.
-    ///
-    /// Default: on_typing_and_movement
-    pub hide_mouse: Option<HideMouseMode>,
+    /// Cursor movement animation settings.
+    pub cursor_animation: Option<CursorAnimationSettingsContent>,
     /// Determines how snippets are sorted relative to other completion items.
     ///
     /// Default: inline
@@ -57,6 +55,17 @@ pub struct EditorSettingsContent {
     ///
     /// Default: 300
     pub hover_popover_delay: Option<DelayMs>,
+    /// Whether the hover popover sticks when the mouse moves toward it,
+    /// allowing interaction with its contents before it disappears.
+    ///
+    /// Default: true
+    pub hover_popover_sticky: Option<bool>,
+    /// Time to wait in milliseconds before hiding the hover popover
+    /// after the mouse moves away from the hover target.
+    /// Only applies when `hover_popover_sticky` is enabled.
+    ///
+    /// Default: 300
+    pub hover_popover_hiding_delay: Option<DelayMs>,
     /// Toolbar related settings
     pub toolbar: Option<ToolbarContent>,
     /// Scrollbar related settings
@@ -89,6 +98,11 @@ pub struct EditorSettingsContent {
     /// Default: 1.0
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub scroll_sensitivity: Option<f32>,
+    /// Whether to zoom the editor font size with the mouse wheel
+    /// while holding the primary modifier key (Cmd on macOS, Ctrl on other platforms).
+    ///
+    /// Default: false
+    pub mouse_wheel_zoom: Option<bool>,
     /// Scroll sensitivity multiplier for fast scrolling. This multiplier is applied
     /// to both the horizontal and vertical delta values while scrolling. Fast scrolling
     /// happens when a user holds the alt or option key while scrolling.
@@ -157,6 +171,12 @@ pub struct EditorSettingsContent {
     /// Default: false
     pub auto_signature_help: Option<bool>,
 
+    /// Whether to automatically detect the language of an untitled buffer from its contents.
+    /// Languages explicitly selected from the language selector are not changed.
+    ///
+    /// Default: true
+    pub language_detection: Option<bool>,
+
     /// Whether to show the signature help pop-up after completions or bracket pairs inserted.
     ///
     /// Default: false
@@ -175,6 +195,20 @@ pub struct EditorSettingsContent {
     ///
     /// Default: FindAllReferences
     pub go_to_definition_fallback: Option<GoToDefinitionFallback>,
+
+    /// Where to show LSP results that can contain multiple locations
+    /// (Go to Definition, Go to Implementation, Find All References). A single
+    /// result always opens directly. Individual actions can override this with
+    /// their `open_results_in` argument.
+    ///
+    /// Default: multi_buffer
+    pub lsp_results_location: Option<OpenResultsIn>,
+
+    /// How to scroll the target into view when navigating to a definition or reference
+    /// (e.g. Go to Definition, Go to Type Definition, Find All References).
+    ///
+    /// Default: center
+    pub go_to_definition_scroll_strategy: Option<GoToDefinitionScrollStrategy>,
 
     /// Jupyter REPL settings.
     pub jupyter: Option<JupyterContent>,
@@ -199,10 +233,19 @@ pub struct EditorSettingsContent {
     /// Drag and drop related settings
     pub drag_and_drop_selection: Option<DragAndDropSelectionContent>,
 
+    /// Whether and how to display code lenses from language servers.
+    ///
+    /// Default: "off"
+    pub code_lens: Option<CodeLens>,
+
     /// How to render LSP `textDocument/documentColor` colors in the editor.
     ///
     /// Default: [`DocumentColorsRenderMode::Inlay`]
     pub lsp_document_colors: Option<DocumentColorsRenderMode>,
+    /// Whether to query and display LSP `textDocument/documentLink` links in the editor.
+    ///
+    /// Default: true
+    pub lsp_document_links: Option<bool>,
     /// When to show the scrollbar in the completion menu.
     /// This setting can take four values:
     ///
@@ -222,10 +265,28 @@ pub struct EditorSettingsContent {
     /// Default: left
     pub completion_detail_alignment: Option<CompletionDetailAlignment>,
 
+    /// How to display the LSP item kind (function, method, variable, etc.)
+    /// of each entry in the completions menu.
+    ///
+    /// - "off": do not display item kinds (default).
+    /// - "symbol": display a single-letter badge, colorized based on the
+    ///   active syntax theme.
+    ///
+    /// Default: off
+    pub completion_menu_item_kind: Option<CompletionMenuItemKind>,
+
     /// How to display diffs in the editor.
     ///
     /// Default: split
     pub diff_view_style: Option<DiffViewStyle>,
+
+    /// The minimum width (in em-widths) at which the split diff view is used.
+    /// When the editor is narrower than this, the diff view automatically
+    /// switches to unified mode and switches back when the editor is wide
+    /// enough. Set to 0 to disable automatic switching.
+    ///
+    /// Default: 100
+    pub minimum_split_diff_width: Option<f32>,
 }
 
 #[derive(
@@ -269,6 +330,27 @@ pub enum CompletionDetailAlignment {
     Right,
 }
 
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CompletionMenuItemKind {
+    #[default]
+    Off,
+    Symbol,
+}
+
 impl RelativeLineNumbers {
     pub fn enabled(&self) -> bool {
         match self {
@@ -282,6 +364,15 @@ impl RelativeLineNumbers {
             RelativeLineNumbers::Wrapped => true,
         }
     }
+}
+
+#[with_fallible_options]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+pub struct CursorAnimationSettingsContent {
+    /// Whether cursor movement animation is enabled.
+    ///
+    /// Default: false
+    pub enabled: Option<bool>,
 }
 
 // Toolbar related settings
@@ -407,9 +498,32 @@ pub struct ScrollbarAxesContent {
     pub vertical: Option<bool>,
 }
 
+/// Controls the width of the git diff hunk indicators in the gutter.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    strum::EnumDiscriminants,
+)]
+#[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
+#[serde(rename_all = "snake_case")]
+pub enum GitGutterWidth {
+    /// Width scales automatically with the buffer font size.
+    #[default]
+    Default,
+    /// A fixed pixel width for the git diff indicators.
+    Custom(crate::PixelSetting),
+}
+
 /// Gutter related settings
 #[with_fallible_options]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct GutterContent {
     /// Whether to show line numbers in the gutter.
     ///
@@ -427,13 +541,22 @@ pub struct GutterContent {
     ///
     /// Default: true
     pub breakpoints: Option<bool>,
+    /// Whether to show bookmarks in the gutter.
+    ///
+    /// Default: true
+    pub bookmarks: Option<bool>,
     /// Whether to show fold buttons in the gutter.
     ///
     /// Default: true
     pub folds: Option<bool>,
+    /// The width of the git diff hunk indicators in the gutter.
+    /// Use "default" to scale with the buffer font size, or {"custom": <pixels>} for a fixed width.
+    ///
+    /// Default: "default"
+    pub git_gutter_width: Option<GitGutterWidth>,
 }
 
-/// How to render LSP `textDocument/documentColor` colors in the editor.
+/// Whether to display code lenses from language servers above code elements.
 #[derive(
     Copy,
     Clone,
@@ -445,6 +568,46 @@ pub struct GutterContent {
     Eq,
     JsonSchema,
     MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeLens {
+    /// Do not query and display code lenses.
+    #[default]
+    Off,
+    /// Display code lenses from language servers above code elements.
+    On,
+    /// Display code lenses in the code action menu.
+    Menu,
+}
+
+impl CodeLens {
+    pub fn enabled(&self) -> bool {
+        self != &Self::Off
+    }
+
+    pub fn inline(&self) -> bool {
+        *self == Self::On
+    }
+
+    pub fn show_in_menu(&self) -> bool {
+        *self == Self::Menu
+    }
+}
+
+/// How to render LSP `textDocument/documentColor` colors in the editor.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
     strum::VariantArray,
     strum::VariantNames,
 )]
@@ -726,9 +889,7 @@ pub enum GoToDefinitionFallback {
     FindAllReferences,
 }
 
-/// Determines when the mouse cursor should be hidden in an editor or input box.
-///
-/// Default: on_typing_and_movement
+/// Where to show LSP results that can contain multiple locations.
 #[derive(
     Copy,
     Clone,
@@ -744,14 +905,43 @@ pub enum GoToDefinitionFallback {
     strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
-pub enum HideMouseMode {
-    /// Never hide the mouse cursor
-    Never,
-    /// Hide only when typing
-    OnTyping,
-    /// Hide on both typing and cursor movement
+pub enum OpenResultsIn {
+    /// Open the results in a multibuffer.
     #[default]
-    OnTypingAndMovement,
+    MultiBuffer,
+    /// Open the results in a filterable picker.
+    Picker,
+}
+
+/// How to scroll the target into view when navigating to a definition or reference.
+///
+/// Default: center
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GoToDefinitionScrollStrategy {
+    /// Vertically center the target in the viewport.
+    #[default]
+    Center,
+    /// Scroll the minimum amount needed to make the target visible.
+    Minimum,
+    /// Scroll so the target appears near the top of the viewport.
+    Top,
+    /// Preserve the cursor's vertical position within the viewport, falling
+    /// back to centering when the cursor is offscreen.
+    Preserve,
 }
 
 /// Determines how snippets are sorted relative to other completion items.
@@ -828,6 +1018,8 @@ pub struct SearchSettingsContent {
     pub regex: Option<bool>,
     /// Whether to center the cursor on each search match when navigating.
     pub center_on_match: Option<bool>,
+    /// Start searching as you type in project search, without pressing Enter.
+    pub search_on_type: Option<bool>,
 }
 
 #[with_fallible_options]

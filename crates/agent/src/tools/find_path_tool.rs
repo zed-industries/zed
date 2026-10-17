@@ -1,5 +1,6 @@
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
-use agent_client_protocol as acp;
+use acp_thread::MentionUri;
+use agent_client_protocol::schema::v2 as acp;
 use anyhow::{Result, anyhow};
 use futures::FutureExt as _;
 use gpui::{App, AppContext, Entity, SharedString, Task};
@@ -11,7 +12,7 @@ use std::fmt::Write;
 use std::{cmp, path::PathBuf, sync::Arc};
 use util::paths::PathMatcher;
 
-/// Fast file path pattern matching tool that works with any codebase size
+/// Find file paths that match a given pattern.
 ///
 /// - Supports glob patterns like "**/*.js" or "src/**/*.ts"
 /// - Returns matching file paths sorted alphabetically
@@ -128,7 +129,7 @@ impl AgentTool for FindPathTool {
         let project = self.project.clone();
         cx.spawn(async move |cx| {
             let input = input.recv().await.map_err(|e| FindPathToolOutput::Error {
-                error: format!("Failed to receive tool input: {e}"),
+                error: e.to_string(),
             })?;
 
             let search_paths_task = cx.update(|cx| search_paths(&input.glob, project, cx));
@@ -143,11 +144,11 @@ impl AgentTool for FindPathTool {
                 ..cmp::min(input.offset + RESULTS_PER_PAGE, matches.len())];
 
             event_stream.update_fields(
-                acp::ToolCallUpdateFields::new()
+                |update| update
                     .title(if paginated_matches.is_empty() {
-                        "No matches".into()
+                        "No matches".to_string()
                     } else if paginated_matches.len() == 1 {
-                        "1 match".into()
+                        "1 match".to_string()
                     } else {
                         format!("{} matches", paginated_matches.len())
                     })
@@ -155,12 +156,15 @@ impl AgentTool for FindPathTool {
                         paginated_matches
                             .iter()
                             .map(|path| {
-                                acp::ToolCallContent::Content(acp::Content::new(
+                                let uri = MentionUri::File {
+                                    abs_path: path.clone(),
+                                };
+                                acp::ToolCallContent::from(
                                     acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
                                         path.to_string_lossy(),
-                                        format!("file://{}", path.display()),
+                                        uri.to_uri().to_string(),
                                     )),
-                                ))
+                                )
                             })
                             .collect::<Vec<_>>(),
                     ),

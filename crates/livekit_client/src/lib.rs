@@ -5,6 +5,7 @@ use cpal::DeviceId;
 mod remote_video_track_view;
 pub use remote_video_track_view::{RemoteVideoTrackView, RemoteVideoTrackViewEvent};
 use rodio::DeviceTrait as _;
+use serde::{Deserialize, Serialize};
 
 mod record;
 pub use record::CaptureInput;
@@ -65,6 +66,23 @@ pub use mock_client::*;
 pub enum Participant {
     Local(LocalParticipant),
     Remote(RemoteParticipant),
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+pub enum ConnectionQuality {
+    Excellent,
+    Good,
+    Poor,
+    Lost,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+pub struct RemoteAudioPlaybackStats {
+    pub frames_received: u64,
+    pub frames_dropped: u64,
+    pub queue_underflows: u64,
+    pub current_queue_depth: u64,
+    pub maximum_queue_depth: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -178,6 +196,10 @@ pub enum RoomEvent {
     },
     ActiveSpeakersChanged {
         speakers: Vec<Participant>,
+    },
+    ConnectionQualityChanged {
+        participant: Participant,
+        quality: ConnectionQuality,
     },
     ConnectionStateChanged(ConnectionState),
     Connected {

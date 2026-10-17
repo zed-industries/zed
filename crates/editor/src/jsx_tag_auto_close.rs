@@ -5,7 +5,7 @@ use multi_buffer::{BufferOffset, MultiBuffer, ToOffset};
 use std::ops::Range;
 use util::ResultExt as _;
 
-use language::{BufferSnapshot, JsxTagAutoCloseConfig, Node};
+use language::{BufferSnapshot, JsxTagAutoCloseConfig, Node, language_settings::LanguageSettings};
 use text::{Anchor, OffsetRangeExt as _};
 
 use crate::{Editor, SelectionEffects};
@@ -322,12 +322,10 @@ pub(crate) fn refresh_enabled_in_any_buffer(
                 if language.config().jsx_tag_auto_close.is_none() {
                     continue;
                 }
-                let language_settings = language::language_settings::language_settings(
-                    Some(language.name()),
-                    snapshot.file(),
-                    cx,
-                );
-                if language_settings.jsx_tag_auto_close {
+                let should_auto_close =
+                    LanguageSettings::resolve(Some(buffer), Some(&language.name()), cx)
+                        .jsx_tag_auto_close;
+                if should_auto_close {
                     found_enabled = true;
                 }
             }
@@ -354,11 +352,12 @@ pub(crate) fn construct_initial_buffer_versions_map<
     }
 
     for (edit_range, _) in edits {
-        let edit_range_buffer = editor
-            .buffer()
-            .read(cx)
-            .excerpt_containing(edit_range.end, cx)
-            .map(|e| e.1);
+        let multibuffer = editor.buffer.read(cx);
+        let snapshot = multibuffer.snapshot(cx);
+        let anchor = snapshot.anchor_before(edit_range.end);
+        let edit_range_buffer = snapshot
+            .anchor_to_buffer_anchor(anchor)
+            .and_then(|(text_anchor, _)| multibuffer.buffer(text_anchor.buffer_id));
         if let Some(buffer) = edit_range_buffer {
             let (buffer_id, buffer_version) =
                 buffer.read_with(cx, |buffer, _| (buffer.remote_id(), buffer.version.clone()));
@@ -512,13 +511,13 @@ pub(crate) fn handle_from(
                     let Some(selection_buffer_offset_head) =
                         multi_buffer_snapshot.point_to_buffer_offset(selection.head())
                     else {
-                        base_selections.push(selection.clone());
+                        base_selections.push(*selection);
                         continue;
                     };
                     let Some(selection_buffer_offset_tail) =
                         multi_buffer_snapshot.point_to_buffer_offset(selection.tail())
                     else {
-                        base_selections.push(selection.clone());
+                        base_selections.push(*selection);
                         continue;
                     };
 
@@ -526,7 +525,7 @@ pub(crate) fn handle_from(
                         == buffer_id
                         && selection_buffer_offset_tail.0.remote_id() == buffer_id;
                     if !is_entirely_in_buffer {
-                        base_selections.push(selection.clone());
+                        base_selections.push(*selection);
                         continue;
                     }
 
@@ -534,7 +533,7 @@ pub(crate) fn handle_from(
                     let selection_buffer_offset_tail = selection_buffer_offset_tail.1;
                     buffer_selection_map.insert(
                         (selection_buffer_offset_head, selection_buffer_offset_tail),
-                        (selection.clone(), None),
+                        (*selection, None),
                     );
                 }
             }
@@ -579,8 +578,8 @@ pub(crate) fn handle_from(
 
                 base_selections.extend(buffer_selection_map.values().map(|selection| {
                     match &selection.1 {
-                        Some(left_biased_selection) => left_biased_selection.clone(),
-                        None => selection.0.clone(),
+                        Some(left_biased_selection) => *left_biased_selection,
+                        None => selection.0,
                     }
                 }));
 

@@ -199,13 +199,20 @@ pub enum KeyBindingContextPredicate {
 impl fmt::Display for KeyBindingContextPredicate {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Identifier(name) => write!(f, "{}", name),
-            Self::Equal(left, right) => write!(f, "{} == {}", left, right),
-            Self::NotEqual(left, right) => write!(f, "{} != {}", left, right),
-            Self::Not(pred) => write!(f, "!{}", pred),
-            Self::Descendant(parent, child) => write!(f, "{} > {}", parent, child),
-            Self::And(left, right) => write!(f, "({} && {})", left, right),
-            Self::Or(left, right) => write!(f, "({} || {})", left, right),
+            Self::Identifier(name) => write!(f, "{name}"),
+            Self::Equal(left, right) => write!(f, "{left} == {right}"),
+            Self::NotEqual(left, right) => write!(f, "{left} != {right}"),
+            Self::Descendant(parent, child) => write!(f, "{parent} > {child}"),
+            Self::Not(pred) => match pred.as_ref() {
+                Self::Identifier(name) => write!(f, "!{name}"),
+                _ => write!(f, "!({pred})"),
+            },
+            Self::And(..) => self.fmt_joined(f, " && ", LogicalOperator::And, |node| {
+                matches!(node, Self::Or(..))
+            }),
+            Self::Or(..) => self.fmt_joined(f, " || ", LogicalOperator::Or, |node| {
+                matches!(node, Self::And(..))
+            }),
         }
     }
 }
@@ -436,6 +443,52 @@ impl KeyBindingContextPredicate {
             anyhow::bail!("operands of != must be identifiers");
         }
     }
+
+    fn fmt_joined(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        separator: &str,
+        operator: LogicalOperator,
+        needs_parens: impl Fn(&Self) -> bool + Copy,
+    ) -> fmt::Result {
+        let mut first = true;
+        self.fmt_joined_inner(f, separator, operator, needs_parens, &mut first)
+    }
+
+    fn fmt_joined_inner(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        separator: &str,
+        operator: LogicalOperator,
+        needs_parens: impl Fn(&Self) -> bool + Copy,
+        first: &mut bool,
+    ) -> fmt::Result {
+        match (operator, self) {
+            (LogicalOperator::And, Self::And(left, right))
+            | (LogicalOperator::Or, Self::Or(left, right)) => {
+                left.fmt_joined_inner(f, separator, operator, needs_parens, first)?;
+                right.fmt_joined_inner(f, separator, operator, needs_parens, first)
+            }
+            (_, node) => {
+                if !*first {
+                    f.write_str(separator)?;
+                }
+                *first = false;
+
+                if needs_parens(node) {
+                    write!(f, "({node})")
+                } else {
+                    write!(f, "{node}")
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum LogicalOperator {
+    And,
+    Or,
 }
 
 const PRECEDENCE_CHILD: u32 = 1;
@@ -756,5 +809,83 @@ mod tests {
         assert!(not_workspace.eval(slice::from_ref(&pane_context)));
         assert!(not_workspace.eval(slice::from_ref(&editor_context)));
         assert!(!not_workspace.eval(&workspace_pane_editor));
+    }
+
+    // MARK: - Display
+
+    #[test]
+    fn test_context_display() {
+        fn ident(s: &str) -> Box<KeyBindingContextPredicate> {
+            Box::new(Identifier(SharedString::new(s)))
+        }
+        fn eq(a: &str, b: &str) -> Box<KeyBindingContextPredicate> {
+            Box::new(Equal(SharedString::new(a), SharedString::new(b)))
+        }
+        fn not_eq(a: &str, b: &str) -> Box<KeyBindingContextPredicate> {
+            Box::new(NotEqual(SharedString::new(a), SharedString::new(b)))
+        }
+        fn and(
+            a: Box<KeyBindingContextPredicate>,
+            b: Box<KeyBindingContextPredicate>,
+        ) -> Box<KeyBindingContextPredicate> {
+            Box::new(And(a, b))
+        }
+        fn or(
+            a: Box<KeyBindingContextPredicate>,
+            b: Box<KeyBindingContextPredicate>,
+        ) -> Box<KeyBindingContextPredicate> {
+            Box::new(Or(a, b))
+        }
+        fn descendant(
+            a: Box<KeyBindingContextPredicate>,
+            b: Box<KeyBindingContextPredicate>,
+        ) -> Box<KeyBindingContextPredicate> {
+            Box::new(Descendant(a, b))
+        }
+        fn not(a: Box<KeyBindingContextPredicate>) -> Box<KeyBindingContextPredicate> {
+            Box::new(Not(a))
+        }
+
+        let test_cases = [
+            (ident("a"), "a"),
+            (eq("a", "b"), "a == b"),
+            (not_eq("a", "b"), "a != b"),
+            (descendant(ident("a"), ident("b")), "a > b"),
+            (not(ident("a")), "!a"),
+            (not_eq("a", "b"), "a != b"),
+            (descendant(ident("a"), ident("b")), "a > b"),
+            (not(and(ident("a"), ident("b"))), "!(a && b)"),
+            (not(or(ident("a"), ident("b"))), "!(a || b)"),
+            (and(ident("a"), ident("b")), "a && b"),
+            (and(and(ident("a"), ident("b")), ident("c")), "a && b && c"),
+            (or(ident("a"), ident("b")), "a || b"),
+            (or(or(ident("a"), ident("b")), ident("c")), "a || b || c"),
+            (or(ident("a"), and(ident("b"), ident("c"))), "a || (b && c)"),
+            (
+                and(
+                    and(
+                        and(ident("a"), eq("b", "c")),
+                        not(descendant(ident("d"), ident("e"))),
+                    ),
+                    eq("f", "g"),
+                ),
+                "a && b == c && !(d > e) && f == g",
+            ),
+            (
+                and(and(ident("a"), or(ident("b"), ident("c"))), ident("d")),
+                "a && (b || c) && d",
+            ),
+            (
+                or(or(ident("a"), and(ident("b"), ident("c"))), ident("d")),
+                "a || (b && c) || d",
+            ),
+        ];
+
+        for (predicate, expected) in test_cases {
+            let actual = predicate.to_string();
+            assert_eq!(actual, expected);
+            let parsed = KeyBindingContextPredicate::parse(&actual).unwrap();
+            assert_eq!(parsed, *predicate);
+        }
     }
 }

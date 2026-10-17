@@ -25,7 +25,7 @@
 //!   assert!(true)
 //! }
 //! ```
-use crate::{Entity, Subscription, TestAppContext, TestDispatcher};
+use crate::{Entity, Subscription, TestAppContext, TestDispatcher, calculate_seeds};
 use futures::StreamExt as _;
 use proptest::prelude::{Just, Strategy, any};
 use std::{
@@ -37,11 +37,32 @@ use std::{
 /// Strategy injected into `#[gpui::property_test]` tests to control the seed
 /// given to the scheduler. Doesn't shrink, since all scheduler seeds are
 /// equivalent in complexity. If `$SEED` is set, it always uses that value.
+///
+/// Note: this function is not intended to be used directly. Rather, it is
+/// public so that it can be used from the `property_test` macro.
 pub fn seed_strategy() -> impl Strategy<Value = u64> {
     match std::env::var("SEED") {
         Ok(val) => Just(val.parse().unwrap()).boxed(),
         Err(_) => any::<u64>().no_shrink().boxed(),
     }
+}
+
+/// Applies a fixed RNG seed to a proptest config so that case generation
+/// is deterministic. Uses `$SEED` if set, otherwise defaults to `0`.
+/// This bridges the GPUI `SEED` env var to proptest's RNG seed, so that
+/// a single variable controls both the scheduler seed and case generation.
+///
+/// Note: this function is not intended to be used directly. Rather, it is
+/// public so that it can be used from the `property_test` macro.
+pub fn apply_seed_to_proptest_config(
+    mut config: proptest::test_runner::Config,
+) -> proptest::test_runner::Config {
+    let seed = env::var("SEED")
+        .ok()
+        .and_then(|val| val.parse::<u64>().ok())
+        .unwrap_or(0);
+    config.rng_seed = proptest::test_runner::RngSeed::Fixed(seed);
+    config
 }
 
 /// Similar to [`run_test`], but only runs the callback once, allowing
@@ -50,16 +71,20 @@ pub fn seed_strategy() -> impl Strategy<Value = u64> {
 ///
 /// Doesn't support many features of [`run_test`], since these are provided by
 /// proptest.
-pub fn run_test_once(seed: u64, test_fn: Box<dyn UnwindSafe + FnOnce(TestDispatcher)>) {
+pub fn run_test_once<R>(
+    seed: u64,
+    test_fn: Box<dyn UnwindSafe + FnOnce(TestDispatcher) -> R>,
+) -> R {
     let result = panic::catch_unwind(|| {
         let dispatcher = TestDispatcher::new(seed);
         let scheduler = dispatcher.scheduler().clone();
-        test_fn(dispatcher);
+        let res = test_fn(dispatcher);
         scheduler.end_test();
+        res
     });
 
     match result {
-        Ok(()) => {}
+        Ok(r) => r,
         Err(e) => panic::resume_unwind(e),
     }
 }
@@ -116,54 +141,6 @@ pub fn run_test(
     }
 }
 
-fn calculate_seeds(
-    iterations: u64,
-    explicit_seeds: &[u64],
-) -> (impl Iterator<Item = u64> + '_, bool) {
-    let iterations = env::var("ITERATIONS")
-        .ok()
-        .map(|var| var.parse().expect("invalid ITERATIONS variable"))
-        .unwrap_or(iterations);
-
-    let env_num = env::var("SEED")
-        .map(|seed| seed.parse().expect("invalid SEED variable as integer"))
-        .ok();
-
-    let empty_range = || 0..0;
-
-    let iter = {
-        let env_range = if let Some(env_num) = env_num {
-            env_num..env_num + 1
-        } else {
-            empty_range()
-        };
-
-        // if `iterations` is 1 and !(`explicit_seeds` is non-empty || `SEED` is set), then add     the run `0`
-        // if `iterations` is 1 and  (`explicit_seeds` is non-empty || `SEED` is set), then discard the run `0`
-        // if `iterations` isn't 1 and `SEED` is set, do `SEED..SEED+iterations`
-        // otherwise, do `0..iterations`
-        let iterations_range = match (iterations, env_num) {
-            (1, None) if explicit_seeds.is_empty() => 0..1,
-            (1, None) | (1, Some(_)) => empty_range(),
-            (iterations, Some(env)) => env..env + iterations,
-            (iterations, None) => 0..iterations,
-        };
-
-        // if `SEED` is set, ignore `explicit_seeds`
-        let explicit_seeds = if env_num.is_some() {
-            &[]
-        } else {
-            explicit_seeds
-        };
-
-        env_range
-            .chain(iterations_range)
-            .chain(explicit_seeds.iter().copied())
-    };
-    let is_multiple_runs = iter.clone().nth(1).is_some();
-    (iter, is_multiple_runs)
-}
-
 /// A test struct for converting an observation callback into a stream.
 pub struct Observation<T> {
     rx: Pin<Box<async_channel::Receiver<T>>>,
@@ -186,7 +163,7 @@ pub fn observe<T: 'static>(entity: &Entity<T>, cx: &mut TestAppContext) -> Obser
     let (tx, rx) = async_channel::unbounded();
     let _subscription = cx.update(|cx| {
         cx.observe(entity, move |_, _| {
-            let _ = pollster::block_on(tx.send(()));
+            let _ = gpui::block_on(tx.send(()));
         })
     });
     let rx = Box::pin(rx);

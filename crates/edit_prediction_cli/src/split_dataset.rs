@@ -22,6 +22,7 @@
 //! The `--stratify` flag controls how examples are grouped before splitting:
 //!
 //! - `cursor-path` (default): group by the `cursor_path` JSON field
+//! - `project`: group by the first component of the `cursor_path` JSON field
 //! - `repo`: group by the `repository_url` JSON field
 //! - `none`: no grouping, split individual examples
 //!
@@ -35,7 +36,7 @@ use clap::Args;
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -74,6 +75,7 @@ EXAMPLES:
 STRATIFICATION:
   Controls how examples are grouped before splitting:
     cursor-path  Group by "cursor_path" field (default)
+    project      Group by the first component of the "cursor_path" field
     repo         Group by "repository_url" field
     none         No grouping, split individual examples
 
@@ -96,6 +98,8 @@ pub struct SplitArgs {
 pub enum Stratify {
     #[strum(serialize = "cursor_path")]
     CursorPath,
+    #[strum(serialize = "project")]
+    Project,
     #[strum(serialize = "repo")]
     Repo,
     #[strum(serialize = "none")]
@@ -324,19 +328,31 @@ fn group_lines(lines: &[String], stratify: Stratify) -> Vec<Vec<String>> {
         return lines.iter().map(|line| vec![line.clone()]).collect();
     }
 
-    let field = match stratify {
-        Stratify::Repo => "repository_url",
-        Stratify::CursorPath => "cursor_path",
-        Stratify::None => unreachable!(),
+    let get_key = |line: &str| {
+        let json: Value = serde_json::from_str(line).unwrap_or_default();
+        match stratify {
+            Stratify::Repo => json
+                .get("repository_url")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            Stratify::CursorPath => json
+                .get("cursor_path")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            Stratify::Project => json
+                .get("cursor_path")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.split(['/', '\\']).next())
+                .map(|s| s.to_string()),
+            Stratify::None => unreachable!(),
+        }
     };
 
-    let mut groups: HashMap<String, Vec<String>> = HashMap::new();
+    let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut ungrouped: Vec<Vec<String>> = Vec::new();
 
     for line in lines {
-        let key = serde_json::from_str::<Value>(line)
-            .ok()
-            .and_then(|v| v.get(field)?.as_str().map(|s| s.to_string()));
+        let key = get_key(line);
         match key {
             Some(key) => groups.entry(key).or_default().push(line.clone()),
             None => ungrouped.push(vec![line.clone()]),
@@ -600,5 +616,64 @@ mod tests {
         // target of 6, NOT 6 groups (which don't even exist). Valid gets the rest.
         assert_eq!(train_lines.len(), 6);
         assert_eq!(valid_lines.len(), 9);
+    }
+
+    #[test]
+    fn test_stratify_by_project() {
+        // 5 repos × 3 lines each = 15 total lines.
+        // `train=6` should target ~6 lines (2 groups), NOT 6 groups (all 15 lines).
+        let input = create_temp_jsonl(&[
+            r#"{"cursor_path": "project1/some/file.rs", "id": 1}"#,
+            r#"{"cursor_path": "project2/some/file.rs", "id": 2}"#,
+            r#"{"cursor_path": "project3/some/file.rs", "id": 3}"#,
+            r#"{"cursor_path": "project1/other/file.rs", "id": 4}"#,
+            r#"{"cursor_path": "project2/other/file.rs", "id": 5}"#,
+            r#"{"cursor_path": "project3/other/file.rs", "id": 6}"#,
+            r#"{"cursor_path": "project3/another/file.rs", "id": 7}"#,
+            r#"{"cursor_path": "project3/even/more.rs", "id": 8}"#,
+        ]);
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let train_path = temp_dir.path().join("train.jsonl");
+        let valid_path = temp_dir.path().join("valid.jsonl");
+
+        let args = SplitArgs {
+            seed: Some(1),
+            stratify: Stratify::Project,
+        };
+        let inputs = vec![
+            input.path().to_path_buf(),
+            PathBuf::from(format!("{}=4", train_path.display())),
+            PathBuf::from(format!("{}=rest", valid_path.display())),
+        ];
+
+        run_split(&args, &inputs).unwrap();
+
+        let train_content = std::fs::read_to_string(&train_path).unwrap();
+        let valid_content = std::fs::read_to_string(&valid_path).unwrap();
+
+        // Make sure project 1 and project 2 are in the train set, and project 3 is in the valid set.
+        let mut train_ids: Vec<u64> = train_content
+            .lines()
+            .map(|l| {
+                serde_json::from_str::<serde_json::Value>(l).unwrap()["id"]
+                    .as_u64()
+                    .unwrap()
+            })
+            .collect();
+        let mut valid_ids: Vec<u64> = valid_content
+            .lines()
+            .map(|l| {
+                serde_json::from_str::<serde_json::Value>(l).unwrap()["id"]
+                    .as_u64()
+                    .unwrap()
+            })
+            .collect();
+
+        train_ids.sort();
+        valid_ids.sort();
+
+        assert_eq!(train_ids, vec![1, 2, 4, 5]);
+        assert_eq!(valid_ids, vec![3, 6, 7, 8]);
     }
 }

@@ -1,0 +1,10 @@
+{"SetOption":{"value":"scrolloff=3"}}
+{"SetOption":{"value":"lines=7"}}
+{"Put":{"state":"ˇ01\n02\n03\n04\n05\n06\n07\n08\n09\n10\n"}}
+{"Key":"ctrl-v"}
+{"Key":"ctrl-d"}
+{"Get":{"state":"«0ˇ»1\n«0ˇ»2\n«0ˇ»3\n«0ˇ»4\n«0ˇ»5\n06\n07\n08\n09\n10\n","mode":"VisualBlock"}}
+{"Key":"shift-i"}
+{"Key":"x"}
+{"Key":"escape"}
+{"Get":{"state":"ˇx01\nx02\nx03\nx04\nx05\n06\n07\n08\n09\n10\n","mode":"Normal"}}

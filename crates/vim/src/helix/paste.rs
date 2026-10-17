@@ -1,4 +1,4 @@
-use editor::{ToOffset, movement};
+use editor::movement;
 use gpui::{Action, Context, Window};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -28,21 +28,23 @@ impl Vim {
         // (none of the other helix_ methods call it)
 
         self.update_editor(cx, |vim, editor, cx| {
+            if editor.read_only(cx) {
+                return;
+            }
+
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
 
                 let selected_register = vim.selected_register.take();
 
-                let Some((text, clipboard_selections)) = Vim::update_globals(cx, |globals, cx| {
+                let Some(register) = Vim::update_globals(cx, |globals, cx| {
                     globals.read_register(selected_register, Some(editor), cx)
                 })
-                .and_then(|reg| {
-                    (!reg.text.is_empty())
-                        .then_some(reg.text)
-                        .zip(reg.clipboard_selections)
-                }) else {
+                .filter(|reg| !reg.text.is_empty()) else {
                     return;
                 };
+                let text = register.text;
+                let clipboard_selections = register.clipboard_selections;
 
                 let display_map = editor.display_snapshot(cx);
                 let current_selections = editor.selections.all_adjusted_display(&display_map);
@@ -63,7 +65,9 @@ impl Vim {
                 let mut replacement_texts: Vec<String> = Vec::new();
 
                 for ix in 0..current_selections.len() {
-                    let to_insert = if let Some(clip_sel) = clipboard_selections.get(ix) {
+                    let to_insert = if let Some(clip_sel) =
+                        clipboard_selections.as_ref().and_then(|s| s.get(ix))
+                    {
                         let end_offset = start_offset + clip_sel.len;
                         let text = text[start_offset..end_offset].to_string();
                         start_offset = if clip_sel.is_entire_line {
@@ -88,7 +92,7 @@ impl Vim {
                     // Pasting before means pasting before the whole selection.
                     let display_point = if line_mode {
                         if action.before {
-                            movement::line_beginning(&display_map, sel.start, false)
+                            movement::line_beginning(&display_map, sel.start)
                         } else {
                             if sel.start == sel.end {
                                 movement::right(
@@ -102,38 +106,30 @@ impl Vim {
                     } else if action.before {
                         sel.start
                     } else if sel.start == sel.end {
-                        // Helix and Zed differ in how they understand
-                        // single-point cursors. In Helix, a single-point cursor
-                        // is "on top" of some character, and pasting after that
-                        // cursor means that the pasted content should go after
-                        // that character. (If the cursor is at the end of a
-                        // line, the pasted content goes on the next line.)
-                        movement::right(&display_map, sel.end)
+                        // In Helix, a single-point cursor is "on top" of a
+                        // character, and pasting after means after that character.
+                        // At line end this means the next line. But on an empty
+                        // line there is no character, so paste at the cursor.
+                        let right = movement::right(&display_map, sel.end);
+                        if right.row() != sel.end.row() && sel.end.column() == 0 {
+                            sel.end
+                        } else {
+                            right
+                        }
                     } else {
                         sel.end
                     };
                     let point = display_point.to_point(&display_map);
-                    let anchor = if action.before {
-                        display_map.buffer_snapshot().anchor_after(point)
-                    } else {
-                        display_map.buffer_snapshot().anchor_before(point)
-                    };
+                    let snapshot = display_map.buffer_snapshot();
+                    new_selections
+                        .push(snapshot.anchor_before(point)..snapshot.anchor_after(point));
                     edits.push((point..point, to_insert.repeat(count)));
-                    new_selections.push((anchor, to_insert.len() * count));
                 }
 
                 editor.edit(edits, cx);
 
-                let snapshot = editor.buffer().read(cx).snapshot(cx);
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.select_ranges(new_selections.into_iter().map(|(anchor, len)| {
-                        let offset = anchor.to_offset(&snapshot);
-                        if action.before {
-                            offset.saturating_sub_usize(len)..offset
-                        } else {
-                            offset..(offset + len)
-                        }
-                    }));
+                    s.select_ranges(new_selections);
                 })
             });
         });
@@ -146,7 +142,106 @@ impl Vim {
 mod test {
     use indoc::indoc;
 
+    use gpui::ClipboardItem;
+
     use crate::{state::Mode, test::VimTestContext};
+
+    #[gpui::test]
+    async fn test_system_clipboard_paste(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.set_state(
+            indoc! {"
+            The quiˇck brown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+
+        cx.write_to_clipboard(ClipboardItem::new_string("clipboard".to_string()));
+        cx.simulate_keystrokes("p");
+        cx.assert_state(
+            indoc! {"
+            The quic«clipboardˇ»k brown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+
+        // Multiple cursors with system clipboard (no metadata) pastes
+        // the same text at each cursor.
+        cx.set_state(
+            indoc! {"
+            ˇThe quick brown
+            fox ˇjumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+        cx.write_to_clipboard(ClipboardItem::new_string("hi".to_string()));
+        cx.simulate_keystrokes("p");
+        cx.assert_state(
+            indoc! {"
+            T«hiˇ»he quick brown
+            fox j«hiˇ»umps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+
+        // Multiple cursors on empty lines should paste on those same lines.
+        cx.set_state("ˇ\nˇ\nˇ\nend", Mode::HelixNormal);
+        cx.write_to_clipboard(ClipboardItem::new_string("X".to_string()));
+        cx.simulate_keystrokes("p");
+        cx.assert_state("«Xˇ»\n«Xˇ»\n«Xˇ»\nend", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_system_clipboard_crlf_paste_at_end_of_buffer(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.set_state("ˇ", Mode::HelixNormal);
+
+        cx.write_to_clipboard(ClipboardItem::new_string("a\r\nb".to_string()));
+        cx.simulate_keystrokes("p");
+
+        cx.assert_state("«a\nbˇ»", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_paste_in_expanded_deleted_hunk(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.set_state("ˇkept\n", Mode::HelixNormal);
+        cx.set_head_text("kept\ndeleted\n");
+        cx.update_editor(|editor, window, cx| {
+            editor.expand_all_diff_hunks(&editor::actions::ExpandAllDiffHunks, window, cx);
+        });
+
+        cx.write_to_clipboard(ClipboardItem::new_string("replacement text".to_string()));
+        cx.simulate_keystrokes("j p");
+
+        let buffer_text = cx.update_editor(|editor, _window, cx| {
+            let buffer = editor
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .expect("test editor should contain one buffer");
+            buffer.read(cx).snapshot().text()
+        });
+        assert_eq!(buffer_text, "kept\n");
+    }
+
+    #[gpui::test]
+    async fn test_read_only_paste(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.set_state("aˇb", Mode::HelixNormal);
+        cx.write_to_clipboard(ClipboardItem::new_string("clipboard".to_string()));
+        cx.update_editor(|editor, _window, _cx| editor.set_read_only(true));
+
+        cx.simulate_keystrokes("p");
+
+        cx.assert_state("aˇb", Mode::HelixNormal);
+    }
 
     #[gpui::test]
     async fn test_paste(cx: &mut gpui::TestAppContext) {

@@ -9,7 +9,7 @@ use crate::workspace::load_workspace;
 pub struct LicensesArgs {}
 
 pub fn run_licenses(_args: LicensesArgs) -> Result<()> {
-    const LICENSE_FILES: &[&str] = &["LICENSE-APACHE", "LICENSE-GPL", "LICENSE-AGPL"];
+    const LICENSE_FILES: &[&str] = &["LICENSE-APACHE", "LICENSE-GPL"];
 
     let workspace = load_workspace()?;
 
