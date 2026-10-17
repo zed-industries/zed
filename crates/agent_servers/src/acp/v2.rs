@@ -1219,9 +1219,10 @@ impl AgentSessionList for V2SessionList {
                         information.apply_update(
                             acp::SessionInfoUpdate::new()
                                 .title(session.title)
-                                .updated_at(session.updated_at)
-                                .meta(session.meta),
+                                .updated_at(session.updated_at),
                         );
+                        // List metadata is a snapshot, so null-valued keys are data.
+                        information.meta = session.meta;
                         information
                     })
                     .collect(),
@@ -2201,6 +2202,8 @@ done
                 .cwd(Some(acp::AbsolutePath::new(session_path("b"))))
                 .meta(meta("request"))
         );
+        let mut information_metadata = meta("information");
+        information_metadata.insert("literal".into(), serde_json::Value::Null);
         responder
             .respond(
                 acp::ListSessionsResponse::new(vec![
@@ -2212,7 +2215,7 @@ done
                         ])
                         .title("Saved title")
                         .updated_at("2026-10-01T10:20:30+02:00")
-                        .meta(meta("information")),
+                        .meta(information_metadata.clone()),
                 ])
                 .next_cursor("opaque/+?&")
                 .meta(meta("page")),
@@ -2239,7 +2242,7 @@ done
             "2026-10-01T08:20:30+00:00"
         );
         assert!(information.created_at.is_none());
-        assert_eq!(information.meta, Some(meta("information")));
+        assert_eq!(information.meta, Some(information_metadata));
         assert_eq!(page.meta, Some(meta("page")));
         assert_eq!(page.next_cursor.as_deref(), Some("opaque/+?&"));
 
