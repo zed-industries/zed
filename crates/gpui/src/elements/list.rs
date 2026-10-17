@@ -1586,6 +1586,7 @@ impl Element for List {
             match state.prepaint_items(bounds, padding, true, &mut self.render_item, window, cx) {
                 Ok(layout) => layout,
                 Err(autoscroll_request) => {
+                    state.rebase_pending_scroll(autoscroll_request);
                     state.logical_scroll_top = Some(autoscroll_request);
                     state
                         .prepaint_items(bounds, padding, false, &mut self.render_item, window, cx)
@@ -1802,6 +1803,72 @@ mod test {
         );
         assert_eq!(scroll_top.item_ix, 0);
         assert_eq!(scroll_top.offset_in_item, px(10.));
+    }
+
+    #[gpui::test]
+    fn test_releasing_provisional_keeps_child_autoscroll(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        let state = ListState::new(10, crate::ListAlignment::Top, px(10.));
+        state.scroll_to(gpui::ListOffset {
+            item_ix: 2,
+            offset_in_item: px(10.),
+        });
+        state.set_item_heights_provisional(true);
+        state.remeasure_items(2..3);
+
+        struct TestView(ListState);
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                list(self.0.clone(), |ix, _, _| {
+                    if ix == 2 {
+                        // Request an autoscroll 5px into item 2, while the
+                        // pending remeasure still points at offset 10.
+                        canvas(
+                            |bounds, window, _| {
+                                window.request_autoscroll(Bounds::from_corners(
+                                    point(bounds.left(), bounds.top() + px(5.)),
+                                    point(bounds.right(), bounds.top() + px(10.)),
+                                ));
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .h(px(20.))
+                        .w_full()
+                        .into_any()
+                    } else {
+                        div().h(px(20.)).w_full().into_any()
+                    }
+                })
+                .w_full()
+                .h_full()
+            }
+        }
+
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(60.)), |_, cx| {
+            cx.new(|_| TestView(state.clone())).into_any_element()
+        });
+
+        let scroll_top = state.logical_scroll_top();
+        assert_eq!(scroll_top.item_ix, 2);
+        assert_eq!(scroll_top.offset_in_item, px(5.));
+
+        state.set_item_heights_provisional(false);
+
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(60.)), |_, cx| {
+            cx.new(|_| TestView(state.clone())).into_any_element()
+        });
+
+        let scroll_top = state.logical_scroll_top();
+        assert_eq!(
+            scroll_top.item_ix, 2,
+            "the autoscroll position should survive releasing provisional mode"
+        );
+        assert_eq!(
+            scroll_top.offset_in_item,
+            px(5.),
+            "releasing provisional mode must not restore the stale pending offset"
+        );
     }
 
     #[gpui::test]
