@@ -8858,7 +8858,12 @@ impl ThreadView {
                 .any(|content| matches!(content, ToolCallContent::DiffPatch { .. }));
 
         let is_cancelled_edit = is_edit && matches!(tool_call.status(), ToolCallStatus::Canceled);
-        let (has_revealed_diff, tool_call_output_focus, tool_call_output_focus_handle) = tool_call
+        let has_diff_changes = is_cancelled_edit
+            && tool_call
+                .diffs()
+                .next()
+                .is_some_and(|diff| diff.read(cx).has_changes(cx));
+        let (tool_call_output_focus, tool_call_output_focus_handle) = tool_call
             .diffs()
             .next()
             .and_then(|diff| {
@@ -8867,12 +8872,11 @@ impl ThreadView {
                     .read(cx)
                     .entry(entry_ix)
                     .and_then(|entry| entry.editor_for_diff(diff))?;
-                let has_revealed_diff = diff.read(cx).has_revealed_range(cx);
                 let has_focus = editor.read(cx).is_focused(window);
                 let focus_handle = editor.focus_handle(cx);
-                Some((has_revealed_diff, has_focus, focus_handle))
+                Some((has_focus, focus_handle))
             })
-            .unwrap_or_else(|| (false, false, focus_handle.clone()));
+            .unwrap_or((false, focus_handle.clone()));
 
         let use_card_layout = needs_confirmation || is_edit || is_terminal_tool;
 
@@ -9150,7 +9154,7 @@ impl ThreadView {
                                 tool_call,
                                 is_edit,
                                 is_cancelled_edit,
-                                has_revealed_diff,
+                                has_diff_changes,
                                 use_card_layout,
                                 window,
                                 cx,
@@ -9158,7 +9162,7 @@ impl ThreadView {
                             .child(
                                 h_flex()
                                     .when(is_collapsible || failed_or_canceled, |this| {
-                                        let diff_for_discard = if has_revealed_diff
+                                        let diff_for_discard = if has_diff_changes
                                             && is_cancelled_edit
                                         {
                                             tool_call.diffs().next().cloned()
@@ -9202,7 +9206,7 @@ impl ThreadView {
                                                     )
                                                 })
                                                 .when(failed_or_canceled, |this| {
-                                                    if is_cancelled_edit && !has_revealed_diff {
+                                                    if is_cancelled_edit && !has_diff_changes {
                                                         this.child(
                                                             div()
                                                                 .id(entry_ix)
@@ -9250,21 +9254,9 @@ impl ThreadView {
                                                                 let tool_call_id =
                                                                     tool_call_id.clone();
                                                                 move |this, _, _window, cx| {
-                                                                    let diff_data = diff.read(cx);
-                                                                    let base_text = diff_data
-                                                                        .base_text()
-                                                                        .clone();
-                                                                    let buffer =
-                                                                        diff_data.buffer().clone();
-                                                                    buffer.update(
-                                                                        cx,
-                                                                        |buffer, cx| {
-                                                                            buffer.set_text(
-                                                                                base_text.as_ref(),
-                                                                                cx,
-                                                                            );
-                                                                        },
-                                                                    );
+                                                                    diff.update(cx, |diff, cx| {
+                                                                        diff.discard_partial_edit(cx)
+                                                                    });
                                                                     this.discarded_partial_edits
                                                                         .insert(
                                                                             tool_call_id.clone(),
@@ -10661,7 +10653,7 @@ impl ThreadView {
         tool_call: &ToolCall,
         is_edit: bool,
         has_failed: bool,
-        has_revealed_diff: bool,
+        has_diff_changes: bool,
         use_card_layout: bool,
         window: &Window,
         cx: &Context<Self>,
@@ -10678,7 +10670,7 @@ impl ThreadView {
             Icon::new(IconName::ToolPencil).color(Color::Muted)
         };
 
-        let interrupted_edit = is_file && has_failed && has_revealed_diff;
+        let interrupted_edit = is_file && has_failed && has_diff_changes;
         let tool_icon = if interrupted_edit {
             div()
                 .child(DecoratedIcon::new(

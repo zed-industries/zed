@@ -296,6 +296,7 @@ impl Diff {
             deferred: Some(DeferredSource {
                 new_text,
                 language_registry: Some(language_registry),
+                has_changes: OnceCell::new(),
             }),
         })
     }
@@ -312,6 +313,7 @@ impl Diff {
         let Some(DeferredSource {
             new_text,
             language_registry,
+            ..
         }) = finalized.deferred.take()
         else {
             return;
@@ -325,6 +327,14 @@ impl Diff {
             cx,
         );
         let _ = finalized.resolved.set(resolved);
+    }
+
+    /// Restores an interrupted edit's buffer to its base text.
+    pub fn discard_partial_edit(&mut self, cx: &mut Context<Self>) {
+        self.resolve(cx);
+        let base_text = self.base_text().clone();
+        let buffer = self.buffer().clone();
+        buffer.update(cx, |buffer, cx| buffer.set_text(base_text.as_ref(), cx));
     }
 
     pub fn new(buffer: Entity<Buffer>, cx: &mut Context<Self>) -> Self {
@@ -460,6 +470,17 @@ impl Diff {
                 .resolved
                 .get()
                 .is_some_and(|resolved| !resolved.multibuffer.read(cx).is_empty()),
+        }
+    }
+
+    /// Whether the diff has any changed hunks, without building render state.
+    pub fn has_changes(&self, cx: &App) -> bool {
+        match self {
+            Self::Pending(_) => !self.multibuffer().read(cx).is_empty(),
+            Self::Finalized(finalized) => match finalized.resolved.get() {
+                Some(resolved) => !resolved.multibuffer.read(cx).is_empty(),
+                None => finalized.deferred_has_changes(),
+            },
         }
     }
 
@@ -667,6 +688,7 @@ pub struct FinalizedDiff {
 struct DeferredSource {
     new_text: String,
     language_registry: Option<Arc<LanguageRegistry>>,
+    has_changes: OnceCell<bool>,
 }
 
 struct ResolvedFinalized {
@@ -678,17 +700,26 @@ struct ResolvedFinalized {
 impl FinalizedDiff {
     /// Mirrors [`Diff::to_markdown`] for a diff that has not been built yet.
     fn export_before_resolve(&self) -> String {
+        self.normalized_new_text().unwrap_or_default()
+    }
+
+    /// Whether the deferred source differs from the base text, without
+    /// building render state.
+    fn deferred_has_changes(&self) -> bool {
         let Some(deferred) = &self.deferred else {
-            return String::new();
+            return false;
         };
+        *deferred
+            .has_changes
+            .get_or_init(|| self.normalized_new_text().is_some())
+    }
+
+    fn normalized_new_text(&self) -> Option<String> {
+        let deferred = self.deferred.as_ref()?;
         let base_text = LineEnding::normalize_arc(self.base_text.clone());
         let mut new_text = deferred.new_text.clone();
         LineEnding::normalize(&mut new_text);
-        if new_text.as_str() == base_text.as_ref() {
-            String::new()
-        } else {
-            new_text
-        }
+        (new_text.as_str() != base_text.as_ref()).then_some(new_text)
     }
 }
 
@@ -1053,13 +1084,13 @@ mod tests {
     async fn test_finalized_diff_export_survives_resolution(cx: &mut TestAppContext) {
         let languages =
             cx.update(|cx| Arc::new(LanguageRegistry::test(cx.background_executor().clone())));
-        for (old_text, new_text) in [
-            (Some("same"), "same"),
-            (Some("before"), "after"),
-            (Some("a\r\nb"), "a\r\nb"),
-            (Some("a\nb"), "a\r\nb"),
-            (None, "added"),
-            (Some("removed"), ""),
+        for (old_text, new_text, expected_changes) in [
+            (Some("same"), "same", false),
+            (Some("before"), "after", true),
+            (Some("a\r\nb"), "a\r\nb", false),
+            (Some("a\nb"), "a\r\nb", false),
+            (None, "added", true),
+            (Some("removed"), "", true),
         ] {
             let diff = cx.new(|cx| {
                 Diff::finalized(
@@ -1071,15 +1102,52 @@ mod tests {
                 )
             });
             let exported_before = cx.update(|cx| diff.read(cx).to_markdown(cx));
+            assert_eq!(
+                cx.update(|cx| diff.read(cx).has_changes(cx)),
+                expected_changes,
+                "unexpected has_changes before resolving {old_text:?} -> {new_text:?}"
+            );
 
             diff.update(cx, |diff, cx| diff.resolve(cx));
             cx.run_until_parked();
 
             let exported_after = cx.update(|cx| diff.read(cx).to_markdown(cx));
             assert_eq!(
+                cx.update(|cx| diff.read(cx).has_changes(cx)),
+                expected_changes,
+                "has_changes changed when resolving {old_text:?} -> {new_text:?}"
+            );
+            assert_eq!(
                 exported_after, exported_before,
                 "export changed when resolving {old_text:?} -> {new_text:?}"
             );
         }
+    }
+
+    #[gpui::test]
+    async fn test_discard_partial_edit_resolves_deferred_diff(cx: &mut TestAppContext) {
+        let languages =
+            cx.update(|cx| Arc::new(LanguageRegistry::test(cx.background_executor().clone())));
+        let diff = cx.new(|cx| {
+            Diff::finalized(
+                "test.rs".into(),
+                Some("before".into()),
+                "after".into(),
+                languages,
+                cx,
+            )
+        });
+
+        assert!(
+            diff.read_with(cx, |diff, cx| diff.has_changes(cx)),
+            "deferred diff should report changes without resolution"
+        );
+
+        diff.update(cx, |diff, cx| diff.discard_partial_edit(cx));
+
+        assert_eq!(
+            diff.read_with(cx, |diff, cx| diff.buffer().read(cx).text()),
+            "before"
+        );
     }
 }
