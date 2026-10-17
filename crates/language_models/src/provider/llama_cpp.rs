@@ -903,6 +903,9 @@ fn build_llama_cpp_request(
         stream_options: Some(llama_cpp::StreamOptions {
             include_usage: true,
         }),
+        chat_template_kwargs: supports_thinking.then_some(llama_cpp::ChatTemplateKwargs {
+            enable_thinking: request.thinking_allowed,
+        }),
     })
 }
 
@@ -1541,6 +1544,7 @@ mod tests {
                 supports_preserve_reasoning: true,
                 ..Default::default()
             }),
+            ..Default::default()
         };
         // /props wins when present.
         let model = model_from_entry(&entry("m", Some(4096), Some(131072)), Some(&props));
@@ -1743,6 +1747,40 @@ mod tests {
             }
             message => panic!("unexpected message: {message:?}"),
         }
+    }
+
+    #[test]
+    fn request_sets_enable_thinking_from_thinking_allowed() {
+        let chat_template_kwargs = |supports_thinking, thinking_allowed| {
+            let request = build_llama_cpp_request(
+                "test-model",
+                false,
+                LiveCapabilities {
+                    max_tokens: 8192,
+                    supports_tools: false,
+                    supports_thinking,
+                },
+                LanguageModelRequest {
+                    thinking_allowed,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            serde_json::to_value(&request)
+                .unwrap()
+                .get("chat_template_kwargs")
+                .cloned()
+        };
+
+        assert_eq!(
+            chat_template_kwargs(true, false),
+            Some(serde_json::json!({ "enable_thinking": false }))
+        );
+        assert_eq!(
+            chat_template_kwargs(true, true),
+            Some(serde_json::json!({ "enable_thinking": true }))
+        );
+        assert_eq!(chat_template_kwargs(false, false), None);
     }
 
     #[test]
