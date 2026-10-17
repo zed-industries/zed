@@ -157,6 +157,7 @@ struct InstanceBindings {
 }
 
 struct WgpuBindGroupLayouts {
+    rounded_clips: crate::rounded_clip::Bindings,
     globals: wgpu::BindGroupLayout,
     instances: wgpu::BindGroupLayout,
     texture: wgpu::BindGroupLayout,
@@ -616,6 +617,7 @@ impl WgpuRendererCore {
         });
 
         WgpuBindGroupLayouts {
+            rounded_clips: crate::rounded_clip::Bindings::new(device),
             globals,
             instances,
             texture,
@@ -737,6 +739,8 @@ impl WgpuRendererCore {
                                module: &wgpu::ShaderModule| {
             let mut bind_group_layouts = vec![Some(globals_layout), Some(data_layout)];
             bind_group_layouts.extend(texture_layout.map(Some));
+            bind_group_layouts.resize(3, None);
+            bind_group_layouts.push(Some(&layouts.rounded_clips.layout));
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some(&format!("{name}_layout")),
                 bind_group_layouts: &bind_group_layouts,
@@ -1491,7 +1495,25 @@ impl WgpuRendererCore {
                 )
             })?;
         self.prepare_texture_bind_groups(scene);
+        let clip_sets: Vec<Vec<_>> = scene
+            .rounded_clip_stacks()
+            .iter()
+            .map(|clips| clips.iter().map(gpui::RoundedClip::gpu_data).collect())
+            .collect();
+        let clip_bindings = (!clip_sets.is_empty()).then(|| {
+            self.resources().bind_group_layouts.rounded_clips.clip_sets(
+                &self.resources().device,
+                &self.resources().queue,
+                &clip_sets,
+            )
+        });
 
+        let unmasked_clips = self
+            .resources()
+            .bind_group_layouts
+            .rounded_clips
+            .unmasked
+            .clone();
         let mut encoder =
             self.resources()
                 .device
@@ -1515,7 +1537,14 @@ impl WgpuRendererCore {
                 ..Default::default()
             });
 
-            for batch in scene.batches() {
+            for (batch, clip_index) in scene.batches_with_clips() {
+                let (clip_binding, clip_offset) = if let Some((binding, alignment)) = &clip_bindings
+                {
+                    (binding, (clip_index as u32 + 1) * alignment)
+                } else {
+                    (&unmasked_clips, 0)
+                };
+                pass.set_bind_group(3, clip_binding, &[clip_offset]);
                 match batch {
                     PrimitiveBatch::Quads(range) => self.draw_instances(
                         &instance_bindings.quads,
@@ -1557,6 +1586,7 @@ impl WgpuRendererCore {
                             ..Default::default()
                         });
 
+                        pass.set_bind_group(3, clip_binding, &[clip_offset]);
                         if rasterized {
                             self.draw_paths_from_intermediate(
                                 paths,
@@ -1881,6 +1911,11 @@ impl WgpuRendererCore {
                 ..Default::default()
             });
 
+            pass.set_bind_group(
+                3,
+                &resources.bind_group_layouts.rounded_clips.unmasked,
+                &[0],
+            );
             pass.set_pipeline(&resources.pipelines.path_rasterization);
             pass.set_bind_group(0, &resources.path_globals_bind_group, &[]);
             pass.set_bind_group(1, &vertex_binding.bind_group, &[]);
@@ -2603,6 +2638,10 @@ impl RenderingParameters {
         }
     }
 }
+
+#[cfg(all(test, feature = "test-support", not(target_family = "wasm")))]
+#[path = "rounded_clip_tests.rs"]
+mod rounded_clip_tests;
 
 #[cfg(test)]
 mod tests {

@@ -302,3 +302,7 @@ path = "examples/view_example/view_example_main.rs"
 [[example]]
 name = "toggle_headless"
 path = "examples/toggle_headless.rs"
+
+[[example]]
+name = "content_mask"
+path = "examples/content_mask.rs"

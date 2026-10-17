@@ -13,6 +13,7 @@ mod display;
 mod events;
 mod keyboard;
 mod platform;
+mod rounded_clip;
 mod system_notifications;
 mod system_settings;
 mod util;
@@ -41,3 +42,6 @@ pub(crate) use wrapper::*;
 pub use platform::WindowsPlatform;
 
 pub(crate) use windows::Win32::Foundation::HWND;
+
+#[cfg(all(test, feature = "test-support"))]
+mod rounded_clip_tests;

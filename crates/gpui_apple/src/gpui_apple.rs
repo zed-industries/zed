@@ -19,3 +19,6 @@ mod text_system;
 pub use dispatcher::{AppleActivity, AppleDispatcher};
 #[cfg(feature = "font-kit")]
 pub use text_system::AppleTextSystem;
+
+#[cfg(all(test, feature = "test-support", not(target_family = "wasm")))]
+mod rounded_clip_tests;

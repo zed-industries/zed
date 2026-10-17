@@ -39,6 +39,7 @@ impl From<bool> for PaddedBool32 {
 #[derive(Default)]
 #[expect(missing_docs)]
 pub struct Scene {
+    pub(crate) rounded_clips: crate::rounded_clip::RoundedClips,
     pub(crate) paint_operations: Vec<PaintOperation>,
     primitive_bounds: BoundsTree<ScaledPixels>,
     layer_stack: Vec<DrawOrder>,
@@ -55,6 +56,7 @@ pub struct Scene {
 #[expect(missing_docs)]
 impl Scene {
     pub fn clear(&mut self) {
+        self.rounded_clips.clear();
         self.paint_operations.clear();
         self.primitive_bounds.clear();
         self.layer_stack.clear();
@@ -144,11 +146,15 @@ impl Scene {
                 PaintOperation::Primitive(primitive) => self.insert_primitive(primitive.clone()),
                 PaintOperation::StartLayer(bounds) => self.push_layer(*bounds),
                 PaintOperation::EndLayer => self.pop_layer(),
+                PaintOperation::RoundedClip(operation) => self
+                    .paint_operations
+                    .push(PaintOperation::RoundedClip(*operation)),
             }
         }
     }
 
     pub fn finish(&mut self) {
+        self.rounded_clips.compile(&self.paint_operations);
         self.shadows.sort_by_key(|shadow| shadow.order);
         self.quads.sort_by_key(|quad| quad.order);
         self.paths.sort_by_key(|path| path.order);
@@ -212,6 +218,7 @@ pub(crate) enum PrimitiveKind {
 }
 
 pub(crate) enum PaintOperation {
+    RoundedClip(crate::rounded_clip::ClipOperation),
     Primitive(Primitive),
     StartLayer(Bounds<ScaledPixels>),
     EndLayer,

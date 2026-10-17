@@ -202,7 +202,18 @@ impl WgpuContext {
         any(test, feature = "bench-support", feature = "test-support")
     ))]
     fn create_headless() -> anyhow::Result<(Self, wgpu::TextureFormat)> {
+        #[cfg(not(all(test, target_os = "macos")))]
         let instance = Self::instance(None);
+        // The windowed WGPU backend selects Linux backends. Pixel tests also
+        // exercise the shared shaders on macOS, where Metal is available.
+        #[cfg(all(test, target_os = "macos"))]
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::METAL,
+            flags: wgpu::InstanceFlags::default(),
+            backend_options: wgpu::BackendOptions::default(),
+            memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+            display: None,
+        });
         let device_id_filter = Self::device_id_filter();
         let (adapter, device, queue, dual_source_blending, color_texture_format, target_format) =
             gpui::block_on(async {

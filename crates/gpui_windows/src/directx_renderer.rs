@@ -362,7 +362,18 @@ impl DirectXRenderer {
             .as_ref()
             .and_then(|devices| devices.annotation.clone())
             .filter(|annotation| unsafe { annotation.GetStatus().as_bool() });
-        for batch in scene.batches() {
+        let devices = self.devices.as_ref().context("devices missing")?;
+        let clips =
+            crate::rounded_clip::Bindings::new(&devices.device, scene.rounded_clip_stacks())?;
+        for (batch, clip_index) in scene.batches_with_clips() {
+            clips.bind(
+                &self
+                    .devices
+                    .as_ref()
+                    .context("devices missing")?
+                    .device_context,
+                clip_index,
+            );
             let _annotation = annotation
                 .as_ref()
                 .map(|annotation| Annotation::new(annotation, HSTRING::from(batch.label())));
