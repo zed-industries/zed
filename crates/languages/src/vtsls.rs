@@ -8,7 +8,7 @@ use language::{
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName, Uri};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use project::{Fs, lsp_store::language_server_settings};
-use regex::Regex;
+use regex::{Captures, Regex};
 use semver::Version;
 use serde_json::Value;
 use serde_json::json;
@@ -75,17 +75,18 @@ impl VtslsLspAdapter {
     }
 
     pub fn enhance_diagnostic_message(message: &str) -> Option<String> {
-        static SINGLE_WORD_REGEX: LazyLock<Regex> =
-            LazyLock::new(|| Regex::new(r"'([^\s']*)'").expect("Failed to create REGEX"));
+        static QUOTED_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(r"(^|[^[:alnum:]_'])'([^']*)'([^[:alnum:]_']|$)")
+                .expect("Failed to create REGEX")
+        });
 
-        static MULTI_WORD_REGEX: LazyLock<Regex> =
-            LazyLock::new(|| Regex::new(r"'([^']+\s+[^']*)'").expect("Failed to create REGEX"));
-
-        let first = SINGLE_WORD_REGEX.replace_all(message, "`$1`").to_string();
-        let second = MULTI_WORD_REGEX
-            .replace_all(&first, "\n```typescript\n$1\n```\n")
+        let result = QUOTED_REGEX
+            .replace_all(message, |caps: &Captures| {
+                format!("{}`{}`{}", &caps[1], &caps[2], &caps[3])
+            })
             .to_string();
-        Some(second)
+
+        Some(result)
     }
 }
 
@@ -410,7 +411,7 @@ mod tests {
         // Parses both multi-word and single-word correctly
         let message = "Property 'baz' is missing in type '{ foo: string; bar: string; }' but required in type 'User'.";
 
-        let expected = "Property `baz` is missing in type \n```typescript\n{ foo: string; bar: string; }\n```\n but required in type `User`.";
+        let expected = "Property `baz` is missing in type `{ foo: string; bar: string; }` but required in type `User`.";
 
         assert_eq!(
             VtslsLspAdapter::enhance_diagnostic_message(message).expect("Should be some"),
@@ -420,10 +421,21 @@ mod tests {
         // Parses multi-and-single word in any order, and ignores existing newlines
         let message = "Type '() => { foo: string; bar: string; }' is not assignable to type 'GetUserFunction'.\n  Property 'baz' is missing in type '{ foo: string; bar: string; }' but required in type 'User'.";
 
-        let expected = "Type \n```typescript\n() => { foo: string; bar: string; }\n```\n is not assignable to type `GetUserFunction`.\n  Property `baz` is missing in type \n```typescript\n{ foo: string; bar: string; }\n```\n but required in type `User`.";
+        let expected = "Type `() => { foo: string; bar: string; }` is not assignable to type `GetUserFunction`.\n  Property `baz` is missing in type `{ foo: string; bar: string; }` but required in type `User`.";
 
         assert_eq!(
             VtslsLspAdapter::enhance_diagnostic_message(message).expect("Should be some"),
+            expected
+        );
+
+        // Check if ' used in normal English language (isn't, possessive 's, etc) are not converted into `
+        let message = "Element implicitly has an 'any' type because expression of type '\"a\" | \"c\"' can't be used to index type '{ a: number; b: string; }'. Property 'c' does not exist on type '{ a: number; b: string; }'.";
+
+        let expected = "Element implicitly has an `any` type because expression of type `\"a\" | \"c\"` can't be used to index type `{ a: number; b: string; }`. Property `c` does not exist on type `{ a: number; b: string; }`.";
+
+        assert_eq!(
+            VtslsLspAdapter::enhance_diagnostic_message(message)
+                .expect("Should return enhanced message"),
             expected
         );
     }
