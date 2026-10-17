@@ -10274,15 +10274,22 @@ fn mcp_message_content_to_acp_content_block(
         context_server::types::MessageContent::Resource {
             resource,
             annotations,
-        } => {
-            let mut link =
-                acp_v2::ResourceLink::new(resource.uri.to_string(), resource.uri.to_string())
-                    .annotations(mcp_annotations_to_acp(annotations));
-            if let Some(mime_type) = resource.mime_type {
-                link = link.mime_type(acp_v2::MediaType::new(mime_type));
+        } => match resource {
+            context_server::types::ResourceContentsType::Text(text_resource) => {
+                text_resource.text.into()
             }
-            acp_v2::ContentBlock::ResourceLink(link)
-        }
+            context_server::types::ResourceContentsType::Blob(blob_response) => {
+                let mut link = acp_v2::ResourceLink::new(
+                    blob_response.uri.to_string(),
+                    blob_response.uri.to_string(),
+                )
+                .annotations(mcp_annotations_to_acp(annotations));
+                if let Some(mime_type) = blob_response.mime_type {
+                    link = link.mime_type(acp_v2::MediaType::new(mime_type));
+                }
+                acp_v2::ContentBlock::ResourceLink(link)
+            }
+        },
     }
 }
 
