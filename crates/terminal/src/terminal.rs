@@ -122,6 +122,23 @@ enum ViMotion {
     ParagraphDown,
 }
 
+impl ViMotion {
+    fn supports_count(self) -> bool {
+        matches!(
+            self,
+            Self::Up
+                | Self::Down
+                | Self::Left
+                | Self::Right
+                | Self::WordLeft
+                | Self::WordRight
+                | Self::WordRightEnd
+                | Self::ParagraphUp
+                | Self::ParagraphDown
+        )
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Search {
     search: AlacrittySearch,
@@ -713,7 +730,7 @@ enum InternalEvent {
     Copy(Option<bool>),
     // Vi mode events
     ToggleViMode,
-    ViMotion(ViMotion),
+    ViMotion { motion: ViMotion, count: usize },
     MoveViCursorToPoint(Point),
 }
 
@@ -1052,6 +1069,7 @@ impl TerminalBuilder {
             selection_phase: SelectionPhase::Ended,
             hyperlink_regex_searches: RegexSearches::default(),
             vi_mode_enabled: false,
+            vi_motion_count: None,
             is_remote_terminal: false,
             last_mouse_move_time: Instant::now(),
             last_hyperlink_search_position: None,
@@ -1342,6 +1360,7 @@ impl TerminalBuilder {
                     path_hyperlink_timeout,
                 ),
                 vi_mode_enabled: false,
+                vi_motion_count: None,
                 is_remote_terminal,
                 last_mouse_move_time: Instant::now(),
                 last_hyperlink_search_position: None,
@@ -1548,6 +1567,7 @@ pub struct Terminal {
     hyperlink_regex_searches: RegexSearches,
     task: Option<TaskState>,
     vi_mode_enabled: bool,
+    vi_motion_count: Option<usize>,
     is_remote_terminal: bool,
     last_mouse_move_time: Instant,
     last_hyperlink_search_position: Option<GpuiPoint<Pixels>>,
@@ -1847,11 +1867,12 @@ impl Terminal {
             InternalEvent::ToggleViMode => {
                 trace!("Toggling vi mode");
                 self.vi_mode_enabled = !self.vi_mode_enabled;
+                self.vi_motion_count = None;
                 toggle_term_vi_mode(term);
             }
-            InternalEvent::ViMotion(motion) => {
-                trace!("Performing vi motion: motion={motion:?}");
-                vi_motion(term, *motion);
+            InternalEvent::ViMotion { motion, count } => {
+                trace!("Performing vi motion: motion={motion:?}, count={count}");
+                vi_motion(term, *motion, *count);
             }
             InternalEvent::FindHyperlink(position, open) => {
                 trace!("Finding hyperlink at position: position={position:?}, open={open:?}");
@@ -2357,8 +2378,31 @@ impl Terminal {
         self.events.push_back(InternalEvent::ToggleViMode);
     }
 
+    fn vi_count_digit(&self, keystroke: &Keystroke) -> Option<usize> {
+        if keystroke.modifiers.control || keystroke.modifiers.alt || keystroke.modifiers.platform {
+            return None;
+        }
+
+        match keystroke.key.as_bytes() {
+            [digit @ b'0'..=b'9'] if *digit != b'0' || self.vi_motion_count.is_some() => {
+                Some(usize::from(*digit - b'0'))
+            }
+            _ => None,
+        }
+    }
+
     pub fn vi_motion(&mut self, keystroke: &Keystroke) {
         if !self.vi_mode_enabled {
+            return;
+        }
+
+        if let Some(digit) = self.vi_count_digit(keystroke) {
+            self.vi_motion_count = Some(
+                self.vi_motion_count
+                    .unwrap_or(0)
+                    .saturating_mul(10)
+                    .saturating_add(digit),
+            );
             return;
         }
 
@@ -2368,6 +2412,7 @@ impl Terminal {
             Cow::Borrowed(keystroke.key.as_str())
         };
 
+        let count = self.vi_motion_count.take();
         let motion: Option<ViMotion> = match key.as_ref() {
             "h" | "left" => Some(ViMotion::Left),
             "j" | "down" => Some(ViMotion::Down),
@@ -2389,6 +2434,11 @@ impl Terminal {
         };
 
         if let Some(motion) = motion {
+            if count.is_some() && !motion.supports_count() {
+                return;
+            }
+
+            let count = count.unwrap_or(1);
             let cursor = self.last_content.cursor.point;
             let cursor_pos = GpuiPoint {
                 x: cursor.column as f32 * self.last_content.terminal_bounds.cell_width,
@@ -2396,7 +2446,8 @@ impl Terminal {
             };
             self.events
                 .push_back(InternalEvent::UpdateSelection(cursor_pos));
-            self.events.push_back(InternalEvent::ViMotion(motion));
+            self.events
+                .push_back(InternalEvent::ViMotion { motion, count });
             return;
         }
 
@@ -2417,6 +2468,9 @@ impl Terminal {
         };
 
         if let Some(scroll_motion) = scroll_motion {
+            if count.is_some() {
+                return;
+            }
             self.events.push_back(InternalEvent::Scroll(scroll_motion));
             return;
         }
@@ -4017,6 +4071,126 @@ mod tests {
         });
 
         (terminal, window)
+    }
+
+    #[gpui::test]
+    async fn test_vi_motion_counts(cx: &mut TestAppContext) {
+        let (terminal, cx) = init_terminal_test_with_window(cx, b"");
+        cx.update_window_entity(&terminal, |terminal, window, cx| {
+            terminal.set_size(TerminalBounds::new(
+                px(20.0),
+                px(10.0),
+                bounds(point(px(0.0), px(0.0)), size(px(400.0), px(400.0))),
+            ));
+            terminal.toggle_vi_mode();
+            terminal
+                .events
+                .push_back(InternalEvent::MoveViCursorToPoint(Point::new(19, 5)));
+            terminal.sync(window, cx);
+
+            for (keys, expected) in [
+                ("1 0 k", Point::new(9, 5)),
+                ("1 0 k", Point::new(0, 5)),
+                ("j", Point::new(1, 5)),
+                ("1 0 j", Point::new(11, 5)),
+                ("0", Point::new(11, 0)),
+                ("3 l", Point::new(11, 3)),
+                ("2 escape k", Point::new(10, 3)),
+                ("2 z k", Point::new(9, 3)),
+                ("2 ctrl-1 k", Point::new(8, 3)),
+            ] {
+                for key in keys.split_whitespace() {
+                    let keystroke = Keystroke::parse(key).expect("valid test keystroke");
+                    assert!(terminal.try_keystroke(&keystroke, false));
+                    terminal.sync(window, cx);
+                }
+                assert_eq!(terminal.last_content.cursor.point, expected, "{keys}");
+                assert_eq!(terminal.vi_motion_count, None);
+            }
+
+            for key in [
+                "$", "^", "H", "M", "L", "%", "g", "G", "ctrl-b", "ctrl-f", "ctrl-d", "ctrl-u",
+            ] {
+                terminal.vi_motion(&Keystroke::parse("3").expect("valid test keystroke"));
+                terminal.vi_motion(&Keystroke::parse(key).expect("valid test keystroke"));
+                assert!(terminal.events.is_empty(), "3{key}");
+                assert_eq!(terminal.vi_motion_count, None, "3{key}");
+            }
+            for (key, expected) in [
+                ("k", Point::new(7, 3)),
+                ("$", Point::new(7, 39)),
+                ("H", Point::new(0, 0)),
+            ] {
+                terminal.vi_motion(&Keystroke::parse(key).expect("valid test keystroke"));
+                terminal.sync(window, cx);
+                assert_eq!(terminal.last_content.cursor.point, expected, "{key}");
+            }
+
+            terminal.vi_motion(&Keystroke::parse("2").expect("valid test keystroke"));
+            terminal.toggle_vi_mode();
+            terminal.sync(window, cx);
+            terminal.toggle_vi_mode();
+            terminal.sync(window, cx);
+            assert_eq!(terminal.vi_motion_count, None);
+
+            for _ in 0..100 {
+                terminal.vi_motion(&Keystroke::parse("9").expect("valid test keystroke"));
+            }
+            assert_eq!(terminal.vi_motion_count, Some(usize::MAX));
+            terminal.vi_motion(&Keystroke::parse("k").expect("valid test keystroke"));
+            assert_eq!(terminal.events.len(), 2);
+            assert!(matches!(
+                terminal.events.back(),
+                Some(InternalEvent::ViMotion {
+                    motion: ViMotion::Up,
+                    count: usize::MAX
+                })
+            ));
+            terminal.sync(window, cx);
+            assert_eq!(terminal.last_content.cursor.point.line, 0);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_vi_motion_large_counts(cx: &mut TestAppContext) {
+        let (terminal, cx) = init_terminal_test_with_window(cx, b"");
+        cx.update_window_entity(&terminal, |terminal, window, cx| {
+            terminal.set_size(TerminalBounds::new(
+                px(20.0),
+                px(10.0),
+                bounds(point(px(0.0), px(0.0)), size(px(400.0), px(400.0))),
+            ));
+            terminal.sync(window, cx);
+            terminal.write_output(&vec![b'\n'; 10_020], cx);
+            terminal.toggle_vi_mode();
+            terminal
+                .events
+                .push_back(InternalEvent::MoveViCursorToPoint(Point::new(19, 0)));
+            terminal.sync(window, cx);
+
+            for key in ["1", "0", "0", "0", "1", "k"] {
+                terminal.vi_motion(&Keystroke::parse(key).expect("valid test keystroke"));
+            }
+            assert_eq!(terminal.events.len(), 2);
+            terminal.sync(window, cx);
+            assert_eq!(terminal.last_content.cursor.point, Point::new(-9_982, 0));
+
+            terminal.write_output(b"\x1b[H()", cx);
+            terminal
+                .events
+                .push_back(InternalEvent::MoveViCursorToPoint(Point::new(0, 0)));
+            terminal.sync(window, cx);
+            for (keys, expected_column) in [("3 %", 0), ("%", 1), ("%", 0)] {
+                for key in keys.split_whitespace() {
+                    terminal.vi_motion(&Keystroke::parse(key).expect("valid test keystroke"));
+                }
+                terminal.sync(window, cx);
+                assert_eq!(
+                    terminal.last_content.cursor.point,
+                    Point::new(0, expected_column)
+                );
+            }
+        });
     }
 
     fn left_mouse_down_at(
