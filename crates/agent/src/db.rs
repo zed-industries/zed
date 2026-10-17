@@ -529,16 +529,22 @@ impl ThreadsDatabase {
                     Some(serialized_folder_paths.order),
                 )
             };
-        let json_data = serde_json::to_string(&SerializedThread {
-            thread,
-            version: DbThread::VERSION,
-        })?;
-
+        // Serialize into the compressor while holding the connection so
+        // concurrent saves cannot each retain an uncompressed snapshot while
+        // waiting on this lock. Streaming also avoids a second full copy of
+        // the JSON before compression.
         let connection = connection.lock();
 
-        let compressed = zstd::encode_all(json_data.as_bytes(), COMPRESSION_LEVEL)?;
+        let mut encoder = zstd::stream::write::Encoder::new(Vec::new(), COMPRESSION_LEVEL)?;
+        serde_json::to_writer(
+            &mut encoder,
+            &SerializedThread {
+                thread,
+                version: DbThread::VERSION,
+            },
+        )?;
+        let data = encoder.finish()?;
         let data_type = DataType::Zstd;
-        let data = compressed;
 
         // Use the thread's updated_at as created_at for new threads.
         // This ensures the creation time reflects when the thread was conceptually
@@ -796,6 +802,8 @@ mod tests {
     use chrono::{DateTime, TimeZone, Utc};
     use collections::HashMap;
     use gpui::TestAppContext;
+    use indoc::indoc;
+    use serde::Serialize;
     use std::sync::Arc;
 
     #[test]
@@ -1433,5 +1441,556 @@ mod tests {
             .expect("scroll_position should be restored");
         assert_eq!(scroll.item_ix, 42);
         assert!((scroll.offset_in_item - 13.5).abs() < f32::EPSILON);
+    }
+
+    const USER_IMAGE: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    const TOOL_IMAGE: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    const REVISED_USER_IMAGE: &str = "revised-user-image-payload";
+    const REVISED_TOOL_IMAGE: &str = "revised-tool-image-payload";
+    const OTHER_USER_IMAGE: &str = "other-session-user-image";
+    const OTHER_TOOL_IMAGE: &str = "other-session-tool-image";
+
+    fn image_bearing_thread(
+        title: &str,
+        updated_at: DateTime<Utc>,
+        user_text: &str,
+        user_image: &str,
+        tool_image: &str,
+        summary: &str,
+        compaction: &str,
+    ) -> DbThread {
+        let user_message_id = acp_thread::ClientUserMessageId::new();
+        let tool_use_id = language_model::LanguageModelToolUseId::from("tool-use-1");
+        let mut tool_results = collections::IndexMap::default();
+        tool_results.insert(
+            tool_use_id.clone(),
+            language_model::LanguageModelToolResult {
+                tool_use_id: tool_use_id.clone(),
+                tool_name: "read_image".into(),
+                is_error: false,
+                content: vec![language_model::LanguageModelToolResultContent::Image(
+                    language_model::LanguageModelImage {
+                        source: tool_image.into(),
+                    },
+                )],
+                output: None,
+            },
+        );
+
+        let mut thread = make_thread(title, updated_at);
+        thread.messages = vec![
+            Arc::new(crate::Message::User(crate::UserMessage {
+                id: user_message_id.clone(),
+                content: Arc::from([
+                    crate::UserMessageContent::Text(user_text.to_string()),
+                    crate::UserMessageContent::Image(language_model::LanguageModelImage {
+                        source: user_image.into(),
+                    }),
+                ]),
+            })),
+            Arc::new(crate::Message::Agent(crate::AgentMessage {
+                content: vec![
+                    crate::AgentMessageContent::Text("Here is the tool image".into()),
+                    crate::AgentMessageContent::ToolUse(language_model::LanguageModelToolUse {
+                        id: tool_use_id,
+                        name: "read_image".into(),
+                        raw_input: "{\"path\":\"café.png\"}".into(),
+                        input: language_model::LanguageModelToolUseInput::Json(serde_json::json!({
+                            "path": "café.png"
+                        })),
+                        is_input_complete: true,
+                        thought_signature: None,
+                    }),
+                ],
+                tool_results,
+                reasoning_details: None,
+            })),
+            Arc::new(crate::Message::Compaction(crate::CompactionInfo::Summary(
+                compaction.into(),
+            ))),
+        ];
+        thread.detailed_summary = Some(summary.into());
+        thread.cumulative_token_usage = language_model::TokenUsage {
+            input_tokens: 11,
+            output_tokens: 22,
+            cache_creation_input_tokens: 3,
+            cache_read_input_tokens: 4,
+        };
+        thread.request_token_usage.insert(
+            user_message_id,
+            language_model::TokenUsage {
+                input_tokens: 5,
+                output_tokens: 6,
+                cache_creation_input_tokens: 1,
+                cache_read_input_tokens: 2,
+            },
+        );
+        thread
+    }
+
+    fn stored_thread_row(database: &ThreadsDatabase, id: &acp::SessionId) -> (String, Vec<u8>) {
+        let connection = database.connection.lock();
+        let mut select = connection
+            .select_bound::<Arc<str>, (String, Vec<u8>)>(
+                "SELECT data_type, data FROM threads WHERE id = ?",
+            )
+            .expect("prepare stored row query");
+        select(id.0.clone())
+            .expect("read stored row")
+            .into_iter()
+            .next()
+            .expect("stored row")
+    }
+
+    fn insert_raw_thread(
+        database: &ThreadsDatabase,
+        id: &acp::SessionId,
+        summary: &str,
+        updated_at: &str,
+        data_type: DataType,
+        data: Vec<u8>,
+    ) {
+        let connection = database.connection.lock();
+        let mut insert = connection
+            .exec_bound::<(
+                Arc<str>,
+                Option<Arc<str>>,
+                Option<String>,
+                Option<String>,
+                String,
+                String,
+                DataType,
+                Vec<u8>,
+                String,
+            )>(indoc! {"
+                INSERT INTO threads (
+                    id, parent_id, folder_paths, folder_paths_order, summary,
+                    updated_at, data_type, data, created_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            "})
+            .expect("prepare raw insert");
+        insert((
+            id.0.clone(),
+            None,
+            None,
+            None,
+            summary.to_string(),
+            updated_at.to_string(),
+            data_type,
+            data,
+            updated_at.to_string(),
+        ))
+        .expect("insert raw thread");
+    }
+
+    #[derive(Serialize)]
+    struct VersionedThread<'a> {
+        #[serde(flatten)]
+        thread: &'a DbThread,
+        version: &'static str,
+    }
+
+    fn versioned_thread_json(thread: &DbThread) -> Vec<u8> {
+        serde_json::to_vec(&VersionedThread {
+            thread,
+            version: DbThread::VERSION,
+        })
+        .expect("serialize versioned thread")
+    }
+
+    #[gpui::test]
+    async fn test_image_thread_round_trips_content_metadata_and_zstd_envelope(
+        cx: &mut TestAppContext,
+    ) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+        let thread_id = session_id("image-thread");
+        let updated_at = Utc.with_ymd_and_hms(2024, 6, 15, 12, 0, 0).unwrap();
+        let user_text = "Screenshot of café menu — 日本語の説明";
+        let summary = "Image thread summary";
+        let compaction = "Compacted: kept the café photo";
+        let thread = image_bearing_thread(
+            "Photos", updated_at, user_text, USER_IMAGE, TOOL_IMAGE, summary, compaction,
+        );
+        let expected_messages = thread.messages.clone();
+        let expected_request_usage = thread.request_token_usage.clone();
+        let expected_usage = thread.cumulative_token_usage;
+        let folder_paths = PathList::new(&[
+            std::path::PathBuf::from("/home/user/project-a"),
+            std::path::PathBuf::from("/home/user/project-b"),
+        ]);
+
+        database
+            .save_thread(thread_id.clone(), thread, folder_paths.clone())
+            .await
+            .unwrap();
+
+        let (data_type, data) = stored_thread_row(&database, &thread_id);
+        assert_eq!(data_type, "zstd");
+        let json = zstd::decode_all(data.as_slice()).expect("decompress saved thread");
+        let value: serde_json::Value =
+            serde_json::from_slice(&json).expect("saved thread should be json");
+        assert_eq!(value["version"], DbThread::VERSION);
+        assert_eq!(value["title"], "Photos");
+        assert_eq!(value["detailed_summary"], summary);
+        let json_text = String::from_utf8(json).expect("saved json is utf-8");
+        assert!(json_text.contains(USER_IMAGE));
+        assert!(json_text.contains(TOOL_IMAGE));
+        assert!(json_text.contains(user_text));
+        assert!(json_text.contains(compaction));
+
+        let loaded = database
+            .load_thread(thread_id.clone())
+            .await
+            .unwrap()
+            .expect("thread should exist");
+        assert_eq!(loaded.title.as_ref(), "Photos");
+        assert_eq!(loaded.messages, expected_messages);
+        assert_eq!(loaded.detailed_summary.as_deref(), Some(summary));
+        assert_eq!(loaded.cumulative_token_usage, expected_usage);
+        assert_eq!(loaded.request_token_usage, expected_request_usage);
+        assert_eq!(loaded.updated_at, updated_at);
+
+        let entries = database.list_threads().await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, thread_id);
+        assert_eq!(entries[0].title.as_ref(), "Photos");
+        assert_eq!(entries[0].folder_paths, folder_paths);
+        assert_eq!(entries[0].created_at, Some(updated_at));
+    }
+
+    #[gpui::test]
+    async fn test_image_thread_revision_preserves_creation_and_other_sessions(
+        cx: &mut TestAppContext,
+    ) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+        let thread_id = session_id("image-thread");
+        let other_id = session_id("other-session");
+        let created_at = Utc.with_ymd_and_hms(2024, 6, 15, 12, 0, 0).unwrap();
+        let revised_at = Utc.with_ymd_and_hms(2024, 6, 16, 8, 30, 0).unwrap();
+        let original_folders = PathList::new(&[std::path::PathBuf::from("/home/user/project-a")]);
+        let revised_folders = PathList::new(&[
+            std::path::PathBuf::from("/home/user/project-a"),
+            std::path::PathBuf::from("/home/user/project-b"),
+        ]);
+        let other_folders = PathList::new(&[std::path::PathBuf::from("/tmp/other-session")]);
+
+        let original = image_bearing_thread(
+            "Original title",
+            created_at,
+            "first café note — 日本語",
+            USER_IMAGE,
+            TOOL_IMAGE,
+            "original summary",
+            "original compaction",
+        );
+        database
+            .save_thread(thread_id.clone(), original, original_folders)
+            .await
+            .unwrap();
+
+        let revised = image_bearing_thread(
+            "Revised title",
+            revised_at,
+            "revised café note — 日本語",
+            REVISED_USER_IMAGE,
+            REVISED_TOOL_IMAGE,
+            "revised summary",
+            "revised compaction",
+        );
+        let revised_messages = revised.messages.clone();
+        let revised_usage = revised.cumulative_token_usage;
+        database
+            .save_thread(thread_id.clone(), revised, revised_folders.clone())
+            .await
+            .unwrap();
+
+        let other = image_bearing_thread(
+            "Other session",
+            revised_at,
+            "other session — 日本語",
+            OTHER_USER_IMAGE,
+            OTHER_TOOL_IMAGE,
+            "other summary",
+            "other compaction",
+        );
+        let other_messages = other.messages.clone();
+        database
+            .save_thread(other_id.clone(), other, other_folders.clone())
+            .await
+            .unwrap();
+
+        let entries = database.list_threads().await.unwrap();
+        let revised_entry = entries
+            .iter()
+            .find(|entry| entry.id == thread_id)
+            .expect("revised thread metadata");
+        assert_eq!(revised_entry.title.as_ref(), "Revised title");
+        assert_eq!(revised_entry.updated_at, revised_at);
+        assert_eq!(revised_entry.created_at, Some(created_at));
+        assert_eq!(revised_entry.folder_paths, revised_folders);
+
+        let other_entry = entries
+            .iter()
+            .find(|entry| entry.id == other_id)
+            .expect("other session metadata");
+        assert_eq!(other_entry.title.as_ref(), "Other session");
+        assert_eq!(other_entry.folder_paths, other_folders);
+        assert_eq!(other_entry.created_at, Some(revised_at));
+
+        let loaded = database
+            .load_thread(thread_id)
+            .await
+            .unwrap()
+            .expect("revised thread should exist");
+        assert_eq!(loaded.title.as_ref(), "Revised title");
+        assert_eq!(loaded.messages, revised_messages);
+        assert_eq!(loaded.detailed_summary.as_deref(), Some("revised summary"));
+        assert_eq!(loaded.cumulative_token_usage, revised_usage);
+        assert_eq!(loaded.updated_at, revised_at);
+        let loaded_json = serde_json::to_string(&loaded.messages).unwrap();
+        assert!(loaded_json.contains(REVISED_USER_IMAGE));
+        assert!(loaded_json.contains(REVISED_TOOL_IMAGE));
+        assert!(!loaded_json.contains(USER_IMAGE));
+        assert!(!loaded_json.contains(OTHER_USER_IMAGE));
+
+        let loaded_other = database
+            .load_thread(other_id)
+            .await
+            .unwrap()
+            .expect("other session should exist");
+        assert_eq!(loaded_other.title.as_ref(), "Other session");
+        assert_eq!(loaded_other.messages, other_messages);
+        assert_eq!(
+            loaded_other.detailed_summary.as_deref(),
+            Some("other summary")
+        );
+    }
+
+    #[gpui::test]
+    async fn test_loader_reads_previous_zstd_and_uncompressed_json_rows(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+        let updated_at = Utc.with_ymd_and_hms(2024, 3, 2, 4, 5, 6).unwrap();
+        let updated_at_text = updated_at.to_rfc3339();
+
+        let previous_writer_thread = image_bearing_thread(
+            "Previous writer",
+            updated_at,
+            "previous writer café — 日本語",
+            USER_IMAGE,
+            TOOL_IMAGE,
+            "previous summary",
+            "previous compaction",
+        );
+        let previous_messages = previous_writer_thread.messages.clone();
+        let previous_usage = previous_writer_thread.cumulative_token_usage;
+        let previous_request_usage = previous_writer_thread.request_token_usage.clone();
+        let previous_id = session_id("previous-zstd");
+        let previous_json = versioned_thread_json(&previous_writer_thread);
+        let previous_zstd = zstd::encode_all(previous_json.as_slice(), 3).expect("encode_all");
+        insert_raw_thread(
+            &database,
+            &previous_id,
+            "Previous writer",
+            &updated_at_text,
+            DataType::Zstd,
+            previous_zstd,
+        );
+
+        let mut uncompressed_thread = make_thread("Uncompressed JSON", updated_at);
+        uncompressed_thread.messages = vec![Arc::new(crate::Message::User(crate::UserMessage {
+            id: acp_thread::ClientUserMessageId::new(),
+            content: Arc::from([crate::UserMessageContent::Text(
+                "plain json café — 日本語".into(),
+            )]),
+        }))];
+        uncompressed_thread.detailed_summary = Some("plain summary".into());
+        uncompressed_thread.cumulative_token_usage = language_model::TokenUsage {
+            input_tokens: 9,
+            output_tokens: 8,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 1,
+        };
+        let uncompressed_messages = uncompressed_thread.messages.clone();
+        let uncompressed_usage = uncompressed_thread.cumulative_token_usage;
+        let uncompressed_id = session_id("uncompressed-json");
+        insert_raw_thread(
+            &database,
+            &uncompressed_id,
+            "Uncompressed JSON",
+            &updated_at_text,
+            DataType::Json,
+            versioned_thread_json(&uncompressed_thread),
+        );
+
+        let legacy = crate::legacy_thread::SerializedThread {
+            version: crate::legacy_thread::SerializedThread::VERSION.to_string(),
+            summary: "Legacy thread".into(),
+            updated_at,
+            messages: vec![crate::legacy_thread::SerializedMessage {
+                id: crate::legacy_thread::MessageId(1),
+                role: language_model::Role::User,
+                segments: vec![crate::legacy_thread::SerializedMessageSegment::Text {
+                    text: "legacy こんにちは".into(),
+                }],
+                tool_uses: vec![],
+                tool_results: vec![],
+                context: String::new(),
+                creases: vec![],
+                is_hidden: false,
+            }],
+            initial_project_snapshot: None,
+            cumulative_token_usage: language_model::TokenUsage {
+                input_tokens: 7,
+                output_tokens: 8,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+            },
+            request_token_usage: vec![],
+            detailed_summary_state: crate::legacy_thread::DetailedSummaryState::Generated {
+                text: "legacy summary".into(),
+            },
+            model: None,
+            tool_use_limit_reached: false,
+            profile: None,
+        };
+        let legacy_json = serde_json::to_vec(&legacy).expect("serialize legacy thread");
+        let legacy_zstd = zstd::encode_all(legacy_json.as_slice(), 3).expect("encode legacy");
+        let legacy_id = session_id("legacy-zstd");
+        insert_raw_thread(
+            &database,
+            &legacy_id,
+            "Legacy thread",
+            &updated_at_text,
+            DataType::Zstd,
+            legacy_zstd,
+        );
+
+        let loaded_previous = database
+            .load_thread(previous_id)
+            .await
+            .unwrap()
+            .expect("previous zstd row should load");
+        assert_eq!(loaded_previous.title.as_ref(), "Previous writer");
+        assert_eq!(loaded_previous.messages, previous_messages);
+        assert_eq!(
+            loaded_previous.detailed_summary.as_deref(),
+            Some("previous summary")
+        );
+        assert_eq!(loaded_previous.cumulative_token_usage, previous_usage);
+        assert_eq!(loaded_previous.request_token_usage, previous_request_usage);
+        assert_eq!(loaded_previous.updated_at, updated_at);
+
+        let loaded_plain = database
+            .load_thread(uncompressed_id)
+            .await
+            .unwrap()
+            .expect("uncompressed json row should load");
+        assert_eq!(loaded_plain.title.as_ref(), "Uncompressed JSON");
+        assert_eq!(loaded_plain.messages, uncompressed_messages);
+        assert_eq!(
+            loaded_plain.detailed_summary.as_deref(),
+            Some("plain summary")
+        );
+        assert_eq!(loaded_plain.cumulative_token_usage, uncompressed_usage);
+
+        let loaded_legacy = database
+            .load_thread(legacy_id)
+            .await
+            .unwrap()
+            .expect("legacy zstd row should load");
+        assert_eq!(loaded_legacy.title.as_ref(), "Legacy thread");
+        assert_eq!(
+            loaded_legacy.detailed_summary.as_deref(),
+            Some("legacy summary")
+        );
+        assert_eq!(loaded_legacy.cumulative_token_usage.input_tokens, 7);
+        assert_eq!(loaded_legacy.cumulative_token_usage.output_tokens, 8);
+        assert_eq!(loaded_legacy.updated_at, updated_at);
+        let crate::Message::User(user_message) = loaded_legacy.messages[0].as_ref() else {
+            panic!("legacy row should upgrade to a user message");
+        };
+        assert_eq!(
+            user_message.content.as_ref(),
+            [crate::UserMessageContent::Text("legacy こんにちは".into())]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_failed_save_leaves_committed_thread_readable(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+        let thread_id = session_id("durable-thread");
+        let created_at = Utc.with_ymd_and_hms(2024, 4, 1, 0, 0, 0).unwrap();
+        let thread = image_bearing_thread(
+            "Committed title",
+            created_at,
+            "committed café note — 日本語",
+            USER_IMAGE,
+            TOOL_IMAGE,
+            "committed summary",
+            "committed compaction",
+        );
+        let expected_messages = thread.messages.clone();
+        let expected_usage = thread.cumulative_token_usage;
+        let folder_paths = PathList::new(&[std::path::PathBuf::from("/home/user/project-a")]);
+
+        database
+            .save_thread(thread_id.clone(), thread, folder_paths.clone())
+            .await
+            .unwrap();
+        let committed_row = stored_thread_row(&database, &thread_id);
+
+        {
+            let connection = database.connection.lock();
+            connection
+                .exec(indoc! {"
+                    CREATE TRIGGER abort_thread_updates
+                    BEFORE UPDATE ON threads
+                    BEGIN
+                        SELECT RAISE(ABORT, 'forced write failure');
+                    END;
+                "})
+                .expect("prepare abort trigger")()
+            .expect("install abort trigger");
+        }
+
+        let revised = image_bearing_thread(
+            "Should not persist",
+            Utc.with_ymd_and_hms(2024, 4, 2, 0, 0, 0).unwrap(),
+            "replacement text",
+            REVISED_USER_IMAGE,
+            REVISED_TOOL_IMAGE,
+            "replacement summary",
+            "replacement compaction",
+        );
+        let save_result = database
+            .save_thread(thread_id.clone(), revised, folder_paths)
+            .await;
+        assert!(
+            save_result.is_err(),
+            "aborting update trigger should fail the save, got {save_result:?}"
+        );
+        assert_eq!(stored_thread_row(&database, &thread_id), committed_row);
+
+        let loaded = database
+            .load_thread(thread_id.clone())
+            .await
+            .unwrap()
+            .expect("committed thread should remain readable");
+        assert_eq!(loaded.title.as_ref(), "Committed title");
+        assert_eq!(loaded.messages, expected_messages);
+        assert_eq!(
+            loaded.detailed_summary.as_deref(),
+            Some("committed summary")
+        );
+        assert_eq!(loaded.cumulative_token_usage, expected_usage);
+        assert_eq!(loaded.updated_at, created_at);
+
+        let entries = database.list_threads().await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, thread_id);
+        assert_eq!(entries[0].title.as_ref(), "Committed title");
+        assert_eq!(entries[0].created_at, Some(created_at));
+        assert_eq!(entries[0].updated_at, created_at);
     }
 }
