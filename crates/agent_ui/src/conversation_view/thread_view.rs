@@ -12,6 +12,7 @@ use acp_thread::{
     Elicitation, ElicitationEntryId, ElicitationStatus, ForegroundActivity,
     SandboxAuthorizationDetails, SandboxFallbackAuthorizationDetails, SandboxNotAppliedReason,
     SubmissionId, SubmissionResponse, SubmissionState, ToolCallLocation, decode_path_escapes,
+    rate_limits::{RateLimitStatus, RateLimitWindowKind},
 };
 use agent::{
     SandboxStatusKey, SandboxStatusRefresh, SkillLoadingIssue, SkillLoadingIssueKind,
@@ -5346,6 +5347,40 @@ impl ThreadView {
             .is_some_and(|model| model.supports_split_token_display())
     }
 
+    fn usage_status_windows(&self, cx: &App) -> Vec<UsageStatusWindow> {
+        if !AgentSettings::get_global(cx).show_usage_status {
+            return Vec::new();
+        }
+        let rate_limits = self.thread.read(cx).rate_limits();
+        let now = chrono::Utc::now();
+        [
+            (RateLimitWindowKind::FiveHour, "5 Hours"),
+            (RateLimitWindowKind::SevenDay, "7 Days"),
+        ]
+        .into_iter()
+        .filter_map(|(kind, title)| {
+            let window = rate_limits.window(kind)?;
+            let reset = window
+                .resets_at
+                .map(|resets_at| format!("resets in {}", format_duration_until(resets_at, now)));
+            Some(UsageStatusWindow {
+                title,
+                ratio: window.utilization.unwrap_or(0.0),
+                percentage: window.utilization.map(format_utilization),
+                detail: if window.status == RateLimitStatus::Rejected {
+                    Some(match reset {
+                        Some(reset) => format!("limit reached, {reset}"),
+                        None => "limit reached".to_string(),
+                    })
+                } else {
+                    reset
+                },
+                is_warning: window.is_warning(),
+            })
+        })
+        .collect()
+    }
+
     fn render_token_usage(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let thread = self.thread.read(cx);
         let usage = thread.token_usage()?;
@@ -5381,6 +5416,8 @@ impl ThreadView {
 
         let ring_size = px(16.0);
         let stroke_width = px(2.);
+
+        let usage_windows = self.usage_status_windows(cx);
 
         let percentage = format!("{}%", (progress_ratio * 100.0).round() as u32);
 
@@ -5424,6 +5461,7 @@ impl ThreadView {
         let output_max_label = crate::humanize_token_count(max_output_tokens);
 
         let build_tooltip = {
+            let usage_windows = usage_windows.clone();
             move |_window: &mut Window, cx: &mut App| {
                 let percentage = percentage.clone();
                 let used = used.clone();
@@ -5435,6 +5473,7 @@ impl ThreadView {
                 let project_entry_ids = project_entry_ids.clone();
                 let workspace = workspace.clone();
                 let cost_label = cost_label.clone();
+                let usage_windows = usage_windows.clone();
                 cx.new(move |_cx| TokenUsageTooltip {
                     percentage,
                     used,
@@ -5445,6 +5484,7 @@ impl ThreadView {
                     output_max: output_max_label,
                     show_split,
                     cost_label,
+                    usage_windows,
                     separator_color: tooltip_separator_color,
                     global_agents_md_loaded,
                     project_rules_count,
@@ -5517,7 +5557,7 @@ impl ThreadView {
                     .hoverable_tooltip(build_tooltip)
                     .into_any_element(),
             )
-        } else {
+        } else if usage_windows.is_empty() {
             Some(
                 h_flex()
                     .id("circular_progress_tokens")
@@ -5533,6 +5573,43 @@ impl ThreadView {
                         .stroke_width(stroke_width)
                         .progress_color(progress_color(progress_ratio)),
                     )
+                    .hoverable_tooltip(build_tooltip)
+                    .into_any_element(),
+            )
+        } else {
+            let nested_ring_size = px(20.);
+            let nested_stroke_width = px(1.5);
+            let ring_spacing = nested_stroke_width + px(1.);
+            let outer_radius = nested_ring_size / 2. - nested_stroke_width;
+
+            let rings = std::iter::once((progress_ratio, progress_color(progress_ratio)))
+                .chain(usage_windows.iter().map(|window| {
+                    let color = if window.is_warning {
+                        cx.theme().status().warning
+                    } else {
+                        cx.theme().colors().text_muted
+                    };
+                    (window.ratio, color)
+                }))
+                .enumerate()
+                .map(|(index, (ratio, color))| {
+                    div().absolute().inset_0().child(
+                        CircularProgress::new(ratio, 1., nested_ring_size, cx)
+                            .stroke_width(nested_stroke_width)
+                            .radius(outer_radius - ring_spacing * index as f32)
+                            .progress_color(color),
+                    )
+                })
+                .collect::<Vec<_>>();
+
+            Some(
+                div()
+                    .id("circular_progress_tokens")
+                    .relative()
+                    .flex_shrink_0()
+                    .size(nested_ring_size)
+                    .mr_1()
+                    .children(rings)
                     .hoverable_tooltip(build_tooltip)
                     .into_any_element(),
             )
@@ -6397,6 +6474,15 @@ impl ThreadView {
     }
 }
 
+#[derive(Clone)]
+struct UsageStatusWindow {
+    title: &'static str,
+    ratio: f32,
+    percentage: Option<String>,
+    detail: Option<String>,
+    is_warning: bool,
+}
+
 struct TokenUsageTooltip {
     percentage: String,
     used: String,
@@ -6407,6 +6493,7 @@ struct TokenUsageTooltip {
     output_max: String,
     show_split: bool,
     cost_label: Option<String>,
+    usage_windows: Vec<UsageStatusWindow>,
     separator_color: Color,
     global_agents_md_loaded: bool,
     project_rules_count: usize,
@@ -6426,6 +6513,7 @@ impl Render for TokenUsageTooltip {
         let output_max = self.output_max.clone();
         let show_split = self.show_split;
         let cost_label = self.cost_label.clone();
+        let usage_windows = self.usage_windows.clone();
         let global_agents_md_loaded = self.global_agents_md_loaded;
         let project_rules_count = self.project_rules_count;
         let project_entry_ids = self.project_entry_ids.clone();
@@ -6474,20 +6562,45 @@ impl Render for TokenUsageTooltip {
                 })
                 .when_some(cost_label, |this, cost_label| {
                     this.child(
-                        v_flex()
-                            .mt_1p5()
-                            .pt_1p5()
+                        h_flex()
                             .gap_0p5()
-                            .border_t_1()
-                            .border_color(cx.theme().colors().border_variant)
-                            .child(
-                                Label::new("Cost")
-                                    .color(Color::Muted)
-                                    .size(LabelSize::Small),
-                            )
+                            .child(Label::new("Cost:").color(Color::Muted).mr_0p5())
                             .child(Label::new(cost_label)),
                     )
                 })
+                .children(usage_windows.into_iter().map(|window| {
+                    let has_both = window.percentage.is_some() && window.detail.is_some();
+                    v_flex()
+                        .mt_1p5()
+                        .pt_1p5()
+                        .gap_0p5()
+                        .border_t_1()
+                        .border_color(cx.theme().colors().border_variant)
+                        .child(
+                            Label::new(window.title)
+                                .color(Color::Muted)
+                                .size(LabelSize::Small),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_0p5()
+                                .children(window.percentage.map(|percentage| {
+                                    Label::new(percentage).color(if window.is_warning {
+                                        Color::Warning
+                                    } else {
+                                        Color::Default
+                                    })
+                                }))
+                                .when(has_both, |this| {
+                                    this.child(Label::new("\u{2022}").color(separator_color).mx_1())
+                                })
+                                .children(
+                                    window
+                                        .detail
+                                        .map(|detail| Label::new(detail).color(Color::Muted)),
+                                ),
+                        )
+                }))
                 .when(
                     global_agents_md_loaded || project_rules_count > 0,
                     move |this| {
@@ -13802,6 +13915,31 @@ fn strip_leading_command(text: &str, command_name: &str) -> String {
         .unwrap_or_else(|| trimmed.to_string())
 }
 
+fn format_utilization(utilization: f32) -> String {
+    format!("{}%", (utilization * 100.0).round() as u32)
+}
+
+fn format_duration_until(
+    target: chrono::DateTime<chrono::Utc>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> String {
+    let total_minutes = (target - now).num_minutes().max(0);
+    let days = total_minutes / (24 * 60);
+    let hours = total_minutes / 60 % 24;
+    let minutes = total_minutes % 60;
+    if days > 0 && hours > 0 {
+        format!("{days}d {hours}h")
+    } else if days > 0 {
+        format!("{days}d")
+    } else if hours > 0 && minutes > 0 {
+        format!("{hours}h {minutes}m")
+    } else if hours > 0 {
+        format!("{hours}h")
+    } else {
+        format!("{minutes}m")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -13812,6 +13950,25 @@ mod tests {
     use std::sync::Once;
     use util::path;
     use workspace::MultiWorkspace;
+
+    #[test]
+    fn test_format_duration_until() {
+        let now = chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        let after = |seconds: i64| now + chrono::Duration::seconds(seconds);
+
+        assert_eq!(format_duration_until(after(-60), now), "0m");
+        assert_eq!(format_duration_until(after(59 * 60), now), "59m");
+        assert_eq!(
+            format_duration_until(after(2 * 3600 + 14 * 60), now),
+            "2h 14m"
+        );
+        assert_eq!(
+            format_duration_until(after(3 * 86400 + 5 * 3600), now),
+            "3d 5h"
+        );
+        assert_eq!(format_duration_until(after(4 * 86400 + 30 * 60), now), "4d");
+        assert_eq!(format_duration_until(after(3 * 3600 + 20), now), "3h");
+    }
 
     #[test]
     fn test_reported_activity_completion_status() {
