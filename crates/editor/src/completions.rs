@@ -394,9 +394,28 @@ impl Editor {
 
         drop(multibuffer_snapshot);
 
+        // Snippet tabstop choices are a finite set: typing inside the tabstop filters the
+        // existing menu instead of querying the completion provider, which would replace the
+        // choices with unrelated completions (or an empty menu, dismissing them entirely).
+        if is_showing_snippet_choices {
+            if let Some(CodeContextMenu::Completions(menu)) =
+                self.context_menu.borrow_mut().as_mut()
+            {
+                menu.filter(
+                    query.unwrap_or_default(),
+                    buffer_position,
+                    &buffer,
+                    None,
+                    window,
+                    cx,
+                );
+            }
+            return;
+        }
+
         // Hide the current completions menu when query is empty. Without this, cached
         // completions from before the trigger char may be reused (#32774).
-        if query.is_none() && menu_is_open && !is_showing_snippet_choices {
+        if query.is_none() && menu_is_open {
             self.hide_context_menu(window, cx);
         }
 
