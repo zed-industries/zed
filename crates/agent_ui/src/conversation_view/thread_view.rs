@@ -9,7 +9,7 @@ use agent_client_protocol::schema::v2 as acp_v2;
 use std::{cell::RefCell, path::Path};
 
 use acp_thread::{
-    Elicitation, ElicitationEntryId, ElicitationStatus, ForegroundActivity,
+    Elicitation, ElicitationEntryId, ElicitationStatus, ForegroundActivity, OutputTokensUpdate,
     SandboxAuthorizationDetails, SandboxFallbackAuthorizationDetails, SandboxNotAppliedReason,
     SubmissionId, SubmissionResponse, SubmissionState, ToolCallLocation, decode_path_escapes,
 };
@@ -1488,6 +1488,7 @@ impl ThreadView {
         let activity_generation = thread.activity_generation();
         let started_at = thread.activity_started_at();
         let duration = thread.activity_duration();
+        let output_tokens = thread.reported_activity_output_tokens();
 
         if activity != ForegroundActivity::Idle {
             if self.turn_fields.reported_activity_generation != Some(activity_generation) {
@@ -1504,6 +1505,9 @@ impl ThreadView {
             }
             self.turn_fields.reported_activity_generation = Some(activity_generation);
             self.turn_fields.last_turn_duration = duration;
+            if let Some(output_tokens) = output_tokens {
+                self.turn_fields.last_turn_tokens = Some(output_tokens);
+            }
         }
         cx.notify();
     }
@@ -1747,13 +1751,34 @@ impl ThreadView {
         )
     }
 
-    pub fn update_turn_tokens(&mut self, cx: &App) {
-        if let Some(usage) = self.thread.read(cx).token_usage() {
-            if let Some(tokens) = &mut self.turn_fields.turn_tokens {
-                *tokens += usage.output_tokens;
-                self.emit_token_limit_telemetry_if_needed(cx);
+    pub fn update_turn_tokens(&mut self, update: OutputTokensUpdate, cx: &mut Context<Self>) {
+        match update {
+            OutputTokensUpdate::Unchanged => {}
+            OutputTokensUpdate::LegacyAdd {
+                activity_generation,
+                output_tokens,
+            } => {
+                if self.thread.read(cx).activity_generation() != activity_generation {
+                    return;
+                }
+                if self.thread.read(cx).foreground_activity() != ForegroundActivity::Idle {
+                    self.sync_reported_activity(cx);
+                }
+                if let Some(tokens) = &mut self.turn_fields.turn_tokens {
+                    *tokens += output_tokens;
+                }
+            }
+            OutputTokensUpdate::Snapshot {
+                activity_generation,
+                ..
+            } => {
+                if self.thread.read(cx).activity_generation() != activity_generation {
+                    return;
+                }
+                self.sync_reported_activity(cx);
             }
         }
+        self.emit_token_limit_telemetry_if_needed(cx);
     }
 
     fn emit_token_limit_telemetry_if_needed(&mut self, cx: &App) {
