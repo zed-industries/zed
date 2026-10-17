@@ -28,7 +28,7 @@ use std::sync::atomic::AtomicBool;
 
 use std::process::{ExitStatus, Output};
 use std::str::FromStr;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 use std::{
     cmp::Ordering,
     path::{Path, PathBuf},
@@ -45,6 +45,48 @@ use uuid::Uuid;
 pub use askpass::{AskPassDelegate, AskPassResult, AskPassSession};
 
 pub const REMOTE_CANCELLED_BY_USER: &str = "Operation cancelled by user";
+
+/// Error reported when a background git operation was stopped by its caller.
+pub const GIT_OPERATION_CANCELLED: &str = "Git operation cancelled";
+
+/// How long git is given to clean up after being asked to terminate.
+const TERMINATION_GRACE: Duration = Duration::from_secs(2);
+
+/// Who a git operation is running on behalf of.
+///
+/// A remote git operation can be asked for credentials through several
+/// independent channels — git itself, an external credential helper, and ssh —
+/// and only some of them route through Zed's askpass. Passing this instead of a
+/// bare [`AskPassDelegate`] keeps that list in one place
+/// ([`GitBinary::run_remote_command`]) rather than at each call site, and leaves
+/// nothing to fall back on when no user is attached.
+pub enum GitCaller {
+    /// A user started this operation and is waiting on it. Prompts route to the
+    /// UI through the delegate.
+    User(AskPassDelegate),
+    /// Background work with no user attached, such as auto-fetch. Nothing can
+    /// answer a prompt, so every prompting channel is closed. Credential helpers
+    /// that answer from a keychain without prompting still work, which is what
+    /// makes an unattended fetch useful at all.
+    ///
+    /// gpg's own pinentry can still open a dialog when signing. No background
+    /// caller signs today, so that channel is left alone rather than given a
+    /// policy nothing exercises.
+    Background(Option<oneshot::Receiver<()>>),
+}
+
+impl GitCaller {
+    /// Background work that runs to completion.
+    pub fn background() -> Self {
+        Self::Background(None)
+    }
+
+    /// Background work that stops when `cancel` resolves or its sender is
+    /// dropped, whichever comes first.
+    pub fn background_cancelled_by(cancel: oneshot::Receiver<()>) -> Self {
+        Self::Background(Some(cancel))
+    }
+}
 
 /// Format string used in graph log to get initial data for the git graph
 /// %H - Full commit hash
@@ -975,7 +1017,7 @@ pub trait GitRepository: Send + Sync {
         message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
         options: CommitOptions,
-        askpass: AskPassDelegate,
+        caller: GitCaller,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>>;
 
@@ -1016,7 +1058,7 @@ pub trait GitRepository: Send + Sync {
         remote_branch_name: String,
         upstream_name: String,
         options: Option<PushOptions>,
-        askpass: AskPassDelegate,
+        caller: GitCaller,
         env: Arc<HashMap<String, String>>,
         // This method takes an AsyncApp to ensure it's invoked on the main thread,
         // otherwise git-credentials-manager won't work.
@@ -1028,7 +1070,7 @@ pub trait GitRepository: Send + Sync {
         branch_name: Option<String>,
         upstream_name: String,
         rebase: bool,
-        askpass: AskPassDelegate,
+        caller: GitCaller,
         env: Arc<HashMap<String, String>>,
         // This method takes an AsyncApp to ensure it's invoked on the main thread,
         // otherwise git-credentials-manager won't work.
@@ -1038,7 +1080,7 @@ pub trait GitRepository: Send + Sync {
     fn fetch(
         &self,
         fetch_options: FetchOptions,
-        askpass: AskPassDelegate,
+        caller: GitCaller,
         env: Arc<HashMap<String, String>>,
         // This method takes an AsyncApp to ensure it's invoked on the main thread,
         // otherwise git-credentials-manager won't work.
@@ -2761,43 +2803,41 @@ impl GitRepository for RealGitRepository {
         message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
         options: CommitOptions,
-        ask_pass: AskPassDelegate,
+        caller: GitCaller,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
         let git = self.git_binary_in_worktree();
-        let executor = self.executor.clone();
         // Note: Do not spawn this command on the background thread, it might pop open the credential helper
         // which we want to block on.
         async move {
             let git = git?;
-            let mut cmd = git.build_command(&["commit", "--quiet", "-m"]);
-            cmd.envs(env.iter())
-                .arg(&message.to_string())
-                .arg("--cleanup=strip")
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped());
+            git.run_remote_command(caller, &env, &["commit", "--quiet", "-m"], |cmd| {
+                cmd.arg(&message.to_string())
+                    .arg("--cleanup=strip")
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped());
 
-            if options.amend {
-                cmd.arg("--amend");
-            }
+                if options.amend {
+                    cmd.arg("--amend");
+                }
 
-            if options.signoff {
-                cmd.arg("--signoff");
-            }
+                if options.signoff {
+                    cmd.arg("--signoff");
+                }
 
-            if options.allow_empty {
-                cmd.arg("--allow-empty");
-            }
+                if options.allow_empty {
+                    cmd.arg("--allow-empty");
+                }
 
-            if options.no_verify {
-                cmd.arg("--no-verify");
-            }
+                if options.no_verify {
+                    cmd.arg("--no-verify");
+                }
 
-            if let Some((name, email)) = name_and_email {
-                cmd.arg("--author").arg(&format!("{name} <{email}>"));
-            }
-
-            run_git_command(env, ask_pass, cmd, executor).await?;
+                if let Some((name, email)) = name_and_email {
+                    cmd.arg("--author").arg(&format!("{name} <{email}>"));
+                }
+            })
+            .await?;
 
             Ok(())
         }
@@ -2833,7 +2873,7 @@ impl GitRepository for RealGitRepository {
         remote_branch_name: String,
         remote_name: String,
         options: Option<PushOptions>,
-        ask_pass: AskPassDelegate,
+        caller: GitCaller,
         env: Arc<HashMap<String, String>>,
         cx: AsyncApp,
     ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
@@ -2850,23 +2890,22 @@ impl GitRepository for RealGitRepository {
                 git_binary_path,
                 working_directory,
                 git_directory,
-                executor.clone(),
+                executor,
                 is_trusted,
             );
-            let mut command = git.build_command(&["push"]);
-            command
-                .envs(env.iter())
-                .args(options.map(|option| match option {
-                    PushOptions::SetUpstream => "--set-upstream",
-                    PushOptions::Force => "--force-with-lease",
-                }))
-                .arg(remote_name)
-                .arg(format!("{}:{}", branch_name, remote_branch_name))
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped());
-
-            run_git_command(env, ask_pass, command, executor).await
+            git.run_remote_command(caller, &env, &["push"], |command| {
+                command
+                    .args(options.map(|option| match option {
+                        PushOptions::SetUpstream => "--set-upstream",
+                        PushOptions::Force => "--force-with-lease",
+                    }))
+                    .arg(remote_name)
+                    .arg(format!("{}:{}", branch_name, remote_branch_name))
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped());
+            })
+            .await
         }
         .boxed()
     }
@@ -2876,7 +2915,7 @@ impl GitRepository for RealGitRepository {
         branch_name: Option<String>,
         remote_name: String,
         rebase: bool,
-        ask_pass: AskPassDelegate,
+        caller: GitCaller,
         env: Arc<HashMap<String, String>>,
         cx: AsyncApp,
     ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
@@ -2893,23 +2932,21 @@ impl GitRepository for RealGitRepository {
                 git_binary_path,
                 working_directory,
                 git_directory,
-                executor.clone(),
+                executor,
                 is_trusted,
             );
-            let mut command = git.build_command(&["pull"]);
-            command.envs(env.iter());
+            git.run_remote_command(caller, &env, &["pull"], |command| {
+                if rebase {
+                    command.arg("--rebase");
+                }
 
-            if rebase {
-                command.arg("--rebase");
-            }
-
-            command
-                .arg(remote_name)
-                .args(branch_name)
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped());
-
-            run_git_command(env, ask_pass, command, executor).await
+                command
+                    .arg(remote_name)
+                    .args(branch_name)
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped());
+            })
+            .await
         }
         .boxed()
     }
@@ -2917,7 +2954,7 @@ impl GitRepository for RealGitRepository {
     fn fetch(
         &self,
         fetch_options: FetchOptions,
-        ask_pass: AskPassDelegate,
+        caller: GitCaller,
         env: Arc<HashMap<String, String>>,
         cx: AsyncApp,
     ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
@@ -2935,16 +2972,13 @@ impl GitRepository for RealGitRepository {
                 git_binary_path,
                 working_directory,
                 git_directory,
-                executor.clone(),
+                executor,
                 is_trusted,
             );
-            let mut command = git.build_command(&["fetch", &remote_name]);
-            command
-                .envs(env.iter())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped());
-
-            run_git_command(env, ask_pass, command, executor).await
+            git.run_remote_command(caller, &env, &["fetch", &remote_name], |command| {
+                command.stdout(Stdio::piped()).stderr(Stdio::piped());
+            })
+            .await
         }
         .boxed()
     }
@@ -3995,6 +4029,18 @@ impl GitBinary {
     where
         S: AsRef<OsStr>,
     {
+        self.build_command_with_config(&[], args)
+    }
+
+    #[allow(clippy::disallowed_methods)]
+    fn build_command_with_config<S>(
+        &self,
+        config: &[(&str, &str)],
+        args: &[S],
+    ) -> util::command::Command
+    where
+        S: AsRef<OsStr>,
+    {
         let mut command = new_command(&self.git_binary_path);
         command.current_dir(&self.working_directory);
         // Disabled to stop malicious actors from running arbitrary commands via fsmonitor hooks
@@ -4011,6 +4057,9 @@ impl GitBinary {
             command.args(["-c", "credential.helper="]);
             command.args(["-c", "protocol.ext.allow=never"]);
             command.args(["-c", "diff.external="]);
+        }
+        for (key, value) in config {
+            command.args(["-c", &format!("{key}={value}")]);
         }
         // If the `diff` command is being used, we'll want to add the
         // `--no-ext-diff` flag when working on an untrusted repository,
@@ -4034,36 +4083,112 @@ impl GitBinary {
         command.envs(&self.envs);
         command
     }
-}
 
-#[derive(Error, Debug)]
-#[error("Git command failed:\n{stdout}{stderr}\n")]
-struct GitBinaryCommandError {
-    stdout: String,
-    stderr: String,
-    status: ExitStatus,
-}
+    /// Runs a git command that may be asked for credentials, applying everything
+    /// `caller` implies.
+    ///
+    /// Every such command goes through here rather than building its own: git
+    /// itself, an external credential helper, and ssh each prompt through a
+    /// different mechanism and are each closed off differently, so a call site
+    /// that assembled its own command would silently miss whichever one it forgot.
+    /// `configure` adds the arguments and redirections specific to the operation.
+    async fn run_remote_command<S>(
+        &self,
+        caller: GitCaller,
+        env: &HashMap<String, String>,
+        args: &[S],
+        configure: impl FnOnce(&mut util::command::Command),
+    ) -> Result<RemoteCommandOutput>
+    where
+        S: AsRef<OsStr>,
+    {
+        let mut config = Vec::new();
+        if matches!(caller, GitCaller::Background(_)) {
+            // Narrower than clearing `credential.helper`, which would also disable
+            // helpers that answer from a keychain without prompting — exactly what
+            // makes an unattended fetch useful. Only prompting is forbidden, and
+            // this covers git's own prompt as well as helpers that honor it.
+            config.push(("credential.interactive", "false"));
+            // Auto-maintenance can repack the entire repository, far outweighing
+            // the fetch that triggered it. A background caller should not start
+            // that work on the user's behalf.
+            config.push(("gc.auto", "0"));
+            config.push(("core.askPass", ""));
+        }
 
-async fn run_git_command(
-    env: Arc<HashMap<String, String>>,
-    ask_pass: AskPassDelegate,
-    mut command: util::command::Command,
-    executor: BackgroundExecutor,
-) -> Result<RemoteCommandOutput> {
-    if env.contains_key("GIT_ASKPASS") {
-        let git_process = command.spawn()?;
-        let output = git_process.output().await?;
-        anyhow::ensure!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        Ok(RemoteCommandOutput {
-            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-        })
-    } else {
-        let ask_pass = AskPassSession::new(executor, ask_pass).await?;
+        let mut command = self.build_command_with_config(&config, args);
+        command.envs(env.iter());
+        configure(&mut command);
+
+        match caller {
+            GitCaller::User(delegate) => self.run_with_askpass(delegate, env, command).await,
+            GitCaller::Background(cancel) => {
+                // These are set after the project environment has been applied
+                // above, so that environment cannot override them.
+                command.env("GIT_TERMINAL_PROMPT", "0");
+                // `credential.interactive` says nothing about ssh, which prompts
+                // for key passphrases and host key confirmation on its own. Batch
+                // mode is composed onto the ssh command git would use anyway
+                // rather than replacing it, so a custom `core.sshCommand` keeps
+                // working.
+                if let Some(ssh_command) = self.batch_mode_ssh_command(env).await {
+                    command.env("GIT_SSH_COMMAND", ssh_command);
+                }
+                // Neither of these should be able to route back to a prompt via a
+                // value inherited from the environment Zed was launched with.
+                command.env_remove("GIT_ASKPASS");
+                command.env_remove("SSH_ASKPASS");
+                // Backstop only: cancellation asks git to terminate so it can
+                // clean up, and only falls through to this if it does not.
+                command.kill_on_drop(true);
+                run_cancellable_command(command, cancel, &self.executor).await
+            }
+        }
+    }
+
+    /// The ssh command git should use for background work, if one can be
+    /// composed. See [`compose_batch_mode_ssh_command`].
+    async fn batch_mode_ssh_command(&self, env: &HashMap<String, String>) -> Option<String> {
+        // Same precedence the spawned command ends up with: the project
+        // environment is applied over `self.envs`, and both over the environment
+        // Zed itself was launched with, which the child inherits.
+        let inherited = |key: &str| {
+            env.get(key)
+                .or_else(|| self.envs.get(key))
+                .cloned()
+                .or_else(|| std::env::var(key).ok())
+        };
+        let ssh_command_env = inherited("GIT_SSH_COMMAND");
+        let core_ssh_command = if ssh_command_env.is_some() {
+            None
+        } else if self.is_trusted {
+            // Absent from config, git exits non-zero rather than printing nothing.
+            self.run(&["config", "--get", "core.sshCommand"]).await.ok()
+        } else {
+            // Pinned by `build_command`. Reading the repository's own value back
+            // here would hand it to git through an environment variable that
+            // outranks the pin.
+            Some("ssh".to_string())
+        };
+        compose_batch_mode_ssh_command(
+            ssh_command_env.as_deref(),
+            core_ssh_command.as_deref(),
+            inherited("GIT_SSH").as_deref(),
+        )
+    }
+
+    async fn run_with_askpass(
+        &self,
+        delegate: AskPassDelegate,
+        env: &HashMap<String, String>,
+        mut command: util::command::Command,
+    ) -> Result<RemoteCommandOutput> {
+        if env.contains_key("GIT_ASKPASS") {
+            let git_process = command.spawn()?;
+            return remote_command_output(git_process.output().await?);
+        }
+
+        let ask_pass = AskPassSession::new(self.executor.clone(), delegate).await?;
         command
             .env("GIT_ASKPASS", ask_pass.script_path())
             .env("SSH_ASKPASS", ask_pass.script_path())
@@ -4084,6 +4209,117 @@ async fn run_git_command(
 
         run_askpass_command(ask_pass, git_process).await
     }
+}
+
+/// Composes batch mode onto the ssh command git would otherwise pick, or returns
+/// `None` when the only thing configured is the deprecated `GIT_SSH`.
+///
+/// git resolves its ssh command as `GIT_SSH_COMMAND`, then `core.sshCommand`,
+/// then `GIT_SSH`, then plain `ssh`. Setting `GIT_SSH_COMMAND` therefore silently
+/// replaces a `GIT_SSH` program (e.g. plink on Windows), and since `GIT_SSH` names
+/// a bare program rather than a shell command there is nothing to compose onto.
+/// Those setups are left alone and keep whatever prompting behavior they have.
+fn compose_batch_mode_ssh_command(
+    ssh_command_env: Option<&str>,
+    core_ssh_command: Option<&str>,
+    git_ssh_env: Option<&str>,
+) -> Option<String> {
+    let configured = ssh_command_env
+        .or(core_ssh_command)
+        .map(str::trim)
+        .filter(|command| !command.is_empty());
+    let base = match configured {
+        Some(configured) => configured,
+        None if git_ssh_env.is_some_and(|program| !program.trim().is_empty()) => return None,
+        None => "ssh",
+    };
+    Some(format!("{base} -o BatchMode=yes"))
+}
+
+fn remote_command_output(output: Output) -> Result<RemoteCommandOutput> {
+    anyhow::ensure!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(RemoteCommandOutput {
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+    })
+}
+
+/// Runs a command with no user attached, stopping early when `cancel` resolves or
+/// its sender is dropped.
+async fn run_cancellable_command(
+    mut command: util::command::Command,
+    mut cancel: Option<oneshot::Receiver<()>>,
+    executor: &BackgroundExecutor,
+) -> Result<RemoteCommandOutput> {
+    // Cancellation can arrive before the work starts, since the caller may have
+    // been waiting on something else first. Nothing is gained by starting git only
+    // to immediately stop it again.
+    if let Some(cancel) = cancel.as_mut()
+        && !matches!(cancel.try_recv(), Ok(None))
+    {
+        anyhow::bail!(GIT_OPERATION_CANCELLED);
+    }
+
+    let child = command.spawn()?;
+    let process_id = child.id();
+    let output = child.output().fuse();
+    futures::pin_mut!(output);
+
+    let cancel = async move {
+        match cancel {
+            // A resolved receiver and a dropped sender both mean the same thing,
+            // so a caller that simply goes away still stops the work.
+            Some(cancel) => {
+                cancel.await.ok();
+            }
+            None => std::future::pending().await,
+        }
+    }
+    .fuse();
+    futures::pin_mut!(cancel);
+
+    let output = select_biased! {
+        // Biased toward the command so one that has already finished is reported
+        // as such rather than as cancelled.
+        output = output.as_mut() => output?,
+        _ = cancel => {
+            // Asking git to terminate lets it remove the lockfiles it is holding.
+            // Killing it outright can leave a stale `refs/remotes/<remote>/<branch>.lock`
+            // behind, after which every later fetch reports "unable to update
+            // local ref" until it is removed by hand.
+            //
+            // Where termination cannot be requested at all there is nothing to wait
+            // for, so the grace period is skipped rather than spent stalling the
+            // caller before the kill it is going to need anyway.
+            if util::process::request_termination(process_id) {
+                let grace = executor.timer(TERMINATION_GRACE).fuse();
+                futures::pin_mut!(grace);
+                select_biased! {
+                    _ = output.as_mut() => {}
+                    _ = grace => log::warn!(
+                        "git did not exit within {TERMINATION_GRACE:?} of being asked to; killing it"
+                    ),
+                }
+            }
+            // Dropping `output` kills the child via `kill_on_drop` if it is still
+            // running.
+            anyhow::bail!(GIT_OPERATION_CANCELLED);
+        }
+    };
+
+    remote_command_output(output)
+}
+
+#[derive(Error, Debug)]
+#[error("Git command failed:\n{stdout}{stderr}\n")]
+struct GitBinaryCommandError {
+    stdout: String,
+    stderr: String,
+    status: ExitStatus,
 }
 
 async fn run_askpass_command(
@@ -5728,7 +5964,7 @@ mod tests {
             "Initial commit".into(),
             None,
             CommitOptions::default(),
-            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            GitCaller::User(AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {})),
             Arc::new(test_commit_envs()),
         )
         .await
@@ -5755,7 +5991,7 @@ mod tests {
             "Commit after checkpoint".into(),
             None,
             CommitOptions::default(),
-            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            GitCaller::User(AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {})),
             Arc::new(test_commit_envs()),
         )
         .await
@@ -5829,7 +6065,7 @@ mod tests {
             "Commit in untrusted repo".into(),
             None,
             CommitOptions::default(),
-            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            GitCaller::User(AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {})),
             Arc::new(test_commit_envs()),
         )
         .await
@@ -5846,7 +6082,7 @@ mod tests {
             "Commit blocked by hook".into(),
             None,
             CommitOptions::default(),
-            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            GitCaller::User(AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {})),
             Arc::new(test_commit_envs()),
         )
         .await
@@ -5862,7 +6098,7 @@ mod tests {
             "Original message".into(),
             None,
             CommitOptions::default(),
-            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            GitCaller::User(AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {})),
             Arc::new(test_commit_envs()),
         )
         .await
@@ -5884,7 +6120,7 @@ mod tests {
                 no_verify: true,
                 ..Default::default()
             },
-            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            GitCaller::User(AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {})),
             Arc::new(test_commit_envs()),
         )
         .await
@@ -5939,7 +6175,7 @@ mod tests {
             "Initial commit".into(),
             None,
             CommitOptions::default(),
-            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            GitCaller::User(AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {})),
             Arc::new(test_commit_envs()),
         )
         .await
@@ -6133,7 +6369,7 @@ mod tests {
             "Initial commit".into(),
             None,
             CommitOptions::default(),
-            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            GitCaller::User(AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {})),
             Arc::new(test_commit_envs()),
         )
         .await
@@ -6238,7 +6474,7 @@ mod tests {
             "Initial commit".into(),
             None,
             CommitOptions::default(),
-            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            GitCaller::User(AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {})),
             Arc::new(test_commit_envs()),
         )
         .await
@@ -6504,7 +6740,7 @@ mod tests {
             "Initial commit".into(),
             None,
             CommitOptions::default(),
-            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            GitCaller::User(AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {})),
             Arc::new(test_commit_envs()),
         )
         .await
@@ -6592,7 +6828,7 @@ mod tests {
             "Initial commit".into(),
             None,
             CommitOptions::default(),
-            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            GitCaller::User(AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {})),
             Arc::new(test_commit_envs()),
         )
         .await
@@ -6690,7 +6926,7 @@ mod tests {
             "Initial commit".into(),
             None,
             CommitOptions::default(),
-            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            GitCaller::User(AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {})),
             Arc::new(test_commit_envs()),
         )
         .await
@@ -7035,6 +7271,100 @@ mod tests {
         assert_eq!(
             remote_urls.get("upstream").unwrap(),
             "/Users/user/My Projects/upstream.git"
+        );
+    }
+
+    #[test]
+    fn test_compose_batch_mode_ssh_command() {
+        assert_eq!(
+            compose_batch_mode_ssh_command(None, None, None).as_deref(),
+            Some("ssh -o BatchMode=yes")
+        );
+        assert_eq!(
+            compose_batch_mode_ssh_command(Some("ssh -i key "), Some("ssh -F config"), None)
+                .as_deref(),
+            Some("ssh -i key -o BatchMode=yes"),
+            "GIT_SSH_COMMAND outranks core.sshCommand"
+        );
+        assert_eq!(
+            compose_batch_mode_ssh_command(None, Some("ssh -F config"), Some("plink")).as_deref(),
+            Some("ssh -F config -o BatchMode=yes"),
+            "core.sshCommand outranks GIT_SSH, so it is still composed onto"
+        );
+        assert_eq!(
+            compose_batch_mode_ssh_command(Some(""), None, None).as_deref(),
+            Some("ssh -o BatchMode=yes")
+        );
+        assert_eq!(
+            compose_batch_mode_ssh_command(None, None, Some("plink")),
+            None,
+            "setting GIT_SSH_COMMAND would silently replace the GIT_SSH program"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_cancelled_background_command_never_starts(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let dir = tempfile::tempdir().unwrap();
+        let would_be_created = dir.path().join("repo");
+        let git = GitBinary::new(
+            PathBuf::from("git"),
+            dir.path().to_path_buf(),
+            dir.path().join(".git"),
+            cx.executor(),
+            true,
+        );
+        let mut command = git.build_command(&["init"]);
+        command.arg(&would_be_created);
+
+        let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
+        drop(cancel_tx);
+        let error = run_cancellable_command(command, Some(cancel_rx), &cx.executor())
+            .await
+            .expect_err("a cancelled command should not succeed");
+
+        assert_eq!(error.to_string(), GIT_OPERATION_CANCELLED);
+        assert!(!would_be_created.exists());
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_cancelling_background_command_requests_termination(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let dir = tempfile::tempdir().unwrap();
+        let ready = dir.path().join("ready");
+        let terminated = dir.path().join("terminated");
+        #[allow(clippy::disallowed_methods)]
+        let mut command = new_command("sh");
+        command
+            .arg("-c")
+            .arg(r#"trap ': > "$0"; exit 143' TERM; : > "$1"; while :; do sleep 0.05; done"#)
+            .arg(&terminated)
+            .arg(&ready)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+
+        // Cancelled only once the handler is installed, since a signal that
+        // arrived first would kill the shell before it could run it.
+        let (cancel_tx, cancel_rx) = oneshot::channel();
+        let watcher = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while !ready.exists() && std::time::Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            cancel_tx.send(()).ok();
+        });
+
+        let error = run_cancellable_command(command, Some(cancel_rx), &cx.executor())
+            .await
+            .expect_err("a cancelled command should not succeed");
+        watcher.join().unwrap();
+
+        assert_eq!(error.to_string(), GIT_OPERATION_CANCELLED);
+        assert!(
+            terminated.exists(),
+            "the command should have been asked to terminate rather than killed"
         );
     }
 }

@@ -145,6 +145,27 @@ impl Child {
     }
 }
 
+/// Asks a process to exit, giving it the chance to run its own cleanup first.
+///
+/// Returns whether termination could be requested at all. git installs handlers
+/// that remove its lockfiles on `SIGTERM`; a hard kill bypasses them and can leave
+/// a stale `refs/remotes/<remote>/<branch>.lock` behind, after which every later
+/// fetch reports "unable to update local ref" until it is removed by hand. Windows
+/// has no equivalent signal, so cleanup cannot be requested there and callers must
+/// fall back to killing the process.
+pub fn request_termination(pid: u32) -> bool {
+    #[cfg(not(windows))]
+    {
+        unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+        true
+    }
+    #[cfg(windows)]
+    {
+        let _ = pid;
+        false
+    }
+}
+
 #[cfg(windows)]
 mod windows_job {
     use crate::ResultExt as _;
