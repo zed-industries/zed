@@ -8255,8 +8255,12 @@ impl GitPanel {
                             .size(LabelSize::Small),
                     ),
             )
-            .when(file_count > 0, |this| {
-                this.child(Chip::new(file_count.to_string()).label_color(Color::Muted))
+            .child(if file_count <= 0 {
+                gpui::Empty.into_any_element()
+                }else {
+                Chip::new(file_count.to_string()).label_color(Color::Muted)
+                    .tooltip(move |_window, cx| Tooltip::simple("file counts", cx))
+                    .into_any_element()
             })
             .child(if section_is_empty {
                 gpui::Empty.into_any_element()
