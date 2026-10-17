@@ -693,6 +693,8 @@ pub struct ThreadView {
     pub last_token_limit_telemetry: Option<acp_thread::TokenUsageRatio>,
     thread_feedback: ThreadFeedbackState,
     pub list_state: ListState,
+    /// Scroll position to keep pinned while deferred markdown parses.
+    scroll_restore: Option<ListOffset>,
     pub session_capabilities: SharedSessionCapabilities,
     pub expanded_tool_call_raw_inputs: HashSet<acp_v2::ToolCallId>,
     collapsed_sandbox_authorization_details: HashSet<acp_v2::ToolCallId>,
@@ -892,6 +894,7 @@ impl ThreadView {
         model_selector: Option<Entity<ModelSelectorPopover>>,
         profile_selector: Option<Entity<ProfileSelector>>,
         list_state: ListState,
+        restored_scroll_position: Option<ListOffset>,
         session_capabilities: SharedSessionCapabilities,
         resumed_without_history: bool,
         project: WeakEntity<Project>,
@@ -1106,6 +1109,9 @@ impl ThreadView {
         }));
 
         let current_submission = thread.read(cx).latest_submission_id();
+        let scroll_restore = restored_scroll_position
+            .filter(|offset| offset.item_ix < thread.read(cx).entries().len());
+        list_state.set_item_heights_provisional(scroll_restore.is_some());
         let mut this = Self {
             root_thread_id,
             session_id,
@@ -1127,6 +1133,7 @@ impl ThreadView {
             model_selector,
             profile_selector,
             list_state,
+            scroll_restore,
             session_capabilities,
             resumed_without_history,
             _subscriptions: subscriptions,
@@ -1196,6 +1203,7 @@ impl ThreadView {
                 cx.defer(move |cx| {
                     let scroll_top = list_state.logical_scroll_top();
                     let _ = thread_view.update(cx, |this, cx| {
+                        this.clear_scroll_restore();
                         if let Some(thread) = this.as_native_thread(cx) {
                             thread.update(cx, |thread, _cx| {
                                 thread.set_ui_scroll_position(Some(scroll_top));
@@ -6804,6 +6812,52 @@ fn sandbox_network_rows(network: &SandboxNetPolicy) -> Vec<SandboxRow> {
 }
 
 impl ThreadView {
+    /// Releases the provisional-height mode once every row that affects the
+    /// restored viewport has finished parsing.
+    fn finish_scroll_restore(&mut self, cx: &mut Context<Self>) {
+        let Some(target) = self.scroll_restore else {
+            return;
+        };
+
+        if self.list_state.is_scrollbar_dragging() {
+            self.clear_scroll_restore();
+            return;
+        }
+
+        if self.list_state.bounds_for_item(target.item_ix).is_none() {
+            return;
+        }
+
+        let parses_pending = {
+            let entries = self.thread.read(cx).entries();
+            let mut parses_pending = false;
+            let mut ix = target.item_ix;
+            while let Some(entry) = entries.get(ix) {
+                if self.list_state.bounds_for_item(ix).is_none() {
+                    break;
+                }
+                if entry.has_pending_markdown_parse(cx) {
+                    parses_pending = true;
+                    break;
+                }
+                ix += 1;
+            }
+            parses_pending
+        };
+
+        if parses_pending {
+            return;
+        }
+
+        self.clear_scroll_restore();
+        cx.notify();
+    }
+
+    fn clear_scroll_restore(&mut self) {
+        self.scroll_restore = None;
+        self.list_state.set_item_heights_provisional(false);
+    }
+
     fn render_entries(&mut self, cx: &mut Context<Self>) -> List {
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
         let centered_container = move |content: AnyElement| {
@@ -6818,6 +6872,18 @@ impl ThreadView {
         list(
             self.list_state.clone(),
             cx.processor(move |this, index: usize, window, cx| {
+                if this
+                    .scroll_restore
+                    .is_some_and(|target| target.item_ix == index)
+                {
+                    let thread_view = cx.entity().downgrade();
+                    cx.defer(move |cx| {
+                        thread_view
+                            .update(cx, |this, cx| this.finish_scroll_restore(cx))
+                            .ok();
+                    });
+                }
+
                 let entries = this.thread.read(cx).entries();
                 if let Some(entry) = entries.get(index) {
                     let rendered = this.render_entry(index, entries.len(), entry, window, cx);

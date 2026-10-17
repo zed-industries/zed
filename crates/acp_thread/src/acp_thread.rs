@@ -944,6 +944,37 @@ impl AgentThreadEntry {
         }
     }
 
+    /// Whether any markdown that contributes to this entry's rendered height
+    /// is still parsing.
+    pub fn has_pending_markdown_parse(&self, cx: &App) -> bool {
+        match self {
+            Self::UserMessage(message) => message
+                .content
+                .markdowns()
+                .any(|markdown| markdown.read(cx).is_parse_pending()),
+            Self::AssistantMessage(message) => message.chunks.iter().any(|chunk| {
+                let (AssistantMessageChunk::Message { block, .. }
+                | AssistantMessageChunk::Thought { block, .. }) = chunk;
+                block
+                    .markdowns()
+                    .any(|markdown| markdown.read(cx).is_parse_pending())
+            }),
+            Self::ToolCall(call) => {
+                call.label.read(cx).is_parse_pending()
+                    || call
+                        .raw_input_markdown
+                        .as_ref()
+                        .is_some_and(|markdown| markdown.read(cx).is_parse_pending())
+                    || call
+                        .content()
+                        .iter()
+                        .filter_map(|content| content.markdown())
+                        .any(|markdown| markdown.read(cx).is_parse_pending())
+            }
+            Self::Elicitation(_) | Self::ContextCompaction(_) => false,
+        }
+    }
+
     pub fn to_markdown(&self, cx: &App) -> String {
         match self {
             Self::UserMessage(message) => message.to_markdown(cx),

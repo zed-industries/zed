@@ -1217,6 +1217,11 @@ impl Markdown {
         }
     }
 
+    /// Whether a parse was started and its result has not been applied yet.
+    pub fn is_parse_pending(&self) -> bool {
+        self.pending_parse.is_some()
+    }
+
     fn parse(&mut self, cx: &mut Context<Self>) {
         if self.options.defer_parsing {
             return;
