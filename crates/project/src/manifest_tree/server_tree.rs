@@ -102,6 +102,10 @@ pub struct InnerTreeNode {
 }
 
 impl InnerTreeNode {
+    pub(crate) fn launch_path(&self) -> &ProjectPath {
+        &self.disposition.path
+    }
+
     fn new(
         server_name: LanguageServerName,
         path: ProjectPath,

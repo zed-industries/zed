@@ -5,7 +5,7 @@ pub mod job_debug_queue;
 pub mod pending_op;
 
 use crate::{
-    Project, ProjectEnvironment, ProjectItem, ProjectPath,
+    Project, ProjectEnvironment, ProjectEnvironmentEvent, ProjectItem, ProjectPath,
     buffer_store::{BufferStore, BufferStoreEvent},
     project_settings::ProjectSettings,
     trusted_worktrees::{
@@ -706,6 +706,9 @@ pub struct Repository {
     askpass_delegates: RemoteAskPassDelegates,
     latest_askpass_id: u64,
     repository_state: Shared<Task<Result<RepositoryState, String>>>,
+    repository_state_generation: usize,
+    local_backend: Option<Arc<dyn GitRepository>>,
+    is_trusted: bool,
     initial_graph_data: HashMap<(LogSource, LogOrder), InitialGitGraphData>,
     commit_data_handler: CommitDataHandlerState,
     commit_data: HashMap<Oid, CommitDataState>,
@@ -766,20 +769,11 @@ impl LocalRepositoryState {
     async fn new(
         work_directory_abs_path: Arc<Path>,
         dot_git_abs_path: Arc<Path>,
-        project_environment: WeakEntity<ProjectEnvironment>,
+        environment: HashMap<String, String>,
         fs: Arc<dyn Fs>,
-        is_trusted: bool,
+        backend: Option<Arc<dyn GitRepository>>,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<Self> {
-        let environment = project_environment
-                .update(cx, |project_environment, cx| {
-                    project_environment.local_directory_environment(&Shell::System, work_directory_abs_path.clone(), cx)
-                })?
-                .await
-                .unwrap_or_else(|| {
-                    log::error!("failed to get working directory environment for repository {work_directory_abs_path:?}");
-                    HashMap::default()
-                });
         let search_paths = environment.get("PATH").map(|val| val.to_owned());
         let backend = cx
             .background_spawn({
@@ -791,12 +785,17 @@ impl LocalRepositoryState {
                                 .ok()
                         })
                         .or_else(|| which::which("git").ok());
-                    fs.open_repo(&dot_git_abs_path, system_git_binary_path.as_deref())
-                        .with_context(|| format!("opening repository at {dot_git_abs_path:?}"))
+                    if let Some(backend) = backend {
+                        Ok(backend
+                            .with_git_binary_path(system_git_binary_path)?
+                            .unwrap_or(backend))
+                    } else {
+                        fs.open_repo(&dot_git_abs_path, system_git_binary_path.as_deref())
+                            .with_context(|| format!("opening repository at {dot_git_abs_path:?}"))
+                    }
                 }
             })
             .await?;
-        backend.set_trusted(is_trusted);
         Ok(LocalRepositoryState {
             backend,
             environment: Arc::new(environment),
@@ -922,23 +921,23 @@ impl GitStore {
                             };
                             let project_environment = project_environment.downgrade();
                             let fs = fs.clone();
-                            let repositories_to_respawn = this
+                            let repositories_to_refresh = this
                                 .repositories
-                                .iter()
-                                .filter_map(|(repository_id, repo)| {
+                                .values()
+                                .filter_map(|repo| {
                                     repo.read(cx)
-                                        .job_sender
-                                        .is_closed()
-                                        .then_some((*repository_id, repo.clone()))
+                                        .repository_state
+                                        .clone()
+                                        .now_or_never()
+                                        .is_some_and(|state| state.is_err())
+                                        .then_some(repo.clone())
                                 })
                                 .collect::<Vec<_>>();
-                            for (repository_id, repo) in repositories_to_respawn {
-                                let is_trusted = this.repository_is_trusted(repository_id, cx);
+                            for repo in repositories_to_refresh {
                                 repo.update(cx, |repo, cx| {
-                                    repo.respawn_local_worker(
+                                    repo.refresh_local_backend(
                                         project_environment.clone(),
                                         fs.clone(),
-                                        is_trusted,
                                         cx,
                                     );
                                     repo.schedule_scan(None, cx);
@@ -1006,6 +1005,13 @@ impl GitStore {
 
         if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
             _subscriptions.push(cx.subscribe(&trusted_worktrees, Self::on_trusted_worktrees_event));
+        }
+        if let GitStoreState::Local {
+            project_environment,
+            ..
+        } = &state
+        {
+            _subscriptions.push(cx.subscribe(project_environment, Self::on_environment_event));
         }
 
         _subscriptions.push(cx.observe_global::<SettingsStore>(|this, cx| {
@@ -2600,21 +2606,6 @@ impl GitStore {
         cx.emit(GitStoreEvent::JobsUpdated)
     }
 
-    fn repository_is_trusted(&self, repository_id: RepositoryId, cx: &mut Context<Self>) -> bool {
-        let Some(worktree_ids) = self.worktree_ids.get(&repository_id) else {
-            return false;
-        };
-        let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) else {
-            return false;
-        };
-
-        worktree_ids.iter().any(|worktree_id| {
-            trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                trusted_worktrees.can_trust(&self.worktree_store, *worktree_id, cx)
-            })
-        })
-    }
-
     /// Update our list of repositories and schedule git scans in response to a notification from a worktree,
     fn update_repositories_from_worktree(
         &mut self,
@@ -3018,6 +3009,33 @@ impl GitStore {
         }
     }
 
+    fn on_environment_event(
+        &mut self,
+        environment: Entity<ProjectEnvironment>,
+        event: &ProjectEnvironmentEvent,
+        cx: &mut Context<Self>,
+    ) {
+        let ProjectEnvironmentEvent::CliEnvironmentChanged = event else {
+            return;
+        };
+        let GitStoreState::Local { fs, .. } = &self.state else {
+            return;
+        };
+        for repository in self.repositories.values() {
+            repository.update(cx, |repository, cx| {
+                let retrying = repository
+                    .repository_state
+                    .clone()
+                    .now_or_never()
+                    .is_some_and(|state| state.is_err());
+                repository.refresh_local_backend(environment.downgrade(), fs.clone(), cx);
+                if retrying {
+                    repository.schedule_scan(None, cx);
+                }
+            });
+        }
+    }
+
     fn on_trusted_worktrees_event(
         &mut self,
         _: Entity<TrustedWorktreesStore>,
@@ -3039,13 +3057,7 @@ impl GitStore {
                 .any(|worktree_id| event_paths.contains(&PathTrust::Worktree(*worktree_id)))
             {
                 if let Some(repo) = self.repositories.get(repo_id) {
-                    let repository_state = repo.read(cx).repository_state.clone();
-                    cx.background_spawn(async move {
-                        if let Ok(RepositoryState::Local(state)) = repository_state.await {
-                            state.backend.set_trusted(is_trusted);
-                        }
-                    })
-                    .detach();
+                    repo.update(cx, |repo, _| repo.set_trusted(is_trusted));
                 }
             }
         }
@@ -6518,10 +6530,7 @@ impl MergeDetails {
 
 impl Repository {
     pub fn is_trusted(&self) -> bool {
-        match self.repository_state.peek() {
-            Some(Ok(RepositoryState::Local(state))) => state.backend.is_trusted(),
-            _ => false,
-        }
+        self.is_trusted
     }
 
     pub fn snapshot(&self) -> RepositorySnapshot {
@@ -6542,6 +6551,13 @@ impl Repository {
             .cloned()
     }
 
+    fn set_trusted(&mut self, is_trusted: bool) {
+        self.is_trusted = is_trusted;
+        if let Some(backend) = &self.local_backend {
+            backend.set_trusted(is_trusted);
+        }
+    }
+
     fn respawn_local_worker(
         &mut self,
         project_environment: WeakEntity<ProjectEnvironment>,
@@ -6549,23 +6565,10 @@ impl Repository {
         is_trusted: bool,
         cx: &mut Context<Self>,
     ) {
-        let work_directory_abs_path = self.snapshot.work_directory_abs_path.clone();
-        let dot_git_abs_path = self.snapshot.dot_git_abs_path.clone();
-
-        let state = cx
-            .spawn(async move |_, cx| {
-                LocalRepositoryState::new(
-                    work_directory_abs_path,
-                    dot_git_abs_path,
-                    project_environment,
-                    fs,
-                    is_trusted,
-                    cx,
-                )
-                .await
-                .map_err(|err| err.to_string())
-            })
-            .shared();
+        self.local_backend = None;
+        self.is_trusted = is_trusted;
+        self.repository_state = Task::ready(Err("not yet initialized".to_owned())).shared();
+        self.refresh_local_backend(project_environment, fs, cx);
         self.job_sender.close_channel();
         self._worker_task = Task::ready(());
         self.active_jobs.clear();
@@ -6573,15 +6576,75 @@ impl Repository {
             .mark_unfinished_complete(job_debug_queue::CompletedJobStatus::Skipped);
         cx.notify();
 
-        let (job_sender, worker_task) = Repository::spawn_local_git_worker(state.clone(), cx);
+        let (job_sender, worker_task) = Repository::spawn_local_git_worker(cx);
         self.job_sender = job_sender;
         self._worker_task = worker_task;
-        self.repository_state = cx
-            .spawn(async move |_, _| {
-                let state = state.await?;
-                Ok(RepositoryState::Local(state))
-            })
-            .shared();
+    }
+
+    fn refresh_local_backend(
+        &mut self,
+        project_environment: WeakEntity<ProjectEnvironment>,
+        fs: Arc<dyn Fs>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.repository_state.clone().now_or_never().is_none() {
+            return;
+        }
+        self.repository_state_generation += 1;
+        let generation = self.repository_state_generation;
+        let work_directory_abs_path = self.snapshot.work_directory_abs_path.clone();
+        let dot_git_abs_path = self.snapshot.dot_git_abs_path.clone();
+        let mut backend = self.local_backend.clone();
+        self.repository_state = cx.spawn(async move |repository, cx| {
+            loop {
+                let environment = project_environment
+                    .update(cx, |environment, cx| {
+                        environment.local_directory_environment(
+                            &Shell::System,
+                            work_directory_abs_path.clone(),
+                            cx,
+                        )
+                    })
+                    .map_err(|error| error.to_string())?
+                    .await
+                    .unwrap_or_else(|| {
+                        log::error!("failed to get working directory environment for repository {work_directory_abs_path:?}");
+                        HashMap::default()
+                    });
+                let state = LocalRepositoryState::new(
+                    work_directory_abs_path.clone(),
+                    dot_git_abs_path.clone(),
+                    environment.clone(),
+                    fs.clone(),
+                    backend.clone(),
+                    cx,
+                )
+                .await;
+                if let Ok(state) = &state {
+                    repository
+                        .update(cx, |repository, _| {
+                            state.backend.set_trusted(repository.is_trusted);
+                            if repository.repository_state_generation == generation {
+                                repository.local_backend = Some(state.backend.clone());
+                            }
+                        })
+                        .map_err(|error| error.to_string())?;
+                    backend = Some(state.backend.clone());
+                }
+                let is_current = repository
+                    .read_with(cx, |repository, _| repository.repository_state_generation == generation)
+                    .map_err(|error| error.to_string())?;
+                if is_current
+                    && project_environment
+                        .read_with(cx, |environment, _| environment.get_cli_environment())
+                        .map_err(|error| error.to_string())?
+                        .is_some_and(|latest| latest != environment)
+                {
+                    continue;
+                }
+                return state.map(RepositoryState::Local).map_err(|error| error.to_string());
+            }
+        }).shared();
     }
 
     fn reinitialize_local_backend(
@@ -6631,7 +6694,10 @@ impl Repository {
             snapshot,
             unshallow_state: UnshallowState::default(),
             pending_ops: Default::default(),
-            repository_state: Task::ready(Err("not yet initialized".into())).shared(),
+            repository_state: Task::ready(Err("not yet initialized".to_owned())).shared(),
+            repository_state_generation: 0,
+            local_backend: None,
+            is_trusted,
             _worker_task: Task::ready(()),
             commit_message_buffer: None,
             askpass_delegates: Default::default(),
@@ -6688,6 +6754,9 @@ impl Repository {
             job_sender,
             _worker_task: worker_task,
             repository_state,
+            repository_state_generation: 0,
+            local_backend: None,
+            is_trusted: false,
             askpass_delegates: Default::default(),
             latest_askpass_id: 0,
             active_jobs: Default::default(),
@@ -7450,11 +7519,11 @@ impl Repository {
         range: Range<usize>,
         cx: &mut Context<Self>,
     ) -> GraphDataResponse<'_> {
+        let state = self.repository_state.clone();
         let initial_commit_data = self
             .initial_graph_data
             .entry((log_source.clone(), log_order))
             .or_insert_with(|| {
-                let state = self.repository_state.clone();
                 let log_source = log_source.clone();
 
                 let fetch_task = cx.spawn(async move |repository, cx| {
@@ -10247,49 +10316,84 @@ impl Repository {
         );
     }
 
-    fn spawn_local_git_worker(
-        state: Shared<Task<Result<LocalRepositoryState, String>>>,
-        cx: &mut Context<Self>,
-    ) -> (mpsc::UnboundedSender<GitJob>, Task<()>) {
+    fn spawn_local_git_worker(cx: &mut Context<Self>) -> (mpsc::UnboundedSender<GitJob>, Task<()>) {
         let (job_tx, mut job_rx) = mpsc::unbounded::<GitJob>();
 
-        let worker_task = cx.spawn(async move |this, cx| {
-            let Some(state) = state.await.log_err() else {
-                return;
-            };
-            if let Some(git_hosting_provider_registry) =
-                cx.update(|cx| GitHostingProviderRegistry::try_global(cx))
-            {
-                git_hosting_providers::register_additional_providers(
-                    git_hosting_provider_registry,
-                    state.backend.clone(),
-                )
-                .await;
-            }
-            let state = RepositoryState::Local(state);
+        let worker_task = cx.spawn(async move |repository, cx| {
             let mut jobs = VecDeque::new();
+            let mut register_providers = true;
             loop {
-                while let Ok(next_job) = job_rx.try_recv() {
-                    jobs.push_back(next_job);
-                }
-
                 if let Some(job) = jobs.pop_front() {
+                    let state = loop {
+                        let Ok((generation, state)) = repository.read_with(cx, |repository, _| {
+                            (
+                                repository.repository_state_generation,
+                                repository.repository_state.clone(),
+                            )
+                        }) else {
+                            return;
+                        };
+                        let state = state.await;
+                        let Ok(is_current) = repository.read_with(cx, |repository, _| {
+                            repository.repository_state_generation == generation
+                        }) else {
+                            return;
+                        };
+                        if is_current {
+                            if register_providers && let Ok(RepositoryState::Local(state)) = &state
+                            {
+                                register_providers = false;
+                                if let Some(registry) =
+                                    cx.update(|cx| GitHostingProviderRegistry::try_global(cx))
+                                {
+                                    git_hosting_providers::register_additional_providers(
+                                        registry,
+                                        state.backend.clone(),
+                                    )
+                                    .await;
+                                }
+                                continue;
+                            }
+                            break state;
+                        }
+                    };
+
+                    while let Ok(next_job) = job_rx.try_recv() {
+                        jobs.push_back(next_job);
+                    }
                     if let Some(current_key) = &job.key
                         && jobs
                             .iter()
                             .any(|other_job| other_job.key.as_ref() == Some(current_key))
                     {
                         let skipped_job_id = job.id;
-                        this.update(cx, |repo, _| {
-                            repo.job_debug_queue.mark_complete(
-                                skipped_job_id,
-                                job_debug_queue::CompletedJobStatus::Skipped,
-                            );
-                        })
-                        .ok();
+                        repository
+                            .update(cx, |repository, _| {
+                                repository.job_debug_queue.mark_complete(
+                                    skipped_job_id,
+                                    job_debug_queue::CompletedJobStatus::Skipped,
+                                );
+                            })
+                            .ok();
                         continue;
                     }
-                    (job.job)(state.clone(), cx).await;
+                    match state {
+                        Ok(state) => (job.job)(state, cx).await,
+                        Err(error) => {
+                            log::error!(
+                                "failed to get repository state for Git job {}: {error}",
+                                job.id
+                            );
+                            repository
+                                .update(cx, |repository, _| {
+                                    repository.job_debug_queue.mark_complete(
+                                        job.id,
+                                        job_debug_queue::CompletedJobStatus::Skipped,
+                                    );
+                                })
+                                .ok();
+                        }
+                    }
                 } else if let Some(job) = job_rx.next().await {
                     jobs.push_back(job);
                 } else {
@@ -12224,6 +12328,173 @@ mod tests {
 
         gate.open();
         cx.run_until_parked();
+    }
+
+    #[gpui::test(iterations = 20)]
+    async fn test_cli_environment_supersedes_pending_native_git_environment(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(util::path!("/project"), json!({ ".git": {} }))
+            .await;
+        let project = Project::test(fs.clone(), [util::path!("/project").as_ref()], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        let repository =
+            project.read_with(cx, |project, cx| project.active_repository(cx).unwrap());
+        let environment = project.read_with(cx, |project, _| project.environment().clone());
+        let registry = cx.update(GitHostingProviderRegistry::default_global);
+        fs.with_git_state(util::path!("/project/.git").as_ref(), false, |state| {
+            state.remotes.insert(
+                "origin".to_owned(),
+                "git@gitlab.example.com:owner/repo.git".to_owned(),
+            );
+        })
+        .unwrap();
+        let (started_sender, mut started_receiver) = mpsc::unbounded();
+        let (release_sender, release_receiver) = oneshot::channel::<()>();
+        let release_receiver = release_receiver.shared();
+        environment.update(cx, |environment, _| {
+            environment.shell_environment_loader = Some(Box::new(move || {
+                let started_sender = started_sender.clone();
+                let release_receiver = release_receiver.clone();
+                async move {
+                    started_sender.unbounded_send(()).unwrap();
+                    release_receiver.await?;
+                    Ok(HashMap::from_iter([(
+                        "NATIVE_ENV".to_owned(),
+                        "old".to_owned(),
+                    )]))
+                }
+                .boxed()
+            }));
+        });
+        let (initialization, mut first, mut second) = repository.update(cx, |repository, cx| {
+            repository.respawn_local_worker(environment.downgrade(), fs, true, cx);
+            (
+                repository.repository_state.clone(),
+                repository.send_job("first", None, |state, _| async move { state }),
+                repository.send_job("second", None, |state, _| async move { state }),
+            )
+        });
+        cx.run_until_parked();
+        assert_eq!(started_receiver.next().now_or_never(), Some(Some(())));
+        assert!(initialization.clone().now_or_never().is_none());
+        assert!((&mut first).now_or_never().is_none());
+        assert!((&mut second).now_or_never().is_none());
+        let pending_environment = environment.update(cx, |environment, cx| {
+            environment.local_directory_environment(
+                &Shell::System,
+                Arc::from(Path::new(util::path!("/project/other"))),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        assert_eq!(started_receiver.next().now_or_never(), Some(Some(())));
+        assert!(pending_environment.clone().now_or_never().is_none());
+        for value in ["first", "latest"] {
+            environment.update(cx, |environment, cx| {
+                environment.set_cli_environment(
+                    HashMap::from_iter([("CLI_ENV".to_owned(), value.to_owned())]),
+                    cx,
+                );
+            });
+        }
+        repository.update(cx, |repository, _| repository.set_trusted(false));
+        cx.run_until_parked();
+        assert!(
+            initialization
+                .now_or_never()
+                .expect("Git initialization must finish without the native environment")
+                .is_ok()
+        );
+        let expected = HashMap::from_iter([
+            ("CLI_ENV".to_owned(), "latest".to_owned()),
+            ("ZED_ENVIRONMENT".to_owned(), "cli".to_owned()),
+        ]);
+        assert_eq!(
+            pending_environment.now_or_never(),
+            Some(Some(expected.clone()))
+        );
+        for job in [first, second] {
+            let RepositoryState::Local(state) = job
+                .now_or_never()
+                .expect("queued Git job must finish")
+                .unwrap()
+            else {
+                panic!("expected local repository")
+            };
+            assert_eq!(*state.environment, expected);
+            assert!(!state.backend.is_trusted());
+        }
+        assert!(!release_sender.is_canceled());
+        assert!(started_receiver.next().now_or_never().is_none());
+        assert_eq!(registry.list_hosting_providers().len(), 1);
+        environment.update(cx, |environment, cx| {
+            environment.set_cli_environment(HashMap::default(), cx);
+        });
+        repository
+            .update(cx, |repository, _| {
+                repository.send_job("after_refresh", None, |_, _| async {})
+            })
+            .await
+            .unwrap();
+        assert_eq!(registry.list_hosting_providers().len(), 1);
+    }
+
+    #[gpui::test]
+    async fn test_cli_environment_retries_failed_git_initialization_and_scans(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(util::path!("/project"), json!({ ".git": {} }))
+            .await;
+        let project = Project::test(fs.clone(), [util::path!("/project").as_ref()], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        let repository =
+            project.read_with(cx, |project, cx| project.active_repository(cx).unwrap());
+        let environment = project.read_with(cx, |project, _| project.environment().clone());
+        cx.run_until_parked();
+        fs.pause_events();
+        fs.remove_dir(
+            util::path!("/project/.git").as_ref(),
+            RemoveOptions {
+                recursive: true,
+                ..RemoveOptions::default()
+            },
+        )
+        .await
+        .unwrap();
+        let initialization = repository.update(cx, |repository, cx| {
+            repository.respawn_local_worker(environment.downgrade(), fs.clone(), false, cx);
+            repository.repository_state.clone()
+        });
+        assert!(initialization.await.is_err());
+        fs.insert_tree(util::path!("/project"), json!({ ".git": {} }))
+            .await;
+        fs.with_git_state(util::path!("/project/.git").as_ref(), false, |state| {
+            state.current_branch_name = Some("recovered".to_owned());
+            state.branches.insert("recovered".to_owned());
+        })
+        .unwrap();
+        environment.update(cx, |environment, cx| {
+            environment.set_cli_environment(
+                HashMap::from_iter([("CLI_ENV".to_owned(), "recovered".to_owned())]),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        repository.read_with(cx, |repository, _| {
+            assert_eq!(
+                repository.branch.as_ref().map(Branch::name),
+                Some("recovered")
+            );
+        });
     }
 
     #[gpui::test]

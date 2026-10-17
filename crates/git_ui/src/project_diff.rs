@@ -11,6 +11,7 @@ use editor::{
     DefaultDiffHunkRenderer, Editor, EditorEvent, SplittableEditor,
     actions::{GoToHunk, GoToPreviousHunk, SendReviewToAgent},
 };
+use futures::FutureExt as _;
 use git::{Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext};
 use gpui::{
     Action, App, AppContext as _, Entity, EventEmitter, FocusHandle, Focusable, Render,
@@ -34,7 +35,7 @@ use ui::{DiffStat, Divider, Tooltip, prelude::*};
 use workspace::{
     ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
-    item::{Item, ItemEvent, ItemHandle, SaveOptions},
+    item::{Item, ItemCleanup, ItemEvent, ItemHandle, ItemPersistenceId, SaveOptions},
     searchable::SearchableItemHandle,
 };
 use zed_actions::git as git_actions;
@@ -599,8 +600,8 @@ impl SerializableItem for ProjectDiff {
         _: Vec<workspace::ItemId>,
         _: &mut Window,
         _: &mut App,
-    ) -> Task<Result<()>> {
-        Task::ready(Ok(()))
+    ) -> ItemCleanup {
+        futures::future::ready(Ok(())).boxed()
     }
 
     fn deserialize(
@@ -628,7 +629,7 @@ impl SerializableItem for ProjectDiff {
     fn serialize(
         &mut self,
         _: &mut Workspace,
-        _: workspace::ItemId,
+        _item_id: ItemPersistenceId,
         _: bool,
         _: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {

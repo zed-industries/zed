@@ -1,4 +1,6 @@
-use gpui::{ClickEvent, DismissEvent, EventEmitter, FocusHandle, Focusable, Render, WeakEntity};
+use gpui::{
+    ClickEvent, DismissEvent, EventEmitter, FocusHandle, Focusable, Render, Task, WeakEntity,
+};
 use project::project_settings::ProjectSettings;
 use remote::RemoteConnectionOptions;
 use settings::Settings;
@@ -88,30 +90,31 @@ impl DisconnectedOverlay {
         .detach();
     }
 
-    fn handle_reconnect(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn finished(&mut self, cx: &mut Context<Self>) {
         self.finished = true;
         cx.emit(DismissEvent);
-
-        if let Host::RemoteServerProject(remote_connection_options, _) = &self.host {
-            self.reconnect_to_remote_project(remote_connection_options.clone(), window, cx);
-        }
     }
 
-    fn reconnect_to_remote_project(
-        &self,
-        connection_options: RemoteConnectionOptions,
+    pub(crate) fn reconnect(
+        &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Task<anyhow::Result<()>> {
+        self.finished(cx);
+        let Host::RemoteServerProject(connection_options, _) = &self.host else {
+            return Task::ready(Ok(()));
+        };
+        let connection_options = connection_options.clone();
         let Some(workspace) = self.workspace.upgrade() else {
-            return;
+            return Task::ready(Ok(()));
         };
 
         let Some(window_handle) = window.window_handle().downcast::<MultiWorkspace>() else {
-            return;
+            return Task::ready(Ok(()));
         };
 
         let app_state = workspace.read(cx).app_state().clone();
+        let workspace_id = workspace.read(cx).database_id();
         let paths = workspace
             .read(cx)
             .root_paths(cx)
@@ -125,6 +128,7 @@ impl DisconnectedOverlay {
                 paths,
                 app_state,
                 OpenOptions {
+                    workspace_id,
                     requesting_window: Some(window_handle),
                     ..Default::default()
                 },
@@ -133,12 +137,19 @@ impl DisconnectedOverlay {
             .await?;
             Ok(())
         })
-        .detach_and_prompt_err("Failed to reconnect", window, cx, |_, _, _| None);
+    }
+
+    fn handle_reconnect(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.reconnect(window, cx).detach_and_prompt_err(
+            "Failed to reconnect",
+            window,
+            cx,
+            |_, _, _| None,
+        );
     }
 
     fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
-        self.finished = true;
-        cx.emit(DismissEvent)
+        self.finished(cx);
     }
 }
 

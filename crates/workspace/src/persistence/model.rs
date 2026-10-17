@@ -1,15 +1,23 @@
-use super::{SerializedAxis, SerializedWindowBounds, UNAVAILABLE_SESSION_WORKSPACE_RETENTION};
+use super::{SerializedAxis, SerializedWindowBounds};
 use crate::{
-    Member, Pane, PaneAxis, SerializableItemRegistry, Workspace, WorkspaceId, item::ItemHandle,
+    Member, Pane, PaneAxis, SerializableItemRegistry, Workspace, WorkspaceId,
+    invalid_item_view::RestoringItem, item::ItemHandle,
     multi_workspace::SerializedProjectGroupState, path_list::PathList,
 };
+#[cfg(test)]
+use anyhow::Context as _;
 use anyhow::Result;
-use collections::{HashSet, IndexSet};
+use collections::{HashMap, IndexSet};
 use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui::{App, Context, Entity, Task, WeakEntity, Window, WindowId};
+#[cfg(test)]
+use gpui::AsyncWindowContext;
+use gpui::{
+    App, AppContext as _, Context, Entity, EntityId, SharedString, Task, WeakEntity, Window,
+    WindowId,
+};
 
 use language::{Toolchain, ToolchainScope};
 use project::{
@@ -21,7 +29,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, atomic::Ordering},
 };
 use util::path_list::SerializedPathList;
 use uuid::Uuid;
@@ -36,6 +44,8 @@ pub(crate) enum RemoteConnectionKind {
     Ssh,
     Wsl,
     Docker,
+    #[cfg(any(test, feature = "test-support"))]
+    Mock,
 }
 
 #[derive(Debug, PartialEq, Clone, serde::Serialize, serde::Deserialize)]
@@ -58,42 +68,7 @@ pub struct SessionWorkspace {
     pub workspace_id: WorkspaceId,
     pub location: SerializedWorkspaceLocation,
     pub paths: PathList,
-    pub session_id: Option<String>,
     pub window_id: Option<WindowId>,
-}
-
-impl SessionWorkspace {
-    pub fn session_window(&self) -> Option<SessionWindow> {
-        self.binding().window()
-    }
-
-    pub fn binding(&self) -> SessionBinding {
-        SessionBinding {
-            session_id: self.session_id.clone(),
-            window_id: self.window_id.map(|window_id| window_id.as_u64()),
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct SessionWindow {
-    pub session_id: String,
-    pub window_id: u64,
-}
-
-#[derive(Debug, PartialEq, Clone, Default)]
-pub struct SessionBinding {
-    pub session_id: Option<String>,
-    pub window_id: Option<u64>,
-}
-
-impl SessionBinding {
-    pub fn window(&self) -> Option<SessionWindow> {
-        Some(SessionWindow {
-            session_id: self.session_id.clone()?,
-            window_id: self.window_id?,
-        })
-    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -150,13 +125,98 @@ pub struct MultiWorkspaceState {
     pub sidebar_state: Option<String>,
 }
 
+impl MultiWorkspaceState {
+    pub(super) fn restore_project_groups(
+        &mut self,
+        previous: &Self,
+        removed_groups: &[ProjectGroupKey],
+    ) {
+        let mut insertion_index = self.project_groups.len();
+        for group in previous.project_groups.iter().rev() {
+            let key = ProjectGroupKey::from(group.clone());
+            if let Some(index) = self
+                .project_groups
+                .iter()
+                .position(|current| ProjectGroupKey::from(current.clone()) == key)
+            {
+                insertion_index = index;
+            } else if removed_groups.contains(&key) {
+                self.project_groups.insert(insertion_index, group.clone());
+            }
+        }
+    }
+}
+
 /// The serialized state of a single MultiWorkspace window from a previous session:
 /// the active workspace to restore plus window-level state (project group keys,
 /// sidebar).
 #[derive(Debug, Clone)]
 pub struct SerializedMultiWorkspace {
     pub active_workspace: SessionWorkspace,
+    pub workspace_ids: Vec<WorkspaceId>,
+    pub scratch_workspaces: Vec<WorkspaceId>,
     pub state: MultiWorkspaceState,
+}
+
+#[derive(Serialize, Deserialize)]
+pub(crate) struct WorkspaceRestoreCheckpoint {
+    active_workspace_id: WorkspaceId,
+    pub(crate) workspace_ids: Vec<WorkspaceId>,
+    pub(crate) order: usize,
+    location: SerializedWorkspaceLocation,
+    paths: SerializedPathList,
+    window_id: Option<u64>,
+    scratch_workspaces: Vec<WorkspaceId>,
+    state: MultiWorkspaceState,
+}
+
+impl WorkspaceRestoreCheckpoint {
+    pub(crate) fn new(workspace: &SerializedMultiWorkspace, order: usize) -> Self {
+        Self {
+            active_workspace_id: workspace.active_workspace.workspace_id,
+            workspace_ids: workspace.workspace_ids.clone(),
+            order,
+            location: workspace.active_workspace.location.clone(),
+            paths: workspace.active_workspace.paths.serialize(),
+            window_id: workspace.active_workspace.window_id.map(|id| id.as_u64()),
+            scratch_workspaces: workspace.scratch_workspaces.clone(),
+            state: workspace.state.clone(),
+        }
+    }
+
+    pub(crate) fn remove_members(
+        &mut self,
+        workspace_ids: &[WorkspaceId],
+        groups: &[ProjectGroupKey],
+    ) {
+        self.workspace_ids.retain(|id| !workspace_ids.contains(id));
+        self.scratch_workspaces
+            .retain(|id| self.workspace_ids.contains(id));
+        self.state
+            .project_groups
+            .retain(|group| !groups.contains(&ProjectGroupKey::from(group.clone())));
+        if self
+            .state
+            .active_workspace_id
+            .is_some_and(|id| !self.workspace_ids.contains(&id))
+        {
+            self.state.active_workspace_id = None;
+        }
+    }
+
+    pub(crate) fn into_workspace(self) -> SerializedMultiWorkspace {
+        SerializedMultiWorkspace {
+            active_workspace: SessionWorkspace {
+                workspace_id: self.active_workspace_id,
+                location: self.location,
+                paths: PathList::deserialize(&self.paths),
+                window_id: self.window_id.map(WindowId::from),
+            },
+            workspace_ids: self.workspace_ids,
+            scratch_workspaces: self.scratch_workspaces,
+            state: self.state,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -182,13 +242,6 @@ pub(crate) struct SerializedWorkspace {
     pub(crate) user_toolchains: BTreeMap<ToolchainScope, IndexSet<Toolchain>>,
     pub(crate) recent_navigation_history: Vec<PathBuf>,
     pub(crate) window_id: Option<u64>,
-    pub(crate) unserialized_root_files: Option<UnserializedRootFiles>,
-}
-
-#[derive(Debug, PartialEq, Clone, Default)]
-pub(crate) struct UnserializedRootFiles {
-    pub(crate) paths: PathList,
-    pub(crate) active: Option<PathBuf>,
 }
 
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize)]
@@ -204,6 +257,8 @@ impl RemoteConnectionKind {
             RemoteConnectionKind::Ssh => "ssh",
             RemoteConnectionKind::Wsl => "wsl",
             RemoteConnectionKind::Docker => "docker",
+            #[cfg(any(test, feature = "test-support"))]
+            RemoteConnectionKind::Mock => "mock",
         }
     }
 
@@ -212,6 +267,8 @@ impl RemoteConnectionKind {
             "ssh" => Some(Self::Ssh),
             "wsl" => Some(Self::Wsl),
             "docker" => Some(Self::Docker),
+            #[cfg(any(test, feature = "test-support"))]
+            "mock" => Some(Self::Mock),
             _ => None,
         }
     }
@@ -293,138 +350,139 @@ impl Default for SerializedPaneGroup {
     }
 }
 
+pub(crate) type ReusableItems = HashMap<(Arc<str>, ItemId), (Entity<Pane>, EntityId)>;
+
 impl SerializedPaneGroup {
-    pub(crate) fn restorable_panes(&self) -> Vec<&SerializedPane> {
+    pub(crate) fn restore(
+        self,
+        project: &Entity<Project>,
+        workspace_id: WorkspaceId,
+        workspace: &mut Workspace,
+        reusable_items: &mut ReusableItems,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> (
+        Member,
+        Option<Entity<Pane>>,
+        Vec<Task<Option<Box<dyn ItemHandle>>>>,
+    ) {
+        self.normalize()
+            .unwrap_or_else(|| Self::Pane(SerializedPane::new(Vec::new(), true, 0)))
+            .restore_normalized(project, workspace_id, workspace, reusable_items, window, cx)
+    }
+
+    pub(super) fn normalize(self) -> Option<Self> {
         match self {
-            SerializedPaneGroup::Group { children, .. } => children
-                .iter()
-                .flat_map(SerializedPaneGroup::restorable_panes)
-                .collect(),
-            SerializedPaneGroup::Pane(serialized_pane) => {
-                if serialized_pane.children.is_empty() {
-                    Vec::new()
-                } else {
-                    vec![serialized_pane]
+            Self::Pane(pane) => (!pane.children.is_empty()).then_some(Self::Pane(pane)),
+            Self::Group {
+                axis,
+                children,
+                flexes,
+            } => {
+                let original_count = children.len();
+                let mut retained_flexes = Vec::new();
+                let mut children = children
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(index, child)| {
+                        let child = child.normalize()?;
+                        if let Some(flex) = flexes.as_ref().and_then(|flexes| flexes.get(index)) {
+                            retained_flexes.push(*flex);
+                        }
+                        Some(child)
+                    })
+                    .collect::<Vec<_>>();
+                if children.len() <= 1 {
+                    return children.pop();
                 }
+                let flexes = flexes
+                    .filter(|flexes| flexes.len() == original_count)
+                    .and_then(|flexes| {
+                        if children.len() == original_count {
+                            return Some(flexes);
+                        }
+                        let total = retained_flexes
+                            .iter()
+                            .map(|flex| f64::from(*flex))
+                            .sum::<f64>();
+                        if total <= 0.0
+                            || retained_flexes
+                                .iter()
+                                .any(|flex| !flex.is_finite() || *flex < 0.0)
+                        {
+                            return None;
+                        }
+                        for flex in &mut retained_flexes {
+                            *flex = (f64::from(*flex) * children.len() as f64 / total) as f32;
+                        }
+                        Some(retained_flexes)
+                    });
+                Some(Self::Group {
+                    axis,
+                    children,
+                    flexes,
+                })
             }
         }
     }
 
-    pub(crate) fn build_restored_member(
-        &self,
-        mut pane_for_leaf: impl FnMut(&SerializedPane) -> Entity<Pane>,
-    ) -> Option<Member> {
-        self.build_member(&mut pane_for_leaf)
-    }
-
-    fn build_member(
-        &self,
-        pane_for_leaf: &mut dyn FnMut(&SerializedPane) -> Entity<Pane>,
-    ) -> Option<Member> {
+    fn restore_normalized(
+        self,
+        project: &Entity<Project>,
+        workspace_id: WorkspaceId,
+        workspace: &mut Workspace,
+        reusable_items: &mut ReusableItems,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> (
+        Member,
+        Option<Entity<Pane>>,
+        Vec<Task<Option<Box<dyn ItemHandle>>>>,
+    ) {
         match self {
             SerializedPaneGroup::Group {
                 axis,
                 children,
                 flexes,
             } => {
-                let mut members = children
-                    .iter()
-                    .filter_map(|child| child.build_member(pane_for_leaf))
-                    .collect::<Vec<_>>();
-                match members.len() {
-                    0 => None,
-                    1 => members.pop(),
-                    _ => Some(Member::Axis(PaneAxis::load(
-                        axis.0,
-                        members,
-                        flexes.clone(),
-                    ))),
+                let mut current_active_pane = None;
+                let mut members = Vec::new();
+                let mut tasks = Vec::new();
+                for child in children {
+                    let (member, active_pane, item_tasks) = child.restore_normalized(
+                        project,
+                        workspace_id,
+                        workspace,
+                        reusable_items,
+                        window,
+                        cx,
+                    );
+                    members.push(member);
+                    tasks.extend(item_tasks);
+                    current_active_pane = current_active_pane.or(active_pane);
                 }
+                (
+                    Member::Axis(PaneAxis::load(axis.0, members, flexes)),
+                    current_active_pane,
+                    tasks,
+                )
             }
             SerializedPaneGroup::Pane(serialized_pane) => {
-                if serialized_pane.children.is_empty() {
-                    None
-                } else {
-                    Some(Member::Pane(pane_for_leaf(serialized_pane)))
-                }
-            }
-        }
-    }
-
-    pub(crate) fn item_count(&self) -> usize {
-        match self {
-            SerializedPaneGroup::Group { children, .. } => {
-                children.iter().map(SerializedPaneGroup::item_count).sum()
-            }
-            SerializedPaneGroup::Pane(serialized_pane) => serialized_pane.children.len(),
-        }
-    }
-
-    pub(crate) fn item_keys(&self) -> HashSet<(Arc<str>, ItemId)> {
-        match self {
-            SerializedPaneGroup::Group { children, .. } => children
-                .iter()
-                .flat_map(SerializedPaneGroup::item_keys)
-                .collect(),
-            SerializedPaneGroup::Pane(serialized_pane) => serialized_pane
-                .children
-                .iter()
-                .map(SerializedItem::key)
-                .collect(),
-        }
-    }
-
-    pub(crate) fn item_ids(&self) -> Vec<ItemId> {
-        match self {
-            SerializedPaneGroup::Group { children, .. } => children
-                .iter()
-                .flat_map(SerializedPaneGroup::item_ids)
-                .collect(),
-            SerializedPaneGroup::Pane(serialized_pane) => serialized_pane
-                .children
-                .iter()
-                .map(|item| item.item_id)
-                .collect(),
-        }
-    }
-
-    pub(crate) fn append_unrestored_items(&mut self, live_items: Vec<SerializedItem>) {
-        let saved_keys = self.item_keys();
-        let items = live_items
-            .into_iter()
-            .filter(|item| !saved_keys.contains(&item.key()))
-            .collect::<Vec<_>>();
-        if items.is_empty() {
-            return;
-        }
-        let has_active_pane = self.has_active_pane();
-        let Some(pane) = self.first_pane_mut(has_active_pane) else {
-            return;
-        };
-        if items.iter().any(|item| item.active) {
-            for child in &mut pane.children {
-                child.active = false;
-            }
-        }
-        pane.children.extend(items);
-    }
-
-    fn has_active_pane(&self) -> bool {
-        match self {
-            SerializedPaneGroup::Group { children, .. } => {
-                children.iter().any(SerializedPaneGroup::has_active_pane)
-            }
-            SerializedPaneGroup::Pane(serialized_pane) => serialized_pane.active,
-        }
-    }
-
-    fn first_pane_mut(&mut self, active_only: bool) -> Option<&mut SerializedPane> {
-        match self {
-            SerializedPaneGroup::Group { children, .. } => children
-                .iter_mut()
-                .find_map(|child| child.first_pane_mut(active_only)),
-            SerializedPaneGroup::Pane(serialized_pane) => {
-                (!active_only || serialized_pane.active).then_some(serialized_pane)
+                let pane = workspace.add_pane(window, cx);
+                let tasks = serialized_pane.restore_to(
+                    project,
+                    &pane,
+                    workspace_id,
+                    workspace.weak_handle(),
+                    reusable_items,
+                    window,
+                    cx,
+                );
+                (
+                    Member::Pane(pane.clone()),
+                    serialized_pane.active.then_some(pane),
+                    tasks,
+                )
             }
         }
     }
@@ -446,152 +504,137 @@ impl SerializedPane {
         }
     }
 
-    pub(crate) fn deserialize_items(
+    #[cfg(test)]
+    pub async fn deserialize_to(
         &self,
         project: &Entity<Project>,
-        workspace: WeakEntity<Workspace>,
+        pane: &WeakEntity<Pane>,
         workspace_id: WorkspaceId,
+        workspace: WeakEntity<Workspace>,
+        cx: &mut AsyncWindowContext,
+    ) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
+        let pane = pane.upgrade().context("Pane closed during restoration")?;
+        let tasks = cx.update(|window, cx| {
+            self.restore_to(
+                project,
+                &pane,
+                workspace_id,
+                workspace,
+                &mut ReusableItems::default(),
+                window,
+                cx,
+            )
+        })?;
+        Ok(futures::future::join_all(tasks).await)
+    }
+
+    fn restore_to(
+        &self,
+        project: &Entity<Project>,
+        pane: &Entity<Pane>,
+        workspace_id: WorkspaceId,
+        workspace: WeakEntity<Workspace>,
+        reusable_items: &mut ReusableItems,
         window: &mut Window,
         cx: &mut App,
-    ) -> Vec<Task<Result<Box<dyn ItemHandle>>>> {
-        self.children
-            .iter()
-            .map(|item| {
-                SerializableItemRegistry::deserialize(
-                    &item.kind,
-                    project.clone(),
-                    workspace.clone(),
-                    workspace_id,
-                    item.item_id,
-                    window,
-                    cx,
-                )
-            })
-            .collect()
-    }
-
-    pub(crate) fn place_restored_items(
-        &self,
-        pane: &mut Pane,
-        items: &[Option<Box<dyn ItemHandle>>],
-        window: &mut Window,
-        cx: &mut Context<Pane>,
-    ) -> Vec<Option<Box<dyn ItemHandle>>> {
-        let pane_had_items = pane.items_len() > 0;
-        let first_index = pane.pinned_count();
-        let mut next_index = first_index;
-        let mut restored_pinned_count = 0;
-        let mut active_item = None;
-        let mut preview_item = None;
-        let mut placed_items = Vec::with_capacity(items.len());
-        for (child_index, (serialized_item, item)) in self.children.iter().zip(items).enumerate() {
-            let Some(item) = item else {
-                placed_items.push(None);
-                continue;
-            };
-            let (item, inserted) = if pane_had_items {
-                pane.insert_restored_item(item.boxed_clone(), next_index, cx)
-            } else {
-                pane.add_item_inner(
-                    item.boxed_clone(),
-                    false,
-                    false,
-                    true,
-                    Some(next_index),
-                    window,
-                    cx,
-                );
-                (item.boxed_clone(), true)
-            };
-            if inserted {
-                next_index += 1;
-                if child_index < self.pinned_count {
-                    restored_pinned_count += 1;
-                }
-                if serialized_item.preview {
-                    preview_item = Some(item.item_id());
-                }
+    ) -> Vec<Task<Option<Box<dyn ItemHandle>>>> {
+        pane.update(cx, |pane, cx| {
+            let mut placeholders = Vec::new();
+            for item in &self.children {
+                let placeholder = cx.new(|cx| RestoringItem::new(item.clone(), cx));
+                pane.add_restoring_item(placeholder.clone(), item.active, window, cx);
+                placeholders.push(placeholder);
             }
-            if serialized_item.active {
-                active_item = Some(item.boxed_clone());
+            pane.set_pinned_count(self.pinned_count.min(placeholders.len()));
+
+            if let Some(index) = self.children.iter().rposition(|item| item.preview) {
+                pane.set_preview_item_id(placeholders.get(index).map(|item| item.entity_id()), cx);
             }
-            placed_items.push(Some(item));
-        }
 
-        if !pane_had_items
-            && let Some(index) = active_item
-                .as_ref()
-                .and_then(|item| pane.index_for_item(item.as_ref()))
-        {
-            pane.activate_item(index, false, false, window, cx);
-        }
-        if let Some(preview_item) = preview_item
-            && (!pane_had_items || pane.preview_item_id().is_none())
-        {
-            pane.set_preview_item_id(Some(preview_item), cx);
-        }
-        pane.set_pinned_count((first_index + restored_pinned_count).min(pane.items_len()));
-        placed_items
-    }
-
-    pub(crate) fn unrestored(
-        &self,
-        items: &[Option<Box<dyn ItemHandle>>],
-        now: i64,
-    ) -> Option<SerializedPane> {
-        let mut pinned_count = 0;
-        let children = self
-            .children
-            .iter()
-            .zip(items)
-            .enumerate()
-            .filter(|(_, (_, item))| item.is_none())
-            .filter_map(|(index, (serialized_item, _))| {
-                let unrestored_since = serialized_item.unrestored_since.unwrap_or(now);
-                if now - unrestored_since >= UNAVAILABLE_SESSION_WORKSPACE_RETENTION.num_seconds() {
-                    return None;
-                }
-                if index < self.pinned_count {
-                    pinned_count += 1;
-                }
-                Some(SerializedItem {
-                    unrestored_since: Some(unrestored_since),
-                    ..serialized_item.clone()
+            placeholders
+                .into_iter()
+                .zip(&self.children)
+                .map(|(placeholder, item)| {
+                    if let Some((source, item_id)) =
+                        reusable_items.remove(&(item.kind.clone(), item.item_id))
+                        && let Some(item) = source.update(cx, |source, cx| {
+                            source.take_item_for_restore(item_id, window, cx)
+                        })
+                    {
+                        let replaced =
+                            pane.replace_item(placeholder.entity_id(), item.clone(), window, cx);
+                        return Task::ready(replaced.then_some(item));
+                    }
+                    let deserialize = SerializableItemRegistry::deserialize(
+                        &item.kind,
+                        project.clone(),
+                        workspace.clone(),
+                        workspace_id,
+                        item.item_id,
+                        window,
+                        cx,
+                    );
+                    let workspace = workspace.clone();
+                    let placeholder = placeholder.downgrade();
+                    window.spawn(cx, async move |cx| {
+                        let restored = deserialize.await;
+                        let placeholder = placeholder.upgrade()?;
+                        let (pane, already_open) = workspace
+                            .read_with(cx, |workspace, cx| {
+                                if workspace.restoration_cancelled.load(Ordering::Relaxed) {
+                                    return None;
+                                }
+                                let pane = workspace.pane_for_item_id(placeholder.entity_id())?;
+                                let already_open = restored.as_ref().is_ok_and(|item| {
+                                    workspace
+                                        .pane_for_item_id(item.item_id())
+                                        .is_some_and(|pane| {
+                                            pane.read(cx).index_for_item(item.as_ref()).is_some()
+                                        })
+                                });
+                                Some((pane, already_open))
+                            })
+                            .ok()
+                            .flatten()?;
+                        pane.update_in(cx, |pane, window, cx| {
+                            pane.index_for_item(&placeholder)?;
+                            match restored {
+                                Ok(item) => {
+                                    if already_open {
+                                        pane.remove_item(
+                                            placeholder.entity_id(),
+                                            false,
+                                            false,
+                                            window,
+                                            cx,
+                                        );
+                                        return Some(item);
+                                    }
+                                    pane.replace_item(
+                                        placeholder.entity_id(),
+                                        item.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                    .then_some(item)
+                                }
+                                Err(error) => {
+                                    placeholder.update(cx, |placeholder, cx| {
+                                        placeholder.set_error(
+                                            SharedString::from(format!("{error:#}")),
+                                            cx,
+                                        );
+                                    });
+                                    None
+                                }
+                            }
+                        })
+                        .ok()
+                        .flatten()
+                    })
                 })
-            })
-            .collect::<Vec<_>>();
-        (!children.is_empty()).then(|| SerializedPane::new(children, self.active, pinned_count))
-    }
-
-    pub(crate) fn merge_pending(&mut self, pending: &SerializedPane) {
-        let live_keys = self
-            .children
-            .iter()
-            .map(SerializedItem::key)
-            .collect::<HashSet<_>>();
-        let live_has_active = self.children.iter().any(|item| item.active);
-        let live_has_preview = self.children.iter().any(|item| item.preview);
-        let insertion_index = self.pinned_count.min(self.children.len());
-        let mut pending_pinned_count = 0;
-        let pending_items = pending
-            .children
-            .iter()
-            .enumerate()
-            .filter(|(_, item)| !live_keys.contains(&item.key()))
-            .map(|(index, item)| {
-                if index < pending.pinned_count {
-                    pending_pinned_count += 1;
-                }
-                SerializedItem {
-                    active: item.active && !live_has_active,
-                    preview: item.preview && !live_has_preview,
-                    ..item.clone()
-                }
-            })
-            .collect::<Vec<_>>();
-        self.children
-            .splice(insertion_index..insertion_index, pending_items);
-        self.pinned_count = insertion_index + pending_pinned_count;
+                .collect()
+        })
     }
 }
 
@@ -605,7 +648,6 @@ pub struct SerializedItem {
     pub item_id: ItemId,
     pub active: bool,
     pub preview: bool,
-    pub(crate) unrestored_since: Option<i64>,
 }
 
 impl SerializedItem {
@@ -615,12 +657,7 @@ impl SerializedItem {
             item_id,
             active,
             preview,
-            unrestored_since: None,
         }
-    }
-
-    pub(crate) fn key(&self) -> (Arc<str>, ItemId) {
-        (self.kind.clone(), self.item_id)
     }
 }
 
@@ -632,14 +669,13 @@ impl Default for SerializedItem {
             item_id: 100000,
             active: false,
             preview: false,
-            unrestored_since: None,
         }
     }
 }
 
 impl StaticColumnCount for SerializedItem {
     fn column_count() -> usize {
-        5
+        4
     }
 }
 impl Bind for &SerializedItem {
@@ -647,8 +683,7 @@ impl Bind for &SerializedItem {
         let next_index = statement.bind(&self.kind, start_index)?;
         let next_index = statement.bind(&self.item_id, next_index)?;
         let next_index = statement.bind(&self.active, next_index)?;
-        let next_index = statement.bind(&self.preview, next_index)?;
-        statement.bind(&self.unrestored_since, next_index)
+        statement.bind(&self.preview, next_index)
     }
 }
 
@@ -658,16 +693,430 @@ impl Column for SerializedItem {
         let (item_id, next_index) = ItemId::column(statement, next_index)?;
         let (active, next_index) = bool::column(statement, next_index)?;
         let (preview, next_index) = bool::column(statement, next_index)?;
-        let (unrestored_since, next_index) = Option::<i64>::column(statement, next_index)?;
         Ok((
             SerializedItem {
                 kind,
                 item_id,
                 active,
                 preview,
-                unrestored_since,
             },
             next_index,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        SerializableItemDescriptor, SplitDirection, WorkspaceDb,
+        item::{
+            bind_item_persistence_id, item_persistence_id,
+            test::{TestItem, TestProjectItem},
+        },
+        move_item, register_serializable_item,
+    };
+    use gpui::{Focusable, Global, TestAppContext};
+    use project::FakeFs;
+
+    #[gpui::test]
+    async fn test_restore_placeholder_lifecycle(cx: &mut TestAppContext) {
+        for action in [
+            "hydrate",
+            "close",
+            "cancel",
+            "move",
+            "reorder",
+            "duplicate",
+            "already_open",
+        ] {
+            let app = &mut cx.new_app();
+            crate::tests::init_test(app);
+            let descriptor = app.update(|cx| {
+                register_serializable_item::<TestItem>(cx);
+                SerializableItemRegistry::descriptor("TestItem", cx).unwrap()
+            });
+            let project = Project::test(FakeFs::new(app.executor()), None, app).await;
+            let (workspace, cx) =
+                app.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            let failed_descriptor =
+                SerializedItem::new("Unrestorable", 43, action != "hydrate", action != "hydrate");
+            let revision_before_restore =
+                workspace.read_with(cx, |workspace, cx| workspace.serialization_revision(cx));
+            let (source, target, placeholder, live, tasks) =
+                workspace.update_in(cx, |workspace, window, cx| {
+                    let source = workspace.active_pane().clone();
+                    let project_item = TestProjectItem::new(1, "same.txt", cx);
+                    cx.set_global(RestoreTest {
+                        descriptor,
+                        project_item: project_item.clone(),
+                        open_in: (action == "already_open").then_some(source.clone()),
+                    });
+                    cx.global_mut::<SerializableItemRegistry>()
+                        .descriptors_by_kind
+                        .get_mut("TestItem")
+                        .unwrap()
+                        .deserialize = deserialize_test_item;
+                    let tasks = SerializedPane::new(
+                        vec![
+                            SerializedItem::new(
+                                "TestItem",
+                                42,
+                                action == "hydrate",
+                                action == "hydrate",
+                            ),
+                            failed_descriptor.clone(),
+                        ],
+                        true,
+                        1,
+                    )
+                    .restore_to(
+                        &project,
+                        &source,
+                        WorkspaceId::from_i64(1),
+                        workspace.weak_handle(),
+                        &mut ReusableItems::default(),
+                        window,
+                        cx,
+                    );
+                    let placeholder = source
+                        .read(cx)
+                        .items_of_type::<RestoringItem>()
+                        .next()
+                        .unwrap();
+                    let target = if action == "move" {
+                        workspace.split_pane(source.clone(), SplitDirection::Right, window, cx)
+                    } else {
+                        source.clone()
+                    };
+                    let live = (action != "already_open" && action != "hydrate").then(|| {
+                        let live = cx.new(|cx| {
+                            let mut item = TestItem::new(cx).with_dirty(true);
+                            item.state = String::from("live edits");
+                            item.project_items.push(project_item);
+                            item
+                        });
+                        target.update(cx, |pane, cx| {
+                            pane.add_item(Box::new(live.clone()), false, false, None, window, cx);
+                        });
+                        live
+                    });
+                    match action {
+                        "hydrate" => {
+                            window.focus(&placeholder.focus_handle(cx), cx);
+                        }
+                        "close" => source.update(cx, |pane, cx| {
+                            pane.remove_item(placeholder.entity_id(), false, false, window, cx);
+                        }),
+                        "cancel" => workspace
+                            .restoration_cancelled
+                            .store(true, Ordering::Relaxed),
+                        "move" | "reorder" => {
+                            move_item(
+                                &source,
+                                &target,
+                                placeholder.entity_id(),
+                                1,
+                                false,
+                                window,
+                                cx,
+                            );
+                            target.update(cx, |pane, cx| {
+                                pane.set_pinned_count(1);
+                                pane.set_preview_item_id(Some(placeholder.entity_id()), cx);
+                            });
+                        }
+                        _ => {}
+                    }
+                    (source, target, placeholder, live, tasks)
+                });
+            if action == "hydrate" {
+                assert_eq!(
+                    workspace.read_with(cx, |workspace, cx| workspace.serialization_revision(cx)),
+                    revision_before_restore
+                );
+            }
+            let expected_ids = target.read_with(cx, |pane, _| {
+                pane.items().map(|item| item.item_id()).collect::<Vec<_>>()
+            });
+            let expected_state = target.read_with(cx, |pane, _| {
+                (
+                    pane.active_item_index(),
+                    pane.pinned_count(),
+                    pane.preview_item_id(),
+                )
+            });
+            let revision =
+                workspace.read_with(cx, |workspace, cx| workspace.serialization_revision(cx));
+            let mut results = futures::future::join_all(tasks).await;
+            if action == "hydrate" {
+                assert_eq!(
+                    workspace.read_with(cx, |workspace, cx| workspace.serialization_revision(cx)),
+                    revision
+                );
+            }
+            let restored = results.remove(0);
+            assert!(results.into_iter().all(|item| item.is_none()));
+            if action == "close" || action == "cancel" {
+                assert!(restored.is_none());
+                assert_eq!(
+                    target.read_with(cx, |pane, _| pane
+                        .items()
+                        .map(|item| item.item_id())
+                        .collect::<Vec<_>>()),
+                    expected_ids
+                );
+            } else {
+                let restored = restored.unwrap().downcast::<TestItem>().unwrap();
+                assert_ne!(
+                    cx.update(|_, cx| item_persistence_id(&restored, cx))
+                        .await
+                        .unwrap(),
+                    42
+                );
+                assert_eq!(
+                    workspace.read_with(cx, |workspace, _| workspace
+                        .pane_for_item_id(restored.entity_id())),
+                    Some(target.clone())
+                );
+                if action == "already_open" {
+                    assert_eq!(target.read_with(cx, |pane, _| pane.items_len()), 2);
+                } else {
+                    assert_eq!(
+                        target.read_with(cx, |pane, _| pane
+                            .items()
+                            .map(|item| item.item_id())
+                            .collect::<Vec<_>>()),
+                        expected_ids
+                            .into_iter()
+                            .map(|id| if id == placeholder.entity_id() {
+                                restored.entity_id()
+                            } else {
+                                id
+                            })
+                            .collect::<Vec<_>>()
+                    );
+                    assert_eq!(
+                        target.read_with(cx, |pane, _| (
+                            pane.active_item_index(),
+                            pane.pinned_count(),
+                            pane.preview_item_id()
+                        )),
+                        (
+                            expected_state.0,
+                            expected_state.1,
+                            expected_state.2.map(|id| if id == placeholder.entity_id() {
+                                restored.entity_id()
+                            } else {
+                                id
+                            })
+                        )
+                    );
+                }
+                assert!(
+                    workspace
+                        .read_with(cx, |workspace, _| workspace
+                            .pane_for_item_id(placeholder.entity_id()))
+                        .is_none()
+                );
+            }
+            source.read_with(cx, |pane, cx| {
+                let failed = pane
+                    .items_of_type::<RestoringItem>()
+                    .find(|item| item.read(cx).serialized_item.item_id == 43)
+                    .unwrap();
+                assert_eq!(failed.read(cx).serialized_item, failed_descriptor);
+                assert_eq!(
+                    failed.read(cx).error.as_deref(),
+                    (action != "cancel")
+                        .then_some("cannot deserialize Unrestorable, descriptor not found")
+                );
+            });
+            if let Some(live) = live {
+                live.read_with(cx, |item, _| assert_eq!(item.state, "live edits"));
+            }
+            if action == "hydrate" {
+                source.update_in(cx, |pane, window, cx| {
+                    let item = pane.items_of_type::<TestItem>().next().unwrap();
+                    pane.remove_item(item.entity_id(), false, false, window, cx);
+                });
+                assert_ne!(
+                    workspace.read_with(cx, |workspace, cx| workspace.serialization_revision(cx)),
+                    revision
+                );
+            }
+            app.quit();
+        }
+    }
+
+    #[gpui::test]
+    async fn test_reload_reuses_persisted_items(cx: &mut TestAppContext) {
+        crate::tests::init_test(cx);
+        cx.update(register_serializable_item::<TestItem>);
+        let project = Project::test(FakeFs::new(cx.executor()), None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let database = cx.update(|_, cx| WorkspaceDb::global(cx));
+        let workspace_id = database.next_id().await.unwrap();
+        let (source, live) = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.set_database_id(workspace_id);
+            let source = workspace.active_pane().clone();
+            let live = cx.new(TestItem::new);
+            bind_item_persistence_id(&live, 42, cx).unwrap();
+            source.update(cx, |pane, cx| {
+                pane.add_item(Box::new(live.clone()), true, true, None, window, cx);
+                pane.set_pinned_count(1);
+                pane.set_preview_item_id(Some(live.entity_id()), cx);
+            });
+            (source, live)
+        });
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.flush_serialization_checked(window, cx)
+            })
+            .await
+            .unwrap();
+        let serialized = database.workspace_for_id(workspace_id).unwrap();
+        let live_id = cx
+            .update(|_, cx| item_persistence_id(&live, cx))
+            .await
+            .unwrap();
+        assert_ne!(live_id, 42);
+        live.update(cx, |item, _| {
+            item.state = String::from("unsaved live edits");
+            item.is_dirty = true;
+        });
+        let pending = cx.new(TestItem::new);
+        source.update_in(cx, |pane, window, cx| {
+            pane.add_item(Box::new(pending.clone()), false, false, None, window, cx);
+        });
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.load_workspace(serialized, Vec::new(), window, cx)
+            })
+            .await
+            .unwrap();
+        workspace.read_with(cx, |workspace, cx| {
+            let restored = workspace.active_pane();
+            assert_ne!(restored, &source);
+            assert_eq!(
+                restored
+                    .read(cx)
+                    .items()
+                    .map(|item| item.item_id())
+                    .collect::<Vec<_>>(),
+                vec![live.entity_id()]
+            );
+            assert_eq!(restored.read(cx).pinned_count(), 1);
+            assert_eq!(restored.read(cx).preview_item_id(), Some(live.entity_id()));
+            assert_eq!(
+                source
+                    .read(cx)
+                    .items()
+                    .map(|item| item.item_id())
+                    .collect::<Vec<_>>(),
+                vec![pending.entity_id()]
+            );
+            assert_eq!(
+                workspace.pane_for_item_id(live.entity_id()).as_ref(),
+                Some(restored)
+            );
+            assert_eq!(live.read(cx).state, "unsaved live edits");
+            assert!(live.read(cx).is_dirty);
+        });
+        let pending_id = cx
+            .update(|_, cx| item_persistence_id(&pending, cx))
+            .await
+            .unwrap();
+        assert_ne!(pending_id, live_id);
+        let mut expected_ids = vec![live_id, pending_id];
+        expected_ids.sort_unstable();
+        let mut saved_items = database
+            .select_bound::<_, ItemId>(
+                "SELECT item_id FROM items WHERE workspace_id = ? ORDER BY item_id",
+            )
+            .unwrap();
+        assert_eq!(saved_items(workspace_id).unwrap(), expected_ids);
+    }
+
+    #[gpui::test]
+    async fn test_restored_single_pane_cannot_be_removed(cx: &mut TestAppContext) {
+        crate::tests::init_test(cx);
+        cx.update(register_serializable_item::<TestItem>);
+        let project = Project::test(FakeFs::new(cx.executor()), None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let database = cx.update(|_, cx| WorkspaceDb::global(cx));
+        let workspace_id = database.next_id().await.unwrap();
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.set_database_id(workspace_id);
+            let source = workspace.active_pane().clone();
+            let item = cx.new(TestItem::new);
+            workspace.add_item_to_active_pane(Box::new(item), None, true, window, cx);
+            workspace.split_pane(source.clone(), SplitDirection::Right, window, cx);
+            workspace.split_pane(source.clone(), SplitDirection::Down, window, cx);
+            window.focus(&source.focus_handle(cx), cx);
+            assert_eq!(workspace.center.panes().len(), 3);
+        });
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.flush_serialization_checked(window, cx)
+            })
+            .await
+            .unwrap();
+        let serialized = database.workspace_for_id(workspace_id).unwrap();
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.load_workspace(serialized, Vec::new(), window, cx)
+            })
+            .await
+            .unwrap();
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        pane.update_in(cx, |pane, window, cx| {
+            assert_eq!(pane.items_len(), 1);
+            let item = pane.active_item().unwrap();
+            pane.remove_item(item.item_id(), false, true, window, cx);
+        });
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(workspace.center.panes().len(), 1);
+            assert_eq!(workspace.panes().len(), 1);
+            assert_eq!(workspace.active_pane(), &pane);
+            assert_eq!(pane.read(cx).items_len(), 0);
+        });
+    }
+
+    struct RestoreTest {
+        descriptor: SerializableItemDescriptor,
+        project_item: Entity<TestProjectItem>,
+        open_in: Option<Entity<Pane>>,
+    }
+
+    impl Global for RestoreTest {}
+
+    fn deserialize_test_item(
+        project: Entity<Project>,
+        workspace: WeakEntity<Workspace>,
+        workspace_id: WorkspaceId,
+        item_id: ItemId,
+        window: &mut Window,
+        cx: &mut Context<Pane>,
+    ) -> Task<Result<Box<dyn ItemHandle>>> {
+        let test = cx.global::<RestoreTest>();
+        let project_item = test.project_item.clone();
+        let open_in = test.open_in.clone();
+        let deserialize = test.descriptor.deserialize;
+        let task = deserialize(project, workspace, workspace_id, item_id, window, cx);
+        window.spawn(cx, async move |cx| {
+            let item = task.await?;
+            item.downcast::<TestItem>().unwrap().update(cx, |item, _| {
+                item.project_items.push(project_item);
+            });
+            if let Some(pane) = open_in {
+                pane.update_in(cx, |pane, window, cx| {
+                    pane.add_item_inner(item.clone(), false, false, false, None, window, cx);
+                })?;
+            }
+            Ok(item)
+        })
     }
 }

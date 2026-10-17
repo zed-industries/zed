@@ -1,7 +1,7 @@
 use crate::{
     NewFile, Open, OpenMode, PathList, RecentWorkspace, SerializedWorkspaceLocation,
     ToggleWorkspaceSidebar, Workspace, WorkspaceSettings,
-    item::{Item, ItemEvent},
+    item::{Item, ItemCleanup, ItemEvent, ItemPersistenceId},
     persistence::WorkspaceDb,
 };
 use agent_settings::AgentSettings;
@@ -552,13 +552,12 @@ impl crate::SerializableItem for WelcomePage {
         alive_items: Vec<crate::ItemId>,
         _window: &mut Window,
         cx: &mut App,
-    ) -> Task<gpui::Result<()>> {
+    ) -> ItemCleanup {
         crate::delete_unloaded_items(
             alive_items,
             workspace_id,
             "welcome_pages",
             &persistence::WelcomePagesDb::global(cx),
-            cx,
         )
     }
 
@@ -586,15 +585,16 @@ impl crate::SerializableItem for WelcomePage {
     fn serialize(
         &mut self,
         workspace: &mut Workspace,
-        item_id: crate::ItemId,
+        item_id: ItemPersistenceId,
         _closing: bool,
         cx: &mut Context<Self>,
     ) -> Option<Task<gpui::Result<()>>> {
         let workspace_id = workspace.database_id()?;
         let db = persistence::WelcomePagesDb::global(cx);
-        Some(cx.background_spawn(
-            async move { db.save_welcome_page(item_id, workspace_id, true).await },
-        ))
+        Some(cx.background_spawn(async move {
+            let item_id = item_id.await.map_err(|error| anyhow::anyhow!(error))?;
+            db.save_welcome_page(item_id, workspace_id, true).await
+        }))
     }
 
     fn should_serialize(&self, event: &Self::Event) -> bool {

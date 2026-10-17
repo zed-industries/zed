@@ -1144,6 +1144,13 @@ pub trait GitRepository: Send + Sync {
 
     fn repair_worktrees(&self) -> BoxFuture<'_, Result<()>>;
 
+    fn with_git_binary_path(
+        &self,
+        _system_git_binary_path: Option<PathBuf>,
+    ) -> Result<Option<Arc<dyn GitRepository>>> {
+        Ok(None)
+    }
+
     fn set_trusted(&self, trusted: bool);
     fn is_trusted(&self) -> bool;
 }
@@ -1173,6 +1180,7 @@ impl std::fmt::Debug for dyn GitRepository {
     }
 }
 
+#[derive(Clone)]
 pub struct RealGitRepository {
     pub git_dir: PathBuf,
     pub common_dir: PathBuf,
@@ -1180,6 +1188,7 @@ pub struct RealGitRepository {
     pub working_directory: Option<PathBuf>,
     pub system_git_binary_path: Option<PathBuf>,
     pub any_git_binary_path: PathBuf,
+    bundled_git_binary_path: Option<PathBuf>,
     any_git_binary_help_output: Arc<Mutex<Option<SharedString>>>,
     executor: BackgroundExecutor,
     is_trusted: Arc<AtomicBool>,
@@ -1222,7 +1231,7 @@ impl RealGitRepository {
     ) -> Result<Self> {
         let any_git_binary_path = system_git_binary_path
             .clone()
-            .or(bundled_git_binary_path)
+            .or_else(|| bundled_git_binary_path.clone())
             .context("no git binary available")?;
         log::info!(
             "opening git repository at {dotgit_path:?} using git binary {any_git_binary_path:?}"
@@ -1278,9 +1287,23 @@ impl RealGitRepository {
             working_directory,
             system_git_binary_path,
             any_git_binary_path,
+            bundled_git_binary_path,
             executor,
             any_git_binary_help_output: Arc::new(Mutex::new(None)),
             is_trusted: Arc::new(AtomicBool::new(false)),
+        })
+    }
+
+    fn clone_with_git_binary_path(&self, system_git_binary_path: Option<PathBuf>) -> Result<Self> {
+        let any_git_binary_path = system_git_binary_path
+            .clone()
+            .or_else(|| self.bundled_git_binary_path.clone())
+            .context("no git binary available")?;
+        Ok(Self {
+            system_git_binary_path,
+            any_git_binary_path,
+            any_git_binary_help_output: Arc::default(),
+            ..self.clone()
         })
     }
 
@@ -3607,6 +3630,18 @@ impl GitRepository for RealGitRepository {
         })
     }
 
+    fn with_git_binary_path(
+        &self,
+        system_git_binary_path: Option<PathBuf>,
+    ) -> Result<Option<Arc<dyn GitRepository>>> {
+        if self.system_git_binary_path == system_git_binary_path {
+            return Ok(None);
+        }
+        Ok(Some(Arc::new(
+            self.clone_with_git_binary_path(system_git_binary_path)?,
+        )))
+    }
+
     fn set_trusted(&self, trusted: bool) {
         self.is_trusted
             .store(trusted, std::sync::atomic::Ordering::Release);
@@ -4456,6 +4491,48 @@ mod tests {
         assert_eq!(
             fs::canonicalize(left.as_ref()).unwrap(),
             fs::canonicalize(right.as_ref()).unwrap()
+        );
+    }
+
+    #[gpui::test]
+    fn test_git_binary_refresh_preserves_trust(cx: &mut TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        let original_binary = directory.path().join("original-git");
+        let replacement_binary = directory.path().join("replacement-git");
+        let bundled_binary = directory.path().join("bundled-git");
+        let original = RealGitRepository::new(
+            &directory.path().join(".git"),
+            Some(bundled_binary.clone()),
+            Some(original_binary.clone()),
+            cx.executor(),
+        )
+        .unwrap();
+        original.set_trusted(true);
+        let replacement = original
+            .clone_with_git_binary_path(Some(replacement_binary.clone()))
+            .unwrap();
+        assert_eq!(original.any_git_binary_path, original_binary);
+        assert_eq!(replacement.any_git_binary_path, replacement_binary);
+        assert!(replacement.is_trusted());
+        replacement.set_trusted(false);
+        assert!(!original.is_trusted());
+        original.set_trusted(true);
+        assert!(replacement.is_trusted());
+        let fallback = replacement.clone_with_git_binary_path(None).unwrap();
+        assert_eq!(fallback.system_git_binary_path, None);
+        assert_eq!(fallback.any_git_binary_path, bundled_binary);
+        let backend = original
+            .with_git_binary_path(Some(replacement_binary))
+            .unwrap()
+            .unwrap();
+        backend.set_trusted(false);
+        assert!(!original.is_trusted());
+        assert!(!fallback.is_trusted());
+        assert!(
+            original
+                .with_git_binary_path(Some(original_binary))
+                .unwrap()
+                .is_none()
         );
     }
 

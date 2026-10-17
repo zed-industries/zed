@@ -4,10 +4,12 @@ pub mod terminal_panel;
 mod terminal_path_like_target;
 pub mod terminal_scrollbar;
 
+use collections::{HashMap, HashSet};
 use editor::{
     Editor, EditorSettings, actions::SelectAll, blink_manager::BlinkManager,
     ui_scrollbar_settings_from_raw,
 };
+use futures::FutureExt as _;
 use gpui::{
     Action, AnyElement, App, ClipboardEntry, Corners, DismissEvent, Entity, EventEmitter,
     ExternalPaths, FocusHandle, Focusable, Font, KeyContext, KeyDownEvent, Keystroke, MouseButton,
@@ -15,7 +17,7 @@ use gpui::{
     Task, TaskExt, WeakEntity, actions, anchored, deferred, div,
 };
 use menu;
-use persistence::TerminalDb;
+use persistence::{PersistenceTask, TerminalDb};
 use project::{Project, ProjectEntryId, search::SearchQuery};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -51,9 +53,10 @@ use ui::{
 use util::ResultExt;
 use workspace::{
     CloseActiveItem, DraggedSelection, DraggedTab, NewCenterTerminal, NewTerminal, Pane,
-    ToolbarItemLocation, Workspace, WorkspaceId, delete_unloaded_items,
+    ToolbarItemLocation, Workspace, WorkspaceId,
     item::{
-        HighlightedText, Item, ItemEvent, SerializableItem, TabContentParams, TabTooltipContent,
+        HighlightedText, Item, ItemCleanup, ItemEvent, ItemPersistenceId, SerializableItem,
+        TabContentParams, TabTooltipContent, bind_item_persistence_id, item_persistence_id,
     },
     register_serializable_item,
     searchable::{
@@ -153,6 +156,8 @@ pub struct TerminalView {
     show_workspace_actions: Option<bool>,
     blinking_terminal_enabled: bool,
     needs_serialize: bool,
+    pending_serialization: PersistenceTask,
+    last_known_working_directory: Option<PathBuf>,
     custom_title: Option<String>,
     hover: Option<HoverTarget>,
     hover_tooltip_update: Task<()>,
@@ -248,6 +253,15 @@ impl TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let entity_id = cx.entity_id();
+        let terminal_view = cx.weak_entity();
+        cx.default_global::<LiveTerminals>()
+            .0
+            .insert(entity_id, terminal_view);
+        cx.on_release(move |_, cx| {
+            cx.default_global::<LiveTerminals>().0.remove(&entity_id);
+        })
+        .detach();
         let workspace_handle = workspace.clone();
         let terminal_subscriptions =
             subscribe_for_terminal_events(&terminal, workspace, window, cx);
@@ -310,6 +324,8 @@ impl TerminalView {
             scroll_top: Pixels::ZERO,
             scroll_handle,
             needs_serialize: false,
+            pending_serialization: Task::ready(Ok(())).shared(),
+            last_known_working_directory: None,
             custom_title: None,
             ime_state: None,
             self_handle: cx.entity().downgrade(),
@@ -493,9 +509,47 @@ impl TerminalView {
         }
     }
 
-    pub(crate) fn mark_needs_serialize(&mut self, cx: &mut Context<Self>) {
-        self.needs_serialize = true;
-        cx.emit(ItemEvent::UpdateTab);
+    pub(crate) fn serialize_state(
+        &mut self,
+        item_id: ItemPersistenceId,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<anyhow::Result<()>>> {
+        let terminal = self.terminal().read(cx);
+        if terminal.task().is_some() {
+            return None;
+        }
+        let workspace_id = self.workspace_id?;
+        if let Some(cwd) = terminal
+            .working_directory()
+            .filter(|cwd| !cwd.as_os_str().is_empty())
+        {
+            self.last_known_working_directory = Some(cwd);
+        }
+        let cwd = self.last_known_working_directory.clone();
+        let custom_title = self.custom_title.clone();
+        self.needs_serialize = false;
+        let previous = self.pending_serialization.clone();
+        let db = TerminalDb::global(cx);
+        let serialization = cx
+            .background_spawn(async move {
+                previous.await.log_err();
+                let item_id = item_id.await?;
+                async move {
+                    if let Some(cwd) = cwd {
+                        db.save_working_directory(item_id, workspace_id, cwd)
+                            .await?;
+                    }
+                    db.save_custom_title(item_id, workspace_id, custom_title)
+                        .await
+                }
+                .await
+                .map_err(Arc::new)
+            })
+            .shared();
+        self.pending_serialization = serialization.clone();
+        Some(cx.background_spawn(async move {
+            serialization.await.map_err(|error| anyhow::anyhow!(error))
+        }))
     }
 
     pub fn is_renaming(&self) -> bool {
@@ -1974,11 +2028,17 @@ impl Item for TerminalView {
                     "Updating workspace id for the terminal, old: {old_id:?}, new: {new_id:?}",
                 );
                 let db = TerminalDb::global(cx);
-                let item_id = workspace::persistent_item_id(&cx.entity(), cx);
-                cx.background_spawn(async move {
-                    db.update_workspace_id(new_id, old_id, item_id).await
-                })
-                .detach();
+                let item_id = item_persistence_id(&cx.entity(), cx);
+                let previous = self.pending_serialization.clone();
+                self.pending_serialization = cx
+                    .background_spawn(async move {
+                        previous.await.log_err();
+                        let item_id = item_id.await?;
+                        db.update_workspace_id(new_id, old_id, item_id)
+                            .await
+                            .map_err(Arc::new)
+                    })
+                    .shared();
             }
             self.workspace_id = workspace.database_id();
         }
@@ -1999,42 +2059,42 @@ impl SerializableItem for TerminalView {
         alive_items: Vec<workspace::ItemId>,
         _window: &mut Window,
         cx: &mut App,
-    ) -> Task<anyhow::Result<()>> {
+    ) -> ItemCleanup {
         let db = TerminalDb::global(cx);
-        delete_unloaded_items(alive_items, workspace_id, "terminals", &db, cx)
+        let candidates = db.item_ids(workspace_id);
+        let terminals = cx
+            .default_global::<LiveTerminals>()
+            .0
+            .values()
+            .filter_map(WeakEntity::upgrade)
+            .collect::<Vec<_>>();
+        let live_ids = terminals
+            .into_iter()
+            .filter(|terminal| terminal.read(cx).workspace_id == Some(workspace_id))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|terminal| item_persistence_id(&terminal, cx))
+            .collect::<Vec<_>>();
+        let cleanup = async move {
+            let candidates = candidates?;
+            let mut alive_items = alive_items.into_iter().collect::<HashSet<_>>();
+            for item_id in live_ids {
+                alive_items.insert(item_id.await.map_err(|error| anyhow::anyhow!(error))?);
+            }
+            db.cleanup(workspace_id, candidates, alive_items).await
+        }
+        .boxed();
+        TerminalPanel::cleanup_barrier(workspace_id, cleanup, cx)
     }
 
     fn serialize(
         &mut self,
         _workspace: &mut Workspace,
-        item_id: workspace::ItemId,
+        item_id: ItemPersistenceId,
         _closing: bool,
         cx: &mut Context<Self>,
     ) -> Option<Task<anyhow::Result<()>>> {
-        let terminal = self.terminal().read(cx);
-        if terminal.task().is_some() {
-            return None;
-        }
-
-        if !self.needs_serialize {
-            return None;
-        }
-
-        let workspace_id = self.workspace_id?;
-        let cwd = terminal.working_directory();
-        let custom_title = self.custom_title.clone();
-        self.needs_serialize = false;
-
-        let db = TerminalDb::global(cx);
-        Some(cx.background_spawn(async move {
-            if let Some(cwd) = cwd {
-                db.save_working_directory(item_id, workspace_id, cwd)
-                    .await?;
-            }
-            db.save_custom_title(item_id, workspace_id, custom_title)
-                .await?;
-            Ok(())
-        }))
+        self.serialize_state(item_id, cx)
     }
 
     fn should_serialize(&self, _: &Self::Event) -> bool {
@@ -2050,38 +2110,32 @@ impl SerializableItem for TerminalView {
         cx: &mut App,
     ) -> Task<anyhow::Result<Entity<Self>>> {
         window.spawn(cx, async move |cx| {
-            let (cwd, custom_title) = cx
-                .update(|_window, cx| {
-                    let db = TerminalDb::global(cx);
-                    let from_db = db
-                        .get_working_directory(item_id, workspace_id)
-                        .log_err()
-                        .flatten();
-                    let cwd = if from_db
-                        .as_ref()
-                        .is_some_and(|from_db| !from_db.as_os_str().is_empty())
-                    {
-                        from_db
-                    } else {
-                        workspace
-                            .upgrade()
-                            .and_then(|workspace| default_working_directory(workspace.read(cx), cx))
-                    };
-                    let custom_title = db
-                        .get_custom_title(item_id, workspace_id)
-                        .log_err()
-                        .flatten()
-                        .filter(|title| !title.trim().is_empty());
-                    (cwd, custom_title)
-                })
-                .ok()
-                .unwrap_or((None, None));
+            let (cwd, custom_title) = cx.update(|_window, cx| {
+                let db = TerminalDb::global(cx);
+                let from_db = db.get_working_directory(item_id, workspace_id)?;
+                let cwd = if from_db
+                    .as_ref()
+                    .is_some_and(|from_db| !from_db.as_os_str().is_empty())
+                {
+                    from_db
+                } else {
+                    workspace
+                        .upgrade()
+                        .and_then(|workspace| default_working_directory(workspace.read(cx), cx))
+                };
+                let custom_title = db
+                    .get_custom_title(item_id, workspace_id)?
+                    .filter(|title| !title.trim().is_empty());
+                anyhow::Ok((cwd, custom_title))
+            })??;
 
             let terminal = project
-                .update(cx, |project, cx| project.create_terminal_shell(cwd, cx))
+                .update(cx, |project, cx| {
+                    project.create_terminal_shell(cwd.clone(), cx)
+                })
                 .await?;
             cx.update(|window, cx| {
-                let view = cx.new(|cx| {
+                let terminal_view = cx.new(|cx| {
                     let mut view = TerminalView::new(
                         terminal,
                         workspace,
@@ -2090,19 +2144,23 @@ impl SerializableItem for TerminalView {
                         window,
                         cx,
                     );
+                    view.last_known_working_directory = cwd;
                     if custom_title.is_some() {
                         view.custom_title = custom_title;
                     }
                     view
                 });
-                if workspace::claim_persistent_item_id(&view, item_id, cx) != item_id {
-                    view.update(cx, |view, _| view.needs_serialize = true);
-                }
-                view
-            })
+                bind_item_persistence_id(&terminal_view, item_id, cx)?;
+                Ok(terminal_view)
+            })?
         })
     }
 }
+
+#[derive(Default)]
+struct LiveTerminals(HashMap<gpui::EntityId, WeakEntity<TerminalView>>);
+
+impl gpui::Global for LiveTerminals {}
 
 impl SearchableItem for TerminalView {
     type Match = Range;
@@ -3310,6 +3368,85 @@ mod tests {
     }
 
     // Terminal rename tests
+
+    #[gpui::test]
+    async fn test_restored_terminal_copies_metadata_without_process_directory(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        let (project, workspace, window) = init_test_with_window(cx).await;
+        cx.update(|cx| cx.set_global(db::AppDatabase::test_new()));
+        let workspace_id = cx
+            .update(|cx| workspace::WorkspaceDb::global(cx))
+            .next_id()
+            .await
+            .unwrap();
+        let db = cx.update(|cx| TerminalDb::global(cx));
+        let cwd = std::env::current_dir().unwrap();
+        let mut source_id = 12345;
+        db.save_working_directory(source_id, workspace_id, cwd.clone())
+            .await
+            .unwrap();
+        db.save_custom_title(source_id, workspace_id, Some("saved".to_string()))
+            .await
+            .unwrap();
+        let display_terminal = cx.new(|cx| {
+            terminal::TerminalBuilder::new_display_only(
+                CursorShape::default(),
+                terminal::terminal_settings::AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+            )
+            .subscribe(cx)
+        });
+        for _ in 0..2 {
+            let terminal_view = window
+                .update(cx, |_, window, cx| {
+                    TerminalView::deserialize(
+                        project.clone(),
+                        workspace.downgrade(),
+                        workspace_id,
+                        source_id,
+                        window,
+                        cx,
+                    )
+                })
+                .unwrap()
+                .await
+                .unwrap();
+            let item_id = cx
+                .update(|cx| item_persistence_id(&terminal_view, cx))
+                .await
+                .unwrap();
+            assert_ne!(item_id, source_id);
+            terminal_view
+                .update(cx, |view, cx| {
+                    assert_eq!(view.custom_title(), Some("saved"));
+                    view.terminal = display_terminal.clone();
+                    assert_eq!(view.terminal.read(cx).working_directory(), None);
+                    let item_id = item_persistence_id(&cx.entity(), cx);
+                    view.serialize_state(item_id, cx).unwrap()
+                })
+                .await
+                .unwrap();
+            for persisted_id in [source_id, item_id] {
+                assert_eq!(
+                    db.get_custom_title(persisted_id, workspace_id)
+                        .unwrap()
+                        .as_deref(),
+                    Some("saved")
+                );
+                assert_eq!(
+                    db.get_working_directory(persisted_id, workspace_id)
+                        .unwrap(),
+                    Some(cwd.clone())
+                );
+            }
+            source_id = item_id;
+        }
+    }
 
     #[gpui::test]
     async fn test_custom_title_initially_none(cx: &mut TestAppContext) {

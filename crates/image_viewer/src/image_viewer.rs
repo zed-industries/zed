@@ -30,7 +30,10 @@ use workspace::{
     ItemId, ItemSettings, Pane, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
     WorkspaceId, delete_unloaded_items,
     invalid_item_view::InvalidItemView,
-    item::{HighlightedText, Item, ItemHandle, ProjectItem, SerializableItem, TabContentParams},
+    item::{
+        HighlightedText, Item, ItemCleanup, ItemHandle, ItemPersistenceId, ProjectItem,
+        SerializableItem, TabContentParams,
+    },
 };
 
 pub use crate::image_info::*;
@@ -727,15 +730,15 @@ impl SerializableItem for ImageView {
         alive_items: Vec<ItemId>,
         _window: &mut Window,
         cx: &mut App,
-    ) -> Task<anyhow::Result<()>> {
+    ) -> ItemCleanup {
         let db = ImageViewerDb::global(cx);
-        delete_unloaded_items(alive_items, workspace_id, "image_viewers", &db, cx)
+        delete_unloaded_items(alive_items, workspace_id, "image_viewers", &db)
     }
 
     fn serialize(
         &mut self,
         workspace: &mut Workspace,
-        item_id: ItemId,
+        item_id: ItemPersistenceId,
         _closing: bool,
         cx: &mut Context<Self>,
     ) -> Option<Task<anyhow::Result<()>>> {
@@ -745,6 +748,7 @@ impl SerializableItem for ImageView {
         let db = ImageViewerDb::global(cx);
         Some(cx.background_spawn({
             async move {
+                let item_id = item_id.await.map_err(|error| anyhow::anyhow!(error))?;
                 log::debug!("Saving image at path {image_path:?}");
                 db.save_image_path(item_id, workspace_id, image_path).await
             }

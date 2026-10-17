@@ -1,5 +1,5 @@
 use anyhow::{Context as _, Result, anyhow};
-use client::ProjectId;
+use client::{ErrorCodeExt as _, ProjectId};
 use collections::HashMap;
 use collections::HashSet;
 use gpui::TasksIncluded;
@@ -613,26 +613,29 @@ impl HeadlessProject {
         message: TypedEnvelope<proto::AddWorktree>,
         mut cx: AsyncApp,
     ) -> Result<proto::AddWorktreeResponse> {
-        use client::ErrorCodeExt;
         let fs = this.read_with(&cx, |this, _| this.fs.clone());
         let path = PathBuf::from(shellexpand::tilde(&message.payload.path).to_string());
 
         let canonicalized = match fs.canonicalize(&path).await {
             Ok(path) => path,
-            Err(e) => {
-                let mut parent = path
-                    .parent()
-                    .ok_or(e)
-                    .with_context(|| format!("{path:?} does not exist"))?;
-                if parent == Path::new("") {
-                    parent = util::paths::home_dir();
+            Err(error) => {
+                if fs.metadata(&path).await?.is_some() {
+                    return Err(error);
                 }
-                let parent = fs.canonicalize(parent).await.map_err(|_| {
+                let missing_path = || {
                     anyhow!(
                         proto::ErrorCode::DevServerProjectPathDoesNotExist
                             .with_tag("path", path.to_string_lossy().as_ref())
                     )
-                })?;
+                };
+                let mut parent = path.parent().ok_or_else(missing_path)?;
+                if parent == Path::new("") {
+                    parent = util::paths::home_dir();
+                }
+                if fs.metadata(parent).await?.is_none() {
+                    return Err(missing_path());
+                }
+                let parent = fs.canonicalize(parent).await?;
                 if let Some(file_name) = path.file_name() {
                     parent.join(file_name)
                 } else {

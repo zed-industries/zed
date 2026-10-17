@@ -209,7 +209,7 @@ use multi_buffer::{
     MultiBufferRow,
 };
 use parking_lot::Mutex;
-use persistence::EditorDb;
+use persistence::{EditorDb, FileFoldTask, MetadataTask, schedule_file_folds};
 use project::{
     BreakpointWithPosition, CodeAction, Completion, CompletionDisplayOptions, CompletionIntent,
     CompletionResponse, CompletionSource, DisableAiSettings, DocumentHighlight, InlayHint, InlayId,
@@ -1124,7 +1124,6 @@ pub struct Editor {
     show_git_blame_inline_delay_task: Option<Task<()>>,
     git_blame_inline_enabled: bool,
     buffer_serialization: Option<BufferSerialization>,
-    recovered_from: Option<PathBuf>,
     show_selection_menu: Option<bool>,
     blame: Option<Entity<GitBlame>>,
     blame_subscription: Option<Subscription>,
@@ -1186,8 +1185,8 @@ pub struct Editor {
     selection_mark_mode: bool,
     toggle_fold_multiple_buffers: Task<()>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
-    serialize_selections: Task<()>,
-    serialize_folds: Task<()>,
+    serialize_selections: MetadataTask,
+    serialize_folds: Option<Entity<FileFoldTask>>,
     minimap: Option<Entity<Self>>,
     pub change_list: ChangeList,
     inline_value_cache: InlineValueCache,
@@ -1912,7 +1911,6 @@ impl Editor {
             .clone_state(&self.scroll_manager, &my_snapshot, &clone_snapshot, cx);
         clone.searchable = self.searchable;
         clone.read_only = self.read_only;
-        clone.recovered_from = self.recovered_from.clone();
         clone.buffers_with_disabled_indent_guides =
             self.buffers_with_disabled_indent_guides.clone();
         clone.enable_mouse_wheel_zoom = self.enable_mouse_wheel_zoom;
@@ -2527,7 +2525,6 @@ impl Editor {
                         .restore_unsaved_buffers,
                 )
             }),
-            recovered_from: None,
             blame: None,
             blame_subscription: None,
             pending_blame_hover_observation: None,
@@ -2579,8 +2576,8 @@ impl Editor {
             _scroll_cursor_center_top_bottom_task: Task::ready(()),
             selection_mark_mode: false,
             toggle_fold_multiple_buffers: Task::ready(()),
-            serialize_selections: Task::ready(()),
-            serialize_folds: Task::ready(()),
+            serialize_selections: MetadataTask::default(),
+            serialize_folds: None,
             text_style_refinement: None,
             load_diff_task: None,
             diff_hunk_renderer: None,
@@ -11374,14 +11371,13 @@ impl Editor {
                     // Migrate from editor_folds to file_folds if we loaded from old table
                     if needs_migration {
                         if let Some(ref path) = file_path {
-                            let path = path.clone();
-                            let db = EditorDb::global(cx);
-                            cx.spawn(async move |_, _| {
-                                db.save_file_folds(workspace_id, path, db_folds_for_migration)
-                                    .await
-                                    .log_err();
-                            })
-                            .detach();
+                            self.serialize_folds = Some(schedule_file_folds(
+                                workspace_id,
+                                path.clone(),
+                                db_folds_for_migration,
+                                Duration::ZERO,
+                                cx,
+                            ));
                         }
                     }
                 }

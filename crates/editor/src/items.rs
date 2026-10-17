@@ -11,10 +11,10 @@ use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
 use file_icons::FileIcons;
 use fs::MTime;
-use futures::{channel::oneshot, future::try_join_all};
+use futures::{FutureExt as _, channel::oneshot, future::try_join_all};
 use git::status::GitSummary;
 use gpui::{
-    AnyElement, App, AsyncWindowContext, Context, Entity, EntityId, EventEmitter, Font, Global,
+    AnyElement, App, AsyncWindowContext, Context, Entity, EntityId, EventEmitter, Font,
     IntoElement, ParentElement, Pixels, SharedString, Styled, Task, WeakEntity, Window, point,
 };
 use language::{
@@ -24,7 +24,7 @@ use language::{
     proto::serialize_anchor as serialize_text_anchor,
 };
 use lsp::DiagnosticSeverity;
-use multi_buffer::{BufferOffset, MultiBufferOffset, MultiBufferRow, PathKey};
+use multi_buffer::{BufferOffset, MultiBufferOffset, MultiBufferRow, PathKey, ToOffset as _};
 use project::{
     File, Project, ProjectItem as _, ProjectPath,
     git_store::GitStore,
@@ -51,7 +51,10 @@ use util::{
     paths::{PathExt, UrlExt as _},
     rel_path::RelPath,
 };
-use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
+use workspace::item::{
+    Dedup, ItemCleanup, ItemPersistenceId, ItemSettings, SerializableItem, TabContentParams,
+    bind_item_persistence_id,
+};
 use workspace::{
     CollaboratorId, ItemId, ItemNavHistory, OpenOptions, OpenVisible, ToolbarItemLocation, ViewId,
     Workspace, WorkspaceId,
@@ -719,8 +722,6 @@ impl Item for Editor {
                     .into_owned()
                     .into(),
             )
-        } else if let Some(recovered_from) = recovered_source_path(self, cx) {
-            Some(format!("{} (recovered)", recovered_from.compact().to_string_lossy()).into())
         } else {
             let title = multi_buffer.title(cx);
             (!title.is_empty()).then(|| title.to_string().into())
@@ -736,14 +737,11 @@ impl Item for Editor {
             path.to_string().into()
         } else {
             // Use the same logic as the displayed title for consistency
-            tab_title(self, cx).to_string().into()
+            self.buffer.read(cx).title(cx).to_string().into()
         }
     }
 
     fn suggested_filename(&self, cx: &App) -> SharedString {
-        if let Some(file_name) = recovered_source_path(self, cx).and_then(|path| path.file_name()) {
-            return file_name.to_string_lossy().into_owned().into();
-        }
         let multi_buffer = self.buffer.read(cx);
         let title = multi_buffer.title(cx);
         if let Some(buffer) = multi_buffer.as_singleton() {
@@ -824,10 +822,10 @@ impl Item for Editor {
             })
             .child(
                 Label::new(if params.truncate_title_middle {
-                    tab_title(self, cx).to_string()
+                    self.title(cx).to_string()
                 } else {
                     util::truncate_and_trailoff(
-                        &tab_title(self, cx),
+                        &self.title(cx),
                         params.max_title_len.unwrap_or(MAX_TAB_TITLE_LEN),
                     )
                 })
@@ -1280,13 +1278,12 @@ impl SerializableItem for Editor {
         alive_items: Vec<ItemId>,
         _window: &mut Window,
         cx: &mut App,
-    ) -> Task<Result<()>> {
+    ) -> ItemCleanup {
         workspace::delete_unloaded_items(
             alive_items,
             workspace_id,
             "editors",
             &EditorDb::global(cx),
-            cx,
         )
     }
 
@@ -1314,7 +1311,6 @@ impl SerializableItem for Editor {
                         contents: None,
                         language: None,
                         mtime: None,
-                        recovered_from: None,
                     }
                 }
             }
@@ -1336,7 +1332,6 @@ impl SerializableItem for Editor {
                 abs_path: None,
                 contents: Some(contents),
                 language,
-                recovered_from,
                 ..
             } => window.spawn(cx, {
                 let project = project.clone();
@@ -1375,13 +1370,8 @@ impl SerializableItem for Editor {
                     });
 
                     cx.update(|window, cx| {
-                        cx.new(|cx| {
-                            let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
-                            editor.recovered_from = recovered_from;
-                            editor.read_metadata_from_db(item_id, workspace_id, window, cx);
-                            editor
-                        })
-                    })
+                        restored_editor(buffer, project, item_id, workspace_id, window, cx)
+                    })?
                 }
             }),
             SerializedEditor {
@@ -1399,62 +1389,43 @@ impl SerializableItem for Editor {
                     Some(project.open_path(project_path, cx))
                 });
 
-                match opened_buffer {
-                    Some(opened_buffer) => window.spawn(cx, async move |cx| {
-                        let (_, buffer) = opened_buffer
-                            .await
-                            .context("Failed to open path in project")?;
-                        let (buffer, recovered_from) = restore_buffer_contents(
-                            &project, buffer, &abs_path, contents, mtime, cx,
-                        )
-                        .await?;
-
-                        cx.update(|window, cx| {
-                            cx.new(|cx| {
-                                let mut editor =
-                                    Editor::for_buffer(buffer, Some(project), window, cx);
-                                editor.recovered_from = recovered_from;
-                                editor.read_metadata_from_db(item_id, workspace_id, window, cx);
-                                editor
-                            })
-                        })
-                    }),
-                    None => {
-                        // File is not in any worktree (e.g., opened as a standalone file).
-                        // Open the buffer directly via the project rather than through
-                        // workspace.open_abs_path(), which has the side effect of adding
-                        // the item to a pane. The caller (deserialize_to) will add the
-                        // returned item to the correct pane.
-                        window.spawn(cx, async move |cx| {
-                            let buffer = project
+                window.spawn(cx, async move |cx| {
+                    let buffer = match opened_buffer {
+                        Some(opened_buffer) => {
+                            let (_, buffer) = opened_buffer
+                                .await
+                                .context("Failed to open path in project")?;
+                            buffer
+                        }
+                        None => {
+                            // File is not in any worktree (e.g., opened as a standalone file).
+                            // Open the buffer directly via the project rather than through
+                            // workspace.open_abs_path(), which has the side effect of adding
+                            // the item to a pane. The caller (deserialize_to) will add the
+                            // returned item to the correct pane.
+                            project
                                 .update(cx, |project, cx| project.open_local_buffer(&abs_path, cx))
                                 .await
                                 .with_context(|| {
                                     format!("Failed to open buffer for {abs_path:?}")
-                                })?;
-                            let (buffer, recovered_from) = restore_buffer_contents(
-                                &project, buffer, &abs_path, contents, mtime, cx,
-                            )
-                            .await?;
-
-                            cx.update(|window, cx| {
-                                cx.new(|cx| {
-                                    let mut editor =
-                                        Editor::for_buffer(buffer, Some(project), window, cx);
-                                    editor.recovered_from = recovered_from;
-                                    editor.read_metadata_from_db(item_id, workspace_id, window, cx);
-                                    editor
-                                })
-                            })
-                        })
-                    }
-                }
+                                })?
+                        }
+                    };
+                    let buffer = if let Some(contents) = contents {
+                        restore_serialized_buffer_contents(buffer, contents, mtime, &project, cx)
+                            .await?
+                    } else {
+                        buffer
+                    };
+                    cx.update(|window, cx| {
+                        restored_editor(buffer, project, item_id, workspace_id, window, cx)
+                    })?
+                })
             }
             SerializedEditor {
                 abs_path: None,
                 contents: None,
                 language,
-                recovered_from,
                 ..
             } => window.spawn(cx, async move |cx| {
                 let buffer = project
@@ -1468,13 +1439,8 @@ impl SerializableItem for Editor {
                 }
 
                 cx.update(|window, cx| {
-                    cx.new(|cx| {
-                        let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
-                        editor.recovered_from = recovered_from;
-                        editor.read_metadata_from_db(item_id, workspace_id, window, cx);
-                        editor
-                    })
-                })
+                    restored_editor(buffer, project, item_id, workspace_id, window, cx)
+                })?
             }),
         }
     }
@@ -1482,7 +1448,7 @@ impl SerializableItem for Editor {
     fn serialize(
         &mut self,
         workspace: &mut Workspace,
-        item_id: ItemId,
+        item_id: ItemPersistenceId,
         closing: bool,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
@@ -1517,19 +1483,44 @@ impl SerializableItem for Editor {
                 })
         });
 
-        let recovered_from = self
-            .recovered_from
-            .clone()
-            .filter(|_| buffer.read(cx).file().is_none());
-        let is_dirty = buffer.read(cx).is_dirty();
+        let is_dirty = buffer.read(cx).has_unsaved_edits() || buffer.read(cx).has_conflict();
         let mtime = buffer.read(cx).saved_mtime();
         let content_language_detection_enabled =
             buffer.read(cx).content_language_detection_enabled();
 
         let snapshot = buffer.read(cx).snapshot();
+        let metadata = {
+            let display_snapshot = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+            let snapshot = display_snapshot.buffer_snapshot();
+            let scroll_anchor = self.scroll_manager.native_anchor(&display_snapshot, cx);
+            let selections = self
+                .selections
+                .disjoint_anchors()
+                .iter()
+                .map(|selection| {
+                    (
+                        selection.start.to_offset(snapshot).0,
+                        selection.end.to_offset(snapshot).0,
+                    )
+                })
+                .collect::<Vec<_>>();
+            let folds_task = self
+                .serialize_folds
+                .as_ref()
+                .map(|task| task.update(cx, |task, cx| task.flush(cx)))
+                .unwrap_or_else(|| async { Ok(()) }.boxed());
+            (
+                scroll_anchor.top_row(snapshot),
+                scroll_anchor.offset,
+                selections,
+                self.scroll_manager.cancel_pending_serialization(),
+                self.serialize_selections.cancel_pending(),
+                folds_task,
+            )
+        };
 
         let db = EditorDb::global(cx);
-        Some(cx.background_spawn(async move {
+        let serialization = async move {
             let (contents, language) = if serialize_dirty_buffers && is_dirty {
                 let contents = snapshot.text();
                 let language = snapshot.language().and_then(|language| {
@@ -1549,13 +1540,36 @@ impl SerializableItem for Editor {
                 contents,
                 language,
                 mtime,
-                recovered_from,
             };
+            let item_id = item_id.await.map_err(|error| anyhow!(error))?;
             log::debug!("Serializing editor {item_id:?} in workspace {workspace_id:?}");
             db.save_serialized_editor(item_id, workspace_id, editor)
                 .await
-                .context("failed to save serialized editor")
-        }))
+                .context("failed to save serialized editor")?;
+            let (top_row, offset, selections, scroll_task, selections_task, folds_task) = metadata;
+            let (scroll_result, selections_result, folds_result) =
+                futures::join!(scroll_task, selections_task, folds_task);
+            scroll_result.log_err();
+            selections_result.log_err();
+            db.save_scroll_position(item_id, workspace_id, top_row, offset.x, offset.y)
+                .await
+                .context("failed to save editor scroll position")?;
+            db.save_editor_selections(item_id, workspace_id, selections)
+                .await
+                .context("failed to save editor selections")?;
+            folds_result
+                .map_err(|error| anyhow!(error))
+                .context("failed to save editor folds")
+        };
+        let serialization = cx
+            .background_spawn(serialization.map(|result| result.map_err(Arc::new)))
+            .shared();
+        self.scroll_manager
+            .set_serialization_barrier(serialization.clone());
+        self.serialize_selections.set_barrier(serialization.clone());
+        Some(
+            cx.background_spawn(async move { serialization.await.map_err(|error| anyhow!(error)) }),
+        )
     }
 
     fn should_serialize(&self, event: &Self::Event) -> bool {
@@ -2308,21 +2322,6 @@ pub fn entry_git_aware_label_color(git_status: GitSummary, ignored: bool, select
     }
 }
 
-fn tab_title<'a>(editor: &Editor, cx: &'a App) -> Cow<'a, str> {
-    match recovered_source_path(editor, cx).and_then(|path| path.file_name()) {
-        Some(file_name) => Cow::Owned(format!("{} (recovered)", file_name.to_string_lossy())),
-        None => editor.title(cx),
-    }
-}
-
-fn recovered_source_path<'a>(editor: &'a Editor, cx: &App) -> Option<&'a Path> {
-    let buffer = editor.buffer.read(cx).as_singleton()?;
-    if buffer.read(cx).file().is_some() {
-        return None;
-    }
-    editor.recovered_from.as_deref()
-}
-
 fn path_for_buffer<'a>(
     buffer: &Entity<MultiBuffer>,
     height: usize,
@@ -2375,109 +2374,57 @@ fn path_for_file<'a>(
     }
 }
 
-/// Restores serialized buffer contents by overwriting the buffer with saved text.
-/// This is somewhat wasteful since we load the whole buffer from disk then overwrite it,
-/// but keeps implementation simple as we don't need to persist all metadata from loading
-/// (git diff base, etc.).
-async fn restore_buffer_contents(
-    project: &Entity<Project>,
+fn restored_editor(
     buffer: Entity<Buffer>,
-    abs_path: &Path,
-    contents: Option<String>,
-    mtime: Option<MTime>,
-    cx: &mut AsyncWindowContext,
-) -> Result<(Entity<Buffer>, Option<PathBuf>)> {
-    let Some(contents) = contents else {
-        return Ok((buffer, None));
-    };
-    let earlier_restoration = cx.update(|_, cx| {
-        match cx
-            .try_global::<RestoredBuffers>()?
-            .0
-            .get(&buffer.entity_id())?
-        {
-            RestoredBuffer::Source => Some((buffer.clone(), None)),
-            RestoredBuffer::RecoveredCopy(restored_copy) => {
-                Some((restored_copy.upgrade()?, Some(abs_path.to_path_buf())))
-            }
-        }
-    })?;
-    if let Some(earlier_restoration) = earlier_restoration {
-        return Ok(earlier_restoration);
-    }
-    let (has_unsaved_edits, already_restored) = buffer.read_with(cx, |buffer, _| {
-        (buffer.has_unsaved_edits(), buffer.text() == contents)
+    project: Entity<Project>,
+    item_id: ItemId,
+    workspace_id: WorkspaceId,
+    window: &mut Window,
+    cx: &mut App,
+) -> Result<Entity<Editor>> {
+    let editor = cx.new(|cx| Editor::for_buffer(buffer, Some(project), window, cx));
+    bind_item_persistence_id(&editor, item_id, cx)?;
+    editor.update(cx, |editor, cx| {
+        editor.read_metadata_from_db(item_id, workspace_id, window, cx);
     });
-    if !has_unsaved_edits || already_restored || contents.is_empty() {
-        if !has_unsaved_edits {
-            buffer.update(cx, |buffer, cx| {
-                restore_serialized_buffer_contents(buffer, contents, mtime, cx);
-            });
-        }
-        cx.update(|_, cx| remember_restored_buffer(&buffer, RestoredBuffer::Source, cx))?;
-        return Ok((buffer, None));
-    }
-    let language = buffer.read_with(cx, |buffer, _| buffer.language().cloned());
-    let restored_copy = project
-        .update(cx, |project, cx| project.create_buffer(language, true, cx))
-        .await
-        .context("Failed to create a buffer for the restored contents")?;
-    restored_copy.update(cx, |restored_copy, cx| {
-        restored_copy.set_text(contents, cx);
-        if let Some(entry) = restored_copy.peek_undo_stack() {
-            restored_copy.forget_transaction(entry.transaction_id());
-        }
-    });
-    cx.update(|_, cx| {
-        remember_restored_buffer(
-            &buffer,
-            RestoredBuffer::RecoveredCopy(restored_copy.downgrade()),
-            cx,
-        )
-    })?;
-    Ok((restored_copy, Some(abs_path.to_path_buf())))
+    Ok(editor)
 }
 
-#[derive(Default)]
-struct RestoredBuffers(HashMap<EntityId, RestoredBuffer>);
-
-impl Global for RestoredBuffers {}
-
-enum RestoredBuffer {
-    Source,
-    RecoveredCopy(WeakEntity<Buffer>),
-}
-
-fn remember_restored_buffer(buffer: &Entity<Buffer>, restored: RestoredBuffer, cx: &mut App) {
-    let buffer_id = buffer.entity_id();
-    let first_restoration = cx
-        .default_global::<RestoredBuffers>()
-        .0
-        .insert(buffer_id, restored)
-        .is_none();
-    if first_restoration {
-        cx.observe_release(buffer, move |_, cx| {
-            cx.default_global::<RestoredBuffers>().0.remove(&buffer_id);
-        })
-        .detach();
-    }
-}
-
-fn restore_serialized_buffer_contents(
-    buffer: &mut Buffer,
+async fn restore_serialized_buffer_contents(
+    buffer: Entity<Buffer>,
     contents: String,
     mtime: Option<MTime>,
-    cx: &mut Context<Buffer>,
-) {
-    // If we did restore an mtime, store it on the buffer so that
-    // the next edit will mark the buffer as dirty/conflicted.
-    if mtime.is_some() {
-        buffer.did_reload(buffer.version(), buffer.line_ending(), mtime, cx);
-    }
-    buffer.set_text(contents, cx);
-    if let Some(entry) = buffer.peek_undo_stack() {
-        buffer.forget_transaction(entry.transaction_id());
-    }
+    project: &Entity<Project>,
+    cx: &mut AsyncWindowContext,
+) -> Result<Entity<Buffer>> {
+    let recovered_contents = buffer.update(cx, |buffer, cx| {
+        if buffer.has_unsaved_edits() || buffer.has_conflict() {
+            return (buffer.text() != contents).then_some(contents);
+        }
+        if mtime.is_some() {
+            buffer.did_reload(buffer.version(), buffer.line_ending(), mtime, cx);
+        }
+        buffer.set_text(contents, cx);
+        if let Some(entry) = buffer.peek_undo_stack() {
+            buffer.forget_transaction(entry.transaction_id());
+        }
+        None
+    });
+    let Some(contents) = recovered_contents else {
+        return Ok(buffer);
+    };
+    let language = buffer.read_with(cx, |buffer, _| buffer.language().cloned());
+    let recovered = project
+        .update(cx, |project, cx| project.create_buffer(language, true, cx))
+        .await
+        .context("Failed to recover saved edits without overwriting live edits")?;
+    recovered.update(cx, |buffer, cx| {
+        buffer.set_text(contents, cx);
+        if let Some(entry) = buffer.peek_undo_stack() {
+            buffer.forget_transaction(entry.transaction_id());
+        }
+    });
+    Ok(recovered)
 }
 
 fn serialize_path_key(path_key: &PathKey) -> proto::PathKey {
@@ -2711,7 +2658,10 @@ pub(crate) fn handle_lsp_show_document(
 mod tests {
     use crate::editor_tests::init_test;
     use fs::Fs;
-    use workspace::MultiWorkspace;
+    use workspace::{
+        MultiWorkspace,
+        item::{SerializableItemHandle, item_persistence_id, test::set_item_persistence_id},
+    };
 
     use super::*;
     use fs::MTime;
@@ -2720,11 +2670,7 @@ mod tests {
     use project::FakeFs;
     use serde_json::json;
     use std::path::{Path, PathBuf};
-    use util::{
-        path,
-        paths::PathWithPosition,
-        rel_path::{RelPath, rel_path},
-    };
+    use util::{path, paths::PathWithPosition, rel_path::RelPath};
     use workspace::path_link::{OpenTarget, OpenTargetFoundBy};
 
     #[gpui::test]
@@ -2942,7 +2888,7 @@ mod tests {
         project: Entity<Project>,
         cx: &mut VisualTestContext,
     ) -> Entity<Editor> {
-        workspace
+        let editor = workspace
             .update_in(cx, |workspace, window, cx| {
                 let pane = workspace.active_pane();
                 pane.update(cx, |_, cx| {
@@ -2957,7 +2903,999 @@ mod tests {
                 })
             })
             .await
+            .unwrap();
+        assert_ne!(
+            cx.update(|_, cx| item_persistence_id(&editor, cx))
+                .await
+                .unwrap(),
+            item_id
+        );
+        editor
+    }
+
+    #[gpui::test]
+    async fn test_serialize_unsaved_contents_independent_of_capability(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "file.txt": "saved" }))
+            .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let saved_buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/root/file.txt"), cx)
+            })
+            .await
+            .unwrap();
+        let file = saved_buffer.read_with(cx, |buffer, _| {
+            File::from_dyn(buffer.file()).unwrap().clone()
+        });
+        let mtime = file.disk_state.mtime();
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        for task in multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+            multi_workspace.flush_all_serialization(window, cx)
+        }) {
+            task.await;
+        }
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let workspace_id = workspace.read_with(cx, |workspace, _| workspace.database_id().unwrap());
+        let editor_db = cx.update(|_, cx| EditorDb::global(cx));
+
+        for disk_state in [file.disk_state, language::DiskState::Deleted] {
+            for (contents, conflict, expected_contents) in [
+                (None, false, None),
+                (Some("pending λ edits"), false, Some("pending λ edits")),
+                (Some(""), false, Some("")),
+                (None, true, Some("saved")),
+            ] {
+                let buffer = cx.new(|cx| {
+                    let mut buffer = Buffer::local("saved", cx);
+                    buffer.file_updated(Arc::new(file.clone()), cx);
+                    buffer.did_save(buffer.version(), mtime, cx);
+                    if let Some(contents) = contents {
+                        buffer.set_text(contents, cx);
+                    }
+                    buffer.file_updated(
+                        Arc::new(File {
+                            disk_state,
+                            ..file.clone()
+                        }),
+                        cx,
+                    );
+                    if conflict {
+                        buffer.set_conflict();
+                    }
+                    buffer
+                });
+                let editor = cx.new_window_entity(|window, cx| {
+                    let mut editor =
+                        Editor::for_buffer(buffer.clone(), Some(project.clone()), window, cx);
+                    editor.set_should_serialize(true, cx);
+                    editor
+                });
+                let item_id = cx
+                    .update(|_, cx| item_persistence_id(&editor, cx))
+                    .await
+                    .unwrap();
+
+                for capability in [Capability::ReadWrite, Capability::ReadOnly] {
+                    buffer.update(cx, |buffer, cx| buffer.set_capability(capability, cx));
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            editor.update(cx, |editor, cx| {
+                                editor
+                                    .serialize(
+                                        workspace,
+                                        Task::ready(Ok(item_id)).shared(),
+                                        false,
+                                        cx,
+                                    )
+                                    .unwrap()
+                            })
+                        })
+                        .await
+                        .unwrap();
+                    let serialized = editor_db
+                        .get_serialized_editor(item_id, workspace_id)
+                        .unwrap()
+                        .unwrap();
+                    assert_eq!(
+                        serialized,
+                        SerializedEditor {
+                            abs_path: Some(PathBuf::from(path!("/root/file.txt"))),
+                            contents: expected_contents.map(String::from),
+                            language: None,
+                            mtime,
+                        },
+                        "{disk_state:?}, {contents:?}, conflict={conflict}, {capability:?}"
+                    );
+                    if capability == Capability::ReadOnly {
+                        buffer.read_with(cx, |buffer, _| assert!(!buffer.is_dirty()));
+                    }
+                }
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_serialize_metadata_on_flush(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        for task in multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+            multi_workspace.flush_all_serialization(window, cx)
+        }) {
+            task.await;
+        }
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let workspace_id = workspace.read_with(cx, |workspace, _| workspace.database_id().unwrap());
+        let buffer = project
+            .update(cx, |project, cx| project.create_buffer(None, true, cx))
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| buffer.set_text("α\none\ntwo\nthree\n", cx));
+        let editor = cx.new_window_entity(|window, cx| {
+            Editor::for_buffer(buffer.clone(), Some(project.clone()), window, cx)
+        });
+        let item_id = cx
+            .update(|_, cx| item_persistence_id(&editor, cx))
+            .await
+            .unwrap();
+        assert_ne!(item_id, editor.entity_id().as_u64());
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                editor.update(cx, |editor, cx| {
+                    editor.set_should_serialize(true, cx);
+                    editor.added_to_workspace(workspace, window, cx);
+                    editor
+                        .serialize(workspace, Task::ready(Ok(item_id)).shared(), false, cx)
+                        .unwrap()
+                })
+            })
+            .await
+            .unwrap();
+        let editor_db = cx.update(|_, cx| EditorDb::global(cx));
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges([MultiBufferOffset(3)..MultiBufferOffset(6)]);
+            });
+            let snapshot = editor.buffer.read(cx).snapshot(cx);
+            editor.set_scroll_anchor(
+                ScrollAnchor {
+                    anchor: snapshot.anchor_before(Point::new(1, 0)),
+                    offset: point(2.0, 0.25),
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        cx.executor()
+            .advance_clock(workspace::SERIALIZATION_THROTTLE_TIME);
+        cx.run_until_parked();
+        assert_eq!(
+            editor_db
+                .get_editor_selections(item_id, workspace_id)
+                .unwrap(),
+            vec![(3, 6)]
+        );
+        assert_eq!(
+            editor_db
+                .get_scroll_position(item_id, workspace_id)
+                .unwrap(),
+            Some((1, 2.0, 0.25))
+        );
+
+        let (resume, persistence) = oneshot::channel();
+        let persistence_id = cx
+            .executor()
+            .spawn(async move {
+                persistence.await.unwrap();
+                Ok(item_id)
+            })
+            .shared();
+        let serialization = workspace.update_in(cx, |workspace, window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                    selections.select_ranges([MultiBufferOffset(7)..MultiBufferOffset(10)]);
+                });
+                let snapshot = editor.buffer.read(cx).snapshot(cx);
+                editor.set_scroll_anchor(
+                    ScrollAnchor {
+                        anchor: snapshot.anchor_before(Point::new(2, 0)),
+                        offset: point(1.0, 0.5),
+                    },
+                    window,
+                    cx,
+                );
+                buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "z\n")], None, cx));
+                editor
+                    .serialize(workspace, persistence_id, false, cx)
+                    .unwrap()
+            })
+        });
+        drop(editor);
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_text("edited after snapshot", cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            editor_db
+                .get_serialized_editor(item_id, workspace_id)
+                .unwrap()
+                .unwrap()
+                .contents
+                .as_deref(),
+            Some("α\none\ntwo\nthree\n")
+        );
+        resume.send(()).unwrap();
+        serialization.await.unwrap();
+        assert_eq!(
+            editor_db
+                .get_editor_selections(item_id, workspace_id)
+                .unwrap(),
+            vec![(9, 12)]
+        );
+        assert_eq!(
+            editor_db
+                .get_scroll_position(item_id, workspace_id)
+                .unwrap(),
+            Some((3, 1.0, 0.5))
+        );
+        cx.executor()
+            .advance_clock(std::time::Duration::from_secs(2));
+        cx.run_until_parked();
+        assert_eq!(
+            editor_db
+                .get_editor_selections(item_id, workspace_id)
+                .unwrap(),
+            vec![(9, 12)]
+        );
+        assert_eq!(
+            editor_db
+                .get_scroll_position(item_id, workspace_id)
+                .unwrap(),
+            Some((3, 1.0, 0.5))
+        );
+        let destination_project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let destination_workspace = multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+            multi_workspace.test_add_workspace(destination_project.clone(), window, cx)
+        });
+        for task in multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+            multi_workspace.flush_all_serialization(window, cx)
+        }) {
+            task.await;
+        }
+        let destination_workspace_id =
+            destination_workspace.read_with(cx, |workspace, _| workspace.database_id().unwrap());
+        assert_ne!(workspace_id, destination_workspace_id);
+        let pending_editor = SerializedEditor {
+            contents: Some("pending destination".to_owned()),
+            ..SerializedEditor::default()
+        };
+        editor_db
+            .save_serialized_editor(item_id, destination_workspace_id, pending_editor.clone())
+            .await
+            .unwrap();
+        editor_db
+            .save_editor_selections(item_id, destination_workspace_id, vec![(0, 7)])
+            .await
+            .unwrap();
+        let restored =
+            deserialize_editor(item_id, workspace_id, workspace.clone(), project, cx).await;
+        let restored_id = cx
+            .update(|_, cx| item_persistence_id(&restored, cx))
+            .await
+            .unwrap();
+        restored.read_with(cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "z\nα\none\ntwo\nthree\n")
+        });
+        let source_pane = workspace.update_in(cx, |workspace, window, cx| {
+            let pane = workspace.active_pane().clone();
+            workspace.add_item(
+                pane.clone(),
+                Box::new(restored.clone()),
+                None,
+                true,
+                false,
+                window,
+                cx,
+            );
+            pane
+        });
+        let destination_pane =
+            destination_workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        cx.update(|window, cx| {
+            workspace::move_item(
+                &source_pane,
+                &destination_pane,
+                restored.entity_id(),
+                0,
+                false,
+                window,
+                cx,
+            );
+        });
+        assert_eq!(source_pane.read_with(cx, |pane, _| pane.items_len()), 0);
+        assert_eq!(
+            destination_pane.read_with(cx, |pane, _| pane.items_len()),
+            1
+        );
+        cx.run_until_parked();
+        destination_workspace
+            .update_in(cx, |workspace, window, cx| {
+                let persistence_id = item_persistence_id(&restored, cx);
+                restored.update(cx, |editor, cx| {
+                    editor.set_should_serialize(true, cx);
+                    editor.added_to_workspace(workspace, window, cx);
+                    let buffer = editor.buffer.read(cx).as_singleton().unwrap();
+                    buffer.update(cx, |buffer, cx| {
+                        let end = buffer.len();
+                        buffer.edit([(end..end, "moved\n")], None, cx);
+                    });
+                    editor
+                        .serialize(workspace, persistence_id, false, cx)
+                        .unwrap()
+                })
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            editor_db
+                .get_serialized_editor(item_id, destination_workspace_id)
+                .unwrap(),
+            Some(pending_editor)
+        );
+        assert_eq!(
+            editor_db
+                .get_editor_selections(item_id, destination_workspace_id)
+                .unwrap(),
+            vec![(0, 7)]
+        );
+        assert_eq!(
+            editor_db
+                .get_editor_selections(restored_id, destination_workspace_id)
+                .unwrap(),
+            vec![(9, 12)]
+        );
+        assert_eq!(
+            editor_db
+                .get_scroll_position(restored_id, destination_workspace_id)
+                .unwrap(),
+            Some((3, 0.0, 0.5))
+        );
+        let pending = deserialize_editor(
+            item_id,
+            destination_workspace_id,
+            destination_workspace.clone(),
+            destination_project,
+            cx,
+        )
+        .await;
+        let pending_id = cx
+            .update(|_, cx| item_persistence_id(&pending, cx))
+            .await
+            .unwrap();
+        assert_ne!(pending_id, restored_id);
+        destination_workspace
+            .update(cx, |workspace, cx| {
+                let persistence_id = item_persistence_id(&pending, cx);
+                pending.update(cx, |editor, cx| {
+                    assert_eq!(editor.text(cx), "pending destination");
+                    editor.set_should_serialize(true, cx);
+                    editor
+                        .serialize(workspace, persistence_id, false, cx)
+                        .unwrap()
+                })
+            })
+            .await
+            .unwrap();
+        for (saved_id, saved_workspace_id, contents, selections) in [
+            (
+                item_id,
+                workspace_id,
+                "z\nα\none\ntwo\nthree\n",
+                vec![(9, 12)],
+            ),
+            (
+                item_id,
+                destination_workspace_id,
+                "pending destination",
+                vec![(0, 7)],
+            ),
+            (
+                restored_id,
+                destination_workspace_id,
+                "z\nα\none\ntwo\nthree\nmoved\n",
+                vec![(9, 12)],
+            ),
+            (
+                pending_id,
+                destination_workspace_id,
+                "pending destination",
+                vec![(0, 7)],
+            ),
+        ] {
+            assert_eq!(
+                editor_db
+                    .get_serialized_editor(saved_id, saved_workspace_id)
+                    .unwrap()
+                    .unwrap()
+                    .contents
+                    .as_deref(),
+                Some(contents)
+            );
+            assert_eq!(
+                editor_db
+                    .get_editor_selections(saved_id, saved_workspace_id)
+                    .unwrap(),
+                selections
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_serialize_orders_later_metadata_updates(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({"file.txt": "zero\none\ntwo\nthree\n"}),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/root/file.txt"), cx)
+            })
+            .await
+            .unwrap();
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        for task in multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+            multi_workspace.flush_all_serialization(window, cx)
+        }) {
+            task.await;
+        }
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let workspace_id = workspace.read_with(cx, |workspace, _| workspace.database_id().unwrap());
+        let editor = cx
+            .new_window_entity(|window, cx| Editor::for_buffer(buffer, Some(project), window, cx));
+        workspace.update_in(cx, |workspace, window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.added_to_workspace(workspace, window, cx)
+            });
+        });
+        workspace
+            .update(cx, |workspace, cx| {
+                SerializableItemHandle::serialize(&editor, workspace, false, cx).unwrap()
+            })
+            .await
+            .unwrap();
+        let item_id = cx
+            .update(|_, cx| item_persistence_id(&editor, cx))
+            .await
+            .unwrap();
+        let (resume, resumed) = oneshot::channel();
+        let pending_id = cx
+            .executor()
+            .spawn(async move {
+                resumed.await.unwrap();
+                Ok(item_id)
+            })
+            .shared();
+        let mut serialization = workspace.update_in(cx, |workspace, window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.fold_ranges(
+                    vec![MultiBufferOffset(5)..MultiBufferOffset(13)],
+                    false,
+                    window,
+                    cx,
+                );
+                editor.serialize(workspace, pending_id, false, cx).unwrap()
+            })
+        });
+        editor.update_in(cx, |editor, window, cx| {
+            editor.unfold_ranges(
+                &[MultiBufferOffset(5)..MultiBufferOffset(13)],
+                true,
+                false,
+                cx,
+            );
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges([MultiBufferOffset(9)..MultiBufferOffset(12)]);
+            });
+            let snapshot = editor.buffer.read(cx).snapshot(cx);
+            editor.set_scroll_anchor(
+                ScrollAnchor {
+                    anchor: snapshot.anchor_before(Point::new(2, 0)),
+                    offset: point(0.0, 0.5),
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        cx.executor()
+            .advance_clock(workspace::SERIALIZATION_THROTTLE_TIME);
+        cx.run_until_parked();
+        assert!((&mut serialization).now_or_never().is_none());
+        resume.send(()).unwrap();
+        serialization.await.unwrap();
+        cx.run_until_parked();
+        let db = cx.update(|_, cx| EditorDb::global(cx));
+        assert_eq!(
+            db.get_editor_selections(item_id, workspace_id).unwrap(),
+            vec![(9, 12)]
+        );
+        assert_eq!(
+            db.get_scroll_position(item_id, workspace_id).unwrap(),
+            Some((2, 0.0, 0.5))
+        );
+        assert_eq!(
+            db.get_file_folds(workspace_id, Path::new(path!("/root/file.txt")))
+                .unwrap(),
+            Vec::new()
+        );
+    }
+
+    #[gpui::test]
+    async fn test_split_serialization_preserves_latest_fold_change(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({"file.txt": "a\nb\nc\nd\n"}))
+            .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/root/file.txt"), cx)
+            })
+            .await
+            .unwrap();
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        for task in multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+            multi_workspace.flush_all_serialization(window, cx)
+        }) {
+            task.await;
+        }
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let workspace_id = workspace.read_with(cx, |workspace, _| workspace.database_id().unwrap());
+        let original = cx
+            .new_window_entity(|window, cx| Editor::for_buffer(buffer, Some(project), window, cx));
+        let split = original
+            .update_in(cx, |editor, window, cx| {
+                editor.clone_on_split(Some(workspace_id), window, cx)
+            })
+            .await
+            .unwrap();
+        workspace.update_in(cx, |workspace, window, cx| {
+            for editor in [&original, &split] {
+                editor.update(cx, |editor, cx| {
+                    editor.added_to_workspace(workspace, window, cx)
+                });
+            }
+            assert_eq!(original.read(cx).buffer, split.read(cx).buffer);
+            assert_ne!(original.read(cx).display_map, split.read(cx).display_map);
+        });
+        cx.run_until_parked();
+        let db = cx.update(|_, cx| EditorDb::global(cx));
+        let path = Arc::<Path>::from(Path::new(path!("/root/file.txt")));
+        db.save_file_folds(
+            workspace_id,
+            path.clone(),
+            vec![(0, 2, "a\n".to_owned(), "a\n".to_owned())],
+        )
+        .await
+        .unwrap();
+        for (first, second, range, (start, end, fingerprint)) in [
+            (&original, &split, None, (0, 2, "a\n")),
+            (&original, &split, Some(2..6), (2, 6, "b\nc\n")),
+            (&split, &original, Some(4..6), (4, 6, "c\n")),
+        ] {
+            if first == &split {
+                original.update(cx, |editor, cx| {
+                    editor.unfold_ranges(
+                        &[MultiBufferOffset(0)..MultiBufferOffset(8)],
+                        true,
+                        false,
+                        cx,
+                    );
+                });
+            }
+            if let Some(range) = range {
+                first.update_in(cx, |editor, window, cx| {
+                    editor.fold_ranges(
+                        vec![MultiBufferOffset(range.start)..MultiBufferOffset(range.end)],
+                        false,
+                        window,
+                        cx,
+                    );
+                });
+            }
+            second.update(cx, |editor, cx| {
+                let snapshot = editor.display_snapshot(cx);
+                assert_eq!(
+                    snapshot
+                        .folds_in_range(MultiBufferOffset(0)..snapshot.buffer_snapshot().len())
+                        .count(),
+                    0
+                );
+            });
+            let before = cx.executor().now();
+            for editor in [first, second] {
+                workspace
+                    .update(cx, |workspace, cx| {
+                        SerializableItemHandle::serialize(editor, workspace, false, cx).unwrap()
+                    })
+                    .await
+                    .unwrap();
+            }
+            assert_eq!(cx.executor().now(), before);
+            let expected = vec![(
+                start,
+                end,
+                Some(fingerprint.to_owned()),
+                Some(fingerprint.to_owned()),
+            )];
+            assert_eq!(db.get_file_folds(workspace_id, &path).unwrap(), expected);
+            cx.executor()
+                .advance_clock(workspace::SERIALIZATION_THROTTLE_TIME);
+            cx.run_until_parked();
+            assert_eq!(db.get_file_folds(workspace_id, &path).unwrap(), expected);
+        }
+    }
+
+    #[gpui::test]
+    async fn test_checked_flush_waits_for_close_serialization(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        for task in multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+            multi_workspace.flush_all_serialization(window, cx)
+        }) {
+            task.await;
+        }
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let workspace_id = workspace.read_with(cx, |workspace, _| workspace.database_id().unwrap());
+        let buffer = project
+            .update(cx, |project, cx| project.create_buffer(None, true, cx))
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| buffer.set_text("initial", cx));
+        let editor = cx.new_window_entity(|window, cx| {
+            let mut editor = Editor::for_buffer(buffer.clone(), Some(project), window, cx);
+            editor.set_should_serialize(true, cx);
+            editor
+        });
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.add_item(
+                    workspace.active_pane().clone(),
+                    Box::new(editor.clone()),
+                    None,
+                    true,
+                    false,
+                    window,
+                    cx,
+                );
+                workspace.flush_serialization_checked(window, cx)
+            })
+            .await
+            .unwrap();
+        let persistence_id = cx.update(|_, cx| item_persistence_id(&editor, cx));
+        let item_id = persistence_id.clone().await.unwrap();
+        buffer.update(cx, |buffer, cx| buffer.set_text("closing", cx));
+        let (resume, resumed) = oneshot::channel();
+        let mut closing = workspace.update(cx, |workspace, cx| {
+            let delayed_id = cx
+                .background_spawn(async move {
+                    resumed.await.unwrap();
+                    Ok(item_id)
+                })
+                .shared();
+            set_item_persistence_id(&editor, delayed_id, cx);
+            let closing = SerializableItemHandle::serialize(&editor, workspace, true, cx).unwrap();
+            set_item_persistence_id(&editor, persistence_id, cx);
+            closing
+        });
+        buffer.update(cx, |buffer, cx| buffer.set_text("latest", cx));
+        let mut flush = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.flush_serialization_checked(window, cx)
+        });
+        cx.run_until_parked();
+        assert!((&mut closing).now_or_never().is_none());
+        assert!((&mut flush).now_or_never().is_none());
+        let editor_db = cx.update(|_, cx| EditorDb::global(cx));
+        assert_eq!(
+            editor_db
+                .get_serialized_editor(item_id, workspace_id)
+                .unwrap()
+                .unwrap()
+                .contents
+                .as_deref(),
+            Some("initial")
+        );
+        resume.send(()).unwrap();
+        flush.await.unwrap();
+        closing.await.unwrap();
+        assert_eq!(
+            editor_db
+                .get_serialized_editor(item_id, workspace_id)
+                .unwrap()
+                .unwrap()
+                .contents
+                .as_deref(),
+            Some("latest")
+        );
+    }
+
+    #[gpui::test]
+    async fn test_cold_shutdown_preserves_fresh_metadata(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({"file.txt": ""}))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        for task in window
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.flush_all_serialization(window, cx)
+            })
             .unwrap()
+        {
+            task.await;
+        }
+        let workspace_id = window
+            .read_with(cx, |multi_workspace, cx| {
+                multi_workspace.database_id(cx).unwrap()
+            })
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/root/file.txt"), cx)
+            })
+            .await
+            .unwrap();
+        let database = cx.read(|cx| db::AppDatabase::global(cx).clone());
+        let editor_db = cx.read(EditorDb::global);
+        let (finished, completed) = oneshot::channel();
+        let mut finished = Some(finished);
+        cx.update(|cx| {
+            cx.on_app_quit(move |cx| {
+                let finished = finished.take().unwrap();
+                let flush = window
+                    .update(cx, |multi_workspace, window, cx| {
+                        multi_workspace.flush_pending_serialization(window, cx)
+                    })
+                    .unwrap();
+                async move {
+                    flush.await.unwrap();
+                    finished.send(()).unwrap();
+                }
+            })
+            .detach();
+        });
+        let persistence_id = window
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    let editor = cx.new(|cx| {
+                        Editor::for_buffer(buffer.clone(), Some(project.clone()), window, cx)
+                    });
+                    workspace.add_item(
+                        workspace.active_pane().clone(),
+                        Box::new(editor.clone()),
+                        None,
+                        true,
+                        true,
+                        window,
+                        cx,
+                    );
+                    editor.update(cx, |editor, cx| {
+                        editor.set_should_serialize(true, cx);
+                        editor.added_to_workspace(workspace, window, cx);
+                        buffer.update(cx, |buffer, cx| {
+                            buffer.set_text("zero\none\ntwo\nthree\nnew\n", cx)
+                        });
+                        editor.fold_ranges(
+                            vec![MultiBufferOffset(5)..MultiBufferOffset(13)],
+                            false,
+                            window,
+                            cx,
+                        );
+                        editor.change_selections(
+                            SelectionEffects::no_scroll(),
+                            window,
+                            cx,
+                            |selections| {
+                                selections
+                                    .select_ranges([MultiBufferOffset(0)..MultiBufferOffset(4)]);
+                            },
+                        );
+                        let snapshot = editor.buffer.read(cx).snapshot(cx);
+                        editor.set_scroll_anchor(
+                            ScrollAnchor {
+                                anchor: snapshot.anchor_before(Point::new(3, 0)),
+                                offset: point(0.0, 0.5),
+                            },
+                            window,
+                            cx,
+                        );
+                    });
+                    item_persistence_id(&editor, cx)
+                })
+            })
+            .unwrap();
+        let shutdown_started = cx.executor().now();
+        cx.quit();
+        assert_eq!(completed.now_or_never(), Some(Ok(())));
+        assert_eq!(cx.executor().now(), shutdown_started);
+        let item_id = persistence_id.now_or_never().unwrap().unwrap();
+        assert_eq!(
+            editor_db
+                .get_editor_selections(item_id, workspace_id)
+                .unwrap(),
+            vec![(0, 4)]
+        );
+        assert_eq!(
+            editor_db
+                .get_scroll_position(item_id, workspace_id)
+                .unwrap(),
+            Some((3, 0.0, 0.5))
+        );
+        assert_eq!(
+            editor_db
+                .get_file_folds(workspace_id, Path::new(path!("/root/file.txt")))
+                .unwrap(),
+            vec![(
+                5,
+                13,
+                Some("one\ntwo\n".to_owned()),
+                Some("one\ntwo\n".to_owned())
+            )]
+        );
+        drop((buffer, project));
+        let cx = &mut cx.new_app();
+        cx.update(|cx| cx.set_global(db::AppDatabase(database)));
+        init_test(cx, |_| {});
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let restored = deserialize_editor(item_id, workspace_id, workspace, project, cx).await;
+        restored.update(cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "zero\none\ntwo\nthree\nnew\n");
+            let snapshot = editor.display_snapshot(cx);
+            let buffer = snapshot.buffer_snapshot();
+            assert_eq!(
+                editor
+                    .selections
+                    .disjoint_anchors()
+                    .iter()
+                    .map(|selection| (
+                        selection.start.to_offset(buffer).0,
+                        selection.end.to_offset(buffer).0,
+                    ))
+                    .collect::<Vec<_>>(),
+                vec![(0, 4)]
+            );
+            assert_eq!(
+                snapshot
+                    .folds_in_range(MultiBufferOffset(0)..buffer.len())
+                    .map(|fold| (
+                        fold.range.start.to_offset(buffer).0,
+                        fold.range.end.to_offset(buffer).0,
+                    ))
+                    .collect::<Vec<_>>(),
+                vec![(5, 13)]
+            );
+            let scroll = editor.scroll_manager.native_anchor(&snapshot, cx);
+            assert_eq!(
+                (scroll.top_row(buffer), scroll.offset),
+                (3, point(0.0, 0.5))
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_deserialize_preserves_live_edits(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_file(path!("/file.rs"), "disk".into()).await;
+        for (live_text, saved_text, capability, conflict) in [
+            ("live λ", "saved λ", Capability::ReadWrite, false),
+            ("", "saved λ", Capability::ReadOnly, false),
+            ("live λ", "", Capability::ReadWrite, false),
+            ("disk", "saved λ", Capability::ReadWrite, true),
+            ("saved λ", "saved λ", Capability::ReadWrite, false),
+        ] {
+            let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
+            project.read_with(cx, |project, _| {
+                project.languages().add(languages::rust_lang())
+            });
+            let live_buffer = project
+                .update(cx, |project, cx| {
+                    project.open_local_buffer(path!("/file.rs"), cx)
+                })
+                .await
+                .unwrap();
+            let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+                MultiWorkspace::test_new(project.clone(), window, cx)
+            });
+            let workspace = multi_workspace
+                .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+            let db = cx.update(|_, cx| workspace::WorkspaceDb::global(cx));
+            let workspace_id = db.next_id().await.unwrap();
+            let item_id = db.next_item_id().await.unwrap();
+            let editor_db = cx.update(|_, cx| EditorDb::global(cx));
+            let mtime = live_buffer.read_with(cx, |buffer, _| buffer.saved_mtime());
+            editor_db
+                .save_serialized_editor(
+                    item_id,
+                    workspace_id,
+                    SerializedEditor {
+                        abs_path: Some(PathBuf::from(path!("/file.rs"))),
+                        contents: Some(saved_text.to_owned()),
+                        language: Some("Rust".to_owned()),
+                        mtime,
+                    },
+                )
+                .await
+                .unwrap();
+            let restore = workspace.update_in(cx, |workspace, window, cx| {
+                Editor::deserialize(
+                    project.clone(),
+                    workspace.weak_handle(),
+                    workspace_id,
+                    item_id,
+                    window,
+                    cx,
+                )
+            });
+            live_buffer.update(cx, |buffer, cx| {
+                buffer.set_text(live_text, cx);
+                if conflict {
+                    buffer.set_conflict();
+                }
+                buffer.set_capability(capability, cx);
+            });
+            let live_version = live_buffer.read_with(cx, |buffer, _| buffer.version());
+            let restored = restore.await.unwrap();
+            live_buffer.read_with(cx, |buffer, _| {
+                assert_eq!(buffer.text(), live_text);
+                assert_eq!(buffer.version(), live_version);
+                assert_eq!(buffer.saved_mtime(), mtime);
+                assert_eq!(buffer.has_conflict(), conflict);
+            });
+            restored.read_with(cx, |editor, cx| {
+                assert_eq!(editor.text(cx), saved_text);
+                let buffer = editor.buffer.read(cx).as_singleton().unwrap();
+                if live_text == saved_text {
+                    assert_eq!(buffer, live_buffer);
+                } else {
+                    assert_ne!(buffer, live_buffer);
+                    assert!(buffer.read(cx).file().is_none());
+                    assert_eq!(
+                        buffer.read(cx).language().map(|language| language.name()),
+                        Some("Rust".into())
+                    );
+                }
+            });
+        }
     }
 
     #[gpui::test]
@@ -2990,7 +3928,6 @@ mod tests {
                 contents: Some("fn main() {}".to_string()),
                 language: Some("Rust".to_string()),
                 mtime: Some(mtime),
-                recovered_from: None,
             };
 
             editor_db
@@ -3028,7 +3965,6 @@ mod tests {
                 contents: None,
                 language: None,
                 mtime: None,
-                recovered_from: None,
             };
 
             editor_db
@@ -3072,7 +4008,6 @@ mod tests {
                 contents: Some("hello".to_string()),
                 language: Some("Rust".to_string()),
                 mtime: None,
-                recovered_from: None,
             };
 
             editor_db
@@ -3116,7 +4051,6 @@ mod tests {
                 contents: Some("fn main() {}".to_string()),
                 language: Some("Rust".to_string()),
                 mtime: Some(old_mtime),
-                recovered_from: None,
             };
 
             editor_db
@@ -3151,7 +4085,6 @@ mod tests {
                 contents: None,
                 language: None,
                 mtime: None,
-                recovered_from: None,
             };
 
             editor_db
@@ -3206,7 +4139,6 @@ mod tests {
                 contents: Some("modified content".to_string()),
                 language: Some("Rust".to_string()),
                 mtime: Some(mtime),
-                recovered_from: None,
             };
 
             editor_db
@@ -3236,6 +4168,7 @@ mod tests {
         use serde_json::json;
         use std::cell::RefCell;
         use std::rc::Rc;
+        use util::rel_path::rel_path;
 
         init_test(cx, |_| {});
 
@@ -3332,7 +4265,6 @@ mod tests {
             contents: None,
             language: None,
             mtime: None,
-            recovered_from: None,
         };
 
         editor_db
@@ -3372,344 +4304,6 @@ mod tests {
         assert_eq!(
             pane_items_before, pane_items_after,
             "Editor::deserialize should not add items to panes as a side effect"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_deserialize_keeps_edits_made_before_restoration(cx: &mut gpui::TestAppContext) {
-        init_test(cx, |_| {});
-        cx.update(|cx| cx.set_global(db::AppDatabase::test_new()));
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            path!("/root"),
-            json!({ "edited.txt": "disk", "split.txt": "disk", "cleared.txt": "disk" }),
-        )
-        .await;
-        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-        let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
-        let workspace_id = cx
-            .update(|_, cx| workspace::WorkspaceDb::global(cx))
-            .next_id()
-            .await
-            .unwrap();
-        let editor_db = cx.update(|_, cx| EditorDb::global(cx));
-        for (item_id, file_name, contents) in [
-            (1, "edited.txt", "saved"),
-            (2, "split.txt", "saved"),
-            (3, "split.txt", "saved"),
-            (5, "edited.txt", "saved"),
-            (6, "cleared.txt", ""),
-        ] {
-            editor_db
-                .save_serialized_editor(
-                    item_id,
-                    workspace_id,
-                    SerializedEditor {
-                        abs_path: Some(PathBuf::from(path!("/root")).join(file_name)),
-                        contents: Some(contents.to_string()),
-                        language: None,
-                        mtime: None,
-                        recovered_from: None,
-                    },
-                )
-                .await
-                .unwrap();
-        }
-        editor_db
-            .save_serialized_editor(
-                4,
-                workspace_id,
-                SerializedEditor {
-                    abs_path: None,
-                    contents: Some("recovered earlier".to_string()),
-                    language: None,
-                    mtime: None,
-                    recovered_from: Some(PathBuf::from(path!("/root/edited.txt"))),
-                },
-            )
-            .await
-            .unwrap();
-        let mut live_buffers = Vec::new();
-        for path in [path!("/root/edited.txt"), path!("/root/cleared.txt")] {
-            let live_buffer = project
-                .update(cx, |project, cx| project.open_local_buffer(path, cx))
-                .await
-                .unwrap();
-            live_buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "live ")], None, cx));
-            live_buffers.push(live_buffer);
-        }
-
-        let mut restored = Vec::new();
-        let mut editors = Vec::new();
-        for item_id in [1, 2, 3, 4, 5, 6] {
-            let editor = deserialize_editor(
-                item_id,
-                workspace_id,
-                workspace.clone(),
-                project.clone(),
-                cx,
-            )
-            .await;
-            editors.push(editor.clone());
-            restored.push(editor.update(cx, |editor, cx| {
-                let buffer = editor.buffer().read(cx).as_singleton().unwrap();
-                (
-                    editor.text(cx),
-                    buffer.read(cx).file().map(|file| file.path().clone()),
-                    editor.tab_content_text(0, cx).to_string(),
-                    editor.recovered_from.clone(),
-                    buffer.entity_id(),
-                )
-            }));
-        }
-
-        let recovered_from = Some(PathBuf::from(path!("/root/edited.txt")));
-        assert_eq!(
-            (
-                live_buffers
-                    .iter()
-                    .map(|buffer| buffer.read_with(cx, |buffer, _| buffer.text()))
-                    .collect::<Vec<_>>(),
-                restored
-                    .iter()
-                    .map(|(text, path, tab, recovered_from, _)| (
-                        text.clone(),
-                        path.clone(),
-                        tab.clone(),
-                        recovered_from.clone()
-                    ))
-                    .collect::<Vec<_>>(),
-                restored[1].4 == restored[2].4,
-                restored[0].4 == restored[4].4,
-                restored[5].4 == live_buffers[1].entity_id(),
-            ),
-            (
-                vec!["live disk".to_string(), "live disk".to_string()],
-                vec![
-                    (
-                        "saved".to_string(),
-                        None,
-                        "edited.txt (recovered)".to_string(),
-                        recovered_from.clone()
-                    ),
-                    (
-                        "saved".to_string(),
-                        Some(rel_path("split.txt").into()),
-                        "split.txt".to_string(),
-                        None
-                    ),
-                    (
-                        "saved".to_string(),
-                        Some(rel_path("split.txt").into()),
-                        "split.txt".to_string(),
-                        None
-                    ),
-                    (
-                        "recovered earlier".to_string(),
-                        None,
-                        "edited.txt (recovered)".to_string(),
-                        recovered_from.clone()
-                    ),
-                    (
-                        "saved".to_string(),
-                        None,
-                        "edited.txt (recovered)".to_string(),
-                        recovered_from
-                    ),
-                    (
-                        "live disk".to_string(),
-                        Some(rel_path("cleared.txt").into()),
-                        "cleared.txt".to_string(),
-                        None
-                    ),
-                ],
-                true,
-                true,
-                true,
-            )
-        );
-    }
-
-    #[gpui::test]
-    async fn test_restoring_emptied_file_into_splits_keeps_it_dirty(cx: &mut gpui::TestAppContext) {
-        init_test(cx, |_| {});
-        cx.update(|cx| cx.set_global(db::AppDatabase::test_new()));
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/root"), json!({ "emptied.txt": "disk" }))
-            .await;
-        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-        let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
-        let workspace_id = cx
-            .update(|_, cx| workspace::WorkspaceDb::global(cx))
-            .next_id()
-            .await
-            .unwrap();
-        let editor_db = cx.update(|_, cx| EditorDb::global(cx));
-        let mtime = fs
-            .metadata(Path::new(path!("/root/emptied.txt")))
-            .await
-            .unwrap()
-            .unwrap()
-            .mtime;
-        for item_id in [1, 2] {
-            editor_db
-                .save_serialized_editor(
-                    item_id,
-                    workspace_id,
-                    SerializedEditor {
-                        abs_path: Some(PathBuf::from(path!("/root/emptied.txt"))),
-                        contents: Some(String::new()),
-                        language: None,
-                        mtime: Some(mtime),
-                        recovered_from: None,
-                    },
-                )
-                .await
-                .unwrap();
-        }
-
-        let mut restored = Vec::new();
-        for item_id in [1, 2] {
-            let editor = deserialize_editor(
-                item_id,
-                workspace_id,
-                workspace.clone(),
-                project.clone(),
-                cx,
-            )
-            .await;
-            restored.push(editor.update(cx, |editor, cx| {
-                (
-                    editor.text(cx),
-                    editor.is_dirty(cx),
-                    editor.recovered_from.clone(),
-                )
-            }));
-        }
-
-        assert_eq!(
-            restored,
-            vec![(String::new(), true, None), (String::new(), true, None)]
-        );
-    }
-
-    #[gpui::test]
-    async fn test_restoring_diverged_views_of_a_file_shares_one_buffer(
-        cx: &mut gpui::TestAppContext,
-    ) {
-        init_test(cx, |_| {});
-        cx.update(|cx| cx.set_global(db::AppDatabase::test_new()));
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/root"), json!({ "split.txt": "disk" }))
-            .await;
-        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-        let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
-        let workspace_id = cx
-            .update(|_, cx| workspace::WorkspaceDb::global(cx))
-            .next_id()
-            .await
-            .unwrap();
-        let editor_db = cx.update(|_, cx| EditorDb::global(cx));
-        for (item_id, contents) in [(1, "older"), (2, ""), (3, "newer"), (4, "newer")] {
-            editor_db
-                .save_serialized_editor(
-                    item_id,
-                    workspace_id,
-                    SerializedEditor {
-                        abs_path: Some(PathBuf::from(path!("/root/split.txt"))),
-                        contents: Some(contents.to_string()),
-                        language: None,
-                        mtime: None,
-                        recovered_from: None,
-                    },
-                )
-                .await
-                .unwrap();
-        }
-
-        let mut restored = Vec::new();
-        let mut editors = Vec::new();
-        for item_id in [1, 2, 3, 4] {
-            let editor = deserialize_editor(
-                item_id,
-                workspace_id,
-                workspace.clone(),
-                project.clone(),
-                cx,
-            )
-            .await;
-            editors.push(editor.clone());
-            restored.push(editor.update(cx, |editor, cx| {
-                (
-                    editor.text(cx),
-                    editor.is_dirty(cx),
-                    editor.recovered_from.clone(),
-                    editor.buffer().read(cx).as_singleton().unwrap().entity_id(),
-                )
-            }));
-        }
-
-        let source_buffer = restored[0].3;
-        assert_eq!(
-            restored,
-            vec![("older".to_string(), true, None, source_buffer); 4]
-        );
-    }
-
-    #[gpui::test]
-    async fn test_recovered_scratch_without_contents_keeps_its_source(
-        cx: &mut gpui::TestAppContext,
-    ) {
-        init_test(cx, |_| {});
-        cx.update(|cx| cx.set_global(db::AppDatabase::test_new()));
-
-        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
-        let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
-        let workspace_id = cx
-            .update(|_, cx| workspace::WorkspaceDb::global(cx))
-            .next_id()
-            .await
-            .unwrap();
-        cx.update(|_, cx| EditorDb::global(cx))
-            .save_serialized_editor(
-                1,
-                workspace_id,
-                SerializedEditor {
-                    abs_path: None,
-                    contents: None,
-                    language: None,
-                    mtime: None,
-                    recovered_from: Some(PathBuf::from(path!("/root/edited.txt"))),
-                },
-            )
-            .await
-            .unwrap();
-
-        let editor = deserialize_editor(1, workspace_id, workspace, project, cx).await;
-
-        let labels = editor.update(cx, |editor, cx| {
-            (
-                tab_title(editor, cx).to_string(),
-                editor.suggested_filename(cx).to_string(),
-            )
-        });
-        assert_eq!(
-            labels,
-            (
-                "edited.txt (recovered)".to_string(),
-                "edited.txt".to_string()
-            )
         );
     }
 

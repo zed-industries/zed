@@ -126,11 +126,7 @@ impl BreakpointList {
         cx: &mut App,
     ) {
         breakpoint_store.update(cx, |breakpoint_store, cx| {
-            if let Some((buffer, breakpoint)) = breakpoint_store.breakpoint_at_row(&path, row, cx) {
-                breakpoint_store.toggle_breakpoint(buffer, breakpoint, action, cx);
-            } else {
-                log::error!("Couldn't find breakpoint at row event though it exists: row {row}")
-            }
+            breakpoint_store.edit_source_breakpoint(path, row, action, cx);
         })
     }
 

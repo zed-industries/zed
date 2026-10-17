@@ -1,4 +1,5 @@
-use anyhow::Result;
+use anyhow::{Context as _, Result};
+use collections::HashMap;
 use db::{
     query,
     sqlez::{
@@ -9,11 +10,20 @@ use db::{
     sqlez_macros::sql,
 };
 use fs::MTime;
+use futures::{
+    FutureExt as _,
+    future::{BoxFuture, Shared},
+};
+use gpui::{App, AppContext as _, BackgroundExecutor, Context, Entity, Global, Task, WeakEntity};
 use itertools::Itertools as _;
+use parking_lot::Mutex;
 use std::{
+    future::Future,
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
+use util::ResultExt as _;
 
 use workspace::{ItemId, WorkspaceDb, WorkspaceId};
 
@@ -23,12 +33,181 @@ pub(crate) struct SerializedEditor {
     pub(crate) contents: Option<String>,
     pub(crate) language: Option<String>,
     pub(crate) mtime: Option<MTime>,
-    pub(crate) recovered_from: Option<PathBuf>,
 }
+
+pub(crate) type MetadataWrite = Shared<Task<Result<(), Arc<anyhow::Error>>>>;
+
+pub(crate) struct MetadataTask {
+    debounce: Option<Task<()>>,
+    state: Arc<Mutex<MetadataTaskState>>,
+}
+
+pub(crate) struct FileFoldTask {
+    workspace_id: WorkspaceId,
+    path: Arc<Path>,
+    folds: Vec<(usize, usize, String, String)>,
+    write: MetadataTask,
+}
+
+pub(crate) fn schedule_file_folds(
+    workspace_id: WorkspaceId,
+    path: Arc<Path>,
+    folds: Vec<(usize, usize, String, String)>,
+    delay: Duration,
+    cx: &mut App,
+) -> Entity<FileFoldTask> {
+    let key = (workspace_id, path.clone());
+    let task = if let Some(task) = cx
+        .default_global::<FileFoldTasks>()
+        .0
+        .get(&key)
+        .and_then(WeakEntity::upgrade)
+    {
+        task.update(cx, |task, _| task.folds = folds);
+        task
+    } else {
+        let task = cx.new(|_| FileFoldTask {
+            workspace_id,
+            path,
+            folds,
+            write: MetadataTask::default(),
+        });
+        let entity_id = task.entity_id();
+        cx.default_global::<FileFoldTasks>()
+            .0
+            .insert(key.clone(), task.downgrade());
+        cx.observe_release(&task, move |_, cx| {
+            let tasks = &mut cx.default_global::<FileFoldTasks>().0;
+            if tasks
+                .get(&key)
+                .is_some_and(|task| task.entity_id() == entity_id)
+            {
+                tasks.remove(&key);
+            }
+        })
+        .detach();
+        task
+    };
+    task.update(cx, |task, cx| task.schedule(delay, cx));
+    task
+}
+
+impl FileFoldTask {
+    pub fn flush(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> BoxFuture<'static, Result<(), Arc<anyhow::Error>>> {
+        self.schedule(Duration::ZERO, cx);
+        let write = self.write.flush(cx.background_executor());
+        let keep_alive = cx.entity();
+        async move {
+            let result = write.await;
+            drop(keep_alive);
+            result
+        }
+        .boxed()
+    }
+
+    fn schedule(&mut self, delay: Duration, cx: &mut Context<Self>) {
+        let db = EditorDb::global(cx);
+        let workspace_id = self.workspace_id;
+        let path = self.path.clone();
+        let folds = self.folds.clone();
+        self.write.schedule(
+            delay,
+            async move {
+                db.save_file_folds(workspace_id, path, folds)
+                    .await
+                    .with_context(|| {
+                        format!("persisting file folds for workspace {workspace_id:?}")
+                    })
+            },
+            cx.background_executor(),
+        );
+    }
+}
+
+impl Default for MetadataTask {
+    fn default() -> Self {
+        Self {
+            debounce: None,
+            state: Arc::new(Mutex::new(MetadataTaskState {
+                pending: None,
+                write: Task::ready(Ok(())).shared(),
+            })),
+        }
+    }
+}
+
+impl MetadataTask {
+    pub fn schedule(
+        &mut self,
+        delay: Duration,
+        write: impl Future<Output = Result<()>> + Send + 'static,
+        executor: &BackgroundExecutor,
+    ) {
+        self.state = Arc::new(Mutex::new(MetadataTaskState {
+            pending: Some(write.boxed()),
+            write: self.cancel_pending(),
+        }));
+        let state = self.state.clone();
+        let executor = executor.clone();
+        self.debounce = Some(executor.clone().spawn(async move {
+            executor.timer(delay).await;
+            let write = state.lock().flush(&executor);
+            write.await.log_err();
+        }));
+    }
+
+    pub fn flush(&mut self, executor: &BackgroundExecutor) -> MetadataWrite {
+        let write = self.state.lock().flush(executor);
+        self.debounce.take();
+        write
+    }
+
+    pub fn cancel_pending(&mut self) -> MetadataWrite {
+        let write = {
+            let mut state = self.state.lock();
+            state.pending.take();
+            state.write.clone()
+        };
+        self.debounce.take();
+        write
+    }
+
+    pub fn set_barrier(&mut self, write: MetadataWrite) {
+        self.state.lock().write = write;
+    }
+}
+
+struct MetadataTaskState {
+    pending: Option<BoxFuture<'static, Result<()>>>,
+    write: MetadataWrite,
+}
+
+impl MetadataTaskState {
+    fn flush(&mut self, executor: &BackgroundExecutor) -> MetadataWrite {
+        if let Some(write) = self.pending.take() {
+            let previous = self.write.clone();
+            self.write = executor
+                .spawn(async move {
+                    previous.await.log_err();
+                    write.await.map_err(Arc::new)
+                })
+                .shared();
+        }
+        self.write.clone()
+    }
+}
+
+#[derive(Default)]
+struct FileFoldTasks(HashMap<(WorkspaceId, Arc<Path>), WeakEntity<FileFoldTask>>);
+
+impl Global for FileFoldTasks {}
 
 impl StaticColumnCount for SerializedEditor {
     fn column_count() -> usize {
-        7
+        6
     }
 }
 
@@ -58,7 +237,6 @@ impl Bind for SerializedEditor {
                 statement.bind::<Option<i32>>(&None, start_index)?
             }
         };
-        let start_index = statement.bind(&self.recovered_from, start_index)?;
         Ok(start_index)
     }
 }
@@ -77,8 +255,6 @@ impl Column for SerializedEditor {
             Column::column(statement, start_index)?;
         let (mtime_nanos, start_index): (Option<i32>, i32) =
             Column::column(statement, start_index)?;
-        let (recovered_from, start_index): (Option<PathBuf>, i32) =
-            Column::column(statement, start_index)?;
 
         let mtime = mtime_seconds
             .zip(mtime_nanos)
@@ -89,7 +265,6 @@ impl Column for SerializedEditor {
             contents,
             language,
             mtime,
-            recovered_from,
         };
         Ok((editor, start_index))
     }
@@ -232,9 +407,6 @@ impl Domain for EditorDb {
             CREATE INDEX editor_selections_editor_id_workspace_id
             ON editor_selections (editor_id, workspace_id);
         ),
-        sql!(
-            ALTER TABLE editors ADD COLUMN recovered_from BLOB;
-        ),
     ];
 }
 
@@ -248,7 +420,7 @@ const MAX_QUERY_PLACEHOLDERS: usize = 32000;
 impl EditorDb {
     query! {
         pub fn get_serialized_editor(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<SerializedEditor>> {
-            SELECT path, buffer_path, contents, language, mtime_seconds, mtime_nanos, recovered_from FROM editors
+            SELECT path, buffer_path, contents, language, mtime_seconds, mtime_nanos FROM editors
             WHERE item_id = ? AND workspace_id = ?
         }
     }
@@ -256,9 +428,9 @@ impl EditorDb {
     query! {
         pub async fn save_serialized_editor(item_id: ItemId, workspace_id: WorkspaceId, serialized_editor: SerializedEditor) -> Result<()> {
             INSERT INTO editors
-                (item_id, workspace_id, path, buffer_path, contents, language, mtime_seconds, mtime_nanos, recovered_from)
+                (item_id, workspace_id, path, buffer_path, contents, language, mtime_seconds, mtime_nanos)
             VALUES
-                (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
             ON CONFLICT DO UPDATE SET
                 item_id = ?1,
                 workspace_id = ?2,
@@ -267,8 +439,7 @@ impl EditorDb {
                 contents = ?5,
                 language = ?6,
                 mtime_seconds = ?7,
-                mtime_nanos = ?8,
-                recovered_from = ?9
+                mtime_nanos = ?8
         }
     }
 
@@ -409,24 +580,114 @@ VALUES {placeholders};
         })
         .await
     }
-
-    pub async fn delete_file_folds(
-        &self,
-        workspace_id: WorkspaceId,
-        path: Arc<Path>,
-    ) -> Result<()> {
-        self.write(move |conn| {
-            conn.exec_bound(sql!(
-                DELETE FROM file_folds WHERE workspace_id = ?1 AND path = ?2;
-            ))?((workspace_id, path.as_ref()))
-        })
-        .await
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::channel::oneshot;
+
+    #[gpui::test]
+    async fn test_metadata_task_preserves_submitted_writes(cx: &mut gpui::TestAppContext) {
+        let mut metadata = MetadataTask::default();
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let (started, submitted) = oneshot::channel();
+        let (resume, resumed) = oneshot::channel();
+        metadata.schedule(
+            Duration::ZERO,
+            {
+                let writes = writes.clone();
+                async move {
+                    writes.lock().push(1);
+                    started.send(()).unwrap();
+                    resumed.await?;
+                    writes.lock().push(2);
+                    Ok(())
+                }
+            },
+            &cx.executor(),
+        );
+        submitted.await.unwrap();
+        metadata.schedule(
+            Duration::from_secs(1),
+            {
+                let writes = writes.clone();
+                async move {
+                    writes.lock().push(3);
+                    Ok(())
+                }
+            },
+            &cx.executor(),
+        );
+        let completion = metadata.cancel_pending();
+        drop(metadata);
+        assert!(completion.clone().now_or_never().is_none());
+        let before = cx.executor().now();
+        resume.send(()).unwrap();
+        completion.await.unwrap();
+        assert_eq!(*writes.lock(), vec![1, 2]);
+        assert_eq!(cx.executor().now(), before);
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert_eq!(*writes.lock(), vec![1, 2]);
+    }
+
+    #[gpui::test]
+    async fn test_file_fold_task_lifetime(cx: &mut gpui::TestAppContext) {
+        let db = cx.update(|cx| WorkspaceDb::global(cx));
+        let workspace_id = db.next_id().await.unwrap();
+        let db = cx.update(|cx| EditorDb::global(cx));
+        let path = Arc::<Path>::from(Path::new("/tmp/folds.txt"));
+        db.save_file_folds(
+            workspace_id,
+            path.clone(),
+            vec![(0, 2, "a\n".to_owned(), "a\n".to_owned())],
+        )
+        .await
+        .unwrap();
+        let released = cx.update(|cx| {
+            schedule_file_folds(
+                workspace_id,
+                path.clone(),
+                Vec::new(),
+                Duration::from_secs(1),
+                cx,
+            )
+            .downgrade()
+        });
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert!(released.upgrade().is_none());
+        assert_eq!(
+            db.get_file_folds(workspace_id, &path).unwrap(),
+            vec![(0, 2, Some("a\n".to_owned()), Some("a\n".to_owned()))]
+        );
+        let (released, completion) = cx.update(|cx| {
+            let task = schedule_file_folds(
+                workspace_id,
+                path.clone(),
+                vec![(2, 4, "b\n".to_owned(), "b\n".to_owned())],
+                Duration::from_secs(1),
+                cx,
+            );
+            (task.downgrade(), task.update(cx, |task, cx| task.flush(cx)))
+        });
+        let before = cx.executor().now();
+        completion.await.unwrap();
+        assert_eq!(cx.executor().now(), before);
+        cx.update(|_| {});
+        assert!(released.upgrade().is_none());
+        cx.update(|cx| {
+            assert_eq!(cx.default_global::<FileFoldTasks>().0.len(), 0);
+        });
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert_eq!(
+            db.get_file_folds(workspace_id, &path).unwrap(),
+            vec![(2, 4, Some("b\n".to_owned()), Some("b\n".to_owned()))]
+        );
+    }
 
     #[gpui::test]
     async fn test_save_and_get_serialized_editor(cx: &mut gpui::TestAppContext) {
@@ -439,7 +700,6 @@ mod tests {
             contents: None,
             language: None,
             mtime: None,
-            recovered_from: None,
         };
 
         editor_db
@@ -459,7 +719,6 @@ mod tests {
             contents: Some("Test".to_owned()),
             language: Some("Go".to_owned()),
             mtime: None,
-            recovered_from: None,
         };
 
         editor_db
@@ -479,7 +738,6 @@ mod tests {
             contents: None,
             language: None,
             mtime: None,
-            recovered_from: None,
         };
 
         editor_db
@@ -499,7 +757,6 @@ mod tests {
             contents: None,
             language: None,
             mtime: Some(MTime::from_seconds_and_nanos(100, 42)),
-            recovered_from: None,
         };
 
         editor_db
@@ -599,7 +856,7 @@ mod tests {
 
         // Test delete
         editor_db
-            .delete_file_folds(workspace_id, file_path.clone())
+            .save_file_folds(workspace_id, file_path.clone(), Vec::new())
             .await
             .unwrap();
         let retrieved = editor_db.get_file_folds(workspace_id, &file_path).unwrap();

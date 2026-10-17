@@ -1610,10 +1610,12 @@ mod git_worktrees {
 }
 
 mod trust_tests {
-    use collections::HashSet;
+    use collections::{HashMap, HashSet};
     use fs::FakeFs;
-    use gpui::TestAppContext;
-    use project::trusted_worktrees::*;
+    use futures::{FutureExt as _, channel::oneshot};
+    use gpui::{SharedString, TestAppContext};
+    use project::{git_store::RepositoryState, trusted_worktrees::*};
+    use std::sync::Arc;
 
     use serde_json::json;
     use settings::SettingsStore;
@@ -1657,6 +1659,151 @@ mod trust_tests {
                 "repository should default to untrusted when no trust system is initialized"
             );
         });
+    }
+
+    #[gpui::test(iterations = 20)]
+    async fn test_cli_environment_changes_preserve_git_jobs(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| init(DbTrustedPaths::default(), cx));
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({ ".git": {}, "a": { "file.txt": "hello" }, "b": { "file.txt": "world" } }),
+        )
+        .await;
+        let project = Project::test_with_worktree_trust(
+            fs,
+            [path!("/project/a").as_ref(), path!("/project/b").as_ref()],
+            cx,
+        )
+        .await;
+        cx.run_until_parked();
+        let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+        let (worktree_id, sibling_worktree_id) = worktree_store.read_with(cx, |store, cx| {
+            let mut worktrees = store.worktrees();
+            let worktree_id = worktrees.next().unwrap().read(cx).id();
+            let sibling_worktree_id = worktrees.next().unwrap().read(cx).id();
+            assert!(worktrees.next().is_none());
+            (worktree_id, sibling_worktree_id)
+        });
+        let trusted_worktrees = cx.update(|cx| TrustedWorktrees::try_get_global(cx).unwrap());
+        let repository = project.read_with(cx, |project, cx| {
+            assert_eq!(project.repositories(cx).len(), 1);
+            project.repositories(cx).values().next().unwrap().clone()
+        });
+        let environment = project.read_with(cx, |project, _| project.environment().clone());
+        let mut previous_environment = HashMap::default();
+
+        for cli_environment in [
+            None,
+            Some(HashMap::from_iter([
+                ("CLI_ENV".to_owned(), "first".to_owned()),
+                ("REMOVED_ENV".to_owned(), "old".to_owned()),
+            ])),
+            Some(HashMap::from_iter([(
+                "CLI_ENV".to_owned(),
+                "second".to_owned(),
+            )])),
+        ] {
+            trusted_worktrees.update(cx, |store, cx| {
+                store.trust(
+                    &worktree_store,
+                    HashSet::from_iter([
+                        PathTrust::Worktree(worktree_id),
+                        PathTrust::Worktree(sibling_worktree_id),
+                    ]),
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+            let (started_sender, started_receiver) = oneshot::channel();
+            let (release_sender, release_receiver) = oneshot::channel();
+            let mut running_job = repository.update(cx, |repository, _| {
+                repository.send_job(
+                    "hold_environment",
+                    Some(SharedString::from("Holding environment")),
+                    move |state, _| async move {
+                        let RepositoryState::Local(state) = state else {
+                            panic!("expected local repository");
+                        };
+                        assert!(state.backend.is_trusted());
+                        started_sender.send(state.environment.clone()).unwrap();
+                        release_receiver.await.unwrap();
+                        state
+                    },
+                )
+            });
+            assert_eq!(*started_receiver.await.unwrap(), previous_environment);
+            let mut queued_job = repository.update(cx, |repository, _| {
+                repository.send_job("queued_environment", None, |state, _| async move { state })
+            });
+            if let Some(cli_environment) = &cli_environment {
+                environment.update(cx, |environment, cx| {
+                    let mut superseded = cli_environment.clone();
+                    superseded.insert("CLI_ENV".to_owned(), "superseded".to_owned());
+                    environment.set_cli_environment(superseded, cx);
+                    environment.set_cli_environment(cli_environment.clone(), cx);
+                });
+            }
+            trusted_worktrees.update(cx, |store, cx| {
+                store.restrict(
+                    worktree_store.downgrade(),
+                    HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+                    cx,
+                );
+                assert_eq!(
+                    (
+                        store.can_trust(&worktree_store, worktree_id, cx),
+                        store.can_trust(&worktree_store, sibling_worktree_id, cx),
+                    ),
+                    (false, true)
+                );
+            });
+            cx.run_until_parked();
+            assert!(!repository.read_with(cx, |repository, _| repository.is_trusted()));
+            assert!((&mut running_job).now_or_never().is_none());
+            assert!((&mut queued_job).now_or_never().is_none());
+            repository.read_with(cx, |repository, _| {
+                assert!(repository.current_job().is_some());
+            });
+
+            release_sender.send(()).unwrap();
+            let old_state = running_job
+                .await
+                .expect("running job must not be cancelled");
+            assert_eq!(*old_state.environment, previous_environment);
+            let RepositoryState::Local(new_state) =
+                queued_job.await.expect("queued job must not be cancelled")
+            else {
+                panic!("expected local repository");
+            };
+            let mut expected_environment = previous_environment.clone();
+            if let Some(cli_environment) = cli_environment {
+                expected_environment = cli_environment.clone();
+                expected_environment.insert("ZED_ENVIRONMENT".to_owned(), "cli".to_owned());
+                environment.update(cx, |environment, cx| {
+                    environment.set_cli_environment(cli_environment, cx);
+                });
+            }
+            assert_eq!(*new_state.environment, expected_environment);
+            assert_eq!(
+                (
+                    old_state.backend.is_trusted(),
+                    new_state.backend.is_trusted()
+                ),
+                (false, false)
+            );
+            assert!(Arc::ptr_eq(&old_state.backend, &new_state.backend));
+            let future_job = repository.update(cx, |repository, _| {
+                repository.send_job("future_environment", None, |state, _| async move { state })
+            });
+            let RepositoryState::Local(future_state) = future_job.await.unwrap() else {
+                panic!("expected local repository");
+            };
+            assert_eq!(*future_state.environment, expected_environment);
+            assert!(Arc::ptr_eq(&new_state.backend, &future_state.backend));
+            previous_environment = expected_environment;
+        }
     }
 
     #[gpui::test]

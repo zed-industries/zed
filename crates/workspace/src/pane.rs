@@ -3,7 +3,7 @@ use crate::{
     OpenTerminal, OpenVisible, SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom,
     Workspace, WorkspaceItemBuilder, ZoomIn, ZoomOut,
     focus_follows_mouse::FocusFollowsMouse as _,
-    invalid_item_view::InvalidItemView,
+    invalid_item_view::{InvalidItemView, RestoringItem},
     item::{
         ActivateOnClose, ClosePosition, Item, ItemBufferKind, ItemHandle, ItemSettings,
         PreviewTabsSettings, ProjectItemKind, SaveOptions, ShowCloseButton, ShowDiagnostics,
@@ -325,6 +325,13 @@ const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 pub enum Event {
     AddItem {
         item: Box<dyn ItemHandle>,
+        restored: bool,
+    },
+    ReplaceItem {
+        old_item: Box<dyn ItemHandle>,
+        item: Box<dyn ItemHandle>,
+        active: bool,
+        focus_changed: bool,
     },
     ActivateItem {
         local: bool,
@@ -357,8 +364,14 @@ pub enum Event {
 impl fmt::Debug for Event {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Event::AddItem { item } => f
+            Event::AddItem { item, restored } => f
                 .debug_struct("AddItem")
+                .field("item", &item.item_id())
+                .field("restored", restored)
+                .finish(),
+            Event::ReplaceItem { old_item, item, .. } => f
+                .debug_struct("ReplaceItem")
+                .field("old_item", &old_item.item_id())
                 .field("item", &item.item_id())
                 .finish(),
             Event::ActivateItem { local, .. } => f
@@ -415,7 +428,7 @@ pub struct Pane {
     pub(crate) workspace: WeakEntity<Workspace>,
     project: WeakEntity<Project>,
     pub drag_split_direction: Option<SplitDirection>,
-    can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut Window, &mut App) -> bool>>,
+    can_drop_predicate: Option<Rc<dyn Fn(&dyn Any, &mut Window, &mut App) -> bool>>,
     can_split_predicate:
         Option<Arc<dyn Fn(&mut Self, &dyn Any, &mut Window, &mut Context<Self>) -> bool>>,
     can_toggle_zoom: bool,
@@ -569,6 +582,22 @@ impl Pane {
         ];
 
         let handle = cx.entity().downgrade();
+        let can_drop_predicate: Rc<dyn Fn(&dyn Any, &mut Window, &mut App) -> bool> = Rc::new({
+            let workspace = workspace.clone();
+            let pane_id = cx.entity().entity_id();
+            move |dragged, window, cx| {
+                if let Some(tab) = dragged.downcast_ref::<DraggedTab>()
+                    && tab.item.downcast::<RestoringItem>().is_some()
+                    && tab.pane.entity_id() != pane_id
+                    && tab.pane.read(cx).workspace != workspace
+                {
+                    return false;
+                }
+                can_drop_predicate
+                    .as_ref()
+                    .is_none_or(|predicate| predicate(dragged, window, cx))
+            }
+        });
 
         Self {
             alternate_file_items: (None, None),
@@ -601,7 +630,7 @@ impl Pane {
             drag_split_direction: None,
             workspace,
             project: project.downgrade(),
-            can_drop_predicate,
+            can_drop_predicate: Some(can_drop_predicate),
             can_split_predicate: None,
             can_toggle_zoom: true,
             should_display_tab_bar: Rc::new(|_, cx| TabBarSettings::get_global(cx).show),
@@ -995,10 +1024,6 @@ impl Pane {
         self.preview_item_id
     }
 
-    pub(crate) fn project(&self) -> &WeakEntity<Project> {
-        &self.project
-    }
-
     pub fn preview_item(&self) -> Option<Box<dyn ItemHandle>> {
         self.preview_item_id
             .and_then(|id| self.items.iter().find(|item| item.item_id() == id))
@@ -1211,6 +1236,16 @@ impl Pane {
     ) -> Option<usize> {
         let item_idx = self.preview_item_idx()?;
         let id = self.preview_item_id()?;
+        if self
+            .items
+            .get(item_idx)?
+            .downcast::<RestoringItem>()
+            .is_some()
+        {
+            self.unpreview_item_if_preview(id);
+            cx.notify();
+            return None;
+        }
         self.preview_item_id = None;
 
         let prev_active_item_index = self.active_item_index;
@@ -1337,7 +1372,6 @@ impl Pane {
                 self.activate_item(insertion_index, activate_pane, focus_item, window, cx);
             }
         } else {
-            let had_items = !self.items.is_empty();
             self.items.insert(insertion_index, item.clone());
             cx.notify();
 
@@ -1349,60 +1383,17 @@ impl Pane {
                 }
 
                 self.activate_item(insertion_index, activate_pane, focus_item, window, cx);
-            } else if had_items && insertion_index <= self.active_item_index {
-                self.active_item_index += 1;
             }
         }
 
         // only new adds or replaced items should be treated as "added". treating existing items as "added" would cause listeners
         // like markdown auto preview to treat a pane move as a new item / fresh open.
         if existing_item_index.is_none() || replaces_existing_item_in_pane {
-            cx.emit(Event::AddItem { item: item.clone() });
+            cx.emit(Event::AddItem {
+                item: item.clone(),
+                restored: false,
+            });
         }
-    }
-
-    pub(crate) fn insert_restored_item(
-        &mut self,
-        item: Box<dyn ItemHandle>,
-        destination_index: usize,
-        cx: &mut Context<Self>,
-    ) -> (Box<dyn ItemHandle>, bool) {
-        let project_entry_id = if item.buffer_kind(cx) == ItemBufferKind::Singleton {
-            item.project_entry_ids(cx).first().copied()
-        } else {
-            None
-        };
-        let live_item = self.items.iter().find(|existing_item| {
-            existing_item.item_id() == item.item_id()
-                || (project_entry_id.is_some()
-                    && existing_item.buffer_kind(cx) == ItemBufferKind::Singleton
-                    && existing_item.project_entry_ids(cx).first().copied() == project_entry_id)
-        });
-        if let Some(live_item) = live_item {
-            return (live_item.boxed_clone(), false);
-        }
-
-        if let Some(entry_id) = project_entry_id
-            && let Some(project) = self.project.upgrade()
-        {
-            let project = project.read(cx);
-            if let Some(project_path) = project.path_for_entry(entry_id, cx) {
-                let abs_path = project.absolute_path(&project_path, cx);
-                self.nav_history
-                    .0
-                    .lock()
-                    .paths_by_item
-                    .insert(item.item_id(), (project_path, abs_path));
-            }
-        }
-        let insertion_index = destination_index.min(self.items.len());
-        if !self.items.is_empty() && insertion_index <= self.active_item_index {
-            self.active_item_index += 1;
-        }
-        self.items.insert(insertion_index, item.clone());
-        cx.notify();
-        cx.emit(Event::AddItem { item: item.clone() });
-        (item, true)
     }
 
     pub fn add_item(
@@ -1427,6 +1418,132 @@ impl Pane {
             window,
             cx,
         )
+    }
+
+    pub fn add_restoring_item(
+        &mut self,
+        item: Entity<RestoringItem>,
+        active: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let index = self.items.len();
+        self.items.push(Box::new(item.clone()));
+        if active {
+            self.active_item_index = index;
+            self.update_history(index);
+            self.update_toolbar(window, cx);
+            self.update_active_tab(index);
+        }
+        cx.emit(Event::AddItem {
+            item: Box::new(item),
+            restored: true,
+        });
+        cx.notify();
+    }
+
+    pub fn replace_item(
+        &mut self,
+        old_item_id: EntityId,
+        item: Box<dyn ItemHandle>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(index) = self.index_for_item_id(old_item_id) else {
+            return false;
+        };
+        let item_id = item.item_id();
+        if item_id == old_item_id {
+            return true;
+        }
+        if self.index_for_item_id(item_id).is_some() {
+            return false;
+        }
+        let Some(slot) = self.items.get_mut(index) else {
+            return false;
+        };
+        let old_item = mem::replace(slot, item.clone());
+        let active = index == self.active_item_index;
+        let focus_item = active && old_item.item_focus_handle(cx).contains_focused(window, cx);
+        let mode = self.nav_history.mode();
+        self.nav_history.disable();
+        old_item.deactivated(window, cx);
+        old_item.on_removed(cx);
+        self.nav_history.set_mode(mode);
+
+        for entry in &mut self.activation_history {
+            if entry.entity_id == old_item_id {
+                entry.entity_id = item_id;
+            }
+        }
+        for alternate in [
+            &mut self.alternate_file_items.0,
+            &mut self.alternate_file_items.1,
+        ] {
+            if alternate
+                .as_ref()
+                .is_some_and(|item| item.id() == old_item_id)
+            {
+                *alternate = Some(item.downgrade_item());
+            }
+        }
+        self.last_focus_handle_by_item.remove(&old_item_id);
+        if self.preview_item_id == Some(old_item_id) {
+            self.preview_item_id = Some(item_id);
+        }
+        {
+            let weak_item = Arc::<dyn WeakItemHandle>::from(item.downgrade_item());
+            let history = &mut *self.nav_history.0.lock();
+            for entry in history
+                .backward_stack
+                .iter_mut()
+                .chain(history.forward_stack.iter_mut())
+                .chain(history.closed_stack.iter_mut())
+                .chain(
+                    history
+                        .tag_stack
+                        .iter_mut()
+                        .flat_map(|entry| [&mut entry.origin, &mut entry.target]),
+                )
+            {
+                if entry.item.id() == old_item_id {
+                    entry.item = weak_item.clone();
+                }
+            }
+            let old_path = history.paths_by_item.remove(&old_item_id);
+            let path = item
+                .project_path(cx)
+                .map(|path| {
+                    let absolute_path = self
+                        .project
+                        .upgrade()
+                        .and_then(|project| project.read(cx).absolute_path(&path, cx));
+                    (path, absolute_path)
+                })
+                .or(old_path);
+            if let Some(path) = path {
+                history.paths_by_item.insert(item_id, path);
+            }
+            if history.preview_item_id == Some(old_item_id) {
+                history.preview_item_id = Some(item_id);
+            }
+        }
+
+        if active {
+            self.update_toolbar(window, cx);
+            self.update_status_bar(window, cx);
+            if focus_item {
+                self.focus_active_item(window, cx);
+            }
+        }
+        cx.emit(Event::ReplaceItem {
+            old_item,
+            item,
+            active,
+            focus_changed: focus_item,
+        });
+        cx.notify();
+        true
     }
 
     pub fn items_len(&self) -> usize {
@@ -1937,7 +2054,11 @@ impl Pane {
                 continue;
             }
 
-            if let Some(true) = self.items.get(index).map(|item| item.is_dirty(cx)) {
+            if self
+                .items
+                .get(index)
+                .is_some_and(|item| item.is_dirty(cx) || item.downcast::<RestoringItem>().is_some())
+            {
                 continue;
             }
 
@@ -1991,17 +2112,13 @@ impl Pane {
     ) -> String {
         let mut file_names = BTreeSet::default();
         for item in items {
-            let singleton_title = (item.buffer_kind(cx) == ItemBufferKind::Singleton)
-                .then(|| item.tab_content_text(0, cx).to_string())
-                .filter(|title| !title.is_empty());
             item.for_each_project_item(cx, &mut |_, project_item| {
                 if !project_item.is_dirty() {
                     return;
                 }
                 let filename = project_item
                     .project_path(cx)
-                    .and_then(|path| path.path.file_name().map(ToOwned::to_owned))
-                    .or_else(|| singleton_title.clone());
+                    .and_then(|path| path.path.file_name().map(ToOwned::to_owned));
                 file_names.insert(filename.unwrap_or("untitled".to_string()));
             });
         }
@@ -2048,6 +2165,23 @@ impl Pane {
             return Task::ready(Ok(()));
         };
         cx.spawn_in(window, async move |pane, cx| {
+            if save_intent != SaveIntent::Skip
+                && items_to_close
+                    .iter()
+                    .any(|item| item.downcast::<RestoringItem>().is_some())
+            {
+                if !cx.update(RestoringItem::confirm_close)?.await {
+                    return Ok(());
+                }
+                if !pane.update(cx, |pane, _| {
+                    items_to_close
+                        .iter()
+                        .all(|item| pane.index_for_item(item.as_ref()).is_some())
+                })? {
+                    return Ok(());
+                }
+            }
+
             let dirty_items = workspace.update(cx, |workspace, cx| {
                 items_to_close
                     .iter()
@@ -2078,6 +2212,11 @@ impl Pane {
             }
 
             for item_to_close in items_to_close {
+                if !pane.update(cx, |pane, _| {
+                    pane.index_for_item(item_to_close.as_ref()).is_some()
+                })? {
+                    continue;
+                }
                 let mut should_close = true;
                 let mut should_save = true;
                 if save_intent == SaveIntent::Close {
@@ -2146,6 +2285,32 @@ impl Pane {
             pane.update(cx, |_, cx| cx.notify()).ok();
             Ok(())
         })
+    }
+
+    pub(crate) fn take_item_for_restore(
+        &mut self,
+        item_id: EntityId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Box<dyn ItemHandle>> {
+        let index = self.index_for_item_id(item_id)?;
+        if self.is_tab_pinned(index) {
+            self.pinned_tab_count -= 1;
+        }
+        let item = self.items.remove(index);
+        if index < self.active_item_index {
+            self.active_item_index -= 1;
+        }
+        self.active_item_index = self
+            .active_item_index
+            .min(self.items.len().saturating_sub(1));
+        self.activation_history
+            .retain(|entry| entry.entity_id != item_id);
+        self.last_focus_handle_by_item.remove(&item_id);
+        self.unpreview_item_if_preview(item_id);
+        self.update_toolbar(window, cx);
+        cx.notify();
+        Some(item)
     }
 
     pub fn take_active_item(
@@ -2321,13 +2486,19 @@ impl Pane {
 
         let path_style = project.read_with(cx, |project, cx| project.path_style(cx));
         if save_intent == SaveIntent::Skip {
-            let is_saveable_singleton = cx.update(|_window, cx| {
-                item.can_save(cx) && item.buffer_kind(cx) == ItemBufferKind::Singleton
+            let (is_saveable_singleton, is_untitled) = cx.update(|_window, cx| {
+                (
+                    item.can_save(cx) && item.buffer_kind(cx) == ItemBufferKind::Singleton,
+                    !item.can_save(cx) && item.can_save_as(cx),
+                )
             })?;
             if is_saveable_singleton {
                 pane.update_in(cx, |_, window, cx| item.reload(project, window, cx))?
-                    .await
-                    .log_err();
+                    .await?;
+            } else if is_untitled {
+                pane.update_in(cx, |pane, window, cx| {
+                    pane.remove_item(item.item_id(), false, true, window, cx);
+                })?;
             }
             return Ok(true);
         };
@@ -2488,18 +2659,16 @@ impl Pane {
                             Ok(0) => {}
                             Ok(1) => {
                                 // Don't save this file - reload from disk to discard changes
-                                pane.update_in(cx, |pane, _, cx| {
-                                    if pane.is_tab_pinned(item_ix) && !item.can_save(cx) {
-                                        pane.pinned_tab_count -= 1;
-                                    }
-                                })
-                                .log_err();
+
                                 if can_save && is_singleton {
                                     pane.update_in(cx, |_, window, cx| {
                                         item.reload(project.clone(), window, cx)
                                     })?
-                                    .await
-                                    .log_err();
+                                    .await?;
+                                } else if !can_save && can_save_as {
+                                    pane.update_in(cx, |pane, window, cx| {
+                                        pane.remove_item(item.item_id(), false, true, window, cx);
+                                    })?;
                                 }
                                 return Ok(true);
                             }
@@ -3778,6 +3947,9 @@ impl Pane {
             .drag_over::<DraggedSelection>(|bar, _, _, cx| {
                 bar.bg(cx.theme().colors().drop_target_background)
             })
+            .when_some(self.can_drop_predicate.clone(), |element, predicate| {
+                element.can_drop(move |dragged, window, cx| predicate(dragged, window, cx))
+            })
             .on_drop(
                 cx.listener(move |this, dragged_tab: &DraggedTab, window, cx| {
                     this.drag_split_direction = None;
@@ -3823,6 +3995,9 @@ impl Pane {
             })
             .drag_over::<DraggedSelection>(|bar, _, _, cx| {
                 bar.bg(cx.theme().colors().drop_target_background)
+            })
+            .when_some(self.can_drop_predicate.clone(), |element, predicate| {
+                element.can_drop(move |dragged, window, cx| predicate(dragged, window, cx))
             })
             .on_drop(
                 cx.listener(move |this, dragged_tab: &DraggedTab, window, cx| {
@@ -3873,6 +4048,14 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self
+            .can_drop_predicate
+            .as_ref()
+            .is_some_and(|predicate| !predicate(event.dragged_item(), window, cx))
+        {
+            self.drag_split_direction = None;
+            return;
+        }
         let can_split_predicate = self.can_split_predicate.take();
         let can_split = match &can_split_predicate {
             Some(can_split_predicate) => {
@@ -3931,6 +4114,13 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self
+            .can_drop_predicate
+            .as_ref()
+            .is_some_and(|predicate| !predicate(dragged_tab, window, cx))
+        {
+            return;
+        }
         if is_pane_target
             && ix == self.active_item_index
             && let Some(active_item) = self.active_item()
@@ -4332,7 +4522,7 @@ impl Pane {
     fn clean_item_ids(&self, cx: &mut Context<Pane>) -> Vec<EntityId> {
         self.items()
             .filter_map(|item| {
-                if !item.is_dirty(cx) {
+                if item.downcast::<RestoringItem>().is_none() && !item.is_dirty(cx) {
                     return Some(item.item_id());
                 }
 
@@ -5153,7 +5343,7 @@ mod tests {
     use crate::{
         Member,
         item::test::{TestItem, TestProjectItem},
-        persistence::model::{SerializedItem, SerializedPane},
+        persistence::model::SerializedItem,
     };
     use gpui::{
         AppContext, Axis, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
@@ -5224,6 +5414,175 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_replace_restoring_item(cx: &mut TestAppContext) {
+        for (count, replacement_index, active_index, pinned_count, preview, focused) in [
+            (1, 0, 0, 0, true, true),
+            (3, 1, 1, 2, false, false),
+            (3, 0, 2, 0, false, false),
+            (3, 2, 0, 0, true, false),
+        ] {
+            let app = &mut cx.new_app();
+            init_test(app);
+            let project = Project::test(FakeFs::new(app.executor()), None, app).await;
+            let (workspace, cx) =
+                app.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+            let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+            let (old_item_id, replacement) = pane.update_in(cx, |pane, window, cx| {
+                let placeholders = (0..count)
+                    .map(|index| {
+                        cx.new(|cx| {
+                            RestoringItem::new(
+                                SerializedItem::new("TestItem", index as u64, false, false),
+                                cx,
+                            )
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                for (index, placeholder) in placeholders.iter().enumerate() {
+                    pane.add_item(
+                        Box::new(placeholder.clone()),
+                        false,
+                        false,
+                        Some(index),
+                        window,
+                        cx,
+                    );
+                }
+                let placeholder = &placeholders[replacement_index];
+                let old_item_id = placeholder.entity_id();
+                pane.set_pinned_count(pinned_count);
+                pane.set_preview_item_id(preview.then_some(old_item_id), cx);
+                pane.activate_item(active_index, false, focused, window, cx);
+                let external_focus = cx.focus_handle();
+                if !focused {
+                    external_focus.focus(window, cx);
+                }
+                let previous_focus = window.focused(cx);
+                pane.max_tabs = NonZeroUsize::new(1);
+                pane.close_items_on_item_open(window, cx);
+                pane.close_items_on_settings_change(window, cx);
+                assert_eq!(pane.items_len(), count);
+                if preview {
+                    assert_eq!(pane.close_current_preview_item(window, cx), None);
+                    assert_eq!(pane.items_len(), count);
+                    assert_eq!(pane.preview_item_id(), None);
+                    pane.set_preview_item_id(Some(old_item_id), cx);
+                }
+                pane.alternate_file_items.1 = Some(placeholder.downgrade_item());
+                let navigation = pane
+                    .nav_history_for_item(placeholder)
+                    .navigation_entry(None);
+                {
+                    let history = &mut *pane.nav_history.0.lock();
+                    history.backward_stack.push_back(navigation.clone());
+                    history.forward_stack.push_back(navigation.clone());
+                    history.closed_stack.push_back(navigation.clone());
+                    history.tag_stack.push_back(TagStackEntry {
+                        origin: navigation.clone(),
+                        target: navigation,
+                    });
+                }
+                let replacement = cx.new(TestItem::new);
+                let expected_history = pane
+                    .activation_history
+                    .iter()
+                    .map(|entry| {
+                        (
+                            if entry.entity_id == old_item_id {
+                                replacement.entity_id()
+                            } else {
+                                entry.entity_id
+                            },
+                            entry.timestamp,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                pane.suppress_scroll = true;
+                assert!(pane.replace_item(old_item_id, Box::new(replacement.clone()), window, cx));
+                let mut expected_ids = placeholders
+                    .iter()
+                    .map(|item| item.entity_id())
+                    .collect::<Vec<_>>();
+                expected_ids[replacement_index] = replacement.entity_id();
+                assert_eq!(
+                    pane.items().map(|item| item.item_id()).collect::<Vec<_>>(),
+                    expected_ids
+                );
+                assert_eq!(pane.active_item_index(), active_index);
+                assert_eq!(pane.pinned_count(), pinned_count);
+                assert_eq!(
+                    pane.activation_history
+                        .iter()
+                        .map(|entry| (entry.entity_id, entry.timestamp))
+                        .collect::<Vec<_>>(),
+                    expected_history
+                );
+                assert!(pane.suppress_scroll);
+                assert_eq!(
+                    pane.preview_item_id(),
+                    preview.then_some(replacement.entity_id())
+                );
+                assert_eq!(
+                    window.focused(cx),
+                    if focused {
+                        Some(replacement.focus_handle(cx))
+                    } else {
+                        previous_focus
+                    },
+                );
+                assert_eq!(
+                    pane.alternate_file_items.1.as_ref().map(|item| item.id()),
+                    Some(replacement.entity_id())
+                );
+                {
+                    let history = &*pane.nav_history.0.lock();
+                    assert_eq!(
+                        history
+                            .backward_stack
+                            .iter()
+                            .chain(history.forward_stack.iter())
+                            .chain(history.closed_stack.iter())
+                            .chain(
+                                history
+                                    .tag_stack
+                                    .iter()
+                                    .flat_map(|entry| [&entry.origin, &entry.target])
+                            )
+                            .map(|entry| entry.item.id())
+                            .collect::<Vec<_>>(),
+                        vec![replacement.entity_id(); 5],
+                    );
+                    assert_eq!(history.preview_item_id, pane.preview_item_id());
+                }
+                assert!(!pane.replace_item(old_item_id, Box::new(replacement.clone()), window, cx));
+                if let Some(other) = placeholders
+                    .iter()
+                    .find(|item| item.entity_id() != old_item_id)
+                {
+                    assert!(!pane.replace_item(
+                        other.entity_id(),
+                        Box::new(replacement.clone()),
+                        window,
+                        cx
+                    ));
+                    pane.remove_item(other.entity_id(), false, false, window, cx);
+                    assert_eq!(pane.items_len(), count - 1);
+                }
+                (old_item_id, replacement)
+            });
+            workspace.read_with(cx, |workspace, cx| {
+                assert!(workspace.pane_for_item_id(old_item_id).is_none());
+                assert_eq!(
+                    workspace.pane_for_item_id(replacement.entity_id()),
+                    Some(pane.clone())
+                );
+                assert!(replacement.read(cx).nav_history.is_some());
+            });
+            app.quit();
+        }
+    }
+
+    #[gpui::test]
     async fn test_add_item_capped_to_max_tabs(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
@@ -5270,57 +5629,6 @@ mod tests {
                 "N5", "N6*",
             ],
             cx,
-        );
-    }
-
-    #[gpui::test]
-    async fn test_restoring_into_a_populated_pane_keeps_its_live_tabs(cx: &mut TestAppContext) {
-        init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, None, cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
-        let file_item = |label: &str, entry_id: u64, cx: &mut VisualTestContext| {
-            Box::new(cx.new(|cx| {
-                let project_item = TestProjectItem::new(entry_id, &format!("{label}.txt"), cx);
-                TestItem::new(cx)
-                    .with_label(label)
-                    .with_buffer_kind(ItemBufferKind::Singleton)
-                    .with_project_items(&[project_item])
-            })) as Box<dyn ItemHandle>
-        };
-        let live_a = file_item("A", 1, cx);
-        for item in [file_item("B", 2, cx), live_a.boxed_clone()] {
-            pane.update_in(cx, |pane, window, cx| {
-                pane.add_item(item, true, true, None, window, cx)
-            });
-        }
-        set_max_tabs(cx, Some(2));
-
-        let restored_items = [Some(file_item("A", 1, cx)), Some(file_item("C", 3, cx))];
-        let placed_item_ids = pane.update_in(cx, |pane, window, cx| {
-            SerializedPane::new(
-                vec![
-                    SerializedItem::new("TestItem", 10, true, false),
-                    SerializedItem::new("TestItem", 11, false, false),
-                ],
-                false,
-                0,
-            )
-            .place_restored_items(pane, &restored_items, window, cx)
-            .into_iter()
-            .map(|item| item.map(|item| item.item_id()))
-            .collect::<Vec<_>>()
-        });
-
-        assert_item_labels(&pane, ["C", "B", "A*"], cx);
-        assert_eq!(
-            placed_item_ids,
-            vec![
-                Some(live_a.item_id()),
-                restored_items[1].as_ref().map(|item| item.item_id())
-            ]
         );
     }
 
@@ -8095,6 +8403,22 @@ mod tests {
         add_labeled_item(&pane, "D", false, cx);
         add_labeled_item(&pane, "E", false, cx);
         assert_item_labels(&pane, ["A^", "B", "C^", "D", "E*"], cx);
+        let placeholders = pane.update_in(cx, |pane, window, cx| {
+            [false, true].map(|failed| {
+                let placeholder = cx.new(|cx| {
+                    let mut item = RestoringItem::new(
+                        SerializedItem::new("TestItem", if failed { 43 } else { 42 }, false, false),
+                        cx,
+                    );
+                    if failed {
+                        item.set_error(gpui::SharedString::from("restore failed"), cx);
+                    }
+                    item
+                });
+                pane.add_restoring_item(placeholder.clone(), false, window, cx);
+                placeholder
+            })
+        });
 
         pane.update_in(cx, |pane, window, cx| {
             pane.close_clean_items(
@@ -8107,6 +8431,99 @@ mod tests {
         })
         .await
         .unwrap();
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.items_len(), 4);
+            assert_eq!(
+                pane.items_of_type::<RestoringItem>().collect::<Vec<_>>(),
+                placeholders.to_vec()
+            );
+        });
+        let placeholder_ids = placeholders
+            .iter()
+            .map(Entity::entity_id)
+            .collect::<Vec<_>>();
+        let retained_ids = pane.read_with(cx, |pane, _| {
+            pane.items().map(|item| item.item_id()).collect::<Vec<_>>()
+        });
+        let close = pane.update_in(cx, |pane, window, cx| {
+            pane.close_items(window, cx, SaveIntent::Close, &|id| {
+                placeholder_ids.contains(&id)
+            })
+        });
+        cx.run_until_parked();
+        assert!(cx.has_pending_prompt());
+        cx.simulate_prompt_answer("Cancel");
+        close.await.unwrap();
+        assert_eq!(
+            pane.read_with(cx, |pane, _| {
+                pane.items().map(|item| item.item_id()).collect::<Vec<_>>()
+            }),
+            retained_ids
+        );
+
+        let close = pane.update_in(cx, |pane, window, cx| {
+            pane.close_items(window, cx, SaveIntent::Close, &|id| {
+                placeholder_ids.contains(&id)
+            })
+        });
+        cx.run_until_parked();
+        assert!(cx.has_pending_prompt());
+        let replacement = pane.update_in(cx, |pane, window, cx| {
+            let replacement = cx.new(|cx| TestItem::new(cx).with_dirty(true));
+            assert!(pane.replace_item(
+                placeholders[0].entity_id(),
+                Box::new(replacement.clone()),
+                window,
+                cx
+            ));
+            replacement
+        });
+        cx.simulate_prompt_answer("Close Without Saving");
+        close.await.unwrap();
+        let mut expected_ids = retained_ids;
+        for id in &mut expected_ids {
+            if *id == placeholders[0].entity_id() {
+                *id = replacement.entity_id();
+            }
+        }
+        assert_eq!(
+            pane.read_with(cx, |pane, _| {
+                pane.items().map(|item| item.item_id()).collect::<Vec<_>>()
+            }),
+            expected_ids
+        );
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.add_restoring_item(placeholders[0].clone(), false, window, cx);
+        });
+        let close = pane.update_in(cx, |pane, window, cx| {
+            pane.close_items(window, cx, SaveIntent::Close, &|id| {
+                placeholder_ids.contains(&id)
+            })
+        });
+        cx.run_until_parked();
+        assert!(cx.has_pending_prompt());
+        cx.simulate_prompt_answer("Close Without Saving");
+        close.await.unwrap();
+        assert!(!cx.has_pending_prompt());
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.items_of_type::<RestoringItem>().count(), 0);
+            assert_eq!(
+                pane.items_of_type::<TestItem>()
+                    .filter(|item| *item == replacement)
+                    .count(),
+                1
+            );
+        });
+        pane.update_in(cx, |pane, window, cx| {
+            pane.add_restoring_item(placeholders[0].clone(), false, window, cx);
+            pane.close_items(window, cx, SaveIntent::Skip, &|id| {
+                id == placeholders[0].entity_id() || id == replacement.entity_id()
+            })
+        })
+        .await
+        .unwrap();
+        assert!(!cx.has_pending_prompt());
         assert_item_labels(&pane, ["A^", "C*^"], cx);
     }
 

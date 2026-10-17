@@ -576,6 +576,10 @@ mod tests {
     }
 
     impl TerminalProvider for TestTerminalProvider {
+        fn flush_serialization(&self, _cx: &mut App) -> Task<Result<()>> {
+            Task::ready(Ok(()))
+        }
+
         fn spawn(
             &self,
             _task: task::SpawnInTerminal,

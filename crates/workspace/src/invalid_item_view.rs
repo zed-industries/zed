@@ -1,6 +1,6 @@
 use std::{path::Path, sync::Arc};
 
-use gpui::{EventEmitter, FocusHandle, Focusable};
+use gpui::{AppContext as _, EventEmitter, FocusHandle, Focusable, PromptLevel, Task};
 use ui::{
     App, Button, ButtonCommon, ButtonStyle, Clickable, Context, FluentBuilder, InteractiveElement,
     KeyBinding, Label, LabelCommon, LabelSize, ParentElement, Render, SharedString, Styled as _,
@@ -8,7 +8,7 @@ use ui::{
 };
 use zed_actions::workspace::OpenWithSystem;
 
-use crate::Item;
+use crate::{Item, item::ItemEvent, persistence::model::SerializedItem};
 
 /// A view to display when a certain buffer/image/other item fails to open.
 #[derive(Debug)]
@@ -110,5 +110,82 @@ impl Render for InvalidItemView {
                         }),
                 ),
             )
+    }
+}
+
+#[derive(Debug)]
+pub struct RestoringItem {
+    pub serialized_item: SerializedItem,
+    pub(crate) error: Option<SharedString>,
+    focus_handle: FocusHandle,
+}
+
+impl RestoringItem {
+    pub fn new(serialized_item: SerializedItem, cx: &mut App) -> Self {
+        Self {
+            serialized_item,
+            error: None,
+            focus_handle: cx.focus_handle(),
+        }
+    }
+
+    pub fn set_error(&mut self, error: SharedString, cx: &mut Context<Self>) {
+        self.error = Some(error);
+        cx.emit(ItemEvent::UpdateTab);
+        cx.notify();
+    }
+
+    pub(crate) fn confirm_close(window: &mut Window, cx: &mut App) -> Task<bool> {
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            "Some items have not finished restoring. Close without saving their changes?",
+            None,
+            &["Close Without Saving", "Cancel"],
+            cx,
+        );
+        cx.background_spawn(async move { answer.await.ok() == Some(0) })
+    }
+}
+
+impl Item for RestoringItem {
+    type Event = ItemEvent;
+
+    fn tab_content_text(&self, _: usize, _: &App) -> SharedString {
+        if self.error.is_some() {
+            SharedString::from(format!("{} (restore failed)", self.serialized_item.kind))
+        } else {
+            SharedString::from(format!("Restoring {}…", self.serialized_item.kind))
+        }
+    }
+
+    fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(ItemEvent)) {
+        f(*event);
+    }
+}
+
+impl EventEmitter<ItemEvent> for RestoringItem {}
+
+impl Focusable for RestoringItem {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Render for RestoringItem {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
+        v_flex()
+            .size_full()
+            .track_focus(&self.focus_handle(cx))
+            .justify_center()
+            .items_center()
+            .gap_2()
+            .child(Label::new(if self.error.is_some() {
+                "Could not restore item"
+            } else {
+                "Restoring item…"
+            }))
+            .when_some(self.error.clone(), |contents, error| {
+                contents.child(Label::new(error).size(LabelSize::Small))
+            })
     }
 }

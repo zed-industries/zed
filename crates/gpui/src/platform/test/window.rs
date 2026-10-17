@@ -58,6 +58,7 @@ pub(crate) struct TestWindowState {
     appearance: WindowAppearance,
     external_drag_files: Vec<(PathBuf, bool)>,
     start_external_drag_result: bool,
+    native_window_state: Option<Vec<u8>>,
 }
 
 #[derive(Clone)]
@@ -133,6 +134,7 @@ impl TestWindow {
             appearance: WindowAppearance::Light,
             external_drag_files: Vec::new(),
             start_external_drag_result: false,
+            native_window_state: None,
         })))
     }
     pub fn simulate_scheduled_frame(&self) -> bool {
@@ -442,6 +444,14 @@ impl PlatformWindow for TestWindow {
 
     fn set_title(&mut self, title: &str) {
         self.0.lock().title = Some(title.to_owned());
+    }
+
+    fn native_window_state(&self) -> Option<Vec<u8>> {
+        self.0.lock().native_window_state.clone()
+    }
+
+    fn restore_native_window_state(&self, state: &[u8]) {
+        self.0.lock().native_window_state = Some(state.to_vec());
     }
 
     fn set_app_id(&mut self, _app_id: &str) {}

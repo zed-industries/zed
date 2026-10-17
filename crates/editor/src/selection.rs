@@ -1,5 +1,6 @@
 use super::*;
 use crate::columnar_selection::ColumnarSelectionRows;
+use workspace::item::item_persistence_id;
 
 /// How a [`crate::actions::SelectNext`] or [`crate::actions::SelectPrevious`]
 /// action originated.
@@ -1706,31 +1707,33 @@ impl Editor {
             {
                 let snapshot = self.buffer().read(cx).snapshot(cx);
                 let selections = selections.clone();
-                let background_executor = cx.background_executor().clone();
-                let editor_id = workspace::persistent_item_id(&cx.entity(), cx);
+                let editor_id = item_persistence_id(&cx.entity(), cx);
                 let db = EditorDb::global(cx);
-                self.serialize_selections = cx.background_spawn(async move {
-                    background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;
-                    let db_selections = selections
-                        .iter()
-                        .map(|selection| {
-                            (
-                                selection.start.to_offset(&snapshot).0,
-                                selection.end.to_offset(&snapshot).0,
-                            )
-                        })
-                        .collect();
+                self.serialize_selections.schedule(
+                    SERIALIZATION_THROTTLE_TIME,
+                    async move {
+                        let editor_id = editor_id.await.map_err(|error| anyhow!(error))?;
+                        let db_selections = selections
+                            .iter()
+                            .map(|selection| {
+                                (
+                                    selection.start.to_offset(&snapshot).0,
+                                    selection.end.to_offset(&snapshot).0,
+                                )
+                            })
+                            .collect();
 
-                    db.save_editor_selections(editor_id, workspace_id, db_selections)
-                        .await
-                        .with_context(|| {
-                            format!(
-                                "persisting editor selections for editor {editor_id}, \
+                        db.save_editor_selections(editor_id, workspace_id, db_selections)
+                            .await
+                            .with_context(|| {
+                                format!(
+                                    "persisting editor selections for editor {editor_id}, \
                                 workspace {workspace_id:?}"
-                            )
-                        })
-                        .log_err();
-                });
+                                )
+                            })
+                    },
+                    cx.background_executor(),
+                );
             }
         }
 

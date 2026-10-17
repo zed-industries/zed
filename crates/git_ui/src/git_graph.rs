@@ -63,7 +63,7 @@ use ui::{
 use util::{ResultExt, debug_panic};
 use workspace::{
     ItemNavHistory, ModalView, Workspace,
-    item::{Item, ItemEvent, TabTooltipContent},
+    item::{Item, ItemCleanup, ItemEvent, ItemPersistenceId, TabTooltipContent},
 };
 
 const COMMIT_CIRCLE_RADIUS: Pixels = px(4.5);
@@ -4833,13 +4833,12 @@ impl workspace::SerializableItem for GitGraph {
         alive_items: Vec<workspace::ItemId>,
         _window: &mut Window,
         cx: &mut App,
-    ) -> Task<gpui::Result<()>> {
+    ) -> ItemCleanup {
         workspace::delete_unloaded_items(
             alive_items,
             workspace_id,
             "git_graphs",
             &persistence::GitGraphsDb::global(cx),
-            cx,
         )
     }
 
@@ -4948,7 +4947,7 @@ impl workspace::SerializableItem for GitGraph {
     fn serialize(
         &mut self,
         workspace: &mut Workspace,
-        item_id: workspace::ItemId,
+        item_id: ItemPersistenceId,
         _closing: bool,
         cx: &mut Context<Self>,
     ) -> Option<Task<gpui::Result<()>>> {
@@ -4983,6 +4982,7 @@ impl workspace::SerializableItem for GitGraph {
 
         let db = persistence::GitGraphsDb::global(cx);
         Some(cx.background_spawn(async move {
+            let item_id = item_id.await.map_err(|error| anyhow::anyhow!(error))?;
             db.save_git_graph(
                 item_id,
                 workspace_id,

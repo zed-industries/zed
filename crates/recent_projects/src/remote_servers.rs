@@ -3146,16 +3146,8 @@ mod filter_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tests::init_test;
     use gpui::TestAppContext;
-
-    fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
-        cx.update(|cx| {
-            let state = AppState::test(cx);
-            crate::init(cx);
-            editor::init(cx);
-            state
-        })
-    }
 
     #[gpui::test]
     async fn test_ssh_config_changes_refresh_rendered_hosts(cx: &mut TestAppContext) {

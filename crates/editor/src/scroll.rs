@@ -8,8 +8,9 @@ use crate::{
     MultiBufferSnapshot, RowExt, SelectionEffects, SizingBehavior, ToPoint,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
-    persistence::EditorDb,
+    persistence::{EditorDb, MetadataTask, MetadataWrite},
 };
+use anyhow::anyhow;
 pub use autoscroll::{Autoscroll, AutoscrollStrategy};
 use core::fmt::Debug;
 use gpui::{
@@ -23,7 +24,7 @@ use settings::Settings;
 use std::{cmp::Ordering, time::Duration};
 use ui::scrollbars::ScrollbarAutoHide;
 use util::ResultExt;
-use workspace::WorkspaceId;
+use workspace::{WorkspaceId, item::item_persistence_id};
 
 const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -163,7 +164,7 @@ pub struct ScrollManager {
     visible_column_count: Option<f64>,
     forbid_vertical_scroll: bool,
     minimap_thumb_state: Option<ScrollbarThumbState>,
-    _save_scroll_position_task: Task<()>,
+    _save_scroll_position_task: MetadataTask,
 }
 
 impl ScrollManager {
@@ -186,7 +187,7 @@ impl ScrollManager {
             visible_column_count: None,
             forbid_vertical_scroll: false,
             minimap_thumb_state: None,
-            _save_scroll_position_task: Task::ready(()),
+            _save_scroll_position_task: MetadataTask::default(),
         }
     }
 
@@ -374,6 +375,14 @@ impl ScrollManager {
         )
     }
 
+    pub(super) fn cancel_pending_serialization(&mut self) -> MetadataWrite {
+        self._save_scroll_position_task.cancel_pending()
+    }
+
+    pub(super) fn set_serialization_barrier(&mut self, write: MetadataWrite) {
+        self._save_scroll_position_task.set_barrier(write);
+    }
+
     fn set_anchor(
         &mut self,
         anchor: ScrollAnchor,
@@ -410,25 +419,26 @@ impl ScrollManager {
         cx.emit(EditorEvent::ScrollPositionChanged { local, autoscroll });
         self.show_scrollbars(window, cx);
         if let Some(workspace_id) = workspace_id {
-            let item_id = workspace::persistent_item_id(&cx.entity(), cx);
-            let executor = cx.background_executor().clone();
-
+            let item_id = item_persistence_id(&cx.entity(), cx);
             let db = EditorDb::global(cx);
-            self._save_scroll_position_task = cx.background_executor().spawn(async move {
-                executor.timer(Duration::from_millis(10)).await;
-                log::debug!(
-                    "Saving scroll position for item {item_id:?} in workspace {workspace_id:?}"
-                );
-                db.save_scroll_position(
-                    item_id,
-                    workspace_id,
-                    top_row,
-                    anchor.offset.x,
-                    anchor.offset.y,
-                )
-                .await
-                .log_err();
-            });
+            self._save_scroll_position_task.schedule(
+                Duration::from_millis(10),
+                async move {
+                    let item_id = item_id.await.map_err(|error| anyhow!(error))?;
+                    log::debug!(
+                        "Saving scroll position for item {item_id:?} in workspace {workspace_id:?}"
+                    );
+                    db.save_scroll_position(
+                        item_id,
+                        workspace_id,
+                        top_row,
+                        anchor.offset.x,
+                        anchor.offset.y,
+                    )
+                    .await
+                },
+                cx.background_executor(),
+            );
         }
         cx.notify();
 

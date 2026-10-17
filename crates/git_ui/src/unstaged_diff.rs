@@ -8,6 +8,7 @@ use editor::{
     DiffHunkRenderer, Editor, EditorEvent, SplittableEditor,
     actions::{GoToHunk, GoToPreviousHunk},
 };
+use futures::FutureExt as _;
 use git::{StageAll, StageAndNext};
 use gpui::{
     Action, AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, Render,
@@ -29,7 +30,7 @@ use ui::{DiffStat, Divider, Icon, Tooltip, Window, prelude::*};
 use workspace::{
     ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
-    item::{Item, ItemEvent, ItemHandle, SaveOptions},
+    item::{Item, ItemCleanup, ItemEvent, ItemHandle, ItemPersistenceId, SaveOptions},
     searchable::SearchableItemHandle,
 };
 
@@ -498,8 +499,8 @@ impl SerializableItem for UnstagedDiff {
         _: Vec<workspace::ItemId>,
         _: &mut Window,
         _: &mut App,
-    ) -> Task<Result<()>> {
-        Task::ready(Ok(()))
+    ) -> ItemCleanup {
+        futures::future::ready(Ok(())).boxed()
     }
 
     fn deserialize(
@@ -519,7 +520,7 @@ impl SerializableItem for UnstagedDiff {
     fn serialize(
         &mut self,
         _: &mut Workspace,
-        _: workspace::ItemId,
+        _item_id: ItemPersistenceId,
         _: bool,
         _: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {

@@ -1,19 +1,24 @@
 use crate::{
     CollaboratorId, DelayedDebouncedEditAction, FollowableViewRegistry, ItemNavHistory,
-    SerializableItemRegistry, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
+    SerializableItemRegistry, ToolbarItemLocation, ViewId, Workspace, WorkspaceDb, WorkspaceId,
     invalid_item_view::InvalidItemView,
     pane::{self, Pane},
     persistence::model::ItemId,
     searchable::SearchableItemHandle,
     workspace_settings::{AutosaveSetting, WorkspaceSettings},
 };
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use client::{Client, proto};
-use futures::channel::mpsc;
+use collections::HashMap;
+use futures::{
+    FutureExt,
+    channel::mpsc,
+    future::{BoxFuture, Shared},
+};
 use gpui::{
     Action, AnyElement, AnyEntity, AnyView, App, AppContext, Context, Entity, EntityId,
-    EventEmitter, FocusHandle, Focusable, Font, Pixels, Point, Render, SharedString, Task, TaskExt,
-    WeakEntity, Window,
+    EventEmitter, FocusHandle, Focusable, Font, Global, Pixels, Point, Render, SharedString, Task,
+    TaskExt, WeakEntity, Window,
 };
 use language::Capability;
 pub use language::HighlightedText;
@@ -414,7 +419,7 @@ pub trait SerializableItem: Item {
         alive_items: Vec<ItemId>,
         window: &mut Window,
         cx: &mut App,
-    ) -> Task<Result<()>>;
+    ) -> ItemCleanup;
 
     fn deserialize(
         _project: Entity<Project>,
@@ -428,7 +433,7 @@ pub trait SerializableItem: Item {
     fn serialize(
         &mut self,
         workspace: &mut Workspace,
-        item_id: ItemId,
+        item_id: ItemPersistenceId,
         closing: bool,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>>;
@@ -436,9 +441,53 @@ pub trait SerializableItem: Item {
     fn should_serialize(&self, event: &Self::Event) -> bool;
 }
 
+pub type ItemCleanup = BoxFuture<'static, Result<()>>;
+pub type ItemPersistenceId = Shared<Task<Result<ItemId, Arc<anyhow::Error>>>>;
+
+pub fn item_persistence_id<T: 'static>(item: &Entity<T>, cx: &mut App) -> ItemPersistenceId {
+    let entity_id = item.entity_id();
+    let ids = cx.default_global::<ItemPersistenceIds>();
+    let source_id = if let Some(binding) = ids.bindings.get(&entity_id) {
+        if !binding.persistence_id.peek().is_some_and(Result::is_err) {
+            return binding.persistence_id.clone();
+        }
+        binding.source_id
+    } else {
+        None
+    };
+    let db = WorkspaceDb::global(cx);
+    let persistence_id = cx
+        .background_spawn(async move { db.next_item_id().await.map_err(Arc::new) })
+        .shared();
+    set_item_persistence_id(item, persistence_id.clone(), source_id, cx);
+    persistence_id
+}
+
+pub fn bind_item_persistence_id<T: 'static>(
+    item: &Entity<T>,
+    source_id: ItemId,
+    cx: &mut App,
+) -> Result<()> {
+    let entity_id = item.entity_id();
+    if let Some(binding) = cx
+        .default_global::<ItemPersistenceIds>()
+        .bindings
+        .get(&entity_id)
+    {
+        anyhow::ensure!(
+            binding.source_id == Some(source_id),
+            "Item {entity_id:?} already has a persistence ID"
+        );
+        return Ok(());
+    }
+    let persistence_id = item_persistence_id(item, cx);
+    set_item_persistence_id(item, persistence_id, Some(source_id), cx);
+    Ok(())
+}
+
 pub trait SerializableItemHandle: ItemHandle {
     fn serialized_item_kind(&self) -> &'static str;
-    fn persistent_item_id(&self, cx: &mut App) -> ItemId;
+    fn persistence_id(&self, cx: &mut App) -> ItemPersistenceId;
     fn serialize(
         &self,
         workspace: &mut Workspace,
@@ -456,8 +505,8 @@ where
         T::serialized_item_kind()
     }
 
-    fn persistent_item_id(&self, cx: &mut App) -> ItemId {
-        crate::persistent_item_id(self, cx)
+    fn persistence_id(&self, cx: &mut App) -> ItemPersistenceId {
+        item_persistence_id(self, cx)
     }
 
     fn serialize(
@@ -466,10 +515,24 @@ where
         closing: bool,
         cx: &mut App,
     ) -> Option<Task<Result<()>>> {
-        let item_id = self.persistent_item_id(cx);
-        self.update(cx, |this, cx| {
-            this.serialize(workspace, item_id, closing, cx)
-        })
+        let persistence_id = self.persistence_id(cx);
+        let previous = workspace.persistence_task.clone();
+        let persistence_id = cx
+            .background_spawn(async move {
+                previous.await.log_err();
+                persistence_id.await
+            })
+            .shared();
+        let serialization = self.update(cx, |item, cx| {
+            item.serialize(workspace, persistence_id, closing, cx)
+        })?;
+        let serialization = cx
+            .background_spawn(async move { serialization.await.map_err(Arc::new) })
+            .shared();
+        workspace.persistence_task = serialization.clone();
+        Some(
+            cx.background_spawn(async move { serialization.await.map_err(|error| anyhow!(error)) }),
+        )
     }
 
     fn should_serialize(&self, event: &dyn Any, cx: &App) -> bool {
@@ -522,6 +585,7 @@ pub trait ItemHandle: 'static + Send {
         &self,
         workspace: &mut Workspace,
         pane: Entity<Pane>,
+        restored: bool,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     );
@@ -754,20 +818,31 @@ impl<T: Item> ItemHandle for Entity<T> {
         &self,
         workspace: &mut Workspace,
         pane: Entity<Pane>,
+        restored: bool,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
         let weak_item = self.downgrade();
         let history = pane.read(cx).nav_history_for_item(self);
-        self.update(cx, |this, cx| {
-            this.set_nav_history(history, window, cx);
-            this.added_to_workspace(workspace, window, cx);
+        let already_registered = workspace.panes_by_item.contains_key(&self.item_id());
+        self.update(cx, |item, cx| {
+            item.set_nav_history(history, window, cx);
+            if !restored || !already_registered {
+                item.added_to_workspace(workspace, window, cx);
+            }
         });
 
         if let Some(serializable_item) = self.to_serializable_item_handle(cx) {
-            workspace
-                .enqueue_item_serialization(serializable_item)
-                .log_err();
+            if restored {
+                workspace
+                    .serializable_items_tx
+                    .unbounded_send(serializable_item)
+                    .log_err();
+            } else {
+                workspace
+                    .enqueue_item_serialization(serializable_item)
+                    .log_err();
+            }
         }
 
         let new_pane_id = pane.entity_id();
@@ -1012,8 +1087,12 @@ impl<T: Item> ItemHandle for Entity<T> {
             .detach();
         }
 
-        cx.defer_in(window, |workspace, window, cx| {
-            workspace.serialize_workspace(window, cx);
+        cx.defer_in(window, move |workspace, window, cx| {
+            if restored {
+                workspace.schedule_serialize_workspace(window, cx);
+            } else {
+                workspace.serialize_workspace(window, cx);
+            }
         });
     }
 
@@ -1431,37 +1510,23 @@ impl<T: FollowableItem> WeakFollowableItemHandle for WeakEntity<T> {
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod test {
-    use super::{Item, ItemEvent, SerializableItem, TabContentParams};
+    use super::{
+        Item, ItemCleanup, ItemEvent, ItemPersistenceId, SerializableItem, TabContentParams,
+    };
     use crate::{
         ItemId, ItemNavHistory, Workspace, WorkspaceId,
         item::{ItemBufferKind, SaveOptions},
     };
-    use futures::{channel::oneshot, future::Shared};
+    use futures::FutureExt as _;
     use gpui::{
         AnyElement, App, AppContext as _, Context, Entity, EntityId, EventEmitter, Focusable,
-        Global, InteractiveElement, IntoElement, ParentElement, Render, SharedString, Task,
-        WeakEntity, Window,
+        InteractiveElement, IntoElement, ParentElement, Render, SharedString, Task, WeakEntity,
+        Window,
     };
     use language::Capability;
     use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
     use std::{any::Any, cell::Cell, sync::Arc};
     use util::rel_path::rel_path;
-
-    pub struct PendingTestItemDeserialization(pub Shared<oneshot::Receiver<()>>);
-
-    impl Global for PendingTestItemDeserialization {}
-
-    pub struct PendingTestItemIds(pub Vec<ItemId>);
-
-    impl Global for PendingTestItemIds {}
-
-    pub struct TestItemDeserializationAwaitsEnvironment;
-
-    impl Global for TestItemDeserializationAwaitsEnvironment {}
-
-    pub struct FailingTestItemDeserialization;
-
-    impl Global for FailingTestItemDeserialization {}
 
     pub struct TestProjectItem {
         pub entry_id: Option<ProjectEntryId>,
@@ -1514,6 +1579,14 @@ pub mod test {
 
     pub enum TestItemEvent {
         Edit,
+    }
+
+    pub fn set_item_persistence_id<T: 'static>(
+        item: &Entity<T>,
+        persistence_id: ItemPersistenceId,
+        cx: &mut App,
+    ) {
+        super::set_item_persistence_id(item, persistence_id, None, cx);
     }
 
     impl TestProjectItem {
@@ -1871,41 +1944,15 @@ pub mod test {
         }
 
         fn deserialize(
-            project: Entity<Project>,
+            _project: Entity<Project>,
             _workspace: WeakEntity<Workspace>,
             workspace_id: WorkspaceId,
-            item_id: ItemId,
+            _item_id: ItemId,
             _window: &mut Window,
             cx: &mut App,
         ) -> Task<anyhow::Result<Entity<Self>>> {
-            if cx.has_global::<FailingTestItemDeserialization>() {
-                return Task::ready(Err(anyhow::anyhow!("test item {item_id} is unavailable")));
-            }
-            if cx.has_global::<TestItemDeserializationAwaitsEnvironment>() {
-                let environment = project.read(cx).environment().clone();
-                let environment =
-                    environment.update(cx, |environment, cx| environment.default_environment(cx));
-                return cx.spawn(async move |cx| {
-                    environment.await;
-                    Ok(cx.new(|cx| Self::new_deserialized(workspace_id, cx)))
-                });
-            }
-            let item_is_pending = cx
-                .try_global::<PendingTestItemIds>()
-                .is_none_or(|PendingTestItemIds(item_ids)| item_ids.contains(&item_id));
-            match cx
-                .try_global::<PendingTestItemDeserialization>()
-                .filter(|_| item_is_pending)
-            {
-                Some(PendingTestItemDeserialization(pending)) => {
-                    let pending = pending.clone();
-                    cx.spawn(async move |cx| {
-                        pending.await.ok();
-                        Ok(cx.new(|cx| Self::new_deserialized(workspace_id, cx)))
-                    })
-                }
-                None => Task::ready(Ok(cx.new(|cx| Self::new_deserialized(workspace_id, cx)))),
-            }
+            let entity = cx.new(|cx| Self::new_deserialized(workspace_id, cx));
+            Task::ready(Ok(entity))
         }
 
         fn cleanup(
@@ -1913,14 +1960,14 @@ pub mod test {
             _alive_items: Vec<ItemId>,
             _window: &mut Window,
             _cx: &mut App,
-        ) -> Task<anyhow::Result<()>> {
-            Task::ready(Ok(()))
+        ) -> ItemCleanup {
+            futures::future::ready(Ok(())).boxed()
         }
 
         fn serialize(
             &mut self,
             _workspace: &mut Workspace,
-            _item_id: ItemId,
+            _item_id: ItemPersistenceId,
             _closing: bool,
             _cx: &mut Context<Self>,
         ) -> Option<Task<anyhow::Result<()>>> {
@@ -1936,5 +1983,211 @@ pub mod test {
         fn should_serialize(&self, _event: &Self::Event) -> bool {
             false
         }
+    }
+}
+
+#[derive(Default)]
+struct ItemPersistenceIds {
+    bindings: HashMap<EntityId, ItemPersistenceBinding>,
+}
+
+struct ItemPersistenceBinding {
+    source_id: Option<ItemId>,
+    persistence_id: ItemPersistenceId,
+}
+
+impl Global for ItemPersistenceIds {}
+
+#[cfg(test)]
+#[gpui::test]
+async fn test_item_persistence_id_binding(cx: &mut gpui::TestAppContext) {
+    crate::tests::init_test(cx);
+    let source_id = cx
+        .update(|cx| WorkspaceDb::global(cx))
+        .next_item_id()
+        .await
+        .unwrap();
+    let item = cx.new(|_| ());
+    let weak_item = item.downgrade();
+    let persistence_id = cx.update(|cx| {
+        bind_item_persistence_id(&item, source_id, cx).unwrap();
+        bind_item_persistence_id(&item, source_id, cx).unwrap();
+        assert!(bind_item_persistence_id(&item, source_id + 1, cx).is_err());
+        item_persistence_id(&item, cx)
+    });
+    let allocated_id = persistence_id.clone().await.unwrap();
+    assert_eq!(allocated_id, source_id + 1);
+    cx.update(|cx| {
+        bind_item_persistence_id(&item, source_id, cx).unwrap();
+        assert!(bind_item_persistence_id(&item, allocated_id, cx).is_err());
+    });
+    assert_eq!(
+        cx.update(|cx| item_persistence_id(&item, cx))
+            .await
+            .unwrap(),
+        allocated_id
+    );
+    cx.update(|_| drop(item));
+    assert!(weak_item.upgrade().is_none());
+    cx.update(|cx| assert_eq!(cx.global::<ItemPersistenceIds>().bindings.len(), 0));
+    assert_eq!(persistence_id.await.unwrap(), allocated_id);
+}
+
+#[cfg(test)]
+#[gpui::test]
+async fn test_item_persistence_id_collisions(cx: &mut gpui::TestAppContext) {
+    crate::tests::init_test(cx);
+    let db = cx.update(|cx| WorkspaceDb::global(cx));
+    db.write(|connection| {
+        connection.exec(
+            "CREATE TABLE legacy_item_payloads (
+                workspace_id INTEGER NOT NULL,
+                item_id INTEGER NOT NULL,
+                contents TEXT NOT NULL,
+                PRIMARY KEY (workspace_id, item_id)
+            ) STRICT;",
+        )?()?;
+        connection.exec(
+            "INSERT INTO legacy_item_payloads VALUES
+                (1, 42, 'first'), (2, 42, 'second'), (3, 100, 'orphan');",
+        )?()
+    })
+    .await
+    .unwrap();
+    let first = cx.new(|_| ());
+    let first_id = cx
+        .update(|cx| {
+            bind_item_persistence_id(&first, 42, cx).unwrap();
+            item_persistence_id(&first, cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(first_id, 101);
+    db.write(move |connection| {
+        connection.exec_bound(
+            "INSERT INTO legacy_item_payloads (workspace_id, item_id, contents)
+             SELECT 2, ?, contents FROM legacy_item_payloads WHERE workspace_id = 1 AND item_id = 42
+             ON CONFLICT (workspace_id, item_id) DO UPDATE SET contents = excluded.contents",
+        )?(first_id)
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        db.select::<(ItemId, String)>(
+            "SELECT item_id, contents FROM legacy_item_payloads WHERE workspace_id = 2 ORDER BY item_id",
+        )
+        .unwrap()()
+        .unwrap(),
+        vec![(42, String::from("second")), (first_id, String::from("first"))]
+    );
+    let second = cx.new(|_| ());
+    let second_id = cx
+        .update(|cx| {
+            bind_item_persistence_id(&second, 42, cx).unwrap();
+            bind_item_persistence_id(&second, 42, cx).unwrap();
+            item_persistence_id(&second, cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(second_id, 102);
+    cx.update(|cx| bind_item_persistence_id(&second, 42, cx).unwrap());
+    db.write(move |connection| {
+        connection.exec_bound(
+            "INSERT INTO legacy_item_payloads (workspace_id, item_id, contents)
+             SELECT 2, ?, contents FROM legacy_item_payloads WHERE workspace_id = 2 AND item_id = 42
+             ON CONFLICT (workspace_id, item_id) DO UPDATE SET contents = excluded.contents",
+        )?(second_id)
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        db.select::<(u64, ItemId, String)>(
+            "SELECT workspace_id, item_id, contents FROM legacy_item_payloads ORDER BY workspace_id, item_id",
+        )
+        .unwrap()()
+        .unwrap(),
+        vec![
+            (1, 42, String::from("first")),
+            (2, 42, String::from("second")),
+            (2, first_id, String::from("first")),
+            (2, second_id, String::from("second")),
+            (3, 100, String::from("orphan")),
+        ]
+    );
+    let ordinary = cx.new(|_| ());
+    let ordinary_id = cx
+        .update(|cx| item_persistence_id(&ordinary, cx))
+        .await
+        .unwrap();
+    assert_eq!(ordinary_id, 103);
+    assert_eq!(
+        cx.update(|cx| item_persistence_id(&ordinary, cx))
+            .await
+            .unwrap(),
+        ordinary_id
+    );
+    let released = cx.new(|_| ());
+    let pending_id = cx.update(|cx| item_persistence_id(&released, cx));
+    cx.update(|_| drop((first, second, ordinary, released)));
+    assert_eq!(pending_id.await.unwrap(), 104);
+    cx.update(|cx| assert_eq!(cx.global::<ItemPersistenceIds>().bindings.len(), 0));
+}
+
+#[cfg(test)]
+#[gpui::test]
+async fn test_serialization_captures_before_pending_persistence(cx: &mut gpui::TestAppContext) {
+    crate::tests::init_test(cx);
+    let project = Project::test(project::FakeFs::new(cx.executor()), None, cx).await;
+    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+    let captured = Rc::new(RefCell::new(false));
+    let item = cx.new(|cx| {
+        test::TestItem::new(cx).with_serialize({
+            let captured = captured.clone();
+            move || {
+                *captured.borrow_mut() = true;
+                Some(Task::ready(Ok(())))
+            }
+        })
+    });
+    let weak_item = item.downgrade();
+    let task = workspace.update(cx, |workspace, cx| {
+        let persistence_id = cx.background_spawn(std::future::pending()).shared();
+        set_item_persistence_id(&item, persistence_id, None, cx);
+        workspace.persistence_task = cx.background_spawn(std::future::pending()).shared();
+        let task = SerializableItemHandle::serialize(&item, workspace, false, cx).unwrap();
+        workspace.persistence_task = Task::ready(Ok(())).shared();
+        task
+    });
+    assert!(*captured.borrow());
+    cx.update(|_, _| drop(item));
+    assert!(weak_item.upgrade().is_none());
+    task.await.unwrap();
+}
+
+fn set_item_persistence_id<T: 'static>(
+    item: &Entity<T>,
+    persistence_id: ItemPersistenceId,
+    source_id: Option<ItemId>,
+    cx: &mut App,
+) {
+    let entity_id = item.entity_id();
+    let ids = cx.default_global::<ItemPersistenceIds>();
+    if ids
+        .bindings
+        .insert(
+            entity_id,
+            ItemPersistenceBinding {
+                source_id,
+                persistence_id,
+            },
+        )
+        .is_none()
+    {
+        cx.observe_release(item, move |_, cx| {
+            cx.default_global::<ItemPersistenceIds>()
+                .bindings
+                .remove(&entity_id);
+        })
+        .detach();
     }
 }

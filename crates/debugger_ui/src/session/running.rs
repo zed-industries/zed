@@ -1624,7 +1624,7 @@ impl RunningState {
     ) {
         this.serialize_layout(window, cx);
         match event {
-            Event::AddItem { item } => {
+            Event::AddItem { item, .. } | Event::ReplaceItem { item, .. } => {
                 if let Some(sub_view) = item.downcast::<SubView>() {
                     sub_view.update(cx, |sub_view, _| {
                         sub_view.set_host_pane(source_pane.downgrade());

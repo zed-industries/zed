@@ -1411,6 +1411,10 @@ mod tests {
     }
 
     impl TerminalProvider for CountingTerminalProvider {
+        fn flush_serialization(&self, _cx: &mut App) -> Task<anyhow::Result<()>> {
+            Task::ready(Ok(()))
+        }
+
         fn spawn(
             &self,
             task: SpawnInTerminal,

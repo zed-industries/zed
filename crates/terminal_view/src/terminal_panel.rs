@@ -1,15 +1,29 @@
-use std::{cmp, path::PathBuf, process::ExitStatus, sync::Arc, time::Duration};
+use std::{
+    cmp,
+    path::PathBuf,
+    process::ExitStatus,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
 
 use crate::{
     TerminalView, default_working_directory,
     persistence::{
-        SerializedItems, SerializedTerminalPanel, deserialize_terminal_panel, serialize_pane_group,
+        PersistenceTask, SerializedItems, SerializedTerminalPanel, deserialize_terminal_panel,
+        serialize_pane_group,
     },
 };
 use breadcrumbs::Breadcrumbs;
 use collections::HashMap;
 use db::kvp::KeyValueStore;
-use futures::{channel::oneshot, future::join_all};
+use futures::{
+    FutureExt as _,
+    channel::oneshot,
+    future::{BoxFuture, join_all, try_join_all},
+};
 use gpui::{
     Action, Anchor, App, AsyncApp, AsyncWindowContext, Context, Entity, EventEmitter, FocusHandle,
     Focusable, IntoElement, ParentElement, Pixels, Render, Styled, Task, TaskExt, WeakEntity,
@@ -25,16 +39,19 @@ use ui::{
     ButtonLike, Clickable, CommonAnimationExt, ContextMenu, FluentBuilder, PopoverMenu,
     SplitButton, Toggleable, Tooltip, prelude::*,
 };
-use util::{ResultExt, TryFutureExt, defer};
+use util::{ResultExt, defer};
 use workspace::{
     ActivateNextPane, ActivatePane, ActivatePaneDown, ActivatePaneLeft, ActivatePaneRight,
-    ActivatePaneUp, ActivatePreviousPane, DraggedTab, ItemId, MoveItemToPane,
-    MoveItemToPaneInDirection, MovePaneDown, MovePaneLeft, MovePaneRight, MovePaneUp, Pane,
-    PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitMode, SplitRight, SplitUp, SwapPaneDown,
-    SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom, Workspace,
+    ActivatePaneUp, ActivatePreviousPane, DraggedTab, MoveItemToPane, MoveItemToPaneInDirection,
+    MovePaneDown, MovePaneLeft, MovePaneRight, MovePaneUp, Pane, PaneGroup, SplitDirection,
+    SplitDown, SplitLeft, SplitMode, SplitRight, SplitUp, SwapPaneDown, SwapPaneLeft,
+    SwapPaneRight, SwapPaneUp, ToggleZoom, Workspace,
     dock::{DockPosition, Panel, PanelEvent, PanelHandle},
-    item::SerializableItem,
-    move_active_item, pane,
+    invalid_item_view::RestoringItem,
+    item::{SerializableItem, item_persistence_id},
+    move_active_item,
+    notifications::{NotificationId, simple_message_notification::MessageNotification},
+    pane,
 };
 
 use anyhow::{Result, anyhow};
@@ -80,9 +97,15 @@ pub struct TerminalPanel {
     focus_handle: FocusHandle,
     fs: Arc<dyn Fs>,
     workspace: WeakEntity<Workspace>,
+    persistence_enabled: Arc<AtomicBool>,
     pending_serialization: Task<Option<()>>,
+    serialization: PersistenceTask,
+    serialization_revision: Arc<AtomicUsize>,
+    serialization_key: Option<String>,
+    pub(crate) has_serialized_state: bool,
     pending_terminals_to_add: usize,
     restoring: bool,
+    preserve_saved_layout: bool,
     _restoration: Task<()>,
     deferred_tasks: HashMap<TaskId, Task<()>>,
     assistant_enabled: bool,
@@ -91,18 +114,36 @@ pub struct TerminalPanel {
 
 impl TerminalPanel {
     pub fn new(workspace: &Workspace, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let entity_id = cx.entity_id();
+        let panel = cx.weak_entity();
+        cx.default_global::<LiveTerminalPanels>()
+            .0
+            .insert(entity_id, panel);
+        cx.on_release(move |_, cx| {
+            cx.default_global::<LiveTerminalPanels>()
+                .0
+                .remove(&entity_id);
+        })
+        .detach();
         let project = workspace.project();
         let pane = new_terminal_pane(workspace.weak_handle(), project.clone(), false, window, cx);
         let center = PaneGroup::new(pane.clone());
+
         let terminal_panel = Self {
             center,
             active_pane: pane,
             focus_handle: cx.focus_handle(),
             fs: workspace.app_state().fs.clone(),
             workspace: workspace.weak_handle(),
+            persistence_enabled: workspace.persistence_enabled(),
             pending_serialization: Task::ready(None),
+            serialization: Task::ready(Ok(())).shared(),
+            serialization_revision: Arc::new(AtomicUsize::new(0)),
+            serialization_key: Self::serialization_key(workspace),
+            has_serialized_state: false,
             pending_terminals_to_add: 0,
             restoring: false,
+            preserve_saved_layout: false,
             _restoration: Task::ready(()),
             deferred_tasks: HashMap::default(),
             assistant_enabled: false,
@@ -239,31 +280,88 @@ impl TerminalPanel {
         mut cx: AsyncWindowContext,
     ) -> Result<Entity<Self>> {
         let terminal_panel = workspace.update_in(&mut cx, |workspace, window, cx| {
-            cx.new(|cx| TerminalPanel::new(workspace, window, cx))
+            let panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
+            workspace.set_terminal_provider(TerminalProvider(panel.clone()));
+            panel
         })?;
 
-        workspace
-            .update(&mut cx, |workspace, _| {
-                workspace.set_terminal_provider(TerminalProvider(terminal_panel.clone()))
-            })
-            .ok();
+        let serialized_panel = terminal_panel.update(&mut cx, |panel, cx| {
+            panel
+                .serialization_key
+                .as_ref()
+                .map(|key| KeyValueStore::global(cx).read_kvp(key))
+                .transpose()?
+                .flatten()
+                .map(|state| serde_json::from_str::<SerializedTerminalPanel>(&state))
+                .transpose()
+                .map_err(anyhow::Error::from)
+        });
+        let serialized_panel = match serialized_panel {
+            Ok(serialized_panel) => serialized_panel,
+            Err(error) => {
+                terminal_panel.update(&mut cx, |panel, cx| panel.fail_restoration(error, cx));
+                return Ok(terminal_panel);
+            }
+        };
+        let (project, database_id) = workspace.read_with(&cx, |workspace, _| {
+            (workspace.project().clone(), workspace.database_id())
+        })?;
+        let restore = cx.update(|window, cx| match serialized_panel.zip(database_id) {
+            Some((serialized_panel, database_id)) => deserialize_terminal_panel(
+                workspace.clone(),
+                project,
+                database_id,
+                serialized_panel,
+                terminal_panel.downgrade(),
+                window,
+                cx,
+            ),
+            None => Task::ready(Ok(0)),
+        })?;
 
         terminal_panel.update_in(&mut cx, |panel, window, cx| {
             panel.restoring = true;
             panel._restoration = cx.spawn_in(window, {
                 let workspace = workspace.clone();
+                let persistence_enabled = panel.persistence_enabled.clone();
                 async move |terminal_panel, cx| {
-                    let restored =
-                        Self::restore_serialized_state(workspace, terminal_panel.clone(), cx)
-                            .await
-                            .log_err()
-                            .unwrap_or(false);
+                    let restored = match Self::restore_serialized_state(
+                        workspace.clone(),
+                        terminal_panel.clone(),
+                        restore,
+                        cx,
+                    )
+                    .await
+                    {
+                        Ok(restored) => restored,
+                        Err(error) => {
+                            terminal_panel
+                                .update(cx, |panel, cx| panel.fail_restoration(error, cx))
+                                .ok();
+                            return;
+                        }
+                    };
                     let default_shell_task = terminal_panel
                         .update_in(cx, |terminal_panel, window, cx| {
                             terminal_panel.finish_restoration(restored, window, cx)
                         })
                         .ok()
                         .flatten();
+                    if let Ok(flush) =
+                        terminal_panel.update(cx, |panel, cx| panel.flush_serialization(cx))
+                    {
+                        flush.await.log_err();
+                    }
+                    if persistence_enabled.load(Ordering::Relaxed)
+                        && let Ok(Some(cleanup)) =
+                            workspace.update_in(cx, |workspace, window, cx| {
+                                workspace.database_id().map(|workspace_id| {
+                                    TerminalView::cleanup(workspace_id, Vec::new(), window, cx)
+                                })
+                            })
+                    {
+                        cleanup.await.log_err();
+                    }
                     if let Some(task) = default_shell_task {
                         task.await.log_err();
                     }
@@ -274,6 +372,41 @@ impl TerminalPanel {
         Ok(terminal_panel)
     }
 
+    fn fail_restoration(&mut self, error: anyhow::Error, cx: &mut Context<Self>) {
+        let error = error.context("Failed to restore terminal panel");
+        self.restoring = false;
+        self.preserve_saved_layout = true;
+        let panel = cx.weak_entity();
+        self.workspace
+            .update(cx, |workspace, cx| {
+                workspace.show_notification(NotificationId::unique::<TerminalPanel>(), cx, |cx| {
+                    cx.new(|cx| {
+                        MessageNotification::new(format!("{error:#}"), cx)
+                            .secondary_content(
+                                "The saved layout has been kept.\nNew terminals will not be saved until you replace it.",
+                            )
+                            .show_suppress_button(false)
+                            .primary_message("Replace Saved Layout")
+                            .primary_on_click(move |_, cx| {
+                                panel
+                                    .update(cx, |panel, cx| panel.replace_failed_layout(cx))
+                                    .ok();
+                            })
+                    })
+                });
+            })
+            .ok();
+        cx.notify();
+    }
+
+    fn replace_failed_layout(&mut self, cx: &mut Context<Self>) {
+        if self.preserve_saved_layout {
+            self.preserve_saved_layout = false;
+            self.has_serialized_state = true;
+            self.serialize(cx);
+        }
+    }
+
     fn finish_restoration(
         &mut self,
         restored: bool,
@@ -281,13 +414,14 @@ impl TerminalPanel {
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<WeakEntity<Terminal>>>> {
         self.restoring = false;
+
         let has_terminals = self
             .center
             .panes()
             .into_iter()
             .any(|pane| pane.read(cx).items_len() > 0);
         if restored || has_terminals {
-            self.serialize(cx);
+            self.schedule_serialization(cx);
         }
         cx.notify();
         if self.active && self.has_no_terminals(cx) {
@@ -311,104 +445,10 @@ impl TerminalPanel {
     async fn restore_serialized_state(
         workspace: WeakEntity<Workspace>,
         terminal_panel: WeakEntity<Self>,
+        restore: Task<Result<usize>>,
         cx: &mut AsyncWindowContext,
     ) -> Result<bool> {
-        let mut restored = false;
-        if let Some((database_id, serialization_key, kvp)) = workspace
-            .read_with(cx, |workspace, cx| {
-                workspace
-                    .database_id()
-                    .zip(TerminalPanel::serialization_key(workspace))
-                    .map(|(id, key)| (id, key, KeyValueStore::global(cx)))
-            })
-            .ok()
-            .flatten()
-            && let Some(serialized_panel) = cx
-                .background_spawn(async move { kvp.read_kvp(&serialization_key) })
-                .await
-                .log_err()
-                .flatten()
-                .map(|panel| serde_json::from_str::<SerializedTerminalPanel>(&panel))
-                .transpose()
-                .log_err()
-                .flatten()
-        {
-            let started_at = std::time::Instant::now();
-            let deserialized = workspace
-                .update_in(cx, |workspace, window, cx| {
-                    deserialize_terminal_panel(
-                        workspace.weak_handle(),
-                        workspace.project().clone(),
-                        database_id,
-                        serialized_panel,
-                        terminal_panel.clone(),
-                        window,
-                        cx,
-                    )
-                })?
-                .await;
-            if let Some(restored_terminals) = deserialized.log_err() {
-                restored = restored_terminals > 0;
-                log::debug!(
-                    "terminal panel: restored {restored_terminals} serialized terminal(s) in {:?}",
-                    started_at.elapsed()
-                );
-            }
-        }
-
-        // Since panels/docks are loaded outside from the workspace, we cleanup here, instead of through the workspace.
-        let cleanup = workspace.update_in(cx, |workspace, window, cx| {
-            let alive_item_ids = terminal_panel.upgrade().map(|terminal_panel| {
-                let terminal_views = terminal_panel
-                    .read(cx)
-                    .center
-                    .panes()
-                    .into_iter()
-                    .flat_map(|pane| pane.read(cx).items())
-                    .filter_map(|item| item.act_as::<TerminalView>(cx))
-                    .collect::<Vec<_>>();
-                terminal_views
-                    .iter()
-                    .map(|terminal_view| workspace::persistent_item_id(terminal_view, cx))
-                    .collect::<Vec<ItemId>>()
-            });
-            alive_item_ids
-                .zip(workspace.database_id())
-                .map(|(alive_item_ids, workspace_id)| {
-                    let cleanup_task =
-                        TerminalView::cleanup(workspace_id, alive_item_ids.clone(), window, cx);
-                    (cleanup_task, alive_item_ids)
-                })
-        })?;
-        if let Some((cleanup_task, alive_item_ids)) = cleanup {
-            cleanup_task.await.log_err();
-            terminal_panel
-                .update(cx, |terminal_panel, cx| {
-                    let terminals_to_reserialize = terminal_panel
-                        .center
-                        .panes()
-                        .into_iter()
-                        .flat_map(|pane| {
-                            pane.read(cx)
-                                .items()
-                                .filter_map(|item| item.act_as::<TerminalView>(cx))
-                                .collect::<Vec<_>>()
-                        })
-                        .collect::<Vec<_>>()
-                        .into_iter()
-                        .filter(|terminal_view| {
-                            !alive_item_ids
-                                .contains(&workspace::persistent_item_id(terminal_view, cx))
-                        })
-                        .collect::<Vec<_>>();
-                    for terminal_view in terminals_to_reserialize {
-                        terminal_view.update(cx, |terminal_view, cx| {
-                            terminal_view.mark_needs_serialize(cx)
-                        });
-                    }
-                })
-                .ok();
-        }
+        let restored = restore.await? > 0;
 
         let should_focus = workspace
             .update_in(cx, |workspace, window, cx| {
@@ -455,6 +495,7 @@ impl TerminalPanel {
                 {
                     focus_on_pane.focus_handle(cx).focus(window, cx);
                 }
+                self.serialize(cx);
             }
             pane::Event::ZoomIn => {
                 for pane in self.center.panes() {
@@ -474,13 +515,25 @@ impl TerminalPanel {
                 cx.emit(PanelEvent::ZoomOut);
                 cx.notify();
             }
-            pane::Event::AddItem { item } => {
+            pane::Event::AddItem { item, restored } => {
                 if let Some(workspace) = self.workspace.upgrade() {
                     workspace.update(cx, |workspace, cx| {
-                        item.added_to_pane(workspace, pane.clone(), window, cx)
+                        item.added_to_pane(workspace, pane.clone(), *restored, window, cx)
                     })
                 }
-                self.serialize(cx);
+                if *restored {
+                    self.schedule_serialization(cx);
+                } else {
+                    self.serialize(cx);
+                }
+            }
+            pane::Event::ReplaceItem { item, .. } => {
+                if let Some(workspace) = self.workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        item.added_to_pane(workspace, pane.clone(), true, window, cx)
+                    });
+                }
+                self.schedule_serialization(cx);
             }
             &pane::Event::Split { direction, mode } => {
                 match mode {
@@ -495,6 +548,7 @@ impl TerminalPanel {
                             panel
                                 .update_in(cx, |panel, window, cx| {
                                     panel.center.split(&pane, &new_pane, direction, cx);
+                                    panel.serialize(cx);
                                     window.focus(&new_pane.focus_handle(cx), cx);
                                 })
                                 .ok();
@@ -519,12 +573,16 @@ impl TerminalPanel {
                             pane.add_item(item, true, true, None, window, cx);
                         });
                         self.center.split(&pane, &new_pane, direction, cx);
+                        self.serialize(cx);
                         window.focus(&new_pane.focus_handle(cx), cx);
                     }
                 };
             }
             pane::Event::Focus => {
-                self.active_pane = pane.clone();
+                if self.active_pane != *pane {
+                    self.active_pane = pane.clone();
+                    self.serialize(cx);
+                }
             }
             pane::Event::ItemPinned | pane::Event::ItemUnpinned => {
                 self.serialize(cx);
@@ -1054,48 +1112,164 @@ impl TerminalPanel {
         cx.notify();
     }
 
-    fn serialize(&mut self, cx: &mut Context<Self>) {
-        if self.restoring {
-            return;
+    pub fn flush_serialization(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        self.pending_serialization = Task::ready(None);
+        let revision = self.serialization_revision.clone();
+        let captured_revision = revision.load(Ordering::Relaxed);
+        let flush = self.serialize_snapshot(cx);
+        cx.background_spawn(async move {
+            flush.await?;
+            anyhow::ensure!(
+                revision.load(Ordering::Relaxed) == captured_revision,
+                "Terminal panel changed during serialization flush"
+            );
+            Ok(())
+        })
+    }
+
+    fn serialize_snapshot(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        if !self.persistence_enabled.load(Ordering::Relaxed) || self.preserve_saved_layout {
+            let serialization = self.serialization.clone();
+            return cx.background_spawn(async move {
+                serialization.await.map_err(|error| anyhow!(error))
+            });
         }
-        let Some(serialization_key) = self
-            .workspace
-            .read_with(cx, |workspace, _| {
-                TerminalPanel::serialization_key(workspace)
-            })
-            .ok()
-            .flatten()
-        else {
-            return;
+        let Some(serialization_key) = self.serialization_key.clone() else {
+            return Task::ready(Ok(()));
         };
+        let terminals = self
+            .center
+            .panes()
+            .into_iter()
+            .flat_map(|pane| pane.read(cx).items())
+            .filter_map(|item| item.act_as::<TerminalView>(cx))
+            .filter(|terminal| terminal.read(cx).terminal().read(cx).task().is_none())
+            .collect::<Vec<_>>();
+        if terminals.is_empty()
+            && !self.has_serialized_state
+            && !self.center.panes().into_iter().any(|pane| {
+                pane.read(cx).items().any(|item| {
+                    item.downcast::<RestoringItem>().is_some_and(|item| {
+                        item.read(cx).serialized_item.kind.as_ref() == "Terminal"
+                    })
+                })
+            })
+        {
+            return Task::ready(Ok(()));
+        }
+        let previous = self.serialization.clone();
+        let previous = cx
+            .background_spawn(async move {
+                previous.await.log_err();
+            })
+            .shared();
+        let metadata = terminals
+            .into_iter()
+            .filter_map(|terminal| {
+                let item_id = item_persistence_id(&terminal, cx);
+                let previous = previous.clone();
+                let item_id = cx
+                    .background_spawn(async move {
+                        previous.await;
+                        item_id.await
+                    })
+                    .shared();
+                terminal.update(cx, |terminal, cx| terminal.serialize_state(item_id, cx))
+            })
+            .collect::<Vec<_>>();
+        let items = serialize_pane_group(&self.center, &self.active_pane, cx);
         let kvp = KeyValueStore::global(cx);
+        self.has_serialized_state = true;
+        let serialization = cx
+            .background_spawn(async move {
+                previous.await;
+                async move {
+                    try_join_all(metadata).await?;
+                    let items = items.await?;
+                    kvp.write_kvp(
+                        serialization_key,
+                        serde_json::to_string(&SerializedTerminalPanel {
+                            items: SerializedItems::WithSplits(items),
+                            active_item_id: None,
+                        })?,
+                    )
+                    .await
+                }
+                .await
+                .map_err(Arc::new)
+            })
+            .shared();
+        self.serialization = serialization.clone();
+        cx.background_spawn(async move { serialization.await.map_err(|error| anyhow!(error)) })
+    }
+
+    pub(crate) fn cleanup_barrier(
+        workspace_id: workspace::WorkspaceId,
+        cleanup: BoxFuture<'static, Result<()>>,
+        cx: &mut App,
+    ) -> BoxFuture<'static, Result<()>> {
+        let key = Self::database_serialization_key(workspace_id);
+        let panels = cx
+            .default_global::<LiveTerminalPanels>()
+            .0
+            .values()
+            .filter_map(WeakEntity::upgrade)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .filter(|panel| panel.read(cx).serialization_key.as_ref() == Some(&key))
+            .collect::<Vec<_>>();
+        if panels.is_empty() {
+            return cleanup;
+        }
+        let previous = panels
+            .iter()
+            .map(|panel| panel.read(cx).serialization.clone())
+            .collect::<Vec<_>>();
+        let (start, started) = oneshot::channel();
+        let cleanup = cx
+            .background_spawn(async move {
+                for previous in previous {
+                    previous.await?;
+                }
+                if started.await.is_ok() {
+                    cleanup.await.map_err(Arc::new)
+                } else {
+                    Ok(())
+                }
+            })
+            .shared();
+        for panel in panels {
+            panel.update(cx, |panel, _| panel.serialization = cleanup.clone());
+        }
+        async move {
+            start.send(()).ok();
+            cleanup.await.map_err(|error| anyhow!(error))
+        }
+        .boxed()
+    }
+
+    pub(crate) fn database_serialization_key(workspace_id: workspace::WorkspaceId) -> String {
+        format!(
+            "{:?}-{:?}",
+            TERMINAL_PANEL_KEY,
+            i64::from(workspace_id).to_string()
+        )
+    }
+
+    fn serialize(&mut self, cx: &mut Context<Self>) {
+        self.serialization_revision.fetch_add(1, Ordering::Relaxed);
+        self.schedule_serialization(cx);
+    }
+
+    fn schedule_serialization(&mut self, cx: &mut Context<Self>) {
         self.pending_serialization = cx.spawn(async move |terminal_panel, cx| {
             cx.background_executor()
                 .timer(Duration::from_millis(50))
                 .await;
-            let terminal_panel = terminal_panel.upgrade()?;
-            let items = terminal_panel.update(cx, |terminal_panel, cx| {
-                SerializedItems::WithSplits(serialize_pane_group(
-                    &terminal_panel.center,
-                    &terminal_panel.active_pane,
-                    cx,
-                ))
-            });
-            cx.background_spawn(
-                async move {
-                    kvp.write_kvp(
-                        serialization_key,
-                        serde_json::to_string(&SerializedTerminalPanel {
-                            items,
-                            active_item_id: None,
-                        })?,
-                    )
-                    .await?;
-                    anyhow::Ok(())
-                }
-                .log_err(),
-            )
-            .await;
+            let flush = terminal_panel
+                .update(cx, |panel, cx| panel.serialize_snapshot(cx))
+                .ok()?;
+            flush.await.log_err();
             Some(())
         });
     }
@@ -1272,6 +1446,7 @@ impl TerminalPanel {
             .cloned()
         {
             self.center.swap(&self.active_pane, &to, cx);
+            self.serialize(cx);
             cx.notify();
         }
     }
@@ -1282,6 +1457,7 @@ impl TerminalPanel {
             .move_to_border(&self.active_pane, direction, cx)
             .unwrap()
         {
+            self.serialize(cx);
             cx.notify();
         }
     }
@@ -1324,7 +1500,12 @@ pub fn new_terminal_pane(
             workspace.clone(),
             project.clone(),
             Default::default(),
-            None,
+            Some(Arc::new(|dragged, _, cx| {
+                dragged
+                    .downcast_ref::<DraggedTab>()
+                    .and_then(|tab| tab.item.downcast::<RestoringItem>())
+                    .is_none_or(|item| item.read(cx).serialized_item.kind.as_ref() == "Terminal")
+            })),
             workspace::NewTerminal::default().boxed_clone(),
             false,
             window,
@@ -1358,7 +1539,10 @@ pub fn new_terminal_pane(
                         tab.pane.read(cx).item_for_index(tab.ix)
                     };
                     if let Some(item) = item {
-                        return item.downcast::<TerminalView>().is_some();
+                        return item.downcast::<TerminalView>().is_some()
+                            || item.downcast::<RestoringItem>().is_some_and(|item| {
+                                item.read(cx).serialized_item.kind.as_ref() == "Terminal"
+                            });
                     }
                 }
             }
@@ -1601,6 +1785,7 @@ impl Render for TerminalPanel {
                                                 SplitDirection::Right,
                                                 cx,
                                             );
+                                            terminal_panel.serialize(cx);
                                             let new_pane = new_pane.read(cx);
                                             window.focus(&new_pane.focus_handle(cx), cx);
                                         },
@@ -1829,6 +2014,14 @@ impl Panel for TerminalPanel {
 struct TerminalProvider(Entity<TerminalPanel>);
 
 impl workspace::TerminalProvider for TerminalProvider {
+    fn serialization_revision(&self, cx: &App) -> Arc<AtomicUsize> {
+        self.0.read(cx).serialization_revision.clone()
+    }
+
+    fn flush_serialization(&self, cx: &mut App) -> Task<Result<()>> {
+        self.0.update(cx, |panel, cx| panel.flush_serialization(cx))
+    }
+
     fn spawn(
         &self,
         task: SpawnInTerminal,
@@ -1879,17 +2072,26 @@ impl RenderOnce for InlineAssistTabBarButton {
     }
 }
 
+#[derive(Default)]
+struct LiveTerminalPanels(HashMap<gpui::EntityId, WeakEntity<TerminalPanel>>);
+
+impl gpui::Global for LiveTerminalPanels {}
+
 #[cfg(test)]
 mod tests {
     use std::num::NonZero;
 
     use super::*;
-    use crate::persistence::{SerializedPane, SerializedPaneGroup};
-    use gpui::{Modifiers, TestAppContext, UpdateGlobal as _, VisualTestContext};
+    use crate::persistence::{
+        SerializedPane, SerializedPaneGroup, hydrate_terminal, initialize_terminal_panel,
+    };
+    use editor::Editor;
+    use gpui::{EntityId, Modifiers, TestAppContext, UpdateGlobal as _, VisualTestContext};
+    use language::Buffer;
     use pretty_assertions::assert_eq;
     use project::FakeFs;
     use settings::SettingsStore;
-    use workspace::{MultiWorkspace, WorkspaceId};
+    use workspace::{ItemId, MultiWorkspace, SerializedItem, WorkspaceId};
 
     #[test]
     fn test_prepare_empty_task() {
@@ -2219,21 +2421,284 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_terminal_added_during_restore_is_serialized_after_restore(
+    async fn test_malformed_layout_keeps_panel_usable_and_preserves_saved_state(
         cx: &mut TestAppContext,
     ) {
         cx.executor().allow_parking();
         init_test(cx);
+        cx.update(|cx| cx.set_global(db::AppDatabase::test_new()));
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.terminal.get_or_insert_default().starts_open = Some(true);
+            });
+        });
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let window_handle =
             cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
-
-        let serialization_key = window_handle
+        let workspace = window_handle
             .update(cx, |multi_workspace, _, cx| {
-                TerminalPanel::serialization_key(multi_workspace.workspace().read(cx)).unwrap()
+                multi_workspace.set_random_database_id(cx);
+                multi_workspace.workspace().clone()
             })
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+        let (workspace_id, serialization_key) = workspace.read_with(cx, |workspace, _| {
+            (
+                workspace.database_id().unwrap(),
+                TerminalPanel::serialization_key(workspace).unwrap(),
+            )
+        });
+        let db = cx.update(|_, cx| crate::persistence::TerminalDb::global(cx));
+        db.write(move |connection| {
+            connection.exec_bound("INSERT INTO workspaces (workspace_id) VALUES (?)")?(workspace_id)
+        })
+        .await
+        .unwrap();
+        db.save_custom_title(12345, workspace_id, Some("saved".to_string()))
+            .await
+            .unwrap();
+        let saved_directory = PathBuf::from("/saved/terminal");
+        db.save_working_directory(12345, workspace_id, saved_directory.clone())
+            .await
+            .unwrap();
+        let editor = workspace.update_in(cx, |workspace, window, cx| {
+            let buffer = cx.new(|cx| Buffer::local("", cx));
+            let editor = cx.new(|cx| {
+                Editor::for_buffer(buffer, Some(workspace.project().clone()), window, cx)
+            });
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, false, window, cx);
+            editor
+        });
+        let editor_id = cx
+            .update(|_, cx| item_persistence_id(&editor, cx))
+            .await
+            .unwrap();
+        let kvp = cx.update(|_, cx| KeyValueStore::global(cx));
+        let malformed_layout = "{";
+        kvp.write_kvp(serialization_key.clone(), malformed_layout.to_string())
+            .await
+            .unwrap();
+
+        for contents in ["unsaved editor", "editor updated during recovery"] {
+            workspace.update_in(cx, |workspace, window, cx| {
+                if let Some(panel) = workspace.panel::<TerminalPanel>(cx) {
+                    workspace.remove_panel(&panel, window, cx);
+                }
+                workspace.dismiss_notification(&NotificationId::unique::<TerminalPanel>(), cx);
+            });
+            editor.update_in(cx, |editor, window, cx| {
+                editor.set_text(contents, window, cx);
+            });
+            let terminal_panel = cx
+                .update(|window, cx| {
+                    let workspace = workspace.downgrade();
+                    window.spawn(cx, async move |cx| {
+                        TerminalPanel::load(workspace, cx.clone()).await
+                    })
+                })
+                .await
+                .unwrap();
+            workspace.update_in(cx, |workspace, window, cx| {
+                workspace.add_panel(terminal_panel.clone(), window, cx);
+                assert_eq!(
+                    workspace.panel::<TerminalPanel>(cx),
+                    Some(terminal_panel.clone())
+                );
+            });
+            cx.run_until_parked();
+            cx.executor().advance_clock(Duration::from_millis(100));
+            cx.run_until_parked();
+            terminal_panel.read_with(cx, |panel, cx| {
+                assert!(!panel.restoring);
+                assert_eq!(panel.active_pane.read(cx).items_len(), 1);
+            });
+            workspace.update_in(cx, |workspace, window, cx| {
+                TerminalPanel::new_terminal(
+                    workspace,
+                    &workspace::NewTerminal::default(),
+                    window,
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+            cx.executor().advance_clock(Duration::from_millis(100));
+            cx.run_until_parked();
+            terminal_panel.read_with(cx, |panel, cx| {
+                assert_eq!(panel.active_pane.read(cx).items_len(), 2);
+            });
+            cx.update(|window, cx| TerminalView::cleanup(workspace_id, Vec::new(), window, cx))
+                .await
+                .unwrap();
+            window_handle
+                .update(cx, |multi_workspace, window, cx| {
+                    multi_workspace.flush_pending_serialization(window, cx)
+                })
+                .unwrap()
+                .await
+                .unwrap();
+            assert_eq!(
+                db.select_bound::<_, (ItemId, String)>(
+                    "SELECT items.item_id, editors.contents FROM items
+                     JOIN editors USING (workspace_id, item_id)
+                     WHERE items.workspace_id = ? AND items.kind = 'Editor'",
+                )
+                .unwrap()(workspace_id)
+                .unwrap(),
+                vec![(editor_id, contents.to_string())]
+            );
+            assert_eq!(
+                kvp.read_kvp(&serialization_key).unwrap().as_deref(),
+                Some(malformed_layout)
+            );
+            assert_eq!(
+                db.get_custom_title(12345, workspace_id).unwrap().as_deref(),
+                Some("saved")
+            );
+            assert_eq!(
+                db.get_working_directory(12345, workspace_id)
+                    .unwrap()
+                    .as_ref(),
+                Some(&saved_directory)
+            );
+            workspace.read_with(cx, |workspace, _| {
+                assert!(workspace.has_notification(&NotificationId::unique::<TerminalPanel>()));
+            });
+        }
+
+        let terminal_panel = workspace.read_with(cx, |workspace, cx| {
+            workspace.panel::<TerminalPanel>(cx).unwrap()
+        });
+        let item_ids = cx.update(|_, cx| {
+            let terminals = terminal_panel
+                .read(cx)
+                .active_pane
+                .read(cx)
+                .items()
+                .map(|item| item.downcast::<TerminalView>().unwrap())
+                .collect::<Vec<_>>();
+            terminals
+                .iter()
+                .map(|terminal| item_persistence_id(terminal, cx))
+                .collect::<Vec<_>>()
+        });
+        let item_ids = try_join_all(item_ids).await.unwrap();
+        db.write(|connection| {
+            connection.exec(
+                "CREATE TRIGGER reject_terminal_write BEFORE INSERT ON terminals
+                 BEGIN SELECT RAISE(ABORT, 'terminal write rejected'); END",
+            )?()
+        })
+        .await
+        .unwrap();
+        terminal_panel.update(cx, |panel, cx| panel.replace_failed_layout(cx));
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.flush_serialization_checked(window, cx)
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(
+            kvp.read_kvp(&serialization_key).unwrap().as_deref(),
+            Some(malformed_layout)
+        );
+        assert_eq!(
+            db.get_custom_title(12345, workspace_id).unwrap().as_deref(),
+            Some("saved")
+        );
+        db.write(|connection| connection.exec("DROP TRIGGER reject_terminal_write")?())
+            .await
+            .unwrap();
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.flush_serialization_checked(window, cx)
+            })
+            .await
+            .unwrap();
+        let saved = kvp.read_kvp(&serialization_key).unwrap().unwrap();
+        assert_eq!(
+            serde_json::from_str::<SerializedTerminalPanel>(&saved)
+                .unwrap()
+                .into_pane_group()
+                .item_ids(),
+            item_ids
+        );
+    }
+
+    #[gpui::test]
+    async fn test_terminal_added_during_restore_is_flushed_before_restore_finishes(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        cx.update(|cx| cx.set_global(db::AppDatabase::test_new()));
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let (workspace_id, serialization_key) = window_handle
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.set_random_database_id(cx);
+                let workspace = multi_workspace.workspace().read(cx);
+                (
+                    workspace.database_id().unwrap(),
+                    TerminalPanel::serialization_key(workspace).unwrap(),
+                )
+            })
+            .unwrap();
+        let db = cx.update(|cx| crate::persistence::TerminalDb::global(cx));
+        db.write(move |connection| {
+            connection.exec_bound("INSERT INTO workspaces (workspace_id) VALUES (?)")?(workspace_id)
+        })
+        .await
+        .unwrap();
+        db.save_custom_title(12345, workspace_id, Some("saved".to_string()))
+            .await
+            .unwrap();
+        for (item_id, title) in [(12346, "pending"), (12347, "closed"), (12348, "orphan")] {
+            db.save_custom_title(item_id, workspace_id, Some(title.to_string()))
+                .await
+                .unwrap();
+        }
+        db.save_working_directory(12346, workspace_id, PathBuf::from("/saved/pending"))
+            .await
+            .unwrap();
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    TerminalPanel::add_center_terminal(workspace, window, cx, |project, cx| {
+                        project.create_terminal_shell(None, cx)
+                    })
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        let center_terminal = window_handle
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace
+                    .workspace()
+                    .read(cx)
+                    .active_item(cx)
+                    .unwrap()
+                    .downcast::<TerminalView>()
+                    .unwrap()
+            })
+            .unwrap();
+        let center_id = cx
+            .update(|cx| item_persistence_id(&center_terminal, cx))
+            .await
+            .unwrap();
+        center_terminal
+            .update(cx, |terminal, cx| {
+                terminal.set_custom_title(Some("center".to_string()), cx);
+                terminal
+                    .serialize_state(Task::ready(Ok(center_id)).shared(), cx)
+                    .unwrap()
+            })
+            .await
             .unwrap();
 
         let terminal_panel = window_handle
@@ -2248,6 +2713,7 @@ mod tests {
             .update(cx, |_, window, cx| {
                 terminal_panel.update(cx, |terminal_panel, cx| {
                     terminal_panel.restoring = true;
+
                     terminal_panel.add_terminal_shell(
                         false,
                         None,
@@ -2261,38 +2727,564 @@ mod tests {
             .await
             .unwrap();
 
-        cx.executor().advance_clock(Duration::from_millis(100));
-        cx.run_until_parked();
-        let suppressed_state = cx
-            .update(|cx| KeyValueStore::global(cx))
-            .read_kvp(&serialization_key)
-            .unwrap();
-        assert_eq!(
-            suppressed_state, None,
-            "serialization should stay suppressed while the panel is restoring"
-        );
-
-        let default_shell_task = window_handle
-            .update(cx, |_, window, cx| {
-                terminal_panel.update(cx, |terminal_panel, cx| {
-                    terminal_panel.finish_restoration(false, window, cx)
-                })
+        let revision = cx.update(|cx| {
+            workspace::TerminalProvider::serialization_revision(
+                &TerminalProvider(terminal_panel.clone()),
+                cx,
+            )
+        });
+        let before_restoration = revision.load(Ordering::Relaxed);
+        let (mut senders, placeholder_ids) = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                let project = workspace.read(cx).project().clone();
+                let placeholders = initialize_terminal_panel(
+                    workspace.downgrade(),
+                    project,
+                    SerializedTerminalPanel {
+                        items: SerializedItems::NoSplits(vec![12345, 12346, 12347]),
+                        active_item_id: Some(12345),
+                    },
+                    &terminal_panel.downgrade(),
+                    window,
+                    cx,
+                )
+                .unwrap();
+                let placeholder_ids = placeholders
+                    .iter()
+                    .map(Entity::entity_id)
+                    .collect::<Vec<_>>();
+                let mut senders = Vec::new();
+                let mut tasks = Vec::new();
+                for placeholder in placeholders {
+                    let (sender, receiver) = oneshot::channel();
+                    senders.push(sender);
+                    let deserialize = cx.background_spawn(async move { receiver.await.unwrap() });
+                    tasks.push(hydrate_terminal(
+                        workspace.downgrade(),
+                        placeholder,
+                        deserialize,
+                        window,
+                        cx,
+                    ));
+                }
+                terminal_panel.update(cx, |panel, cx| {
+                    panel._restoration = cx.background_spawn(async move {
+                        join_all(tasks).await;
+                    });
+                });
+                (senders, placeholder_ids)
             })
             .unwrap();
-        assert!(
-            default_shell_task.is_none(),
-            "no default terminal should spawn when a terminal already exists"
+        assert_eq!(revision.load(Ordering::Relaxed), before_restoration);
+        let terminal_view = terminal_panel.read_with(cx, |panel, cx| {
+            panel
+                .active_pane
+                .read(cx)
+                .active_item()
+                .unwrap()
+                .downcast::<TerminalView>()
+                .unwrap()
+        });
+        terminal_view.update(cx, |view, cx| {
+            view.set_custom_title(Some("interim".to_string()), cx);
+        });
+        window_handle
+            .update(cx, |_, window, cx| {
+                let pane = terminal_panel.read(cx).active_pane.clone();
+                pane.update(cx, |pane, cx| {
+                    let item = pane
+                        .items()
+                        .find(|item| item.item_id() == placeholder_ids[0])
+                        .unwrap()
+                        .boxed_clone();
+                    pane.add_item_inner(item, false, false, false, Some(0), window, cx);
+                    pane.remove_item(placeholder_ids[2], false, false, window, cx);
+                    let index = pane.index_for_item(&terminal_view).unwrap();
+                    pane.activate_item(index, false, false, window, cx);
+                });
+            })
+            .unwrap();
+        cx.update(|cx| {
+            assert_eq!(
+                terminal_panel
+                    .read(cx)
+                    .active_pane
+                    .read(cx)
+                    .items()
+                    .map(|item| item.item_id())
+                    .collect::<Vec<_>>(),
+                vec![
+                    placeholder_ids[0],
+                    terminal_view.entity_id(),
+                    placeholder_ids[1]
+                ]
+            );
+        });
+        cx.run_until_parked();
+        assert!(senders.last().unwrap().is_canceled());
+        let restored_terminal = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                TerminalView::deserialize(
+                    workspace.read(cx).project().clone(),
+                    workspace.downgrade(),
+                    workspace_id,
+                    12345,
+                    window,
+                    cx,
+                )
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        let restored_id = cx
+            .update(|cx| item_persistence_id(&restored_terminal, cx))
+            .await
+            .unwrap();
+        assert_ne!(restored_id, 12345);
+        assert_eq!(
+            restored_terminal
+                .read_with(cx, |terminal, _| terminal.custom_title().map(str::to_owned)),
+            Some("saved".to_string())
+        );
+        let before_hydration = revision.load(Ordering::Relaxed);
+        senders
+            .remove(0)
+            .send(Ok(restored_terminal.clone()))
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(revision.load(Ordering::Relaxed), before_hydration);
+        terminal_panel.read_with(cx, |panel, cx| {
+            let pane = panel.active_pane.read(cx);
+            assert_eq!(
+                pane.item_for_index(0).unwrap().item_id(),
+                restored_terminal.entity_id()
+            );
+            assert_eq!(
+                pane.active_item().unwrap().item_id(),
+                terminal_view.entity_id()
+            );
+        });
+        restored_terminal.update(cx, |terminal, cx| {
+            terminal.set_custom_title(Some("edited saved".to_string()), cx);
+        });
+        let flush = cx.update(|cx| {
+            workspace::TerminalProvider::flush_serialization(
+                &TerminalProvider(terminal_panel.clone()),
+                cx,
+            )
+        });
+        flush.await.unwrap();
+        let interim_id = cx
+            .update(|cx| item_persistence_id(&terminal_view, cx))
+            .await
+            .unwrap();
+        assert_ne!(interim_id, terminal_view.entity_id().as_u64());
+        let saved = cx
+            .update(|cx| KeyValueStore::global(cx))
+            .read_kvp(&serialization_key)
+            .unwrap()
+            .unwrap();
+        let saved = serde_json::from_str::<SerializedTerminalPanel>(&saved)
+            .unwrap()
+            .into_pane_group();
+        assert_eq!(saved.item_ids(), vec![restored_id, interim_id, 12346]);
+        assert_eq!(
+            db.get_custom_title(interim_id, workspace_id)
+                .unwrap()
+                .as_deref(),
+            Some("interim")
+        );
+        assert_eq!(
+            db.get_custom_title(restored_id, workspace_id)
+                .unwrap()
+                .as_deref(),
+            Some("edited saved")
+        );
+        assert_eq!(
+            db.get_custom_title(12345, workspace_id).unwrap().as_deref(),
+            Some("saved")
+        );
+        assert_eq!(
+            db.get_custom_title(12346, workspace_id).unwrap().as_deref(),
+            Some("pending")
+        );
+        assert_eq!(
+            db.get_working_directory(12346, workspace_id).unwrap(),
+            Some(PathBuf::from("/saved/pending"))
+        );
+        terminal_panel.read_with(cx, |panel, _| assert!(panel.restoring));
+        window_handle
+            .update(cx, |_, window, cx| {
+                TerminalView::cleanup(workspace_id, Vec::new(), window, cx)
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        let mut retained_ids = db.item_ids(workspace_id).unwrap();
+        retained_ids.sort_unstable();
+        let mut expected_ids = vec![restored_id, 12346, center_id, interim_id];
+        expected_ids.sort_unstable();
+        assert_eq!(retained_ids, expected_ids);
+        assert_eq!(
+            db.get_custom_title(center_id, workspace_id)
+                .unwrap()
+                .as_deref(),
+            Some("center")
         );
 
-        cx.executor().advance_clock(Duration::from_millis(100));
+        let pending = senders.remove(0);
+        pending
+            .send(Err(anyhow!("terminal startup failed")))
+            .unwrap();
         cx.run_until_parked();
+        terminal_panel
+            .update(cx, |panel, cx| panel.flush_serialization(cx))
+            .await
+            .unwrap();
         let serialized_state = cx
             .update(|cx| KeyValueStore::global(cx))
             .read_kvp(&serialization_key)
+            .unwrap()
             .unwrap();
-        assert!(
-            serialized_state.is_some(),
-            "terminal added during restore must be serialized once restoration finishes"
+        let serialized =
+            serde_json::from_str::<SerializedTerminalPanel>(&serialized_state).unwrap();
+        assert_eq!(
+            serialized.into_pane_group().item_ids(),
+            vec![restored_id, interim_id, 12346]
+        );
+        assert_eq!(
+            db.get_custom_title(12346, workspace_id).unwrap().as_deref(),
+            Some("pending")
+        );
+        let captured_revision = revision.load(Ordering::Relaxed);
+        restored_terminal.update(cx, |terminal, _| {
+            terminal.custom_title = Some("captured".to_string());
+        });
+        let (release, wait) = oneshot::channel();
+        let flush = terminal_panel.update(cx, |panel, cx| {
+            let db = db.clone();
+            panel.serialization = cx
+                .background_spawn(async move {
+                    wait.await.unwrap();
+                    db.save_custom_title(restored_id, workspace_id, Some("older".to_string()))
+                        .await
+                        .map_err(Arc::new)
+                })
+                .shared();
+            panel.flush_serialization(cx)
+        });
+        restored_terminal.update(cx, |terminal, _| {
+            terminal.custom_title = Some("uncaptured".to_string());
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            db.get_custom_title(restored_id, workspace_id)
+                .unwrap()
+                .as_deref(),
+            Some("edited saved")
+        );
+        window_handle
+            .update(cx, |_, window, cx| {
+                terminal_panel
+                    .read(cx)
+                    .active_pane
+                    .clone()
+                    .update(cx, |pane, cx| {
+                        pane.remove_item(placeholder_ids[1], false, false, window, cx);
+                    });
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert!(revision.load(Ordering::Relaxed) > captured_revision);
+        release.send(()).unwrap();
+        assert_eq!(
+            flush.await.unwrap_err().to_string(),
+            "Terminal panel changed during serialization flush"
+        );
+        assert_eq!(
+            db.get_custom_title(restored_id, workspace_id)
+                .unwrap()
+                .as_deref(),
+            Some("captured")
+        );
+        let flush = terminal_panel.update(cx, |panel, cx| panel.flush_serialization(cx));
+        let weak_panel = terminal_panel.downgrade();
+        drop(terminal_panel);
+        assert!(weak_panel.upgrade().is_none());
+        flush.await.unwrap();
+        assert_eq!(
+            cx.update(|cx| stored_item_ids(workspace_id, cx)).unwrap(),
+            vec![restored_id, interim_id]
+        );
+        assert_eq!(
+            db.get_custom_title(restored_id, workspace_id)
+                .unwrap()
+                .as_deref(),
+            Some("uncaptured")
+        );
+    }
+
+    #[gpui::test]
+    async fn test_terminal_restore_moves_preserve_persistence(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        cx.update(|cx| cx.set_global(db::AppDatabase::test_new()));
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+        let other_project = Project::test(fs, [], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let (workspace, other_workspace, panel, other_panel) = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                let other_workspace = multi_workspace.test_add_workspace(other_project, window, cx);
+                let panels = [&workspace, &other_workspace].map(|workspace| {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.set_random_database_id();
+                        let panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
+                        workspace.set_terminal_provider(TerminalProvider(panel.clone()));
+                        panel
+                    })
+                });
+                let [panel, other_panel] = panels;
+                (workspace, other_workspace, panel, other_panel)
+            })
+            .unwrap();
+        let workspace_id = workspace.read_with(cx, |workspace, _| workspace.database_id().unwrap());
+        let other_workspace_id =
+            other_workspace.read_with(cx, |workspace, _| workspace.database_id().unwrap());
+        let db = cx.update(|cx| crate::persistence::TerminalDb::global(cx));
+        db.write(move |connection| {
+            connection.exec_bound("INSERT INTO workspaces (workspace_id) VALUES (?), (?)")?((
+                workspace_id,
+                other_workspace_id,
+            ))
+        })
+        .await
+        .unwrap();
+        let cwd = std::env::current_dir().unwrap();
+        db.save_working_directory(12345, workspace_id, cwd.clone())
+            .await
+            .unwrap();
+        db.save_custom_title(12345, workspace_id, Some("saved".to_string()))
+            .await
+            .unwrap();
+        db.save_custom_title(12347, workspace_id, Some("orphan".to_string()))
+            .await
+            .unwrap();
+        let center = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let panel_pane = panel.read_with(cx, |panel, _| panel.active_pane.clone());
+        let other_pane = other_panel.read_with(cx, |panel, _| panel.active_pane.clone());
+        let (placeholder_id, editor_id, sender, hydration) = window_handle
+            .update(cx, |_, window, cx| {
+                let placeholder = cx.new(|cx| {
+                    RestoringItem::new(SerializedItem::new("Terminal", 12345, false, false), cx)
+                });
+                let editor = cx.new(|cx| {
+                    RestoringItem::new(SerializedItem::new("Editor", 12346, false, false), cx)
+                });
+                center.update(cx, |pane, cx| {
+                    pane.add_item(
+                        Box::new(placeholder.clone()),
+                        false,
+                        false,
+                        None,
+                        window,
+                        cx,
+                    );
+                    pane.add_item(Box::new(editor.clone()), false, false, None, window, cx);
+                });
+                let placeholder_id = placeholder.entity_id();
+                let (sender, receiver) = oneshot::channel();
+                let deserialize = cx.background_spawn(async move { receiver.await.unwrap() });
+                let hydration =
+                    hydrate_terminal(workspace.downgrade(), placeholder, deserialize, window, cx);
+                (placeholder_id, editor.entity_id(), sender, hydration)
+            })
+            .unwrap();
+        window_handle
+            .update(cx, |_, window, cx| {
+                drop_tab(editor_id, &center, &panel_pane, window, cx);
+                drop_tab(placeholder_id, &center, &other_pane, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        center.read_with(cx, |pane, _| {
+            assert_eq!(
+                pane.items().map(|item| item.item_id()).collect::<Vec<_>>(),
+                vec![placeholder_id, editor_id]
+            );
+        });
+        panel_pane.read_with(cx, |pane, _| assert_eq!(pane.items_len(), 0));
+        other_pane.read_with(cx, |pane, _| assert_eq!(pane.items_len(), 0));
+        for (source, destination) in [
+            (&center, &panel_pane),
+            (&panel_pane, &center),
+            (&center, &panel_pane),
+        ] {
+            window_handle
+                .update(cx, |_, window, cx| {
+                    drop_tab(placeholder_id, source, destination, window, cx);
+                })
+                .unwrap();
+            cx.run_until_parked();
+            destination.read_with(cx, |pane, _| {
+                assert_eq!(pane.active_item().unwrap().item_id(), placeholder_id);
+            });
+        }
+        window_handle
+            .update(cx, |_, window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.flush_serialization_checked(window, cx)
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(
+            cx.update(|cx| stored_item_ids(workspace_id, cx)).unwrap(),
+            vec![12345]
+        );
+        assert_eq!(
+            db.get_working_directory(12345, workspace_id).unwrap(),
+            Some(cwd.clone())
+        );
+        assert_eq!(
+            db.get_custom_title(12345, workspace_id).unwrap().as_deref(),
+            Some("saved")
+        );
+        let terminal = window_handle
+            .update(cx, |_, window, cx| {
+                TerminalView::deserialize(
+                    workspace.read(cx).project().clone(),
+                    workspace.downgrade(),
+                    workspace_id,
+                    12345,
+                    window,
+                    cx,
+                )
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        let restored_id = cx
+            .update(|cx| item_persistence_id(&terminal, cx))
+            .await
+            .unwrap();
+        assert_ne!(restored_id, 12345);
+        let (release, wait) = oneshot::channel();
+        panel.update(cx, |panel, cx| {
+            let previous = panel.serialization.clone();
+            panel.serialization = cx
+                .background_spawn(async move {
+                    previous.await?;
+                    wait.await.unwrap();
+                    Ok(())
+                })
+                .shared();
+        });
+        sender.send(Ok(terminal.clone())).unwrap();
+        assert!(hydration.await);
+        cx.run_until_parked();
+        panel_pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.active_item().unwrap().item_id(), terminal.entity_id());
+        });
+        let cleanup = window_handle
+            .update(cx, |_, window, cx| {
+                TerminalView::cleanup(workspace_id, Vec::new(), window, cx)
+            })
+            .unwrap();
+        let flush = panel.update(cx, |panel, cx| panel.flush_serialization(cx));
+        release.send(()).unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            db.get_custom_title(12347, workspace_id).unwrap().as_deref(),
+            Some("orphan")
+        );
+        assert_eq!(
+            cx.update(|cx| stored_item_ids(workspace_id, cx)).unwrap(),
+            vec![12345]
+        );
+        assert_eq!(
+            db.get_custom_title(12345, workspace_id).unwrap().as_deref(),
+            Some("saved")
+        );
+        assert_eq!(
+            db.get_working_directory(12345, workspace_id).unwrap(),
+            Some(cwd.clone())
+        );
+        cleanup.await.unwrap();
+        flush.await.unwrap();
+        assert_eq!(db.get_custom_title(12347, workspace_id).unwrap(), None);
+        assert_eq!(
+            cx.update(|cx| stored_item_ids(workspace_id, cx)).unwrap(),
+            vec![restored_id]
+        );
+        assert_eq!(
+            db.get_custom_title(restored_id, workspace_id)
+                .unwrap()
+                .as_deref(),
+            Some("saved")
+        );
+        assert_eq!(
+            db.get_working_directory(restored_id, workspace_id).unwrap(),
+            Some(cwd.clone())
+        );
+        window_handle
+            .update(cx, |_, window, cx| {
+                drop_tab(terminal.entity_id(), &panel_pane, &other_pane, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        terminal.update(cx, |terminal, cx| {
+            terminal.set_custom_title(Some("moved".to_string()), cx)
+        });
+        for workspace in [&workspace, &other_workspace] {
+            window_handle
+                .update(cx, |_, window, cx| {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.flush_serialization_checked(window, cx)
+                    })
+                })
+                .unwrap()
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            cx.update(|cx| item_persistence_id(&terminal, cx))
+                .await
+                .unwrap(),
+            restored_id
+        );
+        assert_eq!(
+            cx.update(|cx| stored_item_ids(workspace_id, cx)).unwrap(),
+            Vec::<ItemId>::new()
+        );
+        assert_eq!(
+            cx.update(|cx| stored_item_ids(other_workspace_id, cx))
+                .unwrap(),
+            vec![restored_id]
+        );
+        assert_eq!(
+            db.get_custom_title(restored_id, workspace_id).unwrap(),
+            None
+        );
+        assert_eq!(
+            db.get_custom_title(12345, workspace_id).unwrap().as_deref(),
+            Some("saved")
+        );
+        assert_eq!(
+            db.get_working_directory(restored_id, other_workspace_id)
+                .unwrap(),
+            Some(cwd)
+        );
+        assert_eq!(
+            db.get_custom_title(restored_id, other_workspace_id)
+                .unwrap()
+                .as_deref(),
+            Some("moved")
         );
     }
 
@@ -2417,7 +3409,7 @@ mod tests {
                         items: SerializedItems::WithSplits(SerializedPaneGroup::Pane(
                             SerializedPane {
                                 active: true,
-                                children: vec![12345],
+                                children: vec![12345, 12346],
                                 active_item: Some(12345),
                                 pinned_count: 0,
                             },
@@ -2434,7 +3426,55 @@ mod tests {
             .unwrap();
         cx.run_until_parked();
 
-        assert_eq!(restored_items, 1);
+        assert_eq!(restored_items, 2);
+        let active_terminal = terminal_panel.read_with(cx, |panel, cx| {
+            panel
+                .active_pane
+                .read(cx)
+                .active_item()
+                .unwrap()
+                .downcast::<TerminalView>()
+                .unwrap()
+        });
+        assert_ne!(active_terminal.entity_id().as_u64(), 12345);
+        let active_id = cx
+            .update(|cx| item_persistence_id(&active_terminal, cx))
+            .await
+            .unwrap();
+        assert_ne!(active_id, 12345);
+        let restored_ids = cx.update(|cx| {
+            let terminals = terminal_panel
+                .read(cx)
+                .active_pane
+                .read(cx)
+                .items()
+                .map(|item| item.downcast::<TerminalView>().unwrap())
+                .collect::<Vec<_>>();
+            terminals
+                .iter()
+                .map(|terminal| item_persistence_id(terminal, cx))
+                .collect::<Vec<_>>()
+        });
+        let restored_ids = futures::future::try_join_all(restored_ids).await.unwrap();
+        assert_eq!(restored_ids.len(), 2);
+        assert_ne!(restored_ids[0], 12345);
+        assert_ne!(restored_ids[1], 12346);
+        assert_ne!(restored_ids[0], restored_ids[1]);
+        assert_eq!(active_id, restored_ids[0]);
+        let serialized = terminal_panel
+            .update(cx, |panel, cx| {
+                serialize_pane_group(&panel.center, &panel.active_pane, cx)
+            })
+            .await
+            .unwrap();
+        let SerializedPaneGroup::Group { children, .. } = serialized else {
+            panic!("missing split")
+        };
+        let Some(SerializedPaneGroup::Pane(restored_pane)) = children.first() else {
+            panic!("missing restored pane")
+        };
+        assert_eq!(restored_pane.children, restored_ids);
+        assert_eq!(restored_pane.active_item, Some(active_id));
         terminal_panel.read_with(cx, |terminal_panel, cx| {
             let panes = terminal_panel.center.panes();
             assert_eq!(
@@ -2453,6 +3493,16 @@ mod tests {
                 "unfocused interim pane must not become the active pane"
             );
         });
+        let flush = terminal_panel.update(cx, |panel, cx| {
+            let flush = panel.flush_serialization(cx);
+            panel.move_pane_to_border(SplitDirection::Right, cx);
+            assert_eq!(panel.center.first_pane(), interim_pane);
+            flush
+        });
+        assert_eq!(
+            flush.await.unwrap_err().to_string(),
+            "Terminal panel changed during serialization flush"
+        );
     }
 
     #[gpui::test]
@@ -2816,7 +3866,13 @@ mod tests {
                 let workspace = workspace.downgrade();
                 let terminal_panel = terminal_panel.downgrade();
                 window.spawn(cx, async move |cx| {
-                    TerminalPanel::restore_serialized_state(workspace, terminal_panel, cx).await
+                    TerminalPanel::restore_serialized_state(
+                        workspace,
+                        terminal_panel,
+                        Task::ready(Ok(0)),
+                        cx,
+                    )
+                    .await
                 })
             })
             .expect("Failed to restore serialized state")
@@ -3355,6 +4411,45 @@ mod tests {
             center_items_after, center_items_before,
             "Center pane should not gain a new terminal when panel is focused"
         );
+    }
+
+    fn stored_item_ids(workspace_id: WorkspaceId, cx: &App) -> Result<Vec<ItemId>> {
+        let key = TerminalPanel::database_serialization_key(workspace_id);
+        KeyValueStore::global(cx)
+            .read_kvp(&key)?
+            .map(|state| {
+                serde_json::from_str::<SerializedTerminalPanel>(&state)
+                    .map(|panel| panel.into_pane_group().item_ids())
+            })
+            .transpose()
+            .map(|items| items.unwrap_or_default())
+            .map_err(anyhow::Error::from)
+    }
+
+    fn drop_tab(
+        item_id: EntityId,
+        source: &Entity<Pane>,
+        destination: &Entity<Pane>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let pane = source.read(cx);
+        let index = pane
+            .items()
+            .position(|item| item.item_id() == item_id)
+            .unwrap();
+        let dragged = DraggedTab {
+            pane: source.clone(),
+            item: pane.item_for_index(index).unwrap().boxed_clone(),
+            ix: index,
+            detail: 0,
+            is_active: pane
+                .active_item()
+                .is_some_and(|item| item.item_id() == item_id),
+        };
+        destination.update(cx, |pane, cx| {
+            pane.handle_tab_drop(&dragged, pane.items_len(), false, window, cx);
+        });
     }
 
     fn set_max_tabs(cx: &mut TestAppContext, value: Option<usize>) {

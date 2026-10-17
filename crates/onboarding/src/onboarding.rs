@@ -24,7 +24,7 @@ use workspace::welcome::WelcomePage;
 use workspace::{
     AppState, Workspace, WorkspaceId,
     dock::DockPosition,
-    item::{Item, ItemEvent},
+    item::{Item, ItemCleanup, ItemEvent, ItemPersistenceId},
     notifications::NotifyResultExt as _,
     open_new, register_serializable_item, with_active_or_new_workspace,
 };
@@ -597,13 +597,12 @@ impl workspace::SerializableItem for Onboarding {
         alive_items: Vec<workspace::ItemId>,
         _window: &mut Window,
         cx: &mut App,
-    ) -> gpui::Task<gpui::Result<()>> {
+    ) -> ItemCleanup {
         workspace::delete_unloaded_items(
             alive_items,
             workspace_id,
             "onboarding_pages",
             &persistence::OnboardingPagesDb::global(cx),
-            cx,
         )
     }
 
@@ -628,18 +627,17 @@ impl workspace::SerializableItem for Onboarding {
     fn serialize(
         &mut self,
         workspace: &mut Workspace,
-        item_id: workspace::ItemId,
+        item_id: ItemPersistenceId,
         _closing: bool,
         cx: &mut ui::Context<Self>,
     ) -> Option<gpui::Task<gpui::Result<()>>> {
         let workspace_id = workspace.database_id()?;
 
         let db = persistence::OnboardingPagesDb::global(cx);
-        Some(
-            cx.background_spawn(
-                async move { db.save_onboarding_page(item_id, workspace_id).await },
-            ),
-        )
+        Some(cx.background_spawn(async move {
+            let item_id = item_id.await.map_err(|error| anyhow::anyhow!(error))?;
+            db.save_onboarding_page(item_id, workspace_id).await
+        }))
     }
 
     fn should_serialize(&self, event: &Self::Event) -> bool {

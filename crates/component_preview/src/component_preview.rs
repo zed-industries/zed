@@ -19,7 +19,8 @@ use ui::{
 use ui_input::InputField;
 use workspace::AppState;
 use workspace::{
-    Item, ItemId, SerializableItem, Workspace, WorkspaceId, delete_unloaded_items, item::ItemEvent,
+    Item, ItemId, SerializableItem, Workspace, WorkspaceId, delete_unloaded_items,
+    item::{ItemCleanup, ItemEvent, ItemPersistenceId},
 };
 
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
@@ -848,20 +849,19 @@ impl SerializableItem for ComponentPreview {
         alive_items: Vec<ItemId>,
         _window: &mut Window,
         cx: &mut App,
-    ) -> Task<anyhow::Result<()>> {
+    ) -> ItemCleanup {
         delete_unloaded_items(
             alive_items,
             workspace_id,
             "component_previews",
             &ComponentPreviewDb::global(cx),
-            cx,
         )
     }
 
     fn serialize(
         &mut self,
         _workspace: &mut Workspace,
-        item_id: ItemId,
+        item_id: ItemPersistenceId,
         _closing: bool,
         cx: &mut Context<Self>,
     ) -> Option<Task<anyhow::Result<()>>> {
@@ -869,6 +869,7 @@ impl SerializableItem for ComponentPreview {
         let workspace_id = self.workspace_id?;
         let db = ComponentPreviewDb::global(cx);
         Some(cx.background_spawn(async move {
+            let item_id = item_id.await.map_err(|error| anyhow::anyhow!(error))?;
             db.save_active_page(item_id, workspace_id, active_page.0)
                 .await
         }))

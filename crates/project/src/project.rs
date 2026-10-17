@@ -2366,26 +2366,6 @@ impl Project {
         self.environment.read(cx).get_cli_environment()
     }
 
-    pub fn set_cli_environment_if_unset(
-        &mut self,
-        cli_environment: HashMap<String, String>,
-        cx: &mut Context<Self>,
-    ) {
-        self.environment.update(cx, |environment, _| {
-            environment.set_cli_environment_if_unset(cli_environment)
-        });
-    }
-
-    pub fn set_cli_environment_gate(
-        &mut self,
-        gate: impl Future<Output = ()> + 'static,
-        cx: &mut Context<Self>,
-    ) {
-        self.environment.update(cx, |environment, cx| {
-            environment.set_cli_environment_gate(gate, cx)
-        });
-    }
-
     #[inline]
     pub fn peek_environment_error<'a>(&'a self, cx: &'a App) -> Option<&'a String> {
         self.environment.read(cx).peek_environment_error()

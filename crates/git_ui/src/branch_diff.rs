@@ -12,6 +12,7 @@ use editor::{
     Addon, Editor, EditorEvent, HiddenDiffHunkRenderer, SplittableEditor,
     actions::SendReviewToAgent,
 };
+use futures::FutureExt as _;
 use git::{repository::DiffType, status::FileStatus};
 use gpui::{
     Action, App, AppContext as _, Entity, EventEmitter, FocusHandle, Focusable, Render,
@@ -34,7 +35,7 @@ use ui::{DiffStat, Divider, PopoverMenu, Tooltip, prelude::*};
 use workspace::{
     ItemHandle, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace,
-    item::{Item, ItemEvent, SaveOptions},
+    item::{Item, ItemCleanup, ItemEvent, ItemPersistenceId, SaveOptions},
     notifications::NotifyTaskExt,
     searchable::SearchableItemHandle,
 };
@@ -646,13 +647,12 @@ impl SerializableItem for BranchDiff {
     }
 
     fn cleanup(
-        workspace_id: workspace::WorkspaceId,
-        alive_items: Vec<workspace::ItemId>,
+        _: workspace::WorkspaceId,
+        _: Vec<workspace::ItemId>,
         _: &mut Window,
-        cx: &mut App,
-    ) -> Task<Result<()>> {
-        let db = project_diff::persistence::ProjectDiffDb::global(cx);
-        workspace::delete_unloaded_items(alive_items, workspace_id, "project_diffs", &db, cx)
+        _: &mut App,
+    ) -> ItemCleanup {
+        futures::future::ready(Ok(())).boxed()
     }
 
     fn deserialize(
@@ -681,7 +681,7 @@ impl SerializableItem for BranchDiff {
     fn serialize(
         &mut self,
         workspace: &mut Workspace,
-        item_id: workspace::ItemId,
+        item_id: ItemPersistenceId,
         _closing: bool,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
@@ -692,6 +692,7 @@ impl SerializableItem for BranchDiff {
         let diff_base = DiffBase::Merge { base_ref };
         let db = project_diff::persistence::ProjectDiffDb::global(cx);
         Some(cx.background_spawn(async move {
+            let item_id = item_id.await.map_err(|error| anyhow::anyhow!(error))?;
             db.save_project_diff_base(item_id, workspace_id, diff_base)
                 .await
         }))

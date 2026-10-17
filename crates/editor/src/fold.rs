@@ -1,4 +1,5 @@
 use super::*;
+use text::ToOffset as _;
 
 impl GutterDimensions {
     /// The width of the space reserved for the fold indicators,
@@ -818,8 +819,6 @@ impl Editor {
     }
 
     pub(super) fn folds_did_change(&mut self, cx: &mut Context<Self>) {
-        use text::ToOffset as _;
-
         if self.mode.is_minimap()
             || WorkspaceSettings::get(None, cx).restore_on_startup
                 == RestoreOnStartupBehavior::EmptyTab
@@ -857,9 +856,23 @@ impl Editor {
             return;
         };
 
-        let background_executor = cx.background_executor().clone();
+        self.serialize_folds = Some(schedule_file_folds(
+            workspace_id,
+            file_path,
+            Self::serialized_folds(&display_snapshot),
+            SERIALIZATION_THROTTLE_TIME,
+            cx,
+        ));
+    }
+
+    pub(super) fn serialized_folds(
+        display_snapshot: &DisplaySnapshot,
+    ) -> Vec<(usize, usize, String, String)> {
+        let Some(buffer_snapshot) = display_snapshot.buffer_snapshot().as_singleton() else {
+            return Vec::new();
+        };
         const FINGERPRINT_LEN: usize = 32;
-        let db_folds = display_snapshot
+        display_snapshot
             .folds_in_range(MultiBufferOffset(0)..display_snapshot.buffer_snapshot().len())
             .map(|fold| {
                 let start = fold
@@ -872,44 +885,20 @@ impl Editor {
                     .end
                     .text_anchor_in(buffer_snapshot)
                     .to_offset(buffer_snapshot);
-
-                // Extract fingerprints - content at fold boundaries for validation on restore
-                // Both fingerprints must be INSIDE the fold to avoid capturing surrounding
-                // content that might change independently.
-                // start_fp: first min(32, fold_len) bytes of fold content
-                // end_fp: last min(32, fold_len) bytes of fold content
-                // Clip to character boundaries to handle multibyte UTF-8 characters.
                 let fold_len = end - start;
                 let start_fp_end = buffer_snapshot
                     .clip_offset(start + std::cmp::min(FINGERPRINT_LEN, fold_len), Bias::Left);
-                let start_fp: String = buffer_snapshot
+                let start_fp = buffer_snapshot
                     .text_for_range(start..start_fp_end)
-                    .collect();
+                    .collect::<String>();
                 let end_fp_start = buffer_snapshot
                     .clip_offset(end.saturating_sub(FINGERPRINT_LEN).max(start), Bias::Right);
-                let end_fp: String = buffer_snapshot.text_for_range(end_fp_start..end).collect();
-
+                let end_fp = buffer_snapshot
+                    .text_for_range(end_fp_start..end)
+                    .collect::<String>();
                 (start, end, start_fp, end_fp)
             })
-            .collect::<Vec<_>>();
-        let db = EditorDb::global(cx);
-        self.serialize_folds = cx.background_spawn(async move {
-            background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;
-            if db_folds.is_empty() {
-                // No folds - delete any persisted folds for this file
-                db.delete_file_folds(workspace_id, file_path)
-                    .await
-                    .with_context(|| format!("deleting file folds for workspace {workspace_id:?}"))
-                    .log_err();
-            } else {
-                db.save_file_folds(workspace_id, file_path, db_folds)
-                    .await
-                    .with_context(|| {
-                        format!("persisting file folds for workspace {workspace_id:?}")
-                    })
-                    .log_err();
-            }
-        });
+            .collect()
     }
 
     pub(super) fn refresh_single_line_folds(

@@ -253,7 +253,7 @@ impl DockerExecConnection {
             let tmp_path = paths::remote_server_dir_relative().join(
                 RelPath::from_unix_str(&format!(
                     "download-{}-{}",
-                    super::staging_file_suffix(),
+                    std::process::id(),
                     remote_server_path.file_name().unwrap().to_string_lossy()
                 ))
                 .unwrap(),
@@ -290,7 +290,7 @@ impl DockerExecConnection {
             RelPath::from_unix_str(&format!(
                 "{}-download-{}.gz",
                 binary_name,
-                super::staging_file_suffix()
+                std::process::id()
             ))
             .unwrap(),
         );

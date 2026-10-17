@@ -200,8 +200,10 @@ impl ActivityIndicator {
 
             cx.subscribe(
                 &project.read(cx).environment().clone(),
-                |_, _, event, cx| match event {
-                    ProjectEnvironmentEvent::ErrorsUpdated => cx.notify(),
+                |_, _, event, cx| {
+                    if let ProjectEnvironmentEvent::ErrorsUpdated = event {
+                        cx.notify();
+                    }
                 },
             )
             .detach();

@@ -19,7 +19,7 @@ use editor::{
     code_context_menus::CodeContextMenu,
 };
 use extension::ExtensionHostProxy;
-use fs::{FakeFs, Fs};
+use fs::{FakeFs, Fs, RealFs};
 use futures::FutureExt as _;
 use git::{
     Oid,
@@ -65,6 +65,8 @@ use settings::{
     Settings, SettingsLocation, SettingsStore, SplicingVec, initial_server_settings_content,
 };
 use smol::stream::StreamExt;
+#[cfg(unix)]
+use std::os::unix::fs::{PermissionsExt as _, symlink};
 use std::{
     cell::RefCell,
     path::{Path, PathBuf},
@@ -76,6 +78,8 @@ use std::{
     },
 };
 use unindent::Unindent as _;
+#[cfg(unix)]
+use util::defer;
 use util::{
     path,
     path_list::PathList,
@@ -3391,6 +3395,105 @@ async fn test_adding_then_removing_then_adding_worktrees(
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[1].path.as_unix_str(), "README.md")
     })
+}
+
+#[gpui::test]
+async fn test_add_worktree_missing_leaf(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(path!("/code"), json!({ "project": {} }))
+        .await;
+    fs.insert_symlink(path!("/alias"), PathBuf::from(path!("/code/project")))
+        .await;
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/alias/new-file"), true, cx)
+        })
+        .await
+        .unwrap();
+    worktree.read_with(cx, |worktree, _| {
+        assert_eq!(
+            worktree.abs_path().as_ref(),
+            Path::new(path!("/code/project/new-file"))
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_add_worktree_path_error_classification(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    let real_fs = RealFs::new(None, server_cx.executor());
+    headless.update(server_cx, |headless, _| headless.fs = real_fs);
+    let client = project.read_with(cx, |project, cx| {
+        project.remote_client().unwrap().read(cx).proto_client()
+    });
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    std::fs::write(root.join("file"), "").unwrap();
+    let mut cases = vec![
+        (
+            root.join("missing/child"),
+            ErrorCode::DevServerProjectPathDoesNotExist,
+        ),
+        (
+            root.join("file/child/grandchild"),
+            ErrorCode::DevServerProjectPathDoesNotExist,
+        ),
+        (root.join("invalid\0/child"), ErrorCode::Internal),
+        (root.join("invalid\0"), ErrorCode::Internal),
+    ];
+
+    #[cfg(unix)]
+    let _restore_permissions = {
+        let recursive = root.join("recursive");
+        symlink("recursive", &recursive).unwrap();
+        cases.push((recursive.join("child"), ErrorCode::Internal));
+        cases.push((recursive, ErrorCode::Internal));
+        let dangling = root.join("dangling");
+        symlink("missing", &dangling).unwrap();
+        cases.push((dangling.join("child"), ErrorCode::Internal));
+
+        let denied = root.join("denied");
+        std::fs::create_dir_all(denied.join("child")).unwrap();
+        let inaccessible = root.join("inaccessible");
+        symlink(denied.join("child"), &inaccessible).unwrap();
+        let permissions = std::fs::metadata(&denied).unwrap().permissions();
+        std::fs::set_permissions(&denied, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::canonicalize(denied.join("child"))
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::PermissionDenied)
+        {
+            cases.push((denied.join("child/missing"), ErrorCode::Internal));
+            cases.push((inaccessible, ErrorCode::Internal));
+        } else {
+            eprintln!("Skipping permission cases: filesystem permissions are not enforced");
+        }
+        defer(move || std::fs::set_permissions(denied, permissions).unwrap())
+    };
+
+    for (path, expected_code) in cases.drain(..) {
+        let path = path.to_string_lossy().into_owned();
+        let result = client
+            .request(proto::AddWorktree {
+                path: path.clone(),
+                project_id: proto::REMOTE_SERVER_PROJECT_ID,
+                visible: true,
+            })
+            .await;
+        let error = result.expect_err(&format!("opening {path:?} must fail"));
+        assert_eq!(error.error_code(), expected_code, "{path:?}: {error:#}");
+        let expected_tag =
+            (expected_code == ErrorCode::DevServerProjectPathDoesNotExist).then_some(path.as_str());
+        assert_eq!(error.error_tag("path"), expected_tag);
+    }
+    cx.run_until_parked();
+    headless.read_with(server_cx, |headless, cx| {
+        assert_eq!(headless.worktree_store.read(cx).worktrees().count(), 0);
+    });
 }
 
 #[gpui::test]
