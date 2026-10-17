@@ -2652,7 +2652,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
     let mut lock = window_state.as_ref().lock();
 
     let window_height = lock.content_size().height;
-    let event = unsafe { platform_input_from_native(native_event, Some(window_height)) };
+    let event = unsafe { platform_input_from_native(native_event.cast(), Some(window_height)) };
 
     let Some(event) = event else {
         return NO;
@@ -2806,7 +2806,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
         }
         _ => {}
     }
-    let event = unsafe { platform_input_from_native(native_event, Some(window_height)) };
+    let event = unsafe { platform_input_from_native(native_event.cast(), Some(window_height)) };
 
     if let Some(mut event) = event {
         // AppKit unhides the cursor on the next mouse movement; mirror that here.

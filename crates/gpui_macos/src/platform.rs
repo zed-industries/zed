@@ -1573,12 +1573,12 @@ unsafe fn ns_url_to_path(url: id) -> Result<PathBuf> {
 
 #[link(name = "Carbon", kind = "framework")]
 unsafe extern "C" {
-    pub(super) fn TISCopyCurrentKeyboardLayoutInputSource() -> *mut Object;
-    pub(super) fn TISCopyCurrentKeyboardInputSource() -> *mut Object;
+    pub(super) fn TISCopyCurrentKeyboardLayoutInputSource() -> *mut AnyObject;
+    pub(super) fn TISCopyCurrentKeyboardInputSource() -> *mut AnyObject;
     pub(super) fn TISGetInputSourceProperty(
-        inputSource: *mut Object,
+        inputSource: *mut AnyObject,
         propertyKey: *const c_void,
-    ) -> *mut Object;
+    ) -> *mut AnyObject;
 
     pub(super) fn UCKeyTranslate(
         keyLayoutPtr: *const ::std::os::raw::c_void,
