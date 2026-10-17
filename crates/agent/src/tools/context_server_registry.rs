@@ -475,8 +475,28 @@ impl AnyAgentTool for ContextServerTool {
                             }
                         }
                     }
-                    context_server::types::ToolResponseContent::ResourceLink { .. } => {
-                        log::warn!("Ignoring resource link content from tool response");
+                    context_server::types::ToolResponseContent::ResourceLink {
+                        uri,
+                        name,
+                        title,
+                        description,
+                        mime_type,
+                    } => {
+                        let mut link = acp::ResourceLink::new(name.clone(), uri.to_string());
+                        if let Some(mime_type) = mime_type {
+                            link = link.mime_type(mime_type);
+                        }
+                        tool_call_content.push(acp::ToolCallContent::Content(Box::new(acp::Content::new(
+                            acp::ContentBlock::ResourceLink(link)),
+                        )));
+
+                        let mut link_text = format!("{} ({uri})", title.unwrap_or(name));
+                        if let Some(description) = description {
+                            link_text.push_str(": ");
+                            link_text.push_str(&description);
+                        }
+                        concatenated_text.push_str(&link_text);
+                        llm_output.push(LanguageModelToolResultContent::Text(link_text.into()));
                     }
                 }
             }
