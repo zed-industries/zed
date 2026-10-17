@@ -256,6 +256,8 @@ impl Application {
             let cx = &mut *this.borrow_mut();
             // Some platforms only connect to their display server in `run`.
             cx.displays_changed();
+            #[cfg(gpui_hot_reload)]
+            crate::hot_reload::init(cx);
             on_finish_launching(cx);
         }));
 
@@ -282,6 +284,8 @@ impl Application {
             let cx = &mut *this.borrow_mut();
             // Some platforms only connect to their display server in `run`.
             cx.displays_changed();
+            #[cfg(gpui_hot_reload)]
+            crate::hot_reload::init(cx);
             on_finish_launching(cx);
         }));
         ApplicationHandle { app: self.0 }

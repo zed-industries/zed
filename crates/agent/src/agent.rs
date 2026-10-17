@@ -3401,11 +3401,12 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             .try_for_each(UserMessageContent::validate_content_block)
     }
 
-    fn cancel(&self, session_id: &acp_v2::SessionId, cx: &mut App) {
+    fn cancel(&self, session_id: &acp_v2::SessionId, cx: &mut App) -> Result<()> {
         log::info!("Cancelling on session: {}", session_id);
         self.0.update(cx, |agent, _cx| {
             agent.cancel_session(session_id);
         });
+        Ok(())
     }
 
     fn truncate(
@@ -3660,7 +3661,7 @@ impl acp_thread::AgentSessionTruncate for NativeAgentSessionTruncate {
         let acp_thread = self.acp_thread.clone();
         cx.spawn(async move |cx| {
             // Preparation is session-owned and may precede the model turn.
-            cancellation.await;
+            cancellation.await?;
             let usage = thread.update(cx, |thread, cx| {
                 thread.truncate(client_user_message_id, cx)?;
                 anyhow::Ok(thread.latest_token_usage())
@@ -4835,7 +4836,8 @@ mod internal_tests {
                 );
             });
 
-            cx.update(|cx| connection.cancel(&session_id, cx));
+            cx.update(|cx| connection.cancel(&session_id, cx))
+                .expect("cancellation succeeds");
             cx.run_until_parked();
             assert_eq!(
                 completion
@@ -4978,7 +4980,7 @@ mod internal_tests {
         });
         let submission_id = submission.id;
         cx.run_until_parked();
-        cancellation.await;
+        cancellation.await.expect("cancellation succeeds");
         assert!(
             submission
                 .await
@@ -5017,7 +5019,7 @@ mod internal_tests {
         cx.run_until_parked();
         assert_eq!(fake.pending_completions_for(&model).len(), 1);
         let cancellation = acp_thread.update(cx, |thread, cx| thread.cancel(cx));
-        cancellation.await;
+        cancellation.await.expect("cancellation succeeds");
         assert_eq!(
             accepted.await.expect("accepted execution cancelled"),
             acp_v2::StopReason::Cancelled
@@ -5176,7 +5178,8 @@ mod internal_tests {
         );
         assert!(second_completion.peek().is_none());
         cx.run_until_parked();
-        cx.update(|cx| connection.cancel(&session_id, cx));
+        cx.update(|cx| connection.cancel(&session_id, cx))
+            .expect("cancellation succeeds");
         assert_eq!(
             second_completion
                 .await
@@ -5398,7 +5401,8 @@ mod internal_tests {
                     .any(|text| text.contains(command)),
                 "reload retry must not send an unprepared command to the model"
             );
-            cx.update(|cx| connection.cancel(&session_id, cx));
+            cx.update(|cx| connection.cancel(&session_id, cx))
+                .expect("cancellation succeeds");
             completion
                 .await
                 .expect("retry driver completed")
@@ -5731,7 +5735,8 @@ mod internal_tests {
                 .any(|text| text.contains("restored instructions") && text.contains("do work"))
         );
         assert!(!texts.iter().any(|text| text.contains("/:retry-skill")));
-        cx.update(|cx| connection.cancel(&session_id, cx));
+        cx.update(|cx| connection.cancel(&session_id, cx))
+            .expect("cancellation succeeds");
         assert_eq!(
             completion
                 .await
@@ -5815,7 +5820,8 @@ mod internal_tests {
             request.intent,
             Some(CompletionIntent::ThreadContextSummarization)
         );
-        cx.update(|cx| connection.cancel(&session_id, cx));
+        cx.update(|cx| connection.cancel(&session_id, cx))
+            .expect("cancellation succeeds");
         assert_eq!(
             completion
                 .await
@@ -9674,7 +9680,8 @@ mod internal_tests {
         cx.run_until_parked();
         turn.acp_thread
             .update(cx, |thread, cx| thread.cancel(cx))
-            .await;
+            .await
+            .expect("cancellation succeeds");
         send.await.unwrap();
         cx.run_until_parked();
         assert_eq!(
@@ -9801,7 +9808,8 @@ mod internal_tests {
 
         turn.acp_thread
             .update(cx, |thread, cx| thread.cancel(cx))
-            .await;
+            .await
+            .expect("cancellation succeeds");
         send.await.unwrap();
         cx.run_until_parked();
         assert_eq!(
