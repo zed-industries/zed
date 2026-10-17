@@ -658,6 +658,7 @@ mod tests {
     use std::time::Duration;
 
     use proptest::prelude::*;
+    use rand::Rng as _;
     use rand::prelude::*;
     use scheduler::SpawnTime;
 
