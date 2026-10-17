@@ -199,6 +199,49 @@ impl Model {
     pub fn supports_disabling_thinking(&self) -> bool {
         !matches!(self, Self::ZaiGlmLatest)
     }
+
+    /// The `reasoning_effort` values this model accepts, as enforced by the
+    /// Mistral API. Verified against the API: mistral-medium and mistral-small
+    /// only accept `none` and `high`, while Z.ai GLM accepts `low`, `high` and
+    /// `max`.
+    pub fn supported_reasoning_efforts(&self) -> &'static [ReasoningEffort] {
+        match self {
+            Self::MistralMediumLatest | Self::MistralSmallLatest => {
+                &[ReasoningEffort::None, ReasoningEffort::High]
+            }
+            Self::ZaiGlmLatest => &[
+                ReasoningEffort::Low,
+                ReasoningEffort::High,
+                ReasoningEffort::Max,
+            ],
+            Self::Custom {
+                supports_thinking, ..
+            } => {
+                if supports_thinking.unwrap_or(false) {
+                    &[ReasoningEffort::None, ReasoningEffort::High]
+                } else {
+                    &[]
+                }
+            }
+            _ => &[],
+        }
+    }
+
+    /// The effort to request when thinking is enabled but the caller didn't
+    /// select one.
+    pub fn default_reasoning_effort(&self) -> Option<ReasoningEffort> {
+        let supported = self.supported_reasoning_efforts();
+        supported
+            .iter()
+            .copied()
+            .find(|effort| *effort == ReasoningEffort::High)
+            .or_else(|| {
+                supported
+                    .iter()
+                    .copied()
+                    .find(|effort| *effort != ReasoningEffort::None)
+            })
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -228,7 +271,29 @@ pub struct Request {
 #[serde(rename_all = "lowercase")]
 pub enum ReasoningEffort {
     None,
+    Low,
     High,
+    Max,
+}
+
+impl ReasoningEffort {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::None => "None",
+            Self::Low => "Low",
+            Self::High => "High",
+            Self::Max => "Max",
+        }
+    }
+
+    pub fn value(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Low => "low",
+            Self::High => "high",
+            Self::Max => "max",
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
