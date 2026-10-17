@@ -3095,13 +3095,12 @@ impl ToolCallContent {
                 meta: content.meta,
             },
             PreparedToolCallContent::LegacyDiff(source) => {
-                let diff = cx.new(|cx| {
+                let diff = cx.new(|_| {
                     Diff::finalized(
                         source.path.to_string_lossy().into_owned(),
                         source.old_text.clone(),
                         source.new_text.clone(),
                         language_registry.clone(),
-                        cx,
                     )
                 });
                 Self::LegacyDiff { source, diff }
@@ -3179,7 +3178,7 @@ impl ToolCallContent {
 
     pub fn to_markdown(&self, cx: &App) -> String {
         match self {
-            Self::ContentBlock { block, .. } => block.to_markdown(cx).to_string(),
+            Self::ContentBlock { block, .. } => block.to_markdown(cx).to_owned(),
             Self::Diff(diff) | Self::LegacyDiff { diff, .. } => diff.read(cx).to_markdown(cx),
             Self::Terminal { terminal, .. } => terminal.read(cx).to_markdown(cx),
             Self::DiffPatch { source, .. } => format!(
@@ -9537,13 +9536,12 @@ mod tests {
             };
             assert_eq!(source.path, PathBuf::from("second.rs"));
             assert_ne!(diff, &previous);
-            let native_diff = cx.new(|cx| {
+            let native_diff = cx.new(|_| {
                 Diff::finalized(
                     "native.rs".into(),
                     Some("before".into()),
                     "after".into(),
                     languages.clone(),
-                    cx,
                 )
             });
             let mut native = ToolCallContent::Diff(native_diff.clone());
