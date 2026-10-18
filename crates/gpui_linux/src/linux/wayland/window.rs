@@ -1118,7 +1118,9 @@ impl WaylandWindowStatePtr {
                             state.resize_throttle = true;
                         }
                         if !configure.fullscreen && !configure.maximized {
-                            configure.size = if got_unmaximized {
+                            // Only restore the old size if the compositor didn't send one.
+                            // Tiling a maximized window unmaximizes and resizes at once.
+                            configure.size = if got_unmaximized && configure.size.is_none() {
                                 Some(state.window_bounds.size)
                             } else {
                                 compute_outer_size(state.inset(), configure.size, state.tiling)
