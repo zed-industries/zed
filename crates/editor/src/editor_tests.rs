@@ -43113,6 +43113,97 @@ async fn test_select_next_prev_syntax_node(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_select_next_prev_syntax_node_selection_direction_matches_navigation_direction(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+    cx.run_until_parked();
+
+    for (case_name, initial_state, expected_state, select_next) in [
+        (
+            "Next keeps a forward selection forward",
+            indoc! {"
+                fn main() {
+                    «let first = 1;ˇ»
+                    let second = 2;
+                }
+            "},
+            indoc! {"
+                fn main() {
+                    let first = 1;
+                    «let second = 2;ˇ»
+                }
+            "},
+            true,
+        ),
+        (
+            "Next changes a backward selection to forward",
+            indoc! {"
+                fn main() {
+                    «ˇlet first = 1;»
+                    let second = 2;
+                }
+            "},
+            indoc! {"
+                fn main() {
+                    let first = 1;
+                    «let second = 2;ˇ»
+                }
+            "},
+            true,
+        ),
+        (
+            "Previous changes a forward selection to backward",
+            indoc! {"
+                fn main() {
+                    let first = 1;
+                    «let second = 2;ˇ»
+                }
+            "},
+            indoc! {"
+                fn main() {
+                    «ˇlet first = 1;»
+                    let second = 2;
+                }
+            "},
+            false,
+        ),
+        (
+            "Previous keeps a backward selection backward",
+            indoc! {"
+                fn main() {
+                    let first = 1;
+                    «ˇlet second = 2;»
+                }
+            "},
+            indoc! {"
+                fn main() {
+                    «ˇlet first = 1;»
+                    let second = 2;
+                }
+            "},
+            false,
+        ),
+    ] {
+        // Keep both context handles alive so failures include the case name and
+        // initial state.
+        let _case_context = cx.add_assertion_context(case_name.to_string());
+        let _initial_state_context = cx.set_state(initial_state);
+        cx.update_editor(|editor, window, cx| {
+            if select_next {
+                editor.select_next_syntax_node(&SelectNextSyntaxNode, window, cx);
+            } else {
+                editor.select_prev_syntax_node(&SelectPreviousSyntaxNode, window, cx);
+            }
+        });
+        cx.assert_editor_state(expected_state);
+    }
+}
+
+#[gpui::test]
 async fn test_next_prev_document_highlight(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
