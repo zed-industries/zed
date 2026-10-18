@@ -73,7 +73,10 @@ struct StateInner {
     measuring_behavior: ListMeasuringBehavior,
     pending_scroll: Option<PendingScroll>,
     follow_state: FollowState,
-    item_heights_provisional: bool,
+    /// The anchored scroll position whose item heights are provisional, if any.
+    /// Any later assignment to `logical_scroll_top` invalidates it, so navigation
+    /// cannot leave the pin attached to a different position.
+    provisional_scroll_top: Option<ListOffset>,
 }
 
 /// Deferred scroll adjustment applied after the scroll-top item has been remeasured.
@@ -326,7 +329,7 @@ impl ListState {
             measuring_behavior: ListMeasuringBehavior::default(),
             pending_scroll: None,
             follow_state: FollowState::default(),
-            item_heights_provisional: false,
+            provisional_scroll_top: None,
         })));
         this.splice(0..0, item_count);
         this
@@ -361,7 +364,7 @@ impl ListState {
             state.measuring_behavior.reset();
             state.logical_scroll_top = None;
             state.pending_scroll = None;
-            state.item_heights_provisional = false;
+            state.provisional_scroll_top = None;
             state.scrollbar_drag_start_height = None;
             state.items.summary().count
         };
@@ -537,16 +540,20 @@ impl ListState {
         drop(old_items);
         state.items = new_items;
 
+        // A splice at or before the anchored item invalidates the height pin.
+        // Check the anchor before the offsets below are adjusted in place.
+        if state
+            .logical_scroll_top
+            .is_some_and(|top| top.item_ix >= old_range.start)
+        {
+            state.provisional_scroll_top = None;
+        }
+
         if let Some(ListOffset {
             item_ix,
             offset_in_item,
         }) = state.logical_scroll_top.as_mut()
         {
-            // A splice at or before the anchored item invalidates the height
-            // pin on that anchor.
-            if *item_ix >= old_range.start {
-                state.item_heights_provisional = false;
-            }
             if old_range.contains(item_ix) {
                 *item_ix = old_range.start;
                 *offset_in_item = px(0.);
@@ -577,7 +584,6 @@ impl ListState {
 
         let current_offset = self.logical_scroll_top();
         let state = &mut *self.0.borrow_mut();
-        state.item_heights_provisional = false;
 
         if distance < px(0.) {
             state.follow_state.stop_following();
@@ -611,7 +617,6 @@ impl ListState {
     /// growing (e.g. during streaming).
     pub fn scroll_to_end(&self) {
         let state = &mut *self.0.borrow_mut();
-        state.item_heights_provisional = false;
         let item_count = state.items.summary().count;
         state.pending_scroll = None;
         state.logical_scroll_top = Some(ListOffset {
@@ -667,17 +672,23 @@ impl ListState {
     /// re-enable tail-following. The viewport may remain underfilled until you
     /// clear it.
     ///
-    /// Explicit navigation clears this automatically: [`Self::scroll_to`],
-    /// [`Self::scroll_to_end`], [`Self::scroll_to_reveal_item`],
-    /// [`Self::scroll_by`], wheel scrolling, scrollbar navigation, and splicing
-    /// at or before the anchor all drop the pin on the old anchor.
+    /// The pin belongs to the current scroll anchor: any navigation that moves
+    /// `logical_scroll_top` ([`Self::scroll_to`], [`Self::scroll_to_end`],
+    /// [`Self::scroll_to_reveal_item`], [`Self::scroll_by`], wheel scrolling,
+    /// scrollbar navigation, or a splice at or before the anchor) ends
+    /// provisional mode automatically.
     pub fn set_item_heights_provisional(&self, provisional: bool) {
-        self.0.borrow_mut().item_heights_provisional = provisional;
+        let mut state = self.0.borrow_mut();
+        state.provisional_scroll_top = if provisional {
+            state.logical_scroll_top
+        } else {
+            None
+        };
     }
 
     /// Returns whether item heights are currently provisional.
     pub fn item_heights_provisional(&self) -> bool {
-        self.0.borrow().item_heights_provisional
+        self.0.borrow().is_provisional()
     }
 
     /// Returns whether the list is currently actively following the
@@ -692,7 +703,6 @@ impl ListState {
     /// Scroll the list to the given offset
     pub fn scroll_to(&self, mut scroll_top: ListOffset) {
         let state = &mut *self.0.borrow_mut();
-        state.item_heights_provisional = false;
         let item_count = state.items.summary().count;
         if scroll_top.item_ix >= item_count {
             scroll_top.item_ix = item_count;
@@ -710,7 +720,6 @@ impl ListState {
     /// Scroll the list to the given item, such that the item is fully visible.
     pub fn scroll_to_reveal_item(&self, ix: usize) {
         let state = &mut *self.0.borrow_mut();
-        state.item_heights_provisional = false;
 
         let mut scroll_top = state.logical_scroll_top();
         let height = state
@@ -945,8 +954,6 @@ impl StateInner {
             return;
         }
 
-        self.item_heights_provisional = false;
-
         let padding = self.last_padding.unwrap_or_default();
         let scroll_max =
             (self.items.summary().height + padding.top + padding.bottom - height).max(px(0.));
@@ -1017,6 +1024,14 @@ impl StateInner {
             Bias::Right,
         );
         start.height + logical_scroll_top.offset_in_item
+    }
+
+    /// Whether the current scroll anchor is the one whose heights are pinned.
+    /// Navigation assigns `logical_scroll_top`, which breaks the match and ends
+    /// provisional mode without each navigation path having to remember to.
+    fn is_provisional(&self) -> bool {
+        self.provisional_scroll_top
+            .is_some_and(|pinned| self.logical_scroll_top == Some(pinned))
     }
 
     fn layout_all_items(
@@ -1116,7 +1131,7 @@ impl StateInner {
 
                 // If there's a pending scroll adjustment for the scroll-top
                 // item, apply it.
-                if ix == 0 && !self.item_heights_provisional {
+                if ix == 0 && !self.is_provisional() {
                     if let Some(pending_scroll) = self.pending_scroll.take() {
                         match pending_scroll {
                             PendingScroll::Absolute { item_ix, offset }
@@ -1166,8 +1181,7 @@ impl StateInner {
 
         // If the rendered items do not fill the visible region, then adjust
         // the scroll top upward.
-        if !self.item_heights_provisional
-            && rendered_height - scroll_top.offset_in_item < available_height
+        if !self.is_provisional() && rendered_height - scroll_top.offset_in_item < available_height
         {
             while rendered_height < available_height {
                 cursor.prev();
@@ -1215,7 +1229,7 @@ impl StateInner {
         }
 
         // Measure items in the leading overdraw
-        if !self.item_heights_provisional {
+        if !self.is_provisional() {
             let mut leading_overdraw = scroll_top.offset_in_item;
             while leading_overdraw < self.overdraw {
                 cursor.prev();
@@ -1249,7 +1263,7 @@ impl StateInner {
         // If follow_tail mode is on but the user scrolled away
         // (is_following is false), check whether the current scroll
         // position has returned to the bottom.
-        if !self.item_heights_provisional && self.follow_state.has_stopped_following() {
+        if !self.is_provisional() && self.follow_state.has_stopped_following() {
             let padding = self.last_padding.unwrap_or_default();
             let total_height = self.items.summary().height + padding.top + padding.bottom;
             let scroll_offset = self.scroll_top(&scroll_top);
@@ -1413,7 +1427,6 @@ impl StateInner {
         let Some(bounds) = self.last_layout_bounds else {
             return;
         };
-        self.item_heights_provisional = false;
         let height = bounds.size.height;
 
         let padding = self.last_padding.unwrap_or_default();
@@ -1471,7 +1484,7 @@ impl std::fmt::Debug for ListItem {
 
 /// An offset into the list's items, in terms of the item index and the number
 /// of pixels off the top left of the item.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct ListOffset {
     /// The index of an item in the list
     pub item_ix: usize,
@@ -1606,6 +1619,11 @@ impl Element for List {
             match state.prepaint_items(bounds, padding, true, &mut self.render_item, window, cx) {
                 Ok(layout) => layout,
                 Err(autoscroll_request) => {
+                    // A child autoscroll moves the anchor the pin belongs to;
+                    // keep pinning the new position instead of ending it.
+                    if state.is_provisional() {
+                        state.provisional_scroll_top = Some(autoscroll_request);
+                    }
                     state.rebase_pending_scroll(autoscroll_request);
                     state.logical_scroll_top = Some(autoscroll_request);
                     state
@@ -2426,6 +2444,192 @@ mod test {
         assert_eq!(offset.item_ix, 10);
         assert_eq!(offset.offset_in_item, px(40.));
         assert!(!state.is_following_tail());
+    }
+
+    #[gpui::test]
+    fn test_navigation_clears_provisional_item_heights_and_renders_destination(
+        cx: &mut TestAppContext,
+    ) {
+        let cx = cx.add_empty_window();
+        let state = ListState::new(20, crate::ListAlignment::Top, px(0.));
+
+        struct TestView {
+            state: ListState,
+        }
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                list(self.state.clone(), |ix, _, _| {
+                    // The anchor item is still deferred; the rest have real height.
+                    let height = if ix == 5 { px(0.) } else { px(50.) };
+                    div().h(height).w_full().into_any()
+                })
+                .w_full()
+                .h_full()
+            }
+        }
+
+        let view = cx.update(|_, cx| {
+            cx.new(|_| TestView {
+                state: state.clone(),
+            })
+        });
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            let view = view.clone();
+            cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+                view.into_any_element()
+            });
+        };
+
+        // `scroll_to_end` while provisional must clear the pin and backward-fill
+        // the bottom items instead of leaving the viewport blank.
+        state.scroll_to(gpui::ListOffset {
+            item_ix: 5,
+            offset_in_item: px(20.),
+        });
+        state.set_item_heights_provisional(true);
+        draw(cx);
+        assert!(state.item_heights_provisional());
+
+        state.scroll_to_end();
+        assert!(
+            !state.item_heights_provisional(),
+            "scroll_to_end must clear provisional mode"
+        );
+        draw(cx);
+        assert!(
+            state.bounds_for_item(19).is_some(),
+            "backward fill must render the last item after scroll_to_end"
+        );
+
+        // `scroll_by` while provisional must clear the pin as well.
+        state.scroll_to(gpui::ListOffset {
+            item_ix: 5,
+            offset_in_item: px(20.),
+        });
+        state.set_item_heights_provisional(true);
+        draw(cx);
+        state.scroll_by(px(5000.));
+        assert!(
+            !state.item_heights_provisional(),
+            "scroll_by must clear provisional mode"
+        );
+        draw(cx);
+        assert!(
+            state.bounds_for_item(19).is_some(),
+            "scrolling past the end with scroll_by must backward-fill the last item"
+        );
+    }
+
+    #[gpui::test]
+    fn test_scrollbar_navigation_clears_provisional_even_when_ended_before_layout(
+        cx: &mut TestAppContext,
+    ) {
+        let cx = cx.add_empty_window();
+        let state = ListState::new(20, crate::ListAlignment::Top, px(0.));
+
+        struct TestView {
+            state: ListState,
+        }
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                list(self.state.clone(), |ix, _, _| {
+                    let height = if ix == 5 { px(0.) } else { px(50.) };
+                    div().h(height).w_full().into_any()
+                })
+                .w_full()
+                .h_full()
+            }
+        }
+
+        let view = cx.update(|_, cx| {
+            cx.new(|_| TestView {
+                state: state.clone(),
+            })
+        });
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            let view = view.clone();
+            cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+                view.into_any_element()
+            });
+        };
+
+        state.set_follow_mode(FollowMode::Tail);
+        state.scroll_to(gpui::ListOffset {
+            item_ix: 5,
+            offset_in_item: px(20.),
+        });
+        state.set_item_heights_provisional(true);
+        draw(cx);
+        assert!(state.item_heights_provisional());
+
+        // Thumb-down, move to the bottom, and thumb-up all before the next layout.
+        state.scrollbar_drag_started();
+        state.set_offset_from_scrollbar(point(px(0.), px(-10_000.)));
+        state.scrollbar_drag_ended();
+
+        assert!(
+            !state.item_heights_provisional(),
+            "accepting scrollbar navigation must clear provisional mode immediately"
+        );
+        assert!(
+            !state.is_scrollbar_dragging(),
+            "the drag has already ended before layout"
+        );
+
+        draw(cx);
+        assert!(
+            state.bounds_for_item(19).is_some(),
+            "the bottom items must render on the frame after scrollbar navigation"
+        );
+    }
+
+    #[gpui::test]
+    fn test_splice_clears_provisional_only_when_anchor_is_affected(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let state = ListState::new(10, crate::ListAlignment::Top, px(0.));
+
+        struct TestView {
+            state: ListState,
+        }
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                list(self.state.clone(), |_, _, _| {
+                    div().h(px(50.)).w_full().into_any()
+                })
+                .w_full()
+                .h_full()
+            }
+        }
+
+        let view = cx.update(|_, cx| {
+            cx.new(|_| TestView {
+                state: state.clone(),
+            })
+        });
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+            view.into_any_element()
+        });
+
+        state.scroll_to(gpui::ListOffset {
+            item_ix: 5,
+            offset_in_item: px(20.),
+        });
+        state.set_item_heights_provisional(true);
+        assert!(state.item_heights_provisional());
+
+        // Streaming appends and edits after the anchor keep the pin.
+        state.splice(8..10, 3);
+        assert!(
+            state.item_heights_provisional(),
+            "splicing after the anchor must preserve provisional mode"
+        );
+
+        // Removing the anchored item invalidates it.
+        state.splice(5..6, 0);
+        assert!(
+            !state.item_heights_provisional(),
+            "splicing at or before the anchor must clear provisional mode"
+        );
     }
 
     #[gpui::test]
