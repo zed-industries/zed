@@ -361,6 +361,12 @@ impl LanguageModelRegistry {
             .find(|model| model.id == selected_model.model)
     }
 
+    pub fn emit_events_for_unset_models(&mut self, cx: &mut Context<Self>) {
+        if self.thread_summary_model.is_none() {
+            cx.emit(Event::ThreadSummaryModelChanged);
+        }
+    }
+
     pub fn set_default_model(&mut self, model: Option<LanguageModel>, cx: &mut Context<Self>) {
         match (self.default_model(), model.as_ref()) {
             (Some(old), Some(new)) if old.is_same_as(new) => {}
@@ -368,9 +374,7 @@ impl LanguageModelRegistry {
             _ => {
                 cx.emit(Event::DefaultModelChanged);
                 // Emit the feature specific event in case the feature specific model is unset
-                if self.thread_summary_model.is_none() {
-                    cx.emit(Event::ThreadSummaryModelChanged);
-                }
+                self.emit_events_for_unset_models(cx);
             }
         }
         self.default_model = model;
@@ -400,7 +404,11 @@ impl LanguageModelRegistry {
             match (self.available_fallback_model.as_ref(), model.as_ref()) {
                 (Some(old), Some(new)) if old.is_same_as(new) => {}
                 (None, None) => {}
-                _ => cx.emit(Event::DefaultModelChanged),
+                _ => {
+                    cx.emit(Event::DefaultModelChanged);
+                    // Emit the feature specific event in case the feature specific model is unset
+                    self.emit_events_for_unset_models(cx);
+                },
             }
         }
         self.available_fallback_model = model;
