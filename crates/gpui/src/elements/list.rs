@@ -542,6 +542,11 @@ impl ListState {
             offset_in_item,
         }) = state.logical_scroll_top.as_mut()
         {
+            // A splice at or before the anchored item invalidates the height
+            // pin on that anchor.
+            if *item_ix >= old_range.start {
+                state.item_heights_provisional = false;
+            }
             if old_range.contains(item_ix) {
                 *item_ix = old_range.start;
                 *offset_in_item = px(0.);
@@ -572,6 +577,7 @@ impl ListState {
 
         let current_offset = self.logical_scroll_top();
         let state = &mut *self.0.borrow_mut();
+        state.item_heights_provisional = false;
 
         if distance < px(0.) {
             state.follow_state.stop_following();
@@ -605,6 +611,7 @@ impl ListState {
     /// growing (e.g. during streaming).
     pub fn scroll_to_end(&self) {
         let state = &mut *self.0.borrow_mut();
+        state.item_heights_provisional = false;
         let item_count = state.items.summary().count;
         state.pending_scroll = None;
         state.logical_scroll_top = Some(ListOffset {
@@ -658,11 +665,19 @@ impl ListState {
     /// have their final sizes. While set, layout preserves the requested anchor
     /// and in-item offset, does not lay out items above the anchor, and does not
     /// re-enable tail-following. The viewport may remain underfilled until you
-    /// clear it; the list never clears this automatically.
+    /// clear it.
     ///
-    /// User scrolling still works while item heights are provisional.
+    /// Explicit navigation clears this automatically: [`Self::scroll_to`],
+    /// [`Self::scroll_to_end`], [`Self::scroll_to_reveal_item`],
+    /// [`Self::scroll_by`], wheel scrolling, scrollbar navigation, and splicing
+    /// at or before the anchor all drop the pin on the old anchor.
     pub fn set_item_heights_provisional(&self, provisional: bool) {
         self.0.borrow_mut().item_heights_provisional = provisional;
+    }
+
+    /// Returns whether item heights are currently provisional.
+    pub fn item_heights_provisional(&self) -> bool {
+        self.0.borrow().item_heights_provisional
     }
 
     /// Returns whether the list is currently actively following the
@@ -677,6 +692,7 @@ impl ListState {
     /// Scroll the list to the given offset
     pub fn scroll_to(&self, mut scroll_top: ListOffset) {
         let state = &mut *self.0.borrow_mut();
+        state.item_heights_provisional = false;
         let item_count = state.items.summary().count;
         if scroll_top.item_ix >= item_count {
             scroll_top.item_ix = item_count;
@@ -694,6 +710,7 @@ impl ListState {
     /// Scroll the list to the given item, such that the item is fully visible.
     pub fn scroll_to_reveal_item(&self, ix: usize) {
         let state = &mut *self.0.borrow_mut();
+        state.item_heights_provisional = false;
 
         let mut scroll_top = state.logical_scroll_top();
         let height = state
@@ -927,6 +944,8 @@ impl StateInner {
         if self.reset {
             return;
         }
+
+        self.item_heights_provisional = false;
 
         let padding = self.last_padding.unwrap_or_default();
         let scroll_max =
@@ -1394,6 +1413,7 @@ impl StateInner {
         let Some(bounds) = self.last_layout_bounds else {
             return;
         };
+        self.item_heights_provisional = false;
         let height = bounds.size.height;
 
         let padding = self.last_padding.unwrap_or_default();
