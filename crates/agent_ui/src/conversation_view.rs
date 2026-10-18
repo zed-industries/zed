@@ -1487,12 +1487,16 @@ impl ConversationView {
             );
         });
 
-        let restored_scroll_position = thread.read(cx).ui_scroll_position();
+        let restored_scroll_position = thread
+            .read(cx)
+            .ui_scroll_position()
+            .filter(|offset| offset.item_ix < count);
         if let Some(scroll_position) = restored_scroll_position {
             list_state.scroll_to(scroll_position);
         } else {
             list_state.scroll_to_end();
         }
+        list_state.set_item_heights_provisional(restored_scroll_position.is_some());
 
         AgentDiff::set_active_thread(&self.workspace, thread.clone(), window, cx);
 
@@ -1627,7 +1631,6 @@ impl ConversationView {
                 model_selector,
                 profile_selector,
                 list_state,
-                restored_scroll_position,
                 session_capabilities,
                 resumed_without_history,
                 self.project.downgrade(),

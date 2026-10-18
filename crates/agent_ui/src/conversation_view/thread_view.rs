@@ -892,7 +892,6 @@ impl ThreadView {
         model_selector: Option<Entity<ModelSelectorPopover>>,
         profile_selector: Option<Entity<ProfileSelector>>,
         list_state: ListState,
-        restored_scroll_position: Option<ListOffset>,
         session_capabilities: SharedSessionCapabilities,
         resumed_without_history: bool,
         project: WeakEntity<Project>,
@@ -1107,9 +1106,6 @@ impl ThreadView {
         }));
 
         let current_submission = thread.read(cx).latest_submission_id();
-        let restored_scroll_position = restored_scroll_position
-            .filter(|offset| offset.item_ix < thread.read(cx).entries().len());
-        list_state.set_item_heights_provisional(restored_scroll_position.is_some());
         let mut this = Self {
             root_thread_id,
             session_id,
