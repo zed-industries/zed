@@ -79,6 +79,9 @@ struct StateInner {
     pending_scroll: Option<PendingScroll>,
     follow_state: FollowState,
     anchor_state: AnchorState,
+    /// Identifies the current provisional pin, so dropping a stale guard
+    /// cannot release a newer one.
+    provisional_session: u64,
     /// Incremented by every reset. Async work that captured an `item_ix` before
     /// awaiting compares this to detect that the index space was rebuilt.
     generation: u64,
@@ -302,6 +305,7 @@ impl ListState {
             pending_scroll: None,
             follow_state: FollowState::default(),
             anchor_state: AnchorState::Free,
+            provisional_session: 0,
             generation: 0,
         })));
         this.splice(0..0, item_count);
@@ -689,17 +693,23 @@ impl ListState {
 
     /// Enters provisional mode and returns a guard that leaves it on drop.
     ///
-    /// Debug-asserts that an anchor exists; in release the guard is a no-op if
-    /// the anchor was not set. Dropping after navigation already ended
-    /// provisional mode is also a no-op.
+    /// Each guard owns the pin it acquired, so dropping an obsolete guard does
+    /// not release a newer one. Debug-asserts that an anchor exists; in release
+    /// the guard is a no-op if the anchor was not set.
     pub fn pin_provisional_layout(&self) -> ProvisionalGuard {
         let began = self.begin_provisional_layout();
+        let session = began.then(|| {
+            let state = &mut *self.0.borrow_mut();
+            state.provisional_session = state.provisional_session.wrapping_add(1);
+            state.provisional_session
+        });
         debug_assert!(
             began,
             "pin_provisional_layout requires a scroll anchor; call scroll_to first"
         );
         ProvisionalGuard {
             state: self.clone(),
+            session,
         }
     }
 
@@ -900,18 +910,21 @@ impl ListState {
     }
 }
 
-/// Leaves provisional mode when dropped.
+/// Leaves the provisional pin it acquired when dropped.
 ///
-/// Obtained from [`ListState::pin_provisional_layout`]. Dropping is idempotent:
-/// navigation may already have ended provisional mode, and the guard is a no-op
-/// if the anchor was not set at construction (debug-asserted there).
+/// Obtained from [`ListState::pin_provisional_layout`]. A guard that no longer
+/// owns the active pin, because navigation or a newer guard replaced it, is a
+/// no-op on drop, as is one whose anchor was not set at construction.
 pub struct ProvisionalGuard {
     state: ListState,
+    session: Option<u64>,
 }
 
 impl Drop for ProvisionalGuard {
     fn drop(&mut self) {
-        self.state.end_provisional_layout();
+        if let Some(session) = self.session {
+            self.state.0.borrow_mut().end_provisional_session(session);
+        }
     }
 }
 
@@ -1081,7 +1094,11 @@ impl StateInner {
         let Some(anchor) = self.logical_scroll_top else {
             return false;
         };
+        let reentering = self.anchor_state.is_provisional(Some(anchor));
         self.pending_scroll = self.anchor_state.begin(anchor, self.pending_scroll.take());
+        if !reentering {
+            self.provisional_session = self.provisional_session.wrapping_add(1);
+        }
         true
     }
 
@@ -1094,9 +1111,16 @@ impl StateInner {
         }
     }
 
+    /// Leaves provisional mode only if `session` is still the active pin.
+    fn end_provisional_session(&mut self, session: u64) {
+        if self.provisional_session == session {
+            self.end_provisional();
+        }
+    }
+
     /// Stores a deferred adjustment for `anchor`, scoped to the provisional
-    /// pin when one is active. Provisional pendings carry no index: they are
-    /// offsets into the anchor itself.
+    /// pin when one is active. A provisional pending carries no index: it is
+    /// an offset into the anchor itself.
     fn stash_pending(&mut self, anchor: ListOffset, pending: PendingOffset) {
         if self.anchor_state.stash(pending) {
             return;
@@ -2532,6 +2556,63 @@ mod test {
     }
 
     #[gpui::test]
+    fn test_beginning_provisional_again_keeps_the_remeasured_pending(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        let item_height = Rc::new(Cell::new(100usize));
+        let state = ListState::new(10, crate::ListAlignment::Top, px(0.));
+
+        struct TestView {
+            state: ListState,
+            item_height: Rc<Cell<usize>>,
+        }
+
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let height = self.item_height.get();
+                list(self.state.clone(), move |_, _, _| {
+                    div().h(px(height as f32)).w_full().into_any()
+                })
+                .w_full()
+                .h_full()
+            }
+        }
+
+        let view = {
+            let state = state.clone();
+            let item_height = item_height.clone();
+            cx.update(|_, cx| cx.new(|_| TestView { state, item_height }))
+        };
+
+        state.scroll_to(gpui::ListOffset {
+            item_ix: 5,
+            offset_in_item: px(50.),
+        });
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+            view.clone().into_any_element()
+        });
+
+        state.begin_provisional_layout();
+        state.remeasure();
+        state.set_item_heights_provisional(true);
+
+        item_height.set(200);
+        state.end_provisional_layout();
+
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+            view.into_any_element()
+        });
+
+        let offset = state.logical_scroll_top();
+        assert_eq!(offset.item_ix, 5);
+        assert_eq!(
+            offset.offset_in_item,
+            px(100.),
+            "the stored fraction must apply to the item's new height"
+        );
+    }
+
+    #[gpui::test]
     fn test_navigation_clears_provisional_item_heights_and_renders_destination(
         cx: &mut TestAppContext,
     ) {
@@ -2994,6 +3075,50 @@ mod test {
         assert!(!state.item_heights_provisional());
 
         drop(guard);
+        assert!(!state.item_heights_provisional());
+    }
+
+    #[test]
+    fn test_stale_guard_does_not_end_a_newer_pin() {
+        let state = ListState::new(5, crate::ListAlignment::Top, px(0.));
+        state.scroll_to(gpui::ListOffset {
+            item_ix: 2,
+            offset_in_item: px(0.),
+        });
+        let stale = state.pin_provisional_layout();
+
+        state.scroll_to(gpui::ListOffset {
+            item_ix: 3,
+            offset_in_item: px(0.),
+        });
+        let current = state.pin_provisional_layout();
+        assert!(state.item_heights_provisional());
+
+        drop(stale);
+        assert!(
+            state.item_heights_provisional(),
+            "an obsolete guard must not release the newer pin"
+        );
+
+        drop(current);
+        assert!(!state.item_heights_provisional());
+    }
+
+    #[test]
+    fn test_replacing_the_guard_at_the_same_anchor_keeps_the_pin() {
+        let state = ListState::new(5, crate::ListAlignment::Top, px(0.));
+        let offset = gpui::ListOffset {
+            item_ix: 2,
+            offset_in_item: px(0.),
+        };
+        state.scroll_to(offset);
+        let old = state.pin_provisional_layout();
+
+        let new = state.pin_provisional_layout();
+        drop(old);
+        assert!(state.item_heights_provisional());
+
+        drop(new);
         assert!(!state.item_heights_provisional());
     }
 

@@ -102,27 +102,31 @@ impl AnchorState {
     /// Enters provisional mode for `anchor`. Returns a pending scroll that
     /// could not be absorbed because it belongs to a different item, so the
     /// caller can keep it in the non-provisional slot.
+    ///
+    /// Re-entering at the pinned anchor preserves its stored adjustment unless
+    /// superseded by a new `pending` for the same item.
     pub(super) fn begin(
         &mut self,
         anchor: ListOffset,
         pending: Option<PendingScroll>,
     ) -> Option<PendingScroll> {
-        match pending {
+        let (absorbed, leftover) = match pending {
             Some(pending) if pending.item_ix() == anchor.item_ix => {
-                *self = AnchorState::Provisional {
-                    anchor,
-                    pending: Some(pending.into_offset()),
-                };
-                None
+                (Some(pending.into_offset()), None)
             }
-            pending => {
-                *self = AnchorState::Provisional {
-                    anchor,
-                    pending: None,
-                };
-                pending
-            }
-        }
+            pending => (None, pending),
+        };
+
+        let pending = match *self {
+            AnchorState::Provisional {
+                anchor: pinned,
+                pending: existing,
+            } if pinned == anchor => absorbed.or(existing),
+            _ => absorbed,
+        };
+
+        *self = AnchorState::Provisional { anchor, pending };
+        leftover
     }
 
     /// Leaves provisional mode, returning the anchor and its deferred offset
@@ -204,6 +208,54 @@ mod tests {
             } => assert_eq!(pending, px(40.)),
             _ => panic!("expected an absorbed absolute pending"),
         }
+    }
+
+    #[test]
+    fn begin_again_at_the_same_anchor_keeps_the_stored_pending() {
+        let mut state = AnchorState::Free;
+        let anchor = offset(5, 50.);
+        state.begin(anchor, None);
+        assert!(state.stash(PendingOffset::Proportional { fraction: 0.5 }));
+
+        assert!(state.begin(anchor, None).is_none());
+        assert!(matches!(
+            state,
+            AnchorState::Provisional {
+                pending: Some(PendingOffset::Proportional { fraction }),
+                ..
+            } if fraction == 0.5
+        ));
+
+        state.begin(
+            anchor,
+            Some(PendingScroll::Absolute {
+                item_ix: 5,
+                offset: px(20.),
+            }),
+        );
+        assert!(matches!(
+            state,
+            AnchorState::Provisional {
+                pending: Some(PendingOffset::Absolute { offset }),
+                ..
+            } if offset == px(20.)
+        ));
+    }
+
+    #[test]
+    fn begin_at_a_new_anchor_drops_the_stored_pending() {
+        let mut state = AnchorState::Free;
+        state.begin(offset(5, 50.), None);
+        state.stash(PendingOffset::Proportional { fraction: 0.5 });
+
+        state.begin(offset(6, 0.), None);
+        assert!(matches!(
+            state,
+            AnchorState::Provisional {
+                anchor,
+                pending: None,
+            } if anchor == offset(6, 0.)
+        ));
     }
 
     #[test]
