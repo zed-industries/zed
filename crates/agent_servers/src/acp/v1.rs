@@ -4,7 +4,7 @@ use super::{
     enqueue_request, first_class_terminal_auth_task, handle_v2_complete_elicitation,
     handle_v2_create_elicitation, map_acp_error, mcp_configurations_for_project, respond_err,
     respond_result, runtime, session_thread, terminal_auth_task_id, transport,
-    with_v2_client_ingress,
+    with_v2_client_ingress, work_dirs_from_session_info,
 };
 use acp_thread::{
     AgentConnection, AgentSessionInfo, AgentSessionList, AgentSessionListRequest,
@@ -21,7 +21,7 @@ use agent_client_protocol::{
 };
 use anyhow::anyhow;
 use async_channel;
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use futures::channel::mpsc;
 use futures::future::Shared;
 use futures::{Future, FutureExt as _};
@@ -227,8 +227,9 @@ impl AcpSessionList {
     pub(super) fn send_info_update(
         &self,
         session_id: acp_v2::SessionId,
-        update: acp_v2::SessionInfoUpdate,
+        update: impl Into<acp_thread::AgentSessionInfoUpdate>,
     ) {
+        let update = update.into();
         self.updates_tx
             .try_send(acp_thread::SessionListUpdate::SessionInfo { session_id, update })
             .log_err();
@@ -1175,22 +1176,6 @@ fn session_directories_from_work_dirs(
     })
 }
 
-fn work_dirs_from_session_info(cwd: PathBuf, additional_directories: Vec<PathBuf>) -> PathList {
-    let mut seen_paths = HashSet::default();
-    let mut paths = Vec::with_capacity(1 + additional_directories.len());
-
-    seen_paths.insert(cwd.clone());
-    paths.push(cwd);
-
-    for path in additional_directories {
-        if seen_paths.insert(path.clone()) {
-            paths.push(path);
-        }
-    }
-
-    PathList::new(&paths)
-}
-
 fn emit_load_error_to_all_sessions(
     sessions: &Rc<RefCell<HashMap<acp_v2::SessionId, AcpSession>>>,
     error: LoadError,
@@ -1644,12 +1629,15 @@ impl AgentConnection for AcpConnection {
         })
     }
 
-    fn cancel(&self, session_id: &acp_v2::SessionId, _cx: &mut App) {
+    fn cancel(&self, session_id: &acp_v2::SessionId, _cx: &mut App) -> Result<()> {
+        let params = acp::CancelNotification::new(acp::SessionId::new(session_id.0.clone()));
+        self.connection
+            .send_notification(params)
+            .map_err(map_acp_error)?;
         if let Some(session) = self.sessions.borrow_mut().get_mut(session_id) {
             session.suppress_abort_err = true;
         }
-        let params = acp::CancelNotification::new(acp::SessionId::new(session_id.0.clone()));
-        self.connection.send_notification(params).log_err();
+        Ok(())
     }
 
     fn request_elicitations(&self) -> Option<Entity<ElicitationStore>> {
@@ -1968,7 +1956,7 @@ pub mod test_support {
             self.inner.retry(session_id, cx)
         }
 
-        fn cancel(&self, session_id: &acp_v2::SessionId, cx: &mut App) {
+        fn cancel(&self, session_id: &acp_v2::SessionId, cx: &mut App) -> Result<()> {
             self.inner.cancel(session_id, cx)
         }
 
@@ -2427,7 +2415,8 @@ mod tests {
             )
             .data(data);
             *response_error.lock().expect("response error") = original.clone();
-            cx.update(|cx| harness.connection.cancel(&session_id, cx));
+            cx.update(|cx| harness.connection.cancel(&session_id, cx))
+                .expect("cancellation succeeds");
             assert!(
                 harness
                     .connection
@@ -3559,7 +3548,7 @@ mod tests {
                 json!({"updatedAt": null, "_meta": {}}),
                 Some("Agent title"),
                 Some("Agent title"),
-                Some(acp_v2::Meta::new()),
+                Some(v2_terminal_meta("session")),
                 None,
             ),
             (
@@ -3587,7 +3576,7 @@ mod tests {
                 panic!("session-info list update");
             };
             assert_eq!(updated_id, session_id);
-            assert_eq!(update, expected_update);
+            assert_eq!(update, expected_update.into());
             listed.apply_update(update);
             assert_eq!(listed.title.as_deref(), expected_list_title);
             assert_eq!(listed.meta, expected_meta);
@@ -3972,7 +3961,13 @@ mod tests {
                 "replacement"
             );
             assert_eq!(tool.terminals().cloned().collect::<Vec<_>>(), terminals);
-            assert_eq!(tool.meta, Some(v2_terminal_meta("replacement")));
+            assert_eq!(
+                tool.meta,
+                Some(
+                    serde_json::from_value(json!({"scope": "replacement", "old": true}))
+                        .expect("patched metadata")
+                )
+            );
             assert_eq!(tool.raw_input, Some(json!({"path": "./a/../b"})));
             assert_eq!(tool.locations.len(), 1);
         });
@@ -4185,7 +4180,7 @@ mod tests {
                 panic!("historical updates retain first-seen rows");
             };
             assert_eq!(user.content.source_blocks().len(), 3);
-            assert_eq!(user.meta, Some(acp_v2::Meta::new()));
+            assert_eq!(user.meta, Some(v2_terminal_meta("user")));
             assert_eq!(later.content.to_markdown(cx), "later");
             let [
                 AssistantMessageChunk::Message { block, meta, .. },
@@ -9544,10 +9539,7 @@ fn handle_session_notification(
     if let acp::SessionUpdate::SessionInfoUpdate(info_update) = &notification.update
         && let Some(session_list) = ctx.session_list.borrow().as_ref()
     {
-        session_list.send_info_update(
-            session_id.clone(),
-            acp_thread::session_info_update_from_v1(info_update.clone()),
-        );
+        session_list.send_info_update(session_id.clone(), info_update.clone());
     }
 
     // Abandoned loads can keep replaying until their wire operation settles.

@@ -2209,12 +2209,16 @@ impl ThreadView {
         let cancelled = thread.update(cx, |thread, cx| thread.cancel(cx));
 
         cx.spawn_in(window, async move |this, cx| {
-            cancelled.await;
+            if let Err(error) = cancelled.await {
+                this.update(cx, |this, cx| this.handle_thread_error(error, cx))
+                    .log_err();
+                return;
+            }
 
             this.update_in(cx, |this, window, cx| {
                 this.send_impl(message_editor, window, cx);
             })
-            .ok();
+            .log_err();
         })
         .detach();
     }
@@ -2342,9 +2346,19 @@ impl ThreadView {
         self.thread_retry_status.take();
         self.thread_error.take();
         self.message_queue.pause();
-        self._cancel_task = Some(self.thread.update(cx, |thread, cx| thread.cancel(cx)));
+        self._cancel_task = Some(self.cancel_thread(&self.thread, cx));
         self.sync_generating_indicator(cx);
         cx.notify();
+    }
+
+    fn cancel_thread(&self, thread: &Entity<AcpThread>, cx: &mut Context<Self>) -> Task<()> {
+        let cancellation = thread.update(cx, |thread, cx| thread.cancel(cx));
+        cx.spawn(async move |this, cx| {
+            if let Err(error) = cancellation.await {
+                this.update(cx, |this, cx| this.handle_thread_error(error, cx))
+                    .log_err();
+            }
+        })
     }
 
     pub fn retry_generation(&mut self, cx: &mut Context<Self>) {
@@ -2712,14 +2726,12 @@ impl ThreadView {
 
         self.message_editor.focus_handle(cx).focus(window, cx);
 
-        let content = entry.content;
-        let tracked_buffers = entry.tracked_buffers;
-
         // A queued message can itself be a built-in command (e.g. the user typed
         // `/compact` while a turn was generating). Detect that so we run it as a
         // command turn without echoing it as a user message, matching the
         // non-queued path.
-        let is_native_command = content
+        let is_native_command = entry
+            .content
             .first()
             .and_then(|block| match block {
                 acp_v2::ContentBlock::Text(text) => Some(text.text.as_str()),
@@ -2735,8 +2747,16 @@ impl ThreadView {
         let workspace = self.workspace.clone();
 
         let should_be_following = self.should_be_following;
-        let contents_task = cx.spawn_in(window, async move |_this, cx| {
-            cancelled.await;
+        let contents_task = cx.spawn_in(window, async move |this, cx| {
+            if let Err(error) = cancelled.await {
+                this.update(cx, |this, cx| {
+                    this.message_queue.restore_after_failed_send(entry);
+                    this.sync_queue_flag_to_native_thread(cx);
+                    cx.notify();
+                })
+                .log_err();
+                return Err(error);
+            }
             if should_be_following {
                 workspace
                     .update_in(cx, |workspace, window, cx| {
@@ -2745,7 +2765,7 @@ impl ThreadView {
                     .ok();
             }
 
-            Ok(Some((content, tracked_buffers)))
+            Ok(Some((entry.content, entry.tracked_buffers)))
         });
 
         self.send_content(contents_task, is_native_command, window, cx);
@@ -4928,11 +4948,9 @@ impl ThreadView {
                                             .icon_size(IconSize::Small)
                                             .icon_color(Color::Error)
                                             .tooltip(Tooltip::text("Stop Subagent"))
-                                            .on_click(move |_, _, cx| {
-                                                thread.update(cx, |thread, cx| {
-                                                    thread.cancel(cx).detach();
-                                                });
-                                            }),
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.cancel_thread(&thread, cx).detach();
+                                            })),
                                     )
                                 })
                                 .child(
@@ -5789,35 +5807,40 @@ impl ThreadView {
             return None;
         }
 
-        // A toggle would be dishonest for models that always think: only
-        // offer the effort selector.
-        if !model.supports_disabling_thinking() {
-            let effort_levels = model.supported_effort_levels();
+        let effort_levels = model.supported_effort_levels();
+        let selected_effort = thread.thinking_effort().cloned();
+        let supports_disabling_thinking =
+            model.supports_disabling_thinking_at_effort(selected_effort.as_deref());
+        let supports_disabling_thinking_at_any_effort = supports_disabling_thinking
+            || effort_levels.iter().any(|effort_level| {
+                model.supports_disabling_thinking_at_effort(Some(effort_level.value.as_ref()))
+            });
+
+        // A toggle would be dishonest for models that always think at every
+        // effort level: only offer the effort selector.
+        if !supports_disabling_thinking_at_any_effort {
             if effort_levels.is_empty() {
                 return None;
             }
             return Some(
-                self.render_effort_selector(
-                    effort_levels,
-                    thread.thinking_effort().cloned(),
-                    true,
-                    cx,
-                )
-                .into_any_element(),
+                self.render_effort_selector(effort_levels, selected_effort, true, cx)
+                    .into_any_element(),
             );
         }
 
-        let thinking = thread.thinking_enabled();
+        let thinking = thread.thinking_enabled() || !supports_disabling_thinking;
 
-        let (tooltip_label, icon, color) = if thinking {
+        let (tooltip_label, icon, color) = if !supports_disabling_thinking {
+            (None, IconName::ThinkingMode, Color::Accent)
+        } else if thinking {
             (
-                "Disable Thinking Mode",
+                Some("Disable Thinking Mode"),
                 IconName::ThinkingMode,
                 Color::Accent,
             )
         } else {
             (
-                "Enable Thinking Mode",
+                Some("Enable Thinking Mode"),
                 IconName::ThinkingModeOff,
                 Color::Custom(cx.theme().colors().icon_disabled.opacity(0.8)),
             )
@@ -5828,10 +5851,24 @@ impl ThreadView {
         let thinking_toggle = IconButton::new("thinking-mode", icon)
             .icon_size(IconSize::Small)
             .icon_color(color)
-            .tooltip(move |_, cx| {
-                Tooltip::for_action_in(tooltip_label, &ToggleThinkingMode, &focus_handle, cx)
-            })
-            .on_click(cx.listener(move |this, _, _window, cx| {
+            .map(|this| {
+                if let Some(tooltip_label) = tooltip_label {
+                    this.tooltip(move |_, cx| {
+                        Tooltip::for_action_in(
+                            tooltip_label,
+                            &ToggleThinkingMode,
+                            &focus_handle,
+                            cx,
+                        )
+                    })
+                } else {
+                    this.tooltip(Tooltip::text(
+                        "Thinking is always on at this effort level. Select a lower effort level to make it optional.",
+                    ))
+                }
+            });
+        let thinking_toggle = if supports_disabling_thinking {
+            thinking_toggle.on_click(cx.listener(move |this, _, _window, cx| {
                 if let Some(thread) = this.as_native_thread(cx) {
                     thread.update(cx, |thread, cx| {
                         let enable_thinking = !thread.thinking_enabled();
@@ -5857,23 +5894,21 @@ impl ThreadView {
                         });
                     });
                 }
-            }));
+            }))
+        } else {
+            thinking_toggle.cursor_style(gpui::CursorStyle::Arrow)
+        };
 
-        if model.supported_effort_levels().is_empty() {
+        if effort_levels.is_empty() {
             return Some(thinking_toggle.into_any_element());
         }
 
-        if !model.supported_effort_levels().is_empty() && !thinking {
+        if !thinking {
             return Some(thinking_toggle.into_any_element());
         }
 
         let left_btn = thinking_toggle;
-        let right_btn = self.render_effort_selector(
-            model.supported_effort_levels(),
-            thread.thinking_effort().cloned(),
-            false,
-            cx,
-        );
+        let right_btn = self.render_effort_selector(effort_levels, selected_effort, false, cx);
 
         Some(
             SplitButton::new(left_btn, right_btn.into_any_element())
@@ -11641,11 +11676,9 @@ impl ThreadView {
                                         .map(|view| view.read(cx).thread.clone()),
                                     |this, thread| {
                                         this.on_click(cx.listener(
-                                            move |_this, _event, _window, cx| {
+                                            move |this, _event, _window, cx| {
                                                 telemetry::event!("Subagent Stopped");
-                                                thread.update(cx, |thread, cx| {
-                                                    thread.cancel(cx).detach();
-                                                });
+                                                this.cancel_thread(&thread, cx).detach();
                                             },
                                         ))
                                     },
@@ -12997,7 +13030,11 @@ impl ThreadView {
             let Some(model) = thread_ref.model() else {
                 return;
             };
-            if !model.supports_thinking() || !thread_ref.thinking_enabled() {
+            let thinking_enabled = thread_ref.thinking_enabled()
+                || !model.supports_disabling_thinking_at_effort(
+                    thread_ref.thinking_effort().map(String::as_str),
+                );
+            if !model.supports_thinking() || !thinking_enabled {
                 return;
             }
             let effort_levels = model.supported_effort_levels();
@@ -13197,9 +13234,11 @@ impl Render for ThreadView {
                 }
                 if let Some(thread) = this.as_native_thread(cx) {
                     thread.update(cx, |thread, cx| {
-                        let model_allows_disabling = thread
-                            .model()
-                            .is_none_or(|model| model.supports_disabling_thinking());
+                        let model_allows_disabling = thread.model().is_none_or(|model| {
+                            model.supports_disabling_thinking_at_effort(
+                                thread.thinking_effort().map(String::as_str),
+                            )
+                        });
                         if model_allows_disabling {
                             thread.set_thinking_enabled(!thread.thinking_enabled(), cx);
                         }
