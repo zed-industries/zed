@@ -9,11 +9,9 @@ use gpui::{App, AsyncApp, Entity, Task};
 use project::{
     LocalProjectFlags, Project, WorktreeId,
     git_store::{Repository, resolve_git_worktree_to_main_repo, worktrees_directory_for_repo},
-    project_settings::ProjectSettings,
 };
 use remote::{RemoteConnectionOptions, same_remote_connection_identity};
-use settings::Settings;
-use util::{ResultExt, paths::PathStyle};
+use util::ResultExt;
 use workspace::{AppState, MultiWorkspace, Workspace};
 
 use crate::thread_metadata_store::{ArchivedGitWorktree, ThreadId, ThreadMetadataStore};
@@ -78,20 +76,6 @@ fn archived_worktree_ref_name(id: i64) -> String {
     format!("refs/archived-worktrees/{}", id)
 }
 
-/// Resolves the Zed-managed worktrees base directory for a given repo.
-///
-/// This intentionally reads the *global* `git.worktree_directory` setting
-/// rather than any project-local override, because Zed always uses the
-/// global value when creating worktrees and the archive check must match.
-fn worktrees_base_for_repo(
-    main_repo_path: &Path,
-    path_style: PathStyle,
-    cx: &App,
-) -> Option<PathBuf> {
-    let setting = &ProjectSettings::get_global(cx).git.worktree_directory;
-    worktrees_directory_for_repo(main_repo_path, setting, path_style).log_err()
-}
-
 /// Builds a [`RootPlan`] for archiving the git worktree at `path`.
 ///
 /// This is a synchronous planning step that must run *before* any workspace
@@ -109,10 +93,13 @@ fn worktrees_base_for_repo(
 ///
 /// Returns `None` if the path is not a linked worktree (main worktrees
 /// cannot be archived to disk) or if no open project has it loaded.
+/// The global `git.worktree_directory` setting must already be expanded on the
+/// repository's host so creation and archival use the same managed directory.
 pub fn build_root_plan(
     path: &Path,
     remote_connection: Option<&RemoteConnectionOptions>,
     workspaces: &[Entity<Workspace>],
+    worktree_directory_setting: &str,
     cx: &App,
 ) -> Option<RootPlan> {
     let path = path.to_path_buf();
@@ -175,8 +162,16 @@ pub fn build_root_plan(
     // Only archive worktrees that live inside the Zed-managed worktrees
     // directory (configured via `git.worktree_directory`). Worktrees the
     // user created outside that directory should be left untouched.
-    let worktrees_base = worktrees_base_for_repo(&main_repo_path, linked_snapshot.path_style, cx)?;
-    if !path.starts_with(&worktrees_base) {
+    let worktrees_base = worktrees_directory_for_repo(
+        &main_repo_path,
+        worktree_directory_setting,
+        linked_snapshot.path_style,
+    )
+    .log_err()?;
+    if !linked_snapshot
+        .path_style
+        .starts_with(&path, &worktrees_base)
+    {
         return None;
     }
 
@@ -959,7 +954,7 @@ mod tests {
     use super::*;
     use fs::{FakeFs, Fs as _};
     use git::repository::Worktree as GitWorktree;
-    use gpui::{BorrowAppContext, TestAppContext};
+    use gpui::TestAppContext;
     use project::Project;
     use serde_json::json;
     use settings::SettingsStore;
@@ -1022,6 +1017,7 @@ mod tests {
                 Path::new("/project"),
                 None,
                 std::slice::from_ref(&workspace),
+                "../worktrees",
                 cx,
             );
             assert!(
@@ -1088,6 +1084,7 @@ mod tests {
                 Path::new("/worktrees/project/feature/project"),
                 None,
                 std::slice::from_ref(&workspace),
+                "../worktrees",
                 cx,
             );
             assert!(
@@ -1106,6 +1103,7 @@ mod tests {
                 Path::new("/project"),
                 None,
                 std::slice::from_ref(&workspace),
+                "../worktrees",
                 cx,
             );
             assert!(
@@ -1170,6 +1168,7 @@ mod tests {
                 Path::new("/external-worktree"),
                 None,
                 std::slice::from_ref(&workspace),
+                "../worktrees",
                 cx,
             );
             assert!(
@@ -1239,6 +1238,7 @@ mod tests {
                 Path::new("/worktrees/project/feature/project"),
                 None,
                 std::slice::from_ref(&workspace),
+                "../worktrees",
                 cx,
             );
             assert!(
@@ -1252,18 +1252,6 @@ mod tests {
     #[gpui::test]
     async fn test_build_root_plan_with_custom_worktree_directory(cx: &mut TestAppContext) {
         init_test(cx);
-
-        // Override the worktree_directory setting to a non-default location.
-        // With main repo at /project and setting "../custom-worktrees", the
-        // resolved base is /custom-worktrees/project.
-        cx.update(|cx| {
-            cx.update_global::<SettingsStore, _>(|store, cx| {
-                store.update_user_settings(cx, |s| {
-                    s.git.get_or_insert(Default::default()).worktree_directory =
-                        Some("../custom-worktrees".to_string());
-                });
-            });
-        });
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
@@ -1344,6 +1332,7 @@ mod tests {
                 Path::new("/custom-worktrees/project/feature/project"),
                 None,
                 std::slice::from_ref(&workspace),
+                "../custom-worktrees",
                 cx,
             );
             assert!(
@@ -1358,6 +1347,7 @@ mod tests {
                 Path::new("/worktrees/project/feature2/project"),
                 None,
                 std::slice::from_ref(&workspace),
+                "../custom-worktrees",
                 cx,
             );
             assert!(
@@ -1366,6 +1356,88 @@ mod tests {
                  the custom worktree_directory, even if it would match the default",
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_archive_checks_home_relative_worktree_directory(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({".git": {}, "file.txt": "content"}))
+            .await;
+        fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+        let managed_path = paths::home_dir().join("zed-test-worktrees/project/feature/project");
+        let external_path = PathBuf::from("/external/project");
+        for (path, branch) in [(&managed_path, "feature"), (&external_path, "external")] {
+            fs.add_linked_worktree_for_repo(
+                Path::new("/project/.git"),
+                true,
+                GitWorktree {
+                    path: path.clone(),
+                    ref_name: Some(format!("refs/heads/{branch}").into()),
+                    sha: "abc123".into(),
+                    is_main: false,
+                    is_bare: false,
+                },
+            )
+            .await;
+            record_zed_created_worktree(&fs, path, cx).await;
+        }
+        let project = Project::test(
+            fs.clone(),
+            [Path::new("/project"), &managed_path, &external_path],
+            cx,
+        )
+        .await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |workspace, _| workspace.workspace().clone())
+            .unwrap();
+        let setting = project
+            .read_with(cx, |project, cx| {
+                project
+                    .repositories(cx)
+                    .values()
+                    .next()
+                    .unwrap()
+                    .read(cx)
+                    .resolve_worktree_directory_setting("~/zed-test-worktrees".into(), cx)
+            })
+            .await
+            .unwrap();
+        let managed_plan = workspace
+            .read_with(cx, |_, cx| {
+                build_root_plan(
+                    &managed_path,
+                    None,
+                    std::slice::from_ref(&workspace),
+                    &setting,
+                    cx,
+                )
+            })
+            .unwrap();
+
+        let external_plan = workspace.read_with(cx, |_, cx| {
+            build_root_plan(
+                &external_path,
+                None,
+                std::slice::from_ref(&workspace),
+                &setting,
+                cx,
+            )
+        });
+        assert!(external_plan.is_none());
+        let task = cx.update(|cx| {
+            cx.spawn(async move |cx| {
+                remove_root(managed_plan, cx).await.unwrap();
+            })
+        });
+        task.await;
+        assert!(!fs.is_dir(&managed_path).await);
+        assert!(fs.is_dir(&external_path).await);
     }
 
     #[gpui::test]
@@ -1426,6 +1498,7 @@ mod tests {
                     Path::new("/worktrees/project/feature/project"),
                     None,
                     std::slice::from_ref(&workspace),
+                    "../worktrees",
                     cx,
                 )
             })
@@ -1507,6 +1580,7 @@ mod tests {
                     Path::new("/worktrees/project/feature/project"),
                     None,
                     std::slice::from_ref(&workspace),
+                    "../worktrees",
                     cx,
                 )
             })
@@ -1610,6 +1684,7 @@ mod tests {
                     Path::new("/worktrees/project/feature/project"),
                     None,
                     std::slice::from_ref(&workspace),
+                    "../worktrees",
                     cx,
                 )
             })
@@ -1641,7 +1716,13 @@ mod tests {
                     .is_none(),
                 "stale created-worktree record should be removed"
             );
-            let plan = build_root_plan(worktree_path, None, std::slice::from_ref(&workspace), cx);
+            let plan = build_root_plan(
+                worktree_path,
+                None,
+                std::slice::from_ref(&workspace),
+                "../worktrees",
+                cx,
+            );
             assert!(
                 plan.is_none(),
                 "build_root_plan should return None after the stale record is removed"
@@ -1708,6 +1789,7 @@ mod tests {
                     Path::new("/worktrees/project/feature/project"),
                     None,
                     std::slice::from_ref(&workspace),
+                    "../worktrees",
                     cx,
                 )
             })

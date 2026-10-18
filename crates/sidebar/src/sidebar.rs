@@ -4839,13 +4839,20 @@ impl Sidebar {
         remote_connection: Option<&RemoteConnectionOptions>,
         except_thread_id: Option<ThreadId>,
         except_terminal_id: Option<TerminalId>,
+        worktree_directory_setting: &str,
         cx: &App,
     ) -> Vec<thread_worktree_archive::RootPlan> {
         let workspaces = self.archive_workspaces(cx);
         folder_paths
             .ordered_paths()
             .filter_map(|path| {
-                thread_worktree_archive::build_root_plan(path, remote_connection, &workspaces, cx)
+                thread_worktree_archive::build_root_plan(
+                    path,
+                    remote_connection,
+                    &workspaces,
+                    worktree_directory_setting,
+                    cx,
+                )
             })
             .filter(|plan| {
                 let store = ThreadMetadataStore::global(cx);
@@ -4869,6 +4876,126 @@ impl Sidebar {
                 })
             })
             .collect()
+    }
+
+    fn plan_archive_roots_then(
+        &mut self,
+        folder_paths: PathList,
+        remote_connection: Option<RemoteConnectionOptions>,
+        except_thread_id: Option<ThreadId>,
+        except_terminal_id: Option<TerminalId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        then: impl FnOnce(
+            &mut Self,
+            Vec<thread_worktree_archive::RootPlan>,
+            &mut Window,
+            &mut Context<Self>,
+        ) + 'static,
+    ) {
+        let setting = project::project_settings::ProjectSettings::get_global(cx)
+            .git
+            .worktree_directory
+            .clone();
+        if !setting.starts_with('~') {
+            let roots = self.roots_to_archive_for_paths(
+                &folder_paths,
+                remote_connection.as_ref(),
+                except_thread_id,
+                except_terminal_id,
+                &setting,
+                cx,
+            );
+            then(self, roots, window, cx);
+            return;
+        }
+
+        let workspaces = self.archive_workspaces(cx);
+        let repository = workspaces.iter().find_map(|workspace| {
+            let project = workspace.read(cx).project();
+            if !same_remote_connection_identity(
+                project.read(cx).remote_connection_options(cx).as_ref(),
+                remote_connection.as_ref(),
+            ) {
+                return None;
+            }
+            project
+                .read(cx)
+                .repositories(cx)
+                .values()
+                .find(|repository| {
+                    let snapshot = repository.read(cx).snapshot();
+                    let path = snapshot.work_directory_abs_path.as_ref();
+                    snapshot.is_linked_worktree()
+                        && snapshot.main_worktree_abs_path().is_some()
+                        && folder_paths.ordered_paths().any(|folder| folder == path)
+                        && git_ui_core::created_worktrees::recorded_created_at(
+                            path,
+                            remote_connection.as_ref(),
+                            cx,
+                        )
+                        .is_some()
+                        && !Self::path_is_referenced_by_unarchived_threads_for_archive(
+                            ThreadMetadataStore::global(cx).read(cx),
+                            except_thread_id,
+                            path,
+                            remote_connection.as_ref(),
+                            &workspaces,
+                            cx,
+                        )
+                        && TerminalThreadMetadataStore::try_global(cx).is_none_or(|store| {
+                            !store.read(cx).path_is_referenced_by_terminal(
+                                except_terminal_id,
+                                path,
+                                remote_connection.as_ref(),
+                            )
+                        })
+                })
+                .cloned()
+        });
+        let Some(repository) = repository else {
+            then(self, Vec::new(), window, cx);
+            return;
+        };
+        let setting = repository
+            .read(cx)
+            .resolve_worktree_directory_setting(setting, cx);
+
+        cx.spawn_in(window, async move |this, cx| {
+            let result = setting.await;
+            this.update_in(cx, |this, window, cx| {
+                let setting = match result {
+                    Ok(setting) => setting,
+                    Err(error) => {
+                        log::error!("Failed to resolve worktree directory for archival: {error:#}");
+                        if let Some(multi_workspace) = this.multi_workspace.upgrade() {
+                            let workspace = multi_workspace.read(cx).workspace().clone();
+                            workspace.update(cx, |workspace, cx| {
+                                struct ArchiveWorktreeDirectoryErrorToast;
+                                workspace.show_toast(
+                                    Toast::new(
+                                        NotificationId::unique::<ArchiveWorktreeDirectoryErrorToast>(),
+                                        format!("Failed to resolve worktree directory: {error:#}"),
+                                    ).autohide(),
+                                    cx,
+                                );
+                            });
+                        }
+                        return;
+                    }
+                };
+                // Plan against current state: another thread or terminal may have opened
+                // while the remote home directory was being resolved.
+                let roots = this.roots_to_archive_for_paths(
+                    &folder_paths, remote_connection.as_ref(), except_thread_id,
+                    except_terminal_id, &setting, cx,
+                );
+                then(this, roots, window, cx);
+            })?;
+            // Keep workspaces and their repository entities alive until planning finishes.
+            drop(workspaces);
+            anyhow::Ok(())
+        }).detach_and_log_err(cx);
     }
 
     fn linked_worktree_workspace_to_remove(
@@ -5108,6 +5235,29 @@ impl Sidebar {
             return;
         }
 
+        let metadata = metadata.clone();
+        let workspace = workspace.clone();
+        self.plan_archive_roots_then(
+            metadata.folder_paths().clone(),
+            metadata.remote_connection.clone(),
+            None,
+            Some(metadata.terminal_id),
+            window,
+            cx,
+            move |this, roots, window, cx| {
+                this.close_terminal_with_archive_roots(&metadata, &workspace, roots, window, cx);
+            },
+        );
+    }
+
+    fn close_terminal_with_archive_roots(
+        &mut self,
+        metadata: &TerminalThreadMetadata,
+        workspace: &ThreadEntryWorkspace,
+        roots_to_archive: Vec<thread_worktree_archive::RootPlan>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let terminal_id = metadata.terminal_id;
         let is_active = self
             .active_entry
@@ -5127,13 +5277,6 @@ impl Sidebar {
             .and_then(|position| self.neighboring_activatable_entry(position));
 
         let terminal_folder_paths = metadata.folder_paths().clone();
-        let roots_to_archive = self.roots_to_archive_for_paths(
-            metadata.folder_paths(),
-            metadata.remote_connection.as_ref(),
-            None,
-            Some(terminal_id),
-            cx,
-        );
 
         let workspace_to_remove = self.linked_worktree_workspace_to_remove(
             &terminal_folder_paths,
@@ -5447,6 +5590,51 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let thread_id = metadata
+            .as_ref()
+            .map(|metadata| metadata.thread_id)
+            .or_else(|| {
+                thread_entry
+                    .as_ref()
+                    .map(|thread| thread.metadata.thread_id)
+            });
+        let folder_paths = metadata
+            .as_ref()
+            .map(|metadata| metadata.folder_paths().clone())
+            .unwrap_or_default();
+        let remote_connection = metadata
+            .as_ref()
+            .and_then(|metadata| metadata.remote_connection.clone());
+        let session_id = session_id.clone();
+        self.plan_archive_roots_then(
+            folder_paths,
+            remote_connection,
+            thread_id,
+            None,
+            window,
+            cx,
+            move |this, roots, window, cx| {
+                this.archive_thread_with_roots(
+                    &session_id,
+                    metadata,
+                    thread_entry,
+                    roots,
+                    window,
+                    cx,
+                );
+            },
+        );
+    }
+
+    fn archive_thread_with_roots(
+        &mut self,
+        session_id: &acp::SessionId,
+        metadata: Option<ThreadMetadata>,
+        thread_entry: Option<Arc<ThreadEntry>>,
+        roots_to_archive: Vec<thread_worktree_archive::RootPlan>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let metadata_thread_id = metadata.as_ref().map(|metadata| metadata.thread_id);
         let thread_id = metadata_thread_id.or_else(|| {
             thread_entry
@@ -5475,24 +5663,6 @@ impl Sidebar {
                     .as_ref()
                     .map(|workspace| PathList::new(&workspace.read(cx).root_paths(cx)))
             });
-
-        // Compute which linked worktree roots should be archived from disk if
-        // this thread is archived. This must happen before we remove any
-        // workspace from the MultiWorkspace, because `build_root_plan` needs
-        // the currently open workspaces in order to find the affected projects
-        // and repository handles for each linked worktree.
-        let roots_to_archive = metadata
-            .as_ref()
-            .map(|metadata| {
-                self.roots_to_archive_for_paths(
-                    metadata.folder_paths(),
-                    metadata.remote_connection.as_ref(),
-                    thread_id,
-                    None,
-                    cx,
-                )
-            })
-            .unwrap_or_default();
 
         let current_pos = self.contents.entries.iter().position(|entry| match entry {
             ListEntry::Thread(thread) => thread_id.map_or_else(
@@ -6895,6 +7065,38 @@ impl Sidebar {
             return;
         }
 
+        let folder_paths = metadata
+            .as_ref()
+            .map(|metadata| metadata.folder_paths().clone())
+            .unwrap_or_default();
+        let remote_connection = metadata
+            .as_ref()
+            .and_then(|metadata| metadata.remote_connection.clone());
+        let workspace = workspace.clone();
+        self.plan_archive_roots_then(
+            folder_paths,
+            remote_connection,
+            Some(draft_id),
+            None,
+            window,
+            cx,
+            move |this, roots, window, cx| {
+                this.remove_draft_with_archive_roots(
+                    draft_id, &workspace, metadata, roots, window, cx,
+                );
+            },
+        );
+    }
+
+    fn remove_draft_with_archive_roots(
+        &mut self,
+        draft_id: ThreadId,
+        workspace: &ThreadEntryWorkspace,
+        metadata: Option<ThreadMetadata>,
+        roots_to_archive: Vec<thread_worktree_archive::RootPlan>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let draft_folder_paths = metadata
             .as_ref()
             .map(|metadata| metadata.folder_paths().clone())
@@ -6907,19 +7109,6 @@ impl Sidebar {
         let draft_remote_connection = metadata
             .as_ref()
             .and_then(|metadata| metadata.remote_connection.clone());
-        let roots_to_archive = metadata
-            .as_ref()
-            .map(|metadata| {
-                self.roots_to_archive_for_paths(
-                    metadata.folder_paths(),
-                    metadata.remote_connection.as_ref(),
-                    Some(draft_id),
-                    None,
-                    cx,
-                )
-            })
-            .unwrap_or_default();
-
         let was_active = self
             .active_entry
             .as_ref()

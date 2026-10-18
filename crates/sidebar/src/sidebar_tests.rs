@@ -15121,6 +15121,75 @@ async fn test_remote_archive_thread_with_active_connection(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,
 ) {
+    remote_archive_thread_with_directory(
+        "../worktrees",
+        PathBuf::from("/worktrees/project/feature-a/project"),
+        ArchiveOutcome::Removed,
+        cx,
+        server_cx,
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn test_remote_archive_thread_with_home_relative_worktree_directory(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    remote_archive_thread_with_directory(
+        "~/zed-test-worktrees",
+        util::paths::home_dir().join("zed-test-worktrees/project/feature-a/project"),
+        ArchiveOutcome::Removed,
+        cx,
+        server_cx,
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn test_remote_archive_keeps_worktree_outside_home_relative_directory(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    remote_archive_thread_with_directory(
+        "~/zed-test-worktrees",
+        PathBuf::from("/external/project/feature-a/project"),
+        ArchiveOutcome::Kept,
+        cx,
+        server_cx,
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn test_remote_archive_keeps_workspace_when_directory_resolution_fails(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    remote_archive_thread_with_directory(
+        "~other/zed-test-worktrees",
+        util::paths::home_dir().join("zed-test-worktrees/project/feature-a/project"),
+        ArchiveOutcome::Failed,
+        cx,
+        server_cx,
+    )
+    .await;
+}
+
+#[derive(Clone, Copy)]
+enum ArchiveOutcome {
+    Removed,
+    Kept,
+    Failed,
+}
+
+async fn remote_archive_thread_with_directory(
+    setting: &str,
+    worktree_path: PathBuf,
+    expected_outcome: ArchiveOutcome,
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
     // End-to-end test of archiving a remote thread tied to a linked git
     // worktree. Archival should:
     //  1. Persist the worktree's git state via the remote repository RPCs
@@ -15172,7 +15241,7 @@ async fn test_remote_archive_thread_with_active_connection(
         .await;
     server_fs
         .insert_tree(
-            "/worktrees/project/feature-a/project",
+            &worktree_path,
             serde_json::json!({
                 ".git": "gitdir: /project/.git/worktrees/feature-a",
                 "src": { "lib.rs": "// feature" },
@@ -15184,7 +15253,7 @@ async fn test_remote_archive_thread_with_active_connection(
             Path::new("/project/.git"),
             false,
             git::repository::Worktree {
-                path: PathBuf::from("/worktrees/project/feature-a/project"),
+                path: worktree_path.clone(),
                 ref_name: Some("refs/heads/feature-a".into()),
                 sha: "abc".into(),
                 is_main: false,
@@ -15218,13 +15287,18 @@ async fn test_remote_archive_thread_with_active_connection(
         server_cx,
     )
     .await;
+    for cx in [&mut *cx, &mut *server_cx] {
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git.get_or_insert_default().worktree_directory = Some(setting.into());
+                });
+            });
+        });
+    }
     project
         .update(cx, |project, cx| {
-            project.find_or_create_worktree(
-                Path::new("/worktrees/project/feature-a/project"),
-                true,
-                cx,
-            )
+            project.find_or_create_worktree(&worktree_path, true, cx)
         })
         .await
         .expect("should open linked worktree on remote");
@@ -15248,7 +15322,7 @@ async fn test_remote_archive_thread_with_active_connection(
     // *remote* filesystem (where the archive flow will re-stat it).
     agent_ui::test_support::record_zed_created_worktree(
         server_fs.as_ref(),
-        Path::new("/worktrees/project/feature-a/project"),
+        &worktree_path,
         remote_connection.as_ref(),
         cx,
     )
@@ -15268,7 +15342,7 @@ async fn test_remote_archive_thread_with_active_connection(
             interacted_at: None,
             worktree_paths: WorktreePaths::from_path_lists(
                 PathList::new(&[PathBuf::from("/project")]),
-                PathList::new(&[PathBuf::from("/worktrees/project/feature-a/project")]),
+                PathList::new(&[worktree_path.clone()]),
             )
             .unwrap(),
             archived: false,
@@ -15279,11 +15353,10 @@ async fn test_remote_archive_thread_with_active_connection(
     cx.run_until_parked();
 
     assert!(
-        server_fs
-            .is_dir(Path::new("/worktrees/project/feature-a/project"))
-            .await,
+        server_fs.is_dir(&worktree_path).await,
         "linked worktree directory should exist on remote before archiving"
     );
+    let entries_before_archive = visible_entries_as_strings(&sidebar, cx);
 
     sidebar.update_in(cx, |sidebar: &mut Sidebar, window, cx| {
         sidebar.archive_thread(&wt_thread_id, window, cx);
@@ -15298,23 +15371,38 @@ async fn test_remote_archive_thread_with_active_connection(
             .map(|t| t.archived)
             .unwrap_or(false)
     });
-    assert!(is_archived, "worktree thread should be archived");
+    assert_eq!(
+        is_archived,
+        !matches!(expected_outcome, ArchiveOutcome::Failed)
+    );
 
-    assert!(
-        !server_fs
-            .is_dir(Path::new("/worktrees/project/feature-a/project"))
-            .await,
-        "linked worktree directory should be removed from remote fs \
-         (the GitRemoveWorktree RPC runs `Repository::remove_worktree` \
-         on the headless server, which deletes the directory via `Fs::remove_dir` \
-         before running `git worktree remove --force`)"
+    assert_eq!(
+        !server_fs.is_dir(&worktree_path).await,
+        matches!(expected_outcome, ArchiveOutcome::Removed),
+        "only a worktree inside the configured directory should be removed from the remote filesystem"
     );
 
     let entries = visible_entries_as_strings(&sidebar, cx);
-    assert!(
-        !entries.iter().any(|e| e.contains("Worktree Thread")),
-        "archived worktree thread should be hidden from sidebar: {entries:?}"
-    );
+    if matches!(expected_outcome, ArchiveOutcome::Failed) {
+        assert_eq!(entries, entries_before_archive);
+        assert!(multi_workspace.read_with(cx, |multi_workspace, cx| {
+            multi_workspace
+                .workspaces()
+                .any(|workspace| workspace.read(cx).project() == &project)
+        }));
+        assert!(project.read_with(cx, |project, cx| {
+            project
+                .visible_worktrees(cx)
+                .any(|worktree| worktree.read(cx).abs_path().as_ref() == worktree_path.as_path())
+        }));
+    } else {
+        assert!(
+            !entries
+                .iter()
+                .any(|entry| entry.contains("Worktree Thread")),
+            "archived worktree thread should be hidden from sidebar: {entries:?}"
+        );
+    }
 }
 
 #[gpui::test]
