@@ -46,6 +46,7 @@ The features on `gpui_platform` are platform-specific, so the list above is a sa
 
 - [Ownership and data flow](_ownership_and_data_flow)
 - [Accessibility](_accessibility)
+- [Lists](elements/_lists)
 
 ### Dependencies
 
