@@ -584,6 +584,7 @@ impl ListState {
 
         let current_offset = self.logical_scroll_top();
         let state = &mut *self.0.borrow_mut();
+        state.provisional_scroll_top = None;
 
         if distance < px(0.) {
             state.follow_state.stop_following();
@@ -617,6 +618,7 @@ impl ListState {
     /// growing (e.g. during streaming).
     pub fn scroll_to_end(&self) {
         let state = &mut *self.0.borrow_mut();
+        state.provisional_scroll_top = None;
         let item_count = state.items.summary().count;
         state.pending_scroll = None;
         state.logical_scroll_top = Some(ListOffset {
@@ -703,6 +705,7 @@ impl ListState {
     /// Scroll the list to the given offset
     pub fn scroll_to(&self, mut scroll_top: ListOffset) {
         let state = &mut *self.0.borrow_mut();
+        state.provisional_scroll_top = None;
         let item_count = state.items.summary().count;
         if scroll_top.item_ix >= item_count {
             scroll_top.item_ix = item_count;
@@ -720,6 +723,7 @@ impl ListState {
     /// Scroll the list to the given item, such that the item is fully visible.
     pub fn scroll_to_reveal_item(&self, ix: usize) {
         let state = &mut *self.0.borrow_mut();
+        state.provisional_scroll_top = None;
 
         let mut scroll_top = state.logical_scroll_top();
         let height = state
@@ -954,6 +958,8 @@ impl StateInner {
             return;
         }
 
+        self.provisional_scroll_top = None;
+
         let padding = self.last_padding.unwrap_or_default();
         let scroll_max =
             (self.items.summary().height + padding.top + padding.bottom - height).max(px(0.));
@@ -1085,6 +1091,12 @@ impl StateInner {
         window: &mut Window,
         cx: &mut App,
     ) -> LayoutItemsResponse {
+        // Once the anchor has moved away from the pinned position, drop the pin
+        // for good so navigating back to the same offset cannot re-engage it.
+        if !self.is_provisional() {
+            self.provisional_scroll_top = None;
+        }
+
         let old_items = self.items.clone();
         let mut measured_items = VecDeque::new();
         let mut item_layouts = VecDeque::new();
@@ -1427,6 +1439,7 @@ impl StateInner {
         let Some(bounds) = self.last_layout_bounds else {
             return;
         };
+        self.provisional_scroll_top = None;
         let height = bounds.size.height;
 
         let padding = self.last_padding.unwrap_or_default();
@@ -2580,6 +2593,43 @@ mod test {
         assert!(
             state.bounds_for_item(19).is_some(),
             "the bottom items must render on the frame after scrollbar navigation"
+        );
+    }
+
+    #[gpui::test]
+    fn test_navigation_does_not_resurrect_provisional_pin(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let state = ListState::new(10, crate::ListAlignment::Top, px(0.));
+
+        struct TestView(ListState);
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                list(self.0.clone(), |_, _, _| {
+                    div().h(px(50.)).w_full().into_any()
+                })
+                .w_full()
+                .h_full()
+            }
+        }
+
+        let view = cx.update(|_, cx| cx.new(|_| TestView(state.clone())));
+
+        state.scroll_to(gpui::ListOffset::default());
+        state.set_item_heights_provisional(true);
+        assert!(state.item_heights_provisional());
+
+        state.scroll_to_end();
+        assert!(!state.item_heights_provisional());
+
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+            view.clone().into_any_element()
+        });
+
+        // Returning to the previously pinned offset must not re-engage it.
+        state.scroll_to(gpui::ListOffset::default());
+        assert!(
+            !state.item_heights_provisional(),
+            "navigating back to the pinned offset must not resurrect provisional mode"
         );
     }
 
