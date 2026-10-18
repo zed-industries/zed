@@ -28870,6 +28870,63 @@ async fn test_on_type_formatting_does_not_rewind_over_intervening_edits(cx: &mut
 }
 
 #[gpui::test]
+async fn test_on_type_formatting_after_newline_uses_autoindented_position(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    assert_on_type_formatting_after_newline_keeps_cursor_in_body(false, cx).await;
+}
+
+#[gpui::test]
+async fn test_on_type_formatting_after_newline_waits_for_async_autoindent(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    assert_on_type_formatting_after_newline_keeps_cursor_in_body(true, cx).await;
+}
+
+async fn assert_on_type_formatting_after_newline_keeps_cursor_in_body(
+    async_autoindent: bool,
+    cx: &mut TestAppContext,
+) {
+    let mut cx = EditorLspTestContext::new_typescript(
+        lsp::ServerCapabilities {
+            document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
+                first_trigger_character: "\n".to_string(),
+                more_trigger_character: None,
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state("function foo() {ˇ}\n");
+    if async_autoindent {
+        cx.update_buffer(|buffer, _| buffer.set_sync_parse_timeout(None));
+    }
+
+    // Mirrors Ruby LSP closing a block: a newline and the closing keyword inserted at the cursor.
+    let mut request =
+        cx.set_request_handler::<lsp::request::OnTypeFormatting, _, _>(|_, params, _| async move {
+            let position = params.text_document_position.position;
+            assert_eq!(position, lsp::Position::new(1, 4));
+            Ok(Some(vec![
+                lsp::TextEdit {
+                    range: lsp::Range::new(position, position),
+                    new_text: "\n".to_string(),
+                },
+                lsp::TextEdit {
+                    range: lsp::Range::new(position, position),
+                    new_text: "end".to_string(),
+                },
+            ]))
+        });
+
+    cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+    cx.run_until_parked();
+
+    cx.assert_editor_state("function foo() {\n    ˇ\nend\n}\n");
+    assert!(request.next().await.is_some());
+}
+
+#[gpui::test]
 async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

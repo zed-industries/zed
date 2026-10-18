@@ -7109,14 +7109,17 @@ impl LspStore {
             return None;
         }
 
-        let position = position.to_point_utf16(buffer.read(cx));
+        let position = {
+            let buffer = buffer.read(cx);
+            buffer.anchor_after(position.to_point_utf16(buffer))
+        };
         Some(self.on_type_format_impl(buffer, position, trigger, push_to_history, cx))
     }
 
     fn on_type_format_impl(
         &mut self,
         buffer: Entity<Buffer>,
-        position: PointUtf16,
+        position: Anchor,
         trigger: String,
         push_to_history: bool,
         cx: &mut Context<Self>,
@@ -7133,6 +7136,7 @@ impl LspStore {
             {
                 waiter.await?;
             }
+            let position = buffer.read_with(cx, |buffer, _| position.to_point_utf16(buffer));
             cx.update(|cx| {
                 this.update(cx, |this, cx| {
                     this.request_lsp(
