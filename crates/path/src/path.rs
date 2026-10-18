@@ -282,17 +282,6 @@ impl PathStyle {
         }
     }
 
-    pub fn split(self, path_like: &str) -> (Option<&str>, &str) {
-        let Some(pos) = path_like.rfind(self.primary_separator()) else {
-            return (None, path_like);
-        };
-        let filename_start = pos + self.primary_separator().len();
-        (
-            Some(&path_like[..filename_start]),
-            &path_like[filename_start..],
-        )
-    }
-
     pub fn file_name<'a>(&self, path: &'a Path) -> Option<&'a OsStr> {
         self.components(path).next_back().and_then(|p| match p {
             Component::Normal(p) => Some(p),
