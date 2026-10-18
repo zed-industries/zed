@@ -4271,10 +4271,12 @@ impl BufferSnapshot {
             .collect::<SmallVec<[(Arc<Grammar>, HighlightMap); 2]>>();
         let mut runs = Vec::<(Range<usize>, HighlightId)>::new();
         for region in flattened_highlight_regions(captures, range) {
-            let highlight_id = region.stack.iter().rev().find_map(|capture| {
-                let (_, highlight_map) = sources.get(capture.grammar_index)?;
-                highlight_map.get(capture.capture_id)
-            });
+            let highlight_id = crate::resolve_stack_highlight(
+                region.stack.iter().rev().filter_map(|capture| {
+                    let (_, highlight_map) = sources.get(capture.grammar_index)?;
+                    highlight_map.get(capture.capture_id)
+                }),
+            );
             let Some(highlight_id) = highlight_id else {
                 continue;
             };
@@ -5890,13 +5892,9 @@ impl<'a> Iterator for BufferChunks<'a> {
         let mut next_diagnostic_endpoint = usize::MAX;
 
         if let Some(highlights) = self.highlights.as_mut() {
-            while let Some((parent_capture_end, _)) = highlights.stack.last() {
-                if *parent_capture_end <= self.range.start {
-                    highlights.stack.pop();
-                } else {
-                    break;
-                }
-            }
+            highlights
+                .stack
+                .retain(|(parent_capture_end, _)| *parent_capture_end > self.range.start);
 
             if highlights.next_capture.is_none() {
                 highlights.next_capture = highlights.captures.next();
@@ -5962,10 +5960,14 @@ impl<'a> Iterator for BufferChunks<'a> {
                 .min(next_diagnostic_endpoint);
             let mut highlight_id = None;
             if let Some(highlights) = self.highlights.as_ref()
-                && let Some((parent_capture_end, parent_highlight_id)) = highlights.stack.last()
+                && !highlights.stack.is_empty()
             {
-                chunk_end = chunk_end.min(*parent_capture_end);
-                highlight_id = Some(*parent_highlight_id);
+                for (parent_capture_end, _) in &highlights.stack {
+                    chunk_end = chunk_end.min(*parent_capture_end);
+                }
+                highlight_id = crate::resolve_stack_highlight(
+                    highlights.stack.iter().rev().map(|(_, id)| *id),
+                );
             }
             if let Some(cached) = self.cached_highlights.as_ref()
                 && let Some((run_range, run_highlight_id)) = cached.runs.get(cached.ix)

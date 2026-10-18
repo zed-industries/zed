@@ -5,6 +5,12 @@
 ] @text
 
 [
+  (indented_code_block)
+  (fenced_code_block)
+  (pipe_table)
+] @text.monospace
+
+[
   (atx_heading)
   (setext_heading)
   (thematic_break)

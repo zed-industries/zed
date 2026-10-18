@@ -123,7 +123,6 @@ use std::cell::RefCell;
 use std::collections::hash_map::Entry;
 use std::{
     any::TypeId,
-    borrow::Cow,
     fmt::Debug,
     iter,
     num::NonZeroU32,
@@ -1416,6 +1415,7 @@ pub enum ChunkReplacement {
 pub struct HighlightedChunk<'a> {
     pub text: &'a str,
     pub style: Option<HighlightStyle>,
+    pub is_monospace: bool,
     pub(crate) diagnostic_underline_severity: Option<lsp::DiagnosticSeverity>,
     pub is_tab: bool,
     pub is_inlay: bool,
@@ -1430,6 +1430,7 @@ impl<'a> HighlightedChunk<'a> {
     ) -> impl Iterator<Item = Self> + 'a {
         let mut text = self.text;
         let style = self.style;
+        let is_monospace = self.is_monospace;
         let diagnostic_underline_severity = self.diagnostic_underline_severity;
         let is_tab = self.is_tab;
         let renderer = self.replacement;
@@ -1452,6 +1453,7 @@ impl<'a> HighlightedChunk<'a> {
                     return Some(HighlightedChunk {
                         text: prefix,
                         style,
+                        is_monospace,
                         diagnostic_underline_severity,
                         is_tab,
                         is_inlay,
@@ -1477,6 +1479,7 @@ impl<'a> HighlightedChunk<'a> {
                 return Some(HighlightedChunk {
                     text: invisible_text,
                     style: Some(invisible_style),
+                    is_monospace,
                     diagnostic_underline_severity: None,
                     is_tab: false,
                     is_inlay,
@@ -1493,6 +1496,7 @@ impl<'a> HighlightedChunk<'a> {
             Some(HighlightedChunk {
                 text: remainder,
                 style,
+                is_monospace,
                 diagnostic_underline_severity,
                 is_tab,
                 is_inlay,
@@ -1996,6 +2000,7 @@ impl DisplaySnapshot {
                 HighlightedChunk {
                     text: chunk.text,
                     style,
+                    is_monospace: chunk.syntax_highlight_id.is_some_and(|id| id.is_monospace()),
                     diagnostic_underline_severity: diagnostic_severity,
                     is_tab: chunk.is_tab,
                     is_inlay: chunk.is_inlay,
@@ -2075,20 +2080,13 @@ impl DisplaySnapshot {
         for chunk in self.highlighted_chunks(
             range,
             LanguageAwareStyling {
-                tree_sitter: false,
+                tree_sitter: editor_style.monospace_font.is_some(),
                 diagnostics: false,
             },
             editor_style,
         ) {
             line.push_str(chunk.text);
-
-            let text_style = if let Some(style) = chunk.style {
-                Cow::Owned(editor_style.text.clone().highlight(style))
-            } else {
-                Cow::Borrowed(&editor_style.text)
-            };
-
-            runs.push(text_style.to_run(chunk.text.len()))
+            runs.push(editor_style.text_run(&chunk, chunk.text.len()));
         }
 
         if line.ends_with('\n') {
@@ -4869,6 +4867,7 @@ pub mod tests {
         let chunk = HighlightedChunk {
             text: pilot_emoji,
             style: None,
+            is_monospace: false,
             diagnostic_underline_severity: None,
             is_tab: false,
             is_inlay: false,

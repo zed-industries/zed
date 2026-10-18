@@ -169,10 +169,11 @@ use gpui::{
     Action, Animation, AnimationExt, AnyElement, App, AppContext, AsyncWindowContext,
     AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context,
     DispatchPhase, Edges, Entity, EntityId, EntityInputHandler, EventEmitter, FocusHandle,
-    FocusOutEvent, Focusable, FontId, FontStyle, FontWeight, Global, HighlightStyle, Hsla, IsZero,
-    KeyContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, PaintQuad, ParentElement,
-    Pixels, PressureStage, Render, ScrollHandle, SharedString, SharedUri, Size, Stateful, Styled,
-    Subscription, Task, TextRun, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
+    FocusOutEvent, Focusable, Font, FontId, FontStyle, FontWeight, Global, HighlightStyle, Hsla,
+    IsZero, KeyContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, PaintQuad,
+    ParentElement, Pixels, PressureStage, Render, ScrollHandle, SharedString, SharedUri, Size,
+    Stateful, Styled, Subscription, Task, TextRun, TextStyle, TextStyleRefinement, UTF16Selection,
+    UnderlineStyle,
     UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window, div, point, prelude::*,
     pulsating_between, px, relative, size,
 };
@@ -546,6 +547,7 @@ pub struct EditorStyle {
     pub border: Hsla,
     pub local_player: PlayerColor,
     pub text: TextStyle,
+    pub monospace_font: Option<Font>,
     pub scrollbar_width: Pixels,
     pub syntax: Arc<SyntaxTheme>,
     pub status: StatusColors,
@@ -553,6 +555,29 @@ pub struct EditorStyle {
     pub edit_prediction_styles: EditPredictionStyles,
     pub unnecessary_code_fade: f32,
     pub show_underlines: bool,
+}
+
+impl EditorStyle {
+    pub fn text_run(&self, chunk: &HighlightedChunk<'_>, len: usize) -> TextRun {
+        let text_style = if let Some(style) = chunk.style {
+            Cow::Owned(self.text.clone().highlight(style))
+        } else {
+            Cow::Borrowed(&self.text)
+        };
+        let mut run = text_style.to_run(len);
+        if chunk.is_monospace
+            && let Some(monospace_font) = &self.monospace_font
+        {
+            run.font = Font {
+                family: monospace_font.family.clone(),
+                features: monospace_font.features.clone(),
+                fallbacks: monospace_font.fallbacks.clone(),
+                weight: text_style.font_weight,
+                style: text_style.font_style,
+            };
+        }
+        run
+    }
 }
 
 impl Default for EditorStyle {
@@ -564,6 +589,7 @@ impl Default for EditorStyle {
             border: Hsla::default(),
             local_player: PlayerColor::default(),
             text: TextStyle::default(),
+            monospace_font: None,
             scrollbar_width: Pixels::default(),
             syntax: NONE_SYNTAX.clone(),
             // HACK: Status colors don't have a real default.
@@ -11532,6 +11558,23 @@ impl Editor {
             text_style.refine(text_style_refinement)
         }
 
+        let is_font_monospace = |font: &Font| {
+            let text_system = cx.text_system();
+            let font_id = text_system.resolve_font(font);
+            let i_advance = text_system.advance(font_id, px(14.0), 'i').ok();
+            let m_advance = text_system.advance(font_id, px(14.0), 'm').ok();
+            matches!((i_advance, m_advance), (Some(i), Some(m)) if (i.width - m.width).abs() < px(0.01))
+        };
+        let monospace_font = if is_font_monospace(&text_style.font()) {
+            None
+        } else if text_style.font_family != settings.buffer_font.family
+            && is_font_monospace(&settings.buffer_font)
+        {
+            Some(settings.buffer_font.clone())
+        } else {
+            Some(gpui::font(".ZedMono"))
+        };
+
         let background = match self.mode {
             EditorMode::SingleLine => cx.theme().system().transparent,
             EditorMode::AutoHeight { .. } => cx.theme().system().transparent,
@@ -11544,6 +11587,7 @@ impl Editor {
             border: cx.theme().colors().border,
             local_player: cx.theme().players().local(),
             text: text_style,
+            monospace_font,
             scrollbar_width: EditorElement::SCROLLBAR_WIDTH,
             syntax: cx.theme().syntax().clone(),
             status: cx.theme().status().clone(),

@@ -74,7 +74,6 @@ use settings::{
 use smallvec::{SmallVec, smallvec};
 use std::{
     any::TypeId,
-    borrow::Cow,
     cell::Cell,
     cmp::{self, Ordering},
     fmt::{self, Write},
@@ -7421,12 +7420,13 @@ impl LineWithInvisibles {
         for highlighted_chunk in chunks.chain([HighlightedChunk {
             text: "\n",
             style: None,
+            is_monospace: false,
             diagnostic_underline_severity: None,
             is_tab: false,
             is_inlay: false,
             replacement: None,
         }]) {
-            if let Some(replacement) = highlighted_chunk.replacement {
+            if let Some(replacement) = highlighted_chunk.replacement.clone() {
                 if line_exceeded_max_len {
                     continue;
                 }
@@ -7468,7 +7468,7 @@ impl LineWithInvisibles {
                             let shaped_line = window.text_system().shape_line(
                                 chunk,
                                 font_size,
-                                &[text_style.to_run(highlighted_chunk.text.len())],
+                                &[editor_style.text_run(&highlighted_chunk, highlighted_chunk.text.len())],
                                 None,
                             );
                             AvailableSpace::Definite(shaped_line.width)
@@ -7499,20 +7499,7 @@ impl LineWithInvisibles {
                         });
                     }
                     ChunkReplacement::Str(x) => {
-                        let text_style = if let Some(style) = highlighted_chunk.style {
-                            Cow::Owned(text_style.clone().highlight(style))
-                        } else {
-                            Cow::Borrowed(text_style)
-                        };
-
-                        let run = TextRun {
-                            len: x.len(),
-                            font: text_style.font(),
-                            color: text_style.color,
-                            background_color: text_style.background_color,
-                            underline: text_style.underline,
-                            strikethrough: text_style.strikethrough,
-                        };
+                        let run = editor_style.text_run(&highlighted_chunk, x.len());
 
                         let line_layout = window
                             .text_system()
@@ -7574,12 +7561,6 @@ impl LineWithInvisibles {
                     }
 
                     if !line_chunk.is_empty() && !line_exceeded_max_len {
-                        let text_style = if let Some(style) = highlighted_chunk.style {
-                            Cow::Owned(text_style.clone().highlight(style))
-                        } else {
-                            Cow::Borrowed(text_style)
-                        };
-
                         let current_line_len = len + line.len();
                         if current_line_len + line_chunk.len() > max_line_len {
                             let mut chunk_len = max_line_len - current_line_len;
@@ -7594,14 +7575,7 @@ impl LineWithInvisibles {
                             continue;
                         }
 
-                        styles.push(TextRun {
-                            len: line_chunk.len(),
-                            font: text_style.font(),
-                            color: text_style.color,
-                            background_color: text_style.background_color,
-                            underline: text_style.underline,
-                            strikethrough: text_style.strikethrough,
-                        });
+                        styles.push(editor_style.text_run(&highlighted_chunk, line_chunk.len()));
 
                         if let Some(severity) = highlighted_chunk.diagnostic_underline_severity {
                             diagnostic_underline_severity_ranges.push((
@@ -13192,6 +13166,7 @@ mod tests {
                     diagnostic_underline_severity: None,
                     is_tab: false,
                     is_inlay: false,
+                    is_monospace: false,
                     replacement: Some(ChunkReplacement::Str("\u{2007}".into())),
                 })
                 .chain(std::iter::once(HighlightedChunk {
@@ -13200,6 +13175,7 @@ mod tests {
                     diagnostic_underline_severity: None,
                     is_tab: false,
                     is_inlay: false,
+                    is_monospace: false,
                     replacement: None,
                 }))
                 .chain(
@@ -13209,6 +13185,7 @@ mod tests {
                         diagnostic_underline_severity: None,
                         is_tab: false,
                         is_inlay: false,
+                        is_monospace: false,
                         replacement: Some(ChunkReplacement::Str("\u{2007}".into())),
                     })
                     .take(8),
@@ -13232,6 +13209,44 @@ mod tests {
                 assert!(layouts[0].fragments.len() <= max_line_len);
             })
             .unwrap();
+    }
+
+    #[test]
+    fn test_proportional_font_monospace_text_run() {
+        let mut style = EditorStyle::default();
+        style.text.font_family = ".ZedSans".into();
+        style.monospace_font = Some(gpui::font(".ZedMono"));
+
+        let prose_chunk = HighlightedChunk {
+            text: "prose",
+            style: None,
+            diagnostic_underline_severity: None,
+            is_tab: false,
+            is_inlay: false,
+            is_monospace: false,
+            replacement: None,
+        };
+        let code_chunk = HighlightedChunk {
+            text: "code",
+            style: Some(gpui::HighlightStyle {
+                font_weight: Some(FontWeight::BOLD),
+                font_style: Some(gpui::FontStyle::Italic),
+                ..Default::default()
+            }),
+            diagnostic_underline_severity: None,
+            is_tab: false,
+            is_inlay: false,
+            is_monospace: true,
+            replacement: None,
+        };
+
+        let prose_run = style.text_run(&prose_chunk, prose_chunk.text.len());
+        assert_eq!(prose_run.font.family.as_ref(), ".ZedSans");
+
+        let code_run = style.text_run(&code_chunk, code_chunk.text.len());
+        assert_eq!(code_run.font.family.as_ref(), ".ZedMono");
+        assert_eq!(code_run.font.weight, FontWeight::BOLD);
+        assert_eq!(code_run.font.style, gpui::FontStyle::Italic);
     }
 
     #[gpui::test]

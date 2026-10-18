@@ -3784,6 +3784,121 @@ async fn test_markdown_inline_html_highlighting(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_markdown_monospace_highlights(cx: &mut TestAppContext) {
+    let markdown_language = markdown_lang();
+    let markdown_inline_language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "markdown-inline".into(),
+                grammar: Some("markdown-inline".into()),
+                ..Default::default()
+            },
+            Some(tree_sitter_md::INLINE_LANGUAGE.into()),
+        )
+        .with_highlights_query(include_str!(
+            "../../grammars/src/markdown-inline/highlights.scm"
+        ))
+        .unwrap()
+        .with_injection_query(include_str!(
+            "../../grammars/src/markdown-inline/injections.scm"
+        ))
+        .unwrap(),
+    );
+    let rust_language = rust_lang();
+    let syntax_theme = SyntaxTheme::new([
+        ("text.literal".to_string(), gpui::rgba(0x111111ff).into()),
+        ("keyword".to_string(), gpui::rgba(0x222222ff).into()),
+        ("function".to_string(), gpui::rgba(0x333333ff).into()),
+    ]);
+    markdown_language.set_theme(&syntax_theme);
+    markdown_inline_language.set_theme(&syntax_theme);
+    rust_language.set_theme(&syntax_theme);
+
+    let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor.clone()));
+    language_registry.add(markdown_language.clone());
+    language_registry.add(markdown_inline_language);
+    language_registry.add(rust_language);
+
+    let text = indoc! {"
+        Prose with `inline_code` and normal text.
+
+        ```rust
+        fn main() {}
+        ```
+
+            indented_code();
+
+        More prose.
+
+        | col1 | col2 |
+        | ---- | ---- |
+        | val1 | val2 |
+    "};
+
+    let buffer = cx.new(|cx| {
+        let mut buffer = Buffer::local(text, cx);
+        buffer.set_language_registry(language_registry);
+        buffer.set_language(Some(markdown_language), cx);
+        buffer
+    });
+
+    cx.run_until_parked();
+
+    buffer.read_with(cx, |buffer, _cx| {
+        let snapshot = buffer.snapshot();
+        let mut monospace_runs: Vec<String> = Vec::new();
+        let mut prev_monospace = false;
+        let mut keyword_highlight = None;
+        let mut unhighlighted_code_highlight = None;
+
+        for chunk in snapshot.chunks(
+            0..snapshot.len(),
+            LanguageAwareStyling {
+                tree_sitter: true,
+                diagnostics: false,
+            },
+        ) {
+            let is_monospace = chunk
+                .syntax_highlight_id
+                .is_some_and(|id| id.is_monospace());
+            if chunk.text == "fn" {
+                keyword_highlight = chunk.syntax_highlight_id;
+            }
+            if chunk.text.contains("()") {
+                unhighlighted_code_highlight = chunk.syntax_highlight_id;
+            }
+            if is_monospace {
+                match monospace_runs.last_mut() {
+                    Some(last) if prev_monospace => last.push_str(chunk.text),
+                    _ => monospace_runs.push(chunk.text.to_string()),
+                }
+            }
+            prev_monospace = is_monospace;
+        }
+
+        assert_eq!(
+            monospace_runs,
+            vec![
+                "`inline_code`".to_string(),
+                "```rust\nfn main() {}\n```\n".to_string(),
+                "    indented_code();\n\n".to_string(),
+                "| col1 | col2 |\n| ---- | ---- |\n| val1 | val2 |\n".to_string(),
+            ]
+        );
+
+        let keyword_id = keyword_highlight.expect("fn keyword should have a highlight id");
+        assert!(keyword_id.is_monospace());
+        assert_eq!(syntax_theme.get_capture_name(keyword_id), Some("keyword"));
+
+        let unhighlighted_id = unhighlighted_code_highlight
+            .expect("unhighlighted span in code block should carry monospace highlight id");
+        assert!(unhighlighted_id.is_monospace());
+        assert!(!unhighlighted_id.has_style());
+        assert!(syntax_theme.get(unhighlighted_id).is_none());
+    });
+}
+
+#[gpui::test]
 fn test_syntax_layer_at_for_combined_injections(cx: &mut App) {
     init_settings(cx, |_| {});
 

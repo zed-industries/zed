@@ -1208,11 +1208,13 @@ impl Language {
         });
         let mut runs = Vec::<(Range<usize>, HighlightId)>::new();
         for region in regions {
-            let highlight_id = region
-                .stack
-                .iter()
-                .rev()
-                .find_map(|capture| highlight_map.get(capture.capture_id));
+            let highlight_id = resolve_stack_highlight(
+                region
+                    .stack
+                    .iter()
+                    .rev()
+                    .filter_map(|capture| highlight_map.get(capture.capture_id)),
+            );
             let Some(highlight_id) = highlight_id else {
                 continue;
             };
@@ -1277,13 +1279,36 @@ impl Language {
     }
 }
 
+pub(crate) fn resolve_stack_highlight(
+    ids: impl Iterator<Item = HighlightId>,
+) -> Option<HighlightId> {
+    let mut is_monospace = false;
+    let mut style_id = None;
+    for id in ids {
+        is_monospace |= id.is_monospace();
+        if style_id.is_none() && id.has_style() {
+            style_id = Some(id);
+        }
+    }
+    style_id
+        .map(|id| id.with_monospace(is_monospace))
+        .or_else(|| is_monospace.then(HighlightId::monospace_only))
+}
+
 #[inline]
 pub fn build_highlight_map(capture_names: &[&str], theme: &SyntaxTheme) -> HighlightMap {
-    HighlightMap::from_ids(
-        capture_names
-            .iter()
-            .map(|capture_name| theme.highlight_id(capture_name).map(HighlightId::new)),
-    )
+    HighlightMap::from_ids(capture_names.iter().map(|&capture_name| {
+        if capture_name == "text.monospace" {
+            return Some(HighlightId::monospace_only());
+        }
+        let is_monospace = capture_name == "text.literal"
+            || capture_name.starts_with("text.literal.")
+            || capture_name.starts_with("text.monospace.");
+        theme
+            .highlight_id(capture_name)
+            .map(|id| HighlightId::new(id).with_monospace(is_monospace))
+            .or_else(|| is_monospace.then(HighlightId::monospace_only))
+    }))
 }
 
 impl LanguageScope {
