@@ -368,7 +368,7 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_seperators() {
+    fn test_normalize_separators() {
         let paths_and_normalized_unix = [
             ("", ""),
             ("/", "/"),
