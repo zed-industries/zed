@@ -928,6 +928,9 @@ pub struct OsWatcher {
     event_tx: async_channel::Sender<notify::Result<notify::Event>>,
     _dispatch_task: Task<()>,
     diagnostics: Arc<diagnostics::DiagnosticRecorder>,
+    // Closing the event channel can wake the dispatch task. Keep its scheduler
+    // alive through channel and task teardown, even when our owner drops first.
+    _executor: BackgroundExecutor,
 }
 
 impl OsWatcher {
@@ -968,6 +971,7 @@ impl OsWatcher {
             event_tx,
             _dispatch_task: dispatch_task,
             diagnostics: Default::default(),
+            _executor: executor,
         })
     }
 
@@ -1449,6 +1453,21 @@ mod tests {
         }
     }
 
+    #[test]
+    fn watcher_retains_scheduler_until_teardown() {
+        let dispatcher = Arc::new(gpui::TestDispatcher::new(0));
+        let scheduler = Arc::downgrade(dispatcher.scheduler());
+        let executor = BackgroundExecutor::new(dispatcher.clone());
+        let watcher = OsWatcher::new(OsWatcherKind::Native, executor.clone());
+        executor.run_until_parked();
+        drop(executor);
+
+        drop(dispatcher);
+        assert!(scheduler.upgrade().is_some());
+        drop(watcher);
+        assert!(scheduler.upgrade().is_none());
+    }
+
     fn test_os_watcher(
         kind: OsWatcherKind,
         backend: Option<Arc<Mutex<FakeWatchBackend>>>,
@@ -1474,6 +1493,7 @@ mod tests {
             event_tx,
             _dispatch_task: Task::ready(()),
             diagnostics: Default::default(),
+            _executor: BackgroundExecutor::new(Arc::new(gpui::TestDispatcher::new(0))),
         }
     }
 

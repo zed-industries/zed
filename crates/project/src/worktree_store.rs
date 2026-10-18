@@ -468,8 +468,10 @@ impl WorktreeStore {
         let abs_path = SanitizedPath::new(abs_path.as_ref());
         for tree in self.worktrees() {
             let path_style = tree.read(cx).path_style();
-            if let Some(relative_path) =
-                path_style.strip_prefix(abs_path.as_ref(), tree.read(cx).abs_path().as_ref())
+            if let Some(relative_path) = path_style
+                .strip_prefix(abs_path.as_ref(), tree.read(cx).abs_path().as_ref())
+                .ok()
+                .and_then(|path| RelPath::new(path, path_style).ok())
             {
                 return Some((tree.clone(), relative_path.into_arc()));
             }
