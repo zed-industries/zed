@@ -132,6 +132,7 @@
 
 use crate::{ProjectPanel, RemovalKind};
 use anyhow::{Context, Result, anyhow};
+use client::{ErrorCode, ErrorExt as _, RpcError};
 use fs::{TrashId, TrashRestoreError};
 use futures::channel::mpsc;
 use gpui::{
@@ -457,9 +458,15 @@ pub(crate) fn project_path_display(
 /// contain file paths, so matching on text would misdiagnose unrelated
 /// failures for files whose names contain "already exists".
 pub(crate) fn already_exists_error(err: &anyhow::Error) -> bool {
-    err.chain()
-        .find_map(|cause| cause.downcast_ref::<std::io::Error>())
-        .is_some_and(|io_err| io_err.kind() == std::io::ErrorKind::AlreadyExists)
+    err.chain().any(|cause| {
+        if let Some(io_err) = cause.downcast_ref::<std::io::Error>() {
+            io_err.kind() == std::io::ErrorKind::AlreadyExists
+        } else if let Some(rpc_error) = cause.downcast_ref::<RpcError>() {
+            rpc_error.error_code() == ErrorCode::AlreadyExists
+        } else {
+            false
+        }
+    })
 }
 
 impl Inner {

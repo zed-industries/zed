@@ -6208,6 +6208,39 @@ fn test_explain_move_error() {
             .to_string()
             .starts_with("Failed to move")
     );
+
+    // On a remote (SSH) project a collision arrives as an RpcError carrying
+    // the code, not as an io::Error.
+    let remote_error = |code: ErrorCode, message: &str| {
+        client::RpcError::from_proto(
+            &client::proto::Error {
+                message: message.to_string(),
+                code: code as i32,
+                tags: Vec::new(),
+            },
+            "RenameProjectEntry",
+        )
+    };
+
+    let err = remote_error(
+        ErrorCode::AlreadyExists,
+        "renaming \"/root/a/1.json\" into \"/root/1.json\": File exists (os error 17)",
+    );
+    assert_eq!(
+        explain_move_error(err, Some(&names)).to_string(),
+        "Failed to move `a/1.json` to `1.json`. A file or folder already exists there."
+    );
+
+    // Any other remote failure is untouched, even if its text says "already exists".
+    let err = remote_error(
+        ErrorCode::Internal,
+        "renaming \"/root/already exists.txt\" into \"/root/b.txt\": Permission denied (os error 13)",
+    );
+    assert!(
+        !explain_move_error(err, Some(&names))
+            .to_string()
+            .starts_with("Failed to move")
+    );
 }
 
 #[gpui::test]

@@ -106,7 +106,7 @@ impl ErrorExt for anyhow::Error {
         if let Some(rpc_error) = self.downcast_ref::<RpcError>() {
             rpc_error.to_proto()
         } else {
-            ErrorCode::Internal
+            code_for_untyped_error(self)
                 .message(
                     format!("{self:#}")
                         .lines()
@@ -128,6 +128,17 @@ impl ErrorExt for anyhow::Error {
         } else {
             anyhow::anyhow!("{self:#}")
         }
+    }
+}
+
+fn code_for_untyped_error(error: &anyhow::Error) -> ErrorCode {
+    let io_error_kind = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<std::io::Error>())
+        .map(std::io::Error::kind);
+    match io_error_kind {
+        Some(std::io::ErrorKind::AlreadyExists) => ErrorCode::AlreadyExists,
+        _ => ErrorCode::Internal,
     }
 }
 
@@ -252,5 +263,49 @@ impl From<ErrorCode> for RpcError {
             msg: format!("{:?}", code),
             tags: Default::default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io;
+
+    #[test]
+    fn test_already_exists_io_error_keeps_its_code_over_rpc() {
+        let error = anyhow::Error::from(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "\"/root/b.txt\" already exists",
+        ))
+        .context("renaming \"/root/a.txt\" into \"/root/b.txt\"");
+
+        let sent = error.to_proto();
+        assert_eq!(sent.code(), ErrorCode::AlreadyExists);
+        assert!(
+            sent.message.starts_with("renaming"),
+            "the full message should still be sent: {}",
+            sent.message
+        );
+
+        let received = RpcError::from_proto(&sent, "RenameProjectEntry");
+        assert_eq!(received.error_code(), ErrorCode::AlreadyExists);
+    }
+
+    #[test]
+    fn test_other_untyped_errors_stay_internal() {
+        // A different I/O failure, even with "already exists" in a path.
+        let error = anyhow::Error::from(io::Error::from(io::ErrorKind::PermissionDenied))
+            .context("renaming \"/root/already exists.txt\" into \"/root/b.txt\"");
+        assert_eq!(error.to_proto().code(), ErrorCode::Internal);
+
+        // Text alone is never trusted.
+        let error = anyhow::anyhow!("path already exists: \"/root/b.txt\"");
+        assert_eq!(error.to_proto().code(), ErrorCode::Internal);
+    }
+
+    #[test]
+    fn test_rpc_error_code_takes_precedence() {
+        let error = ErrorCode::Forbidden.anyhow().context("while renaming");
+        assert_eq!(error.to_proto().code(), ErrorCode::Forbidden);
     }
 }
