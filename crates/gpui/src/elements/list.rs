@@ -1817,19 +1817,28 @@ mod test {
         state.set_item_heights_provisional(true);
         state.remeasure_items(2..3);
 
-        struct TestView(ListState);
+        struct TestView {
+            state: ListState,
+            request_autoscroll: Rc<Cell<bool>>,
+        }
         impl Render for TestView {
             fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                list(self.0.clone(), |ix, _, _| {
+                let request_autoscroll = self.request_autoscroll.clone();
+                list(self.state.clone(), move |ix, _, _| {
                     if ix == 2 {
+                        let request_autoscroll = request_autoscroll.clone();
                         // Request an autoscroll 5px into item 2, while the
-                        // pending remeasure still points at offset 10.
+                        // pending remeasure still points at offset 10. Only
+                        // request once: a later request would re-apply the
+                        // offset and hide a stale pending scroll.
                         canvas(
-                            |bounds, window, _| {
-                                window.request_autoscroll(Bounds::from_corners(
-                                    point(bounds.left(), bounds.top() + px(5.)),
-                                    point(bounds.right(), bounds.top() + px(10.)),
-                                ));
+                            move |bounds, window, _| {
+                                if request_autoscroll.replace(false) {
+                                    window.request_autoscroll(Bounds::from_corners(
+                                        point(bounds.left(), bounds.top() + px(5.)),
+                                        point(bounds.right(), bounds.top() + px(10.)),
+                                    ));
+                                }
                             },
                             |_, _, _, _| {},
                         )
@@ -1845,9 +1854,24 @@ mod test {
             }
         }
 
-        cx.draw(point(px(0.), px(0.)), size(px(100.), px(60.)), |_, cx| {
-            cx.new(|_| TestView(state.clone())).into_any_element()
-        });
+        let request_autoscroll = Rc::new(Cell::new(true));
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            let request_autoscroll = request_autoscroll.clone();
+            let state = state.clone();
+            cx.draw(
+                point(px(0.), px(0.)),
+                size(px(100.), px(60.)),
+                move |_, cx| {
+                    cx.new(|_| TestView {
+                        state: state.clone(),
+                        request_autoscroll: request_autoscroll.clone(),
+                    })
+                    .into_any_element()
+                },
+            );
+        };
+
+        draw(cx);
 
         let scroll_top = state.logical_scroll_top();
         assert_eq!(scroll_top.item_ix, 2);
@@ -1855,9 +1879,10 @@ mod test {
 
         state.set_item_heights_provisional(false);
 
-        cx.draw(point(px(0.), px(0.)), size(px(100.), px(60.)), |_, cx| {
-            cx.new(|_| TestView(state.clone())).into_any_element()
-        });
+        // No autoscroll request on this frame: the rebased pending offset must
+        // keep the child autoscroll's position instead of restoring the stale
+        // `10px` offset from the remeasure.
+        draw(cx);
 
         let scroll_top = state.logical_scroll_top();
         assert_eq!(
