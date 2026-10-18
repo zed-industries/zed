@@ -6872,7 +6872,20 @@ impl ThreadView {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn is_scroll_restore_pending(&self) -> bool {
+        self.scroll_restore.is_some()
+    }
+
     fn render_entries(&mut self, cx: &mut Context<Self>) -> List {
+        // A scrollbar drag bypasses the scroll handler and can move the list
+        // past the saved anchor before the next layout, which stops
+        // `finish_scroll_restore` from being scheduled. Cancel here so
+        // provisional mode cannot hide the rows the drag scrolls to.
+        if self.scroll_restore.is_some() && self.list_state.is_scrollbar_dragging() {
+            self.clear_scroll_restore();
+        }
+
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
         let centered_container = move |content: AnyElement| {
             h_flex().w_full().justify_center().child(
