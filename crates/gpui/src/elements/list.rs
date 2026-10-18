@@ -681,7 +681,7 @@ impl ListState {
     /// be reported; the RAII path ([`Self::pin_provisional_layout`]) debug-asserts
     /// it instead.
     pub fn begin_provisional_layout(&self) -> bool {
-        self.0.borrow_mut().begin_provisional()
+        self.0.borrow_mut().begin_provisional(true)
     }
 
     /// Leaves provisional mode, releasing the anchor's heights.
@@ -1090,13 +1090,16 @@ impl StateInner {
     /// Whether the current scroll anchor is the one whose heights are pinned.
     /// Navigation assigns `logical_scroll_top`, which breaks the match and ends
     /// provisional mode without each navigation path having to remember to.
-    fn begin_provisional(&mut self) -> bool {
+    ///
+    /// `new_session` is false when a child autoscroll moves the anchor within
+    /// an existing pin, so a live guard keeps owning it.
+    fn begin_provisional(&mut self, new_session: bool) -> bool {
         let Some(anchor) = self.logical_scroll_top else {
             return false;
         };
         let reentering = self.anchor_state.is_provisional(Some(anchor));
         self.pending_scroll = self.anchor_state.begin(anchor, self.pending_scroll.take());
-        if !reentering {
+        if new_session && !reentering {
             self.provisional_session = self.provisional_session.wrapping_add(1);
         }
         true
@@ -1728,12 +1731,11 @@ impl Element for List {
             match state.prepaint_items(bounds, padding, true, &mut self.render_item, window, cx) {
                 Ok(layout) => layout,
                 Err(autoscroll_request) => {
-                    // A child autoscroll moves the anchor the pin belongs to;
-                    // re-enter provisional mode at the new position.
+                    // A child autoscroll moves the anchor the pin belongs to.
                     let was_provisional = state.is_provisional();
                     state.set_scroll_anchor(Some(autoscroll_request));
                     if was_provisional {
-                        state.begin_provisional();
+                        state.begin_provisional(false);
                     }
                     state
                         .prepaint_items(bounds, padding, false, &mut self.render_item, window, cx)
@@ -2040,6 +2042,88 @@ mod test {
             scroll_top.offset_in_item,
             px(5.),
             "releasing provisional mode must not restore the stale pending offset"
+        );
+    }
+
+    #[gpui::test]
+    fn test_child_autoscroll_keeps_the_guard_session(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        let state = ListState::new(3, crate::ListAlignment::Top, px(0.));
+        state.scroll_to(gpui::ListOffset {
+            item_ix: 2,
+            offset_in_item: px(50.),
+        });
+        let guard = state.pin_provisional_layout();
+
+        struct TestView {
+            state: ListState,
+            request_autoscroll: Rc<Cell<bool>>,
+        }
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let request_autoscroll = self.request_autoscroll.clone();
+                list(self.state.clone(), move |ix, _, _| {
+                    if ix == 2 {
+                        let request_autoscroll = request_autoscroll.clone();
+                        canvas(
+                            move |bounds, window, _| {
+                                if request_autoscroll.replace(false) {
+                                    window.request_autoscroll(Bounds::from_corners(
+                                        point(bounds.left(), bounds.top() + px(40.)),
+                                        point(bounds.right(), bounds.top() + px(45.)),
+                                    ));
+                                }
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .h(px(100.))
+                        .w_full()
+                        .into_any()
+                    } else {
+                        div().h(px(100.)).w_full().into_any()
+                    }
+                })
+                .w_full()
+                .h_full()
+            }
+        }
+
+        let request_autoscroll = Rc::new(Cell::new(true));
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            let state = state.clone();
+            let request_autoscroll = request_autoscroll.clone();
+            cx.draw(
+                point(px(0.), px(0.)),
+                size(px(100.), px(200.)),
+                move |_, cx| {
+                    cx.new(|_| TestView {
+                        state: state.clone(),
+                        request_autoscroll: request_autoscroll.clone(),
+                    })
+                    .into_any_element()
+                },
+            );
+        };
+
+        draw(cx);
+        assert!(state.item_heights_provisional());
+
+        drop(guard);
+        draw(cx);
+
+        assert!(!state.item_heights_provisional());
+        let first = state.bounds_for_item(1).expect("row 1 should be rendered");
+        let last = state.bounds_for_item(2).expect("row 2 should be rendered");
+        assert_eq!(
+            first.top(),
+            px(0.),
+            "row 1 should start at the viewport top"
+        );
+        assert_eq!(
+            last.bottom(),
+            px(200.),
+            "row 2 should end at the viewport bottom"
         );
     }
 
