@@ -740,6 +740,7 @@ pub fn language_model(model: &ChatGptModel) -> LanguageModel {
                 name: name.into(),
                 value: value.into(),
                 is_default: Some(effort) == default_effort,
+                supports_disabling_thinking: None,
             })
         })
         .collect();
