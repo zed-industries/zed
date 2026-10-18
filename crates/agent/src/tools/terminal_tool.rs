@@ -1392,17 +1392,16 @@ fn resolve_cd_in_worktrees(
     path_style: util::paths::PathStyle,
     worktree_roots: &[(&str, PathBuf)],
 ) -> Option<PathBuf> {
-    let cd = path_style.normalize(cd);
-    let cd_path = Path::new(&cd);
-    let is_absolute = path_style.is_absolute(cd_path);
+    let cd_path = path_style.normalize_lexically(cd);
+    let is_absolute = path_style.is_absolute(&cd_path);
 
     worktree_roots.iter().find_map(|(root_name, abs_path)| {
         let prefix = if is_absolute {
-            path_style.normalize(abs_path.to_str()?)
+            path_style.normalize_lexically(&abs_path)
         } else {
-            (*root_name).to_string()
+            PathBuf::from(*root_name)
         };
-        let subpath = path_style.strip_prefix(cd_path, Path::new(&prefix)).ok()?;
+        let subpath = path_style.strip_prefix(&cd_path, &prefix).ok()?;
         if subpath.is_empty() {
             Some(abs_path.clone())
         } else {
