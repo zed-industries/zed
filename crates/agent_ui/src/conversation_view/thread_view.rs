@@ -5,7 +5,7 @@ use crate::{
     thread_metadata_store::{ThreadId, ThreadMetadataStore},
 };
 use agent_client_protocol::schema::v2 as acp_v2;
-use std::{cell::RefCell, ops::Range, path::Path};
+use std::{cell::RefCell, path::Path};
 
 use acp_thread::{
     Elicitation, ElicitationEntryId, ElicitationStatus, ForegroundActivity,
@@ -1203,7 +1203,6 @@ impl ThreadView {
                 cx.defer(move |cx| {
                     let scroll_top = list_state.logical_scroll_top();
                     let _ = thread_view.update(cx, |this, cx| {
-                        this.clear_scroll_restore();
                         if let Some(thread) = this.as_native_thread(cx) {
                             thread.update(cx, |thread, _cx| {
                                 thread.set_ui_scroll_position(Some(scroll_top));
@@ -2121,7 +2120,6 @@ impl ThreadView {
             })?;
 
             let _ = this.update(cx, |this, cx| {
-                this.clear_scroll_restore();
                 this.list_state.scroll_to_end();
                 cx.notify();
             });
@@ -4297,7 +4295,6 @@ impl ThreadView {
                                     ),
                                 )
                                 .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.clear_scroll_restore();
                                     this.list_state.scroll_to(ListOffset {
                                         item_ix: entry_ix,
                                         offset_in_item: px(0.0),
@@ -4383,7 +4380,6 @@ impl ThreadView {
                             .color(Color::Default),
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.clear_scroll_restore();
                         this.list_state.scroll_to(ListOffset {
                             item_ix: entry_ix,
                             offset_in_item: px(0.0),
@@ -6818,14 +6814,9 @@ impl ThreadView {
     /// Releases the provisional-height mode once every row that affects the
     /// restored viewport has finished parsing.
     fn finish_scroll_restore(&mut self, cx: &mut Context<Self>) {
-        let Some(target) = self.scroll_restore else {
+        let Some(target) = self.sync_scroll_restore() else {
             return;
         };
-
-        if self.list_state.is_scrollbar_dragging() {
-            self.clear_scroll_restore();
-            return;
-        }
 
         if self.list_state.bounds_for_item(target.item_ix).is_none() {
             return;
@@ -6856,35 +6847,27 @@ impl ThreadView {
         cx.notify();
     }
 
-    pub(crate) fn clear_scroll_restore(&mut self) {
+    /// Drops the restore once the list no longer pins the restored anchor.
+    /// Navigation inside `ListState` clears the pin, so the two cannot drift.
+    fn sync_scroll_restore(&mut self) -> Option<ListOffset> {
+        if !self.list_state.item_heights_provisional() {
+            self.scroll_restore = None;
+        }
+        self.scroll_restore
+    }
+
+    fn clear_scroll_restore(&mut self) {
         self.scroll_restore = None;
         self.list_state.set_item_heights_provisional(false);
     }
 
-    /// Clears the restore when a removal at or before the saved anchor makes it
-    /// stale.
-    pub(crate) fn cancel_scroll_restore_if_removed(&mut self, range: &Range<usize>) {
-        if self
-            .scroll_restore
-            .is_some_and(|target| target.item_ix >= range.start)
-        {
-            self.clear_scroll_restore();
-        }
-    }
-
     #[cfg(test)]
     pub(crate) fn is_scroll_restore_pending(&self) -> bool {
-        self.scroll_restore.is_some()
+        self.scroll_restore.is_some() && self.list_state.item_heights_provisional()
     }
 
     fn render_entries(&mut self, cx: &mut Context<Self>) -> List {
-        // A scrollbar drag bypasses the scroll handler and can move the list
-        // past the saved anchor before the next layout, which stops
-        // `finish_scroll_restore` from being scheduled. Cancel here so
-        // provisional mode cannot hide the rows the drag scrolls to.
-        if self.scroll_restore.is_some() && self.list_state.is_scrollbar_dragging() {
-            self.clear_scroll_restore();
-        }
+        let _ = self.sync_scroll_restore();
 
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
         let centered_container = move |content: AnyElement| {
@@ -7822,8 +7805,6 @@ impl ThreadView {
         user_message_index: Option<usize>,
         cx: &mut Context<Self>,
     ) {
-        self.clear_scroll_restore();
-
         let thread = self.thread.read(cx);
         let entries = thread.entries();
         if entries.is_empty() {
@@ -7848,7 +7829,6 @@ impl ThreadView {
     }
 
     pub fn scroll_to_end(&mut self, cx: &mut Context<Self>) {
-        self.clear_scroll_restore();
         self.list_state.scroll_to_end();
         cx.notify();
     }
@@ -7871,7 +7851,6 @@ impl ThreadView {
     }
 
     pub(crate) fn scroll_to_top(&mut self, cx: &mut Context<Self>) {
-        self.clear_scroll_restore();
         self.list_state.scroll_to(ListOffset::default());
         cx.notify();
     }
@@ -7882,7 +7861,6 @@ impl ThreadView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.clear_scroll_restore();
         let page_height = self.list_state.viewport_bounds().size.height;
         self.list_state.scroll_by(-page_height * 0.9);
         cx.notify();
@@ -7894,7 +7872,6 @@ impl ThreadView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.clear_scroll_restore();
         let page_height = self.list_state.viewport_bounds().size.height;
         self.list_state.scroll_by(page_height * 0.9);
         cx.notify();
@@ -7906,7 +7883,6 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.clear_scroll_restore();
         self.list_state.scroll_by(-window.line_height() * 3.);
         cx.notify();
     }
@@ -7917,7 +7893,6 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.clear_scroll_restore();
         self.list_state.scroll_by(window.line_height() * 3.);
         cx.notify();
     }
@@ -7946,7 +7921,6 @@ impl ThreadView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.clear_scroll_restore();
         let thread = self.thread.read(cx);
         let entries = thread.entries();
         let current_ix = self.list_state.logical_scroll_top().item_ix;
@@ -7969,7 +7943,6 @@ impl ThreadView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.clear_scroll_restore();
         let thread = self.thread.read(cx);
         let entries = thread.entries();
         let current_ix = self.list_state.logical_scroll_top().item_ix;
@@ -8032,7 +8005,6 @@ impl ThreadView {
                     let view = view.clone();
                     cx.defer(move |cx| {
                         view.update(cx, |this, cx| {
-                            this.clear_scroll_restore();
                             this.list_state.scroll_to(gpui::ListOffset {
                                 item_ix: entry_ix,
                                 offset_in_item: gpui::px(0.),

@@ -1874,9 +1874,7 @@ impl ConversationView {
                     let list_state = active.read(cx).list_state.clone();
                     entry_view_state.update(cx, |view_state, _cx| view_state.remove(range.clone()));
                     list_state.splice(range.clone(), 0);
-                    let range = range.clone();
                     active.update(cx, |active, cx| {
-                        active.cancel_scroll_restore_if_removed(&range);
                         active.sync_editor_mode(cx);
                     });
                 }
@@ -9487,12 +9485,12 @@ pub(crate) mod tests {
     /// Builds a thread whose non-deferred tool-call rows make the content
     /// taller than the viewport, then restores an interior position inside a
     /// trailing, deferred assistant reply.
-    async fn setup_pending_restore_from_scrollbar<'a>(
-        cx: &'a mut TestAppContext,
+    async fn setup_pending_restore_from_scrollbar(
+        cx: &mut TestAppContext,
     ) -> (
         Entity<ThreadView>,
         Entity<AcpThread>,
-        &'a mut VisualTestContext,
+        &mut VisualTestContext,
     ) {
         init_test(cx);
 
@@ -9590,13 +9588,18 @@ pub(crate) mod tests {
             |_, _| thread_view.clone().into_any_element(),
         );
 
-        // Thumb-down and the move past the anchor are both handled before the
-        // next layout.
+        // Thumb-down, the move past the anchor, and thumb-up are all handled
+        // before the next layout.
         list_state.scrollbar_drag_started();
         list_state.set_offset_from_scrollbar(point(px(0.0), px(-100_000.0)));
+        list_state.scrollbar_drag_ended();
         assert!(
             list_state.is_following_tail(),
             "the drag must reach the end of the list"
+        );
+        assert!(
+            !thread_view.read_with(cx, |view, _| view.is_scroll_restore_pending()),
+            "accepting the drag must drop the restore immediately"
         );
 
         cx.draw(
@@ -9639,6 +9642,7 @@ pub(crate) mod tests {
             |_, _| thread_view.clone().into_any_element(),
         );
         list_state.set_offset_from_scrollbar(point(px(0.0), px(-100_000.0)));
+        list_state.scrollbar_drag_ended();
         cx.draw(
             point(px(0.0), px(0.0)),
             size(px(800.0), px(600.0)),
