@@ -1,13 +1,13 @@
 //! # Lists in GPUI
 //!
 //! The [`list`] element renders large, variable-height collections efficiently:
-//! it lays out and paints only the rows in the viewport plus a configurable
-//! overdraw buffer. Rows outside that range stay unmeasured until they scroll
-//! closer.
+//! it lays out and paints only the rows in the viewport plus the overdraw, a
+//! configurable amount of extra space measured beyond each edge. Rows outside
+//! that range stay unmeasured until they scroll closer.
 //!
 //! [`ListState`] is the handle that coordinates this with your view. It is
-//! stored intrusively on the view (cloning it yields a shared handle), and it
-//! caches row heights, tracks the scroll anchor, and keeps the scrollbar in
+//! stored on the view, and cloning it yields a shared handle to the same state.
+//! It caches row heights, tracks the scroll anchor, and keeps the scrollbar in
 //! sync as content changes.
 //!
 //! A minimal example can be found in the `examples/list_example.rs` file.
@@ -26,7 +26,9 @@
 //!
 //! impl MyView {
 //!     fn new() -> Self {
-//!         // 100 rows, top-to-bottom, with 50px of overdraw above and below.
+//!         // 100 rows, top-to-bottom, with about 50px of overdraw beyond each
+//!         // edge. Rows are measured a whole row at a time, so the actual
+//!         // buffer is the first row boundary past 50px.
 //!         let state = ListState::new(100, ListAlignment::Top, px(50.0));
 //!         Self { state }
 //!     }
@@ -46,6 +48,11 @@
 //! }
 //! ```
 //!
+//! The list scrolls itself, but it only scrolls if its height is bounded by the
+//! parent. Give it a `flex_1` row, a `size_full` container, or an explicit
+//! height; in unbounded space it lays out at its content height and there is
+//! nothing to scroll.
+//!
 //! Use [`ListAlignment::Bottom`] for chat-like logs that grow at the end.
 //! [`ListState::measure_all`] measures every row on the first frame, which
 //! gives the scrollbar an exact size up front; [`ListState::with_uniform_item_height`]
@@ -63,6 +70,12 @@
 //! | [`ListState::remeasure`] | A global size change, such as a font size or zoom change | Preserves the proportional position |
 //! | [`ListState::reset`] | The whole data set was replaced | Drops cached heights and the scroll position |
 //!
+//! In short: if most rows carry over, [`ListState::splice`]; if one row's
+//! content or height changed at a stable index, [`ListState::remeasure_items`];
+//! if every row may have changed height but the rows themselves are the same,
+//! [`ListState::remeasure`]; if the data set is entirely new,
+//! [`ListState::reset`].
+//!
 //! ```rust
 //! # use gpui::*;
 //! # let state = ListState::new(10, ListAlignment::Top, px(0.));
@@ -71,7 +84,24 @@
 //!
 //! // A row's content changed but it still exists at the same index.
 //! state.remeasure_items(4..5);
+//!
+//! // The whole data set was replaced by 42 different rows.
+//! state.reset(42);
 //! ```
+//!
+//! A splice reindexes the rows that follow `old_range`, so an index captured
+//! before the splice can name a different row afterwards:
+//!
+//! ```rust
+//! # use gpui::*;
+//! # let state = ListState::new(10, ListAlignment::Top, px(0.));
+//! // Before: rows 0..10. Replace rows 5..8 with one new row.
+//! state.splice(5..8, 1);
+//! // Old row 8 is now row 5, and old row 9 is now row 6.
+//! ```
+//!
+//! Hold the row's own identity (its domain id) instead of an index, and resolve
+//! the index again after a splice.
 //!
 //! [`ListState::reset`] also drops scroll events until the next paint, and it
 //! bumps [`ListState::generation`] (see below).
@@ -105,6 +135,27 @@
 //! - rows above the anchor are not laid out;
 //! - tail-following is not re-enabled;
 //! - the viewport may remain underfilled.
+//!
+//! The lifecycle is a small state machine:
+//!
+//! ```text
+//! scroll_to(anchor)
+//!       │
+//!       ▼
+//! begin_provisional_layout() ──▶ Provisional { anchor, pending: None }
+//!                                        │
+//!                     remeasure_items ───┤ pending = offset relative to anchor
+//!                                        │
+//!                     rows settle ───────┤
+//!                                        ▼
+//!                           end_provisional_layout()
+//!                                        │
+//!                                        ▼
+//!                     Free; next layout applies the pending offset
+//!
+//! navigation, reset, or a splice at or before the anchor ends Provisional
+//! and drops the pending offset with it.
+//! ```
 //!
 //! Enter it after positioning the list, and leave it once the rows around the
 //! anchor have their final heights:
