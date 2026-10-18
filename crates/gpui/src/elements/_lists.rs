@@ -97,7 +97,7 @@
 //! # let state = ListState::new(10, ListAlignment::Top, px(0.));
 //! // Before: rows 0..10. Replace rows 5..8 with one new row.
 //! state.splice(5..8, 1);
-//! // Old row 8 is now row 5, and old row 9 is now row 6.
+//! // Old row 8 is now row 6, and old row 9 is now row 7.
 //! ```
 //!
 //! Hold the row's own identity (its domain id) instead of an index, and resolve
