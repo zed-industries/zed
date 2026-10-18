@@ -7660,7 +7660,16 @@ impl GitPanel {
                                                 )
                                             },
                                         )
-                                        .hover(|s| s.bg(cx.theme().colors().element_hover))
+                                        .when(is_focused, |this| {
+                                            this.bg(cx.theme().status().info.alpha(0.08))
+                                        })
+                                        .hover(|style| {
+                                            style.bg(if is_focused && !is_context_menu_target {
+                                                cx.theme().status().info.alpha(0.12)
+                                            } else {
+                                                cx.theme().colors().element_hover
+                                            })
+                                        })
                                         .when(is_context_menu_target, |this| {
                                             this.bg(cx.theme().colors().element_hover)
                                         })
