@@ -406,7 +406,11 @@ impl MarkdownCell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let buffer = cx.new(|cx| Buffer::local(source.clone(), cx));
+        let buffer = cx.new(|cx| {
+            let buffer = Buffer::local(source.clone(), cx);
+            buffer.set_language_registry(languages.clone());
+            buffer
+        });
         let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
 
         let markdown_language = languages.language_for_name("Markdown");
@@ -1319,5 +1323,98 @@ impl Render for RawCell {
             )
             // TODO: Move base cell render into trait impl so we don't have to repeat this
             .children(self.cell_position_spacer(false, window, cx))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use settings::SettingsStore;
+
+    fn run_cell_language_test(
+        cx: &mut TestAppContext,
+        cell_source: &str,
+        expected_languages: &[&str],
+    ) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        });
+
+        let languages = Arc::new(LanguageRegistry::test(cx.executor()));
+
+        for (lang_name, lang_fn) in [
+            ("markdown", tree_sitter_md::LANGUAGE),
+            ("markdown-inline", tree_sitter_md::INLINE_LANGUAGE),
+            ("typescript", tree_sitter_typescript::LANGUAGE_TYPESCRIPT),
+            ("python", tree_sitter_python::LANGUAGE),
+        ] {
+            languages.add(languages::language(lang_name, lang_fn.into()));
+        }
+
+        let metadata: CellMetadata = serde_json::from_str("{}").unwrap();
+
+        let cx = cx.add_empty_window();
+        let cell = cx.update(|window, cx| {
+            cx.new(|cx| {
+                MarkdownCell::new(
+                    uuid::Uuid::new_v4().into(),
+                    metadata,
+                    cell_source.to_string(),
+                    languages,
+                    window,
+                    cx,
+                )
+            })
+        });
+        cx.run_until_parked();
+
+        let detected_names = cell.read_with(cx, |cell, cx| {
+            let buffer = cell
+                .editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .unwrap();
+
+            let snapshot = buffer.read(cx).snapshot();
+            snapshot
+                .syntax_layers_languages()
+                .map(|language| language.name())
+                .collect::<Vec<_>>()
+        });
+
+        let mut expected_names = expected_languages.to_vec();
+        let mut sorted_names = detected_names
+            .iter()
+            .map(|it| it.as_ref())
+            .collect::<Vec<_>>();
+
+        expected_names.sort();
+        sorted_names.sort();
+
+        assert_eq!(
+            expected_names, sorted_names,
+            "detected languages {sorted_names:?} do not match expected {expected_names:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn test_markdown_cell_language_parsing(cx: &mut TestAppContext) {
+        run_cell_language_test(cx, "Hello, World!", &["Markdown", "Markdown-Inline"]);
+        run_cell_language_test(
+            cx,
+            "Some *emphasized* text\n```ts\nconst foo = 42;\n```\n",
+            &["Markdown", "Markdown-Inline", "TypeScript"],
+        );
+        run_cell_language_test(
+            cx,
+            "```ts\nconst f = () => {};\n```\n```py\nprint('Hello')\n```\n",
+            &["Markdown", "Python", "TypeScript"],
+        );
     }
 }
