@@ -5,7 +5,7 @@ use crate::{
     thread_metadata_store::{ThreadId, ThreadMetadataStore},
 };
 use agent_client_protocol::schema::v2 as acp_v2;
-use std::{cell::RefCell, path::Path};
+use std::{cell::RefCell, ops::Range, path::Path};
 
 use acp_thread::{
     Elicitation, ElicitationEntryId, ElicitationStatus, ForegroundActivity,
@@ -6839,7 +6839,7 @@ impl ThreadView {
                 if self.list_state.bounds_for_item(ix).is_none() {
                     break;
                 }
-                if entry.has_pending_markdown_parse(cx) {
+                if entry.has_pending_markdown_render(cx) {
                     parses_pending = true;
                     break;
                 }
@@ -6856,9 +6856,20 @@ impl ThreadView {
         cx.notify();
     }
 
-    fn clear_scroll_restore(&mut self) {
+    pub(crate) fn clear_scroll_restore(&mut self) {
         self.scroll_restore = None;
         self.list_state.set_item_heights_provisional(false);
+    }
+
+    /// Clears the restore when a removal at or before the saved anchor makes it
+    /// stale.
+    pub(crate) fn cancel_scroll_restore_if_removed(&mut self, range: &Range<usize>) {
+        if self
+            .scroll_restore
+            .is_some_and(|target| target.item_ix >= range.start)
+        {
+            self.clear_scroll_restore();
+        }
     }
 
     fn render_entries(&mut self, cx: &mut Context<Self>) -> List {
@@ -7858,6 +7869,7 @@ impl ThreadView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.clear_scroll_restore();
         let page_height = self.list_state.viewport_bounds().size.height;
         self.list_state.scroll_by(-page_height * 0.9);
         cx.notify();
@@ -7869,6 +7881,7 @@ impl ThreadView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.clear_scroll_restore();
         let page_height = self.list_state.viewport_bounds().size.height;
         self.list_state.scroll_by(page_height * 0.9);
         cx.notify();
@@ -7880,6 +7893,7 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.clear_scroll_restore();
         self.list_state.scroll_by(-window.line_height() * 3.);
         cx.notify();
     }
@@ -7890,6 +7904,7 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.clear_scroll_restore();
         self.list_state.scroll_by(window.line_height() * 3.);
         cx.notify();
     }

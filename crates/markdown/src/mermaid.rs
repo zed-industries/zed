@@ -134,6 +134,13 @@ impl MermaidState {
         self.order = new_order;
     }
 
+    /// Whether any cached diagram is still being rasterized.
+    pub(crate) fn has_pending_render(&self) -> bool {
+        self.cache
+            .values()
+            .any(|cached| cached.render_image.get().is_none())
+    }
+
     /// The natural (zoom 1.0) logical size of a diagram, if any raster of it
     /// is available to recover the size from.
     pub(crate) fn natural_size(
@@ -1832,5 +1839,40 @@ mod tests {
                 .position_for_source_index(mermaid_diagram.content_range.end.saturating_sub(1))
                 .is_some()
         );
+    }
+
+    #[gpui::test]
+    fn test_has_pending_render_until_diagram_rasterizes(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let cx = cx.add_empty_window();
+
+        let markdown = cx.new(|cx| Markdown::new("".into(), None, None, cx));
+        let contents = mermaid_contents("flowchart TD\n  A --> B");
+
+        markdown.update(cx, |markdown, cx| {
+            markdown.parsed_markdown.mermaid_diagrams.insert(
+                0,
+                ParsedMarkdownMermaidDiagram {
+                    content_range: 0..contents.contents.len(),
+                    contents: contents.clone(),
+                },
+            );
+            markdown
+                .mermaid_state
+                .update(&markdown.parsed_markdown, |_| 1.0, cx);
+            assert!(
+                markdown.has_pending_render(),
+                "a diagram that is still rasterizing keeps the rendered height provisional"
+            );
+        });
+
+        cx.cx.run_until_parked();
+
+        markdown.read_with(cx, |markdown, _| {
+            assert!(
+                !markdown.has_pending_render(),
+                "the rendered height stops being provisional once the diagram is rasterized"
+            );
+        });
     }
 }

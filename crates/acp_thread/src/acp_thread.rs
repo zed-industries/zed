@@ -945,31 +945,31 @@ impl AgentThreadEntry {
     }
 
     /// Whether any markdown that contributes to this entry's rendered height
-    /// is still parsing.
-    pub fn has_pending_markdown_parse(&self, cx: &App) -> bool {
+    /// still has a provisional height.
+    pub fn has_pending_markdown_render(&self, cx: &App) -> bool {
         match self {
             Self::UserMessage(message) => message
                 .content
                 .markdowns()
-                .any(|markdown| markdown.read(cx).is_parse_pending()),
+                .any(|markdown| markdown.read(cx).has_pending_render()),
             Self::AssistantMessage(message) => message.chunks.iter().any(|chunk| {
                 let (AssistantMessageChunk::Message { block, .. }
                 | AssistantMessageChunk::Thought { block, .. }) = chunk;
                 block
                     .markdowns()
-                    .any(|markdown| markdown.read(cx).is_parse_pending())
+                    .any(|markdown| markdown.read(cx).has_pending_render())
             }),
             Self::ToolCall(call) => {
-                call.label.read(cx).is_parse_pending()
+                call.label.read(cx).has_pending_render()
                     || call
                         .raw_input_markdown
                         .as_ref()
-                        .is_some_and(|markdown| markdown.read(cx).is_parse_pending())
+                        .is_some_and(|markdown| markdown.read(cx).has_pending_render())
                     || call
                         .content()
                         .iter()
                         .filter_map(|content| content.markdown())
-                        .any(|markdown| markdown.read(cx).is_parse_pending())
+                        .any(|markdown| markdown.read(cx).has_pending_render())
             }
             Self::Elicitation(_) | Self::ContextCompaction(_) => false,
         }

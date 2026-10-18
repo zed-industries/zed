@@ -1235,9 +1235,10 @@ impl Markdown {
         }
     }
 
-    /// Whether a parse was started and its result has not been applied yet.
-    pub fn is_parse_pending(&self) -> bool {
-        self.pending_parse.is_some()
+    /// Whether this markdown's rendered height is still provisional: a parse
+    /// has not been applied yet, or a mermaid diagram is still rasterizing.
+    pub fn has_pending_render(&self) -> bool {
+        self.pending_parse.is_some() || self.mermaid_state.has_pending_render()
     }
 
     fn parse(&mut self, cx: &mut Context<Self>) {

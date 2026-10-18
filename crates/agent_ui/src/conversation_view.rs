@@ -1874,7 +1874,9 @@ impl ConversationView {
                     let list_state = active.read(cx).list_state.clone();
                     entry_view_state.update(cx, |view_state, _cx| view_state.remove(range.clone()));
                     list_state.splice(range.clone(), 0);
+                    let range = range.clone();
                     active.update(cx, |active, cx| {
+                        active.cancel_scroll_restore_if_removed(&range);
                         active.sync_editor_mode(cx);
                     });
                 }
