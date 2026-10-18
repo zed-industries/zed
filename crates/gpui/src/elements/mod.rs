@@ -1,5 +1,3 @@
-#[cfg(doc)]
-pub mod _lists;
 mod anchored;
 mod animation;
 mod canvas;

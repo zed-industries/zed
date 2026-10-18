@@ -134,7 +134,6 @@ impl MermaidState {
         self.order = new_order;
     }
 
-    /// Whether any cached diagram is still being rasterized.
     pub(crate) fn has_pending_render(&self) -> bool {
         self.cache
             .values()
@@ -1842,37 +1841,34 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_has_pending_render_until_diagram_rasterizes(cx: &mut TestAppContext) {
+    fn test_has_pending_render_until_diagram_completes(cx: &mut TestAppContext) {
         ensure_theme_initialized(cx);
-        let cx = cx.add_empty_window();
+        let markdown = cx.new(|cx| Markdown::new(SharedString::default(), None, None, cx));
 
-        let markdown = cx.new(|cx| Markdown::new("".into(), None, None, cx));
-        let contents = mermaid_contents("flowchart TD\n  A --> B");
-
-        markdown.update(cx, |markdown, cx| {
-            markdown.parsed_markdown.mermaid_diagrams.insert(
-                0,
-                ParsedMarkdownMermaidDiagram {
-                    content_range: 0..contents.contents.len(),
-                    contents: contents.clone(),
-                },
-            );
-            markdown
-                .mermaid_state
-                .update(&markdown.parsed_markdown, |_| 1.0, cx);
-            assert!(
-                markdown.has_pending_render(),
-                "a diagram that is still rasterizing keeps the rendered height provisional"
-            );
-        });
-
-        cx.cx.run_until_parked();
-
-        markdown.read_with(cx, |markdown, _| {
-            assert!(
-                !markdown.has_pending_render(),
-                "the rendered height stops being provisional once the diagram is rasterized"
-            );
-        });
+        for (source, succeeds) in [("flowchart TD\n  A --> B", true), ("not a diagram", false)] {
+            let contents = mermaid_contents(source);
+            markdown.update(cx, |markdown, cx| {
+                let cached = CachedMermaidDiagram::new(contents.clone(), 1.0, None, cx);
+                markdown
+                    .mermaid_state
+                    .cache
+                    .insert(contents.clone(), Arc::new(cached));
+                assert!(!markdown.is_parsing());
+                assert!(markdown.has_pending_render());
+            });
+            cx.run_until_parked();
+            markdown.read_with(cx, |markdown, _| {
+                assert!(!markdown.has_pending_render());
+                assert_eq!(
+                    markdown
+                        .mermaid_state
+                        .cache
+                        .get(&contents)
+                        .and_then(|cached| cached.render_image.get())
+                        .map(|result| result.is_ok()),
+                    Some(succeeds)
+                );
+            });
+        }
     }
 }

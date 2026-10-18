@@ -9282,387 +9282,70 @@ pub(crate) mod tests {
         cx: &mut TestAppContext,
     ) {
         init_test(cx);
+        let (thread_view, cx) = setup_pending_scroll_restore(0, cx).await;
+        let list_state = thread_view.read_with(cx, |view, _| view.list_state.clone());
+        assert!(list_state.item_heights_provisional());
 
-        let (conversation_view, cx) =
-            setup_conversation_view(StubAgentServer::default_response(), cx).await;
-        add_to_workspace_with_size(conversation_view.clone(), true, cx);
-
-        let conversation = active_thread(&conversation_view, cx)
-            .read_with(cx, |view, _| view.conversation.clone());
-
-        let thread = conversation_view.update_in(cx, |view, _window, cx| {
-            create_test_acp_thread(
-                None,
-                "restore-scroll",
-                Rc::new(StubAgentConnection::new()),
-                view.project.clone(),
-                cx,
-            )
-        });
-
-        // Alternate user and assistant chunks so each turn becomes its own
-        // entry; the assistant markdown is deferred until it is first rendered.
-        let long_reply = "Long reply line.\n\n".repeat(200);
-        thread.update(cx, |thread, cx| {
-            for turn in 0..4 {
-                thread
-                    .handle_session_update(
-                        acp_v1::SessionUpdate::UserMessageChunk(acp_v1::ContentChunk::new(
-                            format!("Prompt {turn}").into(),
-                        )),
-                        cx,
-                    )
-                    .unwrap();
-                thread
-                    .handle_session_update(
-                        acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new(
-                            long_reply.clone().into(),
-                        )),
-                        cx,
-                    )
-                    .unwrap();
-            }
-        });
-
-        let entry_ix = thread.read_with(cx, |thread, _| {
-            let entries = thread.entries();
-            assert!(
-                entries.len() >= 6,
-                "expected several turns, got {}",
-                entries.len()
-            );
-            entries.len() - 3
-        });
-        thread.read_with(cx, |thread, _| {
-            assert!(
-                matches!(
-                    &thread.entries()[entry_ix],
-                    AgentThreadEntry::AssistantMessage(_)
-                ),
-                "expected the restore target to be a long assistant reply"
-            );
-        });
-
-        thread.update(cx, |thread, _cx| {
-            thread.set_ui_scroll_position(Some(ListOffset {
-                item_ix: entry_ix,
-                offset_in_item: px(40.0),
-            }));
-        });
-
-        let thread_view = conversation_view.update_in(cx, |view, window, cx| {
-            conversation.update(cx, |conversation, cx| {
-                conversation.register_thread(thread.clone(), cx);
-            });
-            view.new_thread_view(
-                thread.clone(),
-                conversation.clone(),
-                false,
-                None,
-                window,
-                cx,
-            )
-        });
-
-        // The first frame measures the deferred rows at zero height and starts
-        // their parses; the following frames apply the real heights and release
-        // the provisional flag.
         for _ in 0..3 {
-            cx.draw(
-                point(px(0.0), px(0.0)),
-                size(px(800.0), px(600.0)),
-                |_, _| thread_view.clone().into_any_element(),
-            );
+            draw_restored_thread(&thread_view, cx);
             cx.run_until_parked();
         }
 
-        thread_view.read_with(cx, |view, _| {
-            let offset = view.list_state.logical_scroll_top();
-            assert_eq!(offset.item_ix, entry_ix);
-            assert_eq!(offset.offset_in_item, px(40.0));
-            assert!(
-                !view.list_state.is_following_tail(),
-                "restoring an interior position must not re-enable tail-following"
-            );
-        });
+        assert_eq!(
+            list_state.logical_scroll_top(),
+            ListOffset {
+                item_ix: 5,
+                offset_in_item: px(40.0),
+            },
+        );
+        assert!(!list_state.is_following_tail());
+        assert!(!list_state.item_heights_provisional());
     }
 
     #[gpui::test]
     async fn test_scroll_to_end_during_pending_restore_renders_bottom(cx: &mut TestAppContext) {
         init_test(cx);
+        let (thread_view, cx) = setup_pending_scroll_restore(0, cx).await;
+        let list_state = thread_view.read_with(cx, |view, _| view.list_state.clone());
+        draw_restored_thread(&thread_view, cx);
+        assert!(list_state.item_heights_provisional());
 
-        let (conversation_view, cx) =
-            setup_conversation_view(StubAgentServer::default_response(), cx).await;
-        add_to_workspace_with_size(conversation_view.clone(), true, cx);
-
-        let conversation = active_thread(&conversation_view, cx)
-            .read_with(cx, |view, _| view.conversation.clone());
-
-        let thread = conversation_view.update_in(cx, |view, _window, cx| {
-            create_test_acp_thread(
-                None,
-                "scroll-to-end",
-                Rc::new(StubAgentConnection::new()),
-                view.project.clone(),
-                cx,
-            )
-        });
-
-        let long_reply = "Long reply line.\n\n".repeat(200);
-        thread.update(cx, |thread, cx| {
-            for turn in 0..4 {
-                thread
-                    .handle_session_update(
-                        acp_v1::SessionUpdate::UserMessageChunk(acp_v1::ContentChunk::new(
-                            format!("Prompt {turn}").into(),
-                        )),
-                        cx,
-                    )
-                    .unwrap();
-                thread
-                    .handle_session_update(
-                        acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new(
-                            long_reply.clone().into(),
-                        )),
-                        cx,
-                    )
-                    .unwrap();
-            }
-        });
-
-        let entry_ix = thread.read_with(cx, |thread, _| thread.entries().len() - 3);
-        thread.update(cx, |thread, _cx| {
-            thread.set_ui_scroll_position(Some(ListOffset {
-                item_ix: entry_ix,
-                offset_in_item: px(40.0),
-            }));
-        });
-
-        let thread_view = conversation_view.update_in(cx, |view, window, cx| {
-            conversation.update(cx, |conversation, cx| {
-                conversation.register_thread(thread.clone(), cx);
-            });
-            view.new_thread_view(
-                thread.clone(),
-                conversation.clone(),
-                false,
-                None,
-                window,
-                cx,
-            )
-        });
-
-        // First frame starts the deferred parses and schedules the restore check.
-        cx.draw(
-            point(px(0.0), px(0.0)),
-            size(px(800.0), px(600.0)),
-            |_, _| thread_view.clone().into_any_element(),
-        );
-
-        // Explicit navigation during the initial parse must cancel the restore.
-        thread_view.update_in(cx, |view, _window, cx| view.scroll_to_end(cx));
+        thread_view.update(cx, |view, cx| view.scroll_to_end(cx));
+        assert!(!list_state.item_heights_provisional());
         cx.run_until_parked();
 
         for _ in 0..2 {
-            cx.draw(
-                point(px(0.0), px(0.0)),
-                size(px(800.0), px(600.0)),
-                |_, _| thread_view.clone().into_any_element(),
-            );
+            draw_restored_thread(&thread_view, cx);
             cx.run_until_parked();
         }
 
-        let last_ix = thread.read_with(cx, |thread, _| thread.entries().len() - 1);
-        thread_view.read_with(cx, |view, _| {
-            assert!(
-                view.list_state.is_following_tail(),
-                "jumping to the bottom during the initial parse must cancel the restore"
-            );
-            assert!(
-                view.list_state.bounds_for_item(last_ix).is_some(),
-                "the last entry must be rendered after jumping to the bottom"
-            );
-        });
+        assert!(list_state.is_following_tail());
+        assert!(list_state.bounds_for_item(7).is_some());
     }
 
-    /// Builds a thread whose non-deferred tool-call rows make the content
-    /// taller than the viewport, then restores an interior position inside a
-    /// trailing, deferred assistant reply.
-    async fn setup_pending_restore_from_scrollbar(
-        cx: &mut TestAppContext,
-    ) -> (
-        Entity<ThreadView>,
-        Entity<AcpThread>,
-        &mut VisualTestContext,
-    ) {
+    #[gpui::test]
+    async fn test_scrollbar_drag_cancels_pending_restore(cx: &mut TestAppContext) {
         init_test(cx);
+        for draw_during_drag in [false, true] {
+            let (thread_view, cx) = setup_pending_scroll_restore(40, cx).await;
+            let list_state = thread_view.read_with(cx, |view, _| view.list_state.clone());
+            draw_restored_thread(&thread_view, cx);
+            assert!(list_state.item_heights_provisional());
+            assert!(list_state.bounds_for_item(5).is_some());
 
-        let (conversation_view, cx) =
-            setup_conversation_view(StubAgentServer::default_response(), cx).await;
-        add_to_workspace_with_size(conversation_view.clone(), true, cx);
-
-        let conversation = active_thread(&conversation_view, cx)
-            .read_with(cx, |view, _| view.conversation.clone());
-
-        let thread = conversation_view.update_in(cx, |view, _window, cx| {
-            create_test_acp_thread(
-                None,
-                "scrollbar-restore",
-                Rc::new(StubAgentConnection::new()),
-                view.project.clone(),
-                cx,
-            )
-        });
-
-        thread.update(cx, |thread, cx| {
-            thread
-                .handle_session_update(
-                    acp_v1::SessionUpdate::UserMessageChunk(acp_v1::ContentChunk::new(
-                        "Prompt".into(),
-                    )),
-                    cx,
-                )
-                .unwrap();
-            thread
-                .handle_session_update(
-                    acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new(
-                        "Long reply line.\n\n".repeat(200).into(),
-                    )),
-                    cx,
-                )
-                .unwrap();
-        });
-
-        let entry_ix = thread.read_with(cx, |thread, _| thread.entries().len() - 1);
-
-        // Completed tool calls after the saved anchor give the list a real
-        // height while the reply markdown is still deferred.
-        thread.update(cx, |thread, cx| {
-            for ix in 0..40 {
-                thread
-                    .handle_session_update(
-                        acp_v1::SessionUpdate::ToolCall(
-                            acp_v1::ToolCall::new(
-                                acp_v1::ToolCallId::new(format!("tool-{ix}")),
-                                format!("Tool {ix}"),
-                            )
-                            .kind(acp_v1::ToolKind::Other)
-                            .status(acp_v1::ToolCallStatus::Completed),
-                        ),
-                        cx,
-                    )
-                    .unwrap();
+            list_state.scrollbar_drag_started();
+            if draw_during_drag {
+                draw_restored_thread(&thread_view, cx);
             }
-        });
-        thread.update(cx, |thread, _cx| {
-            thread.set_ui_scroll_position(Some(ListOffset {
-                item_ix: entry_ix,
-                offset_in_item: px(40.0),
-            }));
-        });
+            list_state.set_offset_from_scrollbar(point(px(0.0), px(-100_000.0)));
+            list_state.scrollbar_drag_ended();
+            assert!(list_state.is_following_tail());
+            assert!(!list_state.item_heights_provisional());
 
-        let thread_view = conversation_view.update_in(cx, |view, window, cx| {
-            conversation.update(cx, |conversation, cx| {
-                conversation.register_thread(thread.clone(), cx);
-            });
-            view.new_thread_view(
-                thread.clone(),
-                conversation.clone(),
-                false,
-                None,
-                window,
-                cx,
-            )
-        });
-
-        (thread_view, thread, cx)
-    }
-
-    #[gpui::test]
-    async fn test_scrollbar_drag_before_layout_cancels_pending_restore(cx: &mut TestAppContext) {
-        let (thread_view, thread, cx) = setup_pending_restore_from_scrollbar(cx).await;
-        let list_state = thread_view.read_with(cx, |view, _| view.list_state.clone());
-
-        // The first frame starts the deferred parses and schedules the restore
-        // check while the saved anchor still has bounds.
-        cx.draw(
-            point(px(0.0), px(0.0)),
-            size(px(800.0), px(600.0)),
-            |_, _| thread_view.clone().into_any_element(),
-        );
-
-        // Thumb-down, the move past the anchor, and thumb-up are all handled
-        // before the next layout.
-        list_state.scrollbar_drag_started();
-        list_state.set_offset_from_scrollbar(point(px(0.0), px(-100_000.0)));
-        list_state.scrollbar_drag_ended();
-        assert!(
-            list_state.is_following_tail(),
-            "the drag must reach the end of the list"
-        );
-        assert!(
-            !thread_view.read_with(cx, |view, _| view.list_state.item_heights_provisional()),
-            "accepting the drag must drop the restore immediately"
-        );
-
-        cx.draw(
-            point(px(0.0), px(0.0)),
-            size(px(800.0), px(600.0)),
-            |_, _| thread_view.clone().into_any_element(),
-        );
-
-        let last_ix = thread.read_with(cx, |thread, _| thread.entries().len() - 1);
-        thread_view.read_with(cx, |view, _| {
-            assert!(
-                !view.list_state.item_heights_provisional(),
-                "a scrollbar drag past the anchor must cancel the restore"
-            );
-            assert!(
-                view.list_state.bounds_for_item(last_ix).is_some(),
-                "the rows the drag scrolled to must render"
-            );
-        });
-    }
-
-    #[gpui::test]
-    async fn test_scrollbar_drag_with_layout_between_cancels_pending_restore(
-        cx: &mut TestAppContext,
-    ) {
-        let (thread_view, thread, cx) = setup_pending_restore_from_scrollbar(cx).await;
-        let list_state = thread_view.read_with(cx, |view, _| view.list_state.clone());
-
-        cx.draw(
-            point(px(0.0), px(0.0)),
-            size(px(800.0), px(600.0)),
-            |_, _| thread_view.clone().into_any_element(),
-        );
-
-        // Thumb-down, a layout, then the move to the bottom.
-        list_state.scrollbar_drag_started();
-        cx.draw(
-            point(px(0.0), px(0.0)),
-            size(px(800.0), px(600.0)),
-            |_, _| thread_view.clone().into_any_element(),
-        );
-        list_state.set_offset_from_scrollbar(point(px(0.0), px(-100_000.0)));
-        list_state.scrollbar_drag_ended();
-        cx.draw(
-            point(px(0.0), px(0.0)),
-            size(px(800.0), px(600.0)),
-            |_, _| thread_view.clone().into_any_element(),
-        );
-
-        let last_ix = thread.read_with(cx, |thread, _| thread.entries().len() - 1);
-        thread_view.read_with(cx, |view, _| {
-            assert!(
-                !view.list_state.item_heights_provisional(),
-                "a scrollbar drag must cancel the restore before the move"
-            );
-            assert!(
-                view.list_state.bounds_for_item(last_ix).is_some(),
-                "the rows the drag scrolled to must render"
-            );
-        });
+            draw_restored_thread(&thread_view, cx);
+            assert!(!list_state.item_heights_provisional());
+            assert!(list_state.bounds_for_item(47).is_some());
+        }
     }
 
     #[gpui::test]
@@ -18251,6 +17934,84 @@ pub(crate) mod tests {
         assert!(
             result.unwrap_err().to_string().contains("not supported"),
             "Error message should indicate that closing is not supported"
+        );
+    }
+
+    async fn setup_pending_scroll_restore(
+        tool_call_count: usize,
+        cx: &mut TestAppContext,
+    ) -> (Entity<ThreadView>, &mut VisualTestContext) {
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let conversation = active_thread(&conversation_view, cx)
+            .read_with(cx, |view, _| view.conversation.clone());
+        let thread = conversation_view.update(cx, |view, cx| {
+            create_test_acp_thread(
+                None,
+                "restore-scroll",
+                Rc::new(StubAgentConnection::new()),
+                view.project.clone(),
+                cx,
+            )
+        });
+
+        let reply = "Long reply line.\n\n".repeat(200);
+        let result = thread.update(cx, |thread, cx| -> Result<()> {
+            for turn in 0..4 {
+                thread.handle_session_update(
+                    acp_v1::SessionUpdate::UserMessageChunk(acp_v1::ContentChunk::new(
+                        format!("Prompt {turn}").into(),
+                    )),
+                    cx,
+                )?;
+                thread.handle_session_update(
+                    acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new(
+                        reply.clone().into(),
+                    )),
+                    cx,
+                )?;
+            }
+            for index in 0..tool_call_count {
+                thread.handle_session_update(
+                    acp_v1::SessionUpdate::ToolCall(
+                        acp_v1::ToolCall::new(
+                            acp_v1::ToolCallId::new(format!("tool-{index}")),
+                            format!("Tool {index}"),
+                        )
+                        .kind(acp_v1::ToolKind::Other)
+                        .status(acp_v1::ToolCallStatus::Completed),
+                    ),
+                    cx,
+                )?;
+            }
+            assert_eq!(thread.entries().len(), 8 + tool_call_count);
+            assert!(matches!(
+                thread.entries().get(5),
+                Some(AgentThreadEntry::AssistantMessage(_))
+            ));
+            thread.set_ui_scroll_position(Some(ListOffset {
+                item_ix: 5,
+                offset_in_item: px(40.0),
+            }));
+            Ok(())
+        });
+        assert!(result.is_ok(), "{result:?}");
+
+        let thread_view = conversation_view.update_in(cx, |view, window, cx| {
+            conversation.update(cx, |conversation, cx| {
+                conversation.register_thread(thread.clone(), cx);
+            });
+            view.new_thread_view(thread, conversation, false, None, window, cx)
+        });
+        (thread_view, cx)
+    }
+
+    fn draw_restored_thread(thread_view: &Entity<ThreadView>, cx: &mut VisualTestContext) {
+        cx.draw(
+            point(px(0.0), px(0.0)),
+            size(px(800.0), px(600.0)),
+            |_, _| thread_view.clone().into_any_element(),
         );
     }
 

@@ -337,8 +337,6 @@ fn parse_cat_numbered_line(line: &str) -> Option<(u32, &str)> {
     Some((number.parse().ok()?, text))
 }
 
-/// Numbered `read_file` output. The language for highlighting comes from the
-/// parsed events, so displaying this renderer starts parsing.
 #[derive(IntoElement)]
 struct CatNumberedCodeBlock {
     markdown: Entity<Markdown>,
@@ -548,70 +546,58 @@ mod numbered_code_block_tests {
             cx.background_executor.clone(),
         ));
         languages.add(language::rust_lang());
+        let source = "```rust\n     1\tfn main() {}\n```\n";
         let markdown = cx.new(|cx| {
             Markdown::new_with_options(
-                "```rust\n     1\tfn main() {}\n```\n".into(),
+                SharedString::from(source),
                 Some(languages),
                 None,
                 markdown::MarkdownOptions {
                     defer_parsing: true,
-                    ..Default::default()
+                    ..markdown::MarkdownOptions::default()
                 },
                 cx,
             )
         });
-        cx.update(|cx| {
-            assert!(
-                markdown.read(cx).first_code_block_language().is_none(),
-                "deferred markdown has no parsed events yet"
-            );
+        let cx = cx.add_empty_window();
+        markdown.read_with(cx, |markdown, _| {
+            assert!(markdown.first_code_block_language().is_none());
+            assert!(!markdown.has_pending_render());
         });
-
-        struct TestWindow;
-
-        impl Render for TestWindow {
-            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                div()
-            }
-        }
-
-        struct NumberedOutputView {
-            markdown: Entity<Markdown>,
-        }
-
-        impl Render for NumberedOutputView {
-            fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-                let parsed =
-                    parse_cat_numbered_markdown_code_block(self.markdown.read(cx).source())
-                        .expect("cat-numbered block");
-                CatNumberedCodeBlock {
-                    parsed,
-                    markdown: self.markdown.clone(),
-                    markdown_style: MarkdownStyle::default(),
-                    copy_button_id: "read-file-output-test".into(),
-                }
-            }
-        }
-
-        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let view = cx.new(|_| NumberedOutputView(markdown.clone()));
         cx.draw(
-            Default::default(),
-            gpui::size(gpui::px(600.0), gpui::px(600.0)),
-            |_, cx| {
-                cx.new(|_| NumberedOutputView {
-                    markdown: markdown.clone(),
-                })
-                .into_any_element()
-            },
+            gpui::point(px(0.0), px(0.0)),
+            gpui::size(px(600.0), px(600.0)),
+            |_, _| view.into_any_element(),
         );
         cx.run_until_parked();
 
-        cx.update(|_, cx| {
-            assert!(
-                markdown.read(cx).first_code_block_language().is_some(),
-                "rendering the numbered output must start parsing"
+        markdown.read_with(cx, |markdown, _| {
+            assert_eq!(
+                markdown
+                    .first_code_block_language()
+                    .map(|language| language.name()),
+                Some(language::LanguageName::from("Rust")),
             );
+            assert!(!markdown.has_pending_render());
         });
+    }
+
+    struct NumberedOutputView(Entity<Markdown>);
+
+    impl Render for NumberedOutputView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            CatNumberedCodeBlock {
+                parsed: ParsedCatNumberedCode {
+                    code: String::from("fn main() {}"),
+                    first_number: 1,
+                    line_count: 1,
+                },
+                markdown: self.0.clone(),
+                markdown_style: MarkdownStyle::default(),
+                copy_button_id: String::from("read-file-output-test"),
+            }
+        }
     }
 }
 
@@ -6804,8 +6790,6 @@ fn sandbox_network_rows(network: &SandboxNetPolicy) -> Vec<SandboxRow> {
 }
 
 impl ThreadView {
-    /// Releases the provisional-height mode once every row that affects the
-    /// restored viewport has finished parsing.
     fn finish_scroll_restore(&mut self, cx: &mut Context<Self>) {
         if !self.list_state.item_heights_provisional() {
             return;
@@ -6816,24 +6800,16 @@ impl ThreadView {
             return;
         }
 
-        let parses_pending = {
-            let entries = self.thread.read(cx).entries();
-            let mut parses_pending = false;
-            let mut ix = anchor_ix;
-            while let Some(entry) = entries.get(ix) {
-                if self.list_state.bounds_for_item(ix).is_none() {
-                    break;
-                }
-                if entry.has_pending_markdown_render(cx) {
-                    parses_pending = true;
-                    break;
-                }
-                ix += 1;
-            }
-            parses_pending
-        };
-
-        if parses_pending {
+        if self
+            .thread
+            .read(cx)
+            .entries()
+            .iter()
+            .enumerate()
+            .skip(anchor_ix)
+            .take_while(|(index, _)| self.list_state.bounds_for_item(*index).is_some())
+            .any(|(_, entry)| entry.has_pending_markdown_render(cx))
+        {
             return;
         }
 
@@ -6842,13 +6818,11 @@ impl ThreadView {
     }
 
     fn render_entries(&mut self, cx: &mut Context<Self>) -> List {
-        // `ListState` owns the provisional anchor and drops it on navigation;
-        // all we have to do is release it once the rows settle.
         if self.list_state.item_heights_provisional() {
             let thread_view = cx.entity().downgrade();
             cx.defer(move |cx| {
                 thread_view
-                    .update(cx, |this, cx| this.finish_scroll_restore(cx))
+                    .update(cx, |view, cx| view.finish_scroll_restore(cx))
                     .ok();
             });
         }

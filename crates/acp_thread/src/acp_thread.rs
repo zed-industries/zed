@@ -944,32 +944,27 @@ impl AgentThreadEntry {
         }
     }
 
-    /// Whether any markdown that contributes to this entry's rendered height
-    /// still has a provisional height.
     pub fn has_pending_markdown_render(&self, cx: &App) -> bool {
+        let has_pending_render =
+            |markdown: &Entity<Markdown>| markdown.read(cx).has_pending_render();
         match self {
-            Self::UserMessage(message) => message
-                .content
-                .markdowns()
-                .any(|markdown| markdown.read(cx).has_pending_render()),
+            Self::UserMessage(message) => message.content.markdowns().any(has_pending_render),
             Self::AssistantMessage(message) => message.chunks.iter().any(|chunk| {
                 let (AssistantMessageChunk::Message { block, .. }
                 | AssistantMessageChunk::Thought { block, .. }) = chunk;
-                block
-                    .markdowns()
-                    .any(|markdown| markdown.read(cx).has_pending_render())
+                block.markdowns().any(has_pending_render)
             }),
             Self::ToolCall(call) => {
-                call.label.read(cx).has_pending_render()
+                has_pending_render(&call.label)
                     || call
                         .raw_input_markdown
                         .as_ref()
-                        .is_some_and(|markdown| markdown.read(cx).has_pending_render())
+                        .is_some_and(has_pending_render)
                     || call
                         .content()
                         .iter()
-                        .filter_map(|content| content.markdown())
-                        .any(|markdown| markdown.read(cx).has_pending_render())
+                        .filter_map(ToolCallContent::markdown)
+                        .any(has_pending_render)
             }
             Self::Elicitation(_) | Self::ContextCompaction(_) => false,
         }
@@ -7620,8 +7615,6 @@ impl AcpThread {
     }
 }
 
-/// Creates a markdown entity that parses on first render. Used for thread
-/// content that is long and often off-screen.
 fn markdown_for_raw_output(
     raw_output: &serde_json::Value,
     language_registry: &Arc<LanguageRegistry>,
