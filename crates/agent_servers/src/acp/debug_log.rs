@@ -1,4 +1,4 @@
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::{Error, schema::v2::RequestId};
 use std::{
     collections::VecDeque,
     sync::{Arc, Mutex},
@@ -17,13 +17,13 @@ pub enum AcpDebugMessageDirection {
 #[derive(Clone)]
 pub enum AcpDebugMessageContent {
     Request {
-        id: acp::RequestId,
+        id: RequestId,
         method: Arc<str>,
         params: Option<serde_json::Value>,
     },
     Response {
-        id: acp::RequestId,
-        result: Result<Option<serde_json::Value>, acp::Error>,
+        id: RequestId,
+        result: Result<Option<serde_json::Value>, Error>,
     },
     Notification {
         method: Arc<str>,
@@ -69,7 +69,7 @@ impl AcpDebugMessage {
 
         let parsed_id = object
             .get("id")
-            .map(|raw| serde_json::from_value::<acp::RequestId>(raw.clone()));
+            .map(|raw| serde_json::from_value::<RequestId>(raw.clone()));
 
         let message = if let Some(method) = object.get("method").and_then(|method| method.as_str())
         {
@@ -99,9 +99,9 @@ impl AcpDebugMessage {
 
             if let Some(error) = object.get("error") {
                 let acp_error =
-                    serde_json::from_value::<acp::Error>(error.clone()).unwrap_or_else(|err| {
+                    serde_json::from_value::<Error>(error.clone()).unwrap_or_else(|err| {
                         log::warn!("Failed to deserialize ACP error: {err}");
-                        acp::Error::internal_error().data(error.to_string())
+                        Error::internal_error().data(error.to_string())
                     });
 
                 AcpDebugMessageContent::Response {
@@ -207,6 +207,57 @@ mod tests {
     use super::*;
 
     #[test]
+    fn preserves_shared_request_ids_payloads_and_runtime_error_data() {
+        let id = RequestId::Str("opaque/request:雪".into());
+        let params = serde_json::json!({
+            "sessionId": "session",
+            "update": {"sessionUpdate": "_future", "payload": [null, 7]}
+        });
+        let request = serde_json::json!({
+            "jsonrpc": "2.0", "id": id, "method": "session/update", "params": params
+        });
+        let requests =
+            AcpDebugMessage::parse_line(AcpDebugMessageDirection::Outgoing, &request.to_string());
+        let [request] = requests.as_slice() else {
+            panic!("one request");
+        };
+        let AcpDebugMessageContent::Request {
+            id: request_id,
+            method,
+            params: actual_params,
+        } = &request.message
+        else {
+            panic!("request message");
+        };
+        assert_eq!(request_id, &id);
+        assert_eq!(method.as_ref(), "session/update");
+        assert_eq!(actual_params, &Some(params));
+
+        let error = serde_json::json!({
+            "code": -32999, "message": "Unknown runtime error",
+            "data": {"retain": [null, false, {"nested": "雪"}]}
+        });
+        let response = serde_json::json!({"jsonrpc": "2.0", "id": id, "error": error});
+        let responses =
+            AcpDebugMessage::parse_line(AcpDebugMessageDirection::Incoming, &response.to_string());
+        let [response] = responses.as_slice() else {
+            panic!("one response");
+        };
+        let AcpDebugMessageContent::Response {
+            id: response_id,
+            result: Err(actual_error),
+        } = &response.message
+        else {
+            panic!("error response");
+        };
+        assert_eq!(response_id, &id);
+        assert_eq!(
+            serde_json::to_value(actual_error).expect("runtime error"),
+            error
+        );
+    }
+
+    #[test]
     fn trailing_stderr_only_uses_final_stderr_block() {
         let debug_log = AcpDebugLog::default();
         debug_log.record_line(AcpDebugMessageDirection::Stderr, "stale stderr");
@@ -307,7 +358,7 @@ mod tests {
             Some(AcpDebugMessage {
                 direction: AcpDebugMessageDirection::Incoming,
                 message: AcpDebugMessageContent::Request { id, method, .. },
-            }) if id == &acp::RequestId::Number(1) && method.as_ref() == "session/one"
+            }) if id == &RequestId::Number(1) && method.as_ref() == "session/one"
         ));
         assert!(matches!(
             messages.next(),
@@ -317,7 +368,7 @@ mod tests {
                     id,
                     result: Ok(Some(_)),
                 },
-            }) if id == &acp::RequestId::Number(1)
+            }) if id == &RequestId::Number(1)
         ));
         assert!(matches!(
             messages.next(),
@@ -327,7 +378,7 @@ mod tests {
                     id,
                     result: Err(_),
                 },
-            }) if id == &acp::RequestId::Null
+            }) if id == &RequestId::Null
         ));
         assert!(messages.next().is_none());
     }
