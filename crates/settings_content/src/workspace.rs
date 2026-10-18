@@ -1052,6 +1052,9 @@ pub enum ProjectPanelSortOrder {
     /// Pure Unicode codepoint comparison. No case folding, no natural number sorting.
     /// Uppercase ASCII sorts before lowercase. Accented characters sort after ASCII.
     Unicode,
+    /// Files are grouped by extension in ascending order, with extensionless files
+    /// and dotfiles first. Within a group, names use the default natural sort.
+    Extension,
 }
 
 impl From<ProjectPanelSortMode> for util::paths::SortMode {
@@ -1071,6 +1074,7 @@ impl From<ProjectPanelSortOrder> for util::paths::SortOrder {
             ProjectPanelSortOrder::Upper => Self::Upper,
             ProjectPanelSortOrder::Lower => Self::Lower,
             ProjectPanelSortOrder::Unicode => Self::Unicode,
+            ProjectPanelSortOrder::Extension => Self::Extension,
         }
     }
 }
