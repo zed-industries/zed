@@ -651,17 +651,28 @@ fn show_hover(
                 {
                     this.update_in(cx, |editor, window, cx| {
                         if let Some(popover) =
-                            editor.hover_state.info_popovers.iter_mut().find(|popover| {
+                            editor.hover_state.info_popovers.iter().find(|popover| {
                                 popover
                                     .debugger_hover
                                     .as_ref()
                                     .is_some_and(|view| view.entity_id() == view_id)
                             })
                         {
-                            popover
-                                ._subscriptions
-                                .push(cx.observe(&markdown, |_, _, cx| cx.notify()));
-                            popover.parsed_content = Some(markdown);
+                            let symbol_range = popover.symbol_range.clone();
+                            let keyboard_grace = popover.keyboard_grace.clone();
+                            let anchor = popover.anchor;
+                            let subscription = cx.observe(&markdown, |_, _, cx| cx.notify());
+                            editor.hover_state.info_popovers.push(InfoPopover {
+                                symbol_range,
+                                parsed_content: Some(markdown),
+                                debugger_hover: None,
+                                scroll_handle: ScrollHandle::new(),
+                                keyboard_grace,
+                                anchor,
+                                last_bounds: Rc::new(Cell::new(None)),
+                                fallback_state: None,
+                                _subscriptions: vec![subscription],
+                            });
                             cx.notify();
                             window.refresh();
                         }
@@ -1598,21 +1609,8 @@ impl InfoPopover {
                 *keyboard_grace = false;
                 cx.stop_propagation();
             })
-            .when(debugger_hover_only, |this| {
-                this.child(
-                    h_flex()
-                        .w_full()
-                        .min_w_0()
-                        .max_w(max_size.width)
-                        .h(DEBUGGER_HOVER_HEADER_HEIGHT)
-                        .items_center()
-                        .text_ui_xs(cx)
-                        .overflow_hidden()
-                        .px_2()
-                        .border_b_1()
-                        .border_color(cx.theme().colors().border_variant)
-                        .child(Label::new("Debug · Right-click for actions").single_line().truncate()),
-                )
+            .when_some(debugger_hover.as_ref(), |this, view| {
+                this.child(view.update(cx, |view, cx| view.render_header(cx).into_any_element()))
             })
             .when(
                 parsed_content.is_some() || debugger_hover.is_some(),
@@ -1644,42 +1642,35 @@ impl InfoPopover {
                                     })
                                     .when_some(parsed_content, |this, markdown| {
                                         this.child(
-                                            div()
-                                                .when(debugger_hover_only, |this| {
-                                                    this.max_w(max_size.width)
-                                                        .debug_selector(|| "debugger-hover-documentation".into())
-                                                        .border_t_1()
-                                                        .border_color(cx.theme().colors().border_variant)
-                                                        .pt_1()
-                                                        .child(
-                                                            div().text_ui_xs(cx).child(
-                                                                Label::new("Documentation")
-                                                                    .color(Color::Muted),
-                                                            ),
-                                                        )
-                                                })
-                                                .child(
-                                                    MarkdownElement::new(
-                                                        markdown,
-                                                        hover_markdown_style(window, cx),
+                                            div().child(
+                                                MarkdownElement::new(
+                                                    markdown,
+                                                    hover_markdown_style(window, cx),
+                                                )
+                                                .scroll_handle(self.scroll_handle.clone())
+                                                .code_block_renderer(
+                                                    markdown::CodeBlockRenderer::Default {
+                                                        copy_button_visibility:
+                                                            CopyButtonVisibility::Hidden,
+                                                        wrap_button_visibility:
+                                                            markdown::WrapButtonVisibility::Hidden,
+                                                        border: false,
+                                                    },
+                                                )
+                                                .on_url_click(move |link, window, cx| {
+                                                    open_markdown_url(
+                                                        this2
+                                                            .read_with(cx, |editor, _| {
+                                                                editor.workspace()
+                                                            })
+                                                            .ok()
+                                                            .flatten(),
+                                                        link,
+                                                        window,
+                                                        cx,
                                                     )
-                                                    .scroll_handle(self.scroll_handle.clone())
-                                                    .code_block_renderer(
-                                                        markdown::CodeBlockRenderer::Default {
-                                                            copy_button_visibility: CopyButtonVisibility::Hidden,
-                                                            wrap_button_visibility: markdown::WrapButtonVisibility::Hidden,
-                                                            border: false,
-                                                        },
-                                                    )
-                                                    .on_url_click(move |link, window, cx| {
-                                                        open_markdown_url(
-                                                            this2.read_with(cx, |editor, _| editor.workspace()).ok().flatten(),
-                                                            link,
-                                                            window,
-                                                            cx,
-                                                        )
-                                                    }),
-                                                ),
+                                                }),
+                                            ),
                                         )
                                     }),
                             )
@@ -1949,6 +1940,7 @@ mod tests {
             range: snapshot.anchor_before(12)..snapshot.anchor_after(17),
             data: DebuggerHoverData {
                 session_id: SessionId(1),
+                session_name: "Debug application".into(),
                 root: DebuggerHoverVariable {
                     name: "point".to_string(),
                     evaluate_name: Some("point".to_string()),
@@ -2273,7 +2265,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_debugger_hover_keeps_lsp_markdown_content(cx: &mut gpui::TestAppContext) {
+    async fn test_debugger_hover_separates_lsp_markdown_content(cx: &mut gpui::TestAppContext) {
         init_test(cx, |_| {});
 
         let mut editor_cx = EditorTestContext::new(cx).await;
@@ -2298,7 +2290,7 @@ mod tests {
         editor_cx.run_until_parked();
 
         editor_cx.update_editor(|editor, _, cx| {
-            assert_eq!(editor.hover_state.info_popovers.len(), 1);
+            assert_eq!(editor.hover_state.info_popovers.len(), 2);
             let popover = editor
                 .hover_state
                 .info_popovers
@@ -2306,9 +2298,13 @@ mod tests {
                 .expect("expected debugger hover popover");
 
             assert!(popover.debugger_hover.is_some());
-            assert!(popover.parsed_content.is_some());
-            assert_eq!(popover.get_rendered_text(cx), "Documentation for point");
-            assert!(editor.hover_state.is_single_debugger_hover());
+            assert!(popover.parsed_content.is_none());
+            let documentation = editor.hover_state.info_popovers.last().unwrap();
+            assert!(documentation.debugger_hover.is_none());
+            assert_eq!(
+                documentation.get_rendered_text(cx),
+                "Documentation for point"
+            );
         });
     }
 
@@ -2357,18 +2353,16 @@ mod tests {
         send_lsp.send(()).unwrap();
         editor_cx.run_until_parked();
         editor_cx.update_editor(|editor, _, cx| {
+            assert_eq!(editor.hover_state.info_popovers.len(), 2);
             let popover = editor.hover_state.info_popovers.first().unwrap();
             assert_eq!(popover.debugger_hover.as_ref().unwrap().entity_id(), tree);
-            let rendered = popover.get_rendered_text(cx);
+            assert!(popover.parsed_content.is_none());
+            let documentation = editor.hover_state.info_popovers.last().unwrap();
+            assert!(documentation.debugger_hover.is_none());
+            let rendered = documentation.get_rendered_text(cx);
             assert!(rendered.contains("Point is documented here"));
             assert!(rendered.contains("Additional type documentation"));
-            assert!(editor.hover_state.is_single_debugger_hover());
         });
-        assert!(
-            editor_cx
-                .debug_bounds("debugger-hover-documentation")
-                .is_some()
-        );
     }
 
     #[test]

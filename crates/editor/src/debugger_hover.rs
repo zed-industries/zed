@@ -10,7 +10,7 @@ use project::{DebuggerHoverData, DebuggerHoverVariable, Project};
 use settings::Settings;
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use theme_settings::ThemeSettings;
-use ui::{ContextMenu, Disclosure, Tooltip, prelude::*};
+use ui::{ContextMenu, Disclosure, IconButtonShape, Tooltip, prelude::*};
 use util::ResultExt;
 
 pub(crate) fn build_debugger_hover_view(
@@ -68,6 +68,7 @@ impl DebuggerHoverNode {
 pub(crate) struct DebuggerHoverView {
     project: Option<WeakEntity<Project>>,
     session_id: SessionId,
+    session_name: SharedString,
     root: DebuggerHoverNode,
     selected_path: Vec<usize>,
     row_bounds: Rc<RefCell<HashMap<Vec<usize>, Bounds<Pixels>>>>,
@@ -86,6 +87,74 @@ pub(crate) struct DebuggerHoverVariableColors {
 pub(crate) const DEBUGGER_HOVER_MIN_WIDTH: Pixels = px(320.0);
 
 impl DebuggerHoverView {
+    pub(crate) fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let variable = self.root.variable.clone();
+        let value = variable.value.clone();
+        h_flex()
+            .w_full()
+            .min_w_0()
+            .h_6()
+            .px_1()
+            .gap_1()
+            .child(
+                Icon::new(IconName::Debug)
+                    .size(IconSize::Small)
+                    .color(Color::Muted),
+            )
+            .child(
+                div().min_w_0().flex_1().child(
+                    Label::new(self.session_name.clone())
+                        .size(LabelSize::XSmall)
+                        .color(Color::Muted)
+                        .single_line()
+                        .truncate(),
+                ),
+            )
+            .child(
+                h_flex()
+                    .ml_auto()
+                    .flex_none()
+                    .gap_1()
+                    .child(
+                        IconButton::new("copy-debug-value", IconName::Copy)
+                            .shape(IconButtonShape::Square)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .aria_label("Copy Value")
+                            .tooltip(Tooltip::text("Copy Value"))
+                            .on_click(move |_, _, cx| {
+                                cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                    value.clone(),
+                                ));
+                            }),
+                    )
+                    .when_some(variable.evaluate_name.clone(), |this, expression| {
+                        this.child(
+                            IconButton::new("watch-debug-value", IconName::Eye)
+                                .shape(IconButtonShape::Square)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted)
+                                .aria_label("Add to Watch")
+                                .tooltip(Tooltip::text("Add to Watch"))
+                                .on_click(cx.listener(move |view, _, _, cx| {
+                                    view.add_watch(expression.clone(), cx);
+                                })),
+                        )
+                    })
+                    .child(
+                        IconButton::new("debug-value-actions", IconName::Ellipsis)
+                            .shape(IconButtonShape::Square)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .aria_label("Value Actions")
+                            .tooltip(Tooltip::text("Value Actions"))
+                            .on_click(cx.listener(move |view, _, window, cx| {
+                                view.variable_menu(variable.clone(), window, cx);
+                            })),
+                    ),
+            )
+    }
+
     pub(crate) fn has_menu(&self) -> bool {
         self.context_menu.is_some()
     }
@@ -98,6 +167,7 @@ impl DebuggerHoverView {
         Self {
             project,
             session_id: debugger_value.session_id,
+            session_name: debugger_value.session_name,
             root: DebuggerHoverNode::new(debugger_value.root),
             selected_path: Vec::new(),
             row_bounds: Rc::new(RefCell::new(HashMap::default())),
@@ -453,6 +523,10 @@ impl DebuggerHoverView {
         let variable = node.variable.clone();
 
         if depth == 0 && !is_expandable {
+            let text = format!("{} = {}", variable.name, variable.value);
+            let name_end = variable.name.len();
+            let value_start = name_end + " = ".len();
+            let text_length = text.len();
             let scalar = div()
                 .debug_selector(|| row_selector.clone())
                 .w_full()
@@ -464,7 +538,29 @@ impl DebuggerHoverView {
                     div()
                         .debug_selector(move || value_container_selector.clone())
                         .w_full()
-                        .child(variable.value.clone()),
+                        .child(gpui::StyledText::new(text).with_highlights([
+                            (
+                                0..name_end,
+                                gpui::HighlightStyle {
+                                    color: variable_colors.name,
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                name_end..value_start,
+                                gpui::HighlightStyle {
+                                    color: Some(Color::Muted.color(cx)),
+                                    ..Default::default()
+                                },
+                            ),
+                            (
+                                value_start..text_length,
+                                gpui::HighlightStyle {
+                                    color: variable_colors.value,
+                                    ..Default::default()
+                                },
+                            ),
+                        ])),
                 );
             return scalar
                 .on_mouse_down(

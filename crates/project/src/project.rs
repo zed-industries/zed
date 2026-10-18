@@ -993,6 +993,7 @@ impl DebuggerHoverVariable {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DebuggerHoverData {
     pub session_id: SessionId,
+    pub session_name: SharedString,
     pub root: DebuggerHoverVariable,
 }
 
@@ -4736,6 +4737,10 @@ impl Project {
             return Task::ready(None);
         };
         let session_id = session.read(cx).session_id();
+        let session_name = session
+            .read(cx)
+            .label()
+            .unwrap_or_else(|| session.read(cx).adapter().0);
         let evaluate = session.update(cx, |session, cx| {
             session.evaluate_hover_expression(
                 active_stack_frame.stack_frame_id,
@@ -4750,6 +4755,7 @@ impl Project {
                 range,
                 data: DebuggerHoverData {
                     session_id,
+                    session_name,
                     root: DebuggerHoverVariable::from_evaluate_response(expression, &response),
                 },
             })
