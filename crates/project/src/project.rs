@@ -144,7 +144,7 @@ use toolchain_store::EmptyToolchainStore;
 use util::{
     ResultExt as _, maybe,
     path_list::PathList,
-    paths::{PathStyle, SanitizedPath, is_absolute},
+    paths::{PathStyle, SanitizedPath},
     rel_path::RelPath,
 };
 use worktree::{CreatedEntry, Snapshot, Traversal};
@@ -2636,7 +2636,10 @@ impl Project {
             .filter_map(|worktree| {
                 let worktree = worktree.read(cx);
                 let abs_path = worktree.abs_path();
-                let relative_path = path_style.strip_prefix(path, abs_path.as_ref())?;
+                let relative_path = path_style
+                    .strip_prefix(path, abs_path.as_ref())
+                    .ok()
+                    .and_then(|path| RelPath::new(path, path_style).ok())?;
                 // Don't exclude the worktree root itself, only actual subdirectories
                 let is_subpath = !relative_path.is_empty();
                 // Gitignored subtrees aren't scanned, so their contents don't
@@ -2670,7 +2673,10 @@ impl Project {
             .filter_map(|worktree| {
                 let worktree = worktree.read(cx);
                 let abs_path = worktree.abs_path();
-                let relative_path = path_style.strip_prefix(path, abs_path.as_ref())?;
+                let relative_path = path_style
+                    .strip_prefix(path, abs_path.as_ref())
+                    .ok()
+                    .and_then(|path| RelPath::new(path, path_style).ok())?;
                 let is_subpath =
                     !relative_path.is_empty() && !worktree.is_path_ignored(&relative_path);
                 is_subpath.then(|| worktree.is_visible())
@@ -3376,7 +3382,7 @@ impl Project {
         cx: &mut App,
     ) -> OpenLspBufferHandle {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.register_buffer_with_language_servers(buffer, HashSet::default(), false, cx)
+            lsp_store.register_buffer_with_language_servers(buffer, HashSet::default(), cx)
         })
     }
 
@@ -4247,16 +4253,10 @@ impl Project {
         &mut self,
         buffers: Vec<Entity<Buffer>>,
         only_restart_servers: HashSet<LanguageServerSelector>,
-        clear_stopped: bool,
         cx: &mut Context<Self>,
     ) {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.restart_language_servers_for_buffers(
-                buffers,
-                only_restart_servers,
-                clear_stopped,
-                cx,
-            )
+            lsp_store.restart_language_servers_for_buffers(buffers, only_restart_servers, cx)
         })
     }
 
@@ -5089,7 +5089,7 @@ impl Project {
         buffer: &Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Task<Option<ResolvedPath>> {
-        if util::paths::is_absolute(path, self.path_style(cx)) || path.starts_with("~") {
+        if self.path_style(cx).has_root(Path::new(path)) || path.starts_with("~") {
             self.resolve_abs_path(path, cx)
         } else {
             self.resolve_path_in_worktrees(path, buffer, cx)
@@ -5538,7 +5538,7 @@ impl Project {
         let path = path.as_ref();
         let worktree_store = self.worktree_store.read(cx);
 
-        if is_absolute(&path.to_string_lossy(), path_style) {
+        if path_style.has_root(path) {
             for worktree in worktree_store.visible_worktrees(cx) {
                 let worktree_abs_path = worktree.read(cx).abs_path();
 

@@ -343,15 +343,16 @@ impl LspAdapter for JsonLspAdapter {
     }
 }
 
-/// json-language-server quotes `filterText` (`"status_bar"`), but the completion
-/// query never includes the opening quote, which skews fuzzy match scores.
+/// json-language-server quotes `filterText` (`"status_bar"`), or the label of items
+/// without one (`"dark"`), but the completion query never includes the opening
+/// quote, which skews fuzzy match scores.
 fn unquote_filter_texts(items: &mut [lsp::CompletionItem]) {
     for item in items {
-        if let Some(filter_text) = item.filter_text.as_mut()
-            && filter_text.starts_with('"')
+        let filter_text = item.filter_text.as_deref().unwrap_or(&item.label);
+        if filter_text.starts_with('"')
             && let Ok(unquoted) = serde_json::from_str::<String>(filter_text)
         {
-            *filter_text = unquoted;
+            item.filter_text = Some(unquoted);
         }
     }
 }
@@ -458,6 +459,43 @@ mod tests {
                 Some("{}"),
                 Some("\"unterminated"),
                 None,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_unquote_filter_texts_from_labels() {
+        let items = [
+            ("\"dark\"", None),
+            ("\"value with \\\"escaped\\\" quotes\"", None),
+            ("true", None),
+            ("{}", None),
+            ("\"truncated value...", None),
+            ("\"dark\"", Some("custom")),
+        ];
+        let mut items = items
+            .iter()
+            .map(|(label, filter_text)| lsp::CompletionItem {
+                label: label.to_string(),
+                filter_text: filter_text.map(ToString::to_string),
+                ..Default::default()
+            })
+            .collect::<Vec<_>>();
+
+        unquote_filter_texts(&mut items);
+
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| item.filter_text.as_deref())
+                .collect::<Vec<_>>(),
+            [
+                Some("dark"),
+                Some("value with \"escaped\" quotes"),
+                None,
+                None,
+                None,
+                Some("custom"),
             ]
         );
     }
