@@ -1339,9 +1339,11 @@ impl Pane {
 
                 self.activate_item(insertion_index, activate_pane, focus_item, window, cx);
             }
-        }
 
-        cx.emit(Event::AddItem { item });
+            // only new adds should be treated as "added". treating existing items as "added" would cause listeners
+            // like markdown auto preview to treat a pane move as a new item / fresh open.
+            cx.emit(Event::AddItem { item });
+        }
     }
 
     pub fn add_item(
