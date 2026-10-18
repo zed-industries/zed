@@ -693,8 +693,6 @@ pub struct ThreadView {
     pub last_token_limit_telemetry: Option<acp_thread::TokenUsageRatio>,
     thread_feedback: ThreadFeedbackState,
     pub list_state: ListState,
-    /// Scroll position to keep pinned while deferred markdown parses.
-    scroll_restore: Option<ListOffset>,
     pub session_capabilities: SharedSessionCapabilities,
     pub expanded_tool_call_raw_inputs: HashSet<acp_v2::ToolCallId>,
     collapsed_sandbox_authorization_details: HashSet<acp_v2::ToolCallId>,
@@ -1109,9 +1107,9 @@ impl ThreadView {
         }));
 
         let current_submission = thread.read(cx).latest_submission_id();
-        let scroll_restore = restored_scroll_position
+        let restored_scroll_position = restored_scroll_position
             .filter(|offset| offset.item_ix < thread.read(cx).entries().len());
-        list_state.set_item_heights_provisional(scroll_restore.is_some());
+        list_state.set_item_heights_provisional(restored_scroll_position.is_some());
         let mut this = Self {
             root_thread_id,
             session_id,
@@ -1133,7 +1131,6 @@ impl ThreadView {
             model_selector,
             profile_selector,
             list_state,
-            scroll_restore,
             session_capabilities,
             resumed_without_history,
             _subscriptions: subscriptions,
@@ -6814,18 +6811,19 @@ impl ThreadView {
     /// Releases the provisional-height mode once every row that affects the
     /// restored viewport has finished parsing.
     fn finish_scroll_restore(&mut self, cx: &mut Context<Self>) {
-        let Some(target) = self.sync_scroll_restore() else {
+        if !self.list_state.item_heights_provisional() {
             return;
-        };
+        }
 
-        if self.list_state.bounds_for_item(target.item_ix).is_none() {
+        let anchor_ix = self.list_state.logical_scroll_top().item_ix;
+        if self.list_state.bounds_for_item(anchor_ix).is_none() {
             return;
         }
 
         let parses_pending = {
             let entries = self.thread.read(cx).entries();
             let mut parses_pending = false;
-            let mut ix = target.item_ix;
+            let mut ix = anchor_ix;
             while let Some(entry) = entries.get(ix) {
                 if self.list_state.bounds_for_item(ix).is_none() {
                     break;
@@ -6843,31 +6841,21 @@ impl ThreadView {
             return;
         }
 
-        self.clear_scroll_restore();
+        self.list_state.set_item_heights_provisional(false);
         cx.notify();
     }
 
-    /// Drops the restore once the list no longer pins the restored anchor.
-    /// Navigation inside `ListState` clears the pin, so the two cannot drift.
-    fn sync_scroll_restore(&mut self) -> Option<ListOffset> {
-        if !self.list_state.item_heights_provisional() {
-            self.scroll_restore = None;
-        }
-        self.scroll_restore
-    }
-
-    fn clear_scroll_restore(&mut self) {
-        self.scroll_restore = None;
-        self.list_state.set_item_heights_provisional(false);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn is_scroll_restore_pending(&self) -> bool {
-        self.scroll_restore.is_some() && self.list_state.item_heights_provisional()
-    }
-
     fn render_entries(&mut self, cx: &mut Context<Self>) -> List {
-        let _ = self.sync_scroll_restore();
+        // `ListState` owns the provisional anchor and drops it on navigation;
+        // all we have to do is release it once the rows settle.
+        if self.list_state.item_heights_provisional() {
+            let thread_view = cx.entity().downgrade();
+            cx.defer(move |cx| {
+                thread_view
+                    .update(cx, |this, cx| this.finish_scroll_restore(cx))
+                    .ok();
+            });
+        }
 
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
         let centered_container = move |content: AnyElement| {
@@ -6882,18 +6870,6 @@ impl ThreadView {
         list(
             self.list_state.clone(),
             cx.processor(move |this, index: usize, window, cx| {
-                if this
-                    .scroll_restore
-                    .is_some_and(|target| target.item_ix == index)
-                {
-                    let thread_view = cx.entity().downgrade();
-                    cx.defer(move |cx| {
-                        thread_view
-                            .update(cx, |this, cx| this.finish_scroll_restore(cx))
-                            .ok();
-                    });
-                }
-
                 let entries = this.thread.read(cx).entries();
                 if let Some(entry) = entries.get(index) {
                     let rendered = this.render_entry(index, entries.len(), entry, window, cx);

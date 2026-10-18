@@ -9598,7 +9598,7 @@ pub(crate) mod tests {
             "the drag must reach the end of the list"
         );
         assert!(
-            !thread_view.read_with(cx, |view, _| view.is_scroll_restore_pending()),
+            !thread_view.read_with(cx, |view, _| view.list_state.item_heights_provisional()),
             "accepting the drag must drop the restore immediately"
         );
 
@@ -9611,7 +9611,7 @@ pub(crate) mod tests {
         let last_ix = thread.read_with(cx, |thread, _| thread.entries().len() - 1);
         thread_view.read_with(cx, |view, _| {
             assert!(
-                !view.is_scroll_restore_pending(),
+                !view.list_state.item_heights_provisional(),
                 "a scrollbar drag past the anchor must cancel the restore"
             );
             assert!(
@@ -9652,7 +9652,7 @@ pub(crate) mod tests {
         let last_ix = thread.read_with(cx, |thread, _| thread.entries().len() - 1);
         thread_view.read_with(cx, |view, _| {
             assert!(
-                !view.is_scroll_restore_pending(),
+                !view.list_state.item_heights_provisional(),
                 "a scrollbar drag must cancel the restore before the move"
             );
             assert!(
