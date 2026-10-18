@@ -6650,7 +6650,6 @@ dependencies = [
  "log",
  "notify",
  "parking_lot",
- "path",
  "paths",
  "proto",
  "rope",
