@@ -304,7 +304,7 @@ pub struct SettingsContent {
     pub telemetry: Option<TelemetrySettingsContent>,
 
     /// Configuration of the terminal in Zed.
-    pub terminal: Option<TerminalSettingsContent>,
+    pub terminal: Option<TerminalSettingsProfiles>,
 
     pub title_bar: Option<TitleBarSettingsContent>,
 

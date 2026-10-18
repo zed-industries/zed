@@ -41,6 +41,13 @@ fn no_key_collisions_between_named_fields_and_flattened_sections() {
         )],
     );
     check(
+        "TerminalProfileContent",
+        &["name"],
+        vec![section::<settings_content::TerminalSettingsContent>(
+            "settings",
+        )],
+    );
+    check(
         "TerminalSettingsContent",
         settings_content::TerminalSettingsContent::NAMED_DESERIALIZE_KEYS,
         vec![section::<settings_content::ProjectTerminalSettingsContent>(

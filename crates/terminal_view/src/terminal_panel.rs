@@ -5,6 +5,7 @@ use crate::{
     persistence::{
         SerializedItems, SerializedTerminalPanel, deserialize_terminal_panel, serialize_pane_group,
     },
+    working_directory_for_profile,
 };
 use breadcrumbs::Breadcrumbs;
 use collections::HashMap;
@@ -22,8 +23,8 @@ use settings::{Settings, TerminalDockPosition};
 use task::{RevealStrategy, RevealTarget, Shell, ShellBuilder, SpawnInTerminal, TaskId};
 use terminal::{Terminal, terminal_settings::TerminalSettings};
 use ui::{
-    ButtonLike, Clickable, CommonAnimationExt, ContextMenu, FluentBuilder, PopoverMenu,
-    SplitButton, Toggleable, Tooltip, prelude::*,
+    ButtonLike, Clickable, CommonAnimationExt, ContextMenu, ContextMenuEntry, FluentBuilder,
+    PopoverMenu, SplitButton, Toggleable, Tooltip, prelude::*,
 };
 use util::{ResultExt, TryFutureExt, defer};
 use workspace::{
@@ -142,36 +143,75 @@ impl TerminalPanel {
                     return (None, None);
                 }
                 let focus_handle = pane.focus_handle(cx);
+                let profiles_focus_handle = focus_handle.clone();
+                let has_multiple_profiles = TerminalSettings::get_global(cx).profiles.len() > 1;
                 let right_children = h_flex()
                     .gap(DynamicSpacing::Base02.rems(cx))
                     .child(
                         PopoverMenu::new("terminal-tab-bar-popover-menu")
                             .trigger_with_tooltip(
-                                IconButton::new("plus", IconName::Plus).icon_size(IconSize::Small),
+                                IconButton::new("new-terminal", IconName::Plus)
+                                    .icon_size(IconSize::Small)
+                                    .tab_index(0_isize),
                                 Tooltip::text("New…"),
                             )
                             .anchor(Anchor::TopRight)
                             .with_handle(pane.new_item_context_menu_handle.clone())
                             .menu(move |window, cx| {
-                                let focus_handle = focus_handle.clone();
-                                let menu = ContextMenu::build(window, cx, |menu, _, _| {
+                                Some(ContextMenu::build(window, cx, |menu, _, _| {
                                     menu.context(focus_handle.clone())
                                         .action(
                                             "New Terminal",
                                             workspace::NewTerminal::default().boxed_clone(),
                                         )
-                                        // We want the focus to go back to terminal panel once task modal is dismissed,
-                                        // hence we focus that first. Otherwise, we'd end up without a focused element, as
-                                        // context menu will be gone the moment we spawn the modal.
                                         .action(
                                             "Spawn Task",
                                             zed_actions::Spawn::modal().boxed_clone(),
                                         )
-                                });
-
-                                Some(menu)
+                                }))
                             }),
                     )
+                    .when(has_multiple_profiles, |this| {
+                        this.child(
+                            PopoverMenu::new("terminal-profiles-popover-menu")
+                                .with_handle(pane.new_item_context_menu_handle.clone())
+                                .trigger_with_tooltip(
+                                    IconButton::new("terminal-profiles", IconName::ChevronDown)
+                                        .icon_size(IconSize::Small)
+                                        .tab_index(0_isize),
+                                    Tooltip::text("Terminal Profiles"),
+                                )
+                                .anchor(Anchor::TopRight)
+                                .menu(move |window, cx| {
+                                    let focus_handle = profiles_focus_handle.clone();
+                                    let menu = ContextMenu::build(window, cx, |menu, _, cx| {
+                                        let profiles = &TerminalSettings::get_global(cx).profiles;
+                                        let mut menu = menu.context(focus_handle.clone());
+                                        for profile in profiles {
+                                            let focus_handle = focus_handle.clone();
+                                            let action = workspace::NewTerminal {
+                                                profile: Some(profile.name.clone()),
+                                                ..Default::default()
+                                            };
+                                            menu = menu.item(
+                                                ContextMenuEntry::new(profile.name.clone())
+                                                    .action(action.boxed_clone())
+                                                    .handler(move |window, cx| {
+                                                        window.focus(&focus_handle, cx);
+                                                        window.dispatch_action(
+                                                            action.boxed_clone(),
+                                                            cx,
+                                                        );
+                                                    }),
+                                            );
+                                        }
+                                        menu
+                                    });
+
+                                    Some(menu)
+                                }),
+                        )
+                    })
                     .when(assistant_enabled, |this| {
                         this.when_some(split_context.clone(), |this, focus_handle| {
                             this.child(InlineAssistTabBarButton { focus_handle })
@@ -747,13 +787,20 @@ impl TerminalPanel {
             .is_some_and(|item| item.downcast::<TerminalView>().is_some());
 
         if center_pane_has_focus && active_center_item_is_terminal {
-            let working_directory = default_working_directory(workspace, cx);
+            let working_directory =
+                working_directory_for_profile(workspace, action.profile.as_deref(), cx);
             let local = action.local;
+            let profile = action.profile.clone();
             Self::add_center_terminal(workspace, window, cx, move |project, cx| {
                 if local {
-                    project.create_local_terminal(cx)
+                    project.create_local_terminal_with_profile(profile, cx)
                 } else {
-                    project.create_terminal_shell(working_directory, cx)
+                    project.create_terminal_shell_with_profile(
+                        working_directory,
+                        false,
+                        profile,
+                        cx,
+                    )
                 }
             })
             .detach_and_log_err(cx);
@@ -766,9 +813,10 @@ impl TerminalPanel {
 
         terminal_panel
             .update(cx, |this, cx| {
-                this.add_terminal_shell(
+                this.add_terminal_shell_with_profile(
                     action.local,
-                    default_working_directory(workspace, cx),
+                    working_directory_for_profile(workspace, action.profile.as_deref(), cx),
+                    action.profile.clone(),
                     RevealStrategy::Always,
                     window,
                     cx,
@@ -849,7 +897,26 @@ impl TerminalPanel {
         }
         let project = workspace.project().downgrade();
         cx.spawn_in(window, async move |workspace, cx| {
-            let terminal = project.update(cx, create_terminal)?.await?;
+            let terminal = match project.update(cx, create_terminal)?.await {
+                Ok(terminal) => terminal,
+                Err(error) => {
+                    workspace.update_in(cx, |workspace, window, cx| {
+                        let failed_to_spawn = cx.new(|cx| FailedToSpawnTerminal {
+                            error: error.to_string(),
+                            focus_handle: cx.focus_handle(),
+                        });
+                        let focus_item = !workspace.has_active_modal(window, cx);
+                        workspace.add_item_to_active_pane(
+                            Box::new(failed_to_spawn),
+                            None,
+                            focus_item,
+                            window,
+                            cx,
+                        );
+                    })?;
+                    return Err(error);
+                }
+            };
 
             workspace.update_in(cx, |workspace, window, cx| {
                 let terminal_view = cx.new(|cx| {
@@ -937,6 +1004,18 @@ impl TerminalPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<WeakEntity<Terminal>>> {
+        self.add_terminal_shell_with_profile(force_local, cwd, None, reveal_strategy, window, cx)
+    }
+
+    fn add_terminal_shell_with_profile(
+        &mut self,
+        force_local: bool,
+        cwd: Option<PathBuf>,
+        profile: Option<String>,
+        reveal_strategy: RevealStrategy,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<WeakEntity<Terminal>>> {
         let workspace = self.workspace.clone();
         self.spawn_pending_terminal(window, cx, async move |terminal_panel, cx| {
             if workspace.update(cx, |workspace, cx| !is_enabled_in_workspace(workspace, cx))? {
@@ -945,11 +1024,15 @@ impl TerminalPanel {
             let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
             let terminal = if force_local {
                 project
-                    .update(cx, |project, cx| project.create_local_terminal(cx))
+                    .update(cx, |project, cx| {
+                        project.create_local_terminal_with_profile(profile, cx)
+                    })
                     .await
             } else {
                 project
-                    .update(cx, |project, cx| project.create_terminal_shell(cwd, cx))
+                    .update(cx, |project, cx| {
+                        project.create_terminal_shell_with_profile(cwd, false, profile, cx)
+                    })
                     .await
             };
 
@@ -2942,6 +3025,58 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_new_terminal_uses_selected_profile(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store
+                .set_user_settings(
+                    r#"{"terminal": [
+                {"name": "Default", "shell": "system", "font_size": 14},
+                {"name": "Other", "shell": "system", "font_size": 20}
+            ]}"#,
+                    cx,
+                )
+                .expect("profiles must parse");
+        });
+        let (window_handle, terminal_panel) = init_workspace_with_panel(cx).await;
+        for (profile, expected_name, expected_font_size) in
+            [(Some("Other"), "Other", 20.), (None, "Default", 14.)]
+        {
+            window_handle
+                .update(cx, |multi_workspace, window, cx| {
+                    multi_workspace.workspace().update(cx, |workspace, cx| {
+                        TerminalPanel::new_terminal(
+                            workspace,
+                            &workspace::NewTerminal {
+                                profile: profile.map(str::to_owned),
+                                ..Default::default()
+                            },
+                            window,
+                            cx,
+                        );
+                    });
+                })
+                .expect("new terminal action must dispatch");
+            cx.run_until_parked();
+            terminal_panel.read_with(cx, |panel, cx| {
+                let terminal_view = panel
+                    .active_pane
+                    .read(cx)
+                    .active_item()
+                    .and_then(|item| item.downcast::<TerminalView>())
+                    .expect("new terminal view");
+                let terminal = terminal_view.read(cx).terminal().read(cx);
+                assert_eq!(terminal.profile_name.as_deref(), Some(expected_name));
+                assert_eq!(
+                    terminal.settings(cx).font_size,
+                    Some(px(expected_font_size))
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
     async fn test_new_terminal_opens_in_panel_by_default(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
         init_test(cx);
@@ -3226,7 +3361,10 @@ mod tests {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
                     TerminalPanel::new_terminal(
                         workspace,
-                        &workspace::NewTerminal { local: true },
+                        &workspace::NewTerminal {
+                            local: true,
+                            ..Default::default()
+                        },
                         window,
                         cx,
                     );

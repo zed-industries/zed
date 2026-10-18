@@ -4685,7 +4685,12 @@ List of `integer` column numbers
 
 ## Terminal
 
-- Description: Configuration for the terminal.
+- Description: Configuration for the terminal. Accepts a single settings object or
+  an array of named profiles. The first profile is the default; use the arrow next
+  to **+** in the terminal panel to open another profile. Each profile supports the
+  settings below and requires a unique, non-empty `name`. Panel-wide settings come
+  from the first profile. See [Terminal Profiles](../terminal.md#terminal-profiles)
+  for examples and compatibility details.
 - Setting: `terminal`
 - Default:
 

@@ -30,6 +30,69 @@ Create additional terminals with `Cmd+N` (macOS) or `Ctrl+N` (Linux/Windows) whi
 
 Split terminals horizontally with `Cmd+D` (macOS) or `Ctrl+Shift+5` (Linux/Windows).
 
+## Terminal Profiles {#terminal-profiles}
+
+Click **+** in the terminal panel to choose **New Terminal** or **Spawn Task**.
+**New Terminal** opens your default terminal. When two or more profiles are
+configured, an arrow next to **+** lets you choose a profile by name. Choosing a
+profile opens a new terminal without changing your default.
+
+The Settings Editor edits the first profile. Use **Profiles** on its Terminal page
+to open the JSON configuration. Set `terminal` to an array in your `settings.json`
+to configure multiple profiles. For example, on Windows:
+
+```json [settings]
+{
+  "terminal": [
+    {
+      "name": "PowerShell",
+      "shell": {
+        "with_arguments": {
+          "program": "pwsh.exe",
+          "args": ["-NoLogo"]
+        }
+      }
+    },
+    {
+      "name": "Command Prompt",
+      "shell": {
+        "program": "cmd.exe"
+      }
+    },
+    {
+      "name": "Ubuntu",
+      "shell": {
+        "with_arguments": {
+          "program": "wsl.exe",
+          "args": ["-d", "Ubuntu"]
+        }
+      }
+    }
+  ]
+}
+```
+
+Each profile needs a unique, non-empty `name`. Install the shells you configure;
+Zed does not install PowerShell or WSL distributions for you.
+
+The first profile is the default for **+**, new-terminal shortcuts, and actions
+without a profile name. Each profile supports the existing terminal settings,
+including fonts, environment variables, and the starting folder. Omitted options
+inherit Zed's defaults, not the options of another profile.
+
+Panel-wide options (`button`, `dock`, `starts_open`, `flexible`, `default_width`,
+`default_height`, and `show_count_badge`) come from the first profile. Opening
+another profile does not change the panel's position or size.
+
+Your existing `"terminal": { ... }` configuration continues to work. An empty
+array uses Zed's defaults. Project settings keep the existing object format and
+supported options; those options override the selected profile. In remote
+projects, a profile selected from the menu runs on the remote host, so its shell
+must be available there.
+
+Splitting a terminal preserves its profile. Restored terminals use their saved
+profile name, or the default if that profile no longer exists.
+
 ## Configuring the Shell
 
 By default, Zed uses your system's default shell (from `/etc/passwd` on Unix systems). To use a different shell:

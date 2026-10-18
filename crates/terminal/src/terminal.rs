@@ -1026,6 +1026,7 @@ impl TerminalBuilder {
         );
 
         let terminal = Terminal {
+            profile_name: None,
             task: None,
             terminal_type: TerminalType::DisplayOnly,
             subprocess: None,
@@ -1316,6 +1317,7 @@ impl TerminalBuilder {
 
             let no_task = task.is_none();
             let terminal = Terminal {
+                profile_name: None,
                 task,
                 terminal_type,
                 subprocess,
@@ -1520,6 +1522,7 @@ enum TerminalType {
 }
 
 pub struct Terminal {
+    pub profile_name: Option<String>,
     terminal_type: TerminalType,
     /// Set for non-PTY terminals (see [`HeadlessTerminal`]); owns the spawned
     /// subprocess and the task pumping its output into the grid.
@@ -1637,6 +1640,13 @@ const FIND_HYPERLINK_THROTTLE: Duration = Duration::from_millis(100);
 const SELECTION_DRAG_THRESHOLD: f64 = 2.0;
 
 impl Terminal {
+    pub fn settings<'a>(&self, cx: &'a App) -> &'a TerminalSettings {
+        let settings = TerminalSettings::get_global(cx);
+        settings
+            .profile(self.profile_name.as_deref())
+            .unwrap_or(settings)
+    }
+
     fn process_pty_event(&mut self, event: PtyEvent, cx: &mut Context<Self>) {
         match event {
             PtyEvent::Event(event, generation) => {
@@ -1827,7 +1837,7 @@ impl Terminal {
                 if let Some(txt) = selection_text(term) {
                     cx.write_to_clipboard(ClipboardItem::new_string(txt));
                     if !keep_selection.unwrap_or_else(|| {
-                        let settings = TerminalSettings::get_global(cx);
+                        let settings = self.settings(cx);
                         settings.keep_selection_on_copy
                     }) {
                         self.events.push_back(InternalEvent::SetSelection(None));
@@ -2744,7 +2754,7 @@ impl Terminal {
 
         if e.button == MouseButton::Left
             && e.modifiers.secondary()
-            && (TerminalSettings::get_global(cx).open_links_in_mouse_mode
+            && (self.settings(cx).open_links_in_mouse_mode
                 || !self.mouse_mode(e.modifiers.shift, mode))
         {
             self.mouse_down_hyperlink = self.find_hyperlink_at_point(point);
@@ -2818,7 +2828,7 @@ impl Terminal {
     }
 
     pub fn mouse_up(&mut self, e: &MouseUpEvent, mode: MouseInputMode, cx: &Context<Self>) {
-        let setting = TerminalSettings::get_global(cx);
+        let setting = self.settings(cx);
 
         let position = e.position - self.last_content.terminal_bounds.bounds.origin;
         if let Some(mouse_down_hyperlink) = self.mouse_down_hyperlink.take() {

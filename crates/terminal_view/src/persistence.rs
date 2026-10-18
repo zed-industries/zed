@@ -450,6 +450,9 @@ impl Domain for TerminalDb {
         sql! (
             ALTER TABLE terminals ADD COLUMN custom_title TEXT;
         ),
+        sql!(
+            ALTER TABLE terminals ADD COLUMN profile_name TEXT;
+        ),
     ];
 }
 
@@ -503,6 +506,36 @@ impl TerminalDb {
     query! {
         pub fn get_working_directory(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<PathBuf>> {
             SELECT working_directory
+            FROM terminals
+            WHERE item_id = ? AND workspace_id = ?
+        }
+    }
+
+    pub async fn save_profile_name(
+        &self,
+        item_id: ItemId,
+        workspace_id: WorkspaceId,
+        profile_name: Option<String>,
+    ) -> Result<()> {
+        self.write(move |connection| {
+            let mut statement = Statement::prepare(
+                connection,
+                "INSERT INTO terminals (item_id, workspace_id, profile_name)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT (workspace_id, item_id) DO UPDATE SET
+                     profile_name = excluded.profile_name",
+            )?;
+            let next_index = statement.bind(&item_id, 1)?;
+            let next_index = statement.bind(&workspace_id, next_index)?;
+            statement.bind(&profile_name, next_index)?;
+            statement.exec()
+        })
+        .await
+    }
+
+    query! {
+        pub fn get_profile_name(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<String>> {
+            SELECT profile_name
             FROM terminals
             WHERE item_id = ? AND workspace_id = ?
         }

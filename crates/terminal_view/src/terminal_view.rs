@@ -263,22 +263,14 @@ impl TerminalView {
                 terminal_view.focus_out(window, cx);
             },
         );
-        let cursor_shape = TerminalSettings::get_global(cx).cursor_shape;
+        let cursor_shape = terminal.read(cx).settings(cx).cursor_shape;
+        let show_breadcrumbs = terminal.read(cx).settings(cx).toolbar.breadcrumbs;
 
         let scroll_handle = TerminalScrollHandle::new(terminal.read(cx));
 
-        let blink_manager = cx.new(|cx| {
-            BlinkManager::new(
-                CURSOR_BLINK_INTERVAL,
-                |cx| {
-                    !matches!(
-                        TerminalSettings::get_global(cx).blinking,
-                        TerminalBlink::Off
-                    )
-                },
-                cx,
-            )
-        });
+        // The view controls blinking from its own profile in focus_in and
+        // settings_changed; a global predicate would disable other profiles.
+        let blink_manager = cx.new(|cx| BlinkManager::new(CURSOR_BLINK_INTERVAL, |_| true, cx));
 
         let subscriptions = vec![
             focus_in,
@@ -305,11 +297,11 @@ impl TerminalView {
             read_only: false,
             show_workspace_actions: None,
             workspace_id,
-            show_breadcrumbs: TerminalSettings::get_global(cx).toolbar.breadcrumbs,
+            show_breadcrumbs,
             block_below_cursor: None,
             scroll_top: Pixels::ZERO,
             scroll_handle,
-            needs_serialize: false,
+            needs_serialize: true,
             custom_title: None,
             ime_state: None,
             self_handle: cx.entity().downgrade(),
@@ -354,7 +346,9 @@ impl TerminalView {
     ) -> Corners<Rems> {
         let mut radii = self.background_corner_radii.unwrap_or_default();
         if content_mode.is_scrollable()
-            && TerminalScrollbarSettingsWrapper.visibility(cx) != scrollbars::ShowScrollbar::Never
+            && TerminalScrollbarSettingsWrapper(self.terminal.read(cx).profile_name.clone())
+                .visibility(cx)
+                != scrollbars::ShowScrollbar::Never
         {
             radii.top_right = Rems::ZERO;
             radii.bottom_right = Rems::ZERO;
@@ -661,7 +655,7 @@ impl TerminalView {
     }
 
     fn settings_changed(&mut self, cx: &mut Context<Self>) {
-        let settings = TerminalSettings::get_global(cx);
+        let settings = self.terminal.read(cx).settings(cx);
         let breadcrumb_visibility_changed = self.show_breadcrumbs != settings.toolbar.breadcrumbs;
         self.show_breadcrumbs = settings.toolbar.breadcrumbs;
 
@@ -713,7 +707,7 @@ impl TerminalView {
             self.terminal.update(cx, |term, cx| {
                 term.try_keystroke(
                     &Keystroke::parse("ctrl-cmd-space").unwrap(),
-                    TerminalSettings::get_global(cx).option_as_meta,
+                    term.settings(cx).option_as_meta,
                 )
             });
         } else {
@@ -786,7 +780,7 @@ impl TerminalView {
         self.terminal.update(cx, |term, cx| {
             term.scroll_wheel(
                 event,
-                TerminalSettings::get_global(cx).scroll_multiplier.max(0.01),
+                term.settings(cx).scroll_multiplier.max(0.01),
                 self.mouse_input_mode(),
             )
         });
@@ -933,7 +927,7 @@ impl TerminalView {
         }
 
         // When focused, check blinking settings and blink manager state
-        match TerminalSettings::get_global(cx).blinking {
+        match self.terminal.read(cx).settings(cx).blinking {
             TerminalBlink::Off => true,
             TerminalBlink::TerminalControlled => {
                 !self.blinking_terminal_enabled || self.blink_manager.read(cx).visible()
@@ -1246,7 +1240,8 @@ fn subscribe_for_terminal_events(
 
                 Event::Bell => {
                     terminal_view.has_bell = true;
-                    if let TerminalBell::System = TerminalSettings::get_global(cx).bell {
+                    if let TerminalBell::System = terminal_view.terminal.read(cx).settings(cx).bell
+                    {
                         window.play_system_bell();
                     }
                     cx.emit(Event::Wakeup);
@@ -1257,7 +1252,7 @@ fn subscribe_for_terminal_events(
 
                     // If in terminal-controlled mode and focused, update blink manager
                     if matches!(
-                        TerminalSettings::get_global(cx).blinking,
+                        terminal_view.terminal.read(cx).settings(cx).blinking,
                         TerminalBlink::TerminalControlled
                     ) && terminal_view.focus_handle.is_focused(window)
                     {
@@ -1355,11 +1350,14 @@ fn regex_search_for_query(query: &SearchQuery) -> Option<Search> {
 }
 
 #[derive(Default)]
-struct TerminalScrollbarSettingsWrapper;
+struct TerminalScrollbarSettingsWrapper(Option<String>);
 
 impl ScrollbarVisibility for TerminalScrollbarSettingsWrapper {
     fn visibility(&self, cx: &App) -> scrollbars::ShowScrollbar {
-        TerminalSettings::get_global(cx)
+        let settings = TerminalSettings::get_global(cx);
+        settings
+            .profile(self.0.as_deref())
+            .unwrap_or(settings)
             .scrollbar
             .show
             .map(ui_scrollbar_settings_from_raw)
@@ -1379,7 +1377,7 @@ impl TerminalView {
         }
         let (handled, vi_mode_enabled) = self.terminal.update(cx, |term, cx| {
             (
-                term.try_keystroke(keystroke, TerminalSettings::get_global(cx).option_as_meta),
+                term.try_keystroke(keystroke, term.settings(cx).option_as_meta),
                 term.vi_mode_enabled(),
             )
         });
@@ -1415,7 +1413,7 @@ impl TerminalView {
             }
         });
 
-        let should_blink = match TerminalSettings::get_global(cx).blinking {
+        let should_blink = match self.terminal.read(cx).settings(cx).blinking {
             TerminalBlink::Off => false,
             TerminalBlink::On => true,
             TerminalBlink::TerminalControlled => self.blinking_terminal_enabled,
@@ -1552,13 +1550,12 @@ impl Render for TerminalView {
                     .when(content_mode.is_scrollable(), |div| {
                         let colors = cx.theme().colors();
                         div.custom_scrollbars(
-                            Scrollbars::for_settings::<TerminalScrollbarSettingsWrapper>()
-                                .show_along(ScrollAxes::Vertical)
-                                .with_stable_track_along(
-                                    ScrollAxes::Vertical,
-                                    colors.editor_background,
-                                )
-                                .tracked_scroll_handle(&self.scroll_handle),
+                            Scrollbars::for_visibility(TerminalScrollbarSettingsWrapper(
+                                self.terminal.read(cx).profile_name.clone(),
+                            ))
+                            .show_along(ScrollAxes::Vertical)
+                            .with_stable_track_along(ScrollAxes::Vertical, colors.editor_background)
+                            .tracked_scroll_handle(&self.scroll_handle),
                             window,
                             cx,
                         )
@@ -2022,6 +2019,7 @@ impl SerializableItem for TerminalView {
         let workspace_id = self.workspace_id?;
         let cwd = terminal.working_directory();
         let custom_title = self.custom_title.clone();
+        let profile_name = terminal.profile_name.clone();
         self.needs_serialize = false;
 
         let db = TerminalDb::global(cx);
@@ -2031,6 +2029,8 @@ impl SerializableItem for TerminalView {
                     .await?;
             }
             db.save_custom_title(item_id, workspace_id, custom_title)
+                .await?;
+            db.save_profile_name(item_id, workspace_id, profile_name)
                 .await?;
             Ok(())
         }))
@@ -2049,9 +2049,18 @@ impl SerializableItem for TerminalView {
         cx: &mut App,
     ) -> Task<anyhow::Result<Entity<Self>>> {
         window.spawn(cx, async move |cx| {
-            let (cwd, custom_title) = cx
+            let (cwd, custom_title, profile_name) = cx
                 .update(|_window, cx| {
                     let db = TerminalDb::global(cx);
+                    let profile_name = db.get_profile_name(item_id, workspace_id).log_err().flatten()
+                        .filter(|name| {
+                            if TerminalSettings::get_global(cx).profile(Some(name)).is_some() {
+                                true
+                            } else {
+                                log::warn!("Terminal profile {name:?} no longer exists; restoring the default profile");
+                                false
+                            }
+                        });
                     let from_db = db
                         .get_working_directory(item_id, workspace_id)
                         .log_err()
@@ -2064,20 +2073,20 @@ impl SerializableItem for TerminalView {
                     } else {
                         workspace
                             .upgrade()
-                            .and_then(|workspace| default_working_directory(workspace.read(cx), cx))
+                            .and_then(|workspace| working_directory_for_profile(workspace.read(cx), profile_name.as_deref(), cx))
                     };
                     let custom_title = db
                         .get_custom_title(item_id, workspace_id)
                         .log_err()
                         .flatten()
                         .filter(|title| !title.trim().is_empty());
-                    (cwd, custom_title)
+                    (cwd, custom_title, profile_name)
                 })
                 .ok()
-                .unwrap_or((None, None));
+                .unwrap_or((None, None, None));
 
             let terminal = project
-                .update(cx, |project, cx| project.create_terminal_shell(cwd, cx))
+                .update(cx, |project, cx| project.create_terminal_shell_with_profile(cwd, false, profile_name, cx))
                 .await?;
             cx.update(|window, cx| {
                 cx.new(|cx| {
@@ -2263,8 +2272,23 @@ impl SearchableItem for TerminalView {
 /// local `is_dir` checks) is skipped -- returning `None` lets the remote shell
 /// open in the remote user's home directory by default.
 pub fn default_working_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
-    let is_remote = workspace.project().read(cx).is_remote();
-    let directory = match &TerminalSettings::get_global(cx).working_directory {
+    working_directory_for_profile(workspace, None, cx)
+}
+
+pub fn working_directory_for_profile(
+    workspace: &Workspace,
+    profile: Option<&str>,
+    cx: &App,
+) -> Option<PathBuf> {
+    let project = workspace.project().read(cx);
+    let is_remote = project.is_remote();
+    let project_directory = project
+        .active_project_directory(cx)
+        .map(|path| path.to_path_buf());
+    let settings = project
+        .terminal_settings(&project_directory, cx)
+        .profile(profile)?;
+    let directory = match &settings.working_directory {
         WorkingDirectory::CurrentFileDirectory => workspace
             .project()
             .read(cx)

@@ -20,6 +20,8 @@ pub struct Toolbar {
 
 #[derive(Clone, Debug, Deserialize, RegisterSetting)]
 pub struct TerminalSettings {
+    #[serde(default)]
+    pub profiles: Vec<TerminalProfile>,
     pub shell: Shell,
     pub working_directory: WorkingDirectory,
     pub font_size: Option<Pixels>, // todo(settings_refactor) can be non-optional...
@@ -54,6 +56,12 @@ pub struct TerminalSettings {
     pub bell: TerminalBell,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+pub struct TerminalProfile {
+    pub name: String,
+    pub settings: TerminalSettings,
+}
+
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ScrollbarSettings {
     /// When to show the scrollbar in the terminal.
@@ -80,11 +88,57 @@ fn settings_shell_to_task_shell(shell: settings::Shell) -> Shell {
 
 impl settings::Settings for TerminalSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
-        let user_content = content.terminal.clone().unwrap();
-        // Note: we allow a subset of "terminal" settings in the project files.
+        let terminal = content.terminal.clone().unwrap();
+        let profiles: Vec<_> = terminal
+            .profiles
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .map(|profile| {
+                let mut settings = terminal.defaults.clone();
+                settings.merge_from(&profile.settings);
+                TerminalProfile {
+                    name: profile.name.clone(),
+                    settings: Self::from_content(settings, content.project.terminal.as_ref()),
+                }
+            })
+            .collect();
+        let mut settings = profiles
+            .first()
+            .map(|profile| profile.settings.clone())
+            .unwrap_or_else(|| {
+                Self::from_content(terminal.defaults, content.project.terminal.as_ref())
+            });
+        settings.profiles = profiles;
+        settings
+    }
+}
+
+impl TerminalSettings {
+    pub fn profile(&self, name: Option<&str>) -> Option<&Self> {
+        match name {
+            Some(name) => self
+                .profiles
+                .iter()
+                .find(|profile| profile.name == name)
+                .map(|profile| &profile.settings),
+            None => Some(self),
+        }
+    }
+
+    pub fn profile_name(&self, name: Option<&str>) -> Option<String> {
+        name.map(str::to_owned)
+            .or_else(|| self.profiles.first().map(|profile| profile.name.clone()))
+    }
+
+    fn from_content(
+        user_content: settings::TerminalSettingsContent,
+        project: Option<&settings::ProjectTerminalSettingsContent>,
+    ) -> Self {
         let mut project_content = user_content.project.clone();
-        project_content.merge_from_option(content.project.terminal.as_ref());
+        project_content.merge_from_option(project);
         TerminalSettings {
+            profiles: Vec::new(),
             shell: settings_shell_to_task_shell(project_content.shell.unwrap()),
             working_directory: project_content.working_directory.unwrap(),
             font_size: user_content.font_size.map(|s| s.into_gpui()),
@@ -181,6 +235,74 @@ mod tests {
                 path: rel_path(path),
             }))
             .path_hyperlink_regexes
+    }
+
+    #[gpui::test]
+    fn test_terminal_profiles_resolve_independently(cx: &mut gpui::App) {
+        let mut store = SettingsStore::new(cx, &settings::default_settings());
+        let defaults = store.get::<TerminalSettings>(None).clone();
+        store
+            .set_user_settings(
+                r#"{
+            "terminal": [
+                {"name": "PowerShell", "shell": {"with_arguments": {
+                    "program": "pwsh.exe", "args": ["-NoLogo"]
+                }}, "env": {"FIRST_ONLY": "1"}, "font_size": 20, "copy_on_select": true},
+                {"name": "Ubuntu", "shell": {"with_arguments": {
+                    "program": "wsl.exe", "args": ["-d", "Ubuntu"]
+                }}}
+            ]
+        }"#,
+                cx,
+            )
+            .expect("terminal profiles must parse");
+        let settings = store.get::<TerminalSettings>(None);
+        assert_eq!(settings.profiles.len(), 2);
+        assert_eq!(settings.profile_name(None).as_deref(), Some("PowerShell"));
+        assert_eq!(settings.font_size, Some(gpui::px(20.)));
+        assert!(settings.copy_on_select);
+        let ubuntu = settings.profile(Some("Ubuntu")).expect("Ubuntu profile");
+        assert_eq!(ubuntu.font_size, defaults.font_size);
+        assert_eq!(ubuntu.copy_on_select, defaults.copy_on_select);
+        assert!(!ubuntu.env.contains_key("FIRST_ONLY"));
+        assert!(
+            matches!(&ubuntu.shell, Shell::WithArguments {program, args, ..}
+            if program == "wsl.exe" && args == &["-d", "Ubuntu"])
+        );
+        assert!(settings.profile(Some("missing")).is_none());
+
+        store
+            .set_local_settings(
+                WorktreeId::from_usize(1),
+                LocalSettingsPath::InWorktree(rel_path("project").into()),
+                LocalSettingsKind::Settings,
+                Some(r#"{"terminal": {"env": {"PROJECT": "1"}}}"#),
+                cx,
+            )
+            .expect("project settings must parse");
+        let settings = store.get::<TerminalSettings>(Some(SettingsLocation {
+            worktree_id: WorktreeId::from_usize(1),
+            path: rel_path("project"),
+        }));
+        for profile in &settings.profiles {
+            assert_eq!(
+                profile.settings.env.get("PROJECT").map(String::as_str),
+                Some("1")
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_empty_terminal_profiles_use_defaults(cx: &mut gpui::App) {
+        let mut store = SettingsStore::new(cx, &settings::default_settings());
+        let defaults = store.get::<TerminalSettings>(None).clone();
+        store
+            .set_user_settings(r#"{"terminal": []}"#, cx)
+            .expect("empty profiles must parse");
+        let settings = store.get::<TerminalSettings>(None);
+        assert!(settings.profiles.is_empty());
+        assert_eq!(settings.font_size, defaults.font_size);
+        assert_eq!(settings.shell.program(), defaults.shell.program());
     }
 
     #[gpui::test]
