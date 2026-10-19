@@ -3762,7 +3762,7 @@ mod tests {
             cx.subscribe(&harness.thread, {
                 let events = events.clone();
                 move |_, event, _| {
-                    if matches!(event, AcpThreadEvent::TokenUsageUpdated) {
+                    if matches!(event, AcpThreadEvent::TokenUsageUpdated(_)) {
                         *events.borrow_mut() += 1;
                     }
                     assert!(!matches!(event, AcpThreadEvent::Error));
@@ -4971,7 +4971,7 @@ mod tests {
             thread.read_with(cx, |thread, _| {
                 assert!(thread.uses_reported_activity());
                 assert_eq!(thread.foreground_activity(), phase);
-                assert_eq!(thread.foreground_state(), &expected);
+                assert_eq!(thread.foreground_state(), Some(&expected));
                 assert!(thread.latest_submission_id().is_none());
                 assert!(!thread.has_unsettled_submissions());
                 assert!(thread.entries().is_empty());
