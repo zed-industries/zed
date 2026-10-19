@@ -22175,28 +22175,28 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut TestAppContext) {
     cx.lsp
         .set_request_handler::<lsp::request::Formatting, _, _>({
             move |_, _| {
+                assert_eq!(
+                    buffer_changes.lock().get(1..),
+                    Some(
+                        [
+                            (
+                                lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 4)),
+                                String::new(),
+                            ),
+                            (
+                                lsp::Range::new(lsp::Position::new(2, 5), lsp::Position::new(2, 6)),
+                                String::new(),
+                            ),
+                            (
+                                lsp::Range::new(lsp::Position::new(3, 4), lsp::Position::new(3, 4)),
+                                "\n".to_owned(),
+                            ),
+                        ]
+                        .as_slice(),
+                    ),
+                );
                 // Insert blank lines between each line of the buffer.
                 async move {
-                    // TODO: this assertion is not reliably true. Currently nothing guarantees that we deliver
-                    // DidChangedTextDocument to the LSP before sending the formatting request.
-                    // assert_eq!(
-                    //     &buffer_changes.lock()[1..],
-                    //     &[
-                    //         (
-                    //             lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 4)),
-                    //             "".into()
-                    //         ),
-                    //         (
-                    //             lsp::Range::new(lsp::Position::new(2, 5), lsp::Position::new(2, 6)),
-                    //             "".into()
-                    //         ),
-                    //         (
-                    //             lsp::Range::new(lsp::Position::new(3, 4), lsp::Position::new(3, 4)),
-                    //             "\n".into()
-                    //         ),
-                    //     ]
-                    // );
-
                     Ok(Some(vec![
                         lsp::TextEdit {
                             range: lsp::Range::new(
