@@ -153,16 +153,14 @@ impl PlatformDisplay for WindowsDisplay {
     }
 
     fn refresh_interval(&self) -> Option<std::time::Duration> {
-        get_monitor_info(self.handle)
-            .log_err()
-            .and_then(|info| refresh_interval_for_device(&info.szDevice))
+        monitor_refresh_interval(self.handle)
     }
 }
 
 /// The refresh interval of `hmonitor`'s current mode.
 pub(crate) fn monitor_refresh_interval(hmonitor: HMONITOR) -> Option<std::time::Duration> {
     get_monitor_info(hmonitor)
-        .ok()
+        .log_err()
         .and_then(|info| refresh_interval_for_device(&info.szDevice))
 }
 

@@ -15,7 +15,7 @@ use anyhow::{Context as _, Result, anyhow};
 use futures::channel::oneshot::Receiver;
 use gpui_util::{ResultExt, get_powershell, new_std_command};
 use itertools::Itertools;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use smallvec::SmallVec;
 use windows::{
     UI::ViewManagement::UISettings,
@@ -450,37 +450,57 @@ impl WindowsPlatform {
         // Monitors whose own vblank thread ticks the windows on them; the compositor-clock thread
         // below ticks the rest (no DXGI output, a monitor plugged in later, a clock that failed).
         let clocked: Arc<RwLock<HashSet<isize>>> = Arc::default();
+        // Shared by every clock thread, so a window crossing monitors moves from one clock to the
+        // other at once instead of falling between two caches that disagree.
+        let monitors: Arc<Mutex<WindowMonitors>> = Arc::default();
         for clock in MonitorClock::all() {
-            clocked.write().insert(clock.monitor);
-            let (stop, all_windows, clocked) = (stop.clone(), all_windows.clone(), clocked.clone());
-            std::thread::Builder::new()
+            let monitor = clock.monitor;
+            clocked.write().insert(monitor);
+            let spawned = std::thread::Builder::new()
                 .name("MonitorVBlank".to_owned())
-                .spawn(move || {
-                    let mut monitors = WindowMonitors::default();
-                    while clock.wait() && !stop.load(Ordering::Acquire) {
-                        let signal_at = PlatformFrameSignal::capture(scheduler::Instant::now);
-                        let Some(all_windows) = all_windows.upgrade() else {
-                            break;
-                        };
-                        let windows = all_windows.read();
-                        let now = std::time::Instant::now();
-                        monitors.retain(|raw| windows.iter().any(|w| w.as_raw().0 as isize == raw));
-                        for window in windows.iter() {
-                            if monitors.of(window.as_raw(), now) == clock.monitor {
-                                invalidate(window, signal_at, FrameRequestSource::NativeCallback);
+                .spawn({
+                    let (stop, all_windows, clocked, monitors) = (
+                        stop.clone(),
+                        all_windows.clone(),
+                        clocked.clone(),
+                        monitors.clone(),
+                    );
+                    move || {
+                        while clock.wait() && !stop.load(Ordering::Acquire) {
+                            let signal_at = PlatformFrameSignal::capture(scheduler::Instant::now);
+                            let Some(all_windows) = all_windows.upgrade() else {
+                                break;
+                            };
+                            let windows = all_windows.read();
+                            let now = std::time::Instant::now();
+                            let mut monitors = monitors.lock();
+                            monitors
+                                .retain(|raw| windows.iter().any(|w| w.as_raw().0 as isize == raw));
+                            for window in windows.iter() {
+                                if monitors.of(window.as_raw(), now) == clock.monitor {
+                                    invalidate(
+                                        window,
+                                        signal_at,
+                                        FrameRequestSource::NativeCallback,
+                                    );
+                                }
                             }
                         }
+                        clocked.write().remove(&clock.monitor);
                     }
-                    clocked.write().remove(&clock.monitor);
-                })
-                .unwrap();
+                });
+            if let Err(error) = spawned {
+                log::error!(
+                    "failed to spawn a vblank thread, falling back to the compositor clock: {error}"
+                );
+                clocked.write().remove(&monitor);
+            }
         }
 
         std::thread::Builder::new()
             .name("VSyncProvider".to_owned())
             .spawn(move || {
                 let vsync_provider = VSyncProvider::new();
-                let mut monitors = WindowMonitors::default();
                 loop {
                     let signal_source = vsync_provider.wait_for_vsync();
                     let signal_at = PlatformFrameSignal::capture(scheduler::Instant::now);
@@ -505,6 +525,7 @@ impl WindowsPlatform {
                     };
                     let windows = all_windows.read();
                     let now = std::time::Instant::now();
+                    let mut monitors = monitors.lock();
                     monitors.retain(|raw| windows.iter().any(|w| w.as_raw().0 as isize == raw));
                     for window in windows.iter() {
                         if clocked.read().contains(&monitors.of(window.as_raw(), now)) {
