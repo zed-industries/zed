@@ -64,6 +64,9 @@ set of marked entries.
 
 When exactly two files are marked, {#action project_panel::CompareMarkedFiles}
 ({#kb project_panel::CompareMarkedFiles}) opens a diff view comparing them.
+In this view, {#action editor::CopyHunkToLeft} and {#action editor::CopyHunkToRight},
+also available as arrow buttons on the hunk under the cursor, copy a hunk from one
+file to the other. Saving the diff view saves both files.
 
 ![Project Panel: Compare Marked Files](https://images.zed.dev/docs/project-panel/compare-marked-files.png)
 
