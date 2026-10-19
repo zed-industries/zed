@@ -571,7 +571,7 @@ impl Deref for ScrollEvent {
     }
 }
 
-/// The scroll delta for a scroll wheel event.
+/// The scroll delta for a [`ScrollEvent`].
 #[derive(Clone, Copy, Debug)]
 pub enum ScrollDelta {
     /// An exact scroll delta in pixels.
@@ -807,7 +807,8 @@ pub enum PlatformInput {
     MouseMove(MouseMoveEvent),
     /// The mouse exited the window.
     MouseExited(MouseExitEvent),
-    /// The scroll wheel was used.
+    /// A mouse wheel or trackpad scrolled. Touch pans reach the window as
+    /// [`PlatformInput::Touch`] and are recognized into scrolls by GPUI.
     Scroll(ScrollEvent),
     /// A pinch gesture was performed.
     Pinch(PinchEvent),
