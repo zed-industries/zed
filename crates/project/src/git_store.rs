@@ -7011,6 +7011,24 @@ impl Repository {
         self.snapshot.status()
     }
 
+    pub fn refresh_statuses(&mut self, cx: &mut Context<Self>) {
+        let Some(git_store) = self.git_store() else {
+            return;
+        };
+
+        let scan_updates_tx = match &git_store.read(cx).state {
+            GitStoreState::Local { downstream, .. } => Some(
+                downstream
+                    .as_ref()
+                    .map(|downstream| downstream.updates_tx.clone()),
+            ),
+            GitStoreState::Remote { .. } => None,
+        };
+        if let Some(updates_tx) = scan_updates_tx {
+            self.schedule_scan(updates_tx, cx);
+        }
+    }
+
     pub fn diff_stat_for_path(&self, path: &RepoPath) -> Option<DiffStat> {
         self.snapshot.diff_stat_for_path(path)
     }
