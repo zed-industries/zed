@@ -8,7 +8,9 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fs::FakeFs;
+    use fs::{FakeFs, RealFs};
+    use futures::FutureExt as _;
+    use tempfile::TempDir;
 
     use gpui::TestAppContext;
     use serde_json::json;
@@ -127,6 +129,58 @@ mod tests {
 
         fs.insert_file(&target_settings_path, b"B".to_vec()).await;
         assert_eq!(rx.next().await.as_deref(), Some("B"));
+    }
+
+    #[gpui::test]
+    async fn test_watch_config_file_reloads_after_file_is_replaced(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let executor = cx.background_executor.clone();
+        let fs = RealFs::new(None, executor.clone());
+        let temp_dir = TempDir::new().unwrap();
+        let settings_path = temp_dir.path().join("settings.json");
+        std::fs::write(&settings_path, "A").unwrap();
+
+        let (mut rx, _task) = watch_config_file(&executor, fs, settings_path.clone());
+        assert_eq!(rx.next().await.as_deref(), Some("A"));
+
+        // Replace the file by rename, like `sed -i` and atomic saves do. The second
+        // replacement was missed before, because the first one dropped the watch.
+        for contents in ["B", "C"] {
+            let temp_path = temp_dir.path().join("settings.json.tmp");
+            std::fs::write(&temp_path, contents).unwrap();
+            std::fs::rename(&temp_path, &settings_path).unwrap();
+            assert!(
+                received_contents(&mut rx, contents, &executor).await,
+                "settings file was not reloaded after being replaced with {contents:?}"
+            );
+        }
+
+        std::fs::write(&settings_path, "D").unwrap();
+        assert!(
+            received_contents(&mut rx, "D", &executor).await,
+            "settings file was not reloaded after being edited in place"
+        );
+    }
+
+    /// Waits until `rx` delivers `expected`, ignoring repeated earlier contents, or
+    /// returns `false` after a timeout.
+    async fn received_contents(
+        rx: &mut mpsc::UnboundedReceiver<String>,
+        expected: &str,
+        executor: &BackgroundExecutor,
+    ) -> bool {
+        let timeout = executor.timer(Duration::from_secs(5)).fuse();
+        futures::pin_mut!(timeout);
+        loop {
+            futures::select_biased! {
+                contents = rx.next().fuse() => match contents {
+                    Some(contents) if contents == expected => return true,
+                    Some(_) => {}
+                    None => return false,
+                },
+                _ = timeout => return false,
+            }
+        }
     }
 }
 
