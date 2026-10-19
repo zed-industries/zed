@@ -5122,7 +5122,7 @@ mod internal_tests {
         acp_thread.read_with(cx, |thread, _| {
             assert!(matches!(
                 thread.foreground_state(),
-                acp_v2::StateUpdate::Running(_)
+                Some(acp_v2::StateUpdate::Running(_))
             ));
         });
         drop(completion);
@@ -5144,7 +5144,7 @@ mod internal_tests {
         cx.run_until_parked();
         acp_thread.read_with(cx, |thread, _| {
             assert!(
-                matches!(thread.foreground_state(), acp_v2::StateUpdate::Idle(idle)
+                matches!(thread.foreground_state(), Some(acp_v2::StateUpdate::Idle(idle))
                 if idle.stop_reason == Some(acp_v2::StopReason::EndTurn))
             );
         });
@@ -5217,7 +5217,7 @@ mod internal_tests {
         cx.run_until_parked();
         acp_thread.read_with(cx, |thread, cx| {
             assert!(
-                matches!(thread.foreground_state(), acp_v2::StateUpdate::Idle(idle)
+                matches!(thread.foreground_state(), Some(acp_v2::StateUpdate::Idle(idle))
                 if idle.stop_reason == Some(acp_v2::StopReason::EndTurn))
             );
             assert!(thread.to_markdown(cx).contains("retried"));
