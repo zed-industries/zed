@@ -537,6 +537,10 @@ pub struct ScrollEvent {
     pub source: ScrollSource,
 }
 
+/// The former name of [`ScrollEvent`].
+#[deprecated(note = "renamed to `ScrollEvent`")]
+pub type ScrollWheelEvent = ScrollEvent;
+
 /// The kind of input that produced a [`ScrollEvent`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ScrollSource {

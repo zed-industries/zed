@@ -383,7 +383,7 @@ impl Interactivity {
             }));
     }
 
-    /// Bind the given callback to scroll wheel events during the bubble phase.
+    /// Bind the given callback to scroll events during the bubble phase.
     /// The imperative API equivalent to [`InteractiveElement::on_scroll`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
@@ -394,6 +394,15 @@ impl Interactivity {
                     (listener)(event, window, cx);
                 }
             }));
+    }
+
+    /// The former name of [`Interactivity::on_scroll`].
+    #[deprecated(note = "renamed to `on_scroll`")]
+    pub fn on_scroll_wheel(
+        &mut self,
+        listener: impl Fn(&ScrollEvent, &mut Window, &mut App) + 'static,
+    ) {
+        self.on_scroll(listener);
     }
 
     /// Bind the given callback to pinch gesture events during the bubble phase.
@@ -1050,7 +1059,7 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Bind the given callback to scroll wheel events during the bubble phase.
+    /// Bind the given callback to scroll events during the bubble phase.
     /// The fluent API equivalent to [`Interactivity::on_scroll`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
@@ -1060,6 +1069,15 @@ pub trait InteractiveElement: Sized {
     ) -> Self {
         self.interactivity().on_scroll(listener);
         self
+    }
+
+    /// The former name of [`InteractiveElement::on_scroll`].
+    #[deprecated(note = "renamed to `on_scroll`")]
+    fn on_scroll_wheel(
+        self,
+        listener: impl Fn(&ScrollEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_scroll(listener)
     }
 
     /// Bind the given callback to pinch gesture events during the bubble phase.
