@@ -193,6 +193,12 @@ impl SessionSubmissions {
         self.records.values().any(SubmissionRecord::is_unsettled)
     }
 
+    pub(crate) fn has_pending_receipts(&self) -> bool {
+        self.records
+            .values()
+            .any(|record| matches!(record.state, SubmissionState::Pending))
+    }
+
     pub(crate) fn recoverable(&self) -> impl Iterator<Item = (SubmissionId, &SubmissionRecord)> {
         self.records.iter().filter_map(|(id, record)| {
             (self.receipt_transport.is_some() && record.is_recoverable()).then_some((*id, record))
@@ -410,18 +416,27 @@ impl SessionActivity {
             self.duration = self.started_at.map(|started| started.elapsed());
         }
         if current == ForegroundActivity::Idle {
-            for waiter in self.cancel_waiters.drain(..) {
-                if waiter.send(()).is_err() {
-                    log::debug!("Foreground cancellation observer was dropped");
-                }
+            self.complete_cancel_waiters();
+        }
+    }
+
+    fn complete_cancel_waiters(&mut self) {
+        for waiter in self.cancel_waiters.drain(..) {
+            if waiter.send(()).is_err() {
+                log::debug!("Foreground cancellation observer was dropped");
             }
         }
+    }
+
+    pub(crate) fn finish_close(&mut self) {
+        self.observation_closed = true;
+        self.complete_cancel_waiters();
     }
 
     pub(crate) fn ensure_observable(&self) -> anyhow::Result<()> {
         anyhow::ensure!(
             !self.observation_closed,
-            "Agent connection lost before cancellation was confirmed"
+            "Session closed or agent connection lost before cancellation was confirmed"
         );
         Ok(())
     }

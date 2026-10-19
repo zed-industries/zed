@@ -4235,6 +4235,43 @@ impl AcpThread {
         }
     }
 
+    pub fn prepare_session_close(&mut self, cx: &mut Context<Self>) {
+        self.cancel_generic_permission_requests(cx);
+        if !self.submissions.has_pending_receipts() {
+            return;
+        }
+        // Prompt receipts may follow successful close. Retain their original
+        // projection even if the view and the close observer are released.
+        let (sender, received) = oneshot::channel();
+        let mut sender = Some(sender);
+        let subscription = cx.subscribe_self(move |this, event, _cx| {
+            if matches!(event, AcpThreadEvent::SubmissionUpdated(_))
+                && !this.submissions.has_pending_receipts()
+                && let Some(sender) = sender.take()
+                && sender.send(()).is_err()
+            {
+                log::debug!("Receipt retention observer was dropped");
+            }
+        });
+        let thread = cx.entity();
+        cx.spawn(async move |_, _| {
+            let _subscription = subscription;
+            let _thread = thread;
+            if let Err(error) = received.await {
+                log::debug!("Receipt retention ended before settlement: {error}");
+            }
+        })
+        .detach();
+    }
+
+    pub fn handle_session_closed(&mut self, cx: &mut Context<Self>) {
+        // Close confirms stopping without inventing an Idle snapshot or ending receipts.
+        self.activity.finish_close();
+        self.cancel_generic_permission_requests(cx);
+        self.cancel_outstanding_elicitations(cx);
+        cx.notify();
+    }
+
     fn register_submission(
         &mut self,
         content: Arc<[acp_v2::ContentBlock]>,

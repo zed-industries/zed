@@ -113,6 +113,32 @@ struct SessionOwner {
     context: SessionContext,
     history_loaded: bool,
     initialization: Option<SessionInitialization>,
+    closing: Option<Shared<Task<Result<(), Arc<anyhow::Error>>>>>,
+}
+
+impl SessionOwner {
+    fn ensure_ready(&self, thread_id: gpui::EntityId, session: Option<&AcpSession>) -> Result<()> {
+        anyhow::ensure!(
+            self.thread.entity_id() == thread_id
+                && self.thread.upgrade().is_some()
+                && session.is_some_and(|session| session.thread.entity_id() == thread_id),
+            "Session has been released or replaced"
+        );
+        anyhow::ensure!(
+            self.initialization.is_none(),
+            "Session is still initializing"
+        );
+        anyhow::ensure!(self.closing.is_none(), "Session is closing");
+        Ok(())
+    }
+}
+
+fn shared_session_error(error: Arc<anyhow::Error>) -> anyhow::Error {
+    if let Some(protocol_error) = error.downcast_ref::<agent_client_protocol::Error>() {
+        map_acp_error(protocol_error.clone())
+    } else {
+        anyhow!(error)
+    }
 }
 
 /// An unselected v2 backend with auth, initial sessions/config and receipt-driven prompts.
@@ -126,7 +152,7 @@ pub struct AcpV2Connection {
     debug_log: AcpDebugLog,
     dispatch_tx: mpsc::UnboundedSender<ForegroundWork>,
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
-    session_owners: RefCell<HashMap<acp::SessionId, SessionOwner>>,
+    session_owners: Rc<RefCell<HashMap<acp::SessionId, SessionOwner>>>,
     _runtime: runtime::ClientRuntime,
     _stderr_task: Shared<Task<()>>,
     _wait_task: Option<Task<()>>,
@@ -280,7 +306,7 @@ impl AcpV2Connection {
             debug_log,
             dispatch_tx,
             sessions,
-            session_owners: RefCell::new(HashMap::default()),
+            session_owners: Rc::new(RefCell::new(HashMap::default())),
             _runtime: runtime,
             _stderr_task: stderr_task,
             _wait_task: None,
@@ -574,31 +600,36 @@ impl AcpV2Connection {
                 cx,
             )
         });
-        let release_subscription = cx.observe_release(&thread, {
-            let this = Rc::downgrade(self);
-            let session_id = session_id.clone();
-            let thread_id = thread.entity_id();
-            move |_, _cx| {
-                if let Some(this) = this.upgrade() {
-                    let initialization = this
-                        .session_owners
-                        .borrow()
-                        .get(&session_id)
-                        .filter(|owner| owner.thread.entity_id() == thread_id)
-                        .and_then(|owner| owner.initialization.clone());
-                    if let Some(initialization) = initialization {
-                        initialization.cancellation.cancel().log_err();
-                        enqueue_notification(
-                            &this.dispatch_tx,
-                            initialization.request_id,
-                            cancel_request_elicitations,
-                        );
-                    } else {
-                        this.remove_session(&session_id, thread_id);
+        let release_subscription =
+            cx.observe_release(&thread, {
+                let this = Rc::downgrade(self);
+                let session_id = session_id.clone();
+                let thread_id = thread.entity_id();
+                move |_, _cx| {
+                    if let Some(this) = this.upgrade() {
+                        let initialization = this
+                            .session_owners
+                            .borrow()
+                            .get(&session_id)
+                            .filter(|owner| owner.thread.entity_id() == thread_id)
+                            .and_then(|owner| owner.initialization.clone());
+                        if let Some(initialization) = initialization {
+                            initialization.cancellation.cancel().log_err();
+                            enqueue_notification(
+                                &this.dispatch_tx,
+                                initialization.request_id,
+                                cancel_request_elicitations,
+                            );
+                        } else if !this.session_owners.borrow().get(&session_id).is_some_and(
+                            |owner| {
+                                owner.thread.entity_id() == thread_id && owner.closing.is_some()
+                            },
+                        ) {
+                            this.remove_session(&session_id, thread_id);
+                        }
                     }
                 }
-            }
-        });
+            });
         self.sessions.borrow_mut().insert(
             session_id.clone(),
             AcpSession {
@@ -618,6 +649,7 @@ impl AcpV2Connection {
                 context,
                 history_loaded: true,
                 initialization: None,
+                closing: None,
             },
         );
         Ok(thread)
@@ -654,15 +686,19 @@ impl AcpV2Connection {
         cx: &App,
     ) -> Task<Result<Entity<AcpThread>>> {
         cx.foreground_executor().spawn(async move {
-            initialization.task.await.map_err(|error| {
-                // Shared failures must retain SDK identity, including auth-required payloads.
-                if let Some(protocol_error) = error.downcast_ref::<agent_client_protocol::Error>() {
-                    map_acp_error(protocol_error.clone())
-                } else {
-                    anyhow!(error)
-                }
-            })?;
+            initialization.task.await.map_err(shared_session_error)?;
             Ok(thread)
+        })
+    }
+
+    fn observe_close(
+        task: Shared<Task<Result<(), Arc<anyhow::Error>>>>,
+        thread: Option<Entity<AcpThread>>,
+        cx: &App,
+    ) -> Task<Result<()>> {
+        cx.foreground_executor().spawn(async move {
+            let _thread = thread;
+            task.await.map_err(shared_session_error)
         })
     }
 
@@ -694,11 +730,21 @@ impl AcpV2Connection {
                 owner.context.clone(),
                 owner.history_loaded,
                 owner.initialization.clone(),
+                owner.closing.is_some(),
             )
         });
-        if let Some((thread, project_entity_id, previous_context, history_loaded, initialization)) =
-            existing
+        if let Some((
+            thread,
+            project_entity_id,
+            previous_context,
+            history_loaded,
+            initialization,
+            closing,
+        )) = existing
         {
+            if closing {
+                return Task::ready(Err(anyhow!("Session is closing")));
+            }
             if let Some(thread) = thread.upgrade() {
                 if previous_context != context || project_entity_id != project.entity_id() {
                     return Task::ready(Err(anyhow!(
@@ -1066,6 +1112,119 @@ impl AgentConnection for AcpV2Connection {
         self.open_session(session_id, project, work_dirs, title, false, cx)
     }
 
+    fn supports_close_session(&self) -> bool {
+        self.initialize_response.capabilities.session.is_some()
+    }
+
+    fn close_session(
+        self: Rc<Self>,
+        session_id: &acp::SessionId,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        if !self.supports_close_session() {
+            return Task::ready(Err(anyhow!("Closing sessions is not supported")));
+        }
+        let owner = self.session_owners.borrow().get(session_id).map(|owner| {
+            (
+                owner.thread.clone(),
+                owner.initialization.is_some(),
+                owner.closing.clone(),
+            )
+        });
+        let Some((thread, initializing, closing)) = owner else {
+            return Task::ready(Err(anyhow!("Session has been released")));
+        };
+        if let Some(closing) = closing {
+            return Self::observe_close(closing, thread.upgrade(), cx);
+        }
+        if self.connection.is_incoming_closed() {
+            return Task::ready(Err(anyhow!("Agent connection is closed")));
+        }
+        if initializing {
+            return Task::ready(Err(anyhow!("Session is still initializing")));
+        }
+        let Some(thread) = thread.upgrade() else {
+            return Task::ready(Err(anyhow!("Session has been released")));
+        };
+        let thread_id = thread.entity_id();
+        let response = Self::ordered_request(
+            &self.connection,
+            &self.dispatch_tx,
+            acp::CloseSessionRequest::new(session_id.clone()),
+            {
+                let this = Rc::downgrade(&self);
+                let session_id = session_id.clone();
+                move || {
+                    let this = this.upgrade().context("Connection was released")?;
+                    anyhow::ensure!(
+                        this.session_owners
+                            .borrow()
+                            .get(&session_id)
+                            .is_some_and(|owner| {
+                                owner.thread.entity_id() == thread_id && owner.closing.is_some()
+                            })
+                            && this
+                                .sessions
+                                .borrow()
+                                .get(&session_id)
+                                .is_some_and(|session| { session.thread.entity_id() == thread_id }),
+                        "Session close was superseded"
+                    );
+                    Ok(())
+                }
+            },
+            |_| None,
+            {
+                let thread = thread.downgrade();
+                move |_, cx| {
+                    if let Some(thread) = thread.upgrade() {
+                        thread.update(cx, |thread, cx| thread.handle_session_closed(cx));
+                    }
+                    Ok(())
+                }
+            },
+            cx,
+        );
+        let task = cx
+            .spawn({
+                let this = Rc::downgrade(&self);
+                let session_id = session_id.clone();
+                let dispatch_tx = self.dispatch_tx.clone();
+                async move |_cx| {
+                    let result = response.await;
+                    if result.is_err() {
+                        drain_foreground_queue(&dispatch_tx).await.log_err();
+                    }
+                    if let Some(this) = this.upgrade() {
+                        if result.is_ok() {
+                            this.remove_session(&session_id, thread_id);
+                        } else {
+                            let released = {
+                                let mut owners = this.session_owners.borrow_mut();
+                                owners
+                                    .get_mut(&session_id)
+                                    .filter(|owner| owner.thread.entity_id() == thread_id)
+                                    .is_some_and(|owner| {
+                                        owner.closing = None;
+                                        owner.thread.upgrade().is_none()
+                                    })
+                            };
+                            if released {
+                                this.remove_session(&session_id, thread_id);
+                            }
+                        }
+                    }
+                    result.map_err(Arc::new)
+                }
+            })
+            .shared();
+        if let Some(owner) = self.session_owners.borrow_mut().get_mut(session_id) {
+            owner.closing = Some(task.clone());
+        }
+        thread.update(cx, |thread, cx| thread.prepare_session_close(cx));
+        Self::observe_close(task, Some(thread), cx)
+    }
+
     fn receipt_submissions(
         &self,
         session_id: &acp::SessionId,
@@ -1075,6 +1234,7 @@ impl AgentConnection for AcpV2Connection {
         Some(Rc::new(V2SessionSubmissions {
             session_id: session_id.clone(),
             sessions: self.sessions.clone(),
+            owners: self.session_owners.clone(),
             capabilities: session.prompt.clone().unwrap_or_default(),
             connection: self.connection.clone(),
             dispatch_tx: self.dispatch_tx.clone(),
@@ -1168,6 +1328,7 @@ impl AgentConnection for AcpV2Connection {
             session_id: session_id.clone(),
             thread: session.thread.clone(),
             sessions: self.sessions.clone(),
+            owners: self.session_owners.clone(),
             options: session.config_options.clone()?,
             connection: self.connection.clone(),
             dispatch_tx: self.dispatch_tx.clone(),
@@ -1248,6 +1409,7 @@ struct V2SessionConfigOptions {
     session_id: acp::SessionId,
     thread: WeakEntity<AcpThread>,
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
+    owners: Rc<RefCell<HashMap<acp::SessionId, SessionOwner>>>,
     options: ConfigOptions,
     connection: V2ConnectionTo<Agent>,
     dispatch_tx: mpsc::UnboundedSender<ForegroundWork>,
@@ -1259,15 +1421,14 @@ impl V2SessionConfigOptions {
         config_id: &acp::SessionConfigId,
         value: &acp::SessionConfigOptionValue,
     ) -> Result<()> {
-        if self.thread.upgrade().is_none()
-            || !self
-                .sessions
-                .borrow()
-                .get(&self.session_id)
-                .is_some_and(|session| session.thread.entity_id() == self.thread.entity_id())
-        {
-            return Err(anyhow!("Session has been released"));
-        }
+        self.owners
+            .borrow()
+            .get(&self.session_id)
+            .context("Session has been released")?
+            .ensure_ready(
+                self.thread.entity_id(),
+                self.sessions.borrow().get(&self.session_id),
+            )?;
         let valid = self.options.config_options.borrow().iter().any(|option| {
             if &option.config_id != config_id {
                 return false;
@@ -1366,6 +1527,7 @@ impl AgentSessionConfigOptions for V2SessionConfigOptions {
 struct V2SessionSubmissions {
     session_id: acp::SessionId,
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
+    owners: Rc<RefCell<HashMap<acp::SessionId, SessionOwner>>>,
     capabilities: acp::PromptCapabilities,
     connection: V2ConnectionTo<Agent>,
     dispatch_tx: mpsc::UnboundedSender<ForegroundWork>,
@@ -1381,6 +1543,7 @@ impl V2SessionSubmissions {
             return Task::ready(Err(error)).into();
         }
         let sessions = self.sessions.clone();
+        let owners = self.owners.clone();
         let session_id = self.session_id.clone();
         let connection = self.connection.clone();
         let (response, applied) = AcpV2Connection::ordered_response(
@@ -1388,15 +1551,11 @@ impl V2SessionSubmissions {
             &self.dispatch_tx,
             acp::PromptRequest::new(self.session_id.clone(), content),
             move || {
-                anyhow::ensure!(
-                    owner.upgrade().is_some()
-                        && sessions
-                            .borrow()
-                            .get(&session_id)
-                            .is_some_and(|session| session.thread.entity_id() == owner.entity_id()),
-                    "Session has been released or replaced"
-                );
-                Ok(())
+                owners
+                    .borrow()
+                    .get(&session_id)
+                    .context("Session has been released or replaced")?
+                    .ensure_ready(owner.entity_id(), sessions.borrow().get(&session_id))
             },
             |_| None,
         );
@@ -1475,11 +1634,18 @@ mod tests {
         config_responses: async_channel::Sender<
             Result<acp::SetSessionConfigOptionResponse, agent_client_protocol::Error>,
         >,
+        config_replies: async_channel::Receiver<Responder<acp::SetSessionConfigOptionResponse>>,
+        hold_config: Arc<Mutex<bool>>,
         list_requests: async_channel::Receiver<(
             acp::ListSessionsRequest,
             Responder<acp::ListSessionsResponse>,
         )>,
         closes: async_channel::Receiver<acp::SessionId>,
+        close_requests: async_channel::Receiver<(
+            acp::CloseSessionRequest,
+            Responder<acp::CloseSessionResponse>,
+        )>,
+        hold_closes: Arc<Mutex<bool>>,
         resume_requests: async_channel::Receiver<(
             acp::ResumeSessionRequest,
             Responder<acp::ResumeSessionResponse>,
@@ -1513,7 +1679,13 @@ mod tests {
             let (config_responses, config_received) = async_channel::unbounded::<
                 Result<acp::SetSessionConfigOptionResponse, agent_client_protocol::Error>,
             >();
+            let (config_reply_sender, config_replies) = async_channel::unbounded();
+            let hold_config = Arc::new(Mutex::new(false));
+            let deferred_config = hold_config.clone();
             let (close_sender, closes) = async_channel::unbounded();
+            let (close_request_sender, close_requests) = async_channel::unbounded();
+            let hold_closes = Arc::new(Mutex::new(false));
+            let deferred_closes = hold_closes.clone();
             let (resume_sender, resume_requests) = async_channel::unbounded();
             let (prompt_sender, prompts) = async_channel::unbounded();
             let (cancel_sender, cancellations) = async_channel::unbounded();
@@ -1577,6 +1749,12 @@ mod tests {
                                     agent: V2ConnectionTo<Client>| {
                             let session_id = request.session_id.clone();
                             config_sender.try_send(request).expect("record config");
+                            if *deferred_config.lock().expect("config mode") {
+                                config_reply_sender
+                                    .try_send(responder)
+                                    .expect("config receiver");
+                                return Ok(());
+                            }
                             match config_received.recv().await.expect("config response") {
                                 Ok(response) => {
                                     responder.respond(response)?;
@@ -1600,9 +1778,16 @@ mod tests {
                                     responder: Responder<acp::CloseSessionResponse>,
                                     _| {
                             close_sender
-                                .try_send(request.session_id)
+                                .try_send(request.session_id.clone())
                                 .expect("record abandoned close");
-                            responder.respond(acp::CloseSessionResponse::new())
+                            if *deferred_closes.lock().expect("close mode") {
+                                close_request_sender
+                                    .try_send((request, responder))
+                                    .expect("close receiver");
+                                Ok(())
+                            } else {
+                                responder.respond(acp::CloseSessionResponse::new())
+                            }
                         },
                         agent_client_protocol::on_receive_request!(),
                     )
@@ -1661,8 +1846,12 @@ mod tests {
                 new_responses,
                 config_requests,
                 config_responses,
+                config_replies,
+                hold_config,
                 list_requests,
                 closes,
+                close_requests,
+                hold_closes,
                 resume_requests,
                 agent: received.await.expect("agent"),
                 _agent_task: agent_task,
@@ -1724,6 +1913,37 @@ mod tests {
             let thread = bounded(creation, cx).await.expect("create thread");
             cx.run_until_parked();
             thread
+        }
+
+        fn defer_closes(&self) {
+            *self.hold_closes.lock().expect("close mode") = true;
+        }
+
+        fn close(&self, cx: &mut TestAppContext) -> Task<Result<()>> {
+            cx.update(|cx| self.client.clone().close_session(&"saved".into(), cx))
+        }
+
+        async fn resumed_thread(
+            &self,
+            state: Option<acp::StateUpdate>,
+            cx: &mut TestAppContext,
+        ) -> Entity<AcpThread> {
+            let loading = self.reopen(false, cx);
+            let (_, responder) = bounded(self.resume_requests.recv(), cx)
+                .await
+                .expect("resume");
+            if let Some(state) = state {
+                self.resume_state(state);
+            }
+            let initial = initial_response();
+            responder
+                .respond(
+                    acp::ResumeSessionResponse::new()
+                        .config_options(initial.config_options)
+                        .available_commands(initial.available_commands),
+                )
+                .expect("resumed");
+            bounded(loading, cx).await.expect("resumed owner")
         }
 
         async fn new_request(
@@ -2411,7 +2631,7 @@ done
             assert!(
                 harness.client.supports_load_session()
                     && harness.client.supports_resume_session()
-                    && !harness.client.supports_close_session()
+                    && harness.client.supports_close_session()
             );
             assert!(!harness.client.should_close_sessions_on_release());
         });
@@ -2423,6 +2643,683 @@ done
         assert!(
             harness.closes.is_empty(),
             "view release must not choose a remote-close policy"
+        );
+    }
+
+    #[gpui::test]
+    async fn v2_close_sdk_fences_commands_and_reopen_until_success(cx: &mut TestAppContext) {
+        use acp_thread::{AcpThreadEvent, ForegroundActivity};
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let thread = harness
+            .resumed_thread(
+                Some(acp::StateUpdate::Running(acp::RunningStateUpdate::new())),
+                cx,
+            )
+            .await;
+        harness.defer_closes();
+        let options = cx
+            .read(|cx| harness.client.session_config_options(&"saved".into(), cx))
+            .expect("config");
+        let stops = Rc::new(RefCell::new(0));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&thread, {
+                let stops = stops.clone();
+                move |_, event, _| {
+                    if matches!(event, AcpThreadEvent::Stopped { .. }) {
+                        *stops.borrow_mut() += 1;
+                    }
+                }
+            })
+        });
+        let (unpublished, setting, closing) = cx.update(|cx| {
+            let unpublished =
+                thread.update(cx, |thread, cx| thread.send(vec!["unpublished".into()], cx));
+            let setting = options.set_config_option(
+                "enabled".into(),
+                acp::SessionConfigOptionValue::boolean(true),
+                cx,
+            );
+            let closing = harness.client.clone().close_session(&"saved".into(), cx);
+            (unpublished, setting, closing)
+        });
+        let (request, responder) = bounded(harness.close_requests.recv(), cx)
+            .await
+            .expect("close");
+        assert_eq!(request.session_id, acp::SessionId::new("saved"));
+        let cancellation = responder.cancellation();
+        let mut duplicate = harness.close(cx);
+        drop(closing);
+        cx.run_until_parked();
+        assert!(
+            !cancellation.is_cancelled(),
+            "close is not owned by its observer"
+        );
+        assert!((&mut duplicate).now_or_never().is_none());
+        assert!(
+            bounded(unpublished, cx)
+                .await
+                .expect_err("unpublished prompt fenced")
+                .to_string()
+                .contains("closing")
+        );
+        assert!(
+            bounded(setting, cx)
+                .await
+                .expect_err("config preflight fenced")
+                .to_string()
+                .contains("closing")
+        );
+        assert!(
+            bounded(harness.reopen(false, cx), cx)
+                .await
+                .expect_err("no rebind while closing")
+                .to_string()
+                .contains("closing")
+        );
+        assert!(harness.prompts.is_empty());
+        assert!(harness.config_requests.is_empty());
+        assert!(harness.resume_requests.is_empty());
+        harness
+            .agent
+            .send_notification(acp::UpdateSessionNotification::new(
+                "saved",
+                acp::SessionUpdate::AgentMessage(
+                    acp::AgentMessage::new("final").content(vec!["final output".into()]),
+                ),
+            ))
+            .expect("final output");
+        harness.resume_state(acp::StateUpdate::Idle(
+            acp::IdleStateUpdate::new().stop_reason(acp::StopReason::Cancelled),
+        ));
+        responder
+            .respond(acp::CloseSessionResponse::new())
+            .expect("closed");
+        bounded(duplicate, cx).await.expect("shared close result");
+        cx.run_until_parked();
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(thread.foreground_activity(), ForegroundActivity::Idle);
+            assert!(thread.to_markdown(cx).contains("final output"));
+        });
+        assert_eq!(*stops.borrow(), 1);
+        assert!(harness.client.sessions.borrow().is_empty());
+        assert!(harness.client.session_owners.borrow().is_empty());
+        assert_eq!(
+            bounded(harness.closes.recv(), cx).await.expect("one close"),
+            acp::SessionId::new("saved")
+        );
+        assert!(harness.closes.is_empty());
+        harness
+            .agent
+            .send_notification(acp::UpdateSessionNotification::new(
+                "saved",
+                acp::SessionUpdate::SessionInfoUpdate(acp::SessionInfoUpdate::new().title("late")),
+            ))
+            .expect("late detached update");
+        cx.run_until_parked();
+        assert_ne!(
+            thread.read_with(cx, |thread, _| thread.title()),
+            Some("late".into())
+        );
+        let replacement = harness
+            .resumed_thread(
+                Some(acp::StateUpdate::Idle(acp::IdleStateUpdate::new())),
+                cx,
+            )
+            .await;
+        assert_ne!(replacement.entity_id(), thread.entity_id());
+        assert!(
+            bounded(
+                thread.update(cx, |thread, cx| thread.send(vec!["stale".into()], cx)),
+                cx
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            bounded(
+                cx.update(|cx| options.set_config_option(
+                    "enabled".into(),
+                    acp::SessionConfigOptionValue::boolean(true),
+                    cx
+                )),
+                cx
+            )
+            .await
+            .is_err()
+        );
+        drop(thread);
+        cx.run_until_parked();
+        assert_eq!(
+            harness
+                .client
+                .sessions
+                .borrow()
+                .get(&"saved".into())
+                .expect("replacement")
+                .thread
+                .entity_id(),
+            replacement.entity_id()
+        );
+    }
+
+    #[gpui::test]
+    async fn v2_close_sdk_preserves_late_receipts_and_releases_the_original_owner(
+        cx: &mut TestAppContext,
+    ) {
+        use acp_thread::{SubmissionDisconnected, SubmissionResponse, SubmissionState};
+        for outcome in ["cancelled", "echoed", "unechoed", "dropped", "eof"] {
+            let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+            let thread = harness
+                .resumed_thread(
+                    Some(acp::StateUpdate::Running(acp::RunningStateUpdate::new())),
+                    cx,
+                )
+                .await;
+            let sending =
+                thread.update(cx, |thread, cx| thread.send(vec!["old prompt".into()], cx));
+            let submission_id = sending.id;
+            let (_, receipt) = bounded(harness.prompts.recv(), cx)
+                .await
+                .expect("prompt published");
+            if outcome == "echoed" {
+                harness
+                    .agent
+                    .send_notification(acp::UpdateSessionNotification::new(
+                        "saved",
+                        acp::SessionUpdate::UserMessage(
+                            acp::UserMessage::new("old-message").content(vec!["old prompt".into()]),
+                        ),
+                    ))
+                    .expect("insertion echo");
+            }
+            harness.defer_closes();
+            let closing = harness.close(cx);
+            let (_, responder) = bounded(harness.close_requests.recv(), cx)
+                .await
+                .expect("close");
+            harness.resume_state(acp::StateUpdate::Idle(
+                acp::IdleStateUpdate::new().stop_reason(acp::StopReason::Cancelled),
+            ));
+            responder
+                .respond(acp::CloseSessionResponse::new())
+                .expect("close precedes receipt");
+            bounded(closing, cx)
+                .await
+                .expect("close does not await prompt reply");
+            thread.read_with(cx, |thread, _| {
+                assert!(matches!(
+                    thread.submission(submission_id).expect("pending").state,
+                    SubmissionState::Pending
+                ))
+            });
+            let weak = thread.downgrade();
+            let replacement = harness
+                .resumed_thread(
+                    Some(acp::StateUpdate::Idle(acp::IdleStateUpdate::new())),
+                    cx,
+                )
+                .await;
+            drop(thread);
+            cx.run_until_parked();
+            assert!(
+                weak.upgrade().is_some(),
+                "pending receipt retains only its original projection"
+            );
+            if outcome == "dropped" {
+                drop(sending);
+                receipt
+                    .respond(acp::PromptResponse::new("unobserved"))
+                    .expect("unobserved receipt");
+            } else if outcome == "eof" {
+                drop(harness._agent_task);
+                drop(harness.agent);
+                let error = bounded(sending, cx)
+                    .await
+                    .expect_err("receipt observes transport loss");
+                assert!(error.is::<SubmissionDisconnected>());
+            } else if outcome != "cancelled" {
+                let expected = acp::PromptResponse::new("old-message").meta(meta("receipt"));
+                receipt.respond(expected.clone()).expect("late acceptance");
+                assert!(
+                    matches!(bounded(sending, cx).await.expect("accepted"), Some(SubmissionResponse::Accepted(actual)) if actual == expected)
+                );
+            } else {
+                let rejected = agent_client_protocol::Error::new(-32800, "Request Cancelled")
+                    .data(json!({"beforeInsertion": true}));
+                receipt
+                    .respond_with_error(rejected.clone())
+                    .expect("pre-insertion cancellation");
+                assert_eq!(
+                    bounded(sending, cx)
+                        .await
+                        .expect_err("not inserted")
+                        .downcast_ref::<agent_client_protocol::Error>(),
+                    Some(&rejected)
+                );
+            }
+            cx.run_until_parked();
+            cx.update(|_| ());
+            assert!(
+                weak.upgrade().is_none(),
+                "settlement releases the retired projection"
+            );
+            replacement.read_with(cx, |thread, _| {
+                assert!(thread.entries().is_empty());
+                assert!(thread.latest_submission_id().is_none());
+            });
+            assert_eq!(
+                harness
+                    .client
+                    .sessions
+                    .borrow()
+                    .get(&"saved".into())
+                    .expect("replacement")
+                    .thread
+                    .entity_id(),
+                replacement.entity_id()
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn v2_close_sdk_preserves_accepted_but_unechoed_evidence(cx: &mut TestAppContext) {
+        use acp_thread::{SubmissionResponse, SubmissionState};
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let thread = harness
+            .resumed_thread(
+                Some(acp::StateUpdate::Idle(acp::IdleStateUpdate::new())),
+                cx,
+            )
+            .await;
+        let sending = thread.update(cx, |thread, cx| thread.send(vec!["retained".into()], cx));
+        let submission_id = sending.id;
+        let (_, responder) = bounded(harness.prompts.recv(), cx).await.expect("prompt");
+        let expected = acp::PromptResponse::new("inserted").meta(meta("acceptance"));
+        responder
+            .respond(expected.clone())
+            .expect("accepted without echo");
+        assert!(
+            matches!(bounded(sending, cx).await.expect("accepted"), Some(SubmissionResponse::Accepted(receipt)) if receipt == expected)
+        );
+        bounded(harness.close(cx), cx)
+            .await
+            .expect("close does not discard acceptance");
+        thread.read_with(cx, |thread, _| {
+            assert!(
+                matches!(&thread.submission(submission_id).expect("retained evidence").state,
+                SubmissionState::Accepted { receipt, echoed: false } if receipt == &expected)
+            );
+            assert_eq!(thread.recoverable_submissions().count(), 1);
+        });
+    }
+
+    #[gpui::test]
+    async fn v2_close_sdk_handles_unconfirmed_and_idle_without_inventing_state(
+        cx: &mut TestAppContext,
+    ) {
+        use acp_thread::{AcpThreadEvent, ForegroundActivity};
+        for confirmed_idle in [false, true] {
+            let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+            let thread = harness
+                .resumed_thread(
+                    confirmed_idle.then(|| acp::StateUpdate::Idle(acp::IdleStateUpdate::new())),
+                    cx,
+                )
+                .await;
+            let stops = Rc::new(RefCell::new(0));
+            let _subscription = cx.update(|cx| {
+                cx.subscribe(&thread, {
+                    let stops = stops.clone();
+                    move |_, event, _| {
+                        if matches!(event, AcpThreadEvent::Stopped { .. }) {
+                            *stops.borrow_mut() += 1;
+                        }
+                    }
+                })
+            });
+            let stopping = thread.update(cx, |thread, cx| thread.cancel(cx));
+            bounded(harness.close(cx), cx)
+                .await
+                .expect("close needs no extra idle snapshot");
+            bounded(stopping, cx)
+                .await
+                .expect("closed session confirms stop");
+            thread.read_with(cx, |thread, _| {
+                assert_eq!(
+                    thread.foreground_activity(),
+                    if confirmed_idle {
+                        ForegroundActivity::Idle
+                    } else {
+                        ForegroundActivity::Unconfirmed
+                    }
+                );
+                assert_eq!(thread.activity_generation(), 0);
+                assert!(thread.activity_duration().is_none());
+            });
+            assert_eq!(*stops.borrow(), 0);
+            assert!(
+                bounded(thread.update(cx, |thread, cx| thread.cancel(cx)), cx)
+                    .await
+                    .is_err()
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn v2_close_sdk_rejects_initialization_without_aborting_it(cx: &mut TestAppContext) {
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let loading = harness.reopen(false, cx);
+        let (_, responder) = bounded(harness.resume_requests.recv(), cx)
+            .await
+            .expect("initialization");
+        let cancellation = responder.cancellation();
+        assert!(
+            bounded(harness.close(cx), cx)
+                .await
+                .expect_err("still initializing")
+                .to_string()
+                .contains("initializing")
+        );
+        assert!(harness.closes.is_empty());
+        assert!(!cancellation.is_cancelled());
+        harness.resume_state(acp::StateUpdate::Idle(acp::IdleStateUpdate::new()));
+        responder
+            .respond(acp::ResumeSessionResponse::new())
+            .expect("initialized");
+        let _thread = bounded(loading, cx)
+            .await
+            .expect("initialization remains usable");
+        bounded(harness.close(cx), cx)
+            .await
+            .expect("close initialized owner");
+    }
+
+    #[gpui::test]
+    async fn v2_close_sdk_dropped_observers_leave_the_fence_until_settlement(
+        cx: &mut TestAppContext,
+    ) {
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let thread = harness
+            .resumed_thread(
+                Some(acp::StateUpdate::Idle(acp::IdleStateUpdate::new())),
+                cx,
+            )
+            .await;
+        let weak = thread.downgrade();
+        harness.defer_closes();
+        let closing = harness.close(cx);
+        let (_, responder) = bounded(harness.close_requests.recv(), cx)
+            .await
+            .expect("close");
+        let cancellation = responder.cancellation();
+        drop(closing);
+        drop(thread);
+        cx.run_until_parked();
+        cx.update(|_| ());
+        assert!(weak.upgrade().is_none());
+        assert!(!cancellation.is_cancelled());
+        assert!(bounded(harness.reopen(false, cx), cx).await.is_err());
+        assert!(harness.resume_requests.is_empty());
+        let duplicate = harness.close(cx);
+        responder
+            .respond(acp::CloseSessionResponse::new())
+            .expect("settled close");
+        bounded(duplicate, cx)
+            .await
+            .expect("join without a live view");
+        assert!(harness.client.session_owners.borrow().is_empty());
+        let replacement = harness
+            .resumed_thread(
+                Some(acp::StateUpdate::Idle(acp::IdleStateUpdate::new())),
+                cx,
+            )
+            .await;
+        assert_ne!(replacement.entity_id(), weak.entity_id());
+    }
+
+    #[gpui::test]
+    async fn v2_close_sdk_abandoned_connection_does_not_cycle(cx: &mut TestAppContext) {
+        for published in [false, true] {
+            let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+            let thread = harness
+                .resumed_thread(
+                    Some(acp::StateUpdate::Idle(acp::IdleStateUpdate::new())),
+                    cx,
+                )
+                .await;
+            harness.defer_closes();
+            let closing = harness.close(cx);
+            let _responder = if published {
+                Some(
+                    bounded(harness.close_requests.recv(), cx)
+                        .await
+                        .expect("published close"),
+                )
+            } else {
+                None
+            };
+            let weak = Rc::downgrade(&harness.client);
+            drop(closing);
+            drop(thread);
+            drop(harness.client);
+            cx.run_until_parked();
+            cx.update(|_| ());
+            assert!(
+                weak.upgrade().is_none(),
+                "closing task must not retain its connection"
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn v2_close_sdk_rejection_is_shared_and_retryable(cx: &mut TestAppContext) {
+        use acp_thread::ForegroundActivity;
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let thread = harness
+            .resumed_thread(
+                Some(acp::StateUpdate::Running(acp::RunningStateUpdate::new())),
+                cx,
+            )
+            .await;
+        harness.defer_closes();
+        let closing = harness.close(cx);
+        let duplicate = harness.close(cx);
+        let (_, responder) = bounded(harness.close_requests.recv(), cx)
+            .await
+            .expect("close");
+        let rejection = agent_client_protocol::Error::new(-32042, "Close unavailable")
+            .data(json!({"retain": [null, 7]}));
+        responder
+            .respond_with_error(rejection.clone())
+            .expect("rejected");
+        for result in [closing, duplicate] {
+            assert_eq!(
+                bounded(result, cx)
+                    .await
+                    .expect_err("shared rejection")
+                    .downcast_ref::<agent_client_protocol::Error>(),
+                Some(&rejection)
+            );
+        }
+        assert_eq!(
+            thread.read_with(cx, |thread, _| thread.foreground_activity()),
+            ForegroundActivity::Running
+        );
+        let reused = bounded(harness.reopen(false, cx), cx)
+            .await
+            .expect("failed close retains binding");
+        assert_eq!(reused.entity_id(), thread.entity_id());
+        let retry = harness.close(cx);
+        let (_, responder) = bounded(harness.close_requests.recv(), cx)
+            .await
+            .expect("explicit retry");
+        harness.resume_state(acp::StateUpdate::Idle(
+            acp::IdleStateUpdate::new().stop_reason(acp::StopReason::Cancelled),
+        ));
+        responder
+            .respond(acp::CloseSessionResponse::new())
+            .expect("closed on retry");
+        bounded(retry, cx).await.expect("successful retry");
+    }
+
+    #[gpui::test]
+    async fn v2_close_sdk_cleanup_does_not_remove_or_unlock_a_replacement(cx: &mut TestAppContext) {
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let thread = harness
+            .resumed_thread(
+                Some(acp::StateUpdate::Idle(acp::IdleStateUpdate::new())),
+                cx,
+            )
+            .await;
+        harness.defer_closes();
+        let first = harness.close(cx);
+        let (_, first_response) = bounded(harness.close_requests.recv(), cx)
+            .await
+            .expect("original close");
+        harness
+            .client
+            .remove_session(&"saved".into(), thread.entity_id());
+        let replacement = harness
+            .resumed_thread(
+                Some(acp::StateUpdate::Idle(acp::IdleStateUpdate::new())),
+                cx,
+            )
+            .await;
+        let second = harness.close(cx);
+        let (_, second_response) = bounded(harness.close_requests.recv(), cx)
+            .await
+            .expect("replacement close");
+        first_response
+            .respond(acp::CloseSessionResponse::new())
+            .expect("late original close");
+        bounded(first, cx).await.expect("original close result");
+        assert_eq!(
+            harness
+                .client
+                .sessions
+                .borrow()
+                .get(&"saved".into())
+                .expect("replacement survives")
+                .thread
+                .entity_id(),
+            replacement.entity_id()
+        );
+        assert!(
+            bounded(harness.reopen(false, cx), cx)
+                .await
+                .expect_err("replacement remains closing")
+                .to_string()
+                .contains("closing")
+        );
+        assert!(
+            bounded(
+                replacement.update(cx, |thread, cx| thread.send(vec!["fenced".into()], cx)),
+                cx
+            )
+            .await
+            .is_err()
+        );
+        assert!(harness.prompts.is_empty());
+        second_response
+            .respond(acp::CloseSessionResponse::new())
+            .expect("replacement closed");
+        bounded(second, cx).await.expect("replacement result");
+        assert!(harness.client.sessions.borrow().is_empty());
+    }
+
+    #[gpui::test]
+    async fn v2_close_sdk_eof_does_not_claim_idle(cx: &mut TestAppContext) {
+        use acp_thread::ForegroundActivity;
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let thread = harness
+            .resumed_thread(
+                Some(acp::StateUpdate::Running(acp::RunningStateUpdate::new())),
+                cx,
+            )
+            .await;
+        harness.defer_closes();
+        let closing = harness.close(cx);
+        let (_, _responder) = bounded(harness.close_requests.recv(), cx)
+            .await
+            .expect("close");
+        drop(harness._agent_task);
+        drop(harness.agent);
+        let error = bounded(closing, cx).await.expect_err("EOF ends close");
+        assert!(
+            error
+                .downcast_ref::<agent_client_protocol::Error>()
+                .is_some_and(agent_client_protocol::is_incoming_transport_closed)
+        );
+        assert_eq!(
+            thread.read_with(cx, |thread, _| thread.foreground_activity()),
+            ForegroundActivity::Running
+        );
+        assert!(
+            bounded(thread.update(cx, |thread, cx| thread.cancel(cx)), cx)
+                .await
+                .is_err()
+        );
+    }
+
+    #[gpui::test]
+    async fn v2_close_sdk_late_config_cannot_change_a_replacement(cx: &mut TestAppContext) {
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        *harness.hold_config.lock().expect("config mode") = true;
+        let thread = harness
+            .resumed_thread(
+                Some(acp::StateUpdate::Idle(acp::IdleStateUpdate::new())),
+                cx,
+            )
+            .await;
+        let options = cx
+            .read(|cx| harness.client.session_config_options(&"saved".into(), cx))
+            .expect("old config");
+        let setting = cx.update(|cx| {
+            options.set_config_option(
+                "enabled".into(),
+                acp::SessionConfigOptionValue::boolean(true),
+                cx,
+            )
+        });
+        bounded(harness.config_requests.recv(), cx)
+            .await
+            .expect("published config");
+        let responder = bounded(harness.config_replies.recv(), cx)
+            .await
+            .expect("deferred config");
+        bounded(harness.close(cx), cx).await.expect("closed");
+        let replacement = harness
+            .resumed_thread(
+                Some(acp::StateUpdate::Idle(acp::IdleStateUpdate::new())),
+                cx,
+            )
+            .await;
+        let changed = vec![acp::SessionConfigOption::boolean(
+            "enabled", "Changed", true,
+        )];
+        responder
+            .respond(acp::SetSessionConfigOptionResponse::new(changed))
+            .expect("late config response");
+        bounded(setting, cx)
+            .await
+            .expect_err("old config is fenced");
+        let current = cx
+            .read(|cx| harness.client.session_config_options(&"saved".into(), cx))
+            .expect("replacement config");
+        assert_eq!(current.config_options(), initial_response().config_options);
+        assert_eq!(options.config_options(), initial_response().config_options);
+        drop(thread);
+        cx.run_until_parked();
+        assert_eq!(
+            harness
+                .client
+                .sessions
+                .borrow()
+                .get(&"saved".into())
+                .expect("replacement")
+                .thread
+                .entity_id(),
+            replacement.entity_id()
         );
     }
 
@@ -2519,6 +3416,10 @@ done
         assert!(unsupported.new_requests.is_empty());
         assert!(!unsupported.client.supports_load_session());
         assert!(!unsupported.client.supports_resume_session());
+        assert!(!unsupported.client.supports_close_session());
+        bounded(unsupported.close(cx), cx)
+            .await
+            .expect_err("close requires session support");
         for replay_history in [false, true] {
             bounded(unsupported.reopen(replay_history, cx), cx)
                 .await
@@ -2867,6 +3768,69 @@ done
                     if method.as_ref() == method_name
             )).count(), 1);
         }
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn v2_close_stdio_preserves_success_before_immediate_eof(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+            release_channel::init("0.0.0".parse().expect("version"), cx);
+        });
+        cx.executor().allow_parking();
+        let directory = tempfile::tempdir().expect("working directory");
+        let project = Project::example([directory.path()], &mut cx.to_async()).await;
+        let command = AgentServerCommand {
+            path: "/bin/sh".into(),
+            args: vec!["-c".into(), r#"
+while IFS= read -r request; do
+    id=${request#*\"id\":}
+    id=${id%%,*}
+    case "$request" in
+        *'"method":"initialize"'*)
+            printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":2,"info":{"name":"close-stdio","version":"1"},"capabilities":{"session":{}}}}\n' "$id"
+            ;;
+        *'"method":"session/new"'*)
+            printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"stdio-session"}}\n' "$id"
+            ;;
+        *'"method":"session/close"'*)
+            printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id"
+            exit 0
+            ;;
+        *) exit 43 ;;
+    esac
+done
+"#.into()],
+            env: None,
+        };
+        let client = Rc::new(
+            bounded(
+                AcpV2Connection::stdio(
+                    AgentId::new("close-stdio"),
+                    project.clone(),
+                    command,
+                    WeakEntity::new_invalid(),
+                    &mut cx.to_async(),
+                ),
+                cx,
+            )
+            .await
+            .expect("stdio connection"),
+        );
+        let creation = cx.update(|cx| {
+            client
+                .clone()
+                .new_session(project, PathList::new(&[directory.path()]), cx)
+        });
+        let _thread = bounded(creation, cx).await.expect("stdio owner");
+        let closing = cx.update(|cx| client.clone().close_session(&"stdio-session".into(), cx));
+        bounded(closing, cx)
+            .await
+            .expect("successful close precedes EOF");
+        bounded(client.connection.incoming_closed(), cx).await;
+        assert!(client.sessions.borrow().is_empty());
+        assert!(client.session_owners.borrow().is_empty());
     }
 
     #[gpui::test]
