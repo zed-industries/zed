@@ -96,6 +96,51 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    #[gpui::test]
+    async fn test_watch_config_file_created_later_under_symlinked_dir(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let fs = FakeFs::new(cx.background_executor.clone());
+        let settings_path = PathBuf::from("/root/.config/zed/settings.json");
+        let target_path = PathBuf::from("/root/dotfiles/zed/settings.json");
+
+        fs.insert_tree(
+            Path::new("/root"),
+            json!({
+                ".config": {},
+                "dotfiles": {
+                    "zed": {}
+                }
+            }),
+        )
+        .await;
+        fs.create_symlink(
+            Path::new("/root/.config/zed"),
+            PathBuf::from("/root/dotfiles/zed"),
+        )
+        .await
+        .unwrap();
+
+        // The file does not exist yet, so only its directory can be resolved.
+        // The watch must still land on the real directory: a watch registered
+        // through the symlink falls back to the file's inode and dies with it.
+        let (mut rx, _task) = watch_config_file(&cx.background_executor, fs.clone(), settings_path);
+        assert_eq!(rx.next().await.as_deref(), Some(""));
+
+        for content in ["A", "B", "C"] {
+            fs.atomic_write(target_path.clone(), content.to_owned())
+                .await
+                .unwrap();
+            cx.executor().advance_clock(fs::fs_watcher::poll_interval());
+            cx.run_until_parked();
+            assert_eq!(
+                rx.try_recv().ok().as_deref(),
+                Some(content),
+                "the created file and every replacement must be delivered"
+            );
+        }
+    }
+
     #[gpui::test]
     async fn test_watch_config_file_reloads_when_parent_dir_is_symlink(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
@@ -264,7 +309,7 @@ pub fn watch_config_file(
 ) -> (mpsc::UnboundedReceiver<String>, gpui::Task<()>) {
     let (tx, rx) = mpsc::unbounded();
     let task = executor.spawn(async move {
-        let path = fs.canonicalize(&path).await.unwrap_or_else(|_| path);
+        let path = canonical_config_path(fs.as_ref(), path).await;
         let (events, _) = fs.watch(&path, Duration::from_millis(100)).await;
         futures::pin_mut!(events);
 
@@ -286,6 +331,22 @@ pub fn watch_config_file(
         }
     });
     (rx, task)
+}
+
+/// A missing file cannot be canonicalized, but its directory can. The watch
+/// is registered on the real directory so that it survives the file's
+/// creation and later replacements, which on Linux a watch registered
+/// through a symlinked directory does not.
+async fn canonical_config_path(fs: &dyn Fs, path: PathBuf) -> PathBuf {
+    if let Ok(canonical_path) = fs.canonicalize(&path).await {
+        return canonical_path;
+    }
+    if let (Some(parent), Some(file_name)) = (path.parent(), path.file_name())
+        && let Ok(canonical_parent) = fs.canonicalize(parent).await
+    {
+        return canonical_parent.join(file_name);
+    }
+    path
 }
 
 pub fn watch_config_dir(
