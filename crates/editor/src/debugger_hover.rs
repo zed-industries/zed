@@ -748,7 +748,8 @@ impl DebuggerHoverView {
             let mut width = Pixels::ZERO;
             let mut nodes = vec![(&self.root, 0)];
             let font = ThemeSettings::get_global(cx).buffer_font.clone();
-            let font_size = ui::TextSize::Small.rems(cx).to_pixels(window.rem_size());
+            // Labels override the row's text size with their own default size.
+            let font_size = ui::TextSize::Default.rems(cx).to_pixels(window.rem_size());
             while let Some((node, depth)) = nodes.pop() {
                 let text = ui::utils::replace_control_characters(&format!(
                     "{} = {}{}",

@@ -1568,7 +1568,6 @@ impl InfoPopover {
                     ui::ScrollAxes::Vertical,
                     cx.theme().colors().elevated_surface_background,
                 )
-                .min_thumb_size(px(10.))
                 .tracked_scroll_handle(&self.scroll_handle)
         } else {
             Scrollbars::for_settings::<EditorSettingsScrollbarProxy>()
@@ -2272,16 +2271,18 @@ mod tests {
         editor_cx.set_state("let value = ˇpoint.x;\n");
 
         editor_cx.update_editor(|editor, _, cx| {
+            let mut debugger_response = test_debugger_hover(editor, cx);
+            debugger_response.data.root.value = "Point { x: 42 }\n".repeat(40);
             editor.set_semantics_provider(Some(Rc::new(TestHoverSemanticsProvider {
                 hover_response: vec![ProjectHover {
                     contents: vec![HoverBlock {
-                        text: "Documentation for point".to_string(),
+                        text: "Documentation for point\n\n".repeat(40),
                         kind: HoverBlockKind::Markdown,
                     }],
                     range: None,
                     language: None,
                 }],
-                debugger_response: Some(test_debugger_hover(editor, cx)),
+                debugger_response: Some(debugger_response),
                 lsp_gate: None,
             })));
         });
@@ -2301,11 +2302,39 @@ mod tests {
             assert!(popover.parsed_content.is_none());
             let documentation = editor.hover_state.info_popovers.last().unwrap();
             assert!(documentation.debugger_hover.is_none());
-            assert_eq!(
-                documentation.get_rendered_text(cx),
-                "Documentation for point"
+            assert!(
+                documentation
+                    .get_rendered_text(cx)
+                    .contains("Documentation for point")
             );
         });
+
+        let handles = editor_cx.update_editor(|editor, _, _| {
+            editor
+                .hover_state
+                .info_popovers
+                .iter()
+                .map(|popover| popover.scroll_handle.clone())
+                .collect::<Vec<_>>()
+        });
+        for (index, handle) in handles.iter().enumerate() {
+            let viewport = handle.bounds();
+            let max_offset = handle.max_offset();
+            assert!(max_offset.y > px(20.));
+            let other_offset = handles[1 - index].offset();
+            let before = handle.offset();
+            editor_cx.simulate_event(gpui::ScrollWheelEvent {
+                position: viewport.center(),
+                delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(-20.))),
+                modifiers: Modifiers::none(),
+                touch_phase: gpui::TouchPhase::Moved,
+            });
+            editor_cx.run_until_parked();
+            assert_eq!(handle.offset(), before + gpui::point(px(0.), px(-20.)));
+            assert_eq!(handle.bounds(), viewport);
+            assert_eq!(handle.max_offset(), max_offset);
+            assert_eq!(handles[1 - index].offset(), other_offset);
+        }
     }
 
     #[gpui::test]

@@ -27,6 +27,139 @@ use crate::{
 const SOURCE: &str =
     "fn main() {\n    let value = 42;\n    let x = value + 1;\n    println!(\"{}\", x);\n}\n";
 
+#[gpui::test]
+async fn test_hover_horizontal_scrollbar_drag_is_stable(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    const SOURCE: &str = "fn main() {\n    let a = 0;\n    let b = vec![\"heyy\"];\n    println!(\"{a} {b:?}\");\n}\n";
+    const VECTOR_TYPE: &str = "alloc::vec::Vec<&str, alloc::alloc::Global>";
+    init_test(cx);
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(path!("/project"), json!({ "main.rs": SOURCE }))
+        .await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    workspace
+        .update(cx, |workspace, window, cx| {
+            workspace.focus_panel::<DebugPanel>(window, cx);
+        })
+        .unwrap();
+    let session = start_debug_session(&workspace, cx, |_| {}).unwrap();
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+    client.on_request::<Threads, _>(|_, _| {
+        Ok(
+            serde_json::from_value(json!({"threads": [{"id": 1, "name": "main"}]}))
+                .expect("threads fixture"),
+        )
+    });
+    client.on_request::<StackTrace, _>(|_, _| {
+        Ok(serde_json::from_value(json!({
+            "stackFrames": [{"id": 1, "name": "main", "line": 4, "column": 1,
+                "source": {"name": "main.rs", "path": path!("/project/main.rs")}}]
+        }))
+        .expect("stack fixture"))
+    });
+    client.on_request::<Scopes, _>(|_, _| Ok(dap::ScopesResponse { scopes: vec![] }));
+    client.on_request::<Evaluate, _>(|_, args| {
+        assert_eq!(args.expression, "b");
+        Ok(serde_json::from_value(json!({
+            "result": "size=1", "type": VECTOR_TYPE, "variablesReference": 1
+        }))
+        .expect("evaluate fixture"))
+    });
+    client.on_request::<Variables, _>(|_, args| {
+        let variables = match args.variables_reference {
+            1 => json!([
+                {"name": "[0]", "value": "\"heyy\"", "variablesReference": 2},
+                {"name": "[raw]", "value": VECTOR_TYPE, "variablesReference": 3}
+            ]),
+            3 => json!([
+                {"name": "buf", "value": "{inner:{ptr:{pointer:\"\\xd0c\\U00000003\"}, _marker:{}}, cap:{0:1}, alloc:{}}", "variablesReference": 4},
+                {"name": "len", "value": "1", "variablesReference": 0}
+            ]),
+            reference => panic!("unexpected variables reference {reference}"),
+        };
+        Ok(serde_json::from_value(json!({"variables": variables})).expect("variables fixture"))
+    });
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/project/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+    let (editor, editor_cx) = cx.add_window_view(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            MultiBuffer::build_from_buffer(buffer, cx),
+            Some(project),
+            window,
+            cx,
+        )
+    });
+    editor_cx.simulate_resize(gpui::size(gpui::px(900.), gpui::px(582.)));
+    focus_editor(&editor, editor_cx);
+    client
+        .fake_event(dap::messages::Events::Stopped(
+            serde_json::from_value(json!({
+                "reason": "breakpoint", "threadId": 1, "allThreadsStopped": true
+            }))
+            .unwrap(),
+        ))
+        .await;
+    editor_cx.run_until_parked();
+    trigger_hover(&editor, editor_cx, SOURCE.find("b =").unwrap());
+    editor_cx.run_until_parked();
+    let toggle = editor_cx
+        .debug_bounds("debugger-hover-toggle-1")
+        .expect("raw disclosure");
+    editor_cx.simulate_click(toggle.center(), Modifiers::none());
+    editor_cx.run_until_parked();
+    assert!(editor_cx.debug_bounds("debugger-hover-node-1-0").is_some());
+    let handle = editor.read_with(editor_cx, |editor, _| {
+        editor.hover_state.info_popovers[0].scroll_handle.clone()
+    });
+    let viewport = handle.bounds();
+    let max_offset = handle.max_offset();
+    assert!(max_offset.x > gpui::px(100.));
+    let start = gpui::point(
+        viewport.left() + gpui::px(40.),
+        viewport.bottom() - gpui::px(7.),
+    );
+    editor_cx.simulate_mouse_move(start, None, Modifiers::none());
+    editor_cx.simulate_mouse_down(start, gpui::MouseButton::Left, Modifiers::none());
+    let mut position = start + gpui::point(gpui::px(60.), gpui::px(0.));
+    editor_cx.simulate_mouse_move(position, Some(gpui::MouseButton::Left), Modifiers::none());
+    let mut previous_offset = handle.offset();
+    assert!(previous_offset.x < gpui::px(0.));
+    let pixels_per_pointer_pixel = -previous_offset.x / gpui::px(60.);
+    for step in 0..20 {
+        position.x += gpui::px(1.);
+        editor_cx.simulate_mouse_move(position, Some(gpui::MouseButton::Left), Modifiers::none());
+        let offset = handle.offset();
+        assert_eq!(handle.bounds(), viewport);
+        assert_eq!(handle.max_offset(), max_offset);
+        assert!(
+            (offset.x - previous_offset.x + gpui::px(pixels_per_pointer_pixel)).abs()
+                < gpui::px(0.1),
+            "drag step {step}: a one-pixel pointer move must not jump the content: {previous_offset:?} -> {offset:?}, expected {} pixels",
+            pixels_per_pointer_pixel
+        );
+        previous_offset = offset;
+    }
+    editor_cx.simulate_mouse_up(position, gpui::MouseButton::Left, Modifiers::none());
+    handle.set_offset(gpui::point(-max_offset.x, gpui::px(0.)));
+    editor_cx.update(|window, cx| window.draw(cx).clear(cx));
+    let value_bounds = editor_cx
+        .debug_bounds("debugger-hover-node-1-0-value-container")
+        .expect("expanded buffer value");
+    assert!(
+        value_bounds.right() <= viewport.right(),
+        "the full value must be reachable at the horizontal scroll limit: {value_bounds:?}, viewport {viewport:?}"
+    );
+}
+
 fn open_variable_menu(editor_cx: &mut VisualTestContext, selector: &'static str) {
     let bounds = editor_cx
         .debug_bounds(selector)
@@ -820,6 +953,34 @@ async fn test_hover_values_keyboard_selection_scrolls_into_view(
             );
         });
     }
+
+    let scroll_handle = editor.read_with(editor_cx, |editor, _| {
+        editor.hover_state.info_popovers[0].scroll_handle.clone()
+    });
+    let viewport = scroll_handle.bounds();
+    let max_offset = scroll_handle.max_offset();
+    let position = viewport.center();
+    for delta in [
+        gpui::point(gpui::px(-30.), gpui::px(0.)),
+        gpui::point(gpui::px(0.), gpui::px(-15.)),
+        gpui::point(gpui::px(20.), gpui::px(0.)),
+        gpui::point(gpui::px(0.), gpui::px(10.)),
+    ] {
+        let before = scroll_handle.offset();
+        editor_cx.simulate_event(gpui::ScrollWheelEvent {
+            position,
+            delta: gpui::ScrollDelta::Pixels(delta),
+            modifiers: Modifiers::none(),
+            touch_phase: gpui::TouchPhase::Moved,
+        });
+        editor_cx.run_until_parked();
+        assert_eq!(scroll_handle.bounds(), viewport);
+        assert_eq!(scroll_handle.max_offset(), max_offset);
+        assert_eq!(scroll_handle.offset(), before + delta);
+    }
+    scroll_handle.set_offset(gpui::Point::default());
+    editor_cx.refresh().unwrap();
+    editor_cx.run_until_parked();
 
     let initial_scroll_offset = editor.update(editor_cx, |editor, _| {
         assert!(
