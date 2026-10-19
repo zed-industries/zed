@@ -451,12 +451,6 @@ pub(crate) fn project_path_display(
         .unwrap_or_else(|| project_path.path.display(path_style).to_string())
 }
 
-/// Returns `true` if a rename failed because something already exists at the
-/// destination.
-///
-/// Only a typed `io::ErrorKind::AlreadyExists` counts. Error context strings
-/// contain file paths, so matching on text would misdiagnose unrelated
-/// failures for files whose names contain "already exists".
 pub(crate) fn already_exists_error(err: &anyhow::Error) -> bool {
     err.chain().any(|cause| {
         if let Some(io_err) = cause.downcast_ref::<std::io::Error>() {

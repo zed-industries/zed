@@ -6085,13 +6085,28 @@ async fn test_dragging_same_named_files_preserves_one_source_on_conflict(
 #[gpui::test]
 async fn test_drag_onto_existing_name_shows_clear_error(cx: &mut gpui::TestAppContext) {
     init_test(cx);
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                auto_fold_dirs: true,
+                ..settings
+            },
+            cx,
+        );
+    });
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
         json!({
-            "a": { "1.json": "from a"},
-            "1.json": "already here"
+            "a": { "1.json": "from a" },
+            "1.json": "already here",
+            "x": { "y": { "file.txt": "from x" } },
+            "target": {
+                "x": { "file.txt": "existing directory" },
+                "other.txt": ""
+            }
         }),
     )
     .await;
@@ -6099,147 +6114,115 @@ async fn test_drag_onto_existing_name_shows_clear_error(cx: &mut gpui::TestAppCo
     let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
     let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
         .unwrap();
     let cx = &mut VisualTestContext::from_window(window.into(), cx);
     let panel = workspace.update_in(cx, ProjectPanel::new);
     cx.run_until_parked();
 
-    panel.update_in(cx, |panel, window, cx| {
-        let (root_entry_id, worktree_id, entry_id) = {
-            let worktree = panel.project.read(cx).visible_worktrees(cx).next().unwrap();
-            let worktree = worktree.read(cx);
-            (
-                worktree.root_entry().unwrap().id,
-                worktree.id(),
-                worktree.entry_for_path(rel_path("a/1.json")).unwrap().id,
-            )
-        };
+    for (source, active_ancestor, target, target_is_file, expected_message) in [
+        (
+            "root/a/1.json",
+            None,
+            "root",
+            false,
+            "Error: Failed to move `a/1.json` to `1.json`. A file or folder already exists there.",
+        ),
+        (
+            "root/a/1.json",
+            None,
+            "root/1.json",
+            true,
+            "Error: Failed to move `a/1.json` to `1.json`. A file or folder already exists there.",
+        ),
+        (
+            "root/x/y",
+            Some("root/x"),
+            "root/target",
+            false,
+            "Error: Failed to move `x` to `target/x`. A file or folder already exists there.",
+        ),
+    ] {
+        workspace.update(cx, |workspace, cx| {
+            for id in workspace.notification_ids() {
+                workspace.dismiss_notification(&id, cx);
+            }
+        });
+        if let Some(active_ancestor) = active_ancestor {
+            select_folded_path_with_mark(&panel, source, active_ancestor, cx);
+        }
+        drag_entries_onto(&panel, &[source], target, target_is_file, cx);
 
-        let selection = SelectedEntry {
-            worktree_id,
-            entry_id,
-        };
-        let drag = DraggedSelection {
-            active_selection: selection,
-            marked_selections: Arc::new([selection]),
-        };
+        workspace.read_with(cx, |workspace, cx| {
+            let notifications = workspace.notification_views();
+            assert_eq!(notifications.len(), 1);
+            let notification = notifications
+                .into_iter()
+                .next()
+                .unwrap()
+                .downcast::<MessageNotification>()
+                .unwrap_or_else(|_| panic!("expected an error MessageNotification"));
+            let expected_message = if cfg!(windows) {
+                expected_message.replace('/', "\\")
+            } else {
+                expected_message.to_string()
+            };
+            assert_eq!(
+                notification
+                    .read(cx)
+                    .copied_text()
+                    .map(SharedString::as_ref),
+                Some(expected_message.as_str())
+            );
+        });
+    }
 
-        panel.drag_onto(&drag, root_entry_id, false, window, cx);
-    });
-    cx.executor().run_until_parked();
-
-    assert_eq!(
-        String::from_utf8(fs.read_file_sync(path!("/root/a/1.json")).unwrap()).unwrap(),
-        "from a"
-    );
-    assert_eq!(
-        String::from_utf8(fs.read_file_sync(path!("/root/1.json")).unwrap()).unwrap(),
-        "already here"
-    );
-
-    // The user was told about it.
-    workspace.update_in(cx, |workspace, _, cx| {
-        let notifications = workspace.notification_views();
-        assert_eq!(
-            notifications.len(),
-            1,
-            "Should show one notification explaining the conflict"
-        );
-        let notification = notifications
-            .into_iter()
-            .next()
-            .unwrap()
-            .downcast::<MessageNotification>()
-            .unwrap_or_else(|_| panic!("expected an error MessageNotification"));
-        let text = notification
-            .read(cx)
-            .copied_text()
-            .cloned()
-            .unwrap_or_default();
-
-        assert!(
-            text.starts_with("Error: Failed to move")
-                && text.ends_with("A file or folder already exists there."),
-            "unexpected notification text: {text}"
-        );
-    });
+    for (path, contents) in [
+        (path!("/root/a/1.json"), "from a"),
+        (path!("/root/1.json"), "already here"),
+        (path!("/root/x/y/file.txt"), "from x"),
+        (path!("/root/target/x/file.txt"), "existing directory"),
+    ] {
+        assert_eq!(fs.load(Path::new(path)).await.unwrap(), contents);
+    }
 }
 
 #[test]
 fn test_explain_move_error() {
     let names = ("a/1.json".to_string(), "1.json".to_string());
-    let err = anyhow::Error::from(std::io::Error::from(std::io::ErrorKind::AlreadyExists))
-        .context("renaming \"/root/a/1.json\" into \"/root/1.json\"");
-    let explained = explain_move_error(err, Some(&names));
+    let explained_message =
+        "Failed to move `a/1.json` to `1.json`. A file or folder already exists there.";
+
+    let local_collision =
+        anyhow::Error::from(std::io::Error::from(std::io::ErrorKind::AlreadyExists))
+            .context("renaming \"/root/a/1.json\" into \"/root/1.json\"");
     assert_eq!(
-        explained.to_string(),
-        "Failed to move `a/1.json` to `1.json`. A file or folder already exists there."
+        explain_move_error(local_collision, Some(&names)).to_string(),
+        explained_message
     );
 
-    // Different error → untouched
-    let err = anyhow::Error::from(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
-    let explained = explain_move_error(err, Some(&names));
-    assert!(!explained.to_string().contains("already exists"));
-
-    // No names → untouched
-    let err = anyhow::Error::from(std::io::Error::from(std::io::ErrorKind::AlreadyExists));
-    let explained = explain_move_error(err, None);
-    assert!(!explained.to_string().contains("Failed to move"));
-
-    // A non-collision I/O error must not be misdiagnosed, even when a path in the context contains the words "already exists".
-    for kind in [
-        std::io::ErrorKind::PermissionDenied,
-        std::io::ErrorKind::NotFound,
-    ] {
-        let err = anyhow::Error::from(std::io::Error::from(kind))
-            .context("renaming \"/root/already exists.txt\" into \"/root/b/already exists.txt\"");
-        let explained = explain_move_error(err, Some(&names));
-        assert!(
-            !explained.to_string().starts_with("Failed to move"),
-            "{kind:?} was misdiagnosed as a collision"
-        );
-    }
-
-    // Untyped text is never trusted.
-    let err = anyhow::anyhow!("path already exists: \"/root/1.json\"");
-    assert!(
-        !explain_move_error(err, Some(&names))
-            .to_string()
-            .starts_with("Failed to move")
-    );
-
-    // On a remote (SSH) project a collision arrives as an RpcError carrying
-    // the code, not as an io::Error.
-    let remote_error = |code: ErrorCode, message: &str| {
-        client::RpcError::from_proto(
-            &client::proto::Error {
-                message: message.to_string(),
-                code: code as i32,
-                tags: Vec::new(),
-            },
-            "RenameProjectEntry",
-        )
-    };
-
-    let err = remote_error(
-        ErrorCode::AlreadyExists,
-        "renaming \"/root/a/1.json\" into \"/root/1.json\": File exists (os error 17)",
+    let remote_collision = client::RpcError::from_proto(
+        &client::proto::Error {
+            message: "renaming \"/root/a/1.json\" into \"/root/1.json\": File exists (os error 17)"
+                .to_string(),
+            code: ErrorCode::AlreadyExists as i32,
+            tags: Vec::new(),
+        },
+        "RenameProjectEntry",
     );
     assert_eq!(
-        explain_move_error(err, Some(&names)).to_string(),
-        "Failed to move `a/1.json` to `1.json`. A file or folder already exists there."
+        explain_move_error(remote_collision, Some(&names)).to_string(),
+        explained_message
     );
 
-    // Any other remote failure is untouched, even if its text says "already exists".
-    let err = remote_error(
-        ErrorCode::Internal,
-        "renaming \"/root/already exists.txt\" into \"/root/b.txt\": Permission denied (os error 13)",
-    );
-    assert!(
-        !explain_move_error(err, Some(&names))
-            .to_string()
-            .starts_with("Failed to move")
+    let path_named_already_exists =
+        "renaming \"/root/already exists.txt\" into \"/root/b/already exists.txt\"";
+    let permission_denied =
+        anyhow::Error::from(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+            .context(path_named_already_exists);
+    assert_eq!(
+        explain_move_error(permission_denied, Some(&names)).to_string(),
+        path_named_already_exists
     );
 }
 

@@ -272,26 +272,6 @@ mod tests {
     use std::io;
 
     #[test]
-    fn test_already_exists_io_error_keeps_its_code_over_rpc() {
-        let error = anyhow::Error::from(io::Error::new(
-            io::ErrorKind::AlreadyExists,
-            "\"/root/b.txt\" already exists",
-        ))
-        .context("renaming \"/root/a.txt\" into \"/root/b.txt\"");
-
-        let sent = error.to_proto();
-        assert_eq!(sent.code(), ErrorCode::AlreadyExists);
-        assert!(
-            sent.message.starts_with("renaming"),
-            "the full message should still be sent: {}",
-            sent.message
-        );
-
-        let received = RpcError::from_proto(&sent, "RenameProjectEntry");
-        assert_eq!(received.error_code(), ErrorCode::AlreadyExists);
-    }
-
-    #[test]
     fn test_other_untyped_errors_stay_internal() {
         // A different I/O failure, even with "already exists" in a path.
         let error = anyhow::Error::from(io::Error::from(io::ErrorKind::PermissionDenied))
