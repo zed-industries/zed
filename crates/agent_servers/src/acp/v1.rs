@@ -532,6 +532,7 @@ impl AcpConnection {
             session_list: client_session_list.clone(),
             request_elicitations: request_elicitations.clone(),
             active_request_scopes: None,
+            pending_session_updates: None,
         };
         let (mut runtime, shutdown) = runtime::ClientRuntime::new(dispatch_context, cx);
         let dispatch_tx = runtime.sender();
@@ -2186,6 +2187,7 @@ pub mod test_support {
             session_list: client_session_list.clone(),
             request_elicitations: request_elicitations.clone(),
             active_request_scopes: None,
+            pending_session_updates: None,
         };
         let dispatch_task = cx.spawn({
             let mut dispatch_rx = dispatch_rx;
@@ -3762,7 +3764,7 @@ mod tests {
             cx.subscribe(&harness.thread, {
                 let events = events.clone();
                 move |_, event, _| {
-                    if matches!(event, AcpThreadEvent::TokenUsageUpdated) {
+                    if matches!(event, AcpThreadEvent::TokenUsageUpdated(_)) {
                         *events.borrow_mut() += 1;
                     }
                     assert!(!matches!(event, AcpThreadEvent::Error));
@@ -4971,7 +4973,7 @@ mod tests {
             thread.read_with(cx, |thread, _| {
                 assert!(thread.uses_reported_activity());
                 assert_eq!(thread.foreground_activity(), phase);
-                assert_eq!(thread.foreground_state(), &expected);
+                assert_eq!(thread.foreground_state(), Some(&expected));
                 assert!(thread.latest_submission_id().is_none());
                 assert!(!thread.has_unsettled_submissions());
                 assert!(thread.entries().is_empty());
@@ -7379,6 +7381,7 @@ exit 7
             session_list: client_session_list.clone(),
             request_elicitations: request_elicitations.clone(),
             active_request_scopes: None,
+            pending_session_updates: None,
         };
         // `TestAppContext::spawn` hands out an `AsyncApp` by value, whereas the
         // production path uses `Context::spawn` which hands out `&mut AsyncApp`.
@@ -7761,6 +7764,7 @@ exit 7
             session_list: Rc::new(RefCell::new(None)),
             request_elicitations: store.clone(),
             active_request_scopes: None,
+            pending_session_updates: None,
         };
         let (dispatch_tx, mut dispatch_rx) = mpsc::unbounded::<ForegroundWork>();
         let dispatch_task = cx.spawn(move |mut cx| async move {
@@ -7883,6 +7887,7 @@ exit 7
             session_list: Rc::new(RefCell::new(None)),
             request_elicitations: cx.new(|_| ElicitationStore::default()),
             active_request_scopes: None,
+            pending_session_updates: None,
         };
         let (sender, mut receiver) = mpsc::unbounded::<ForegroundWork>();
         let cleanup = settle_after_disconnect(sender.clone()).boxed().shared();

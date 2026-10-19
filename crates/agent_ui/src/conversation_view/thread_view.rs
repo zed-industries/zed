@@ -9,7 +9,7 @@ use agent_client_protocol::schema::v2 as acp_v2;
 use std::{cell::RefCell, path::Path};
 
 use acp_thread::{
-    Elicitation, ElicitationEntryId, ElicitationStatus, ForegroundActivity,
+    Elicitation, ElicitationEntryId, ElicitationStatus, ForegroundActivity, OutputTokensUpdate,
     SandboxAuthorizationDetails, SandboxFallbackAuthorizationDetails, SandboxNotAppliedReason,
     SubmissionId, SubmissionResponse, SubmissionState, ToolCallLocation, decode_path_escapes,
 };
@@ -1488,8 +1488,11 @@ impl ThreadView {
         let activity_generation = thread.activity_generation();
         let started_at = thread.activity_started_at();
         let duration = thread.activity_duration();
+        let output_tokens = thread.reported_activity_output_tokens();
 
-        if activity != ForegroundActivity::Idle {
+        if activity == ForegroundActivity::Unconfirmed {
+            self.turn_fields.reported_activity_generation = None;
+        } else if activity.is_active() {
             if self.turn_fields.reported_activity_generation != Some(activity_generation) {
                 self.initialize_turn(cx);
                 self.turn_fields.turn_started_at = started_at;
@@ -1504,6 +1507,9 @@ impl ThreadView {
             }
             self.turn_fields.reported_activity_generation = Some(activity_generation);
             self.turn_fields.last_turn_duration = duration;
+            if let Some(output_tokens) = output_tokens {
+                self.turn_fields.last_turn_tokens = Some(output_tokens);
+            }
         }
         cx.notify();
     }
@@ -1747,13 +1753,34 @@ impl ThreadView {
         )
     }
 
-    pub fn update_turn_tokens(&mut self, cx: &App) {
-        if let Some(usage) = self.thread.read(cx).token_usage() {
-            if let Some(tokens) = &mut self.turn_fields.turn_tokens {
-                *tokens += usage.output_tokens;
-                self.emit_token_limit_telemetry_if_needed(cx);
+    pub fn update_turn_tokens(&mut self, update: OutputTokensUpdate, cx: &mut Context<Self>) {
+        match update {
+            OutputTokensUpdate::Unchanged => {}
+            OutputTokensUpdate::LegacyAdd {
+                activity_generation,
+                output_tokens,
+            } => {
+                if self.thread.read(cx).activity_generation() != activity_generation {
+                    return;
+                }
+                if self.thread.read(cx).foreground_activity() != ForegroundActivity::Idle {
+                    self.sync_reported_activity(cx);
+                }
+                if let Some(tokens) = &mut self.turn_fields.turn_tokens {
+                    *tokens += output_tokens;
+                }
+            }
+            OutputTokensUpdate::Snapshot {
+                activity_generation,
+                ..
+            } => {
+                if self.thread.read(cx).activity_generation() != activity_generation {
+                    return;
+                }
+                self.sync_reported_activity(cx);
             }
         }
+        self.emit_token_limit_telemetry_if_needed(cx);
     }
 
     fn emit_token_limit_telemetry_if_needed(&mut self, cx: &App) {
@@ -1824,7 +1851,7 @@ impl ThreadView {
         let message_editor = self.message_editor.clone();
 
         let is_editor_empty = message_editor.read(cx).is_empty(cx);
-        let is_generating = thread.read(cx).status() != ThreadStatus::Idle;
+        let is_generating = thread.read(cx).status() == ThreadStatus::Generating;
 
         if is_editor_empty {
             if self.message_queue.can_fast_track()
@@ -2677,6 +2704,11 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.thread.read(cx).foreground_activity() != ForegroundActivity::Idle
+            || self.is_loading_contents
+        {
+            return false;
+        }
         if let Some(id) = self
             .message_queue
             .auto_send_candidate(is_first_editor_focused)
@@ -5102,6 +5134,25 @@ impl ThreadView {
                                     .min_w_0()
                                     .flex_wrap()
                                     .gap_1()
+                                    .when(
+                                        self.thread.read(cx).foreground_activity()
+                                            == ForegroundActivity::Unconfirmed,
+                                        |row| {
+                                            row.child(
+                                                div()
+                                                    .id("activity-unconfirmed")
+                                                    .debug_selector(|| "activity-unconfirmed".into())
+                                                    .child(
+                                                        Label::new("Activity unconfirmed")
+                                                            .size(LabelSize::Small)
+                                                            .color(Color::Muted),
+                                                    )
+                                                    .tooltip(Tooltip::text(
+                                                        "The session is attached, but the agent has not reported its activity. You can send manually; automatic sends wait for confirmed Idle.",
+                                                    )),
+                                            )
+                                        },
+                                    )
                                     .children(discard_draft_button)
                                     .children(self.render_token_usage(cx))
                                     .children(self.profile_selector.clone())
@@ -6088,7 +6139,8 @@ impl ThreadView {
         let is_editor_empty = message_editor.is_empty(cx);
         let focus_handle = message_editor.focus_handle(cx);
 
-        let is_generating = self.thread.read(cx).status() != ThreadStatus::Idle;
+        let is_generating = self.thread.read(cx).status() == ThreadStatus::Generating;
+        let is_unconfirmed = self.thread.read(cx).status() == ThreadStatus::Unconfirmed;
 
         if self.is_loading_contents {
             div()
@@ -6097,12 +6149,20 @@ impl ThreadView {
                 .tooltip(Tooltip::text("Loading Added Context…"))
                 .child(loading_contents_spinner(IconSize::default()))
                 .into_any_element()
-        } else if is_generating && is_editor_empty {
+        } else if (is_generating || is_unconfirmed) && is_editor_empty {
             IconButton::new("stop-generation", IconName::Stop)
                 .icon_color(Color::Error)
                 .style(ButtonStyle::Tinted(TintColor::Error))
                 .tooltip(move |_window, cx| {
-                    Tooltip::for_action("Stop Generation", &editor::actions::Cancel, cx)
+                    Tooltip::for_action(
+                        if is_unconfirmed {
+                            "Request Stop (Activity Unconfirmed)"
+                        } else {
+                            "Stop Generation"
+                        },
+                        &editor::actions::Cancel,
+                        cx,
+                    )
                 })
                 .on_click(cx.listener(|this, _event, _, cx| this.cancel_generation(cx)))
                 .into_any_element()
