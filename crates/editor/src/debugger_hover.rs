@@ -536,7 +536,7 @@ impl DebuggerHoverView {
                 .whitespace_normal()
                 .child(
                     div()
-                        .debug_selector(move || value_container_selector.clone())
+                        .debug_selector(move || value_container_selector)
                         .w_full()
                         .child(gpui::StyledText::new(text).with_highlights([
                             (
@@ -632,16 +632,12 @@ impl DebuggerHoverView {
                         div()
                             .debug_selector(|| toggle_selector.clone())
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                            .child(
-                                Disclosure::new(toggle_selector.clone(), node.is_expanded)
-                                    .on_click(cx.listener({
-                                        let path = path.clone();
-                                        move |this, _, window, cx| {
-                                            window.prevent_default();
-                                            this.toggle_node(path.clone(), cx)
-                                        }
-                                    })),
-                            )
+                            .child(Disclosure::new(toggle_selector, node.is_expanded).on_click(
+                                cx.listener(move |this, _, window, cx| {
+                                    window.prevent_default();
+                                    this.toggle_node(path.clone(), cx)
+                                }),
+                            ))
                             .into_any_element()
                     } else {
                         div().w_4().flex_none().into_any_element()
@@ -667,7 +663,7 @@ impl DebuggerHoverView {
                             )
                             .child(
                                 h_flex()
-                                    .debug_selector(move || value_container_selector.clone())
+                                    .debug_selector(move || value_container_selector)
                                     .flex_none()
                                     .gap_0p5()
                                     .child(Label::new("=").single_line().color(Color::Muted))
