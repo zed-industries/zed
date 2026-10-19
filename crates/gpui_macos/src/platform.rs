@@ -1,7 +1,7 @@
 use crate::{
     AppleActivity, AppleDispatcher, BoolExt, MacDisplay, MacKeyboardLayout, MacKeyboardMapper,
-    MacWindow, events::key_to_native, ns_string, pasteboard::Pasteboard, renderer,
-    set_active_window_cursor_style,
+    MacWindow, events::key_to_native, main_thread_marker, ns_string, pasteboard::Pasteboard,
+    renderer, set_active_window_cursor_style,
 };
 use anyhow::{Context as _, anyhow};
 use block2::RcBlock;
@@ -214,7 +214,7 @@ fn native_activation_policy(policy: ActivationPolicy) -> NSApplicationActivation
 
 impl MacPlatform {
     pub fn new(headless: bool) -> Self {
-        let marker = MainThreadMarker::new().expect("Mac platform not created on main thread");
+        let marker = main_thread_marker().expect("Mac platform not created on main thread");
         let dispatcher = Arc::new(AppleDispatcher::new());
 
         #[cfg(feature = "font-kit")]
