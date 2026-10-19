@@ -300,6 +300,8 @@ mod python_locator {
 }
 
 mod hover {
+    #![expect(clippy::result_large_err)]
+
     use std::{path::Path, sync::Arc};
 
     use dap::{
@@ -446,12 +448,11 @@ mod hover {
                     let evaluation_contexts = evaluation_contexts.clone();
                     let evaluation_succeeds = evaluation_succeeds.clone();
                     client.on_request::<Evaluate, _>(move |_, args| {
-                        let context = args.context.clone();
                         evaluation_contexts
                             .lock()
-                            .push((args.expression.clone(), context.clone()));
+                            .push((args.expression, args.context.clone()));
 
-                        match context {
+                        match args.context {
                             Some(EvaluateArgumentsContext::Hover) => Err(dap::ErrorResponse {
                                 error: Some(dap::Message {
                                     id: 1,

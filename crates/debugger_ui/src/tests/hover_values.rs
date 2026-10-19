@@ -1,3 +1,5 @@
+#![expect(clippy::result_large_err)]
+
 use dap::{
     StackFrame, Variable,
     requests::{Evaluate, Scopes, StackTrace, Threads, Variables},
