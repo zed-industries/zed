@@ -6160,6 +6160,138 @@ async fn test_word_diff_disabled(cx: &mut TestAppContext) {
     );
 }
 
+fn create_multibuffer_with_diff(
+    base_text: &str,
+    modified_text: &str,
+    cx: &mut TestAppContext,
+) -> Entity<MultiBuffer> {
+    let buffer = cx.new(|cx| Buffer::local(modified_text, cx));
+    let diff = cx
+        .new(|cx| BufferDiff::new_with_base_text(base_text, &buffer.read(cx).text_snapshot(), cx));
+    cx.run_until_parked();
+
+    cx.new(|cx| {
+        let mut mb = MultiBuffer::singleton(buffer, cx);
+        mb.add_diff(diff, cx);
+        mb
+    })
+}
+
+fn assert_word_diff_ranges_valid(snapshot: &MultiBufferSnapshot) -> Vec<String> {
+    let text = snapshot.text();
+    let ranges: Vec<_> = snapshot
+        .diff_hunks()
+        .flat_map(|hunk| hunk.word_diffs)
+        .collect();
+
+    for range in &ranges {
+        assert!(
+            range.start.0 <= range.end.0 && range.end.0 <= text.len(),
+            "word diff range {:?} is outside text of length {}",
+            range,
+            text.len()
+        );
+        assert!(
+            text.is_char_boundary(range.start.0),
+            "invalid start boundary in {:?} (byte {})",
+            range,
+            range.start.0
+        );
+        assert!(
+            text.is_char_boundary(range.end.0),
+            "invalid end boundary in {:?} (byte {})",
+            range,
+            range.end.0
+        );
+    }
+
+    ranges
+        .iter()
+        .map(|range| text[range.start.0..range.end.0].to_owned())
+        .collect()
+}
+
+#[gpui::test]
+async fn test_word_diff_expanded_cjk(cx: &mut TestAppContext) {
+    let settings_store = cx.update(|cx| SettingsStore::test(cx));
+    cx.set_global(settings_store);
+
+    let base_text = "line 0\nline 1\nhello ab\n";
+    let modified_text = "line 0\nline 1\nhello 写入\n";
+
+    let multibuffer = create_multibuffer_with_diff(base_text, modified_text, cx);
+    multibuffer.update(cx, |mb, cx| {
+        mb.expand_diff_hunks(vec![Anchor::Min..Anchor::Max], cx);
+    });
+
+    let snapshot = multibuffer.read_with(cx, |mb, cx| mb.snapshot(cx));
+    let highlighted = assert_word_diff_ranges_valid(&snapshot);
+    assert_eq!(highlighted, vec!["ab", "写入"]);
+}
+
+#[gpui::test]
+async fn test_word_diff_byte_132_collapsed(cx: &mut TestAppContext) {
+    let settings_store = cx.update(|cx| SettingsStore::test(cx));
+    cx.set_global(settings_store);
+
+    let prefix = "x".repeat(129);
+    let base_text = format!("{prefix} ab\n");
+    let modified_text = format!("{prefix} 写入\n");
+
+    let multibuffer = create_multibuffer_with_diff(&base_text, &modified_text, cx);
+    let snapshot = multibuffer.read_with(cx, |mb, cx| mb.snapshot(cx));
+    let highlighted = assert_word_diff_ranges_valid(&snapshot);
+    assert_eq!(highlighted, vec!["写入"]);
+}
+
+#[gpui::test]
+async fn test_word_diff_byte_132_expanded(cx: &mut TestAppContext) {
+    let settings_store = cx.update(|cx| SettingsStore::test(cx));
+    cx.set_global(settings_store);
+
+    let prefix = "x".repeat(129);
+    let base_text = format!("{prefix} ab\n");
+    let modified_text = format!("{prefix} 写入\n");
+
+    let multibuffer = create_multibuffer_with_diff(&base_text, &modified_text, cx);
+    multibuffer.update(cx, |mb, cx| {
+        mb.expand_diff_hunks(vec![Anchor::Min..Anchor::Max], cx);
+    });
+
+    let snapshot = multibuffer.read_with(cx, |mb, cx| mb.snapshot(cx));
+    let highlighted = assert_word_diff_ranges_valid(&snapshot);
+    assert_eq!(highlighted, vec!["ab", "写入"]);
+}
+
+#[gpui::test]
+async fn test_word_diff_mixed_expanded_and_collapsed(cx: &mut TestAppContext) {
+    let settings_store = cx.update(|cx| SettingsStore::test(cx));
+    cx.set_global(settings_store);
+
+    let prefix = "x".repeat(129);
+    let base_text = format!("first alpha\nmiddle 1\nmiddle 2\n{prefix} ab\n");
+    let modified_text = format!("first BETA\nmiddle 1\nmiddle 2\n{prefix} 写入\n");
+
+    let multibuffer = create_multibuffer_with_diff(&base_text, &modified_text, cx);
+
+    let hunks: Vec<_> = multibuffer
+        .read_with(cx, |mb, cx| mb.snapshot(cx))
+        .diff_hunks()
+        .collect();
+    assert_eq!(hunks.len(), 2, "expected 2 distinct diff hunks");
+
+    // Expand ONLY the first hunk, leaving the second hunk collapsed
+    multibuffer.update(cx, |mb, cx| {
+        mb.expand_diff_hunks(vec![hunks[0].multi_buffer_range.clone()], cx);
+    });
+
+    let snapshot = multibuffer.read_with(cx, |mb, cx| mb.snapshot(cx));
+    let highlighted = assert_word_diff_ranges_valid(&snapshot);
+    // Hunk 1 (expanded) yields deleted + modified words: ["alpha", "BETA"]
+    // Hunk 2 (collapsed) yields modified word only: ["写入"]
+    assert_eq!(highlighted, vec!["alpha", "BETA", "写入"]);
+}
+
 /// Tests `excerpt_containing` and `excerpts_for_range` (functions mapping multi-buffer text-coordinates to excerpts)
 #[gpui::test]
 fn test_excerpts_containment_functions(cx: &mut App) {
