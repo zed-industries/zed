@@ -357,42 +357,6 @@ mod tests {
     }
 
     #[test]
-    fn concurrent_failure_preserves_other_creation_and_prunes_orphans() {
-        let mut pending = PendingSessionUpdates::default();
-        let first = request_id(1);
-        let second = request_id(2);
-        pending.begin(first.clone());
-        pending.begin(second.clone());
-        assert!(
-            pending
-                .stage(notification("first", "discarded"), 10)
-                .is_none()
-        );
-        assert!(
-            pending
-                .stage(notification("second", "retained"), 20)
-                .is_none()
-        );
-        pending.finish(&first);
-        let retained = pending
-            .take(&second, &"second".into())
-            .expect("second succeeds");
-        assert_eq!(retained.len(), 1);
-        assert_eq!(
-            retained.first().expect("notification").session_id,
-            "second".into()
-        );
-        assert_eq!(pending.counts(), (0, 0, 0));
-        pending.begin(request_id(3));
-        assert!(
-            pending
-                .take(&request_id(3), &"first".into())
-                .expect("fresh creation")
-                .is_empty()
-        );
-    }
-
-    #[test]
     fn later_creation_does_not_adopt_an_older_prefix() {
         let mut pending = PendingSessionUpdates::default();
         pending.begin(request_id(1));
@@ -414,34 +378,18 @@ mod tests {
     }
 
     #[test]
-    fn count_limit_fails_creation_without_publishing_partial_history() {
-        let mut pending = PendingSessionUpdates::default();
-        pending.begin(request_id(1));
-        for _ in 0..MAX_PENDING_SESSION_UPDATES {
-            assert!(pending.stage(notification("first", "entry"), 1).is_none());
-        }
-        assert_eq!(
-            pending.counts(),
-            (1, MAX_PENDING_SESSION_UPDATES, MAX_PENDING_SESSION_UPDATES)
-        );
-        assert!(
-            pending
-                .stage(notification("first", "overflow"), 1)
-                .is_none()
-        );
-        assert_eq!(pending.counts(), (1, 0, 0));
-        assert!(
-            pending
-                .take(&request_id(1), &"first".into())
-                .expect_err("bounded history")
-                .to_string()
-                .contains("limits")
-        );
-        assert_eq!(pending.counts(), (0, 0, 0));
-    }
-
-    #[test]
     fn byte_limit_is_bounded_and_does_not_poison_later_creations() {
+        let wire = acp_v2::UpdateSessionNotification::new(
+            "session",
+            acp_v2::SessionUpdate::AgentMessage(
+                acp_v2::AgentMessage::new("message")
+                    .content(vec!["unicode é and \"quotes\"".into()]),
+            ),
+        );
+        assert_eq!(
+            super::super::notification_size(&wire).expect("counted"),
+            serde_json::to_vec(&wire).expect("serialized").len()
+        );
         let mut pending = PendingSessionUpdates::default();
         pending.begin(request_id(1));
         assert!(
@@ -468,41 +416,5 @@ mod tests {
             1
         );
         assert_eq!(pending.counts(), (0, 0, 0));
-    }
-
-    #[test]
-    fn abandoned_success_discards_only_its_session() {
-        let mut pending = PendingSessionUpdates::default();
-        pending.begin(request_id(1));
-        pending.begin(request_id(2));
-        assert!(
-            pending
-                .stage(notification("first", "abandoned"), 1)
-                .is_none()
-        );
-        assert!(
-            pending
-                .stage(notification("second", "retained"), 2)
-                .is_none()
-        );
-        pending.finish(&request_id(1));
-        pending.discard_session(&"first".into());
-        assert_eq!(pending.counts(), (1, 1, 2));
-        assert_eq!(
-            pending
-                .take(&request_id(2), &"second".into())
-                .expect("second")
-                .len(),
-            1
-        );
-        pending.begin(request_id(3));
-        assert!(
-            pending
-                .stage(notification("third", "disconnect"), 4)
-                .is_none()
-        );
-        pending.clear();
-        assert_eq!(pending.counts(), (0, 0, 0));
-        assert!(pending.take(&request_id(3), &"third".into()).is_err());
     }
 }

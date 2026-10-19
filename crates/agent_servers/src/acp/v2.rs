@@ -2828,116 +2828,84 @@ done
     }
 
     #[gpui::test]
-    async fn v2_new_sdk_concurrent_rejection_does_not_discard_successful_prefix(
-        cx: &mut TestAppContext,
-    ) {
-        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
-        *harness.hold_new_responses.lock().expect("new mode") = true;
-        let failed = harness.create(cx);
-        let (_, failed_response) = bounded(harness.new_replies.recv(), cx)
-            .await
-            .expect("failed creation");
-        let retained = harness.create(cx);
-        let (_, retained_response) = bounded(harness.new_replies.recv(), cx)
-            .await
-            .expect("retained creation");
-        harness.send_update(
-            "failed",
-            acp::SessionUpdate::AgentMessage(
-                acp::AgentMessage::new("discarded").content(vec!["discarded".into()]),
-            ),
-        );
-        harness.send_update(
-            "retained",
-            acp::SessionUpdate::AgentMessage(
-                acp::AgentMessage::new("retained").content(vec!["retained".into()]),
-            ),
-        );
-        harness.drain_updates(cx).await;
-        let rejection = agent_client_protocol::Error::new(-32042, "Creation rejected")
-            .data(json!({"keep": [null, 7]}));
-        failed_response
-            .respond_with_error(rejection.clone())
-            .expect("reject first");
-        assert_eq!(
-            bounded(failed, cx)
-                .await
-                .expect_err("rejection")
-                .downcast_ref::<agent_client_protocol::Error>(),
-            Some(&rejection)
-        );
-        retained_response
-            .respond(acp::NewSessionResponse::new("retained"))
-            .expect("successful response");
-        let thread = bounded(retained, cx)
-            .await
-            .expect("success survives unrelated rejection");
-        thread.read_with(cx, |thread, cx| {
-            assert!(thread.to_markdown(cx).contains("retained"));
-            assert!(!thread.to_markdown(cx).contains("discarded"));
-        });
-        cx.run_until_parked();
-        assert_eq!(
-            harness.client.pending_session_updates.borrow().counts(),
-            (0, 0, 0)
-        );
-        let later = harness.create(cx);
-        let (_, response) = bounded(harness.new_replies.recv(), cx)
-            .await
-            .expect("later creation");
-        response
-            .respond(acp::NewSessionResponse::new("failed"))
-            .expect("later response");
-        assert!(
-            bounded(later, cx)
-                .await
-                .expect("later owner")
-                .read_with(cx, |thread, _| thread.entries().is_empty())
-        );
-    }
-
-    #[gpui::test]
-    async fn v2_new_sdk_abandonment_and_eof_clear_provisional_updates(cx: &mut TestAppContext) {
-        for disconnect in [false, true] {
+    async fn v2_new_sdk_concurrent_failure_preserves_successful_prefix(cx: &mut TestAppContext) {
+        for abandoned in [false, true] {
             let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
             *harness.hold_new_responses.lock().expect("new mode") = true;
-            let creation = harness.create(cx);
-            let (_, responder) = bounded(harness.new_replies.recv(), cx)
+            let failed = harness.create(cx);
+            let (_, failed_response) = bounded(harness.new_replies.recv(), cx)
                 .await
-                .expect("new request");
+                .expect("failed creation");
+            let retained = harness.create(cx);
+            let (_, retained_response) = bounded(harness.new_replies.recv(), cx)
+                .await
+                .expect("retained creation");
             harness.send_update(
-                "session",
+                "failed",
                 acp::SessionUpdate::AgentMessage(
-                    acp::AgentMessage::new("staged").content(vec!["staged".into()]),
+                    acp::AgentMessage::new("discarded").content(vec!["discarded".into()]),
+                ),
+            );
+            harness.send_update(
+                "retained",
+                acp::SessionUpdate::AgentMessage(
+                    acp::AgentMessage::new("retained").content(vec!["retained".into()]),
                 ),
             );
             harness.drain_updates(cx).await;
-            assert_eq!(
-                harness.client.pending_session_updates.borrow().counts().1,
-                1
-            );
-            if disconnect {
-                drop(harness._agent_task);
-                drop(harness.agent);
-                bounded(creation, cx).await.expect_err("EOF");
-            } else {
-                drop(creation);
-                cx.run_until_parked();
+            if abandoned {
+                drop(failed);
+                failed_response
+                    .respond(acp::NewSessionResponse::new("failed"))
+                    .expect("abandoned success");
                 assert_eq!(
-                    harness.client.pending_session_updates.borrow().counts(),
-                    (0, 0, 0)
+                    bounded(harness.closes.recv(), cx)
+                        .await
+                        .expect("close abandoned session"),
+                    acp::SessionId::new("failed")
                 );
-                responder.respond(initial_response()).expect("late success");
-                bounded(harness.closes.recv(), cx)
-                    .await
-                    .expect("close undelivered session");
+            } else {
+                let rejection = agent_client_protocol::Error::new(-32042, "Creation rejected")
+                    .data(json!({"keep": [null, 7]}));
+                failed_response
+                    .respond_with_error(rejection.clone())
+                    .expect("reject first");
+                assert_eq!(
+                    bounded(failed, cx)
+                        .await
+                        .expect_err("rejection")
+                        .downcast_ref::<agent_client_protocol::Error>(),
+                    Some(&rejection)
+                );
             }
+            retained_response
+                .respond(acp::NewSessionResponse::new("retained"))
+                .expect("successful response");
+            let thread = bounded(retained, cx)
+                .await
+                .expect("success survives unrelated rejection");
+            thread.read_with(cx, |thread, cx| {
+                assert!(thread.to_markdown(cx).contains("retained"));
+                assert!(!thread.to_markdown(cx).contains("discarded"));
+            });
             cx.run_until_parked();
             assert_eq!(
                 harness.client.pending_session_updates.borrow().counts(),
                 (0, 0, 0)
             );
-            assert!(harness.client.sessions.borrow().is_empty());
+            let later = harness.create(cx);
+            let (_, response) = bounded(harness.new_replies.recv(), cx)
+                .await
+                .expect("later creation");
+            response
+                .respond(acp::NewSessionResponse::new("failed"))
+                .expect("later response");
+            assert!(
+                bounded(later, cx)
+                    .await
+                    .expect("later owner")
+                    .read_with(cx, |thread, _| thread.entries().is_empty())
+            );
         }
     }
 
@@ -2952,7 +2920,7 @@ done
         let (_, responder) = bounded(harness.new_replies.recv(), cx)
             .await
             .expect("new request");
-        for _ in 0..=super::super::session_updates::MAX_PENDING_SESSION_UPDATES {
+        for _ in 0..super::super::session_updates::MAX_PENDING_SESSION_UPDATES {
             harness.send_update(
                 "overflowed",
                 acp::SessionUpdate::SessionInfoUpdate(
@@ -2960,6 +2928,15 @@ done
                 ),
             );
         }
+        harness.drain_updates(cx).await;
+        assert_eq!(
+            harness.client.pending_session_updates.borrow().counts().1,
+            super::super::session_updates::MAX_PENDING_SESSION_UPDATES
+        );
+        harness.send_update(
+            "overflowed",
+            acp::SessionUpdate::SessionInfoUpdate(acp::SessionInfoUpdate::new().title("overflow")),
+        );
         harness.send_update(
             "session",
             acp::SessionUpdate::SessionInfoUpdate(
@@ -3032,36 +3009,6 @@ done
                 .thread
                 .entity_id(),
             thread.entity_id()
-        );
-    }
-
-    #[test]
-    fn v2_notification_budget_counts_encoded_payloads_without_copying_them() {
-        let notification = acp::UpdateSessionNotification::new(
-            "session",
-            acp::SessionUpdate::AgentMessage(
-                acp::AgentMessage::new("message")
-                    .content(vec!["unicode é and \"quotes\"".into()])
-                    .meta(meta("payload")),
-            ),
-        )
-        .meta(meta("delivery"));
-        assert_eq!(
-            super::super::notification_size(&notification).expect("counted"),
-            serde_json::to_vec(&notification).expect("serialized").len()
-        );
-    }
-
-    #[gpui::test]
-    async fn v2_new_sdk_unpublished_creation_does_not_admit_updates(cx: &mut TestAppContext) {
-        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
-        let unpublished = harness.create(cx);
-        drop(unpublished);
-        cx.run_until_parked();
-        assert!(harness.new_requests.is_empty());
-        assert_eq!(
-            harness.client.pending_session_updates.borrow().counts(),
-            (0, 0, 0)
         );
     }
 
@@ -4144,14 +4091,38 @@ done
         cx: &mut TestAppContext,
     ) {
         let harness = SessionHarness::new(session_capabilities(), Vec::new(), Vec::new(), cx).await;
+        let unpublished = harness.create(cx);
+        drop(unpublished);
+        cx.run_until_parked();
+        assert!(harness.new_requests.is_empty());
+        assert_eq!(
+            harness.client.pending_session_updates.borrow().counts(),
+            (0, 0, 0)
+        );
+        *harness.hold_new_responses.lock().expect("new mode") = true;
         let creation = harness.create(cx);
-        bounded(harness.new_requests.recv(), cx)
+        let (_, responder) = bounded(harness.new_replies.recv(), cx)
             .await
             .expect("request");
+        harness.send_update(
+            "session",
+            acp::SessionUpdate::AgentMessage(
+                acp::AgentMessage::new("staged").content(vec!["staged".into()]),
+            ),
+        );
+        harness.drain_updates(cx).await;
+        assert_eq!(
+            harness.client.pending_session_updates.borrow().counts().1,
+            1
+        );
         drop(creation);
-        harness
-            .new_responses
-            .try_send(Ok(initial_response()))
+        cx.run_until_parked();
+        assert_eq!(
+            harness.client.pending_session_updates.borrow().counts(),
+            (0, 0, 0)
+        );
+        responder
+            .respond(initial_response())
             .expect("late response");
         assert_eq!(
             bounded(harness.closes.recv(), cx)
@@ -4161,12 +4132,29 @@ done
         );
         assert!(harness.client.sessions.borrow().is_empty());
         let creation = harness.create(cx);
-        bounded(harness.new_requests.recv(), cx)
+        let (_, _responder) = bounded(harness.new_replies.recv(), cx)
             .await
             .expect("next request");
+        harness.send_update(
+            "session",
+            acp::SessionUpdate::AgentMessage(
+                acp::AgentMessage::new("next").content(vec!["next prefix".into()]),
+            ),
+        );
+        harness.drain_updates(cx).await;
+        assert_eq!(
+            harness.client.pending_session_updates.borrow().counts().1,
+            1
+        );
         drop(harness._agent_task);
+        drop(harness.agent);
         assert!(bounded(creation, cx).await.is_err());
+        cx.run_until_parked();
         assert!(harness.client.sessions.borrow().is_empty());
+        assert_eq!(
+            harness.client.pending_session_updates.borrow().counts(),
+            (0, 0, 0)
+        );
     }
 
     #[gpui::test]
