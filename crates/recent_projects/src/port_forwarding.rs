@@ -7,7 +7,7 @@ use gpui::{
     Window, div, px,
 };
 use project::Fs;
-use remote::{SshConnectionOptions, SshPortForwardOption};
+use remote::{RemoteConnectionIdentity, SshConnectionOptions, SshPortForwardOption};
 use settings::{Settings as _, SettingsStore, SshConnection, update_settings_file_with_completion};
 use std::sync::Arc;
 use ui::{
@@ -20,29 +20,32 @@ use workspace::{Toast, Workspace, notifications::NotificationId};
 const INVALID_FORWARD_MESSAGE: &str =
     "Invalid port forward. Use port or host:port. Expected port or host:port";
 
-#[derive(Clone)]
-struct SshConnectionIdentity {
-    host: String,
+fn ssh_connection_identity(
+    host: impl Into<String>,
     username: Option<String>,
     port: Option<u16>,
-}
-
-impl From<&SshConnectionOptions> for SshConnectionIdentity {
-    fn from(options: &SshConnectionOptions) -> Self {
-        Self {
-            host: options.host.to_string(),
-            username: options.username.clone(),
-            port: options.port,
-        }
+) -> RemoteConnectionIdentity {
+    RemoteConnectionIdentity::Ssh {
+        host: host.into(),
+        username,
+        port,
     }
 }
 
-impl SshConnectionIdentity {
-    fn matches(&self, connection: &SshConnection) -> bool {
-        self.host == connection.host
-            && self.username == connection.username
-            && self.port == connection.port
-    }
+fn ssh_identity_matches_connection(
+    identity: &RemoteConnectionIdentity,
+    connection: &SshConnection,
+) -> bool {
+    let RemoteConnectionIdentity::Ssh {
+        host,
+        username,
+        port,
+    } = identity
+    else {
+        return false;
+    };
+
+    host == &connection.host && username == &connection.username && port == &connection.port
 }
 
 struct ForwardEditor {
@@ -127,7 +130,7 @@ impl ForwardUpdateError {
 }
 
 pub struct PortForwardingPopover {
-    connection: SshConnectionIdentity,
+    connection: RemoteConnectionIdentity,
     connection_name: SharedString,
     fs: Arc<dyn Fs>,
     workspace: WeakEntity<Workspace>,
@@ -160,7 +163,11 @@ impl PortForwardingPopover {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let connection = SshConnectionIdentity::from(&options);
+        let connection = ssh_connection_identity(
+            options.host.to_string(),
+            options.username.clone(),
+            options.port,
+        );
         let connection_name: SharedString = options
             .nickname
             .clone()
@@ -685,12 +692,12 @@ impl PortForwardingPopover {
 }
 
 fn read_forwards(
-    identity: &SshConnectionIdentity,
+    identity: &RemoteConnectionIdentity,
     cx: &App,
 ) -> Result<Vec<SshPortForwardOption>, ForwardUpdateError> {
     let connections = RemoteSettings::get_global(cx)
         .ssh_connections()
-        .filter(|connection| identity.matches(connection))
+        .filter(|connection| ssh_identity_matches_connection(identity, connection))
         .collect::<Vec<_>>();
 
     match connections.as_slice() {
@@ -702,14 +709,16 @@ fn read_forwards(
 
 fn apply_settings_change(
     settings: &mut settings::RemoteSettingsContent,
-    identity: &SshConnectionIdentity,
+    identity: &RemoteConnectionIdentity,
     change: ForwardChange,
 ) -> Result<Vec<SshPortForwardOption>, String> {
     let mut connections = settings.ssh_connections.clone().unwrap_or_default();
     let matching_indices = connections
         .iter()
         .enumerate()
-        .filter_map(|(index, connection)| identity.matches(connection).then_some(index))
+        .filter_map(|(index, connection)| {
+            ssh_identity_matches_connection(identity, connection).then_some(index)
+        })
         .collect::<Vec<_>>();
 
     if matching_indices.len() > 1 {
@@ -731,6 +740,14 @@ fn apply_settings_change(
                 original: None,
                 replacement,
             } => {
+                let RemoteConnectionIdentity::Ssh {
+                    host,
+                    username,
+                    port,
+                } = identity
+                else {
+                    return Err(ForwardUpdateError::ConnectionChanged.message().to_owned());
+                };
                 let forwards = apply_forward_change(
                     Vec::new(),
                     ForwardChange::Upsert {
@@ -740,9 +757,9 @@ fn apply_settings_change(
                 )
                 .map_err(|error| error.message().to_owned())?;
                 connections.push(SshConnection {
-                    host: identity.host.clone(),
-                    username: identity.username.clone(),
-                    port: identity.port,
+                    host: host.clone(),
+                    username: username.clone(),
+                    port: *port,
                     port_forwards: Some(forwards.clone()),
                     ..Default::default()
                 });
@@ -967,14 +984,14 @@ mod tests {
 
     fn assert_persisted_connections(
         cx: &mut gpui::VisualTestContext,
-        identity: &SshConnectionIdentity,
+        identity: &RemoteConnectionIdentity,
         target_forwards: &[SshPortForwardOption],
     ) {
         let connections = cx.update(|_, cx| read_ssh_connections(cx));
         assert_eq!(connections.len(), 2);
         let Some(target_connection) = connections
             .iter()
-            .find(|connection| identity.matches(connection))
+            .find(|connection| ssh_identity_matches_connection(identity, connection))
         else {
             panic!("target SSH settings entry was not preserved");
         };
@@ -1084,18 +1101,17 @@ mod tests {
 
     #[test]
     fn settings_edits_preserve_other_connection_fields() {
-        let identity = SshConnectionIdentity {
-            host: "example.com".to_owned(),
-            username: Some("zed".to_owned()),
-            port: Some(2222),
-        };
+        let host = "example.com".to_owned();
+        let username = Some("zed".to_owned());
+        let port = Some(2222);
+        let identity = ssh_connection_identity(host.clone(), username.clone(), port);
         let existing = forward(None, 8080, None, 80);
         let replacement = forward(Some("localhost"), 8081, Some("service"), 80);
         let mut settings_content = settings::RemoteSettingsContent {
             ssh_connections: Some(vec![SshConnection {
-                host: identity.host.clone(),
-                username: identity.username.clone(),
-                port: identity.port,
+                host,
+                username,
+                port,
                 nickname: Some("Development server".to_owned()),
                 args: vec!["-C".to_owned()],
                 port_forwards: Some(vec![existing.clone()]),
@@ -1134,11 +1150,7 @@ mod tests {
 
     #[test]
     fn adding_a_forward_creates_a_minimal_settings_entry_when_needed() {
-        let identity = SshConnectionIdentity {
-            host: "example.com".to_owned(),
-            username: Some("zed".to_owned()),
-            port: None,
-        };
+        let identity = ssh_connection_identity("example.com", Some("zed".to_owned()), None);
         let replacement = forward(None, 8080, None, 80);
         let mut settings_content = settings::RemoteSettingsContent::default();
 
@@ -1160,7 +1172,7 @@ mod tests {
                 .is_some_and(|connections| {
                     connections.len() == 1
                         && connections.first().is_some_and(|connection| {
-                            identity.matches(connection)
+                            ssh_identity_matches_connection(&identity, connection)
                                 && connection.port_forwards == Some(vec![replacement])
                         })
                 })
@@ -1169,16 +1181,13 @@ mod tests {
 
     #[test]
     fn failed_settings_edits_leave_the_settings_list_unchanged() {
-        let identity = SshConnectionIdentity {
-            host: "example.com".to_owned(),
-            username: None,
-            port: None,
-        };
+        let host = "example.com".to_owned();
+        let identity = ssh_connection_identity(host.clone(), None, None);
         let current = forward(None, 8080, None, 80);
         let stale = forward(None, 8081, None, 80);
         let mut settings_content = settings::RemoteSettingsContent {
             ssh_connections: Some(vec![SshConnection {
-                host: identity.host.clone(),
+                host,
                 port_forwards: Some(vec![current]),
                 ..Default::default()
             }]),
@@ -1202,19 +1211,16 @@ mod tests {
 
     #[test]
     fn duplicate_connection_and_forward_entries_are_rejected_as_ambiguous() {
-        let identity = SshConnectionIdentity {
-            host: "example.com".to_owned(),
-            username: None,
-            port: None,
-        };
+        let host = "example.com".to_owned();
+        let identity = ssh_connection_identity(host.clone(), None, None);
         let mut settings_content = settings::RemoteSettingsContent {
             ssh_connections: Some(vec![
                 SshConnection {
-                    host: identity.host.clone(),
+                    host: host.clone(),
                     ..Default::default()
                 },
                 SshConnection {
-                    host: identity.host.clone(),
+                    host,
                     ..Default::default()
                 },
             ]),
@@ -1503,21 +1509,22 @@ mod tests {
             app_state
         });
         let fs = app_state.fs.as_fake();
-        let target_identity = SshConnectionIdentity {
-            host: "example.com".to_owned(),
-            username: Some("zed".to_owned()),
-            port: Some(2222),
-        };
-        let settings_identity = target_identity.clone();
+        let target_host = "example.com".to_owned();
+        let target_username = Some("zed".to_owned());
+        let target_port = Some(2222);
+        let target_identity =
+            ssh_connection_identity(target_host.clone(), target_username.clone(), target_port);
+        let settings_host = target_host.clone();
+        let settings_username = target_username.clone();
         let initial_forward = forward(None, 8080, None, 80);
         let unrelated_forward = forward(Some("localhost"), 7070, Some("other"), 70);
         let initial_settings_write = cx.update(|cx| {
             update_settings_file_with_completion(fs.clone(), cx, move |settings, _| {
                 settings.remote.ssh_connections = Some(vec![
                     SshConnection {
-                        host: settings_identity.host,
-                        username: settings_identity.username,
-                        port: settings_identity.port,
+                        host: settings_host,
+                        username: settings_username,
+                        port: target_port,
                         nickname: Some("Development server".to_owned()),
                         args: vec!["-C".to_owned()],
                         port_forwards: Some(vec![initial_forward]),
@@ -1541,9 +1548,9 @@ mod tests {
             .expect("initial settings should be written");
         let project = Project::test(fs.clone(), [], cx).await;
         let options = SshConnectionOptions {
-            host: "example.com".to_owned().into(),
-            username: Some("zed".to_owned()),
-            port: Some(2222),
+            host: target_host.into(),
+            username: target_username,
+            port: target_port,
             nickname: Some("Development server".to_owned()),
             ..Default::default()
         };
@@ -1603,16 +1610,15 @@ mod tests {
             app_state
         });
         let fs = app_state.fs.as_fake();
-        let identity = SshConnectionIdentity {
-            host: "example.com".to_owned(),
-            username: Some("zed".to_owned()),
-            port: Some(2222),
-        };
+        let host = "example.com".to_owned();
+        let username = Some("zed".to_owned());
+        let port = Some(2222);
+        let identity = ssh_connection_identity(host.clone(), username.clone(), port);
         let original_forward = forward(None, 8080, None, 80);
         let initial_connection = SshConnection {
-            host: identity.host.clone(),
-            username: identity.username.clone(),
-            port: identity.port,
+            host: host.clone(),
+            username: username.clone(),
+            port,
             nickname: Some("Development server".to_owned()),
             args: vec!["-C".to_owned()],
             port_forwards: Some(vec![original_forward.clone()]),
@@ -1630,9 +1636,9 @@ mod tests {
             .expect("initial settings should be written");
         let project = Project::test(fs.clone(), [], cx).await;
         let options = SshConnectionOptions {
-            host: identity.host.clone().into(),
-            username: identity.username.clone(),
-            port: identity.port,
+            host: host.into(),
+            username,
+            port,
             nickname: Some("Development server".to_owned()),
             ..Default::default()
         };
