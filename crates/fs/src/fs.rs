@@ -166,9 +166,6 @@ pub trait Fs: Send + Sync {
     /// Whether `path` exists, without following a final symlink. Synchronous
     /// because watches are registered synchronously by the worktree scanner.
     fn path_exists(&self, path: &Path) -> bool;
-    /// Whether `path` is a directory, following symlinks. Synchronous like
-    /// `path_exists`, for the watcher to choose what to register.
-    fn path_is_dir(&self, path: &Path) -> bool;
     /// Whether the volume holding `path` compares file names case-sensitively.
     fn is_path_case_sensitive(&self, path: &Path) -> bool;
     /// Whether `path` sits on a filesystem where native file watching does not
@@ -1200,10 +1197,6 @@ impl Fs for RealFs {
         std::fs::symlink_metadata(path).is_ok()
     }
 
-    fn path_is_dir(&self, path: &Path) -> bool {
-        std::fs::metadata(path).is_ok_and(|metadata| metadata.is_dir())
-    }
-
     fn is_path_case_sensitive(&self, path: &Path) -> bool {
         !fs_watcher::case_insensitive_path(path)
     }
@@ -1897,7 +1890,7 @@ impl FakeFs {
         {
             let mut state = state.lock();
             state.watches.event_sink = Some(Box::new(native_watcher.event_sink()));
-            state.watches.inode_bound = !native_watcher.is_recursive();
+            state.watches.inode_bound = fs_watcher::native_file_watch_is_inode_bound();
         }
         let poll_watcher =
             fs_watcher::OsWatcher::new(fs_watcher::OsWatcherKind::Poll, executor.clone());
@@ -2891,10 +2884,7 @@ impl FakeFs {
             }
         };
 
-        state.emit_event([(path.clone(), Some(PathEventKind::Removed))]);
-        if removed.as_ref().is_some_and(|entry| entry.is_file()) {
-            state.drop_inode_bound_watch(&path);
-        }
+        state.emit_event([(path, Some(PathEventKind::Removed))]);
         Ok(removed)
     }
 
@@ -2958,10 +2948,6 @@ impl FakeFs {
 impl FakeFsEntry {
     fn is_file(&self) -> bool {
         matches!(self, Self::File { .. })
-    }
-
-    fn is_dir(&self) -> bool {
-        matches!(self, Self::Dir { .. })
     }
 
     fn is_symlink(&self) -> bool {
@@ -3541,13 +3527,6 @@ impl Fs for FakeFs {
             .lock()
             .try_entry(&normalize_path(path), false)
             .is_some()
-    }
-
-    fn path_is_dir(&self, path: &Path) -> bool {
-        self.state
-            .lock()
-            .try_entry(&normalize_path(path), true)
-            .is_some_and(|(entry, _)| entry.is_dir())
     }
 
     fn is_path_case_sensitive(&self, _path: &Path) -> bool {

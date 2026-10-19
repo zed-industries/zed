@@ -81,20 +81,17 @@ mod tests {
 
         // `atomic_write` replaces the file by rename, which gives it a new
         // inode. On Linux an inotify watch on the file dies with the old one.
-        fs.atomic_write(settings_path.clone(), "B".to_owned())
-            .await
-            .unwrap();
-        assert_eq!(rx.next().await.as_deref(), Some("B"));
-
-        fs.atomic_write(settings_path.clone(), "C".to_owned())
-            .await
-            .unwrap();
-        cx.run_until_parked();
-        assert_eq!(
-            rx.try_recv().ok().as_deref(),
-            Some("C"),
-            "the second replacement must still be delivered"
-        );
+        for content in ["B", "C"] {
+            fs.atomic_write(settings_path.clone(), content.to_owned())
+                .await
+                .unwrap();
+            cx.run_until_parked();
+            assert_eq!(
+                rx.try_recv().ok().as_deref(),
+                Some(content),
+                "every replacement must be delivered"
+            );
+        }
     }
 
     #[gpui::test]

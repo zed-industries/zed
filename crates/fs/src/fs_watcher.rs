@@ -33,6 +33,40 @@ impl OsWatcherKind {
     }
 }
 
+/// Whether the native backend binds a watch on a file to the file's inode.
+/// inotify does, so the watch dies when the file is replaced by rename.
+/// FSEvents and Windows watches follow the path, and a kqueue directory
+/// watch does not report writes to the files inside it, so only inotify gets
+/// the parent-directory registration for a file.
+pub(crate) fn native_file_watch_is_inode_bound() -> bool {
+    cfg!(target_os = "linux")
+}
+
+/// The directory to register at the OS level in place of `path`, when a
+/// native watch on the file itself would be lost at the first replacement by
+/// rename (atomic saves, `sed -i`, `git checkout`). The directory watch
+/// reports the file's events by name and survives; the registration keeps
+/// `path` as its root so only the file's events reach the subscriber.
+///
+/// `None` keeps the plain watch: for a directory, a poll watch, a backend
+/// whose file watches follow the path, a path whose metadata cannot be read
+/// (registering it fails or succeeds as before), and a parent reached
+/// through a symlink. inotify hands out one descriptor per inode and notify
+/// keeps one path per descriptor, so registering the alias would relabel
+/// the events of whoever watches the real directory.
+async fn parent_for_file_watch(fs: &dyn Fs, path: &Path) -> Option<Arc<Path>> {
+    if !native_file_watch_is_inode_bound() || fs.requires_poll_watcher(path) {
+        return None;
+    }
+    let metadata = fs.metadata(path).await.ok().flatten()?;
+    if metadata.is_dir {
+        return None;
+    }
+    let parent = path.parent()?;
+    let canonical_parent = fs.canonicalize(parent).await.ok()?;
+    (canonical_parent == parent).then(|| Arc::from(parent))
+}
+
 pub(crate) async fn watch(
     fs: Arc<dyn Fs>,
     native_watcher: Arc<OsWatcher>,
@@ -47,7 +81,7 @@ pub(crate) async fn watch(
     let (tx, rx) = async_channel::unbounded();
     let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
 
-    let watcher: Arc<dyn Watcher> = Arc::new(FsWatcher::new(
+    let watcher = Arc::new(FsWatcher::new(
         native_watcher,
         poll_watcher,
         fs.clone(),
@@ -56,9 +90,11 @@ pub(crate) async fn watch(
         pending_paths.clone(),
     ));
 
-    if let Err(e) = watcher.add(path) {
+    let os_path = parent_for_file_watch(fs.as_ref(), path).await;
+    if let Err(e) = watcher.add_path(path.into(), os_path) {
         log::warn!("Failed to watch {}:\n{e}", path.display());
     }
+    let watcher: Arc<dyn Watcher> = watcher;
 
     // Check if path is a symlink and follow the target parent
     if let Some(mut target) = fs.read_link(path).await.ok() {
@@ -118,6 +154,9 @@ pub struct FsWatcher {
 struct FsWatcherRegistration {
     id: WatcherRegistrationId,
     os_watcher: Arc<OsWatcher>,
+    /// The path registered with the backend: the path itself, or its parent
+    /// directory for a file on inotify (see `parent_for_file_watch`).
+    os_path: Arc<Path>,
 }
 
 impl FsWatcher {
@@ -141,16 +180,47 @@ impl FsWatcher {
         }
     }
 
-    fn add_existing_path(&self, path: Arc<Path>) -> anyhow::Result<()> {
+    /// `Watcher::add` with the path to register at the OS level when it
+    /// differs from `path` (see `parent_for_file_watch`).
+    fn add_path(&self, path: Arc<Path>, os_path: Option<Arc<Path>>) -> anyhow::Result<()> {
+        log::trace!("watcher add: {path:?}");
+
+        if path_covered_by_recursive_registration(
+            &self.registrations.lock(),
+            SanitizedPath::new(&path),
+        ) {
+            log::trace!("path to watch is covered by an existing registration: {path:?}");
+            return Ok(());
+        }
+
+        if self
+            .pending_registrations
+            .lock()
+            .contains_key(path.as_ref())
+        {
+            log::trace!("path to watch is already pending: {path:?}");
+            return Ok(());
+        }
+
+        if !self.fs.path_exists(&path) {
+            self.add_pending_path(path);
+            return Ok(());
+        }
+
+        self.add_existing_path(path, os_path)
+    }
+
+    fn add_existing_path(&self, path: Arc<Path>, os_path: Option<Arc<Path>>) -> anyhow::Result<()> {
         let case_insensitive = !self.fs.is_path_case_sensitive(&path);
         let key = WatchKey::for_registration(SanitizedPath::new(&path), case_insensitive);
         let existing = self.registrations.lock().get(&key).cloned();
         if let Some(existing) = existing {
             log::trace!("path to watch is already registered: {path:?}");
+            let os_path = SanitizedPath::new(&existing.os_path);
             return existing.os_watcher.rewatch_if_stale(
                 &mut existing.os_watcher.state.lock(),
-                SanitizedPath::new(&path),
-                &key,
+                os_path,
+                &WatchKey::for_registration(os_path, case_insensitive),
             );
         }
         match register_existing_path(
@@ -158,6 +228,7 @@ impl FsWatcher {
             &self.poll_watcher,
             self.fs.as_ref(),
             path.clone(),
+            os_path,
             case_insensitive,
             self.tx.clone(),
             self.pending_path_events.clone(),
@@ -215,32 +286,7 @@ impl Drop for FsWatcher {
 
 impl Watcher for FsWatcher {
     fn add(&self, path: &std::path::Path) -> anyhow::Result<()> {
-        log::trace!("watcher add: {path:?}");
-
-        let path: Arc<Path> = path.into();
-        if path_covered_by_recursive_registration(
-            &self.registrations.lock(),
-            SanitizedPath::new(&path),
-        ) {
-            log::trace!("path to watch is covered by an existing registration: {path:?}");
-            return Ok(());
-        }
-
-        if self
-            .pending_registrations
-            .lock()
-            .contains_key(path.as_ref())
-        {
-            log::trace!("path to watch is already pending: {path:?}");
-            return Ok(());
-        }
-
-        if !self.fs.path_exists(&path) {
-            self.add_pending_path(path);
-            return Ok(());
-        }
-
-        self.add_existing_path(path)
+        self.add_path(path.into(), None)
     }
 
     fn remove(&self, path: &std::path::Path) -> anyhow::Result<()> {
@@ -316,6 +362,7 @@ fn register_existing_path(
     poll_watcher: &Arc<OsWatcher>,
     fs: &dyn Fs,
     path: Arc<Path>,
+    os_path: Option<Arc<Path>>,
     case_insensitive: bool,
     tx: async_channel::Sender<()>,
     pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
@@ -332,35 +379,51 @@ fn register_existing_path(
         native_watcher
     };
     let root_path = SanitizedPath::new_arc(path.as_ref());
-    let path_for_callback = path.clone();
-    // inotify binds a watch on a file to its inode, so the watch is lost when
-    // the file is replaced by rename (atomic saves, `sed -i`, `git checkout`).
-    // A watch on the parent directory reports the file's events by name and
-    // survives the replacement; the callback keeps only events under `path`.
-    // Recursive native watches (FSEvents, Windows) follow the path already,
-    // and a poll watch on the parent would scan its whole tree.
-    let os_path: Arc<Path> = match path.parent() {
-        Some(parent) if !os_watcher.is_recursive() && !fs.path_is_dir(&path) => parent.into(),
-        _ => path.clone(),
-    };
-    let Some(registration_id) =
-        os_watcher.add(os_path, case_insensitive, move |event: &notify::Event| {
+    let callback = || {
+        let tx = tx.clone();
+        let pending_path_events = pending_path_events.clone();
+        let root_path = root_path.clone();
+        let path = path.clone();
+        move |event: &notify::Event| {
             log::trace!("watcher received event: {event:?}");
             push_notify_event(
                 &tx,
                 &pending_path_events,
                 &root_path,
                 case_insensitive,
-                path_for_callback.as_ref(),
+                path.as_ref(),
                 event,
             );
-        })?
-    else {
+        }
+    };
+    let (registration_id, os_path) = match os_path {
+        Some(os_path) => match os_watcher.add(os_path.clone(), case_insensitive, callback()) {
+            Ok(registration_id) => (registration_id, os_path),
+            // Watching a directory needs read permission on it, which a
+            // readable file inside does not imply; the plain watch still works
+            // there, short of surviving a replacement.
+            Err(error) => {
+                log::warn!(
+                    "failed to watch {os_path:?} for {path:?}: {error}; watching the path itself"
+                );
+                (
+                    os_watcher.add(path.clone(), case_insensitive, callback())?,
+                    path.clone(),
+                )
+            }
+        },
+        None => (
+            os_watcher.add(path.clone(), case_insensitive, callback())?,
+            path.clone(),
+        ),
+    };
+    let Some(registration_id) = registration_id else {
         return Ok(None);
     };
     Ok(Some(FsWatcherRegistration {
         id: registration_id,
         os_watcher: os_watcher.clone(),
+        os_path,
     }))
 }
 
@@ -630,6 +693,7 @@ async fn poll_path_until_created(
             return;
         }
 
+        let os_path = parent_for_file_watch(fs.as_ref(), &path).await;
         let register = {
             let path = path.clone();
             let tx = tx.clone();
@@ -643,6 +707,7 @@ async fn poll_path_until_created(
                     &poll_watcher,
                     fs.as_ref(),
                     path,
+                    os_path,
                     case_insensitive,
                     tx,
                     pending_path_events,
@@ -1540,7 +1605,7 @@ mod tests {
         assert_eq!(backend.unwatch_calls, &[parent.to_path_buf()]);
     }
 
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[cfg(target_os = "linux")]
     #[gpui::test]
     async fn file_watch_registers_parent_and_survives_replacement(cx: &mut gpui::TestAppContext) {
         let fs = crate::FakeFs::new(cx.executor());
@@ -1590,6 +1655,105 @@ mod tests {
                 batch.iter().all(|event| event.path == config_path),
                 "only the watched file's events reach the stream: {batch:?}"
             );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[gpui::test]
+    async fn file_under_symlinked_parent_keeps_the_plain_watch(cx: &mut gpui::TestAppContext) {
+        let fs = crate::FakeFs::new(cx.executor());
+        fs.insert_tree("/real", serde_json::json!({ "config.json": "A" }))
+            .await;
+        fs.create_symlink(Path::new("/alias"), PathBuf::from("/real"))
+            .await
+            .expect("create symlink");
+
+        // `/alias` and `/real` are one inode to inotify, and notify keeps one
+        // path per descriptor, so registering `/alias` would relabel the
+        // events of a subscriber watching `/real`.
+        let (_events, _watcher) = fs
+            .watch(Path::new("/alias/config.json"), Duration::ZERO)
+            .await;
+        cx.run_until_parked();
+        assert_eq!(fs.watch_calls(), [PathBuf::from("/alias/config.json")]);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[gpui::test]
+    async fn re_adding_a_file_repairs_its_stale_parent_watch(cx: &mut gpui::TestAppContext) {
+        let fs = crate::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            serde_json::json!({ "dir": { "config.json": "A" } }),
+        )
+        .await;
+        let config_path = PathBuf::from("/root/dir/config.json");
+
+        let (_events, watcher) = fs.watch(&config_path, Duration::ZERO).await;
+        cx.run_until_parked();
+        assert_eq!(fs.watch_calls(), [PathBuf::from("/root/dir")]);
+
+        // Deleting the directory marks its registration stale; recreating it
+        // and re-adding the file must reinstall the directory watch.
+        fs.remove_dir(
+            Path::new("/root/dir"),
+            crate::RemoveOptions {
+                recursive: true,
+                ignore_if_not_exists: false,
+            },
+        )
+        .await
+        .expect("remove dir");
+        fs.insert_tree(
+            "/root",
+            serde_json::json!({ "dir": { "config.json": "B" } }),
+        )
+        .await;
+        cx.run_until_parked();
+
+        watcher.add(&config_path).expect("re-add file");
+        assert_eq!(
+            fs.watch_calls(),
+            [PathBuf::from("/root/dir"), PathBuf::from("/root/dir")]
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[gpui::test]
+    async fn file_created_after_the_watch_starts_gets_the_directory_watch(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs = crate::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({ "dir": {} }))
+            .await;
+        let config_path = PathBuf::from("/root/dir/config.json");
+
+        let (mut events, _watcher) = fs.watch(&config_path, Duration::ZERO).await;
+        cx.run_until_parked();
+        assert_eq!(fs.watch_calls(), Vec::<PathBuf>::new());
+
+        fs.insert_file(&config_path, b"A".to_vec()).await;
+        cx.executor().advance_clock(poll_interval());
+        cx.run_until_parked();
+        assert_eq!(fs.watch_calls(), [PathBuf::from("/root/dir")]);
+        let created = events
+            .next()
+            .now_or_never()
+            .flatten()
+            .expect("creation batch");
+        assert!(created.iter().all(|event| event.path == config_path));
+
+        for content in ["B", "C"] {
+            fs.atomic_write(config_path.clone(), content.to_owned())
+                .await
+                .expect("atomic write");
+            cx.run_until_parked();
+            let batch = events
+                .next()
+                .now_or_never()
+                .flatten()
+                .expect("replacement batch");
+            assert!(batch.iter().all(|event| event.path == config_path));
         }
     }
 
