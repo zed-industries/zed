@@ -5,7 +5,8 @@ Usage: python3 crates/vcs/tests/fixture_provider.py --scenario normal --events F
 Feed Content-Length framed JSON-RPC. `--events` records test-only lifecycle events.
 Scenarios: normal, reply-eof, crash, error, pending, malformed, oversized,
 stderr-flood, descendant, early-exit, reordered, hang-after-exit,
-exit-leaves-descendant, polling-content, changing-slow-content. `reordered` holds the first
+exit-leaves-descendant, polling-content, changing-slow-content, pending-refresh.
+`reordered` holds the first
 snapshot, then sends the second response before the first, even after cancellation.
 `descendant` creates one idle child in the
 same process group so the host's forced-close ownership can be tested.
@@ -15,6 +16,8 @@ same process group so the host's forced-close ownership can be tested.
 later snapshots from r42 to r43 while older snapshot contents remain pinned.
 `changing-slow-content` changes each snapshot revision and leaves content requests
 pending while still processing snapshots, cancellation, and shutdown.
+`pending-refresh` replies to the first snapshot, then holds later snapshots and
+records refresh-held without blocking cancellation or shutdown.
 """
 import argparse
 import json
@@ -29,7 +32,7 @@ EOF_TEXT = "baseline — r42\n" * 8192
 SCENARIOS = ("normal", "reply-eof", "crash", "error", "pending", "malformed",
              "oversized", "stderr-flood", "descendant", "early-exit", "reordered",
              "hang-after-exit", "exit-leaves-descendant", "polling-content",
-             "changing-slow-content")
+             "changing-slow-content", "pending-refresh")
 
 
 def read_message():
@@ -119,7 +122,7 @@ def main():
             return 0
         if method == "$/cancelRequest":
             record("cancel-received", id=params["id"])
-            if args.scenario not in ("reordered", "changing-slow-content"):
+            if args.scenario not in ("reordered", "changing-slow-content", "pending-refresh"):
                 changed()
             continue
         if method == "initialize":
@@ -133,6 +136,9 @@ def main():
                                                                           {"id": "previous", "label": "Previous changes"}]}])
         elif method == "vcs/snapshot":
             snapshots += 1
+            if args.scenario == "pending-refresh" and snapshots > 1:
+                record("refresh-held", id=identifier)
+                continue
             if args.scenario == "crash":
                 if snapshots == 2:
                     sys.stderr.write("fixture crash\n")

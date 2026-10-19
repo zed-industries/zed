@@ -574,7 +574,12 @@ async fn multiple_external_scopes_keep_baselines_and_lifetimes_independent(
                 .is_some_and(|repository| repository.key == second_repository.key)
     })
     .await;
-    first_connection.shutdown().await.unwrap();
+    provider_event(
+        fixture.directory.path().join("multiple-scopes.jsonl"),
+        "exit-received",
+    )
+    .await;
+    assert!(!first_connection.is_alive());
     fixture.store.read_with(cx, |store, _| {
         let remaining = &store.repositories[&second_repository.key];
         assert!(Arc::ptr_eq(&remaining.connection, &second_connection));
@@ -1094,4 +1099,122 @@ async fn closing_buffer_before_snapshot_completes_resolves_diff_waiter(cx: &mut 
         .update(cx, |store, cx| store.refresh(&repository.key, cx));
     assert!(format!("{:#}", waiting.await.unwrap_err()).contains("VCS diff buffer closed"));
     stop(&fixture, cx).await;
+}
+
+#[gpui::test]
+async fn refresh_progress_distinguishes_explicit_actions_from_background_work(
+    cx: &mut TestAppContext,
+) {
+    let fixture = fixture(cx, false).await;
+    trust(&fixture, cx);
+    let initial_progress = Arc::new(AtomicUsize::new(0));
+    let observer = initial_progress.clone();
+    let _subscription = cx.update(|cx| {
+        cx.observe(&fixture.store, move |store, cx| {
+            for repository in store.read(cx).repositories() {
+                if repository.loading && repository.snapshot.is_none() {
+                    assert!(repository.show_loading);
+                    observer.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+        })
+    });
+    FixtureExtension::new("progress", fixture.directory.path(), "normal").register(cx);
+    let repository = ready(&fixture, cx).await;
+    assert!(initial_progress.load(Ordering::SeqCst) > 0);
+    fixture.store.update(cx, |store, cx| {
+        store.poll(cx);
+        let view = &store.repositories.get(&repository.key).unwrap().view;
+        assert!(view.loading);
+        assert!(
+            !view.show_loading,
+            "ordinary background refresh should remain quiet"
+        );
+    });
+    ready(&fixture, cx).await;
+    fixture.store.update(cx, |store, cx| {
+        store.refresh_all(cx);
+        assert!(
+            store
+                .repositories
+                .get(&repository.key)
+                .unwrap()
+                .view
+                .show_loading
+        );
+        store.refresh_with_reason(&repository.key, RefreshReason::Background, cx);
+        assert!(
+            store
+                .repositories
+                .get(&repository.key)
+                .unwrap()
+                .view
+                .show_loading,
+            "background supersession must preserve explicit progress"
+        );
+    });
+    ready(&fixture, cx).await;
+    fixture.store.update(cx, |store, cx| {
+        store
+            .set_baseline(&repository.key, "previous".into(), cx)
+            .unwrap();
+        let view = &store.repositories.get(&repository.key).unwrap().view;
+        assert!(view.loading && view.show_loading && view.snapshot.is_none());
+    });
+    let updated = ready(&fixture, cx).await;
+    assert!(!updated.show_loading);
+    stop(&fixture, cx).await;
+}
+
+#[gpui::test]
+async fn slow_background_refresh_reveals_progress_and_preserves_failures(cx: &mut TestAppContext) {
+    let fixture = fixture(cx, false).await;
+    trust(&fixture, cx);
+    FixtureExtension::new("slow-progress", fixture.directory.path(), "pending-refresh")
+        .register(cx);
+    let repository = ready(&fixture, cx).await;
+    fixture.store.update(cx, |store, cx| store.poll(cx));
+    provider_event(
+        fixture.directory.path().join("slow-progress.jsonl"),
+        "refresh-held",
+    )
+    .await;
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    fixture.store.read_with(cx, |store, _| {
+        let view = &store.repositories.get(&repository.key).unwrap().view;
+        assert!(view.loading && !view.show_loading);
+    });
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.condition(&fixture.store, |store, _| {
+        store
+            .repositories
+            .get(&repository.key)
+            .unwrap()
+            .view
+            .show_loading
+    })
+    .await;
+    let connection = fixture.store.read_with(cx, |store, _| {
+        let repository = store.repositories.get(&repository.key).unwrap();
+        assert!(repository.view.loading);
+        repository.connection.clone()
+    });
+    connection.shutdown().await.unwrap();
+    cx.condition(&fixture.store, |store, _| {
+        store
+            .repositories
+            .get(&repository.key)
+            .unwrap()
+            .view
+            .error
+            .is_some()
+    })
+    .await;
+    fixture.store.read_with(cx, |store, _| {
+        let view = &store.repositories.get(&repository.key).unwrap().view;
+        assert!(!view.loading && !view.show_loading);
+        assert!(view.error.is_some());
+    });
+    fixture.store.update(cx, |store, cx| store.stop_all(cx));
 }

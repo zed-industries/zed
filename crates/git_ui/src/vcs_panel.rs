@@ -1,4 +1,5 @@
 use std::{
+    any::TypeId,
     collections::{BTreeMap, HashMap},
     ops::Range,
 };
@@ -21,8 +22,9 @@ use ui::{Button, Color, IconButton, IconName, Label, ListItem, prelude::*};
 use util::ResultExt as _;
 use vcs::{Change, ChangeStatus, ContentKind};
 use workspace::{
-    Panel, Workspace,
+    Item, Panel, Workspace,
     dock::{DockPosition, PanelEvent},
+    searchable::SearchableItemHandle,
 };
 
 actions!(
@@ -89,8 +91,73 @@ fn show_diagnostics(workspace: &mut Workspace, window: &mut Window, cx: &mut Con
     });
     let multibuffer = cx
         .new(|cx| MultiBuffer::singleton(buffer, cx).with_title("External VCS diagnostics".into()));
-    let editor = cx.new(|cx| Editor::for_multibuffer(multibuffer, None, window, cx));
-    workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+    let editor = cx.new(|cx| {
+        let mut editor = Editor::for_multibuffer(multibuffer, None, window, cx);
+        editor.set_should_serialize(false, cx);
+        editor
+    });
+    let view = cx.new(|_| VcsDiagnosticsView { editor });
+    workspace.add_item_to_active_pane(Box::new(view), None, true, window, cx);
+}
+
+struct VcsDiagnosticsView {
+    editor: Entity<Editor>,
+}
+
+impl EventEmitter<()> for VcsDiagnosticsView {}
+
+impl Focusable for VcsDiagnosticsView {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.editor.focus_handle(cx)
+    }
+}
+
+impl Render for VcsDiagnosticsView {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        self.editor.clone()
+    }
+}
+
+impl Item for VcsDiagnosticsView {
+    type Event = ();
+
+    fn tab_content_text(&self, detail: usize, cx: &App) -> SharedString {
+        self.editor.read(cx).tab_content_text(detail, cx)
+    }
+
+    fn capability(&self, cx: &App) -> Capability {
+        self.editor.read(cx).capability(cx)
+    }
+
+    fn added_to_workspace(
+        &mut self,
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.editor.update(cx, |editor, cx| {
+            editor.added_to_workspace(workspace, window, cx);
+        });
+    }
+
+    fn act_as_type<'a>(
+        &'a self,
+        type_id: TypeId,
+        self_handle: &'a Entity<Self>,
+        _: &'a App,
+    ) -> Option<gpui::AnyEntity> {
+        if type_id == TypeId::of::<Self>() {
+            Some(self_handle.clone().into())
+        } else if type_id == TypeId::of::<Editor>() {
+            Some(self.editor.clone().into())
+        } else {
+            None
+        }
+    }
+
+    fn as_searchable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn SearchableItemHandle>> {
+        Some(Box::new(self.editor.clone()))
+    }
 }
 
 #[derive(Clone)]
@@ -481,7 +548,7 @@ impl Render for VcsPanel {
                             .color(Color::Muted),
                     )
                     .child(h_flex().flex_wrap().gap_1().children(baselines))
-                    .when(repository.loading, |element| {
+                    .when(repository.show_loading, |element| {
                         element.child(Label::new("Loading changes…").color(Color::Muted))
                     })
                     .when_some(repository.error.clone(), |element, error| {
@@ -548,7 +615,7 @@ impl Render for VcsPanel {
                     && !self
                         .repositories
                         .iter()
-                        .any(|repository| repository.loading),
+                        .any(|repository| repository.show_loading),
                 |element| {
                     element.child(
                         Label::new(if self.repositories.is_empty() {
@@ -621,6 +688,49 @@ mod tests {
     use settings::{DiffViewStyle, SettingsStore};
     use std::sync::Arc;
     use workspace::MultiWorkspace;
+
+    #[gpui::test]
+    async fn diagnostics_is_read_only_searchable_and_not_persisted(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            language_model::init(cx);
+            editor::init(cx);
+            crate::init(cx);
+        });
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        workspace.update_in(cx, |workspace, window, cx| {
+            show_diagnostics(workspace, window, cx);
+            let item = workspace
+                .active_item(cx)
+                .expect("Diagnostics tab must open");
+            assert!(
+                item.to_serializable_item_handle(cx).is_none(),
+                "Temporary diagnostics must not enter workspace persistence"
+            );
+            assert_eq!(item.capability(cx), Capability::ReadOnly);
+            assert!(item.to_searchable_item_handle(cx).is_some());
+            let editor = item
+                .act_as::<Editor>(cx)
+                .expect("Diagnostics exposes its editor");
+            assert_eq!(editor.read(cx).text(cx), "External VCS diagnostics");
+            assert!(!workspace::SerializableItem::should_serialize(
+                editor.read(cx),
+                &editor::EditorEvent::Saved,
+            ));
+            assert!(
+                editor
+                    .read(cx)
+                    .focus_handle(cx)
+                    .contains_focused(window, cx)
+            );
+        });
+    }
 
     #[gpui::test]
     async fn metadata_selection_is_not_an_error_and_cached_text_clears_prior_error(

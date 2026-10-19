@@ -102,7 +102,14 @@ pub struct VcsRepositorySnapshot {
     pub selected_baseline: String,
     pub snapshot: Option<Arc<Snapshot>>,
     pub loading: bool,
+    pub show_loading: bool,
     pub error: Option<SharedString>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RefreshReason {
+    Explicit,
+    Background,
 }
 
 #[derive(Clone, Debug)]
@@ -223,7 +230,7 @@ impl VcsStore {
                         .cloned()
                         .collect();
                     for key in keys {
-                        this.refresh(&key, cx);
+                        this.refresh_with_reason(&key, RefreshReason::Background, cx);
                     }
                     if !this
                         .repositories
@@ -515,7 +522,7 @@ impl VcsStore {
                                 .cloned()
                                 .collect();
                             for key in keys {
-                                this.refresh(&key, cx);
+                                this.refresh_with_reason(&key, RefreshReason::Background, cx);
                             }
                         }
                         ProviderNotification::Exited { message } => {
@@ -578,6 +585,7 @@ impl VcsStore {
                         descriptor,
                         snapshot: None,
                         loading: false,
+                        show_loading: false,
                         error: None,
                     },
                     connection: connection.clone(),
@@ -600,6 +608,7 @@ impl VcsStore {
                     repository.refresh_task = None;
                     repository.view.snapshot = None;
                     repository.view.loading = false;
+                    repository.view.show_loading = false;
                     repository.view.error = Some(
                         "Multiple VCS providers claim this folder; disable one provider".into(),
                     );
@@ -646,6 +655,7 @@ impl VcsStore {
             if let Some(state) = self.repositories.get_mut(&repository) {
                 state.generation += 1;
                 state.view.loading = false;
+                state.view.show_loading = false;
                 state.view.error = Some(message.clone().into());
                 state.view.snapshot = None;
                 state.refresh_task = None;
@@ -754,6 +764,15 @@ impl VcsStore {
     }
 
     pub fn refresh(&mut self, key: &VcsRepositoryId, cx: &mut Context<Self>) {
+        self.refresh_with_reason(key, RefreshReason::Explicit, cx);
+    }
+
+    fn refresh_with_reason(
+        &mut self,
+        key: &VcsRepositoryId,
+        reason: RefreshReason,
+        cx: &mut Context<Self>,
+    ) {
         if self
             .repositories
             .keys()
@@ -775,14 +794,37 @@ impl VcsStore {
         let baseline = repository.view.selected_baseline.clone();
         let connection = repository.connection.clone();
         let key = key.clone();
+        repository.view.show_loading = (repository.view.loading && repository.view.show_loading)
+            || reason == RefreshReason::Explicit
+            || repository.view.snapshot.is_none();
         repository.view.loading = true;
+        let show_loading = repository.view.show_loading;
         repository.refresh_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(Duration::from_millis(150))
                 .await;
-            let result = connection
-                .snapshot(key.repository_id.clone(), baseline.clone())
-                .await;
+            let request = connection.snapshot(key.repository_id.clone(), baseline.clone());
+            let result = if show_loading {
+                request.await
+            } else {
+                let slow_refresh = cx.background_executor().timer(Duration::from_secs(2));
+                match futures::future::select(Box::pin(request), Box::pin(slow_refresh)).await {
+                    futures::future::Either::Left((result, _)) => result,
+                    futures::future::Either::Right((_, request)) => {
+                        this.update(cx, |this, cx| {
+                            if let Some(repository) = this.repositories.get_mut(&key)
+                                && repository.generation == generation
+                                && repository.view.loading
+                            {
+                                repository.view.show_loading = true;
+                                this.notify(cx);
+                            }
+                        })
+                        .log_err();
+                        request.await
+                    }
+                }
+            };
             this.update(cx, |this, cx| {
                 let Some(repository) = this.repositories.get_mut(&key) else {
                     return;
@@ -793,6 +835,7 @@ impl VcsStore {
                     return;
                 }
                 repository.view.loading = false;
+                repository.view.show_loading = false;
                 let diff_changed = match result.and_then(|snapshot| {
                     snapshot.validate(&key.repository_id, &baseline)?;
                     Ok(snapshot)
@@ -874,7 +917,7 @@ impl VcsStore {
             .map(|(key, _)| key.clone())
             .collect();
         for key in keys {
-            self.refresh(&key, cx);
+            self.refresh_with_reason(&key, RefreshReason::Background, cx);
         }
     }
 
