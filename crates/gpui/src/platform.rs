@@ -9,7 +9,10 @@ pub mod layer_shell;
 /// Types for configuring parent-anchored popup windows such as menus, dropdowns and tooltips.
 pub mod popup;
 
-#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+#[cfg(all(
+    not(target_family = "wasm"),
+    any(test, feature = "test-support", feature = "bench-support")
+))]
 mod threaded_dispatcher;
 
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
@@ -176,7 +179,10 @@ pub(crate) use test::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream};
 
-#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+#[cfg(all(
+    not(target_family = "wasm"),
+    any(test, feature = "test-support", feature = "bench-support")
+))]
 pub use threaded_dispatcher::ThreadedDispatcher;
 
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
@@ -1451,6 +1457,9 @@ pub enum TasksIncluded {
 pub trait PlatformDispatcher: Send + Sync {
     fn is_main_thread(&self) -> bool;
     fn dispatch(&self, runnable: RunnableVariant, priority: Priority);
+
+    /// Dispatches synchronous work to a reusable pool separate from background workers.
+    fn dispatch_blocking(&self, runnable: RunnableVariant);
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority);
     fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant);
 
@@ -1488,7 +1497,10 @@ pub trait PlatformDispatcher: Send + Sync {
 
     // This cfg must match the `threaded_dispatcher` module's, which implements
     // this method whenever it compiles.
-    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+    #[cfg(all(
+        not(target_family = "wasm"),
+        any(test, feature = "test-support", feature = "bench-support")
+    ))]
     fn as_threaded(&self) -> Option<&ThreadedDispatcher> {
         None
     }

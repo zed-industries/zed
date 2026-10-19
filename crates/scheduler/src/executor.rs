@@ -244,6 +244,9 @@ impl BackgroundExecutor {
         self.spawn_inner(priority, TaskKind::Cooperative, future)
     }
 
+    /// Enqueues synchronous work through [`Scheduler::schedule_blocking`].
+    ///
+    /// Dropping the task does not cancel already running work.
     #[track_caller]
     pub fn spawn_blocking<R>(&self, work: impl FnOnce() -> R + Send + 'static) -> Task<R>
     where
@@ -262,7 +265,17 @@ impl BackgroundExecutor {
         F: Future + Send + 'static,
         F::Output: Send + 'static,
     {
-        let schedule = self.schedule_with_priority(priority);
+        let scheduler = Arc::downgrade(&self.scheduler);
+        let schedule = move |runnable| {
+            if let Some(scheduler) = scheduler.upgrade() {
+                match kind {
+                    TaskKind::Cooperative => {
+                        scheduler.schedule_background_with_priority(runnable, priority)
+                    }
+                    TaskKind::Blocking => scheduler.schedule_blocking(runnable),
+                }
+            }
+        };
         let location = Location::caller();
         let (runnable, task) = async_task::Builder::new()
             .metadata(RunnableMeta {
@@ -344,18 +357,6 @@ impl BackgroundExecutor {
             .clone()
             .spawn_dedicated(box_dedicated(f))
             .downcast::<Fut::Output>()
-    }
-
-    fn schedule_with_priority(
-        &self,
-        priority: Priority,
-    ) -> impl Fn(Runnable<RunnableMeta>) + Send + Sync + 'static {
-        let scheduler = Arc::downgrade(&self.scheduler);
-        move |runnable| {
-            if let Some(scheduler) = scheduler.upgrade() {
-                scheduler.schedule_background_with_priority(runnable, priority);
-            }
-        }
     }
 }
 

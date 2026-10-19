@@ -132,6 +132,7 @@ async-channel.workspace = true
 async-channel = { workspace = true, features = ["std"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
+blocking.workspace = true
 pollster.workspace = true
 
 [target.'cfg(any(target_os = "macos", target_os = "linux", target_os = "windows", target_os = "ios"))'.dependencies]

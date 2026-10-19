@@ -91,8 +91,8 @@ impl WindowsDispatcher {
     #[inline(always)]
     pub(crate) fn execute_runnable(runnable: RunnableVariant) {
         gpui::profiler::update_running_task(runnable.metadata());
+        let _timing = gpui_util::defer(gpui::profiler::save_task_timing);
         runnable.run();
-        gpui::profiler::save_task_timing();
     }
 }
 
@@ -111,6 +111,10 @@ impl PlatformDispatcher for WindowsDispatcher {
             Priority::Low => TP_CALLBACK_PRIORITY_LOW,
         };
         self.dispatch_on_threadpool(priority, runnable);
+    }
+
+    fn dispatch_blocking(&self, runnable: RunnableVariant) {
+        blocking::unblock(move || Self::execute_runnable(runnable)).detach();
     }
 
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) {

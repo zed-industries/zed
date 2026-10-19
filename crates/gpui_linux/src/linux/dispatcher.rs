@@ -112,6 +112,15 @@ impl PlatformDispatcher for LinuxDispatcher {
             .unwrap_or_else(|_| panic!("blocking sender returned without value"));
     }
 
+    fn dispatch_blocking(&self, runnable: RunnableVariant) {
+        blocking::unblock(move || {
+            profiler::update_running_task(runnable.metadata());
+            let _timing = gpui_util::defer(profiler::save_task_timing);
+            runnable.run();
+        })
+        .detach();
+    }
+
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) {
         self.main_sender
             .send(priority, runnable)

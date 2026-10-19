@@ -432,6 +432,22 @@ impl PlatformDispatcher for ThreadedDispatcher {
         thread::current().id() == self.main_thread_id
     }
 
+    fn dispatch_blocking(&self, runnable: RunnableVariant) {
+        self.idle.increment();
+        let submission = gpui_util::defer(|| self.idle.decrement());
+        blocking::unblock({
+            let idle = self.idle.clone();
+            move || {
+                let _decrement = idle.decrement_on_drop();
+                profiler::update_running_task(runnable.metadata());
+                let _timing = gpui_util::defer(profiler::save_task_timing);
+                runnable.run();
+            }
+        })
+        .detach();
+        submission.abort();
+    }
+
     fn dispatch(&self, runnable: RunnableVariant, priority: Priority) {
         self.idle.increment();
         self.background_sender
@@ -485,6 +501,100 @@ mod tests {
 
     use super::*;
     use crate::{BackgroundExecutor, ForegroundExecutor};
+
+    #[test]
+    fn blocking_work_keeps_dispatcher_busy_without_starving_ordinary_work() {
+        let (completed_sender, completed_receiver) = std::sync::mpsc::channel();
+        let main_thread = thread::spawn(move || {
+            let dispatcher = Arc::new(ThreadedDispatcher::new());
+            let background = BackgroundExecutor::new(dispatcher.clone());
+            let foreground = ForegroundExecutor::new(dispatcher.clone());
+            let (started_sender, started_receiver) = std::sync::mpsc::channel();
+            let (release_sender, release_receiver) = std::sync::mpsc::channel();
+            let blocking = background.spawn_blocking(move || {
+                let thread = thread::current();
+                started_sender
+                    .send((thread.id(), thread.name().map(str::to_owned)))
+                    .expect("test should receive blocking thread identity");
+                release_receiver
+                    .recv_timeout(Duration::from_secs(5))
+                    .expect("foreground task should release blocking work");
+                42
+            });
+            let (blocking_thread_id, blocking_thread_name) = started_receiver
+                .recv_timeout(Duration::from_secs(5))
+                .expect("blocking work should start");
+            assert_ne!(blocking_thread_id, thread::current().id());
+            assert!(
+                blocking_thread_name
+                    .as_deref()
+                    .is_some_and(|name| name.starts_with("blocking-"))
+            );
+            assert!(!dispatcher.is_idle());
+
+            let (handoff_sender, handoff_receiver) = std::sync::mpsc::channel();
+            foreground
+                .spawn(async move {
+                    let output = blocking.await;
+                    handoff_sender
+                        .send((output, thread::current().id()))
+                        .expect("test should receive foreground handoff");
+                })
+                .detach();
+            assert!(dispatcher.run_ready_main_tasks());
+            assert!(!dispatcher.is_idle());
+            assert!(matches!(
+                handoff_receiver.try_recv(),
+                Err(std::sync::mpsc::TryRecvError::Empty)
+            ));
+
+            let (ordinary_sender, ordinary_receiver) = std::sync::mpsc::channel();
+            background
+                .spawn(async move {
+                    let thread = thread::current();
+                    ordinary_sender
+                        .send((thread.id(), thread.name().map(str::to_owned)))
+                        .expect("test should receive ordinary task completion");
+                })
+                .detach();
+            let (ordinary_thread_id, ordinary_thread_name) = ordinary_receiver
+                .recv_timeout(Duration::from_secs(5))
+                .expect("ordinary work should finish while blocking work is held");
+            assert_ne!(ordinary_thread_id, blocking_thread_id);
+            assert_ne!(ordinary_thread_id, thread::current().id());
+            assert!(
+                ordinary_thread_name
+                    .expect("ordinary worker should be named")
+                    .starts_with("ThreadedDispatcherWorker-")
+            );
+            assert!(!dispatcher.is_idle());
+
+            foreground
+                .spawn(async move {
+                    release_sender
+                        .send(())
+                        .expect("blocking work should still be waiting");
+                })
+                .detach();
+            dispatcher.run_until_idle();
+            assert_eq!(
+                handoff_receiver
+                    .try_recv()
+                    .expect("idle pump must complete the blocking-to-foreground handoff"),
+                (42, thread::current().id())
+            );
+            assert!(dispatcher.is_idle());
+            completed_sender
+                .send(())
+                .expect("test should await completion");
+        });
+        completed_receiver
+            .recv_timeout(Duration::from_secs(15))
+            .expect("blocking integration test must not hang in the idle pump");
+        main_thread
+            .join()
+            .expect("dispatcher main thread should finish");
+    }
 
     #[test]
     fn is_idle_tracks_queued_work_but_ignores_undue_timers() {
