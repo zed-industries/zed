@@ -138,6 +138,7 @@ impl BreakpointList {
         &mut self,
         path: Arc<Path>,
         row: u32,
+        allow_preview: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -149,8 +150,16 @@ impl BreakpointList {
             let worktree_id = worktree.read_with(cx, |this, _| this.id());
             let item = this
                 .update_in(cx, |this, window, cx| {
-                    this.workspace.update(cx, |this, cx| {
-                        this.open_path((worktree_id, relative_path), None, true, window, cx)
+                    this.workspace.update(cx, |workspace, cx| {
+                        workspace.open_path_preview(
+                            (worktree_id, relative_path),
+                            None,
+                            true,
+                            allow_preview,
+                            true,
+                            window,
+                            cx,
+                        )
                     })
                 })??
                 .await?;
@@ -370,7 +379,7 @@ impl BreakpointList {
             BreakpointEntryKind::LineBreakpoint(line_breakpoint) => {
                 let path = line_breakpoint.breakpoint.path.clone();
                 let row = line_breakpoint.breakpoint.row;
-                self.go_to_line_breakpoint(path, row, window, cx);
+                self.go_to_line_breakpoint(path, row, false, window, cx);
             }
             BreakpointEntryKind::DataBreakpoint(_)
             | BreakpointEntryKind::ExceptionBreakpoint(_) => {}
@@ -903,16 +912,23 @@ impl LineBreakpoint {
                     "breakpoint-ui-on-click-go-to-line-{:?}/{}:{}",
                     self.dir, self.name, self.line
                 )))
+                .debug_selector(move || format!("debugger-breakpoint-line-{ix}"))
                 .w_full()
                 .gap_1()
                 .min_h(rems_from_px(26_f32))
                 .justify_between()
                 .on_click({
                     let weak = weak.clone();
-                    move |_, window, cx| {
+                    move |event, window, cx| {
                         weak.update(cx, |breakpoint_list, cx| {
                             breakpoint_list.select_ix(Some(ix), window, cx);
-                            breakpoint_list.go_to_line_breakpoint(path.clone(), row, window, cx);
+                            breakpoint_list.go_to_line_breakpoint(
+                                path.clone(),
+                                row,
+                                event.click_count() == 1,
+                                window,
+                                cx,
+                            );
                         })
                         .ok();
                     }

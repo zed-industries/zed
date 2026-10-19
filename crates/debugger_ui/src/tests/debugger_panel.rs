@@ -18,12 +18,20 @@ use editor::{
     ActiveDebugLine, Editor, EditorMode, MultiBuffer,
     actions::{self},
 };
-use gpui::{AppContext, BackgroundExecutor, TestAppContext, VisualTestContext};
+use gpui::{
+    AppContext, BackgroundExecutor, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent,
+    TestAppContext, UpdateGlobal, VisualTestContext,
+};
+use language::Point;
 use project::{
     FakeFs, Project,
-    debugger::session::{ThreadId, ThreadStatus},
+    debugger::{
+        breakpoint_store::{Breakpoint, BreakpointEditAction, BreakpointWithPosition},
+        session::{ThreadId, ThreadStatus},
+    },
 };
 use serde_json::json;
+use settings::SettingsStore;
 use std::{
     path::Path,
     sync::{
@@ -34,7 +42,7 @@ use std::{
 use terminal_view::terminal_panel::TerminalPanel;
 use tests::{active_debug_session_panel, init_test, init_test_workspace};
 use util::{path, rel_path::rel_path};
-use workspace::item::SaveOptions;
+use workspace::item::{ItemHandle, SaveOptions};
 use workspace::pane_group::SplitDirection;
 use workspace::{Item, dock::Panel, move_active_item};
 
@@ -1382,6 +1390,147 @@ async fn test_send_breakpoints_when_editor_has_been_saved(
         called_set_breakpoints.load(std::sync::atomic::Ordering::SeqCst),
         "SetBreakpoint request must be called after editor is saved"
     );
+}
+
+#[gpui::test]
+async fn test_line_breakpoint_preview_tabs(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "main.rs": "First line\nSecond line",
+            "second.rs": "First line\nSecond line",
+            "third.rs": "First line\nSecond line",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let breakpoint_store = project.read_with(cx, |project, _| project.breakpoint_store());
+    for file_name in ["main.rs", "second.rs", "third.rs"] {
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(Path::new(path!("/project")).join(file_name), cx)
+            })
+            .await
+            .unwrap();
+        breakpoint_store.update(cx, |store, cx| {
+            let position = buffer.read(cx).snapshot().anchor_before(Point::new(1, 0));
+            store.toggle_breakpoint(
+                buffer,
+                BreakpointWithPosition {
+                    position,
+                    bp: Breakpoint::new_standard(),
+                },
+                BreakpointEditAction::Toggle,
+                cx,
+            );
+        });
+    }
+
+    let workspace = init_test_workspace(&project, cx).await;
+    workspace
+        .update(cx, |workspace, window, cx| {
+            workspace.focus_panel::<DebugPanel>(window, cx);
+        })
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    for (selector, file_name, previews_enabled, click_count, item_count, preview_name) in [
+        (
+            "debugger-breakpoint-line-0",
+            "main.rs",
+            true,
+            1,
+            1,
+            Some("main.rs"),
+        ),
+        (
+            "debugger-breakpoint-line-1",
+            "second.rs",
+            true,
+            1,
+            1,
+            Some("second.rs"),
+        ),
+        ("debugger-breakpoint-line-1", "second.rs", true, 2, 1, None),
+        (
+            "debugger-breakpoint-line-0",
+            "main.rs",
+            true,
+            1,
+            2,
+            Some("main.rs"),
+        ),
+        (
+            "debugger-breakpoint-line-1",
+            "second.rs",
+            true,
+            1,
+            2,
+            Some("main.rs"),
+        ),
+        ("debugger-breakpoint-line-2", "third.rs", false, 1, 3, None),
+    ] {
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.preview_tabs.get_or_insert_default().enabled = Some(previews_enabled);
+                });
+            });
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+
+        let bounds = cx.debug_bounds(selector).expect("breakpoint row");
+        let position = gpui::point(bounds.left() + gpui::px(1.), bounds.center().y);
+        cx.simulate_event(MouseDownEvent {
+            position,
+            button: MouseButton::Left,
+            modifiers: Modifiers::none(),
+            click_count,
+            first_mouse: false,
+        });
+        cx.simulate_event(MouseUpEvent {
+            position,
+            button: MouseButton::Left,
+            modifiers: Modifiers::none(),
+            click_count,
+        });
+        cx.run_until_parked();
+
+        let editor = workspace
+            .read_with(cx, |workspace, cx| {
+                let pane = workspace.workspace().read(cx).active_pane().read(cx);
+                let editor = pane.active_item().unwrap().downcast::<Editor>().unwrap();
+                assert_eq!(pane.items_len(), item_count);
+                assert_eq!(
+                    editor.project_path(cx).unwrap().path.as_ref(),
+                    rel_path(file_name)
+                );
+
+                assert_eq!(
+                    pane.preview_item()
+                        .and_then(|item| item.project_path(cx))
+                        .map(|path| path.path.to_rel_path_buf()),
+                    preview_name.map(|name| rel_path(name).to_rel_path_buf()),
+                );
+                editor
+            })
+            .unwrap();
+        editor.update_in(cx, |editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            assert_eq!(
+                editor
+                    .selections
+                    .newest::<Point>(&snapshot.display_snapshot)
+                    .head(),
+                Point::new(1, 0)
+            );
+        });
+    }
 }
 
 #[gpui::test]
