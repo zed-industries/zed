@@ -380,7 +380,7 @@ fn open_file_diff(
     cx: &mut App,
 ) {
     window.defer(cx, move |window, cx| {
-        SoloDiffView::open_or_focus(entry, repository, workspace.clone(), window, cx)
+        SoloDiffView::open_or_focus(entry, repository, workspace.clone(), false, window, cx)
             .detach_and_notify_err(workspace, window, cx);
     });
 }

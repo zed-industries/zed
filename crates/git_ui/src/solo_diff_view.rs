@@ -15,7 +15,7 @@ use gpui::{
     Action, App, AppContext as _, Context, Empty, Entity, EventEmitter, FocusHandle, Focusable,
     HighlightStyle, IntoElement, Render, Subscription, Task, WeakEntity, Window,
 };
-use language::{Anchor, Buffer, HighlightedText, OffsetRangeExt as _, Point};
+use language::{Anchor, Buffer, BufferEvent, HighlightedText, OffsetRangeExt as _, Point};
 use multi_buffer::{MultiBuffer, PathKey, excerpt_context_lines};
 use project::{
     Project, ProjectPath,
@@ -32,7 +32,7 @@ use util::paths::{PathExt as _, PathStyle};
 use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
-    item::{ItemEvent, SaveOptions},
+    item::{ItemEvent, PreviewTabsSettings, SaveOptions},
     notifications::NotifyTaskExt,
     searchable::SearchableItemHandle,
 };
@@ -47,6 +47,7 @@ pub struct SoloDiffView {
     workspace: WeakEntity<Workspace>,
     showing_full_file: bool,
     _settings_subscription: Subscription,
+    _buffer_subscription: Subscription,
 }
 
 impl SoloDiffView {
@@ -54,6 +55,7 @@ impl SoloDiffView {
         entry: GitStatusEntry,
         repository: Entity<Repository>,
         workspace: WeakEntity<Workspace>,
+        allow_preview: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
@@ -67,6 +69,11 @@ impl SoloDiffView {
             .find(|item| item.read(cx).matches(&repository, &entry.repo_path, cx));
         if let Some(existing) = existing {
             workspace_entity.update(cx, |workspace, cx| {
+                if !allow_preview && let Some(pane) = workspace.pane_for(&existing) {
+                    pane.update(cx, |pane, _| {
+                        pane.unpreview_item_if_preview(existing.entity_id())
+                    });
+                }
                 workspace.activate_item(&existing, true, true, window, cx);
             });
             existing.focus_handle(cx).focus(window, cx);
@@ -98,6 +105,9 @@ impl SoloDiffView {
                 .await?;
 
             workspace_entity.update_in(cx, |workspace, window, cx| {
+                let allow_preview = allow_preview
+                    && PreviewTabsSettings::get_global(cx).enabled
+                    && !buffer.read(cx).is_dirty();
                 let workspace_handle = cx.entity();
                 let view = cx.new(|cx| {
                     Self::new(
@@ -112,7 +122,20 @@ impl SoloDiffView {
                     )
                 });
 
-                workspace.add_item_to_active_pane(Box::new(view.clone()), None, true, window, cx);
+                let destination_index = if allow_preview {
+                    workspace.active_pane().update(cx, |pane, cx| {
+                        pane.replace_preview_item_id(view.entity_id(), window, cx)
+                    })
+                } else {
+                    None
+                };
+                workspace.add_item_to_active_pane(
+                    Box::new(view.clone()),
+                    destination_index,
+                    true,
+                    window,
+                    cx,
+                );
                 view
             })
         })
@@ -157,6 +180,11 @@ impl SoloDiffView {
             editor
         });
 
+        let buffer_subscription = cx.subscribe(&buffer, |_, _, event, cx| {
+            if let BufferEvent::Edited { .. } = event {
+                cx.emit(EditorEvent::BufferEdited);
+            }
+        });
         let mut previous_diff_view_style = EditorSettings::get_global(cx).diff_view_style;
         let settings_subscription =
             cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
@@ -182,6 +210,7 @@ impl SoloDiffView {
             workspace: workspace.downgrade(),
             showing_full_file,
             _settings_subscription: settings_subscription,
+            _buffer_subscription: buffer_subscription,
         }
     }
 

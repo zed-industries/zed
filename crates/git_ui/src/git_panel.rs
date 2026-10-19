@@ -2621,20 +2621,18 @@ impl GitPanel {
         });
     }
 
-    fn open_solo_diff(
-        &mut self,
-        _: &menu::SecondaryConfirm,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn open_solo_diff(&mut self, allow_preview: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(repository) = self.active_repository.clone() else {
             return;
         };
-        for entry in self.effective_status_entries() {
+        let entries = self.effective_status_entries();
+        let allow_preview = allow_preview && entries.len() == 1;
+        for entry in entries {
             SoloDiffView::open_or_focus(
                 entry,
                 repository.clone(),
                 self.workspace.clone(),
+                allow_preview,
                 window,
                 cx,
             )
@@ -2763,7 +2761,7 @@ impl GitPanel {
                 self.focus_handle.focus(window, cx);
             }
             GitPanelClickBehavior::FileDiff => {
-                self.open_solo_diff(&Default::default(), window, cx);
+                self.open_solo_diff(!secondary, window, cx);
             }
             GitPanelClickBehavior::ViewFile => {
                 self.view_file(&Default::default(), window, cx);
@@ -9376,7 +9374,11 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::last_entry))
             .on_action(cx.listener(Self::close_panel))
             .on_action(cx.listener(Self::open_diff))
-            .on_action(cx.listener(Self::open_solo_diff))
+            .on_action(
+                cx.listener(|panel, _: &menu::SecondaryConfirm, window, cx| {
+                    panel.open_solo_diff(false, window, cx);
+                }),
+            )
             .on_action(cx.listener(Self::view_file))
             .on_action(cx.listener(Self::view_file_history))
             .on_action(cx.listener(Self::copy_path))
@@ -10564,6 +10566,110 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_file_diff_preview_tabs(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        for enabled in [true, false] {
+            cx.update(|cx| {
+                SettingsStore::update_global(cx, |store, cx| {
+                    store.update_user_settings(cx, |settings| {
+                        settings
+                            .git_panel
+                            .get_or_insert_default()
+                            .entry_primary_click_action = Some(GitPanelClickBehavior::FileDiff);
+                        settings.preview_tabs.get_or_insert_default().enabled = Some(enabled);
+                    });
+                });
+            });
+            let (_, _, workspace, panel, mut cx) = setup_git_panel_with_changes(
+                cx,
+                json!({
+                    ".git": {},
+                    "a.txt": "a",
+                    "b.txt": "b",
+                }),
+                &[
+                    ("a.txt", StatusCode::Modified),
+                    ("b.txt", StatusCode::Modified),
+                ],
+            )
+            .await;
+
+            for file in ["a.txt", "b.txt", "b.txt"] {
+                panel.update_in(&mut cx, |panel, window, cx| {
+                    panel.selected_entry = entry_index_for_repo_path(panel, &repo_path(file));
+                    panel.open_selected_entry_on_click(false, window, cx);
+                });
+                cx.run_until_parked();
+
+                workspace.read_with(&cx, |workspace, cx| {
+                    let pane = workspace.active_pane().read(cx);
+                    let active_item = pane.active_item().expect("file diff should be active");
+                    assert_eq!(active_item.tab_content_text(0, cx).as_ref(), file);
+                    assert_eq!(
+                        pane.preview_item_id(),
+                        enabled.then_some(active_item.item_id())
+                    );
+                    assert_eq!(
+                        pane.items_len(),
+                        if enabled || file == "a.txt" { 1 } else { 2 }
+                    );
+                });
+            }
+
+            let buffer = workspace.read_with(&cx, |workspace, cx| {
+                workspace
+                    .active_item(cx)
+                    .expect("b.txt should be active")
+                    .act_as::<Editor>(cx)
+                    .expect("diff should expose its editor")
+                    .read(cx)
+                    .active_buffer(cx)
+                    .expect("diff should have a buffer")
+            });
+            buffer.update(&mut cx, |buffer, cx| buffer.set_text("unsaved", cx));
+            cx.run_until_parked();
+            workspace.read_with(&cx, |workspace, cx| {
+                assert_eq!(workspace.active_pane().read(cx).preview_item_id(), None);
+            });
+
+            for file in ["a.txt", "b.txt"] {
+                panel.update_in(&mut cx, |panel, window, cx| {
+                    panel.selected_entry = entry_index_for_repo_path(panel, &repo_path(file));
+                    panel.open_selected_entry_on_click(false, window, cx);
+                });
+                cx.run_until_parked();
+            }
+            workspace.read_with(&cx, |workspace, cx| {
+                let pane = workspace.active_pane().read(cx);
+                assert_eq!(pane.items_len(), 2);
+                assert_eq!(
+                    pane.preview_item()
+                        .map(|item| item.tab_content_text(0, cx).to_string()),
+                    enabled.then(|| "a.txt".to_owned())
+                );
+                assert_eq!(
+                    pane.active_item()
+                        .expect("b.txt should be active")
+                        .tab_content_text(0, cx)
+                        .as_ref(),
+                    "b.txt"
+                );
+                assert_eq!(buffer.read(cx).text(), "unsaved");
+            });
+
+            panel.update_in(&mut cx, |panel, window, cx| {
+                panel.selected_entry = entry_index_for_repo_path(panel, &repo_path("a.txt"));
+                panel.open_solo_diff(false, window, cx);
+            });
+            cx.run_until_parked();
+            workspace.read_with(&cx, |workspace, cx| {
+                assert_eq!(workspace.active_pane().read(cx).preview_item_id(), None);
+            });
+        }
+    }
+
+    #[gpui::test]
     async fn test_file_actions_use_multiple_selected_entries(cx: &mut TestAppContext) {
         init_test(cx);
         let (_, _, workspace, panel, mut cx) = setup_git_panel_with_changes(
@@ -10626,7 +10732,7 @@ mod tests {
         });
         cx.run_until_parked();
         panel.update_in(&mut cx, |panel, window, cx| {
-            panel.open_solo_diff(&menu::SecondaryConfirm, window, cx);
+            panel.open_solo_diff(false, window, cx);
             panel.view_file_history(&git::FileHistory, window, cx);
         });
         cx.run_until_parked();
@@ -12071,7 +12177,7 @@ mod tests {
         });
 
         panel.update_in(&mut cx, |panel, window, cx| {
-            panel.open_solo_diff(&menu::SecondaryConfirm, window, cx);
+            panel.open_solo_diff(false, window, cx);
         });
         cx.run_until_parked();
 
