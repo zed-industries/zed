@@ -69,6 +69,7 @@ impl ProcessIdGetter {
 pub(crate) struct ProcessInfo {
     pub(crate) pid: Pid,
     pub(crate) name: String,
+    pub(crate) exe: Option<PathBuf>,
     pub(crate) cwd: PathBuf,
     pub(crate) argv: Vec<String>,
 }
@@ -78,6 +79,7 @@ pub(crate) struct PtyProcessInfo {
     system: RwLock<System>,
     refresh_kind: ProcessRefreshKind,
     pid_getter: ProcessIdGetter,
+    shell_exe: Option<PathBuf>,
     last_foreground_pid: Mutex<Option<Pid>>,
     pub(crate) current: RwLock<Option<ProcessInfo>>,
     task: Mutex<Option<Task<()>>>,
@@ -104,11 +106,16 @@ impl PtyProcessInfo {
             true,
             process_refresh_kind,
         );
+        let shell_exe = system
+            .process(pid_getter.fallback_pid())
+            .and_then(|process| process.exe())
+            .map(ToOwned::to_owned);
 
         PtyProcessInfo {
             system: RwLock::new(system),
             refresh_kind: process_refresh_kind,
             pid_getter,
+            shell_exe,
             last_foreground_pid: Mutex::new(None),
             current: RwLock::new(None),
             task: Mutex::new(None),
@@ -117,6 +124,18 @@ impl PtyProcessInfo {
 
     pub(crate) fn pid_getter(&self) -> &ProcessIdGetter {
         &self.pid_getter
+    }
+
+    /// Whether `process` is the spawned shell. A program the shell `exec`s into
+    /// (`exec tmux`, `exec ssh host`) keeps the shell's pid, so the executable
+    /// is compared as well. The process name is not used because on macOS it
+    /// keeps the shell's name after an `exec`.
+    pub(crate) fn is_shell(&self, process: &ProcessInfo) -> bool {
+        process.pid == self.pid_getter.fallback_pid()
+            && match (&self.shell_exe, &process.exe) {
+                (Some(shell_exe), Some(exe)) => shell_exe == exe,
+                _ => true,
+            }
     }
 
     fn refresh(&self) -> Option<MappedRwLockReadGuard<'_, Process>> {
@@ -182,6 +201,7 @@ impl PtyProcessInfo {
         let info = ProcessInfo {
             pid: process.pid(),
             name: process.name().to_str()?.to_owned(),
+            exe: process.exe().map(ToOwned::to_owned),
             cwd,
             argv: process
                 .cmd()
@@ -210,7 +230,10 @@ impl PtyProcessInfo {
             let has_changed = match (previous.as_ref(), current.as_ref()) {
                 (None, None) => false,
                 (Some(prev), Some(now)) => {
-                    prev.pid != now.pid || prev.cwd != now.cwd || prev.name != now.name
+                    prev.pid != now.pid
+                        || prev.cwd != now.cwd
+                        || prev.name != now.name
+                        || prev.exe != now.exe
                 }
                 _ => true,
             };

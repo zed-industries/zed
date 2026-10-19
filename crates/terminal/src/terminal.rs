@@ -3134,12 +3134,11 @@ impl Terminal {
         }
         match &self.terminal_type {
             TerminalType::Pty { info, .. } => {
-                let shell_pid = info.pid_getter().fallback_pid();
                 let program_running = info
                     .current
                     .read()
                     .as_ref()
-                    .is_some_and(|process| process.pid != shell_pid);
+                    .is_some_and(|process| !info.is_shell(process));
                 program_running.then_some(program_title)
             }
             TerminalType::DisplayOnly => None,
@@ -4422,6 +4421,53 @@ mod tests {
             assert_eq!(
                 terminal.foreground_process_command_name().as_deref(),
                 Some("bash")
+            );
+        });
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_title_shows_program_title_after_shell_execs_into_program(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        // A shell wrapper ending in `exec tmux ...` keeps the shell's pid, so
+        // the program has to be told apart from the shell by its name.
+        let script = r#"printf "\033]0;exec-title\007"; exec tail -f /dev/null"#;
+        let builder = cx
+            .update(|cx| {
+                TerminalBuilder::new(
+                    None,
+                    TerminalMode::interactive(),
+                    task::Shell::WithArguments {
+                        program: "bash".to_string(),
+                        args: vec!["-c".to_string(), script.to_string()],
+                        title_override: None,
+                    },
+                    HashMap::default(),
+                    SettingsCursorShape::default(),
+                    AlternateScroll::On,
+                    None,
+                    vec![],
+                    Duration::ZERO,
+                    false,
+                    0,
+                    cx,
+                    Vec::new(),
+                    PathStyle::local(),
+                )
+            })
+            .await
+            .expect("terminal should spawn");
+        let terminal = cx.new(|cx| builder.subscribe(cx));
+
+        assert_title_eventually(&terminal, |title| title == "exec-title", cx).await;
+        terminal.read_with(cx, |terminal, _| {
+            assert_eq!(
+                terminal.foreground_process_command_name().as_deref(),
+                Some("tail")
             );
         });
     }
