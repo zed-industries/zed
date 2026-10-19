@@ -1863,10 +1863,13 @@ impl ConversationView {
         cx: &mut Context<Self>,
     ) {
         let session_id = thread.read(cx).session_id().clone();
-        let has_thread = self
-            .as_connected()
-            .is_some_and(|connected| connected.threads.contains_key(&session_id));
-        if !has_thread {
+        let is_current_owner = self.as_connected().is_some_and(|connected| {
+            connected
+                .threads
+                .get(&session_id)
+                .is_some_and(|view| view.read(cx).thread == *thread)
+        });
+        if !is_current_owner {
             return;
         };
         let is_subagent = thread.read(cx).parent_session_id().is_some();
@@ -7164,6 +7167,88 @@ pub(crate) mod tests {
                 ),
             }
         });
+    }
+
+    #[gpui::test]
+    async fn test_reset_ignores_events_from_retained_previous_owner(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        for reported_activity in [false, true] {
+            let connection = StubAgentConnection::new()
+                .with_supports_load_session(true)
+                .with_receipt_submissions(reported_activity);
+            let (conversation_view, cx) =
+                setup_conversation_view(StubAgentServer::new(connection), cx).await;
+            let previous_view = active_thread(&conversation_view, cx);
+            let previous_thread = previous_view.read_with(cx, |view, _| view.thread.clone());
+            conversation_view.update_in(cx, |view, window, cx| view.reset(window, cx));
+            cx.run_until_parked();
+
+            let current_view = active_thread(&conversation_view, cx);
+            let current_thread = current_view.read_with(cx, |view, _| view.thread.clone());
+            assert_ne!(previous_thread, current_thread);
+            assert_eq!(
+                previous_thread.read_with(cx, |thread, _| thread.session_id().clone()),
+                current_thread.read_with(cx, |thread, _| thread.session_id().clone()),
+            );
+            current_view.update_in(cx, |view, window, cx| {
+                view.add_to_queue(vec!["queued for replacement".into()], vec![], window, cx);
+                view.message_editor.update(cx, |editor, cx| {
+                    editor.set_text("replacement draft", window, cx);
+                });
+            });
+
+            for event in [
+                AcpThreadEvent::LoadError(LoadError::Other("previous owner exited".into())),
+                AcpThreadEvent::ActivityConfirmedIdle,
+                AcpThreadEvent::Stopped {
+                    activity_generation: previous_thread
+                        .read_with(cx, |thread, _| thread.activity_generation()),
+                    activity_duration: None,
+                    stop_reason: Some(acp_v2::StopReason::EndTurn),
+                },
+            ] {
+                previous_thread.update(cx, |_, cx| cx.emit(event));
+                cx.run_until_parked();
+                conversation_view.read_with(cx, |view, cx| {
+                    let current = view
+                        .root_thread_view()
+                        .expect("previous owner events must not replace the current connection");
+                    assert_eq!(current, current_view);
+                    assert_eq!(current.read(cx).thread, current_thread);
+                });
+                current_view.read_with(cx, |view, cx| {
+                    assert_eq!(
+                        view.message_queue.len(),
+                        1,
+                        "previous owner events must not drain the current queue"
+                    );
+                    assert_eq!(view.message_editor.read(cx).text(cx), "replacement draft");
+                    assert!(view.current_submission.is_none());
+                });
+                assert!(
+                    current_thread
+                        .read_with(cx, |thread, _| thread.latest_submission_id().is_none())
+                );
+            }
+
+            current_thread.update(cx, |_, cx| cx.emit(AcpThreadEvent::ActivityConfirmedIdle));
+            cx.run_until_parked();
+            current_view.read_with(cx, |view, _| {
+                assert!(view.message_queue.is_empty());
+                assert!(view.current_submission.is_some());
+            });
+            current_thread.update(cx, |_, cx| {
+                cx.emit(AcpThreadEvent::LoadError(LoadError::Other(
+                    "current owner exited".into(),
+                )));
+            });
+            cx.run_until_parked();
+            conversation_view.read_with(cx, |view, _| {
+                assert!(matches!(view.server_state, ServerState::LoadError { .. }));
+            });
+            drop(previous_view);
+        }
     }
 
     #[gpui::test]
