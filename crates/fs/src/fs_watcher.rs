@@ -333,8 +333,18 @@ fn register_existing_path(
     };
     let root_path = SanitizedPath::new_arc(path.as_ref());
     let path_for_callback = path.clone();
+    // inotify binds a watch on a file to its inode, so the watch is lost when
+    // the file is replaced by rename (atomic saves, `sed -i`, `git checkout`).
+    // A watch on the parent directory reports the file's events by name and
+    // survives the replacement; the callback keeps only events under `path`.
+    // Recursive native watches (FSEvents, Windows) follow the path already,
+    // and a poll watch on the parent would scan its whole tree.
+    let os_path: Arc<Path> = match path.parent() {
+        Some(parent) if !os_watcher.is_recursive() && !fs.path_is_dir(&path) => parent.into(),
+        _ => path.clone(),
+    };
     let Some(registration_id) =
-        os_watcher.add(path, case_insensitive, move |event: &notify::Event| {
+        os_watcher.add(os_path, case_insensitive, move |event: &notify::Event| {
             log::trace!("watcher received event: {event:?}");
             push_notify_event(
                 &tx,
@@ -1403,6 +1413,7 @@ pub fn poll_interval() -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::FutureExt as _;
     use std::{collections::HashSet, path::PathBuf};
 
     fn rescan(path: &str) -> PathEvent {
@@ -1527,6 +1538,59 @@ mod tests {
         let backend = backend.lock();
         assert_eq!(backend.watch_calls, &[parent.to_path_buf()]);
         assert_eq!(backend.unwatch_calls, &[parent.to_path_buf()]);
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[gpui::test]
+    async fn file_watch_registers_parent_and_survives_replacement(cx: &mut gpui::TestAppContext) {
+        let fs = crate::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            serde_json::json!({
+                "dir": {
+                    "config.json": "A",
+                    "sibling.txt": "",
+                }
+            }),
+        )
+        .await;
+        let config_path = PathBuf::from("/root/dir/config.json");
+
+        let (mut events, _watcher) = fs.watch(&config_path, Duration::ZERO).await;
+        cx.run_until_parked();
+
+        // inotify binds a file watch to its inode, so the OS-level watch goes
+        // on the directory and the file's events are picked out by name.
+        assert_eq!(fs.watch_calls(), [PathBuf::from("/root/dir")]);
+
+        fs.insert_file("/root/dir/sibling.txt", b"changed".to_vec())
+            .await;
+        cx.run_until_parked();
+        assert_eq!(events.next().now_or_never(), None);
+
+        // Two atomic writes: each replaces the inode, which is what Zed's own
+        // `update_settings_file`, `sed -i` and editors with atomic save do.
+        fs.atomic_write(config_path.clone(), "B".to_owned())
+            .await
+            .expect("first atomic write");
+        cx.run_until_parked();
+        let first = events.next().now_or_never().flatten().expect("first batch");
+        fs.atomic_write(config_path.clone(), "C".to_owned())
+            .await
+            .expect("second atomic write");
+        cx.run_until_parked();
+        let second = events
+            .next()
+            .now_or_never()
+            .flatten()
+            .expect("second batch");
+
+        for batch in [first, second] {
+            assert!(
+                batch.iter().all(|event| event.path == config_path),
+                "only the watched file's events reach the stream: {batch:?}"
+            );
+        }
     }
 
     #[gpui::test]

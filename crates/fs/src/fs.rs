@@ -166,6 +166,9 @@ pub trait Fs: Send + Sync {
     /// Whether `path` exists, without following a final symlink. Synchronous
     /// because watches are registered synchronously by the worktree scanner.
     fn path_exists(&self, path: &Path) -> bool;
+    /// Whether `path` is a directory, following symlinks. Synchronous like
+    /// `path_exists`, for the watcher to choose what to register.
+    fn path_is_dir(&self, path: &Path) -> bool;
     /// Whether the volume holding `path` compares file names case-sensitively.
     fn is_path_case_sensitive(&self, path: &Path) -> bool;
     /// Whether `path` sits on a filesystem where native file watching does not
@@ -1197,6 +1200,10 @@ impl Fs for RealFs {
         std::fs::symlink_metadata(path).is_ok()
     }
 
+    fn path_is_dir(&self, path: &Path) -> bool {
+        std::fs::metadata(path).is_ok_and(|metadata| metadata.is_dir())
+    }
+
     fn is_path_case_sensitive(&self, path: &Path) -> bool {
         !fs_watcher::case_insensitive_path(path)
     }
@@ -1480,6 +1487,10 @@ struct FakeWatches {
     event_sink: Option<Box<dyn Fn(notify::Result<notify::Event>) + Send + Sync>>,
     /// A file to create, without an event, when the given path is next watched.
     file_to_create_on_watch: Option<(PathBuf, PathBuf)>,
+    /// Whether a watch on a file is bound to its inode, as with inotify: the
+    /// watch dies with the inode when the file is replaced by rename or
+    /// removed. Recursive native watches (FSEvents, Windows) follow the path.
+    inode_bound: bool,
 }
 
 #[cfg(feature = "test-support")]
@@ -1717,6 +1728,19 @@ impl FakeFsState {
         callback(new_entry)
     }
 
+    /// The kernel side of replacing or removing a watched file: an inode-bound
+    /// watch registered on exactly this path is gone afterwards, so later
+    /// events for the path no longer reach the watcher. Only the loss is
+    /// modelled, not inotify's `IN_DELETE_SELF` on the old inode.
+    fn drop_inode_bound_watch(&mut self, path: &Path) {
+        if !self.watches.inode_bound {
+            return;
+        }
+        self.watches
+            .registered_paths
+            .retain(|registered_path| registered_path != path);
+    }
+
     fn emit_event<I, T>(&mut self, paths: I)
     where
         I: IntoIterator<Item = (T, Option<PathEventKind>)>,
@@ -1870,7 +1894,11 @@ impl FakeFs {
                 state: state.clone(),
             })),
         );
-        state.lock().watches.event_sink = Some(Box::new(native_watcher.event_sink()));
+        {
+            let mut state = state.lock();
+            state.watches.event_sink = Some(Box::new(native_watcher.event_sink()));
+            state.watches.inode_bound = !native_watcher.is_recursive();
+        }
         let poll_watcher =
             fs_watcher::OsWatcher::new(fs_watcher::OsWatcherKind::Poll, executor.clone());
 
@@ -2020,6 +2048,9 @@ impl FakeFs {
                 Ok(())
             })?;
             state.emit_event([(path, kind)]);
+            if recreate_inode && kind == Some(PathEventKind::Changed) {
+                state.drop_inode_bound_watch(path);
+            }
             Ok(())
         }
         inner(self, path.as_ref(), new_content, recreate_inode)
@@ -2860,7 +2891,10 @@ impl FakeFs {
             }
         };
 
-        state.emit_event([(path, Some(PathEventKind::Removed))]);
+        state.emit_event([(path.clone(), Some(PathEventKind::Removed))]);
+        if removed.as_ref().is_some_and(|entry| entry.is_file()) {
+            state.drop_inode_bound_watch(&path);
+        }
         Ok(removed)
     }
 
@@ -2898,7 +2932,10 @@ impl FakeFs {
             }
         };
 
-        state.emit_event([(path, Some(PathEventKind::Removed))]);
+        state.emit_event([(path.clone(), Some(PathEventKind::Removed))]);
+        if removed.as_ref().is_some_and(|entry| entry.is_file()) {
+            state.drop_inode_bound_watch(&path);
+        }
         Ok(removed)
     }
 
@@ -2921,6 +2958,10 @@ impl FakeFs {
 impl FakeFsEntry {
     fn is_file(&self) -> bool {
         matches!(self, Self::File { .. })
+    }
+
+    fn is_dir(&self) -> bool {
+        matches!(self, Self::Dir { .. })
     }
 
     fn is_symlink(&self) -> bool {
@@ -3125,11 +3166,14 @@ impl Fs for FakeFs {
             return Ok(());
         }
 
+        let moved_entry_is_file = moved_entry.is_file();
+        let mut replaced_file = false;
         let mut moved = true;
         state.write_path(&new_path, |e| {
             match e {
                 btree_map::Entry::Occupied(mut e) => {
                     if options.overwrite {
+                        replaced_file = e.get().is_file();
                         *e.get_mut() = moved_entry;
                     } else if options.ignore_if_exists {
                         // `RealFs` reports success without moving anything here,
@@ -3162,9 +3206,15 @@ impl Fs for FakeFs {
             .unwrap();
 
         state.emit_event([
-            (old_path, Some(PathEventKind::Removed)),
-            (new_path, Some(PathEventKind::Created)),
+            (old_path.clone(), Some(PathEventKind::Removed)),
+            (new_path.clone(), Some(PathEventKind::Created)),
         ]);
+        if moved_entry_is_file {
+            state.drop_inode_bound_watch(&old_path);
+        }
+        if replaced_file {
+            state.drop_inode_bound_watch(&new_path);
+        }
         Ok(())
     }
 
@@ -3491,6 +3541,13 @@ impl Fs for FakeFs {
             .lock()
             .try_entry(&normalize_path(path), false)
             .is_some()
+    }
+
+    fn path_is_dir(&self, path: &Path) -> bool {
+        self.state
+            .lock()
+            .try_entry(&normalize_path(path), true)
+            .is_some_and(|(entry, _)| entry.is_dir())
     }
 
     fn is_path_case_sensitive(&self, _path: &Path) -> bool {

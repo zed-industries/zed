@@ -60,6 +60,44 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_watch_config_file_survives_replacement_by_rename(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let fs = FakeFs::new(cx.background_executor.clone());
+        let settings_path = PathBuf::from("/root/config/settings.json");
+
+        fs.insert_tree(
+            Path::new("/root"),
+            json!({
+                "config": {
+                    "settings.json": "A"
+                }
+            }),
+        )
+        .await;
+
+        let (mut rx, _task) =
+            watch_config_file(&cx.background_executor, fs.clone(), settings_path.clone());
+        assert_eq!(rx.next().await.as_deref(), Some("A"));
+
+        // `atomic_write` replaces the file by rename, which gives it a new
+        // inode. On Linux an inotify watch on the file dies with the old one.
+        fs.atomic_write(settings_path.clone(), "B".to_owned())
+            .await
+            .unwrap();
+        assert_eq!(rx.next().await.as_deref(), Some("B"));
+
+        fs.atomic_write(settings_path.clone(), "C".to_owned())
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            rx.try_recv().ok().as_deref(),
+            Some("C"),
+            "the second replacement must still be delivered"
+        );
+    }
+
+    #[gpui::test]
     async fn test_watch_config_file_reloads_when_parent_dir_is_symlink(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
         let fs = FakeFs::new(cx.background_executor.clone());
