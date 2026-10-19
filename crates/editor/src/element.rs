@@ -11489,6 +11489,65 @@ mod tests {
         }
     }
 
+    #[gpui::test]
+    fn test_ime_underlines_with_diagnostics_toggled_off(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let buffer = point_diagnostic_buffer(
+            "file-.rs",
+            [(PointUtf16::new(0, 0)..PointUtf16::new(0, 4), WARNING)],
+            cx,
+        );
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let window = cx.open_window(size(px(500.), px(100.)), |window, cx| {
+            Editor::new(EditorMode::full(), buffer, None, window, cx)
+        });
+        let painted_underlines = |cx: &mut TestAppContext| {
+            cx.update_window(window.into(), |_, window, cx| {
+                window.draw(cx).clear(cx);
+                window.painted_underlines()
+            })
+            .expect("completed editor scene")
+        };
+
+        let underlines = painted_underlines(cx);
+        assert_eq!(underlines.len(), 1);
+        let underline = underlines.first().expect("diagnostic underline");
+        assert_eq!(underline.wavy, true.into());
+
+        window
+            .update(cx, |editor, window, cx| {
+                editor.toggle_diagnostics(&crate::actions::ToggleDiagnostics, window, cx);
+                assert!(!editor.diagnostics_enabled());
+            })
+            .expect("toggled diagnostics off");
+        assert!(painted_underlines(cx).is_empty());
+
+        window
+            .update(cx, |editor, window, cx| {
+                editor.replace_and_mark_text_in_range(Some(5..5), "ni", Some(2..2), window, cx);
+                assert_eq!(editor.marked_text_range(window, cx), Some(5..7));
+            })
+            .expect("updated preedit text");
+        let underlines = painted_underlines(cx);
+        assert_eq!(underlines.len(), 1);
+        let underline = underlines.first().expect("preedit underline");
+        assert_eq!(underline.wavy, false.into());
+
+        window
+            .update(cx, |editor, _, cx| {
+                editor.set_max_diagnostics_severity(
+                    project::project_settings::DiagnosticSeverity::Hint,
+                    cx,
+                );
+            })
+            .expect("set diagnostics severity");
+        let underlines = painted_underlines(cx);
+        assert_eq!(underlines.len(), 1);
+        let underline = underlines.first().expect("preedit underline");
+        assert_eq!(underline.wavy, false.into());
+    }
+
     // Regression test for https://github.com/zed-industries/zed/pull/48510.
     #[gpui::test]
     fn test_minimap_filters_semantic_token_underlines(cx: &mut TestAppContext) {
