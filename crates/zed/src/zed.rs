@@ -4082,131 +4082,72 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_add_folder_readme_respects_panes(cx: &mut TestAppContext) {
+    async fn test_add_folder_does_not_open_readme(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         set_on_new_window(Some(settings::OnNewWindow::Readme), cx);
-        for (has_item, explicit_pane, focus) in [
-            (false, false, true),
-            (true, false, true),
-            (false, true, false),
-        ] {
-            let root =
-                Path::new(path!("/root")).join(format!("add-folder-{has_item}-{explicit_pane}"));
-            app_state
-                .fs
-                .as_fake()
-                .insert_tree(
-                    &root,
-                    json!({
-                        "existing": {},
-                        "first": {"README.txt": ""}
-                    }),
-                )
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/root"),
+                json!({
+                    "existing": {"code.rs": ""},
+                    "added": {"README.md": ""}
+                }),
+            )
+            .await;
+        let root = Path::new(path!("/root"));
+        let result =
+            open_test_workspace_paths(vec![root.join("existing")], app_state.clone(), cx).await;
+        assert_workspace_item_paths(&result.workspace, &[], cx);
+        result
+            .window
+            .update(cx, |_, window, cx| {
+                result.workspace.update(cx, |workspace, cx| {
+                    workspace.open_paths(
+                        vec![root.join("added")],
+                        OpenOptions {
+                            visible: Some(workspace::OpenVisible::All),
+                            ..OpenOptions::default()
+                        },
+                        None,
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .expect("add folder")
+            .await;
+        cx.run_until_parked();
+        result.workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(
+                workspace
+                    .root_paths(cx)
+                    .iter()
+                    .map(|path| path.to_path_buf())
+                    .collect::<Vec<_>>(),
+                vec![root.join("existing"), root.join("added")]
+            );
+        });
+        assert_workspace_item_paths(&result.workspace, &[], cx);
+    }
+
+    #[gpui::test]
+    async fn test_open_paths_readme_case_insensitive_fs(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        set_on_new_window(Some(settings::OnNewWindow::Readme), cx);
+        let fs = app_state.fs.as_fake();
+        fs.set_case_sensitive(false);
+        fs.insert_tree(path!("/root"), json!({"readme.md": ""}))
+            .await;
+        let result =
+            open_test_workspace_paths(vec![PathBuf::from(path!("/root"))], app_state.clone(), cx)
                 .await;
-            let result =
-                open_test_workspace_paths(vec![root.join("existing")], app_state.clone(), cx).await;
-            let original_item = if has_item {
-                let editor = result
-                    .window
-                    .update(cx, |_, window, cx| {
-                        result.workspace.update(cx, |workspace, cx| {
-                            Editor::new_in_workspace(workspace, window, cx)
-                        })
-                    })
-                    .expect("create untitled item")
-                    .await
-                    .expect("load untitled item");
-                Some(editor.entity_id())
-            } else {
-                None
-            };
-            let destination = result
-                .window
-                .update(cx, |_, window, cx| {
-                    result.workspace.update(cx, |workspace, cx| {
-                        let original_pane = workspace.active_pane().clone();
-                        if has_item || explicit_pane {
-                            workspace.split_pane(
-                                original_pane.clone(),
-                                SplitDirection::Right,
-                                window,
-                                cx,
-                            );
-                        }
-                        if explicit_pane {
-                            original_pane
-                        } else {
-                            workspace.active_pane().clone()
-                        }
-                    })
-                })
-                .expect("prepare destination pane");
-            cx.run_until_parked();
-            result.workspace.read_with(cx, |workspace, cx| {
-                assert_eq!(workspace.active_pane().read(cx).items_len(), 0);
-            });
-            let focused = result
-                .window
-                .update(cx, |_, window, cx| window.focused(cx))
-                .expect("read focused element");
-            result
-                .window
-                .update(cx, |_, window, cx| {
-                    result.workspace.update(cx, |workspace, cx| {
-                        workspace.open_paths(
-                            vec![root.join("first")],
-                            OpenOptions {
-                                visible: Some(workspace::OpenVisible::All),
-                                focus: Some(focus),
-                                ..OpenOptions::default()
-                            },
-                            explicit_pane.then(|| destination.downgrade()),
-                            window,
-                            cx,
-                        )
-                    })
-                })
-                .expect("add folder")
-                .await;
-            cx.run_until_parked();
-            result.workspace.read_with(cx, |workspace, cx| {
-                assert_eq!(
-                    workspace
-                        .root_paths(cx)
-                        .iter()
-                        .map(|path| path.to_path_buf())
-                        .collect::<Vec<_>>(),
-                    vec![root.join("existing"), root.join("first")]
-                );
-                if let Some(item_id) = original_item {
-                    assert_eq!(
-                        workspace
-                            .items(cx)
-                            .map(|item| item.item_id())
-                            .collect::<Vec<_>>(),
-                        vec![item_id]
-                    );
-                    assert_eq!(workspace.active_pane().read(cx).items_len(), 0);
-                } else {
-                    assert_eq!(
-                        workspace.open_item_abs_paths(cx),
-                        vec![root.join("first/README.txt")]
-                    );
-                    assert_eq!(workspace.items(cx).count(), 1);
-                    assert_eq!(destination.read(cx).items_len(), 1);
-                }
-            });
-            result
-                .window
-                .update(cx, |_, window, cx| {
-                    if !focus {
-                        assert_eq!(window.focused(cx), focused);
-                    }
-                    window.remove_window();
-                })
-                .expect("close workspace");
-            cx.run_until_parked();
-        }
+        assert_workspace_item_paths(
+            &result.workspace,
+            &[PathBuf::from(path!("/root/readme.md"))],
+            cx,
+        );
     }
 
     #[gpui::test]

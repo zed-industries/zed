@@ -3715,9 +3715,9 @@ Or add this to your settings.json:
 Zed opens one README from the first project root with a match.
 Zed checks `README.md`, `readme.md`, `Readme.md`, `README`, `readme`, `Readme`, `README.txt`, `readme.txt`, and `Readme.txt`, in that order.
 These are direct root-level file checks, not a directory scan.
-Other spellings do not match on case-sensitive filesystems.
+Other spellings do not match, even on case-insensitive filesystems.
 File-index exclusions do not affect README discovery.
-The same behavior applies when you add a folder to a project with no open items.
+Adding a folder to an already open project does not open a README.
 Files passed when opening the project and restored tabs take precedence.
 The README opens in a temporary [preview tab](#preview-tabs) when `preview_tabs.enabled` is `true`, or a regular tab otherwise.
 Zed uses your existing file opener settings, without forcing a rendered Markdown preview.
