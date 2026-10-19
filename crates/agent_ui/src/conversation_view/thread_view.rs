@@ -59,6 +59,60 @@ use super::*;
 
 const DATA_RETENTION_LEARN_MORE_URL: &str = "https://support.claude.com/en/articles/15425996-data-retention-practices-for-mythos-class-models";
 
+pub(super) struct ThreadRecovery {
+    pub session_id: acp_v2::SessionId,
+    pub work_dirs: Option<PathList>,
+    pub title: Option<SharedString>,
+    pub submissions: Vec<SavedSubmission>,
+    pub draft: Vec<acp_v2::ContentBlock>,
+    queued: Vec<QueuedMessageRecovery>,
+}
+
+struct QueuedMessageRecovery {
+    content: Vec<acp_v2::ContentBlock>,
+    tracked_buffers: Vec<Entity<Buffer>>,
+}
+
+pub(super) struct SavedSubmission {
+    pub content: Arc<[acp_v2::ContentBlock]>,
+    pub state: SubmissionState,
+}
+
+impl ThreadRecovery {
+    pub(super) fn to_json(
+        session_id: Option<&acp_v2::SessionId>,
+        recovery: Option<&Self>,
+        saved_submissions: &[SavedSubmission],
+    ) -> Result<String> {
+        #[derive(serde::Serialize)]
+        struct SavedInput<'a> {
+            session_id: Option<&'a acp_v2::SessionId>,
+            draft: &'a [acp_v2::ContentBlock],
+            queued: Vec<&'a [acp_v2::ContentBlock]>,
+            submissions: Vec<(&'a [acp_v2::ContentBlock], &'a SubmissionState)>,
+        }
+
+        Ok(serde_json::to_string_pretty(&SavedInput {
+            session_id,
+            draft: recovery.map_or(&[], |recovery| recovery.draft.as_slice()),
+            queued: recovery
+                .into_iter()
+                .flat_map(|recovery| &recovery.queued)
+                .map(|queued| queued.content.as_slice())
+                .collect(),
+            submissions: saved_submissions
+                .iter()
+                .chain(
+                    recovery
+                        .into_iter()
+                        .flat_map(|recovery| &recovery.submissions),
+                )
+                .map(|submission| (submission.content.as_ref(), &submission.state))
+                .collect(),
+        })?)
+    }
+}
+
 #[derive(Default)]
 struct ThreadFeedbackState {
     feedback: Option<ThreadFeedback>,
@@ -784,6 +838,67 @@ pub fn open_markdown_in_workspace(
 }
 
 impl ThreadView {
+    pub(super) fn snapshot_recovery(&self, cx: &App) -> Option<ThreadRecovery> {
+        let thread = self.thread.read(cx);
+        if !thread.uses_reported_activity() || !thread.is_observation_closed() {
+            return None;
+        }
+        let editor = self.message_editor.read(cx);
+        let draft = if editor.editor().read(cx).read_only(cx) {
+            thread
+                .draft_prompt()
+                .map(<[_]>::to_vec)
+                .unwrap_or_else(|| editor.draft_content_blocks_snapshot(cx))
+        } else {
+            editor.draft_content_blocks_snapshot(cx)
+        };
+        Some(ThreadRecovery {
+            session_id: thread.session_id().clone(),
+            work_dirs: thread.work_dirs().cloned(),
+            title: thread.title(),
+            submissions: thread
+                .recoverable_submissions()
+                .map(|(_, record)| SavedSubmission {
+                    content: record.content.clone(),
+                    state: record.state.clone(),
+                })
+                .collect(),
+            draft,
+            queued: self
+                .message_queue
+                .iter()
+                .map(|entry| {
+                    let editor = entry.editor.read(cx);
+                    QueuedMessageRecovery {
+                        content: if editor.editor().read(cx).read_only(cx) {
+                            entry.content.clone()
+                        } else {
+                            editor.draft_content_blocks_snapshot(cx)
+                        },
+                        tracked_buffers: entry.tracked_buffers.clone(),
+                    }
+                })
+                .collect(),
+        })
+    }
+
+    pub(super) fn restore_recovery(
+        &mut self,
+        recovery: &ThreadRecovery,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for queued in &recovery.queued {
+            self.add_to_queue(
+                queued.content.clone(),
+                queued.tracked_buffers.clone(),
+                window,
+                cx,
+            );
+        }
+        self.message_queue.pause();
+    }
+
     pub(crate) fn new(
         root_thread_id: ThreadId,
         thread: Entity<AcpThread>,

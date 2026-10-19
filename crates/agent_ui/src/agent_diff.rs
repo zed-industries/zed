@@ -1464,7 +1464,10 @@ impl AgentDiff {
             AcpThreadEvent::Stopped { .. } => {
                 self.update_reviewing_editors(workspace, window, cx);
             }
-            AcpThreadEvent::Error | AcpThreadEvent::LoadError(_) | AcpThreadEvent::Refusal => {
+            AcpThreadEvent::Error
+            | AcpThreadEvent::ConnectionLost
+            | AcpThreadEvent::LoadError(_)
+            | AcpThreadEvent::Refusal => {
                 self.update_reviewing_editors(workspace, window, cx);
             }
             AcpThreadEvent::TitleUpdated
