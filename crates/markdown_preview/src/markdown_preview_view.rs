@@ -1653,29 +1653,28 @@ impl Item for MarkdownPreviewView {
 
     fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
         let preview = self.self_handle.clone();
-        let description = params.detail.and_then(|detail| {
-            let editor = self.active_editor.as_ref()?.editor.read(cx);
-            let description = editor.tab_description(detail, cx)?;
-            Some(util::truncate_and_trailoff(
-                &description,
-                params.max_title_len.unwrap_or(MAX_TAB_TITLE_LEN),
-            ))
-        });
-        let title = match &self.active_editor {
-            Some(editor_state) => {
-                let title = editor_state.editor.read(cx).title(cx);
-                let title = if params.truncate_title_middle {
-                    title.to_string()
-                } else {
-                    util::truncate_and_trailoff(
-                        &title,
-                        params.max_title_len.unwrap_or(MAX_TAB_TITLE_LEN),
-                    )
-                };
-                format!("Preview {title}")
-            }
+        let editor = self
+            .active_editor
+            .as_ref()
+            .map(|editor_state| editor_state.editor.read(cx));
+        let max_title_len = params.max_title_len.unwrap_or(MAX_TAB_TITLE_LEN);
+
+        // Like editor tabs, the title is only the file name, since `tab_content_text` can be a
+        // full path for files outside the project. The directories needed to tell apart files
+        // with the same name are shown in the description.
+        let title = match editor {
+            Some(editor) if params.truncate_title_middle => format!("Preview {}", editor.title(cx)),
+            Some(editor) => format!(
+                "Preview {}",
+                util::truncate_and_trailoff(&editor.title(cx), max_title_len)
+            ),
             None => "Markdown Preview".to_string(),
         };
+        let description = editor
+            .zip(params.detail)
+            .and_then(|(editor, detail)| editor.tab_description(detail, cx))
+            .map(|description| util::truncate_and_trailoff(&description, max_title_len));
+
         h_flex()
             .gap_1()
             .when(!params.selected, |tab| tab.track_focus(&self.focus_handle))
@@ -1689,9 +1688,6 @@ impl Item for MarkdownPreviewView {
                     })
                     .ok();
             })
-            // Like editor tabs, the title is only the file name, since `tab_content_text` can be a
-            // full path for files outside the project. The directories needed to tell apart files
-            // with the same name are shown in the description.
             .child(
                 Label::new(title)
                     .single_line()
