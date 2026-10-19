@@ -3333,6 +3333,7 @@ impl GitRepository for RealGitRepository {
                         .take()
                         .context("commit graph process has no stdin")?;
                     stdin.write_all(revisions.as_bytes()).await?;
+                    stdin.flush().await?;
                     drop(stdin);
                     let output = process.output().await?;
                     anyhow::ensure!(
