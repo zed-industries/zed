@@ -22189,7 +22189,7 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut TestAppContext) {
                             ),
                             (
                                 lsp::Range::new(lsp::Position::new(3, 4), lsp::Position::new(3, 4)),
-                                "\n".to_owned(),
+                                language::LineEnding::default().as_str().to_owned(),
                             ),
                         ]
                         .as_slice(),
