@@ -1732,9 +1732,21 @@ impl FakeFsState {
         if !self.watches.inode_bound {
             return;
         }
+        let path = normalize_path(path);
         self.watches
             .registered_paths
-            .retain(|registered_path| registered_path != path);
+            .retain(|registered_path| *registered_path != path);
+    }
+
+    /// The kernel side of removing a watched directory tree: every
+    /// inode-bound watch registered on the directory or below it is gone.
+    fn drop_inode_bound_watches_under(&mut self, path: &Path) {
+        if !self.watches.inode_bound {
+            return;
+        }
+        self.watches
+            .registered_paths
+            .retain(|registered_path| !registered_path.starts_with(path));
     }
 
     fn emit_event<I, T>(&mut self, paths: I)
@@ -2116,13 +2128,19 @@ impl FakeFs {
         self.state.lock().watches.watch_calls.clone()
     }
 
-    /// Creates `path` without emitting an event when `watch_path` is next
-    /// watched, simulating a change that lands while the watch is installed.
     /// Makes the next backend watch of `path` fail with a permission error.
     pub fn refuse_next_watch_of(&self, path: impl AsRef<Path>) {
         self.state.lock().watches.path_to_refuse_on_watch = Some(normalize_path(path.as_ref()));
     }
 
+    /// The paths the watcher backend currently watches, as opposed to the
+    /// roots passed to `Fs::watch` that `watched_paths` reports.
+    pub fn backend_watched_paths(&self) -> Vec<PathBuf> {
+        self.state.lock().watches.registered_paths.clone()
+    }
+
+    /// Creates `path` without emitting an event when `watch_path` is next
+    /// watched, simulating a change that lands while the watch is installed.
     pub fn create_file_before_next_watch_add(
         &self,
         watch_path: impl AsRef<Path>,
@@ -2902,7 +2920,10 @@ impl FakeFs {
             }
         };
 
-        state.emit_event([(path, Some(PathEventKind::Removed))]);
+        state.emit_event([(path.clone(), Some(PathEventKind::Removed))]);
+        if removed.is_some() {
+            state.drop_inode_bound_watches_under(&path);
+        }
         Ok(removed)
     }
 

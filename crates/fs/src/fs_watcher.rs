@@ -50,16 +50,19 @@ pub(crate) fn native_file_watch_is_inode_bound() -> bool {
 ///
 /// `None` keeps the plain watch: for a directory, a poll watch, a backend
 /// whose file watches follow the path, a path whose metadata cannot be read
-/// (registering it fails or succeeds as before), and a parent reached
-/// through a symlink. inotify hands out one descriptor per inode and notify
-/// keeps one path per descriptor, so registering the alias would relabel
-/// the events of whoever watches the real directory.
+/// (registering it fails or succeeds as before), a symlink, and a parent
+/// reached through a symlink. inotify follows a symlink to its target, so
+/// the plain watch reports under the link's path, and `watch` covers the
+/// target's directory separately. inotify also hands out one descriptor per
+/// inode and notify keeps one path per descriptor, so registering an
+/// aliased parent would relabel the events of whoever watches the real
+/// directory.
 async fn parent_for_file_watch(fs: &dyn Fs, path: &Path) -> Option<Arc<Path>> {
     if !native_file_watch_is_inode_bound() || fs.requires_poll_watcher(path) {
         return None;
     }
     let metadata = fs.metadata(path).await.ok().flatten()?;
-    if metadata.is_dir {
+    if metadata.is_dir || metadata.is_symlink {
         return None;
     }
     let parent = path.parent()?;
@@ -1680,6 +1683,37 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[gpui::test]
+    async fn symlinked_file_keeps_the_plain_watch(cx: &mut gpui::TestAppContext) {
+        let fs = crate::FakeFs::new(cx.executor());
+        fs.insert_tree("/real", serde_json::json!({ "config.json": "A" }))
+            .await;
+        fs.insert_tree("/links", serde_json::json!({})).await;
+        fs.create_symlink(
+            Path::new("/links/config.json"),
+            PathBuf::from("/real/config.json"),
+        )
+        .await
+        .expect("create symlink");
+
+        // inotify follows the link, so the plain watch lands on the target's
+        // inode and reports under the link's path; `watch` then also covers
+        // the target and its directory, which sees a replacement there.
+        let (_events, _watcher) = fs
+            .watch(Path::new("/links/config.json"), Duration::ZERO)
+            .await;
+        cx.run_until_parked();
+        assert_eq!(
+            fs.watch_calls(),
+            [
+                PathBuf::from("/links/config.json"),
+                PathBuf::from("/real/config.json"),
+                PathBuf::from("/real"),
+            ]
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[gpui::test]
     async fn re_adding_a_file_repairs_its_stale_parent_watch(cx: &mut gpui::TestAppContext) {
         let fs = crate::FakeFs::new(cx.executor());
         fs.insert_tree(
@@ -1689,7 +1723,7 @@ mod tests {
         .await;
         let config_path = PathBuf::from("/root/dir/config.json");
 
-        let (_events, watcher) = fs.watch(&config_path, Duration::ZERO).await;
+        let (mut events, watcher) = fs.watch(&config_path, Duration::ZERO).await;
         cx.run_until_parked();
         assert_eq!(fs.watch_calls(), [PathBuf::from("/root/dir")]);
 
@@ -1716,6 +1750,18 @@ mod tests {
             fs.watch_calls(),
             [PathBuf::from("/root/dir"), PathBuf::from("/root/dir")]
         );
+
+        while events.next().now_or_never().flatten().is_some() {}
+        fs.atomic_write(config_path.clone(), "C".to_owned())
+            .await
+            .expect("atomic write");
+        cx.run_until_parked();
+        let batch = events
+            .next()
+            .now_or_never()
+            .flatten()
+            .expect("replacement batch after the repair");
+        assert!(batch.iter().all(|event| event.path == config_path));
     }
 
     #[cfg(target_os = "linux")]
@@ -1803,7 +1849,7 @@ mod tests {
         let keymap_path = PathBuf::from("/root/dir/keymap.json");
 
         let (settings_events, settings_watcher) = fs.watch(&settings_path, Duration::ZERO).await;
-        let (mut keymap_events, _keymap_watcher) = fs.watch(&keymap_path, Duration::ZERO).await;
+        let (mut keymap_events, keymap_watcher) = fs.watch(&keymap_path, Duration::ZERO).await;
         cx.run_until_parked();
         assert_eq!(fs.watch_calls(), [PathBuf::from("/root/dir")]);
 
@@ -1822,6 +1868,11 @@ mod tests {
             .flatten()
             .expect("keymap batch after the settings watcher was dropped");
         assert!(batch.iter().all(|event| event.path == keymap_path));
+
+        drop(keymap_events);
+        drop(keymap_watcher);
+        cx.run_until_parked();
+        assert_eq!(fs.backend_watched_paths(), Vec::<PathBuf>::new());
     }
 
     #[gpui::test]
