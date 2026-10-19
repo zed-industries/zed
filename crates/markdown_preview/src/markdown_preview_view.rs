@@ -1662,7 +1662,18 @@ impl Item for MarkdownPreviewView {
             ))
         });
         let title = match &self.active_editor {
-            Some(editor_state) => format!("Preview {}", editor_state.editor.read(cx).title(cx)),
+            Some(editor_state) => {
+                let title = editor_state.editor.read(cx).title(cx);
+                let title = if params.truncate_title_middle {
+                    title.to_string()
+                } else {
+                    util::truncate_and_trailoff(
+                        &title,
+                        params.max_title_len.unwrap_or(MAX_TAB_TITLE_LEN),
+                    )
+                };
+                format!("Preview {title}")
+            }
             None => "Markdown Preview".to_string(),
         };
         h_flex()
