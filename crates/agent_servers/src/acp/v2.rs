@@ -1174,29 +1174,26 @@ impl AgentConnection for AcpV2Connection {
                 }
             },
             |_| None,
-            {
-                let thread = thread.downgrade();
-                move |_, cx| {
-                    if let Some(thread) = thread.upgrade() {
-                        thread.update(cx, |thread, cx| thread.handle_session_closed(cx));
-                    }
-                    Ok(())
-                }
-            },
+            // Stop must not wake before the response's foreground barrier applies final updates.
+            |_, _| Ok(()),
             cx,
         );
         let task = cx
             .spawn({
                 let this = Rc::downgrade(&self);
+                let thread = thread.downgrade();
                 let session_id = session_id.clone();
                 let dispatch_tx = self.dispatch_tx.clone();
-                async move |_cx| {
+                async move |cx| {
                     let result = response.await;
                     if result.is_err() {
                         drain_foreground_queue(&dispatch_tx).await.log_err();
                     }
                     if let Some(this) = this.upgrade() {
                         if result.is_ok() {
+                            if let Some(thread) = thread.upgrade() {
+                                thread.update(cx, |thread, cx| thread.handle_session_closed(cx));
+                            }
                             this.remove_session(&session_id, thread_id);
                         } else {
                             let released = {
@@ -2643,6 +2640,125 @@ done
         assert!(
             harness.closes.is_empty(),
             "view release must not choose a remote-close policy"
+        );
+    }
+
+    #[gpui::test]
+    async fn v2_close_sdk_stop_confirmation_waits_for_preceding_updates(cx: &mut TestAppContext) {
+        use acp_thread::ForegroundActivity;
+        for reported_active in [false, true] {
+            let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+            let thread = harness
+                .resumed_thread(
+                    reported_active
+                        .then(|| acp::StateUpdate::Running(acp::RunningStateUpdate::new())),
+                    cx,
+                )
+                .await;
+            let stopping = thread.update(cx, |thread, cx| thread.cancel(cx));
+            bounded(harness.cancellations.recv(), cx)
+                .await
+                .expect("stop requested");
+            let observed = cx.spawn({
+                let thread = thread.clone();
+                async move |cx| {
+                    stopping.await.expect("confirmed stop");
+                    thread.read_with(&cx, |thread, cx| {
+                        (thread.foreground_activity(), thread.to_markdown(cx))
+                    })
+                }
+            });
+            harness.defer_closes();
+            let closing = harness.close(cx);
+            let (_, responder) = bounded(harness.close_requests.recv(), cx)
+                .await
+                .expect("close");
+            harness
+                .agent
+                .send_notification(acp::UpdateSessionNotification::new(
+                    "saved",
+                    acp::SessionUpdate::AgentMessage(
+                        acp::AgentMessage::new("final").content(vec!["final before close".into()]),
+                    ),
+                ))
+                .expect("final update");
+            if reported_active {
+                harness.resume_state(acp::StateUpdate::Idle(
+                    acp::IdleStateUpdate::new().stop_reason(acp::StopReason::Cancelled),
+                ));
+            }
+            responder
+                .respond(acp::CloseSessionResponse::new())
+                .expect("closed");
+            let (activity, content) = bounded(observed, cx).await;
+            bounded(closing, cx).await.expect("close completed");
+            assert_eq!(
+                activity,
+                if reported_active {
+                    ForegroundActivity::Idle
+                } else {
+                    ForegroundActivity::Unconfirmed
+                },
+                "stop must observe preceding state"
+            );
+            assert!(
+                content.contains("final before close"),
+                "stop must observe preceding content"
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn v2_close_sdk_failed_close_retains_only_captured_receipts(cx: &mut TestAppContext) {
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let thread = harness
+            .resumed_thread(
+                Some(acp::StateUpdate::Running(acp::RunningStateUpdate::new())),
+                cx,
+            )
+            .await;
+        let original = thread.update(cx, |thread, cx| thread.send(vec!["original".into()], cx));
+        let (_, original_response) = bounded(harness.prompts.recv(), cx)
+            .await
+            .expect("original prompt");
+        harness.defer_closes();
+        let closing = harness.close(cx);
+        let (_, response) = bounded(harness.close_requests.recv(), cx)
+            .await
+            .expect("close");
+        response
+            .respond_with_error(agent_client_protocol::Error::new(-32042, "Close rejected"))
+            .expect("rejected");
+        bounded(closing, cx).await.expect_err("close failed");
+        let later = thread.update(cx, |thread, cx| thread.send(vec!["later".into()], cx));
+        let (_, later_response) = bounded(harness.prompts.recv(), cx)
+            .await
+            .expect("later prompt");
+        drop(later);
+        let weak = thread.downgrade();
+        drop(thread);
+        cx.run_until_parked();
+        assert!(
+            weak.upgrade().is_some(),
+            "original close receipt is still pending"
+        );
+        original_response
+            .respond(acp::PromptResponse::new("original"))
+            .expect("original receipt");
+        bounded(original, cx).await.expect("original accepted");
+        cx.run_until_parked();
+        cx.update(|_| ());
+        let retained_for_later_prompt = weak.upgrade().is_some();
+        later_response
+            .respond_with_error(agent_client_protocol::Error::new(
+                -32800,
+                "Request Cancelled",
+            ))
+            .expect("settle later prompt");
+        cx.run_until_parked();
+        assert!(
+            !retained_for_later_prompt,
+            "failed close must not pin future unrelated receipts"
         );
     }
 

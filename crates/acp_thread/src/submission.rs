@@ -193,10 +193,10 @@ impl SessionSubmissions {
         self.records.values().any(SubmissionRecord::is_unsettled)
     }
 
-    pub(crate) fn has_pending_receipts(&self) -> bool {
-        self.records
-            .values()
-            .any(|record| matches!(record.state, SubmissionState::Pending))
+    pub(crate) fn pending_receipt_ids(&self) -> impl Iterator<Item = SubmissionId> {
+        self.records.iter().filter_map(|(id, record)| {
+            matches!(record.state, SubmissionState::Pending).then_some(*id)
+        })
     }
 
     pub(crate) fn recoverable(&self) -> impl Iterator<Item = (SubmissionId, &SubmissionRecord)> {

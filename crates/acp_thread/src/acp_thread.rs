@@ -4237,16 +4237,21 @@ impl AcpThread {
 
     pub fn prepare_session_close(&mut self, cx: &mut Context<Self>) {
         self.cancel_generic_permission_requests(cx);
-        if !self.submissions.has_pending_receipts() {
+        let pending_receipt_ids = self.submissions.pending_receipt_ids().collect::<Vec<_>>();
+        if pending_receipt_ids.is_empty() {
             return;
         }
-        // Prompt receipts may follow successful close. Retain their original
-        // projection even if the view and the close observer are released.
+        // Prompt receipts may follow successful close. Pin only those already pending:
+        // a rejected close must not extend this retention to later submissions.
         let (sender, received) = oneshot::channel();
         let mut sender = Some(sender);
         let subscription = cx.subscribe_self(move |this, event, _cx| {
             if matches!(event, AcpThreadEvent::SubmissionUpdated(_))
-                && !this.submissions.has_pending_receipts()
+                && !pending_receipt_ids.iter().any(|id| {
+                    this.submissions
+                        .get(*id)
+                        .is_some_and(|record| matches!(record.state, SubmissionState::Pending))
+                })
                 && let Some(sender) = sender.take()
                 && sender.send(()).is_err()
             {
