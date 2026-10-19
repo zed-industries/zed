@@ -98,6 +98,38 @@ fn port_forwarding_popover_trigger(
         .into_any_element()
 }
 
+fn remote_server_projects_menu(
+    workspace: WeakEntity<Workspace>,
+) -> PopoverMenu<recent_projects::RemoteServerProjects> {
+    let remote_workspace = workspace.clone();
+    PopoverMenu::new("remote-project-menu").menu(move |window, cx| {
+        let workspace_entity = remote_workspace.upgrade()?;
+        let fs = workspace_entity.read(cx).project().read(cx).fs().clone();
+        Some(recent_projects::RemoteServerProjects::popover(
+            fs,
+            remote_workspace.clone(),
+            None,
+            window,
+            cx,
+        ))
+    })
+}
+
+fn ssh_port_forwarding_options(options: RemoteConnectionOptions) -> Option<SshConnectionOptions> {
+    match options {
+        RemoteConnectionOptions::Ssh(options) => Some(options),
+        _ => None,
+    }
+}
+
+fn port_forwarding_button_for_remote_options(
+    workspace: WeakEntity<Workspace>,
+    options: RemoteConnectionOptions,
+) -> Option<AnyElement> {
+    let options = ssh_port_forwarding_options(options)?;
+    Some(port_forwarding_popover_trigger(workspace, options, false))
+}
+
 fn linked_worktree_name_anchor<'a>(
     main_worktree_path: Option<&'a Path>,
     repository_identity_path: Option<&'a Path>,
@@ -691,19 +723,7 @@ impl TitleBar {
 
         let meta = SharedString::from(meta);
 
-        let remote_workspace = workspace.clone();
-        let remote_connection_menu = PopoverMenu::new("remote-project-menu")
-            .menu(move |window, cx| {
-                let workspace_entity = remote_workspace.upgrade()?;
-                let fs = workspace_entity.read(cx).project().read(cx).fs().clone();
-                Some(recent_projects::RemoteServerProjects::popover(
-                    fs,
-                    remote_workspace.clone(),
-                    None,
-                    window,
-                    cx,
-                ))
-            })
+        let remote_connection_menu = remote_server_projects_menu(workspace.clone())
             .trigger_with_tooltip(
                 ButtonLike::new("remote_project")
                     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
@@ -782,16 +802,8 @@ impl TitleBar {
 
     fn render_port_forwarding_button(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let workspace = self.workspace.clone();
-        match self.project.read(cx).remote_connection_options(cx) {
-            Some(RemoteConnectionOptions::Ssh(options)) => {
-                return Some(port_forwarding_popover_trigger(
-                    workspace.clone(),
-                    options,
-                    false,
-                ));
-            }
-            Some(_) => return None,
-            None => {}
+        if let Some(options) = self.project.read(cx).remote_connection_options(cx) {
+            return port_forwarding_button_for_remote_options(workspace, options);
         }
 
         #[cfg(debug_assertions)]
@@ -1512,6 +1524,7 @@ mod tests {
     use super::*;
     use fs::Fs as _;
     use gpui::TestAppContext;
+    use std::ops::Deref;
     use util::paths::PathStyle;
     use workspace::AppState;
 
@@ -1524,6 +1537,134 @@ mod tests {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
             self.title_bar.clone()
         }
+    }
+
+    struct PortForwardingButtonTestRoot {
+        _workspace: Entity<Workspace>,
+        workspace: WeakEntity<Workspace>,
+        options: RemoteConnectionOptions,
+    }
+
+    impl Render for PortForwardingButtonTestRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().when_some(
+                port_forwarding_button_for_remote_options(
+                    self.workspace.clone(),
+                    self.options.clone(),
+                ),
+                |this, button| this.child(button),
+            )
+        }
+    }
+
+    struct RemoteServerProjectsMenuTestRoot {
+        _workspace: Entity<Workspace>,
+        workspace: WeakEntity<Workspace>,
+    }
+
+    impl Render for RemoteServerProjectsMenuTestRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            remote_server_projects_menu(self.workspace.clone())
+                .trigger(Button::new(
+                    "remote-project-menu-test-trigger",
+                    "Remote projects",
+                ))
+                .anchor(Anchor::TopLeft)
+        }
+    }
+
+    #[test]
+    fn port_forwarding_options_are_limited_to_ssh_connections() {
+        assert!(
+            ssh_port_forwarding_options(RemoteConnectionOptions::Ssh(
+                SshConnectionOptions::default()
+            ))
+            .is_some()
+        );
+        assert!(
+            ssh_port_forwarding_options(RemoteConnectionOptions::Mock(
+                remote::MockConnectionOptions { id: 99 }
+            ))
+            .is_none()
+        );
+    }
+
+    #[gpui::test]
+    async fn port_forwarding_trigger_is_visible_only_for_ssh_options(cx: &mut TestAppContext) {
+        let app_state = cx.update(AppState::test);
+        let fs = app_state.fs.as_fake();
+        let project = Project::test(fs.clone(), [], cx).await;
+        let ssh_options = RemoteConnectionOptions::Ssh(SshConnectionOptions {
+            host: "example.com".to_owned().into(),
+            ..Default::default()
+        });
+        let ssh_window = cx.open_window(gpui::size(gpui::px(500.), gpui::px(400.)), {
+            let project = project.clone();
+            move |window, cx| {
+                let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
+                PortForwardingButtonTestRoot {
+                    _workspace: workspace.clone(),
+                    workspace: workspace.downgrade(),
+                    options: ssh_options,
+                }
+            }
+        });
+        let mut ssh_visual_cx = gpui::VisualTestContext::from_window(*ssh_window.deref(), cx);
+        ssh_visual_cx.run_until_parked();
+        assert!(
+            ssh_visual_cx
+                .debug_bounds("ssh-port-forwarding-trigger")
+                .is_some()
+        );
+        drop(ssh_visual_cx);
+
+        let mock_window = cx.open_window(
+            gpui::size(gpui::px(500.), gpui::px(400.)),
+            move |window, cx| {
+                let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
+                PortForwardingButtonTestRoot {
+                    _workspace: workspace.clone(),
+                    workspace: workspace.downgrade(),
+                    options: RemoteConnectionOptions::Mock(remote::MockConnectionOptions {
+                        id: 99,
+                    }),
+                }
+            },
+        );
+        let mut mock_visual_cx = gpui::VisualTestContext::from_window(*mock_window.deref(), cx);
+        mock_visual_cx.run_until_parked();
+        assert!(
+            mock_visual_cx
+                .debug_bounds("ssh-port-forwarding-trigger")
+                .is_none(),
+            "non-SSH remote options must not render a forwarding trigger"
+        );
+    }
+
+    #[gpui::test]
+    async fn remote_server_menu_does_not_render_a_port_forwarding_trigger(cx: &mut TestAppContext) {
+        let app_state = cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            recent_projects::init(cx);
+            app_state
+        });
+        let fs = app_state.fs.as_fake();
+        let project = Project::test(fs, [], cx).await;
+        let (_root, cx) = cx.add_window_view(move |window, cx| {
+            let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
+            RemoteServerProjectsMenuTestRoot {
+                _workspace: workspace.clone(),
+                workspace: workspace.downgrade(),
+            }
+        });
+
+        let Some(trigger_bounds) = cx.debug_bounds("remote-project-menu-test-trigger") else {
+            panic!("remote server menu trigger was not rendered");
+        };
+        cx.simulate_click(trigger_bounds.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("remote-project-menu").is_some());
+        assert!(cx.debug_bounds("ssh-port-forwarding-trigger").is_none());
     }
 
     #[cfg(debug_assertions)]

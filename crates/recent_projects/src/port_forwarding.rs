@@ -892,6 +892,7 @@ fn format_forward(forward: &SshPortForwardOption) -> String {
     )
 }
 
+// TestAppContext cannot expose the accessibility tree; manually verify input roles, names, values, and placeholders with a screen reader, and verify the keyboard focus outline visually.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -904,6 +905,37 @@ mod tests {
         _workspace: Entity<Workspace>,
         popover: Entity<PortForwardingPopover>,
         _dismiss_subscription: Option<Subscription>,
+    }
+
+    struct PortForwardingMenuTestRoot {
+        _workspace: Entity<Workspace>,
+        workspace: WeakEntity<Workspace>,
+        fs: Arc<dyn Fs>,
+        options: SshConnectionOptions,
+    }
+
+    impl Render for PortForwardingMenuTestRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let workspace = self.workspace.clone();
+            let fs = self.fs.clone();
+            let options = self.options.clone();
+            ui::PopoverMenu::new("test-port-forwarding-menu")
+                .menu(move |window, cx| {
+                    workspace.upgrade()?;
+                    Some(PortForwardingPopover::popover(
+                        options.clone(),
+                        workspace.clone(),
+                        fs.clone(),
+                        true,
+                        window,
+                        cx,
+                    ))
+                })
+                .trigger(Button::new(
+                    "test-port-forwarding-trigger",
+                    "Port forwarding",
+                ))
+        }
     }
 
     impl Render for PortForwardingTestRoot {
@@ -924,6 +956,55 @@ mod tests {
             remote_host: remote_host.map(str::to_owned),
             remote_port,
         }
+    }
+
+    fn read_ssh_connections(cx: &App) -> Vec<SshConnection> {
+        RemoteSettings::get_global(cx)
+            .ssh_connections()
+            .cloned()
+            .collect()
+    }
+
+    fn assert_persisted_connections(
+        cx: &mut gpui::VisualTestContext,
+        identity: &SshConnectionIdentity,
+        target_forwards: &[SshPortForwardOption],
+    ) {
+        let connections = cx.update(|_, cx| read_ssh_connections(cx));
+        assert_eq!(connections.len(), 2);
+        let Some(target_connection) = connections
+            .iter()
+            .find(|connection| identity.matches(connection))
+        else {
+            panic!("target SSH settings entry was not preserved");
+        };
+        assert_eq!(
+            target_connection.port_forwards.as_deref(),
+            Some(target_forwards)
+        );
+        assert_eq!(
+            target_connection.nickname.as_deref(),
+            Some("Development server")
+        );
+        assert_eq!(target_connection.args, vec!["-C".to_owned()]);
+
+        let Some(unrelated_connection) = connections
+            .iter()
+            .find(|connection| connection.host == "unrelated.example.com")
+        else {
+            panic!("unrelated SSH settings entry was not preserved");
+        };
+        assert_eq!(unrelated_connection.username.as_deref(), Some("other"));
+        assert_eq!(unrelated_connection.port, Some(2201));
+        assert_eq!(
+            unrelated_connection.nickname.as_deref(),
+            Some("Other server")
+        );
+        assert_eq!(unrelated_connection.args, vec!["-A".to_owned()]);
+        assert_eq!(
+            unrelated_connection.port_forwards,
+            Some(vec![forward(Some("localhost"), 7070, Some("other"), 70)])
+        );
     }
 
     #[test]
@@ -1284,6 +1365,56 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn port_forwarding_popover_keeps_row_layout_at_breakpoint(cx: &mut TestAppContext) {
+        let app_state = cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            crate::init(cx);
+            editor::init(cx);
+            app_state
+        });
+        let fs = app_state.fs.as_fake();
+        let project = Project::test(fs.clone(), [], cx).await;
+        let options = SshConnectionOptions {
+            host: "for-testing-only".to_owned().into(),
+            nickname: Some("for-testing-only".to_owned()),
+            ..Default::default()
+        };
+        let window_handle = cx.open_window(
+            gpui::size(gpui::px(376.), gpui::px(600.)),
+            move |window, cx| {
+                let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
+                let popover = cx.new(|cx| {
+                    PortForwardingPopover::new(options, workspace.downgrade(), fs, true, window, cx)
+                });
+                PortForwardingTestRoot {
+                    _workspace: workspace,
+                    popover,
+                    _dismiss_subscription: None,
+                }
+            },
+        );
+        let mut visual_cx = gpui::VisualTestContext::from_window(*window_handle.deref(), cx);
+        visual_cx.run_until_parked();
+
+        let Some(popover_bounds) = visual_cx.debug_bounds("port-forwarding-popover") else {
+            panic!("port forwarding popover was not rendered");
+        };
+        assert!(popover_bounds.size.width <= gpui::px(360.));
+
+        click_port_forwarding_button(&mut visual_cx, "add-port-forward");
+        let Some(local_bounds) = visual_cx.debug_bounds("port-forward-local-endpoint") else {
+            panic!("local endpoint field was not rendered");
+        };
+        let Some(remote_bounds) = visual_cx.debug_bounds("port-forward-remote-endpoint") else {
+            panic!("remote endpoint field was not rendered");
+        };
+        assert_eq!(
+            local_bounds.origin.y, remote_bounds.origin.y,
+            "the editor should remain horizontal at 360px of available width"
+        );
+    }
+
+    #[gpui::test]
     async fn add_edit_and_validate_port_forward_inputs(cx: &mut TestAppContext) {
         let app_state = cx.update(|cx| {
             let app_state = AppState::test(cx);
@@ -1362,7 +1493,9 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn saving_a_port_forward_updates_ssh_settings(cx: &mut TestAppContext) {
+    async fn non_preview_add_edit_and_delete_only_update_the_matching_ssh_entry(
+        cx: &mut TestAppContext,
+    ) {
         let app_state = cx.update(|cx| {
             let app_state = AppState::test(cx);
             crate::init(cx);
@@ -1370,14 +1503,36 @@ mod tests {
             app_state
         });
         let fs = app_state.fs.as_fake();
+        let target_identity = SshConnectionIdentity {
+            host: "example.com".to_owned(),
+            username: Some("zed".to_owned()),
+            port: Some(2222),
+        };
+        let settings_identity = target_identity.clone();
         let initial_forward = forward(None, 8080, None, 80);
+        let unrelated_forward = forward(Some("localhost"), 7070, Some("other"), 70);
         let initial_settings_write = cx.update(|cx| {
             update_settings_file_with_completion(fs.clone(), cx, move |settings, _| {
-                settings.remote.ssh_connections = Some(vec![SshConnection {
-                    host: "example.com".to_owned(),
-                    port_forwards: Some(vec![initial_forward]),
-                    ..Default::default()
-                }]);
+                settings.remote.ssh_connections = Some(vec![
+                    SshConnection {
+                        host: settings_identity.host,
+                        username: settings_identity.username,
+                        port: settings_identity.port,
+                        nickname: Some("Development server".to_owned()),
+                        args: vec!["-C".to_owned()],
+                        port_forwards: Some(vec![initial_forward]),
+                        ..Default::default()
+                    },
+                    SshConnection {
+                        host: "unrelated.example.com".to_owned(),
+                        username: Some("other".to_owned()),
+                        port: Some(2201),
+                        nickname: Some("Other server".to_owned()),
+                        args: vec!["-A".to_owned()],
+                        port_forwards: Some(vec![unrelated_forward]),
+                        ..Default::default()
+                    },
+                ]);
             })
         });
         initial_settings_write
@@ -1387,10 +1542,12 @@ mod tests {
         let project = Project::test(fs.clone(), [], cx).await;
         let options = SshConnectionOptions {
             host: "example.com".to_owned().into(),
-            nickname: Some("example.com".to_owned()),
+            username: Some("zed".to_owned()),
+            port: Some(2222),
+            nickname: Some("Development server".to_owned()),
             ..Default::default()
         };
-        let identity = SshConnectionIdentity::from(&options);
+        let identity = target_identity;
         let (root, cx) = cx.add_window_view(move |window, cx| {
             let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
             let popover = cx.new(|cx| {
@@ -1403,21 +1560,249 @@ mod tests {
             }
         });
         let popover = root.read_with(cx, |root, _| root.popover.clone());
-        let replacement = forward(Some("localhost"), 8081, Some("service"), 9001);
+        let edited_forward = forward(Some("localhost"), 8081, Some("service"), 9001);
+        let added_forward = forward(Some("localhost"), 8082, Some("service"), 9002);
 
         click_port_forwarding_button(cx, "edit-port-forward-0");
         set_endpoint_values(&popover, "localhost:8081", "service:9001", cx);
         click_port_forwarding_button(cx, "save-port-forward");
         assert_eq!(
             popover.read_with(cx, |popover, _| popover.forwards.clone()),
-            vec![replacement.clone()]
+            vec![edited_forward.clone()]
+        );
+        assert_persisted_connections(cx, &identity, &[edited_forward.clone()]);
+
+        click_port_forwarding_button(cx, "add-port-forward");
+        set_endpoint_values(&popover, "localhost:8082", "service:9002", cx);
+        click_port_forwarding_button(cx, "save-port-forward");
+        assert_eq!(
+            popover.read_with(cx, |popover, _| popover.forwards.clone()),
+            vec![edited_forward.clone(), added_forward.clone()]
+        );
+        assert_persisted_connections(cx, &identity, &[edited_forward, added_forward.clone()]);
+
+        click_port_forwarding_button(cx, "delete-port-forward-0");
+        assert!(cx.has_pending_prompt());
+        cx.simulate_prompt_answer("Yes, remove it");
+        cx.run_until_parked();
+        assert_eq!(
+            popover.read_with(cx, |popover, _| popover.forwards.clone()),
+            vec![added_forward.clone()]
+        );
+        assert_persisted_connections(cx, &identity, &[added_forward]);
+    }
+
+    #[gpui::test]
+    async fn non_preview_cancel_invalid_stale_and_ambiguous_settings_do_not_change_forwards(
+        cx: &mut TestAppContext,
+    ) {
+        let app_state = cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            crate::init(cx);
+            editor::init(cx);
+            app_state
+        });
+        let fs = app_state.fs.as_fake();
+        let identity = SshConnectionIdentity {
+            host: "example.com".to_owned(),
+            username: Some("zed".to_owned()),
+            port: Some(2222),
+        };
+        let original_forward = forward(None, 8080, None, 80);
+        let initial_connection = SshConnection {
+            host: identity.host.clone(),
+            username: identity.username.clone(),
+            port: identity.port,
+            nickname: Some("Development server".to_owned()),
+            args: vec!["-C".to_owned()],
+            port_forwards: Some(vec![original_forward.clone()]),
+            ..Default::default()
+        };
+        let settings_connection = initial_connection.clone();
+        let initial_settings_write = cx.update(|cx| {
+            update_settings_file_with_completion(fs.clone(), cx, move |settings, _| {
+                settings.remote.ssh_connections = Some(vec![settings_connection]);
+            })
+        });
+        initial_settings_write
+            .await
+            .expect("initial settings update should complete")
+            .expect("initial settings should be written");
+        let project = Project::test(fs.clone(), [], cx).await;
+        let options = SshConnectionOptions {
+            host: identity.host.clone().into(),
+            username: identity.username.clone(),
+            port: identity.port,
+            nickname: Some("Development server".to_owned()),
+            ..Default::default()
+        };
+        let (root, cx) = cx.add_window_view(move |window, cx| {
+            let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
+            let popover = cx.new(|cx| {
+                PortForwardingPopover::new(options, workspace.downgrade(), fs, false, window, cx)
+            });
+            PortForwardingTestRoot {
+                _workspace: workspace,
+                popover,
+                _dismiss_subscription: None,
+            }
+        });
+        let popover = root.read_with(cx, |root, _| root.popover.clone());
+
+        click_port_forwarding_button(cx, "add-port-forward");
+        click_port_forwarding_button(cx, "cancel-port-forward");
+        assert_eq!(read_ssh_connections(cx), vec![initial_connection.clone()]);
+
+        click_port_forwarding_button(cx, "add-port-forward");
+        set_endpoint_values(&popover, "invalid input", "80", cx);
+        click_port_forwarding_button(cx, "save-port-forward");
+        assert_eq!(
+            popover.read_with(cx, |popover, _| {
+                popover.message.as_deref().map(str::to_owned)
+            }),
+            Some(INVALID_FORWARD_MESSAGE.to_owned())
+        );
+        assert!(
+            cx.debug_bounds("port-forward-error").is_some(),
+            "invalid input should render an inline error"
+        );
+        assert_eq!(read_ssh_connections(cx), vec![initial_connection.clone()]);
+        click_port_forwarding_button(cx, "cancel-port-forward");
+
+        click_port_forwarding_button(cx, "edit-port-forward-0");
+        set_endpoint_values(&popover, "localhost:8081", "service:9001", cx);
+        let stale_forward = forward(None, 8081, None, 80);
+        let stale_connection = SshConnection {
+            port_forwards: Some(vec![stale_forward.clone()]),
+            ..initial_connection.clone()
+        };
+        write_remote_connections(cx, fs.clone(), vec![stale_connection.clone()]).await;
+        assert_eq!(
+            popover.read_with(cx, |popover, _| popover.forwards.clone()),
+            vec![stale_forward.clone()]
         );
 
+        click_port_forwarding_button(cx, "save-port-forward");
         assert_eq!(
-            cx.update(|_, cx| read_forwards(&identity, cx))
-                .expect("updated SSH settings should be readable"),
-            vec![replacement]
+            popover.read_with(cx, |popover, _| {
+                popover.message.as_deref().map(str::to_owned)
+            }),
+            Some(ForwardUpdateError::ForwardChanged.message().to_owned())
         );
+        assert_eq!(read_ssh_connections(cx), vec![stale_connection.clone()]);
+        assert!(
+            popover.read_with(cx, |popover, _| popover.editor.is_some()),
+            "stale edits should remain open for the user to review"
+        );
+        click_port_forwarding_button(cx, "cancel-port-forward");
+
+        let ambiguous_connection = SshConnection {
+            port_forwards: Some(vec![forward(None, 8082, None, 80)]),
+            ..initial_connection.clone()
+        };
+        let ambiguous_connections = vec![stale_connection, ambiguous_connection];
+        write_remote_connections(cx, fs.clone(), ambiguous_connections.clone()).await;
+        assert_eq!(
+            popover.read_with(cx, |popover, _| {
+                popover.message.as_deref().map(str::to_owned)
+            }),
+            Some(ForwardUpdateError::AmbiguousConnection.message().to_owned())
+        );
+        click_port_forwarding_button(cx, "add-port-forward");
+        set_endpoint_values(&popover, "localhost:8083", "service:9003", cx);
+        click_port_forwarding_button(cx, "save-port-forward");
+        assert_eq!(
+            popover.read_with(cx, |popover, _| {
+                popover.message.as_deref().map(str::to_owned)
+            }),
+            Some(ForwardUpdateError::AmbiguousConnection.message().to_owned())
+        );
+        assert_eq!(read_ssh_connections(cx), ambiguous_connections);
+        assert!(
+            cx.debug_bounds("port-forward-error").is_some(),
+            "ambiguous settings should render an inline error"
+        );
+    }
+
+    #[gpui::test]
+    async fn settings_write_failure_keeps_the_forward_and_shows_an_error(cx: &mut TestAppContext) {
+        let app_state = cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            crate::init(cx);
+            editor::init(cx);
+            app_state
+        });
+        let fs = app_state.fs.as_fake();
+        let initial_forward = forward(None, 8080, None, 80);
+        let initial_connection = SshConnection {
+            host: "example.com".to_owned(),
+            port_forwards: Some(vec![initial_forward.clone()]),
+            ..Default::default()
+        };
+        let settings_connection = initial_connection.clone();
+        let initial_settings_write = cx.update(|cx| {
+            update_settings_file_with_completion(fs.clone(), cx, move |settings, _| {
+                settings.remote.ssh_connections = Some(vec![settings_connection]);
+            })
+        });
+        initial_settings_write
+            .await
+            .expect("initial settings update should complete")
+            .expect("initial settings should be written");
+        let initial_settings_text = fs
+            .load(paths::settings_file())
+            .await
+            .expect("initial settings should be readable");
+        let project = Project::test(fs.clone(), [], cx).await;
+        let options = SshConnectionOptions {
+            host: "example.com".to_owned().into(),
+            ..Default::default()
+        };
+        let (root, cx) = cx.add_window_view(move |window, cx| {
+            let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
+            let popover = cx.new(|cx| {
+                PortForwardingPopover::new(options, workspace.downgrade(), fs, false, window, cx)
+            });
+            PortForwardingTestRoot {
+                _workspace: workspace,
+                popover,
+                _dismiss_subscription: None,
+            }
+        });
+        let popover = root.read_with(cx, |root, _| root.popover.clone());
+        fs.fail_next_atomic_write("simulated settings write failure");
+
+        click_port_forwarding_button(cx, "edit-port-forward-0");
+        set_endpoint_values(&popover, "localhost:8081", "service:9001", cx);
+        click_port_forwarding_button(cx, "save-port-forward");
+
+        assert_eq!(
+            popover.read_with(cx, |popover, _| popover.forwards.clone()),
+            vec![initial_forward]
+        );
+        assert!(
+            popover.read_with(cx, |popover, _| popover.editor.is_some()),
+            "a failed write should keep the editor open"
+        );
+        assert!(
+            !popover.read_with(cx, |popover, _| popover.is_saving),
+            "saving state should clear after a failed write"
+        );
+        let error_message = popover.read_with(cx, |popover, _| popover.message.clone());
+        assert!(
+            error_message
+                .as_deref()
+                .is_some_and(|message| message.contains("simulated settings write failure")),
+            "the write failure should be shown to the user"
+        );
+        assert!(cx.debug_bounds("port-forward-error").is_some());
+        assert_eq!(
+            fs.load(paths::settings_file())
+                .await
+                .expect("settings should remain readable"),
+            initial_settings_text
+        );
+        assert_eq!(read_ssh_connections(cx), vec![initial_connection]);
     }
 
     #[gpui::test]
@@ -1513,11 +1898,74 @@ mod tests {
         assert!(dismiss_event_received.get());
     }
 
+    #[gpui::test]
+    async fn mounted_port_forwarding_menu_closes_after_outside_click(cx: &mut TestAppContext) {
+        let app_state = cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            crate::init(cx);
+            editor::init(cx);
+            app_state
+        });
+        let fs = app_state.fs.as_fake();
+        let project = Project::test(fs.clone(), [], cx).await;
+        let options = SshConnectionOptions {
+            host: "for-testing-only".to_owned().into(),
+            nickname: Some("for-testing-only".to_owned()),
+            ..Default::default()
+        };
+        let (_root, cx) = cx.add_window_view(move |window, cx| {
+            let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
+            PortForwardingMenuTestRoot {
+                _workspace: workspace.clone(),
+                workspace: workspace.downgrade(),
+                fs,
+                options,
+            }
+        });
+
+        click_port_forwarding_button(cx, "test-port-forwarding-trigger");
+        let Some(popover_bounds) = cx.debug_bounds("port-forwarding-popover") else {
+            panic!("mounted port forwarding popover was not opened");
+        };
+        cx.simulate_click(
+            gpui::point(
+                popover_bounds.right() + gpui::px(20.),
+                popover_bounds.bottom() + gpui::px(20.),
+            ),
+            gpui::Modifiers::default(),
+        );
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("port-forwarding-popover").is_none(),
+            "the mounted menu should close after an outside click"
+        );
+
+        click_port_forwarding_button(cx, "test-port-forwarding-trigger");
+        assert!(cx.debug_bounds("port-forwarding-popover").is_some());
+    }
+
     fn click_port_forwarding_button(cx: &mut gpui::VisualTestContext, button_id: &'static str) {
         let Some(bounds) = cx.debug_bounds(button_id) else {
             panic!("port forwarding button {button_id:?} was not rendered");
         };
         cx.simulate_click(bounds.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+    }
+
+    async fn write_remote_connections(
+        cx: &mut gpui::VisualTestContext,
+        fs: Arc<dyn Fs>,
+        connections: Vec<SshConnection>,
+    ) {
+        let completion = cx.update(|_, cx| {
+            update_settings_file_with_completion(fs, cx, move |settings, _| {
+                settings.remote.ssh_connections = Some(connections);
+            })
+        });
+        completion
+            .await
+            .expect("SSH settings update should complete")
+            .expect("SSH settings should be written");
         cx.run_until_parked();
     }
 

@@ -1466,6 +1466,7 @@ struct FakeFsState {
     job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
     trash: Mutex<SlotMap<TrashId, (TrashedEntry, FakeFsEntry)>>,
     remove_dir_errors: std::collections::HashMap<PathBuf, String>,
+    next_atomic_write_error: Option<String>,
     case_sensitive: bool,
 }
 
@@ -1861,6 +1862,7 @@ impl FakeFs {
             job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
             trash: Mutex::new(SlotMap::with_key()),
             remove_dir_errors: Default::default(),
+            next_atomic_write_error: None,
             case_sensitive: true,
         }));
         let native_watcher = fs_watcher::OsWatcher::with_backend(
@@ -2657,6 +2659,11 @@ impl FakeFs {
         .unwrap();
     }
 
+    /// Makes the next atomic write fail, then clears the injected error.
+    pub fn fail_next_atomic_write(&self, message: impl Into<String>) {
+        self.state.lock().next_atomic_write_error = Some(message.into());
+    }
+
     pub fn set_create_worktree_error(&self, dot_git: &Path, message: Option<String>) {
         self.with_git_state(dot_git, true, |state| {
             state.simulated_create_worktree_error = message;
@@ -3280,6 +3287,9 @@ impl Fs for FakeFs {
 
     async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
         self.simulate_random_delay().await;
+        if let Some(error) = self.state.lock().next_atomic_write_error.take() {
+            return Err(anyhow::anyhow!(error));
+        }
         let path = normalize_path(path.as_path());
         if let Some(path) = path.parent() {
             self.create_dir(path).await?;
