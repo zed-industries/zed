@@ -3506,6 +3506,69 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn reordering_editor_tab_after_returning_to_editor_does_not_reopen_preview(
+        cx: &mut TestAppContext,
+    ) {
+        let (project, workspace, multi_workspace) = markdown_workspace(
+            cx,
+            json!({ "note.md": "# Note\n", "plain.txt": "plain" }),
+            false,
+        )
+        .await;
+        cx.update(|cx| set_auto_preview_enabled(cx, true));
+
+        open_project_file(cx, &project, &multi_workspace, "plain.txt", None, false).await;
+        open_project_file(cx, &project, &multi_workspace, "note.md", None, true).await;
+
+        let preview = cx.update(|cx| {
+            workspace
+                .read(cx)
+                .active_item_as::<MarkdownPreviewView>(cx)
+                .unwrap()
+        });
+        let editor = preview.read_with(cx, |preview, _| {
+            preview.active_editor.as_ref().unwrap().editor.clone()
+        });
+
+        dispatch_close_and_return_to_editor(cx, &multi_workspace, &preview);
+        cx.run_until_parked();
+
+        assert_editor_is_active_and_focused(cx, &multi_workspace, &editor);
+        assert_no_markdown_preview_items(cx, &multi_workspace);
+
+        let pane = cx.update(|cx| workspace.read(cx).active_pane().clone());
+        let (editor_index_before_move, destination_index) = cx.update(|cx| {
+            let pane = pane.read(cx);
+            assert_eq!(pane.items_len(), 2);
+            let editor_index = pane.index_for_item(&editor).unwrap();
+            let other_index = if editor_index == 0 { 1 } else { 0 };
+            (editor_index, other_index)
+        });
+        multi_workspace
+            .update(cx, |_, window, cx| {
+                workspace::move_item(
+                    &pane,
+                    &pane,
+                    editor.entity_id(),
+                    destination_index,
+                    true,
+                    window,
+                    cx,
+                );
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let editor_index_after_move = pane.read(cx).index_for_item(&editor).unwrap();
+            assert_ne!(editor_index_after_move, editor_index_before_move);
+        });
+
+        assert_editor_is_active_and_focused(cx, &multi_workspace, &editor);
+        assert_no_markdown_preview_items(cx, &multi_workspace);
+    }
+
+    #[gpui::test]
     async fn preview_serialized_path_updates_when_source_file_is_renamed(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         app_state

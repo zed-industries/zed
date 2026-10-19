@@ -7359,6 +7359,43 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_move_item(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let [first_item, _, _] = set_labeled_items(&pane, ["A", "B*", "C"], cx);
+
+        let add_item_event_count = Rc::new(Cell::new(0));
+        let _subscription = cx.update(|_, cx| {
+            cx.subscribe(&pane, {
+                let add_item_event_count = add_item_event_count.clone();
+                move |_pane, event: &Event, _cx| {
+                    println!("Event: {:?}", event);
+                    if matches!(event, Event::AddItem { .. }) {
+                        add_item_event_count.set(add_item_event_count.get() + 1);
+                    }
+                }
+            })
+        });
+
+        pane.update_in(cx, |pane, window, cx| {
+            // move pane
+            pane.add_item(first_item, false, false, Some(1), window, cx)
+        });
+
+        assert_item_labels(&pane, ["B", "A*", "C"], cx);
+        assert_eq!(add_item_event_count.get(), 0);
+
+        add_labeled_item(&pane, "D", false, cx);
+        assert_eq!(add_item_event_count.get(), 1);
+    }
+
+    #[gpui::test]
     async fn test_add_item_with_same_project_entries(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
