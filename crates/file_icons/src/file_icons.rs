@@ -304,8 +304,6 @@ mod tests {
                 FileIcons::get_icon("Dockerfile.rs".as_ref(), cx),
                 Some("icons/file_icons/rust.svg".into())
             );
-        });
-        cx.update(|cx| {
             assert_eq!(
                 FileIcons::get_icon("go.mod".as_ref(), cx),
                 Some("icons/file_icons/go.svg".into())
