@@ -305,7 +305,11 @@ impl Editor {
     }
 
     pub fn set_max_diagnostics_severity(&mut self, severity: DiagnosticSeverity, cx: &mut App) {
-        self.diagnostics_max_severity = severity;
+        self.diagnostics_max_severity = if self.diagnostics_enabled() {
+            severity
+        } else {
+            DiagnosticSeverity::Off
+        };
         self.display_map.update(cx, |display_map, _| {
             display_map.diagnostics_max_severity = self.diagnostics_max_severity;
         });
