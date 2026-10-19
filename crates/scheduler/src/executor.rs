@@ -1,4 +1,4 @@
-use crate::{Instant, Priority, RunnableMeta, Scheduler, SessionId, Timer};
+use crate::{Instant, Priority, RunnableMeta, Scheduler, SessionId, TaskKind, Timer};
 use async_task::Runnable;
 use std::{
     any::Any,
@@ -78,6 +78,7 @@ impl LocalExecutor {
             RunnableMeta {
                 location,
                 spawned: crate::SpawnTime(Instant::now()),
+                kind: TaskKind::Cooperative,
             },
         );
         runnable.schedule();
@@ -105,6 +106,7 @@ impl LocalExecutor {
             RunnableMeta {
                 location,
                 spawned: crate::SpawnTime(Instant::now()),
+                kind: TaskKind::Cooperative,
             },
         );
         runnable.schedule();
@@ -239,12 +241,34 @@ impl BackgroundExecutor {
         F: Future + Send + 'static,
         F::Output: Send + 'static,
     {
+        self.spawn_inner(priority, TaskKind::Cooperative, future)
+    }
+
+    #[track_caller]
+    pub fn spawn_blocking<R>(&self, work: impl FnOnce() -> R + Send + 'static) -> Task<R>
+    where
+        R: Send + 'static,
+    {
+        self.spawn_inner(
+            Priority::default(),
+            TaskKind::Blocking,
+            async move { work() },
+        )
+    }
+
+    #[track_caller]
+    fn spawn_inner<F>(&self, priority: Priority, kind: TaskKind, future: F) -> Task<F::Output>
+    where
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
         let schedule = self.schedule_with_priority(priority);
         let location = Location::caller();
         let (runnable, task) = async_task::Builder::new()
             .metadata(RunnableMeta {
                 location,
                 spawned: crate::SpawnTime(Instant::now()),
+                kind,
             })
             .spawn(move |_| future, schedule);
         runnable.schedule();
@@ -271,6 +295,7 @@ impl BackgroundExecutor {
             .metadata(RunnableMeta {
                 location,
                 spawned: crate::SpawnTime(Instant::now()),
+                kind: TaskKind::Cooperative,
             })
             .spawn(
                 move |_| future,

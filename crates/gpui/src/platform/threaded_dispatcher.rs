@@ -137,9 +137,7 @@ impl ThreadedDispatcher {
                 .spawn(move || {
                     while let Ok(runnable) = receiver.pop() {
                         let _decrement = idle.decrement_on_drop();
-                        let location = runnable.metadata().location;
-                        let spawned = runnable.metadata().spawned;
-                        profiler::update_running_task(spawned, location);
+                        profiler::update_running_task(runnable.metadata());
                         runnable.run();
                         profiler::save_task_timing();
                     }
@@ -185,9 +183,7 @@ impl ThreadedDispatcher {
 
                         {
                             let _decrement = idle.decrement_on_drop();
-                            let location = entry.runnable.metadata().location;
-                            let spawned = entry.runnable.metadata().spawned;
-                            profiler::update_running_task(spawned, location);
+                            profiler::update_running_task(entry.runnable.metadata());
                             entry.runnable.run();
                             profiler::save_task_timing();
                         }
@@ -289,9 +285,7 @@ impl ThreadedDispatcher {
         let runnable = self.main_receiver.lock().try_pop();
         match runnable {
             Ok(Some(runnable)) => {
-                let location = runnable.metadata().location;
-                let spawned = runnable.metadata().spawned;
-                profiler::update_running_task(spawned, location);
+                profiler::update_running_task(runnable.metadata());
                 runnable.run();
                 profiler::save_task_timing();
                 true
@@ -422,9 +416,7 @@ impl ThreadedDispatcher {
             let runnable = self.main_receiver.lock().try_pop();
             match runnable {
                 Ok(Some(runnable)) => {
-                    let location = runnable.metadata().location;
-                    let spawned = runnable.metadata().spawned;
-                    profiler::update_running_task(spawned, location);
+                    profiler::update_running_task(runnable.metadata());
                     runnable.run();
                     profiler::save_task_timing();
                     ran_any = true;

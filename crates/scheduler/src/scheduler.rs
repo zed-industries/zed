@@ -72,6 +72,15 @@ impl Priority {
 #[derive(Clone, Copy, Debug)]
 pub struct SpawnTime(pub Instant);
 
+/// Identifies whether a task is expected to yield or intentionally block its worker.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TaskKind {
+    /// Asynchronous work that yields to allow other tasks to run.
+    Cooperative,
+    /// Synchronous work that runs to completion without yielding.
+    Blocking,
+}
+
 /// Metadata attached to runnables for debugging and profiling.
 #[derive(Clone, Debug)]
 pub struct RunnableMeta {
@@ -79,6 +88,8 @@ pub struct RunnableMeta {
     pub location: &'static Location<'static>,
     /// The moment the task was spawned.
     pub spawned: SpawnTime,
+    /// Whether the task intentionally blocks its background worker.
+    pub kind: TaskKind,
 }
 
 impl RunnableMeta {
@@ -87,6 +98,7 @@ impl RunnableMeta {
         Self {
             location: core::panic::Location::caller(),
             spawned: SpawnTime(Instant::now()),
+            kind: TaskKind::Cooperative,
         }
     }
 }

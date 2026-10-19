@@ -1827,7 +1827,11 @@ mod tests {
     /// dispatchers call around a poll that blocks the foreground.
     fn simulate_blocked_foreground_poll(duration: Duration) {
         let location = std::panic::Location::caller();
-        crate::profiler::update_running_task(SpawnTime(scheduler::Instant::now()), location);
+        crate::profiler::update_running_task(&scheduler::RunnableMeta {
+            spawned: SpawnTime(scheduler::Instant::now()),
+            location,
+            kind: scheduler::TaskKind::Cooperative,
+        });
         thread::sleep(duration);
         crate::profiler::save_task_timing();
     }

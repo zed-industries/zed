@@ -40,9 +40,7 @@ impl LinuxDispatcher {
                     .name(format!("Worker-{i}"))
                     .spawn(move || {
                         for runnable in receiver.iter() {
-                            let location = runnable.metadata().location;
-                            let spawned = runnable.metadata().spawned;
-                            profiler::update_running_task(spawned, location);
+                            profiler::update_running_task(runnable.metadata());
                             runnable.run();
                             profiler::save_task_timing();
                         }
@@ -75,9 +73,7 @@ impl LinuxDispatcher {
                                     calloop::timer::Timer::from_duration(timer.duration),
                                     move |_, _, _| {
                                         if let Some(runnable) = runnable.take() {
-                                            let location = runnable.metadata().location;
-                                            let spawned = runnable.metadata().spawned;
-                                            profiler::update_running_task(spawned, location);
+                                            profiler::update_running_task(runnable.metadata());
                                             runnable.run();
                                             profiler::save_task_timing();
                                         }

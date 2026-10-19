@@ -136,6 +136,7 @@ impl Scheduler for PlatformScheduler {
             .metadata(RunnableMeta {
                 location,
                 spawned: scheduler::SpawnTime(Instant::now()),
+                kind: scheduler::TaskKind::Cooperative,
             })
             .spawn(
                 move |_| async move {

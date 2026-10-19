@@ -90,9 +90,7 @@ impl WindowsDispatcher {
 
     #[inline(always)]
     pub(crate) fn execute_runnable(runnable: RunnableVariant) {
-        let location = runnable.metadata().location;
-        let spawned = runnable.metadata().spawned;
-        gpui::profiler::update_running_task(spawned, location);
+        gpui::profiler::update_running_task(runnable.metadata());
         runnable.run();
         gpui::profiler::save_task_timing();
     }

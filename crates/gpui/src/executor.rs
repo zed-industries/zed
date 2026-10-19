@@ -107,6 +107,15 @@ impl BackgroundExecutor {
         self.spawn_with_priority(Priority::default(), future.boxed())
     }
 
+    /// Enqueues synchronous work on a background thread.
+    #[track_caller]
+    pub fn spawn_blocking<R>(&self, work: impl FnOnce() -> R + Send + 'static) -> Task<R>
+    where
+        R: Send + 'static,
+    {
+        self.inner.spawn_blocking(work)
+    }
+
     /// Enqueues the given future to be run to completion on a background thread with the given priority.
     ///
     /// When `Priority::RealtimeAudio` is used, the task runs on a dedicated thread with

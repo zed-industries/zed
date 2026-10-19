@@ -35,6 +35,25 @@ fn test_background_executor_spawn() {
 }
 
 #[test]
+fn test_background_executor_spawn_blocking() {
+    TestScheduler::once(async |scheduler| {
+        let contents = String::from("blocking work");
+        let task = scheduler.background().spawn_blocking(move || contents);
+        assert_eq!(task.await, "blocking work");
+    });
+}
+
+#[test]
+fn test_background_executor_spawn_blocking_cancelled_before_start() {
+    let scheduler = Arc::new(TestScheduler::new(TestSchedulerConfig::default()));
+    let task = scheduler.background().spawn_blocking(|| {
+        panic!("a cancelled task must not run its closure");
+    });
+    drop(task);
+    scheduler.run();
+}
+
+#[test]
 fn test_dedicated_executor_spawn() {
     TestScheduler::once(async |scheduler| {
         let dedicated = DedicatedExecutor::new(&scheduler.background());
