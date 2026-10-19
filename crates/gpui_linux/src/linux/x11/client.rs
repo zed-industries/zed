@@ -1295,9 +1295,11 @@ impl X11Client {
                                 ScrollDirection::Left => Point::new(SCROLL_LINES, 0.0),
                                 ScrollDirection::Right => Point::new(-SCROLL_LINES, 0.0),
                             };
-                            window.handle_input(PlatformInput::Scroll(
-                                make_scroll_wheel_event(position, scroll_delta, modifiers),
-                            ));
+                            window.handle_input(PlatformInput::Scroll(make_scroll_wheel_event(
+                                position,
+                                scroll_delta,
+                                modifiers,
+                            )));
                         }
                     }
                     None => {

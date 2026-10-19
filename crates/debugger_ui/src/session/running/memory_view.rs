@@ -10,7 +10,7 @@ use std::{
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
     Action, Along, AppContext, Axis, DismissEvent, DragMoveEvent, Empty, Entity, FocusHandle,
-    Focusable, ListHorizontalSizingBehavior, MouseButton, Point, ScrollStrategy, ScrollEvent,
+    Focusable, ListHorizontalSizingBehavior, MouseButton, Point, ScrollEvent, ScrollStrategy,
     Subscription, Task, TextStyle, UniformList, UniformListScrollHandle, WeakEntity, actions,
     anchored, deferred, uniform_list,
 };

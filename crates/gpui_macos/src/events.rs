@@ -270,7 +270,10 @@ pub(crate) unsafe fn platform_input_from_native(
                 );
 
                 let (delta, source) = if native_event.hasPreciseScrollingDeltas() == YES {
-                    (ScrollDelta::Pixels(raw_data.map(px)), ScrollSource::Trackpad)
+                    (
+                        ScrollDelta::Pixels(raw_data.map(px)),
+                        ScrollSource::Trackpad,
+                    )
                 } else {
                     (ScrollDelta::Lines(raw_data), ScrollSource::Wheel)
                 };

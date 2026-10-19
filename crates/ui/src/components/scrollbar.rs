@@ -6,8 +6,8 @@ use gpui::{
     ContentMask, Context, Corners, CursorStyle, DispatchPhase, Div, Edges, Element, ElementId,
     Entity, EntityId, GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement,
     IntoElement, IsZero, LayoutId, ListState, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ParentElement, Pixels, Point, Position, Render, ScrollHandle, ScrollEvent,
-    Size, Stateful, StatefulInteractiveElement, Style, StyleRefinement, Styled, Task,
+    MouseUpEvent, ParentElement, Pixels, Point, Position, Render, ScrollEvent, ScrollHandle, Size,
+    Stateful, StatefulInteractiveElement, Style, StyleRefinement, Styled, Task,
     UniformListDecoration, UniformListScrollHandle, Window, ease_in_out, fill,
     prelude::FluentBuilder as _, px, quad, relative, size,
 };

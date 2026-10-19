@@ -13,9 +13,9 @@ use gpui::{
     AnyElement, App, Bounds, Context, DispatchPhase, Element, ElementId, Entity, EventEmitter,
     FocusHandle, Focusable, Font, GlobalElementId, InspectorElementId, InteractiveElement,
     IntoElement, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, PinchEvent, Pixels, Point, Render, RenderImage, ScrollDelta, ScrollEvent,
-    Style, Styled, Subscription, Task, WeakEntity, Window, actions, checkerboard, div, img, point,
-    px, size,
+    ParentElement, PinchEvent, Pixels, Point, Render, RenderImage, ScrollDelta, ScrollEvent, Style,
+    Styled, Subscription, Task, WeakEntity, Window, actions, checkerboard, div, img, point, px,
+    size,
 };
 use language::File as _;
 use persistence::ImageViewerDb;

@@ -19,8 +19,8 @@ use gpui::{
     Action, AppContext as _, AsyncApp, ClickEvent, Context, DismissEvent, Entity, EventEmitter,
     FocusHandle, Focusable, Global, IsZero,
     KeyBindingContextPredicate::{And, Descendant, Equal, Identifier, Not, NotEqual, Or},
-    KeyContext, KeybindingKeystroke, MouseButton, PlatformKeyboardMapper, Point, ScrollStrategy,
-    ScrollEvent, Stateful, StyledText, Subscription, Task, TextStyleRefinement, WeakEntity,
+    KeyContext, KeybindingKeystroke, MouseButton, PlatformKeyboardMapper, Point, ScrollEvent,
+    ScrollStrategy, Stateful, StyledText, Subscription, Task, TextStyleRefinement, WeakEntity,
     actions, anchored, deferred, div,
 };
 use language::{Language, LanguageConfig, ToOffset as _};

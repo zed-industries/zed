@@ -35,10 +35,7 @@ pub fn touch_id(touch: &UITouch) -> TouchId {
 /// The source comes from the scroll types the recognizer accepts: the window
 /// installs one recognizer for continuous scrolls and one for discrete ones.
 /// Returns `None` for states that carry no scroll.
-pub fn scroll_event(
-    recognizer: &UIPanGestureRecognizer,
-    view: &UIView,
-) -> Option<ScrollEvent> {
+pub fn scroll_event(recognizer: &UIPanGestureRecognizer, view: &UIView) -> Option<ScrollEvent> {
     let touch_phase = match recognizer.state() {
         UIGestureRecognizerState::Began => TouchPhase::Started,
         UIGestureRecognizerState::Changed => TouchPhase::Moved,

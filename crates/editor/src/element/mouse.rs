@@ -6,8 +6,8 @@ use feature_flags::{DiffReviewFeatureFlag, FeatureFlagAppExt as _};
 use gpui::{
     AnyElement, App, AvailableSpace, ClickEvent, Context, DispatchPhase, Element, MouseButton,
     MouseClickEvent, MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent,
-    ParentElement, Pixels, PressureStage, ScrollDelta, ScrollEvent, Window, anchored,
-    deferred, point, px,
+    ParentElement, Pixels, PressureStage, ScrollDelta, ScrollEvent, Window, anchored, deferred,
+    point, px,
 };
 use multi_buffer::MultiBufferRow;
 use project::DisableAiSettings;
