@@ -942,7 +942,7 @@ impl AcpConnection {
                 let connection = self.connection.clone();
                 let dispatch_tx = self.dispatch_tx.clone();
                 let supports_close = self.agent_supports_session_close();
-                async move |cx| {
+                async move |_cx| {
                     if thread.upgrade().is_none() {
                         if let Some(this) = this.upgrade() {
                             this.remove_session(&session_id, thread.entity_id());
@@ -986,14 +986,7 @@ impl AcpConnection {
                                 )));
                             };
                             session.session_modes = modes;
-                            session.config_options = config_options.clone();
-                            session.default_config_task = config_options.as_ref().map(|options| {
-                                connection_state.apply_default_config_options(
-                                    &session_id,
-                                    options,
-                                    cx,
-                                )
-                            });
+                            session.config_options = config_options;
                         }
                         connection_state.remove_pending_session(&session_id, thread.entity_id());
                         return Ok(());
@@ -6272,6 +6265,65 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn loaded_sessions_do_not_apply_config_defaults(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+        });
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/", serde_json::json!({"a": {}})).await;
+        let project = project::Project::test(fs, [std::path::Path::new("/a")], cx).await;
+        let (connection, requests) = connect_config_defaults_test_agent(cx).await;
+        connection.defaults.set(
+            None,
+            HashMap::from_iter([("web_search".into(), AgentConfigOptionValue::Boolean(true))]),
+        );
+        let connection = Rc::new(connection);
+        let returned = vec![acp::SessionConfigOption::boolean(
+            "web_search",
+            "Web Search",
+            false,
+        )];
+        let session_id = acp_v2::SessionId::new("saved-config");
+        let thread = cx
+            .update(|cx| {
+                connection.clone().open_or_create_session(
+                    session_id.clone(),
+                    project,
+                    PathList::new(&[std::path::Path::new("/a")]),
+                    None,
+                    {
+                        let returned = returned.clone();
+                        |_, _, _| {
+                            async move {
+                                Ok(SessionConfigResponse {
+                                    modes: None,
+                                    config_options: Some(returned),
+                                })
+                            }
+                            .boxed_local()
+                        }
+                    },
+                    cx,
+                )
+            })
+            .await
+            .expect("load preserves saved settings");
+        cx.run_until_parked();
+        assert!(
+            requests.lock().expect("config requests").is_empty(),
+            "load must not send saved defaults"
+        );
+        let options = cx
+            .read(|cx| connection.session_config_options(thread.read(cx).session_id(), cx))
+            .expect("loaded config");
+        assert_eq!(
+            options.config_options(),
+            acp_thread::config_options::from_v1(returned).expect("v2 projection")
+        );
+    }
+
+    #[gpui::test]
     async fn default_config_options_apply_boolean_defaults(cx: &mut gpui::TestAppContext) {
         let (connection, set_config_requests) = connect_config_defaults_test_agent_with_handler(
             |_| {
@@ -6606,6 +6658,21 @@ mod tests {
             })
             .await
             .expect("load initial session");
+        // Exercise the new-session task lifetime without making load apply defaults.
+        let options = connection
+            .sessions
+            .borrow()
+            .get(&session_id)
+            .and_then(|session| session.config_options.clone())
+            .expect("session config");
+        let defaults =
+            connection.apply_default_config_options(&session_id, &options, &mut cx.to_async());
+        connection
+            .sessions
+            .borrow_mut()
+            .get_mut(&session_id)
+            .expect("registered session")
+            .default_config_task = Some(defaults);
         cx.run_until_parked();
         assert_eq!(requests.lock().expect("requests").len(), 1);
         drop(thread);
