@@ -1342,7 +1342,7 @@ mod tests {
         assert!(draw(cx).is_none());
 
         cx.executor()
-            .advance_clock(image_store::MISSING_IMAGE_RETRY_DELAY);
+            .advance_clock(image_store::IMAGE_RECHECK_DELAY);
         assert!(draw(cx).is_none());
         cx.run_until_parked();
         assert!(matches!(

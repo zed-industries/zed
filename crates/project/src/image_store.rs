@@ -151,8 +151,8 @@ pub fn project_image_source(project: WeakEntity<Project>, path: ProjectPath) -> 
     })
 }
 
-pub const MISSING_IMAGE_RETRY_DELAY: Duration = Duration::from_secs(2);
-const MAX_MISSING_IMAGE_RETRY_DELAY: Duration = Duration::from_secs(30);
+pub const IMAGE_RECHECK_DELAY: Duration = Duration::from_secs(2);
+const MAX_IMAGE_RECHECK_DELAY: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum ImageLocation {
@@ -186,12 +186,10 @@ impl ImagePathSource {
 }
 
 #[derive(Clone)]
-enum ImagePathResolution {
-    Found(ImageLocation),
-    /// `retry_due` holds the elapsed retry delay once the next check is due.
-    Missing {
-        retry_due: Arc<Mutex<Option<Duration>>>,
-    },
+struct ImagePathResolution {
+    location: Option<ImageLocation>,
+    /// Holds the elapsed recheck delay once the next check is due.
+    recheck_due: Arc<Mutex<Option<Duration>>>,
 }
 
 enum ImagePathResolver {}
@@ -207,49 +205,50 @@ impl Asset for ImagePathResolver {
         let executor = cx.background_executor().clone();
         let resolve = cx.spawn(async move |cx| source.resolve(log::Level::Warn, cx).await);
         async move {
-            if let Some(location) = resolve.await {
-                return ImagePathResolution::Found(location);
+            let location = resolve.await;
+            let recheck_due = Arc::new(Mutex::new(None));
+            schedule_recheck(&executor, recheck_due.clone(), IMAGE_RECHECK_DELAY);
+            ImagePathResolution {
+                location,
+                recheck_due,
             }
-            let retry_due = Arc::new(Mutex::new(None));
-            schedule_retry(&executor, retry_due.clone(), MISSING_IMAGE_RETRY_DELAY);
-            ImagePathResolution::Missing { retry_due }
         }
     }
 }
 
-fn schedule_retry(
+fn schedule_recheck(
     executor: &BackgroundExecutor,
-    retry_due: Arc<Mutex<Option<Duration>>>,
+    recheck_due: Arc<Mutex<Option<Duration>>>,
     delay: Duration,
 ) {
     let timer = executor.timer(delay);
     executor
         .spawn(async move {
             timer.await;
-            *retry_due.lock() = Some(delay);
+            *recheck_due.lock() = Some(delay);
         })
         .detach();
 }
 
-// A hit evicts the cached miss so the next render loads the image; a miss only re-arms
-// the timer, so a visible missing image costs one check per delay and never redraws itself.
-fn retry_missing_image(
+// A changed result evicts the cached entry so the next render resolves it again; an unchanged
+// one only re-arms the timer, so a visible image costs one check per delay and never redraws.
+fn recheck_image_location(
     source: ImagePathSource,
-    retry_due: Arc<Mutex<Option<Duration>>>,
+    resolution: ImagePathResolution,
     delay: Duration,
     view: EntityId,
     cx: &mut App,
 ) {
     let executor = cx.background_executor().clone();
     cx.spawn(async move |cx| {
-        if source.resolve(log::Level::Debug, cx).await.is_some() {
+        if source.resolve(log::Level::Debug, cx).await != resolution.location {
             cx.update(|cx| {
                 cx.remove_asset::<ImagePathResolver>(&source);
                 cx.notify(view);
             });
         } else {
-            let next_delay = (delay * 2).min(MAX_MISSING_IMAGE_RETRY_DELAY);
-            schedule_retry(&executor, retry_due, next_delay);
+            let next_delay = (delay * 2).min(MAX_IMAGE_RECHECK_DELAY);
+            schedule_recheck(&executor, resolution.recheck_due, next_delay);
         }
     })
     .detach();
@@ -262,16 +261,13 @@ pub fn use_image_location(
     cx: &mut App,
 ) -> Option<ImageLocation> {
     let source = ImagePathSource { project, paths };
-    match window.use_asset::<ImagePathResolver>(&source, cx)? {
-        ImagePathResolution::Found(location) => Some(location),
-        ImagePathResolution::Missing { retry_due } => {
-            let elapsed_delay = retry_due.lock().take();
-            if let Some(delay) = elapsed_delay {
-                retry_missing_image(source, retry_due, delay, window.current_view(), cx);
-            }
-            None
-        }
+    let resolution = window.use_asset::<ImagePathResolver>(&source, cx)?;
+    let location = resolution.location.clone();
+    let elapsed_delay = resolution.recheck_due.lock().take();
+    if let Some(delay) = elapsed_delay {
+        recheck_image_location(source, resolution, delay, window.current_view(), cx);
     }
+    location
 }
 
 impl ImageItem {

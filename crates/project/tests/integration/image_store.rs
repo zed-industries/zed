@@ -1,4 +1,4 @@
-use fs::FakeFs;
+use fs::{FakeFs, Fs};
 use gpui::{
     Context, IntoElement, Render, TestAppContext, VisualTestContext, WeakEntity, Window, px, size,
 };
@@ -132,7 +132,7 @@ async fn test_use_image_location_retries_missing_file_after_delay(cx: &mut TestA
     }
     assert_eq!(fs.metadata_call_count(), calls_after_first_check);
 
-    cx.executor().advance_clock(MISSING_IMAGE_RETRY_DELAY);
+    cx.executor().advance_clock(IMAGE_RECHECK_DELAY);
     assert_eq!(draw(cx), None);
     let renders_before_recheck = renders(cx);
     cx.run_until_parked();
@@ -147,7 +147,7 @@ async fn test_use_image_location_retries_missing_file_after_delay(cx: &mut TestA
         "a miss must not redraw"
     );
 
-    cx.executor().advance_clock(MISSING_IMAGE_RETRY_DELAY);
+    cx.executor().advance_clock(IMAGE_RECHECK_DELAY);
     assert_eq!(draw(cx), None);
     cx.run_until_parked();
     assert_eq!(
@@ -155,7 +155,7 @@ async fn test_use_image_location_retries_missing_file_after_delay(cx: &mut TestA
         calls_after_recheck,
         "the second re-check waits longer than the first"
     );
-    cx.executor().advance_clock(MISSING_IMAGE_RETRY_DELAY);
+    cx.executor().advance_clock(IMAGE_RECHECK_DELAY);
     assert_eq!(draw(cx), None);
     cx.run_until_parked();
     let calls_after_second_recheck = fs.metadata_call_count();
@@ -178,7 +178,7 @@ async fn test_use_image_location_retries_missing_file_after_delay(cx: &mut TestA
     let expected = Some(ImageLocation::Local(
         Path::new(path!("/outside/later.ppm")).into(),
     ));
-    cx.executor().advance_clock(MISSING_IMAGE_RETRY_DELAY * 4);
+    cx.executor().advance_clock(IMAGE_RECHECK_DELAY * 4);
     assert_eq!(draw(cx), None);
     cx.run_until_parked();
     assert_eq!(
@@ -186,4 +186,71 @@ async fn test_use_image_location_retries_missing_file_after_delay(cx: &mut TestA
         expected
     );
     assert_eq!(draw(cx), expected);
+}
+
+#[gpui::test]
+async fn test_use_image_location_revalidates_found_location(cx: &mut TestAppContext) {
+    init_test(cx);
+    let red_pixel = "P3\n1 1\n255\n255 0 0\n";
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/a"), json!({"work": {}, "shot.ppm": red_pixel}))
+        .await;
+    fs.insert_tree(path!("/b"), json!({"work": {}, "shot.ppm": red_pixel}))
+        .await;
+    let project = Project::test(
+        fs.clone(),
+        [path!("/a/work").as_ref(), path!("/b/work").as_ref()],
+        cx,
+    )
+    .await;
+    let (view, cx) = cx.add_window_view(|_, _| ImageLocationTestView {
+        project: project.downgrade(),
+        paths: vec![
+            path!("/a/work/../shot.ppm").to_string(),
+            path!("/b/work/../shot.ppm").to_string(),
+        ],
+        location: None,
+        renders: 0,
+    });
+    let draw = |cx: &mut VisualTestContext| {
+        cx.draw(Default::default(), size(px(10.), px(10.)), {
+            let view = view.clone();
+            move |_, _| view.into_any_element()
+        });
+        view.read_with(cx, |view, _| view.location.clone())
+    };
+    let renders = |cx: &mut VisualTestContext| view.read_with(cx, |view, _| view.renders);
+    let first = Some(ImageLocation::Local(Path::new(path!("/a/shot.ppm")).into()));
+    let second = Some(ImageLocation::Local(Path::new(path!("/b/shot.ppm")).into()));
+
+    cx.run_until_parked();
+    assert_eq!(draw(cx), first);
+
+    cx.executor().advance_clock(IMAGE_RECHECK_DELAY);
+    assert_eq!(draw(cx), first);
+    let renders_before_recheck = renders(cx);
+    cx.run_until_parked();
+    assert_eq!(
+        renders(cx),
+        renders_before_recheck,
+        "an unchanged location must not redraw"
+    );
+
+    fs.remove_file(Path::new(path!("/a/shot.ppm")), Default::default())
+        .await
+        .unwrap();
+    cx.executor().advance_clock(IMAGE_RECHECK_DELAY);
+    assert_eq!(draw(cx), first);
+    cx.run_until_parked();
+    assert_eq!(
+        view.read_with(cx, |view, _| view.location.clone()),
+        first,
+        "the second recheck waits longer than the first"
+    );
+
+    cx.executor().advance_clock(IMAGE_RECHECK_DELAY);
+    assert_eq!(draw(cx), first);
+    cx.run_until_parked();
+    assert_eq!(view.read_with(cx, |view, _| view.location.clone()), second);
+    assert_eq!(draw(cx), second);
 }
