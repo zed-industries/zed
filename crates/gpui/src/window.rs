@@ -8369,6 +8369,7 @@ mod tests {
                 bottom: px(350.),
                 ..Default::default()
             },
+            ..Default::default()
         };
         platform_window.simulate_insets_change(insets.clone());
         assert!(platform_window.frame_wake_count() > wakes);

@@ -710,6 +710,8 @@ objc2-ui-kit = { version = "0.3.2", default-features = false, features = [
     "objc2-core-foundation",
     "NSText",
     "UIApplication",
+    "UICornerConfiguration",
+    "UICornerRadius",
     "UIEvent",
     "UIGeometry",
     "UIInterface",

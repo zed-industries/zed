@@ -13,8 +13,8 @@ use super::events::*;
 use super::text_input::TextInputView;
 use super::{CallbackSlot, IosDisplay, platform::IosPlatformState};
 use gpui::{
-    AnyWindowHandle, Bounds, Capslock, DevicePixels, DispatchEventResult, DisplayId, Edges,
-    GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    AnyWindowHandle, Bounds, Capslock, Corners, DevicePixels, DispatchEventResult, DisplayId,
+    Edges, GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
     Scene, Size, TextInputConfiguration, TextInputStateChange, TouchEvent, TouchId, TouchPhase,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowInsets,
@@ -23,7 +23,9 @@ use gpui::{
 use gpui_apple::metal_renderer::{Context as MetalContext, MetalRenderer};
 use objc2::rc::Retained;
 use objc2::runtime::AnyClass;
-use objc2::{ClassType, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
+use objc2::{
+    ClassType, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel,
+};
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::{NSNotification, NSNotificationCenter, NSObjectProtocol, NSSet, NSValue};
 use objc2_quartz_core::CAMetalLayer;
@@ -32,8 +34,9 @@ use objc2_ui_kit::{
     UIKeyboardWillChangeFrameNotification, UIKeyboardWillHideNotification, UIStatusBarStyle,
 };
 use objc2_ui_kit::{
-    UIEvent, UIScreen, UITouch, UITraitCollection, UITraitEnvironment, UIUserInterfaceStyle,
-    UIView, UIViewAutoresizing, UIViewController, UIWindow, UIWindowScene,
+    UICornerConfiguration, UICornerRadius, UIEvent, UIRectCorner, UIScreen, UITouch,
+    UITraitCollection, UITraitEnvironment, UIUserInterfaceStyle, UIView, UIViewAutoresizing,
+    UIViewController, UIWindow, UIWindowScene,
 };
 use parking_lot::Mutex;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, UiKitDisplayHandle, UiKitWindowHandle};
@@ -219,6 +222,9 @@ pub(crate) struct IosWindowState {
     view: Retained<MetalView>,
     /// The hidden text input view for keyboard input
     text_input_view: Retained<TextInputView>,
+    /// A transparent view filling the window whose concentric corner radii
+    /// report the display's corners. `None` before iOS 26.
+    corner_probe: Option<Retained<UIView>>,
     /// Current bounds in pixels
     bounds: Cell<Bounds<Pixels>>,
     /// Scale factor
@@ -311,6 +317,8 @@ impl IosWindow {
         // Make the window visible
         window.makeKeyAndVisible();
 
+        let corner_probe = display_corner_probe(&window, main_thread);
+
         // Create a hidden text input view for keyboard handling.
         // Uses our custom GPUITextInputView which implements UIKeyInput
         // so iOS actually routes keyboard text to us.
@@ -340,6 +348,7 @@ impl IosWindow {
             view_controller,
             view,
             text_input_view,
+            corner_probe,
             bounds: Cell::new(screen_bounds),
             scale_factor: Cell::new(scale_factor),
             input_handler: CallbackSlot::default(),
@@ -540,6 +549,20 @@ impl IosWindowState {
                 bottom: px(self.keyboard_height.get()),
                 ..Default::default()
             },
+            corner_radii: self.display_corner_radii(),
+        }
+    }
+
+    fn display_corner_radii(&self) -> Corners<Pixels> {
+        let Some(probe) = &self.corner_probe else {
+            return Corners::default();
+        };
+        let radius = |corner| px(probe.effectiveRadiusForCorner(corner) as f32);
+        Corners {
+            top_left: radius(UIRectCorner::TopLeft),
+            top_right: radius(UIRectCorner::TopRight),
+            bottom_right: radius(UIRectCorner::BottomRight),
+            bottom_left: radius(UIRectCorner::BottomLeft),
         }
     }
 
@@ -644,6 +667,32 @@ impl IosWindowState {
         self.resize_callback
             .with(|callback| callback(new_size, new_scale));
     }
+}
+
+/// Installs a view whose corners are concentric with the window's container.
+///
+/// UIKit has no public API for the display's corner radius, but since iOS 26 a
+/// full-window view with a container-concentric corner configuration resolves
+/// its radii to the display's. The probe sits behind all content and ignores
+/// touches. Returns `None` on earlier iOS versions, which lack these APIs.
+fn display_corner_probe(
+    window: &UIWindow,
+    main_thread: MainThreadMarker,
+) -> Option<Retained<UIView>> {
+    let probe = UIView::new(main_thread);
+    if !probe.respondsToSelector(sel!(effectiveRadiusForCorner:)) {
+        return None;
+    }
+    probe.setCornerConfiguration(&UICornerConfiguration::configurationWithRadius(
+        &UICornerRadius::containerConcentricRadius(),
+    ));
+    probe.setUserInteractionEnabled(false);
+    probe.setFrame(window.bounds());
+    probe.setAutoresizingMask(
+        UIViewAutoresizing::FlexibleWidth | UIViewAutoresizing::FlexibleHeight,
+    );
+    window.insertSubview_atIndex(&probe, 0);
+    Some(probe)
 }
 
 impl Drop for IosWindow {
