@@ -1476,6 +1476,18 @@ impl ConversationView {
         let count = thread.read(cx).entries().len();
         let list_state = ListState::new(0, gpui::ListAlignment::Top, px(2048.0));
         list_state.set_follow_mode(gpui::FollowMode::Tail);
+        list_state.set_item_measurement_ready({
+            let thread = thread.downgrade();
+            move |index, cx| {
+                thread.upgrade().is_none_or(|thread| {
+                    thread
+                        .read(cx)
+                        .entries()
+                        .get(index)
+                        .is_none_or(|entry| !entry.has_pending_markdown_render(cx))
+                })
+            }
+        });
 
         entry_view_state.update(cx, |view_state, cx| {
             for ix in 0..count {
@@ -1496,7 +1508,6 @@ impl ConversationView {
         } else {
             list_state.scroll_to_end();
         }
-        list_state.set_item_heights_provisional(restored_scroll_position.is_some());
 
         AgentDiff::set_active_thread(&self.workspace, thread.clone(), window, cx);
 
@@ -9282,24 +9293,86 @@ pub(crate) mod tests {
         cx: &mut TestAppContext,
     ) {
         init_test(cx);
-        let (thread_view, cx) = setup_pending_scroll_restore(0, cx).await;
-        let list_state = thread_view.read_with(cx, |view, _| view.list_state.clone());
-        assert!(list_state.item_heights_provisional());
-
-        for _ in 0..3 {
-            draw_restored_thread(&thread_view, cx);
-            cx.run_until_parked();
-        }
-
-        assert_eq!(
-            list_state.logical_scroll_top(),
-            ListOffset {
+        let repeated_destination = ListOffset {
+            item_ix: 1,
+            offset_in_item: px(80.0),
+        };
+        for (height, settle_restore, destination) in [
+            (600.0, false, None),
+            (1200.0, false, Some(ListOffset::default())),
+            (1200.0, true, Some(ListOffset::default())),
+            (1200.0, false, Some(repeated_destination)),
+            (1200.0, true, Some(repeated_destination)),
+        ] {
+            let (thread_view, cx) = setup_pending_scroll_restore(0, cx).await;
+            let list_state = thread_view.read_with(cx, |view, _| view.list_state.clone());
+            let restored = ListOffset {
                 item_ix: 5,
-                offset_in_item: px(40.0),
-            },
-        );
-        assert!(!list_state.is_following_tail());
-        assert!(!list_state.item_heights_provisional());
+                offset_in_item: px(if settle_restore { 2048.0 } else { 40.0 }),
+            };
+            if settle_restore {
+                list_state.scroll_to(restored);
+            }
+            let draw = |cx: &mut VisualTestContext| {
+                cx.draw(
+                    point(px(0.0), px(0.0)),
+                    size(px(800.0), px(height)),
+                    |_, _| thread_view.clone().into_any_element(),
+                );
+            };
+            for frame in 0..if settle_restore { 4 } else { 1 } {
+                if frame > 0 {
+                    cx.run_until_parked();
+                }
+                draw(cx);
+                assert_eq!(list_state.logical_scroll_top(), restored);
+                assert!(!list_state.is_following_tail());
+            }
+
+            let mut expected = restored;
+            if let Some(destination) = destination {
+                expected = destination;
+                thread_view.update(cx, |view, cx| view.scroll_to_top(cx));
+                draw(cx);
+                assert_eq!(list_state.logical_scroll_top(), ListOffset::default());
+                assert!(!list_state.is_following_tail());
+                assert!(thread_view.read_with(cx, |view, cx| {
+                    view.thread
+                        .read(cx)
+                        .entries()
+                        .get(1)
+                        .is_some_and(|entry| entry.has_pending_markdown_render(cx))
+                }));
+
+                if destination != ListOffset::default() {
+                    for target in [
+                        ListOffset {
+                            item_ix: 3,
+                            offset_in_item: px(20.0),
+                        },
+                        destination,
+                    ] {
+                        list_state.scroll_to(target);
+                        draw(cx);
+                        assert_eq!(list_state.logical_scroll_top(), target);
+                        assert!(!list_state.is_following_tail());
+                    }
+                }
+            }
+
+            for _ in 0..3 {
+                draw(cx);
+                cx.run_until_parked();
+                assert_eq!(list_state.logical_scroll_top(), expected);
+                assert!(!list_state.is_following_tail());
+            }
+            assert_eq!(
+                list_state
+                    .bounds_for_item(expected.item_ix)
+                    .map(|bounds| bounds.top()),
+                Some(list_state.viewport_bounds().top() - expected.offset_in_item),
+            );
+        }
     }
 
     #[gpui::test]
@@ -9308,19 +9381,25 @@ pub(crate) mod tests {
         let (thread_view, cx) = setup_pending_scroll_restore(0, cx).await;
         let list_state = thread_view.read_with(cx, |view, _| view.list_state.clone());
         draw_restored_thread(&thread_view, cx);
-        assert!(list_state.item_heights_provisional());
+        assert!(!list_state.is_following_tail());
 
         thread_view.update(cx, |view, cx| view.scroll_to_end(cx));
-        assert!(!list_state.item_heights_provisional());
-        cx.run_until_parked();
-
-        for _ in 0..2 {
+        assert_eq!(
+            list_state.logical_scroll_top(),
+            ListOffset {
+                item_ix: 8,
+                offset_in_item: px(0.0),
+            },
+        );
+        for _ in 0..3 {
             draw_restored_thread(&thread_view, cx);
+            assert!(list_state.is_following_tail());
             cx.run_until_parked();
         }
-
-        assert!(list_state.is_following_tail());
-        assert!(list_state.bounds_for_item(7).is_some());
+        assert_eq!(
+            list_state.bounds_for_item(7).map(|bounds| bounds.bottom()),
+            Some(list_state.viewport_bounds().bottom()),
+        );
     }
 
     #[gpui::test]
@@ -9329,22 +9408,37 @@ pub(crate) mod tests {
         for draw_during_drag in [false, true] {
             let (thread_view, cx) = setup_pending_scroll_restore(40, cx).await;
             let list_state = thread_view.read_with(cx, |view, _| view.list_state.clone());
+            let restored = ListOffset {
+                item_ix: 5,
+                offset_in_item: px(40.0),
+            };
             draw_restored_thread(&thread_view, cx);
-            assert!(list_state.item_heights_provisional());
-            assert!(list_state.bounds_for_item(5).is_some());
-
             list_state.scrollbar_drag_started();
             if draw_during_drag {
                 draw_restored_thread(&thread_view, cx);
             }
+            assert_eq!(list_state.logical_scroll_top(), restored);
+            assert!(!list_state.is_following_tail());
             list_state.set_offset_from_scrollbar(point(px(0.0), px(-100_000.0)));
             list_state.scrollbar_drag_ended();
             assert!(list_state.is_following_tail());
-            assert!(!list_state.item_heights_provisional());
+            assert_eq!(
+                list_state.logical_scroll_top(),
+                ListOffset {
+                    item_ix: 48,
+                    offset_in_item: px(0.0),
+                },
+            );
 
-            draw_restored_thread(&thread_view, cx);
-            assert!(!list_state.item_heights_provisional());
-            assert!(list_state.bounds_for_item(47).is_some());
+            for _ in 0..3 {
+                draw_restored_thread(&thread_view, cx);
+                assert!(list_state.is_following_tail());
+                cx.run_until_parked();
+            }
+            assert_eq!(
+                list_state.bounds_for_item(47).map(|bounds| bounds.bottom()),
+                Some(list_state.viewport_bounds().bottom()),
+            );
         }
     }
 

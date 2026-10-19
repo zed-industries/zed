@@ -6790,43 +6790,7 @@ fn sandbox_network_rows(network: &SandboxNetPolicy) -> Vec<SandboxRow> {
 }
 
 impl ThreadView {
-    fn finish_scroll_restore(&mut self, cx: &mut Context<Self>) {
-        if !self.list_state.item_heights_provisional() {
-            return;
-        }
-
-        let anchor_ix = self.list_state.logical_scroll_top().item_ix;
-        if self.list_state.bounds_for_item(anchor_ix).is_none() {
-            return;
-        }
-
-        if self
-            .thread
-            .read(cx)
-            .entries()
-            .iter()
-            .enumerate()
-            .skip(anchor_ix)
-            .take_while(|(index, _)| self.list_state.bounds_for_item(*index).is_some())
-            .any(|(_, entry)| entry.has_pending_markdown_render(cx))
-        {
-            return;
-        }
-
-        self.list_state.set_item_heights_provisional(false);
-        cx.notify();
-    }
-
     fn render_entries(&mut self, cx: &mut Context<Self>) -> List {
-        if self.list_state.item_heights_provisional() {
-            let thread_view = cx.entity().downgrade();
-            cx.defer(move |cx| {
-                thread_view
-                    .update(cx, |view, cx| view.finish_scroll_restore(cx))
-                    .ok();
-            });
-        }
-
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
         let centered_container = move |content: AnyElement| {
             h_flex().w_full().justify_center().child(
