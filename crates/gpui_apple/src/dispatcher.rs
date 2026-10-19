@@ -17,11 +17,19 @@ use objc2::{rc::Retained, runtime::ProtocolObject};
 use objc2_foundation::{NSActivityOptions, NSObjectProtocol, NSProcessInfo, NSString, NSThread};
 use std::{ffi::c_void, ptr::NonNull, time::Duration};
 
-pub struct AppleDispatcher;
+pub struct AppleDispatcher {
+    blocking_pool: gpui::BlockingPool,
+}
 
 impl AppleDispatcher {
     pub fn new() -> Self {
-        Self
+        Self {
+            blocking_pool: gpui::BlockingPool::new(|runnable| {
+                gpui::profiler::update_running_task(runnable.metadata());
+                let _timing = gpui_util::defer(gpui::profiler::save_task_timing);
+                runnable.run();
+            }),
+        }
     }
 }
 
@@ -46,6 +54,10 @@ impl PlatformDispatcher for AppleDispatcher {
             DispatchQueue::global_queue(GlobalQueueIdentifier::Priority(queue_priority))
                 .exec_async_f(context, trampoline);
         }
+    }
+
+    fn dispatch_blocking(&self, runnable: RunnableVariant) {
+        self.blocking_pool.schedule(runnable);
     }
 
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, _priority: Priority) {

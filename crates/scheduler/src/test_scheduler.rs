@@ -657,6 +657,10 @@ impl Scheduler for TestScheduler {
         self.thread.unpark();
     }
 
+    fn schedule_blocking(&self, runnable: Runnable<RunnableMeta>) {
+        self.schedule_background(runnable);
+    }
+
     fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>) {
         std::thread::spawn(move || {
             f();

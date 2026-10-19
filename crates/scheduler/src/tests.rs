@@ -36,9 +36,13 @@ fn test_background_executor_spawn() {
 
 #[test]
 fn test_background_executor_spawn_blocking() {
-    TestScheduler::once(async |scheduler| {
+    TestScheduler::many(20, async |scheduler| {
+        let thread_id = std::thread::current().id();
         let contents = String::from("blocking work");
-        let task = scheduler.background().spawn_blocking(move || contents);
+        let task = scheduler.background().spawn_blocking(move || {
+            assert_eq!(std::thread::current().id(), thread_id);
+            contents
+        });
         assert_eq!(task.await, "blocking work");
     });
 }

@@ -29,6 +29,7 @@ pub(crate) struct WindowsDispatcher {
     pub(crate) wake_posted: AtomicBool,
     main_sender: PriorityQueueSender<RunnableVariant>,
     main_thread_id: ThreadId,
+    blocking_pool: gpui::BlockingPool,
     pub(crate) platform_window_handle: SafeHwnd,
     validation_number: usize,
 }
@@ -45,6 +46,7 @@ impl WindowsDispatcher {
         WindowsDispatcher {
             main_sender,
             main_thread_id,
+            blocking_pool: gpui::BlockingPool::new(Self::execute_runnable),
             platform_window_handle,
             validation_number,
             wake_posted: AtomicBool::new(false),
@@ -91,8 +93,8 @@ impl WindowsDispatcher {
     #[inline(always)]
     pub(crate) fn execute_runnable(runnable: RunnableVariant) {
         gpui::profiler::update_running_task(runnable.metadata());
+        let _timing = gpui_util::defer(gpui::profiler::save_task_timing);
         runnable.run();
-        gpui::profiler::save_task_timing();
     }
 }
 
@@ -111,6 +113,10 @@ impl PlatformDispatcher for WindowsDispatcher {
             Priority::Low => TP_CALLBACK_PRIORITY_LOW,
         };
         self.dispatch_on_threadpool(priority, runnable);
+    }
+
+    fn dispatch_blocking(&self, runnable: RunnableVariant) {
+        self.blocking_pool.schedule(runnable);
     }
 
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) {

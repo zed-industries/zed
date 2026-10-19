@@ -130,6 +130,9 @@ pub trait Scheduler: Send + Sync {
         priority: Priority,
     );
 
+    /// Schedules synchronous work on the blocking pool.
+    fn schedule_blocking(&self, runnable: Runnable<RunnableMeta>);
+
     /// Spawn a closure on a dedicated realtime thread for audio processing.
     fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>);
 

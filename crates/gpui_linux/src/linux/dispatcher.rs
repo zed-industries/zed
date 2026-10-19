@@ -21,6 +21,7 @@ pub(crate) struct LinuxDispatcher {
     main_sender: PriorityQueueCalloopSender<RunnableVariant>,
     timer_sender: Sender<TimerAfter>,
     background_sender: PriorityQueueSender<RunnableVariant>,
+    blocking_pool: gpui::BlockingPool,
     _background_threads: Vec<thread::JoinHandle<()>>,
     main_thread_id: thread::ThreadId,
 }
@@ -95,6 +96,11 @@ impl LinuxDispatcher {
             main_sender,
             timer_sender,
             background_sender,
+            blocking_pool: gpui::BlockingPool::new(|runnable| {
+                profiler::update_running_task(runnable.metadata());
+                let _timing = gpui_util::defer(profiler::save_task_timing);
+                runnable.run();
+            }),
             _background_threads: background_threads,
             main_thread_id: thread::current().id(),
         }
@@ -110,6 +116,10 @@ impl PlatformDispatcher for LinuxDispatcher {
         self.background_sender
             .send(priority, runnable)
             .unwrap_or_else(|_| panic!("blocking sender returned without value"));
+    }
+
+    fn dispatch_blocking(&self, runnable: RunnableVariant) {
+        self.blocking_pool.schedule(runnable);
     }
 
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) {
