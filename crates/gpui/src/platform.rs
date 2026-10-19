@@ -508,6 +508,13 @@ pub trait Platform: 'static {
     fn on_thermal_state_change(&self, callback: Box<dyn FnMut()>);
     fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>>;
 
+    /// Returns whether the operating system is conserving energy by reducing
+    /// the performance available to applications.
+    fn low_power_mode_enabled(&self) -> bool {
+        false
+    }
+    fn on_low_power_mode_change(&self, _callback: Box<dyn FnMut()>) {}
+
     /// Sets the application's process-wide identity and user-visible name.
     ///
     /// The identifier is used for platform identity mechanisms such as the

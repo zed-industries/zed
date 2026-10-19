@@ -164,6 +164,10 @@ unsafe fn build_classes() {
                 sel!(onSystemSleep:),
                 on_system_sleep as extern "C" fn(&mut Object, Sel, id),
             );
+            decl.add_method(
+                sel!(onLowPowerModeChange:),
+                on_low_power_mode_change as extern "C" fn(&mut Object, Sel, id),
+            );
 
             decl.add_method(
                 sel!(onSystemWake:),
@@ -192,6 +196,7 @@ pub(crate) struct MacPlatformState {
     thermal_observer: Option<ThermalObserver>,
     on_displays_changed: Option<Box<dyn FnMut()>>,
     on_system_sleep: Option<Box<dyn FnMut()>>,
+    on_low_power_mode_change: Option<Box<dyn FnMut()>>,
     on_system_wake: Option<Box<dyn FnMut()>>,
     system_power_observers_registered: bool,
     quit: Option<Box<dyn FnMut() -> bool>>,
@@ -269,6 +274,7 @@ impl MacPlatform {
             thermal_observer: None,
             on_displays_changed: None,
             on_system_sleep: None,
+            on_low_power_mode_change: None,
             on_system_wake: None,
             system_power_observers_registered: false,
             menus: None,
@@ -1094,6 +1100,10 @@ impl Platform for MacPlatform {
         self.ensure_system_power_observers();
     }
 
+    fn on_low_power_mode_change(&self, callback: Box<dyn FnMut()>) {
+        self.0.lock().on_low_power_mode_change = Some(callback);
+    }
+
     fn on_system_wake(&self, callback: Box<dyn FnMut()>) {
         self.0.lock().on_system_wake = Some(callback);
         self.ensure_system_power_observers();
@@ -1108,6 +1118,19 @@ impl Platform for MacPlatform {
             reason,
             NSActivityOptions::UserInitiated,
         )))
+    }
+
+    fn low_power_mode_enabled(&self) -> bool {
+        unsafe {
+            let process_info: id = msg_send![class!(NSProcessInfo), processInfo];
+            let supported: BOOL =
+                msg_send![process_info, respondsToSelector: sel!(isLowPowerModeEnabled)];
+            if supported == NO {
+                return false;
+            }
+            let enabled: BOOL = msg_send![process_info, isLowPowerModeEnabled];
+            enabled != NO
+        }
     }
 
     fn show_system_notification(&self, notification: gpui::SystemNotification) {
@@ -1324,6 +1347,13 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
             name: ns_string("NSApplicationDidChangeScreenParametersNotification")
             object: nil
         ];
+        let low_power_name = ns_string("NSProcessInfoPowerStateDidChangeNotification");
+        let process_info: id = msg_send![class!(NSProcessInfo), processInfo];
+        let _: () = msg_send![notification_center, addObserver: this as id
+            selector: sel!(onLowPowerModeChange:)
+            name: low_power_name
+            object: process_info
+        ];
 
         // SAFETY: `this` is a live Objective-C object; only the pointer's type changes.
         let observer = &*(this as *mut Object as *const AnyObject);
@@ -1448,6 +1478,28 @@ extern "C" fn on_system_sleep(this: &mut Object, _: Sel, _: id) {
             drop(lock);
             callback();
             platform.0.lock().on_system_sleep.get_or_insert(callback);
+        }
+    }
+}
+
+extern "C" fn on_low_power_mode_change(this: &mut Object, _: Sel, _: id) {
+    let platform = unsafe { get_mac_platform(this) };
+    let platform_ptr = platform as *const MacPlatform as *mut c_void;
+    unsafe {
+        DispatchQueue::main().exec_async_f(platform_ptr, on_low_power_mode_change);
+    }
+
+    extern "C" fn on_low_power_mode_change(context: *mut c_void) {
+        let platform = unsafe { &*(context as *const MacPlatform) };
+        let mut lock = platform.0.lock();
+        if let Some(mut callback) = lock.on_low_power_mode_change.take() {
+            drop(lock);
+            callback();
+            platform
+                .0
+                .lock()
+                .on_low_power_mode_change
+                .get_or_insert(callback);
         }
     }
 }
