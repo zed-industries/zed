@@ -3646,6 +3646,7 @@ pub enum AcpThreadEvent {
         stop_reason: Option<acp_v2::StopReason>,
     },
     Error,
+    ConnectionLost,
     LoadError(LoadError),
     PromptCapabilitiesUpdated,
     Refusal,
@@ -3790,6 +3791,7 @@ impl AcpThread {
                 | AcpThreadEvent::SubagentSpawned(_)
                 | AcpThreadEvent::Stopped { .. }
                 | AcpThreadEvent::Error
+                | AcpThreadEvent::ConnectionLost
                 | AcpThreadEvent::LoadError(_)
                 | AcpThreadEvent::PromptCapabilitiesUpdated
                 | AcpThreadEvent::Refusal
@@ -4199,6 +4201,45 @@ impl AcpThread {
         self.submissions.recoverable()
     }
 
+    pub fn submission_recovery(&self, cx: &Context<Self>) -> Option<SessionSubmissionRecovery> {
+        if !self.uses_reported_activity() || self.activity.ensure_observable().is_ok() {
+            return None;
+        }
+        Some(SessionSubmissionRecovery {
+            session_id: self.session_id().clone(),
+            agent_id: self.connection.agent_id(),
+            project_id: self.project.entity_id(),
+            records: self.submissions.snapshot(cx.entity().entity_id()),
+        })
+    }
+
+    pub fn restore_submissions(
+        &mut self,
+        recovery: &SessionSubmissionRecovery,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        anyhow::ensure!(
+            self.uses_reported_activity()
+                && self.session_id() == &recovery.session_id
+                && self.connection.agent_id() == recovery.agent_id
+                && self.project.entity_id() == recovery.project_id,
+            "Saved submissions belong to a different agent, session or project, or require receipt support"
+        );
+        self.activity.ensure_observable()?;
+        let entries = &self.entries;
+        let changed = self.submissions.restore(&recovery.records, |message_id| {
+            entries.iter().any(|entry| {
+                matches!(entry, AgentThreadEntry::UserMessage(message)
+                    if matches!(&message.identity, MessageIdentity::Keyed(id) if id == message_id))
+            })
+        });
+        for id in changed {
+            cx.emit(AcpThreadEvent::SubmissionUpdated(id));
+        }
+        cx.notify();
+        Ok(())
+    }
+
     pub fn is_idle_for_retention(&self) -> bool {
         self.status() == ThreadStatus::Idle
             && !self.has_unsettled_submissions()
@@ -4225,12 +4266,17 @@ impl AcpThread {
 
     /// Ends receipt and cancellation observations without declaring remote execution stopped.
     pub fn handle_connection_lost(&mut self, cx: &mut Context<Self>) {
+        let was_observable = self.activity.ensure_observable().is_ok();
         self.activity.close_observation();
         let changed = self.submissions.disconnect();
         if !changed.is_empty() {
             for id in changed {
                 cx.emit(AcpThreadEvent::SubmissionUpdated(id));
             }
+            cx.notify();
+        }
+        if was_observable {
+            cx.emit(AcpThreadEvent::ConnectionLost);
             cx.notify();
         }
     }
@@ -4289,6 +4335,9 @@ impl AcpThread {
     }
 
     fn observe_submission_echo(&mut self, message_id: &acp_v2::MessageId, cx: &mut Context<Self>) {
+        if self.activity.ensure_observable().is_err() {
+            return;
+        }
         for id in self.submissions.observe_echo(message_id) {
             cx.emit(AcpThreadEvent::SubmissionUpdated(id));
         }

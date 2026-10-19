@@ -4,8 +4,8 @@ use futures::{
     channel::oneshot,
     future::{BoxFuture, LocalBoxFuture},
 };
-use gpui::{SharedString, Task};
-use std::collections::BTreeMap;
+use gpui::{EntityId, SharedString, Task};
+use std::collections::{BTreeMap, HashMap};
 use std::{
     fmt,
     future::Future,
@@ -108,7 +108,7 @@ impl Future for Submission {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
 pub enum SubmissionState {
     Pending,
     Accepted {
@@ -127,8 +127,33 @@ pub enum SubmissionState {
 pub struct SubmissionRecord {
     pub content: Arc<[acp_v2::ContentBlock]>,
     pub state: SubmissionState,
+    recovered_from: Option<(EntityId, SubmissionId)>,
     task: Option<Task<()>>,
     disconnect_sender: Option<oneshot::Sender<()>>,
+}
+
+/// Recovery must remain available without keeping a disconnected runtime alive.
+#[derive(Clone)]
+pub struct SessionSubmissionRecovery {
+    pub(crate) session_id: acp_v2::SessionId,
+    pub(crate) agent_id: project::AgentId,
+    pub(crate) project_id: EntityId,
+    pub(crate) records: Vec<RecoveredSubmission>,
+}
+
+impl SessionSubmissionRecovery {
+    pub fn records(&self) -> impl Iterator<Item = (&[acp_v2::ContentBlock], &SubmissionState)> {
+        self.records
+            .iter()
+            .map(|record| (record.content.as_ref(), &record.state))
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct RecoveredSubmission {
+    origin: (EntityId, SubmissionId),
+    content: Arc<[acp_v2::ContentBlock]>,
+    state: SubmissionState,
 }
 
 impl fmt::Debug for SubmissionRecord {
@@ -163,6 +188,7 @@ impl SubmissionRecord {
 pub(crate) struct SessionSubmissions {
     receipt_transport: Option<Rc<dyn ReceiptSessionSubmissions>>,
     records: BTreeMap<SubmissionId, SubmissionRecord>,
+    recovered: HashMap<(EntityId, SubmissionId), SubmissionId>,
     next_id: u64,
     latest_id: Option<SubmissionId>,
 }
@@ -172,6 +198,7 @@ impl SessionSubmissions {
         Self {
             receipt_transport,
             records: BTreeMap::default(),
+            recovered: HashMap::default(),
             next_id: 0,
             latest_id: None,
         }
@@ -205,6 +232,82 @@ impl SessionSubmissions {
         })
     }
 
+    pub(crate) fn snapshot(&self, owner: EntityId) -> Vec<RecoveredSubmission> {
+        self.recoverable()
+            .map(|(id, record)| RecoveredSubmission {
+                origin: record.recovered_from.unwrap_or((owner, id)),
+                content: record.content.clone(),
+                state: match &record.state {
+                    SubmissionState::Pending => SubmissionState::Disconnected { receipt: None },
+                    SubmissionState::Accepted { receipt, .. } => SubmissionState::Disconnected {
+                        receipt: Some(receipt.clone()),
+                    },
+                    state => state.clone(),
+                },
+            })
+            .collect()
+    }
+
+    pub(crate) fn restore(
+        &mut self,
+        records: &[RecoveredSubmission],
+        has_echo: impl Fn(&acp_v2::MessageId) -> bool,
+    ) -> Vec<SubmissionId> {
+        let mut changed = Vec::new();
+        let previous_latest = self.latest_id;
+        for recovered in records {
+            let state = match &recovered.state {
+                SubmissionState::Disconnected {
+                    receipt: Some(receipt),
+                } if has_echo(&receipt.message_id) => SubmissionState::Accepted {
+                    receipt: receipt.clone(),
+                    echoed: true,
+                },
+                state => state.clone(),
+            };
+            if let Some(id) = self.recovered.get(&recovered.origin) {
+                // Another view can carry the same snapshot. Do not resurrect discarded
+                // input, but accept stronger evidence if a receipt raced with disconnect.
+                if let Some(record) = self.records.get_mut(id)
+                    && matches!(
+                        record.state,
+                        SubmissionState::Disconnected { receipt: None }
+                    )
+                    && matches!(
+                        state,
+                        SubmissionState::Accepted { .. }
+                            | SubmissionState::Disconnected { receipt: Some(_) }
+                    )
+                {
+                    record.state = state;
+                    changed.push(*id);
+                }
+                continue;
+            }
+            self.next_id += 1;
+            let id = SubmissionId(self.next_id);
+            self.latest_id = Some(id);
+            self.recovered.insert(recovered.origin, id);
+            self.records.insert(
+                id,
+                SubmissionRecord {
+                    content: recovered.content.clone(),
+                    state,
+                    recovered_from: Some(recovered.origin),
+                    task: None,
+                    disconnect_sender: None,
+                },
+            );
+            changed.push(id);
+        }
+        // A shared replacement may already have newer input from another view.
+        if previous_latest.is_some() {
+            self.latest_id = previous_latest;
+        }
+        self.prune();
+        changed
+    }
+
     pub(crate) fn register(&mut self, content: Arc<[acp_v2::ContentBlock]>) -> SubmissionId {
         self.next_id += 1;
         let id = SubmissionId(self.next_id);
@@ -215,6 +318,7 @@ impl SessionSubmissions {
             SubmissionRecord {
                 content,
                 state: SubmissionState::Pending,
+                recovered_from: None,
                 task: None,
                 disconnect_sender: None,
             },
@@ -289,6 +393,17 @@ impl SessionSubmissions {
     pub(crate) fn observe_echo(&mut self, message_id: &acp_v2::MessageId) -> Vec<SubmissionId> {
         let mut changed = Vec::new();
         for (id, record) in &mut self.records {
+            if let SubmissionState::Disconnected {
+                receipt: Some(receipt),
+            } = &record.state
+                && &receipt.message_id == message_id
+            {
+                record.state = SubmissionState::Accepted {
+                    receipt: receipt.clone(),
+                    echoed: true,
+                };
+                changed.push(*id);
+            }
             if let SubmissionState::Accepted { receipt, echoed } = &mut record.state
                 && &receipt.message_id == message_id
                 && !*echoed
