@@ -1585,6 +1585,10 @@ impl DisplaySnapshot {
         })
     }
 
+    pub(crate) fn diagnostics_visible(&self) -> bool {
+        self.diagnostics_max_severity.into_lsp().is_some()
+    }
+
     fn diagnostic_severity_is_visible(&self, severity: lsp::DiagnosticSeverity) -> bool {
         self.diagnostics_max_severity
             .into_lsp()
@@ -1600,7 +1604,6 @@ impl DisplaySnapshot {
     ) -> Option<UnderlineStyle> {
         (underline
             && editor_style.show_underlines
-            && editor_style.show_diagnostic_underlines
             && self.diagnostic_severity_is_visible(severity)
             && !(is_unnecessary && severity > lsp::DiagnosticSeverity::WARNING))
             .then(|| UnderlineStyle {

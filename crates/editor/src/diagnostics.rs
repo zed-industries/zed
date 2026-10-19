@@ -276,6 +276,7 @@ impl Editor {
 
     pub fn disable_diagnostics(&mut self, cx: &mut Context<Self>) {
         self.diagnostics_enabled = false;
+        self.set_max_diagnostics_severity(DiagnosticSeverity::Off, cx);
         self.dismiss_diagnostics(cx);
         self.inline_diagnostics_update = Task::ready(());
         self.inline_diagnostics.clear();

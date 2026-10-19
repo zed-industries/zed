@@ -3235,7 +3235,7 @@ impl EditorElement {
                 || snapshot.use_tree_sitter_for_syntax(rows.start, cx);
             let language_aware = LanguageAwareStyling {
                 tree_sitter: use_tree_sitter,
-                diagnostics: true,
+                diagnostics: snapshot.display_snapshot.diagnostics_visible(),
             };
             let chunks = snapshot.highlighted_chunks(rows.clone(), language_aware, style);
             LineWithInvisibles::from_chunks(
@@ -5678,7 +5678,7 @@ impl EditorElement {
         visible_rows: Range<DisplayRow>,
         line_layouts: &mut [LineWithInvisibles],
     ) {
-        if visible_rows.is_empty() {
+        if !snapshot.display_snapshot.diagnostics_visible() || visible_rows.is_empty() {
             return;
         }
 
@@ -10910,7 +10910,7 @@ pub fn layout_line(
         !snapshot.semantic_tokens_enabled || snapshot.use_tree_sitter_for_syntax(row, cx);
     let language_aware = LanguageAwareStyling {
         tree_sitter: use_tree_sitter,
-        diagnostics: true,
+        diagnostics: snapshot.display_snapshot.diagnostics_visible(),
     };
     let chunks = snapshot.highlighted_chunks(row..row + DisplayRow(1), language_aware, style);
     LineWithInvisibles::from_chunks(
