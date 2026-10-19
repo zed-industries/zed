@@ -68,6 +68,7 @@ tracing.workspace = true
 ui.workspace = true
 ui_input.workspace = true
 util.workspace = true
+vcs.workspace = true
 watch.workspace = true
 workspace.workspace = true
 git_ui_core.workspace = true

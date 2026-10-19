@@ -2281,6 +2281,35 @@ impl Editor {
                 },
             ));
             let git_store = project.read(cx).git_store().clone();
+            if let Some(vcs_store) = project.read(cx).vcs_store().cloned() {
+                let project = project.clone();
+                project_subscriptions.push(cx.subscribe(
+                    &vcs_store,
+                    move |editor, _, event, cx| {
+                        if let project::vcs_store::VcsStoreEvent::DiffChanged { worktree_id } =
+                            event
+                        {
+                            let buffers: Vec<_> = editor
+                                .buffer
+                                .read(cx)
+                                .all_buffers()
+                                .into_iter()
+                                .filter(|buffer| {
+                                    buffer
+                                        .read(cx)
+                                        .project_path(cx)
+                                        .is_some_and(|path| path.worktree_id == *worktree_id)
+                                })
+                                .collect();
+                            if !buffers.is_empty() {
+                                editor
+                                    .update_uncommitted_diff_for_buffer(&project, buffers, cx)
+                                    .detach();
+                            }
+                        }
+                    },
+                ));
+            }
             let project = project.clone();
             project_subscriptions.push(cx.subscribe(
                 &git_store,

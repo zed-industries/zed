@@ -108,6 +108,8 @@ pub struct ExtensionManifest {
     pub grammars: BTreeMap<Arc<str>, GrammarManifestEntry>,
     #[serde(default)]
     pub language_servers: BTreeMap<LanguageServerName, LanguageServerManifestEntry>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub vcs_providers: BTreeMap<Arc<str>, VcsProviderManifestEntry>,
     #[serde(default)]
     pub context_servers: BTreeMap<Arc<str>, ContextServerManifestEntry>,
     #[serde(default)]
@@ -194,6 +196,33 @@ impl ExtensionManifest {
             || !self.debug_locators.is_empty())
         .then_some(RemoteLoad { manifest: self })
     }
+}
+
+/// A local VCS provider discovered through literal repository marker names.
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+pub struct VcsProviderManifestEntry {
+    #[serde(deserialize_with = "deserialize_vcs_root_markers")]
+    pub root_markers: Vec<String>,
+}
+
+fn deserialize_vcs_root_markers<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let markers = Vec::<String>::deserialize(deserializer)?;
+    if markers.is_empty()
+        || markers.iter().any(|marker| {
+            marker.is_empty()
+                || matches!(marker.as_str(), "." | "..")
+                || marker.contains(['/', '\\'])
+                || marker.chars().any(char::is_control)
+        })
+    {
+        return Err(serde::de::Error::custom(
+            "VCS root_markers must contain nonempty literal file or directory names",
+        ));
+    }
+    Ok(markers)
 }
 
 pub struct RemoteLoad<'a> {
@@ -381,6 +410,7 @@ fn manifest_from_old_manifest(
             .map(|grammar_name| (grammar_name, Default::default()))
             .collect(),
         language_servers: Default::default(),
+        vcs_providers: Default::default(),
         context_servers: BTreeMap::default(),
         slash_commands: BTreeMap::default(),
         snippets: None,
@@ -415,6 +445,7 @@ mod tests {
             languages: vec![],
             grammars: BTreeMap::default(),
             language_servers: BTreeMap::default(),
+            vcs_providers: Default::default(),
             context_servers: BTreeMap::default(),
             slash_commands: BTreeMap::default(),
             snippets: None,
@@ -519,6 +550,43 @@ mod tests {
                 .is_ok()
         );
         assert!(manifest.allow_exec("docker", &["ps"]).is_err()); // wrong first arg
+    }
+
+    #[test]
+    fn test_vcs_provider_manifest_is_local() {
+        let manifest: ExtensionManifest = toml::from_str(
+            r#"
+            id = "vcs-fixture"
+            name = "VCS fixture"
+            version = "0.1.0"
+            schema_version = 1
+            [vcs_providers.fixture]
+            root_markers = [".vcs-fixture"]
+        "#,
+        )
+        .unwrap();
+        assert_eq!(
+            manifest.vcs_providers["fixture"].root_markers,
+            [".vcs-fixture"]
+        );
+        assert!(!manifest.allow_remote_load());
+        assert!(extension_manifest().vcs_providers.is_empty());
+    }
+
+    #[test]
+    fn test_vcs_provider_markers_cannot_escape_discovery_roots() {
+        for markers in [
+            vec![],
+            vec![""],
+            vec![".."],
+            vec!["../outside"],
+            vec!["dir\\marker"],
+        ] {
+            let result = serde_json::from_value::<VcsProviderManifestEntry>(
+                serde_json::json!({ "root_markers": markers }),
+            );
+            assert!(result.is_err());
+        }
     }
 
     #[test]

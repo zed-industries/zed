@@ -133,6 +133,21 @@ impl TestExtension {
 }
 
 impl zed::Extension for TestExtension {
+    fn vcs_provider_command(
+        &mut self,
+        provider_id: &str,
+        worktree: &zed::Worktree,
+    ) -> Result<zed::Command> {
+        if provider_id != "fixture-vcs" {
+            return Err("Unknown fixture provider".into());
+        }
+        Ok(zed::Command {
+            command: "vcs-fixture-do-not-execute".into(),
+            args: vec!["--root".into(), worktree.root_path()],
+            env: vec![("VCS_FIXTURE".into(), "ready".into())],
+        })
+    }
+
     fn new() -> Self {
         Self {
             cached_binary_path: None,

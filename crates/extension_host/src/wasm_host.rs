@@ -85,6 +85,33 @@ impl extension::Extension for WasmExtension {
         self.work_dir.clone()
     }
 
+    async fn vcs_provider_command(
+        &self,
+        provider_id: Arc<str>,
+        worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<Command> {
+        anyhow::ensure!(
+            self.zed_api_version >= Version::new(0, 9, 0),
+            "VCS providers require extension API 0.9.0"
+        );
+        anyhow::ensure!(
+            self.manifest.vcs_providers.contains_key(&provider_id),
+            "Unknown VCS provider {provider_id}"
+        );
+        self.call(move |extension, store| {
+            async move {
+                let resource = store.data_mut().table.push(worktree)?;
+                let command = extension
+                    .call_vcs_provider_command(store, &provider_id, resource)
+                    .await?
+                    .map_err(|error| store.data().extension_error(error))?;
+                Ok(command.into())
+            }
+            .boxed()
+        })
+        .await?
+    }
+
     async fn language_server_command(
         &self,
         language_server_id: LanguageServerName,

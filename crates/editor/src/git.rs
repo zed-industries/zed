@@ -1598,7 +1598,7 @@ impl Editor {
             .iter()
             .map(|s| s.range())
             .collect();
-        let task = self.save_buffers_for_ranges_if_needed(&ranges, cx);
+        let task = self.save_buffers_for_ranges_if_needed(&ranges, None, cx);
         cx.spawn_in(window, async move |this, cx| {
             task.await?;
             this.update_in(cx, |this, window, cx| {
@@ -1658,6 +1658,9 @@ impl Editor {
             let Some(operations) = hunks.diff.read(cx).operations() else {
                 continue;
             };
+            if !operations.supports_staging() && !operations.supports_unstaging() {
+                continue;
+            }
             let stage = if !operations.supports_unstaging() {
                 true
             } else if !operations.supports_staging() {
@@ -2090,7 +2093,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let task = self.save_buffers_for_ranges_if_needed(&ranges, cx);
+        let task = self.save_buffers_for_ranges_if_needed(&ranges, Some(stage), cx);
         cx.spawn_in(window, async move |this, cx| {
             task.await?;
             this.update_in(cx, |this, window, cx| {
@@ -2182,6 +2185,7 @@ impl Editor {
     fn save_buffers_for_ranges_if_needed(
         &mut self,
         ranges: &[Range<Anchor>],
+        stage: Option<bool>,
         cx: &mut Context<Editor>,
     ) -> Task<Result<()>> {
         let multibuffer = self.buffer.read(cx);
@@ -2194,6 +2198,18 @@ impl Editor {
 
         let mut buffers = HashSet::default();
         for buffer_id in buffer_ids {
+            let can_stage = multibuffer.diff_for(buffer_id).is_some_and(|diff| {
+                diff.read(cx)
+                    .operations()
+                    .is_some_and(|operations| match stage {
+                        Some(true) => operations.supports_staging(),
+                        Some(false) => operations.supports_unstaging(),
+                        None => operations.supports_staging() || operations.supports_unstaging(),
+                    })
+            });
+            if !can_stage {
+                continue;
+            }
             if let Some(buffer_entity) = multibuffer.buffer(buffer_id) {
                 let buffer = buffer_entity.read(cx);
                 if buffer.file().is_some_and(|file| file.disk_state().exists()) && buffer.is_dirty()
@@ -3242,14 +3258,11 @@ impl Editor {
     ) -> Task<()> {
         let mut tasks = Vec::new();
         project.update(cx, |project, cx| {
-            let git_store = project.git_store().clone();
-            git_store.update(cx, |git_store, cx| {
-                for buffer in buffers {
-                    if project::File::from_dyn(buffer.read(cx).file()).is_some() {
-                        tasks.push(git_store.open_display_diff(buffer, cx));
-                    }
+            for buffer in buffers {
+                if project::File::from_dyn(buffer.read(cx).file()).is_some() {
+                    tasks.push(project.open_source_control_diff(buffer, cx));
                 }
-            });
+            }
         });
 
         let editor = cx.entity();

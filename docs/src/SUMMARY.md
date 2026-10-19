@@ -205,6 +205,7 @@
 - [Icon Theme Extensions](./extensions/icon-themes.md)
 - [Snippets Extensions](./extensions/snippets.md)
 - [MCP Server Extensions](./extensions/mcp-extensions.md)
+- [External VCS Providers](./extensions/vcs-providers.md)
 - [Agent Server Extensions](./extensions/agent-servers.md)
 
 # Coming From…

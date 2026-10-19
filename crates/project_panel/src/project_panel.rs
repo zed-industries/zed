@@ -714,6 +714,9 @@ impl ProjectPanel {
         let project_panel = cx.new(|cx| {
             let focus_handle = cx.focus_handle();
             cx.on_focus(&focus_handle, window, Self::focus_in).detach();
+            if let Some(vcs_store) = project.read(cx).vcs_store().cloned() {
+                cx.observe(&vcs_store, |_, _, cx| cx.notify()).detach();
+            }
 
             cx.subscribe_in(
                 &git_store,
@@ -7086,6 +7089,25 @@ impl ProjectPanel {
         cx: &mut Context<Self>,
     ) -> EntryDetails {
         let folder_indicator = ProjectPanelSettings::get_global(cx).folder_indicator;
+        let git_status = self
+            .project
+            .read(cx)
+            .vcs_store()
+            .and_then(|store| {
+                ProjectPanelSettings::get_global(cx)
+                    .git_status
+                    .then(|| {
+                        store.read(cx).summary_for_path(
+                            &project::ProjectPath {
+                                worktree_id,
+                                path: entry.path.clone(),
+                            },
+                            cx,
+                        )
+                    })
+                    .flatten()
+            })
+            .unwrap_or(git_status);
 
         let expanded_entry_ids = self
             .state

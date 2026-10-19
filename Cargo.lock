@@ -7184,6 +7184,7 @@ dependencies = [
  "ui_input",
  "unindent",
  "util",
+ "vcs",
  "watch",
  "workspace",
  "zed_actions",
@@ -14032,6 +14033,7 @@ dependencies = [
  "unindent",
  "url",
  "util",
+ "vcs",
  "watch",
  "wax",
  "which",
@@ -19702,6 +19704,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
+name = "vcs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-channel 2.5.0",
+ "collections",
+ "futures 0.3.34",
+ "gpui",
+ "log",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "smol",
+ "tempfile",
+ "thiserror 2.0.17",
+ "url",
+ "util",
+]
+
+[[package]]
 name = "version-compare"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -22864,7 +22886,7 @@ dependencies = [
 
 [[package]]
 name = "zed_extension_api"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -22896,7 +22918,7 @@ dependencies = [
 name = "zed_test_extension"
 version = "0.1.0"
 dependencies = [
- "zed_extension_api 0.8.0",
+ "zed_extension_api 0.9.0",
 ]
 
 [[package]]

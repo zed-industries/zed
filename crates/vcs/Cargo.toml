@@ -1,0 +1,32 @@
+[package]
+name = "vcs"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/vcs.rs"
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+async-channel = { workspace = true, features = ["std"] }
+collections.workspace = true
+futures.workspace = true
+gpui.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+smol.workspace = true
+thiserror.workspace = true
+url.workspace = true
+util.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true

@@ -18,6 +18,7 @@ use extension::{
     ExtensionContextServerProxy, ExtensionDebugAdapterProviderProxy, ExtensionEvents,
     ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy,
     ExtensionLanguageServerProxy, ExtensionSnippetProxy, ExtensionThemeProxy,
+    ExtensionVcsProviderProxy,
 };
 use fs::{Fs, RemoveOptions, RenameOptions};
 use futures::future::{Shared, join_all};
@@ -1411,6 +1412,11 @@ impl ExtensionStore {
                 }
             }
 
+            for provider_id in extension.manifest.vcs_providers.keys() {
+                self.proxy
+                    .unregister_vcs_provider(extension_id.clone(), provider_id.clone(), cx);
+            }
+
             for server_id in extension.manifest.context_servers.keys() {
                 self.proxy.unregister_context_server(server_id.clone(), cx);
             }
@@ -1686,6 +1692,14 @@ impl ExtensionStore {
                                 language.clone(),
                             );
                         }
+                    }
+
+                    for provider_id in manifest.vcs_providers.keys() {
+                        this.proxy.register_vcs_provider(
+                            extension.clone(),
+                            provider_id.clone(),
+                            cx,
+                        );
                     }
 
                     for id in manifest.context_servers.keys() {

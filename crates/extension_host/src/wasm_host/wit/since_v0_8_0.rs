@@ -34,7 +34,6 @@ use util::{
 use wasmtime::component::{Linker, Resource};
 
 pub const MIN_VERSION: Version = Version::new(0, 8, 0);
-pub const MAX_VERSION: Version = Version::new(0, 8, 0);
 
 wasmtime::component::bindgen!({
     imports: {

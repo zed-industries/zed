@@ -23,3 +23,6 @@ args = ["hello from a child process!"]
 kind = "process:exec"
 command = "cmd"
 args = ["/C", "echo", "hello from a child process!"]
+
+[vcs_providers.fixture-vcs]
+root_markers = [".vcs-fixture"]

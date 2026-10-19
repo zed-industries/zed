@@ -72,6 +72,16 @@ pub trait Extension: Send + Sync {
     where
         Self: Sized;
 
+    /// Returns the command for a declared local VCS provider.
+    /// Zed invokes this only after the workspace has been trusted.
+    fn vcs_provider_command(
+        &mut self,
+        _provider_id: &str,
+        _worktree: &Worktree,
+    ) -> Result<Command> {
+        Err("`vcs_provider_command` not implemented".to_string())
+    }
+
     /// Returns the command used to start the language server for the specified
     /// language.
     fn language_server_command(
@@ -355,7 +365,7 @@ pub static ZED_API_VERSION: [u8; 6] = *include_bytes!(concat!(env!("OUT_DIR"), "
 mod wit {
     wit_bindgen::generate!({
         skip: ["init-extension"],
-        path: "./wit/since_v0.8.0",
+        path: "./wit/since_v0.9.0",
     });
 }
 
@@ -364,6 +374,10 @@ wit::export!(Component);
 struct Component;
 
 impl wit::Guest for Component {
+    fn vcs_provider_command(provider_id: String, worktree: &Worktree) -> Result<Command> {
+        extension().vcs_provider_command(&provider_id, worktree)
+    }
+
     fn language_server_command(
         language_server_id: String,
         worktree: &wit::Worktree,

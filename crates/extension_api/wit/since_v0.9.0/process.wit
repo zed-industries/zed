@@ -1,0 +1,29 @@
+interface process {
+    use common.{env-vars};
+
+    /// A command.
+    record command {
+        /// The command to execute.
+        command: string,
+        /// The arguments to pass to the command.
+        args: list<string>,
+        /// The environment variables to set for the command.
+        env: env-vars,
+    }
+
+    /// The output of a finished process.
+    record output {
+        /// The status (exit code) of the process.
+        ///
+        /// On Unix, this will be `None` if the process was terminated by a signal.
+        status: option<s32>,
+        /// The data that the process wrote to stdout.
+        stdout: list<u8>,
+        /// The data that the process wrote to stderr.
+        stderr: list<u8>,
+    }
+
+    /// Executes the given command as a child process, waiting for it to finish
+    /// and collecting all of its output.
+    run-command: func(command: command) -> result<output, string>;
+}

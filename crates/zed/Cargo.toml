@@ -6,7 +6,7 @@ version = "1.26.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
-default-run = "zed"
+default-run = "zed-vcs-g1"
 
 [lints]
 workspace = true
@@ -55,7 +55,7 @@ visual-tests = [
 ]
 
 [[bin]]
-name = "zed"
+name = "zed-vcs-g1"
 path = "src/main.rs"
 
 [[bin]]

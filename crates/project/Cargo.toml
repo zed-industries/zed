@@ -98,6 +98,7 @@ text.workspace = true
 toml.workspace = true
 tracing.workspace = true
 url.workspace = true
+vcs.workspace = true
 util.workspace = true
 watch.workspace = true
 wax.workspace = true

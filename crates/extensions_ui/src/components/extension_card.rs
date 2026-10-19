@@ -491,6 +491,7 @@ impl Component for ExtensionCard {
                 languages: Vec::new(),
                 grammars: Default::default(),
                 language_servers: Default::default(),
+                vcs_providers: Default::default(),
                 context_servers: Default::default(),
                 slash_commands: Default::default(),
                 snippets: None,

@@ -394,6 +394,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         .into_iter()
                         .collect(),
                         language_servers: BTreeMap::default(),
+                        vcs_providers: Default::default(),
                         context_servers: BTreeMap::default(),
                         slash_commands: BTreeMap::default(),
                         snippets: None,
@@ -425,6 +426,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         languages: Default::default(),
                         grammars: BTreeMap::default(),
                         language_servers: BTreeMap::default(),
+                        vcs_providers: Default::default(),
                         context_servers: BTreeMap::default(),
                         slash_commands: BTreeMap::default(),
                         snippets: None,
@@ -611,6 +613,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 languages: Default::default(),
                 grammars: BTreeMap::default(),
                 language_servers: BTreeMap::default(),
+                vcs_providers: Default::default(),
                 context_servers: BTreeMap::default(),
                 slash_commands: BTreeMap::default(),
                 snippets: None,
@@ -823,6 +826,8 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     .await;
 
     let proxy = Arc::new(ExtensionHostProxy::new());
+    let vcs_registrations = Arc::new(Mutex::new(Vec::new()));
+    proxy.register_vcs_provider_proxy(TestVcsProxy(vcs_registrations.clone()));
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
     theme_extension::init(proxy.clone(), theme_registry.clone(), cx.executor());
     let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
@@ -998,6 +1003,31 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         },
     )
     .await;
+
+    assert_eq!(
+        *vcs_registrations.lock(),
+        [(true, "test-extension".into(), "fixture-vcs".into())]
+    );
+    let wasm_extension = extension_store.read_with(cx, |store, _| {
+        store
+            .wasm_extensions
+            .iter()
+            .find(|(manifest, _)| manifest.id.as_ref() == test_extension_id)
+            .unwrap()
+            .1
+            .clone()
+    });
+    let command = await_or_timeout(
+        &executor,
+        "awaiting VCS command",
+        5,
+        wasm_extension.vcs_provider_command("fixture-vcs".into(), Arc::new(TestVcsWorktree)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(command.command, PathBuf::from("vcs-fixture-do-not-execute"));
+    assert_eq!(command.args, ["--root", "/vcs-fixture"]);
+    assert_eq!(command.env, [("VCS_FIXTURE".into(), "ready".into())]);
 
     let mut fake_servers = language_registry.register_fake_lsp_server(
         LanguageServerName("gleam".into()),
@@ -1245,6 +1275,15 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     project.update(cx, |project, cx| {
         project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx)
     });
+
+    assert_eq!(
+        *vcs_registrations.lock(),
+        [
+            (true, "test-extension".into(), "fixture-vcs".into()),
+            (false, "test-extension".into(), "fixture-vcs".into()),
+            (true, "test-extension".into(), "fixture-vcs".into()),
+        ]
+    );
 
     // The extension re-fetches the latest version of the language server.
     let fake_server = await_or_timeout(
@@ -4087,6 +4126,7 @@ impl Extension for FakeExtension {
             languages: Vec::new(),
             grammars: BTreeMap::default(),
             language_servers: BTreeMap::default(),
+            vcs_providers: Default::default(),
             context_servers: BTreeMap::default(),
             slash_commands: BTreeMap::default(),
             snippets: None,
@@ -4271,5 +4311,50 @@ impl Extension for FakeExtension {
         _config: SpawnInTerminal,
     ) -> anyhow::Result<DebugRequest> {
         anyhow::bail!("not supported by FakeExtension")
+    }
+}
+
+struct TestVcsProxy(Arc<Mutex<Vec<(bool, Arc<str>, Arc<str>)>>>);
+
+impl extension::ExtensionVcsProviderProxy for TestVcsProxy {
+    fn register_vcs_provider(
+        &self,
+        extension: Arc<dyn Extension>,
+        provider_id: Arc<str>,
+        _cx: &mut gpui::App,
+    ) {
+        self.0
+            .lock()
+            .push((true, extension.manifest().id.clone(), provider_id));
+    }
+
+    fn unregister_vcs_provider(
+        &self,
+        extension_id: Arc<str>,
+        provider_id: Arc<str>,
+        _cx: &mut gpui::App,
+    ) {
+        self.0.lock().push((false, extension_id, provider_id));
+    }
+}
+
+struct TestVcsWorktree;
+
+#[async_trait]
+impl WorktreeDelegate for TestVcsWorktree {
+    fn id(&self) -> u64 {
+        1
+    }
+    fn root_path(&self) -> String {
+        "/vcs-fixture".into()
+    }
+    async fn read_text_file(&self, _path: &util::rel_path::RelPath) -> anyhow::Result<String> {
+        anyhow::bail!("Unexpected file read by VCS fixture")
+    }
+    async fn which(&self, _binary_name: String) -> Option<String> {
+        None
+    }
+    async fn shell_env(&self) -> Vec<(String, String)> {
+        Vec::new()
     }
 }

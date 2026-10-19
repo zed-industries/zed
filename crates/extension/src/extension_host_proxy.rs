@@ -28,6 +28,7 @@ pub struct ExtensionHostProxy {
     grammar_proxy: RwLock<Option<Arc<dyn ExtensionGrammarProxy>>>,
     language_proxy: RwLock<Option<Arc<dyn ExtensionLanguageProxy>>>,
     language_server_proxy: RwLock<Option<Arc<dyn ExtensionLanguageServerProxy>>>,
+    vcs_provider_proxy: RwLock<Option<Arc<dyn ExtensionVcsProviderProxy>>>,
     snippet_proxy: RwLock<Option<Arc<dyn ExtensionSnippetProxy>>>,
     context_server_proxy: RwLock<Option<Arc<dyn ExtensionContextServerProxy>>>,
     debug_adapter_provider_proxy: RwLock<Option<Arc<dyn ExtensionDebugAdapterProviderProxy>>>,
@@ -53,6 +54,7 @@ impl ExtensionHostProxy {
             grammar_proxy: RwLock::default(),
             language_proxy: RwLock::default(),
             language_server_proxy: RwLock::default(),
+            vcs_provider_proxy: RwLock::default(),
             snippet_proxy: RwLock::default(),
             context_server_proxy: RwLock::default(),
             debug_adapter_provider_proxy: RwLock::default(),
@@ -74,6 +76,10 @@ impl ExtensionHostProxy {
 
     pub fn register_language_server_proxy(&self, proxy: impl ExtensionLanguageServerProxy) {
         self.language_server_proxy.write().replace(Arc::new(proxy));
+    }
+
+    pub fn register_vcs_provider_proxy(&self, proxy: impl ExtensionVcsProviderProxy) {
+        self.vcs_provider_proxy.write().replace(Arc::new(proxy));
     }
 
     pub fn register_snippet_proxy(&self, proxy: impl ExtensionSnippetProxy) {
@@ -345,6 +351,38 @@ impl ExtensionLanguageServerProxy for ExtensionHostProxy {
         };
 
         proxy.update_language_server_status(source, language_server_id, status)
+    }
+}
+
+pub trait ExtensionVcsProviderProxy: Send + Sync + 'static {
+    fn register_vcs_provider(
+        &self,
+        extension: Arc<dyn Extension>,
+        provider_id: Arc<str>,
+        cx: &mut App,
+    );
+
+    fn unregister_vcs_provider(&self, extension_id: Arc<str>, provider_id: Arc<str>, cx: &mut App);
+}
+
+impl ExtensionVcsProviderProxy for ExtensionHostProxy {
+    fn register_vcs_provider(
+        &self,
+        extension: Arc<dyn Extension>,
+        provider_id: Arc<str>,
+        cx: &mut App,
+    ) {
+        let Some(proxy) = self.vcs_provider_proxy.read().clone() else {
+            return;
+        };
+        proxy.register_vcs_provider(extension, provider_id, cx);
+    }
+
+    fn unregister_vcs_provider(&self, extension_id: Arc<str>, provider_id: Arc<str>, cx: &mut App) {
+        let Some(proxy) = self.vcs_provider_proxy.read().clone() else {
+            return;
+        };
+        proxy.unregister_vcs_provider(extension_id, provider_id, cx);
     }
 }
 

@@ -229,6 +229,7 @@ members = [
     "crates/ui_macros",
     "crates/ui_prompt",
     "crates/util",
+    "crates/vcs",
     "crates/util_macros",
     "crates/vim",
     "crates/vim_mode_setting",
@@ -500,6 +501,7 @@ ui_input = { path = "crates/ui_input" }
 ui_macros = { path = "crates/ui_macros" }
 ui_prompt = { path = "crates/ui_prompt" }
 util = { path = "crates/util" }
+vcs = { path = "crates/vcs" }
 util_macros = { path = "crates/util_macros" }
 vim = { path = "crates/vim" }
 vim_mode_setting = { path = "crates/vim_mode_setting" }

@@ -135,6 +135,7 @@ fn manifest() -> ExtensionManifest {
         language_servers: [("gleam".into(), LanguageServerManifestEntry::default())]
             .into_iter()
             .collect(),
+        vcs_providers: BTreeMap::default(),
         context_servers: BTreeMap::default(),
         slash_commands: BTreeMap::default(),
         snippets: None,

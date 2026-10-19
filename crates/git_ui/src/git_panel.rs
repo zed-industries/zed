@@ -1331,6 +1331,10 @@ impl GitPanel {
             let focus_handle = cx.focus_handle();
             cx.on_focus(&focus_handle, window, Self::focus_in).detach();
 
+            if let Some(vcs_store) = project.read(cx).vcs_store().cloned() {
+                cx.observe(&vcs_store, |_, _, cx| cx.notify()).detach();
+            }
+
             let mut was_sort_by = GitPanelSettings::get_global(cx).sort_by;
             let mut was_group_by = GitPanelSettings::get_global(cx).group_by;
             let mut was_tree_view = GitPanelSettings::get_global(cx).tree_view;
@@ -4568,12 +4572,21 @@ impl GitPanel {
     }
 
     pub(crate) fn git_init(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let worktrees = self
-            .project
-            .read(cx)
+        let project = self.project.read(cx);
+        let vcs_store = project.vcs_store().map(|store| store.read(cx));
+        let worktrees = project
             .visible_worktrees(cx)
             .filter(|worktree| !worktree.read(cx).is_single_file())
+            .filter(|worktree| {
+                vcs_store.is_none_or(|store| {
+                    !store.owns_absolute_path(&worktree.read(cx).abs_path(), cx)
+                })
+            })
             .collect::<Vec<_>>();
+        let has_external_repository = project.visible_worktrees(cx).any(|worktree| {
+            vcs_store
+                .is_some_and(|store| store.owns_absolute_path(&worktree.read(cx).abs_path(), cx))
+        });
 
         let worktree = if let [worktree] = worktrees.as_slice() {
             Task::ready(Some(worktree.clone()))
@@ -4581,7 +4594,11 @@ impl GitPanel {
             let result = window.prompt(
                 PromptLevel::Warning,
                 "Unable to initialize a git repository",
-                Some("Open a directory first"),
+                Some(if has_external_repository {
+                    "This repository uses an external VCS provider. Open Source Control to inspect its changes."
+                } else {
+                    "Open a directory first"
+                }),
                 &["OK"],
                 cx,
             );
@@ -7931,15 +7948,40 @@ impl GitPanel {
     fn render_uninitialized_ui(&self, cx: &mut Context<Self>) -> AnyElement {
         let project = self.project.read(cx);
         let worktree_count = project.visible_worktrees(cx).count();
+        let vcs_store = project.vcs_store().map(|store| store.read(cx));
+        let has_external_repository = project.visible_worktrees(cx).any(|worktree| {
+            vcs_store
+                .is_some_and(|store| store.owns_absolute_path(&worktree.read(cx).abs_path(), cx))
+        });
         // `git init` can't run inside a worktree whose root is a single file.
-        let has_directory_worktree = project
-            .visible_worktrees(cx)
-            .any(|worktree| !worktree.read(cx).is_single_file());
+        let has_directory_worktree = project.visible_worktrees(cx).any(|worktree| {
+            !worktree.read(cx).is_single_file()
+                && vcs_store.is_none_or(|store| {
+                    !store.owns_absolute_path(&worktree.read(cx).abs_path(), cx)
+                })
+        });
         if worktree_count > 0 && self.active_repository.is_none() {
             v_flex()
                 .gap_1()
                 .items_center()
                 .child(Label::new("No Git Repositories").color(Color::Muted))
+                .when(has_external_repository, |this| {
+                    this.child(
+                        Label::new("External VCS changes are available in Source Control")
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Button::new("open_source_control", "Open Source Control")
+                            .label_size(LabelSize::Small)
+                            .style(ButtonStyle::Outlined)
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(
+                                    crate::vcs_panel::ToggleFocus.boxed_clone(),
+                                    cx,
+                                );
+                            }),
+                    )
+                })
                 .when(has_directory_worktree, |this| {
                     this.child(
                         Button::new("initialize_repository", "Initialize Repository")
@@ -10938,6 +10980,28 @@ mod tests {
             !fs.is_dir(Path::new(path!("/demo/plain.txt/.git"))).await,
             "git init should not run inside a single-file worktree"
         );
+    }
+
+    #[gpui::test]
+    async fn test_git_init_preserves_unowned_directory_with_vcs_store(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(path!("/demo"), json!({ "plain.txt": "hello" }))
+            .await;
+        let project = Project::test(fs.clone(), [Path::new(path!("/demo"))], cx).await;
+        assert!(project.read_with(cx, |project, _| project.vcs_store().is_some()));
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+        cx.run_until_parked();
+        let panel = workspace.update_in(cx, GitPanel::new);
+        panel.update_in(cx, |panel, window, cx| panel.git_init(window, cx));
+        cx.run_until_parked();
+        assert!(fs.is_dir(Path::new(path!("/demo/.git"))).await);
+        assert!(!cx.has_pending_prompt());
     }
 
     #[test]

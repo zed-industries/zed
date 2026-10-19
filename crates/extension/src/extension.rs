@@ -59,6 +59,15 @@ pub trait Extension: Send + Sync + 'static {
         path::normalize_path(&self.work_dir().join(path))
     }
 
+    /// Resolves a local VCS provider command after the caller has verified workspace trust.
+    async fn vcs_provider_command(
+        &self,
+        _provider_id: Arc<str>,
+        _worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<Command> {
+        bail!("`vcs_provider_command` is not supported by this extension")
+    }
+
     async fn language_server_command(
         &self,
         language_server_id: LanguageServerName,

@@ -59,11 +59,13 @@ pub mod staged_diff;
 pub mod stash_picker;
 pub mod text_diff_view;
 pub mod unstaged_diff;
+pub mod vcs_panel;
 
 pub use blame_ui::GitBlameStatus;
 pub use conflict_view::MergeConflictIndicator;
 
 pub fn init(cx: &mut App) {
+    vcs_panel::init(cx);
     editor::set_blame_renderer(blame_ui::GitBlameRenderer, cx);
     commit_view::init(cx);
     git_graph::init(cx);
