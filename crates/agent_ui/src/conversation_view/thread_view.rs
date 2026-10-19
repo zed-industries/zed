@@ -11,8 +11,7 @@ use std::{cell::RefCell, path::Path};
 use acp_thread::{
     Elicitation, ElicitationEntryId, ElicitationStatus, ForegroundActivity, OutputTokensUpdate,
     SandboxAuthorizationDetails, SandboxFallbackAuthorizationDetails, SandboxNotAppliedReason,
-    SessionSubmissionRecovery, SubmissionId, SubmissionResponse, SubmissionState, ToolCallLocation,
-    decode_path_escapes,
+    SubmissionId, SubmissionResponse, SubmissionState, ToolCallLocation, decode_path_escapes,
 };
 use agent::{
     SandboxStatusKey, SandboxStatusRefresh, SkillLoadingIssue, SkillLoadingIssueKind,
@@ -64,7 +63,7 @@ pub(super) struct ThreadRecovery {
     pub session_id: acp_v2::SessionId,
     pub work_dirs: Option<PathList>,
     pub title: Option<SharedString>,
-    pub submissions: SessionSubmissionRecovery,
+    pub submissions: Vec<SavedSubmission>,
     pub draft: Vec<acp_v2::ContentBlock>,
     queued: Vec<QueuedMessageRecovery>,
 }
@@ -74,25 +73,42 @@ struct QueuedMessageRecovery {
     tracked_buffers: Vec<Entity<Buffer>>,
 }
 
+pub(super) struct SavedSubmission {
+    pub content: Arc<[acp_v2::ContentBlock]>,
+    pub state: SubmissionState,
+}
+
 impl ThreadRecovery {
-    pub(super) fn to_json(&self) -> Result<String> {
+    pub(super) fn to_json(
+        session_id: Option<&acp_v2::SessionId>,
+        recovery: Option<&Self>,
+        saved_submissions: &[SavedSubmission],
+    ) -> Result<String> {
         #[derive(serde::Serialize)]
         struct SavedInput<'a> {
-            session_id: &'a acp_v2::SessionId,
+            session_id: Option<&'a acp_v2::SessionId>,
             draft: &'a [acp_v2::ContentBlock],
             queued: Vec<&'a [acp_v2::ContentBlock]>,
             submissions: Vec<(&'a [acp_v2::ContentBlock], &'a SubmissionState)>,
         }
 
         Ok(serde_json::to_string_pretty(&SavedInput {
-            session_id: &self.session_id,
-            draft: &self.draft,
-            queued: self
-                .queued
-                .iter()
+            session_id,
+            draft: recovery.map_or(&[], |recovery| recovery.draft.as_slice()),
+            queued: recovery
+                .into_iter()
+                .flat_map(|recovery| &recovery.queued)
                 .map(|queued| queued.content.as_slice())
                 .collect(),
-            submissions: self.submissions.records().collect(),
+            submissions: saved_submissions
+                .iter()
+                .chain(
+                    recovery
+                        .into_iter()
+                        .flat_map(|recovery| &recovery.submissions),
+                )
+                .map(|submission| (submission.content.as_ref(), &submission.state))
+                .collect(),
         })?)
     }
 }
@@ -816,11 +832,11 @@ pub fn open_markdown_in_workspace(
 }
 
 impl ThreadView {
-    pub(super) fn snapshot_recovery(&self, cx: &mut Context<Self>) -> Option<ThreadRecovery> {
-        let submissions = self
-            .thread
-            .update(cx, |thread, cx| thread.submission_recovery(cx))?;
+    pub(super) fn snapshot_recovery(&self, cx: &App) -> Option<ThreadRecovery> {
         let thread = self.thread.read(cx);
+        if !thread.uses_reported_activity() || !thread.is_observation_closed() {
+            return None;
+        }
         let editor = self.message_editor.read(cx);
         let draft = if editor.editor().read(cx).read_only(cx) {
             thread
@@ -834,7 +850,13 @@ impl ThreadView {
             session_id: thread.session_id().clone(),
             work_dirs: thread.work_dirs().cloned(),
             title: thread.title(),
-            submissions,
+            submissions: thread
+                .recoverable_submissions()
+                .map(|(_, record)| SavedSubmission {
+                    content: record.content.clone(),
+                    state: record.state.clone(),
+                })
+                .collect(),
             draft,
             queued: self
                 .message_queue
@@ -860,7 +882,6 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.current_submission = self.thread.read(cx).latest_submission_id();
         for queued in &recovery.queued {
             self.add_to_queue(
                 queued.content.clone(),

@@ -799,6 +799,7 @@ pub struct ConversationView {
     pub(crate) root_session_id: Option<acp_v2::SessionId>,
     server_state: ServerState,
     recovery: Option<ThreadRecovery>,
+    saved_submissions: Vec<SavedSubmission>,
     pending_selections: Vec<AgentContextSelection>,
     focus_handle: FocusHandle,
     notifications: Vec<WindowHandle<AgentNotification>>,
@@ -838,6 +839,10 @@ impl ConversationView {
             ServerState::Connected(connected) => connected.active_view(),
             _ => None,
         }
+    }
+
+    pub(crate) fn has_saved_input(&self) -> bool {
+        self.recovery.is_some() || !self.saved_submissions.is_empty()
     }
 
     pub fn pending_tool_call<'a>(
@@ -1125,6 +1130,7 @@ impl ConversationView {
                 cx,
             ),
             recovery: None,
+            saved_submissions: Vec::new(),
             pending_selections: Vec::new(),
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
@@ -1142,7 +1148,7 @@ impl ConversationView {
     fn set_server_state(&mut self, state: ServerState, cx: &mut Context<Self>) {
         if matches!(&state, ServerState::LoadError { .. })
             && let Some(view) = self.root_thread_view()
-            && let Some(recovery) = view.update(cx, |view, cx| view.snapshot_recovery(cx))
+            && let Some(recovery) = view.read(cx).snapshot_recovery(cx)
         {
             self.draft_prompt_persist_task.take();
             self.recovery = Some(recovery);
@@ -1444,19 +1450,9 @@ impl ConversationView {
                 match result {
                     Ok(thread) => {
                         if let Some(recovery) = &this.recovery {
-                            let restored = thread.update(cx, |thread, cx| {
-                                thread.restore_submissions(&recovery.submissions, cx)?;
+                            thread.update(cx, |thread, cx| {
                                 thread.set_draft_prompt(Some(recovery.draft.clone()), cx);
-                                anyhow::Ok(())
                             });
-                            if let Err(error) = restored {
-                                this.handle_load_error(
-                                    LoadError::Other(error.to_string().into()),
-                                    window,
-                                    cx,
-                                );
-                                return;
-                            }
                         }
                         this.clear_resolved_request_elicitations_for_connection(&connection, cx);
                         let root_session_id = thread.read(cx).session_id().clone();
@@ -1515,7 +1511,9 @@ impl ConversationView {
                             }),
                             cx,
                         );
-                        this.recovery = None;
+                        if let Some(recovery) = this.recovery.take() {
+                            this.saved_submissions.extend(recovery.submissions);
+                        }
                     }
                     Err(err) => {
                         this.handle_load_error(
@@ -3160,19 +3158,21 @@ impl ConversationView {
                         "Copy the original content and receipt evidence as JSON",
                     ))
                     .on_click(cx.listener(|this, _, window, cx| {
-                        if let Some(recovery) = &this.recovery {
-                            match recovery.to_json() {
-                                Ok(saved) => {
-                                    cx.write_to_clipboard(ClipboardItem::new_string(saved));
-                                }
-                                Err(error) => this.handle_load_error(
-                                    LoadError::Other(
-                                        format!("Failed to copy saved input: {error}").into(),
-                                    ),
-                                    window,
-                                    cx,
-                                ),
+                        match ThreadRecovery::to_json(
+                            this.root_session_id.as_ref(),
+                            this.recovery.as_ref(),
+                            &this.saved_submissions,
+                        ) {
+                            Ok(saved) => {
+                                cx.write_to_clipboard(ClipboardItem::new_string(saved));
                             }
+                            Err(error) => this.handle_load_error(
+                                LoadError::Other(
+                                    format!("Failed to copy saved input: {error}").into(),
+                                ),
+                                window,
+                                cx,
+                            ),
                         }
                     })),
             )
@@ -3927,8 +3927,35 @@ impl Render for ConversationView {
             .size_full()
             .bg(cx.theme().colors().panel_background)
             .child(v_flex().flex_1().min_h_0().child(content))
-            .when(self.recovery.is_some(), |this| {
-                this.child(h_flex().p_2().child(self.copy_saved_input_button(cx)))
+            .when(self.has_saved_input(), |this| {
+                this.child(
+                    h_flex()
+                        .p_2()
+                        .gap_2()
+                        .flex_wrap()
+                        .child(self.copy_saved_input_button(cx))
+                        .when(
+                            !self.saved_submissions.is_empty()
+                                || self.recovery.as_ref().is_some_and(|recovery| !recovery.submissions.is_empty()),
+                            |this| {
+                                this.child(
+                                    div()
+                                        .debug_selector(|| "discard-saved-agent-submissions".into())
+                                        .child(
+                                            Button::new("discard-saved-agent-submissions", "Discard Saved Submissions")
+                                                .tooltip(Tooltip::text("Discard local copies only; does not cancel agent work"))
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.saved_submissions.clear();
+                                                    if let Some(recovery) = &mut this.recovery {
+                                                        recovery.submissions.clear();
+                                                    }
+                                                    cx.notify();
+                                                })),
+                                        ),
+                                )
+                            },
+                        ),
+                )
             })
             .when(!active_thread_renders_request_elicitations, |this| {
                 this.children(request_elicitation_connection.as_ref().map_or_else(
@@ -7393,8 +7420,15 @@ pub(crate) mod tests {
         assert_ne!(current_thread, previous_thread);
         current_thread.read_with(cx, |thread, cx| {
             assert_eq!(thread.session_id(), &session_id);
-            assert!(!Rc::ptr_eq(thread.connection(), previous_thread.read(cx).connection()));
-            let records = thread.recoverable_submissions().map(|(_, record)| record).collect::<Vec<_>>();
+            assert!(!Rc::ptr_eq(
+                thread.connection(),
+                previous_thread.read(cx).connection()
+            ));
+            assert_eq!(thread.recoverable_submissions().count(), 0);
+            assert!(thread.latest_submission_id().is_none());
+        });
+        conversation_view.read_with(cx, |view, _| {
+            let records = &view.saved_submissions;
             assert_eq!(records.len(), 2);
             assert!(matches!(&records[0].state, acp_thread::SubmissionState::Disconnected { receipt: Some(saved) } if saved == &receipt));
             assert!(matches!(&records[1].state, acp_thread::SubmissionState::Disconnected { receipt: None }));
@@ -7420,9 +7454,24 @@ pub(crate) mod tests {
             "recovery must not send input"
         );
         conversation_view.read_with(cx, |view, _| assert!(view.recovery.is_none()));
-        assert!(cx.debug_bounds("copy-saved-agent-input").is_none());
+        let copy = cx
+            .debug_bounds("copy-saved-agent-input")
+            .expect("old submissions stay copyable");
+        cx.simulate_click(copy.center(), gpui::Modifiers::default());
+        let after_reconnect: serde_json::Value = serde_json::from_str(
+            &cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()))
+                .expect("saved copies"),
+        )
+        .expect("JSON export");
+        assert_eq!(after_reconnect["submissions"], saved["submissions"]);
 
         current_thread.update(cx, |thread, cx| {
+            thread
+                .upsert_user_message(
+                    acp_v2::UserMessage::new("accepted").content(vec!["accepted input".into()]),
+                    cx,
+                )
+                .expect("canonical history does not reconcile saved copies");
             thread.set_draft_prompt(Some(queued.clone()), cx);
         });
         current_view.update_in(cx, |view, window, cx| {
@@ -7441,8 +7490,24 @@ pub(crate) mod tests {
                 serde_json::to_value(view.thread.read(cx).draft_prompt()).expect("recovered draft"),
                 serde_json::to_value(&queued).expect("original source"),
             );
-            assert_eq!(view.thread.read(cx).recoverable_submissions().count(), 2);
+            assert_eq!(view.thread.read(cx).recoverable_submissions().count(), 0);
             assert_eq!(view.message_queue.len(), 1);
+        });
+        conversation_view.read_with(cx, |view, _| assert_eq!(view.saved_submissions.len(), 2));
+        let discard = cx
+            .debug_bounds("discard-saved-agent-submissions")
+            .expect("discard local copies");
+        cx.simulate_click(discard.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        conversation_view.read_with(cx, |view, _| assert!(view.saved_submissions.is_empty()));
+        assert!(cx.debug_bounds("copy-saved-agent-input").is_none());
+        active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
+            assert_eq!(
+                view.message_queue.len(),
+                1,
+                "discarding copies leaves the restored queue alone"
+            );
+            assert!(view.thread.read(cx).draft_prompt().is_some());
         });
         assert!(connection.take_receipt_prompt().is_none());
     }
