@@ -536,9 +536,10 @@ pub struct SearchMatch {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{sync::Arc, time::Duration};
 
-    use gpui::{TestAppContext, VisualTestContext};
+    use gpui::{BorrowAppContext, TestAppContext, VisualTestContext};
+    use picker::PickerDelegate as _;
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::SettingsStore;
@@ -745,6 +746,86 @@ mod tests {
                 "highlighting should be dropped once the regex filter is off"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_confirm_preview_tabs(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        for (enabled, enable_from_finder, double_click, expect_preview) in [
+            (true, true, false, true),
+            (true, false, false, false),
+            (false, true, false, false),
+            (true, true, true, false),
+        ] {
+            cx.update(|cx| {
+                cx.update_global::<SettingsStore, _>(|store, cx| {
+                    store.update_user_settings(cx, |settings| {
+                        let preview_tabs = settings.preview_tabs.get_or_insert_default();
+                        preview_tabs.enabled = Some(enabled);
+                        preview_tabs.enable_preview_from_file_finder = Some(enable_from_finder);
+                    });
+                });
+            });
+
+            let fs = FakeFs::new(cx.background_executor.clone());
+            fs.insert_tree(path!("/dir"), json!({"one.rs": "const ONE: usize = 1;"}))
+                .await;
+            let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+            let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+            let workspace = window
+                .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+                .unwrap();
+            let cx = &mut VisualTestContext::from_window(window.into(), cx);
+
+            let seed_query = SearchSeed {
+                query: QuerySeed::Query("ONE".to_string()),
+                options: None,
+            };
+            workspace
+                .update_in(cx, |_, window, cx| {
+                    TextFinder::open(Some(seed_query), window, cx)
+                })
+                .await;
+            cx.executor().advance_clock(Duration::from_millis(150));
+            cx.run_until_parked();
+
+            let picker = workspace.read_with(cx, |workspace, cx| {
+                workspace
+                    .active_modal::<TextFinder>(cx)
+                    .expect("Text Finder should be open")
+                    .read(cx)
+                    .picker
+                    .clone()
+            });
+            picker.update_in(cx, |picker, window, cx| {
+                assert_eq!(picker.delegate.matches.len(), 1);
+                picker.delegate.last_selection_change_time = None;
+                if double_click {
+                    let now = std::time::Instant::now();
+                    picker.delegate.last_selection_change_time = Some(now);
+                    picker.delegate.last_click = Some((picker.delegate.selected_index, now));
+                    picker.delegate.confirm(false, window, cx);
+                }
+            });
+            if !double_click {
+                cx.dispatch_action(menu::Confirm);
+            }
+            cx.run_until_parked();
+
+            workspace.read_with(cx, |workspace, cx| {
+                assert!(workspace.active_modal::<TextFinder>(cx).is_none());
+                let pane = workspace.active_pane().read(cx);
+                assert_eq!(pane.items_len(), 1);
+                let item = pane.active_item().expect("The match should be open");
+                assert_eq!(item.project_path(cx).unwrap().path.file_name(), Some("one.rs"));
+                assert_eq!(
+                    pane.preview_item_id(),
+                    expect_preview.then(|| item.item_id()),
+                    "enabled={enabled}, enable_from_finder={enable_from_finder}, double_click={double_click}"
+                );
+            });
+        }
     }
 
     fn query_language_name(delegate: &Delegate, cx: &App) -> Option<String> {
