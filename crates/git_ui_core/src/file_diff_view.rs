@@ -5,13 +5,14 @@ use buffer_diff::{BufferDiff, DiffOperations};
 use editor::{
     DiffStyleControls, Editor, EditorEvent, EditorSettings, MultiBuffer, SplittableEditor,
     TwoWayDiffHunkRenderer,
+    actions::{Redo, Undo},
 };
 use futures::{FutureExt, select_biased};
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Empty, Entity, EventEmitter, FocusHandle, Focusable,
     Font, IntoElement, Render, Task, WeakEntity, Window,
 };
-use language::{Buffer, BufferSnapshot, HighlightedText, Point};
+use language::{Buffer, BufferSnapshot, HighlightedText, Point, TransactionId};
 use project::{Project, ProjectPath};
 use settings::Settings;
 use std::{
@@ -36,6 +37,8 @@ pub struct FileDiffView {
     old_buffer: Entity<Buffer>,
     new_buffer: Entity<Buffer>,
     diffed_old_buffer: DiffedOldBuffer,
+    copies_to_old_buffer: Vec<CopyToOldBuffer>,
+    undone_copies_to_old_buffer: Vec<CopyToOldBuffer>,
     buffer_changes_tx: watch::Sender<()>,
     _recalculate_diff_task: Task<Result<()>>,
 }
@@ -46,6 +49,22 @@ pub struct FileDiffView {
 struct DiffedOldBuffer {
     base_text_version: clock::Global,
     old_buffer_snapshot: BufferSnapshot,
+}
+
+/// Copying hunks to the old buffer edits a buffer that has no editor in this
+/// view, so its undo history is interleaved with the new buffer's here.
+struct CopyToOldBuffer {
+    transaction_id: TransactionId,
+    /// The new buffer's history when the copy was made or undone. A copy is
+    /// undone before the new buffer's own edits only while the top of its undo
+    /// stack is unchanged, and redone only while both tops are unchanged.
+    new_buffer_history: NewBufferHistory,
+}
+
+#[derive(PartialEq)]
+struct NewBufferHistory {
+    undo_top: Option<TransactionId>,
+    redo_top: Option<TransactionId>,
 }
 
 struct FileDiffOperations {
@@ -242,6 +261,8 @@ impl FileDiffView {
             old_buffer,
             new_buffer,
             diffed_old_buffer,
+            copies_to_old_buffer: Vec::new(),
+            undone_copies_to_old_buffer: Vec::new(),
             _recalculate_diff_task: cx.spawn(async move |this, cx| {
                 while buffer_changes_rx.recv().await.is_ok() {
                     loop {
@@ -312,9 +333,87 @@ impl FileDiffView {
                 (range, text)
             })
             .collect::<Vec<_>>();
-        self.old_buffer.update(cx, |old_buffer, cx| {
+        let transaction_id = self.old_buffer.update(cx, |old_buffer, cx| {
+            old_buffer.finalize_last_transaction();
+            old_buffer.start_transaction();
             old_buffer.edit(edits, None, cx);
+            let transaction_id = old_buffer.end_transaction(cx);
+            old_buffer.finalize_last_transaction();
+            transaction_id
         });
+        let Some(transaction_id) = transaction_id else {
+            return;
+        };
+        // Keep later edits of the new buffer from being grouped into a
+        // transaction that precedes the copy.
+        self.new_buffer.update(cx, |new_buffer, _| {
+            new_buffer.finalize_last_transaction();
+        });
+        self.copies_to_old_buffer.push(CopyToOldBuffer {
+            transaction_id,
+            new_buffer_history: self.new_buffer_history(cx),
+        });
+        self.undone_copies_to_old_buffer.clear();
+    }
+
+    fn new_buffer_history(&self, cx: &App) -> NewBufferHistory {
+        let new_buffer = self.new_buffer.read(cx);
+        NewBufferHistory {
+            undo_top: new_buffer
+                .peek_undo_stack()
+                .map(|entry| entry.transaction_id()),
+            redo_top: new_buffer
+                .peek_redo_stack()
+                .map(|entry| entry.transaction_id()),
+        }
+    }
+
+    fn undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
+        let new_buffer_history = self.new_buffer_history(cx);
+        if self
+            .copies_to_old_buffer
+            .last()
+            .is_none_or(|copy| copy.new_buffer_history.undo_top != new_buffer_history.undo_top)
+        {
+            return;
+        }
+        let Some(copy) = self.copies_to_old_buffer.pop() else {
+            return;
+        };
+        let undone = self.old_buffer.update(cx, |old_buffer, cx| {
+            old_buffer.undo_transaction(copy.transaction_id, cx)
+        });
+        if undone {
+            self.undone_copies_to_old_buffer.push(CopyToOldBuffer {
+                transaction_id: copy.transaction_id,
+                new_buffer_history,
+            });
+            cx.stop_propagation();
+        }
+    }
+
+    fn redo(&mut self, _: &Redo, _: &mut Window, cx: &mut Context<Self>) {
+        let new_buffer_history = self.new_buffer_history(cx);
+        if self
+            .undone_copies_to_old_buffer
+            .last()
+            .is_none_or(|copy| copy.new_buffer_history != new_buffer_history)
+        {
+            return;
+        }
+        let Some(copy) = self.undone_copies_to_old_buffer.pop() else {
+            return;
+        };
+        let redone = self.old_buffer.update(cx, |old_buffer, cx| {
+            old_buffer.redo_to_transaction(copy.transaction_id, cx)
+        });
+        if redone {
+            self.copies_to_old_buffer.push(CopyToOldBuffer {
+                transaction_id: copy.transaction_id,
+                new_buffer_history,
+            });
+            cx.stop_propagation();
+        }
     }
 }
 
@@ -518,8 +617,14 @@ impl Item for FileDiffView {
 }
 
 impl Render for FileDiffView {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        self.editor.clone()
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Captured before the editors handle these actions, so that copies to
+        // the old buffer are undone in order with the new buffer's own edits.
+        div()
+            .size_full()
+            .capture_action(cx.listener(Self::undo))
+            .capture_action(cx.listener(Self::redo))
+            .child(self.editor.clone())
     }
 }
 
@@ -577,7 +682,7 @@ impl Render for FileDiffStyleToolbar {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor::actions::{CopyHunkToLeft, CopyHunkToRight};
+    use editor::actions::{CopyHunkToLeft, CopyHunkToRight, Redo, Undo};
     use editor::test::editor_test_context::assert_state_with_diff;
     use gpui::BorrowAppContext;
     use gpui::{TestAppContext, VisualTestContext};
@@ -1095,5 +1200,102 @@ mod tests {
             assert_eq!(diff_view.old_buffer.read(cx).text(), "old 1\nsame\nnew 3\n");
             assert_eq!(diff_view.new_buffer.read(cx).text(), "old 1\nsame\nnew 3\n");
         });
+    }
+
+    #[gpui::test]
+    async fn test_undo_copies_to_old_file_in_order(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/test"),
+            serde_json::json!({
+                "old_file.txt": "old 1\nsame\nold 3\n",
+                "new_file.txt": "new 1\nsame\nnew 3\n",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let diff_view = workspace
+            .update_in(cx, |workspace, window, cx| {
+                FileDiffView::open(
+                    path!("/test/old_file.txt").into(),
+                    path!("/test/new_file.txt").into(),
+                    None,
+                    workspace.weak_handle(),
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        let (rhs_editor, old_buffer, new_buffer) = diff_view.read_with(cx, |diff_view, cx| {
+            (
+                diff_view.editor.read(cx).rhs_editor().clone(),
+                diff_view.old_buffer.clone(),
+                diff_view.new_buffer.clone(),
+            )
+        });
+        rhs_editor.update_in(cx, |editor, window, cx| {
+            window.focus(&editor.focus_handle(cx), cx);
+        });
+        let select_new_buffer_point = |point: Point, cx: &mut VisualTestContext| {
+            rhs_editor.update_in(cx, |editor, window, cx| {
+                let anchor = editor
+                    .buffer()
+                    .read(cx)
+                    .buffer_point_to_anchor(&new_buffer, point, cx)
+                    .expect("point should be visible in the diff");
+                editor.change_selections(Default::default(), window, cx, |selections| {
+                    selections.select_anchor_ranges([anchor..anchor]);
+                });
+            });
+        };
+        let assert_texts = |old_text: &str, new_text: &str, cx: &mut VisualTestContext| {
+            assert_eq!(
+                old_buffer.read_with(cx, |buffer, _| buffer.text()),
+                old_text
+            );
+            assert_eq!(
+                new_buffer.read_with(cx, |buffer, _| buffer.text()),
+                new_text
+            );
+        };
+
+        select_new_buffer_point(Point::new(0, 0), cx);
+        rhs_editor.update_in(cx, |editor, window, cx| {
+            editor.copy_hunk_to_left(&CopyHunkToLeft, window, cx);
+        });
+        select_new_buffer_point(Point::new(2, 5), cx);
+        rhs_editor.update_in(cx, |editor, window, cx| {
+            editor.insert("!", window, cx);
+        });
+        assert_texts("new 1\nsame\nold 3\n", "new 1\nsame\nnew 3!\n", cx);
+
+        cx.dispatch_action(Undo);
+        assert_texts("new 1\nsame\nold 3\n", "new 1\nsame\nnew 3\n", cx);
+        cx.dispatch_action(Undo);
+        assert_texts("old 1\nsame\nold 3\n", "new 1\nsame\nnew 3\n", cx);
+
+        cx.dispatch_action(Redo);
+        assert_texts("new 1\nsame\nold 3\n", "new 1\nsame\nnew 3\n", cx);
+        cx.dispatch_action(Redo);
+        assert_texts("new 1\nsame\nold 3\n", "new 1\nsame\nnew 3!\n", cx);
+
+        // A new edit discards the redo history, including the undone copy.
+        cx.dispatch_action(Undo);
+        cx.dispatch_action(Undo);
+        assert_texts("old 1\nsame\nold 3\n", "new 1\nsame\nnew 3\n", cx);
+        select_new_buffer_point(Point::new(1, 4), cx);
+        rhs_editor.update_in(cx, |editor, window, cx| {
+            editor.insert("?", window, cx);
+        });
+        cx.dispatch_action(Redo);
+        assert_texts("old 1\nsame\nold 3\n", "new 1\nsame?\nnew 3\n", cx);
     }
 }
