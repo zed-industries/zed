@@ -138,29 +138,26 @@ fn agent_image_lookup(
     let project_entity = project?;
     let project = project_entity.read(cx);
     let path_style = project.path_style(cx);
-    let candidates = image_path_candidates(dest_url, path_style);
-
-    for candidate in &candidates {
-        let Some(project_path) = project.project_path_for_file_link(Path::new(candidate), cx)
-        else {
-            continue;
-        };
-        let worktree = project.worktree_for_id(project_path.worktree_id, cx)?;
-        let source = if worktree.read(cx).is_local() {
-            let path = project.absolute_path(&project_path, cx)?;
-            ImageSource::Resource(Resource::Path(Arc::from(path.as_path())))
-        } else {
-            image_store::project_image_source(project_entity.downgrade(), project_path)
-        };
-        return Some(AgentImageLookup::Source(source));
-    }
-
-    let paths: Vec<String> = candidates
+    let paths: Vec<String> = image_path_candidates(dest_url, path_style)
         .iter()
         .flat_map(|candidate| project.abs_paths_for_file_link(Path::new(candidate), cx))
         .filter_map(|path| path.to_str().map(str::to_owned))
         .collect();
-    (!paths.is_empty()).then_some(AgentImageLookup::Disk(paths))
+
+    // Only the first candidate may skip the disk walk: an indexed later candidate must not
+    // win over an earlier one that exists on disk but isn't indexed (e.g. gitignored).
+    let first_path = paths.first()?;
+    let Some(project_path) = project.project_path_for_file_link(Path::new(first_path), cx) else {
+        return Some(AgentImageLookup::Disk(paths));
+    };
+    let worktree = project.worktree_for_id(project_path.worktree_id, cx)?;
+    let source = if worktree.read(cx).is_local() {
+        let path = project.absolute_path(&project_path, cx)?;
+        ImageSource::Resource(Resource::Path(Arc::from(path.as_path())))
+    } else {
+        image_store::project_image_source(project_entity.downgrade(), project_path)
+    };
+    Some(AgentImageLookup::Source(source))
 }
 
 // Percent escapes in bare paths are ambiguous: prefer the decoded interpretation and
@@ -1142,8 +1139,56 @@ mod tests {
             Some(Arc::from(Path::new(path!("/project/a b.png"))))
         );
         assert_eq!(
-            image_path(lookup("e%20f.png", &project, cx)),
-            Some(Arc::from(Path::new(path!("/project/e%20f.png"))))
+            disk_paths(lookup("e%20f.png", &project, cx)),
+            Some(vec![
+                PathBuf::from(path!("/project/e f.png")),
+                PathBuf::from(path!("/project/e%20f.png")),
+            ])
+        );
+    }
+
+    #[gpui::test]
+    async fn test_agent_image_lookup_preserves_candidate_order(cx: &mut TestAppContext) {
+        crate::test_support::init_test(cx);
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/one"),
+            json!({".gitignore": "screenshots\n", "screenshots": {"shot.png": ""}}),
+        )
+        .await;
+        fs.insert_tree(path!("/two"), json!({"screenshots": {"shot.png": ""}}))
+            .await;
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".gitignore": "my dir\n",
+                "my dir": {"shot.png": ""},
+                "my%20dir": {"shot.png": ""},
+            }),
+        )
+        .await;
+
+        let project = Project::test(
+            fs.clone(),
+            [path!("/one").as_ref(), path!("/two").as_ref()],
+            cx,
+        )
+        .await;
+        assert_eq!(
+            disk_paths(lookup("screenshots/shot.png", &project, cx)),
+            Some(vec![
+                PathBuf::from(path!("/one/screenshots/shot.png")),
+                PathBuf::from(path!("/two/screenshots/shot.png")),
+            ])
+        );
+
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        assert_eq!(
+            disk_paths(lookup("my%20dir/shot.png", &project, cx)),
+            Some(vec![
+                PathBuf::from(path!("/project/my dir/shot.png")),
+                PathBuf::from(path!("/project/my%20dir/shot.png")),
+            ])
         );
     }
 
