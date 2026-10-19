@@ -480,7 +480,11 @@ async fn normalize_remote_paths_for_matching(
         }
 
         let lookup_path = remote_path_for_metadata_lookup(&path);
-        let resolved_path = cx.update(|cx| project.read(cx).resolve_abs_path(&lookup_path, cx));
+        let resolved_path = cx.update(|cx| {
+            project
+                .read(cx)
+                .resolve_abs_path_canonical(&lookup_path, cx)
+        });
         match resolved_path
             .await
             .and_then(|resolved_path| resolved_path.into_abs_path())

@@ -3159,6 +3159,48 @@ async fn test_remote_resolve_abs_path(cx: &mut TestAppContext, server_cx: &mut T
 }
 
 #[gpui::test]
+async fn test_resolve_abs_path_canonical(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {
+                "src": {
+                    "lib.rs": "fn one() -> usize { 1 }"
+                }
+            },
+            "project2": {},
+        }),
+    )
+    .await;
+    fs.insert_symlink(
+        path!("/code/project1/linked"),
+        PathBuf::from(path!("/code/project2")),
+    )
+    .await;
+
+    let (remote_project, _headless) = init_test(&fs, cx, server_cx).await;
+    let local_project = Project::test(fs, [], cx).await;
+    for project in [remote_project, local_project] {
+        let path = path!("/code/project1/linked");
+        let resolved_path = project
+            .update(cx, |project, cx| project.resolve_abs_path(path, cx))
+            .await
+            .expect("existing path should resolve without canonicalization");
+        assert_eq!(resolved_path.abs_path(), Some(path));
+
+        let resolved_path = project
+            .update(cx, |project, cx| {
+                project.resolve_abs_path_canonical(path, cx)
+            })
+            .await
+            .expect("existing symlinked directory should resolve canonically");
+        assert_eq!(resolved_path.abs_path(), Some(path!("/code/project2")));
+        assert!(resolved_path.is_dir());
+    }
+}
+
+#[gpui::test]
 async fn test_resolve_abs_file_path_canonical(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,

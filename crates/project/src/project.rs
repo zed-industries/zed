@@ -5144,6 +5144,46 @@ impl Project {
         }
     }
 
+    /// Like [`Project::resolve_abs_path`], but returns the canonicalized path,
+    /// with symlinks resolved locally as well as on the remote server.
+    pub fn resolve_abs_path_canonical(&self, path: &str, cx: &App) -> Task<Option<ResolvedPath>> {
+        if self.is_local() {
+            let expanded = PathBuf::from(shellexpand::tilde(&path).into_owned());
+            let fs = self.fs.clone();
+            cx.background_spawn(async move {
+                let metadata = fs.metadata(&expanded).await.ok().flatten()?;
+                let path = fs.canonicalize(&expanded).await.ok()?;
+                let path = path.to_str()?.to_owned();
+                Some(ResolvedPath::AbsPath {
+                    path,
+                    is_dir: metadata.is_dir,
+                })
+            })
+        } else if let Some(ssh_client) = self.remote_client.as_ref() {
+            let request = ssh_client
+                .read(cx)
+                .proto_client()
+                .request(proto::GetPathMetadata {
+                    project_id: REMOTE_SERVER_PROJECT_ID,
+                    path: path.into(),
+                    canonicalize: true,
+                });
+            cx.background_spawn(async move {
+                let response = request.await.log_err()?;
+                if response.exists {
+                    Some(ResolvedPath::AbsPath {
+                        path: response.path,
+                        is_dir: response.is_dir,
+                    })
+                } else {
+                    None
+                }
+            })
+        } else {
+            Task::ready(None)
+        }
+    }
+
     fn resolve_path_in_worktrees(
         &self,
         path: &str,
