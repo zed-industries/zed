@@ -1757,6 +1757,73 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    #[gpui::test]
+    async fn file_watch_falls_back_to_the_file_when_its_directory_is_refused(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs = crate::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            serde_json::json!({ "dir": { "config.json": "A" } }),
+        )
+        .await;
+        let config_path = PathBuf::from("/root/dir/config.json");
+
+        // A readable file inside a directory the process may not read: inotify
+        // refuses the directory, and the plain file watch must still be set up.
+        fs.refuse_next_watch_of("/root/dir");
+        let (mut events, _watcher) = fs.watch(&config_path, Duration::ZERO).await;
+        cx.run_until_parked();
+        assert_eq!(
+            fs.watch_calls(),
+            [PathBuf::from("/root/dir"), config_path.clone()]
+        );
+
+        fs.insert_file(&config_path, b"B".to_vec()).await;
+        cx.run_until_parked();
+        let batch = events
+            .next()
+            .now_or_never()
+            .flatten()
+            .expect("change batch");
+        assert!(batch.iter().all(|event| event.path == config_path));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[gpui::test]
+    async fn files_in_one_directory_share_its_watch(cx: &mut gpui::TestAppContext) {
+        let fs = crate::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            serde_json::json!({ "dir": { "settings.json": "A", "keymap.json": "A" } }),
+        )
+        .await;
+        let settings_path = PathBuf::from("/root/dir/settings.json");
+        let keymap_path = PathBuf::from("/root/dir/keymap.json");
+
+        let (settings_events, settings_watcher) = fs.watch(&settings_path, Duration::ZERO).await;
+        let (mut keymap_events, _keymap_watcher) = fs.watch(&keymap_path, Duration::ZERO).await;
+        cx.run_until_parked();
+        assert_eq!(fs.watch_calls(), [PathBuf::from("/root/dir")]);
+
+        // Dropping one subscriber must leave the shared directory watch for the other.
+        drop(settings_events);
+        drop(settings_watcher);
+        cx.run_until_parked();
+
+        fs.atomic_write(keymap_path.clone(), "B".to_owned())
+            .await
+            .expect("atomic write");
+        cx.run_until_parked();
+        let batch = keymap_events
+            .next()
+            .now_or_never()
+            .flatten()
+            .expect("keymap batch after the settings watcher was dropped");
+        assert!(batch.iter().all(|event| event.path == keymap_path));
+    }
+
     #[gpui::test]
     async fn pending_path_is_registered_once_created(cx: &mut gpui::TestAppContext) {
         let temp_dir = tempfile::tempdir().expect("create temp dir");

@@ -1480,6 +1480,9 @@ struct FakeWatches {
     event_sink: Option<Box<dyn Fn(notify::Result<notify::Event>) + Send + Sync>>,
     /// A file to create, without an event, when the given path is next watched.
     file_to_create_on_watch: Option<(PathBuf, PathBuf)>,
+    /// A path whose next watch fails with a permission error, as inotify does
+    /// for a directory the process may not read.
+    path_to_refuse_on_watch: Option<PathBuf>,
     /// Whether a watch on a file is bound to its inode, as with inotify: the
     /// watch dies with the inode when the file is replaced by rename or
     /// removed. Recursive native watches (FSEvents, Windows) follow the path.
@@ -1806,6 +1809,16 @@ impl fs_watcher::WatchBackend for FakeWatchBackend {
             "fake filesystem state is locked; this execution would have caused a test hang",
         );
         state.watches.watch_calls.push(path.clone());
+        if state
+            .watches
+            .path_to_refuse_on_watch
+            .take_if(|refused| *refused == path)
+            .is_some()
+        {
+            return Err(notify::Error::io(io::Error::from(
+                io::ErrorKind::PermissionDenied,
+            )));
+        }
         if let Some((_, file_path)) = state
             .watches
             .file_to_create_on_watch
@@ -2105,6 +2118,11 @@ impl FakeFs {
 
     /// Creates `path` without emitting an event when `watch_path` is next
     /// watched, simulating a change that lands while the watch is installed.
+    /// Makes the next backend watch of `path` fail with a permission error.
+    pub fn refuse_next_watch_of(&self, path: impl AsRef<Path>) {
+        self.state.lock().watches.path_to_refuse_on_watch = Some(normalize_path(path.as_ref()));
+    }
+
     pub fn create_file_before_next_watch_add(
         &self,
         watch_path: impl AsRef<Path>,
