@@ -10,6 +10,7 @@ use std::{
 };
 
 const EVENT_CAPACITY: usize = 10_000;
+const RESCAN_PATH_HISTORY_CAPACITY: usize = 10;
 
 /// An opt-in recording. Watchers hold only weak references to its buffer, so
 /// dropping this value stops collection without changing any watches.
@@ -122,6 +123,37 @@ impl DiagnosticRecorder {
     }
 }
 
+#[derive(Default)]
+pub(super) struct RescanHistory {
+    paths: VecDeque<PathBuf>,
+}
+
+impl RescanHistory {
+    pub(super) fn record(&mut self, event: &notify::Event) -> Option<String> {
+        let report = event.need_rescan().then(|| {
+            // Capture before inserting the rescan so the report includes all ten
+            // preceding paths, even when this is the start of an overflow burst.
+            format!(
+                "reason={:?}, paths={:?}, recent_paths={:?}",
+                event.info().unwrap_or("unspecified"),
+                event.paths,
+                self.paths,
+            )
+        });
+        let first_path = event
+            .paths
+            .len()
+            .saturating_sub(RESCAN_PATH_HISTORY_CAPACITY);
+        for path in event.paths.iter().skip(first_path) {
+            if self.paths.len() == RESCAN_PATH_HISTORY_CAPACITY {
+                self.paths.pop_front();
+            }
+            self.paths.push_back(path.clone());
+        }
+        report
+    }
+}
+
 impl WatchRecording {
     pub(crate) fn new(watchers: impl IntoIterator<Item = Arc<OsWatcher>>) -> Self {
         let state = Arc::new(Mutex::new(RecordingState {
@@ -202,6 +234,31 @@ mod tests {
     use gpui::TestAppContext;
     use notify::{Event, EventKind, event::Flag};
     use std::path::Path;
+
+    #[test]
+    fn rescan_report_contains_ten_preceding_paths_and_reason() {
+        let mut history = RescanHistory::default();
+        for range in [0..12, 12..13] {
+            let mut event = Event::new(EventKind::Create(notify::event::CreateKind::File));
+            event.paths = range
+                .map(|index| PathBuf::from(format!("file-{index}")))
+                .collect();
+            assert!(history.record(&event).is_none());
+        }
+        let rescan = Event::new(EventKind::Other)
+            .set_flag(Flag::Rescan)
+            .set_info("rescan: kernel dropped")
+            .add_path("root".into());
+        let report = history
+            .record(&rescan)
+            .expect("the first rescan should produce a report");
+
+        assert_eq!(
+            report,
+            r#"reason="rescan: kernel dropped", paths=["root"], recent_paths=["file-3", "file-4", "file-5", "file-6", "file-7", "file-8", "file-9", "file-10", "file-11", "file-12"]"#
+        );
+        assert_eq!(history.paths.len(), RESCAN_PATH_HISTORY_CAPACITY);
+    }
 
     struct Backend;
 

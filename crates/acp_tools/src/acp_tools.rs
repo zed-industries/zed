@@ -1,6 +1,6 @@
 use std::{collections::HashSet, fmt::Display, rc::Rc, sync::Arc};
 
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::{Error, schema::v2::RequestId};
 use agent_servers::{AcpDebugMessage, AcpDebugMessageContent, AcpDebugMessageDirection};
 use agent_ui::agent_connection_store::AgentConnectionStatus;
 use agent_ui::{Agent, AgentConnectionStore, AgentPanel};
@@ -65,8 +65,8 @@ struct WatchedConnection {
     connection: Rc<agent_servers::AcpConnection>,
     messages: Vec<WatchedConnectionMessage>,
     list_state: ListState,
-    incoming_request_methods: HashMap<acp::RequestId, Arc<str>>,
-    outgoing_request_methods: HashMap<acp::RequestId, Arc<str>>,
+    incoming_request_methods: HashMap<RequestId, Arc<str>>,
+    outgoing_request_methods: HashMap<RequestId, Arc<str>>,
     _task: Task<()>,
 }
 
@@ -591,10 +591,10 @@ fn push_stream_message_for_connection(
 
 struct WatchedConnectionMessage {
     name: SharedString,
-    request_id: Option<acp::RequestId>,
+    request_id: Option<RequestId>,
     direction: AcpDebugMessageDirection,
     message_type: MessageType,
-    params: Result<Option<serde_json::Value>, acp::Error>,
+    params: Result<Option<serde_json::Value>, Error>,
     collapsed_params_md: Option<Entity<Markdown>>,
     expanded_params_md: Option<Entity<Markdown>>,
 }

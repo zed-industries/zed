@@ -13,6 +13,18 @@ pub enum TruncateFrom {
     Middle,
 }
 
+/// Controls how soft-wrapped continuation lines are indented.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum IndentAdjustment {
+    /// No indent - continuation lines start at column 0.
+    NoIndent,
+    /// Match the original line's leading whitespace.
+    #[default]
+    SameIndent,
+    /// Add N extra columns of indent (in space-character widths).
+    ExtraColumns(u32),
+}
+
 /// The GPUI line wrapper, used to wrap lines of text to a given width.
 pub struct LineWrapper {
     text_system: Arc<TextSystem>,
@@ -41,10 +53,11 @@ impl LineWrapper {
         &'a mut self,
         fragments: &'a [LineFragment],
         wrap_width: Pixels,
+        indent_adjustment: IndentAdjustment,
     ) -> impl Iterator<Item = Boundary> + 'a {
         let mut width = px(0.);
         let mut first_non_whitespace_ix = None;
-        let mut indent = None;
+        let mut base_indent = None;
         let mut last_candidate_ix = 0;
         let mut last_candidate_width = px(0.);
         let mut last_wrap_ix = 0;
@@ -105,27 +118,65 @@ impl LineWrapper {
 
                 width += item_width;
                 if width > wrap_width && ix > last_wrap_ix {
-                    if let (None, Some(first_non_whitespace_ix)) = (indent, first_non_whitespace_ix)
-                    {
-                        indent = Some(
-                            Self::MAX_INDENT.min((first_non_whitespace_ix - last_wrap_ix) as u32),
-                        );
+                    let wrap_at_candidate =
+                        last_candidate_ix > 0 && width - last_candidate_width <= wrap_width;
+
+                    let carried_width = if wrap_at_candidate {
+                        width - last_candidate_width
+                    } else {
+                        item_width
+                    };
+
+                    // Compute base indentation from the first non-whitespace character on the line
+                    // and retain it for all subsequent wrap rows. If the line begins with leading
+                    // whitespace that wraps before any non-whitespace character (or is all whitespace),
+                    // base_indent remains None so continuation rows within the leading whitespace
+                    // do not receive ExtraColumns indentation and degrade into cascading short rows.
+                    if base_indent.is_none() {
+                        if let Some(first_non_whitespace_ix) = first_non_whitespace_ix {
+                            base_indent =
+                                Some(Self::MAX_INDENT.min(
+                                    first_non_whitespace_ix.saturating_sub(last_wrap_ix) as u32,
+                                ));
+                        }
                     }
 
-                    if last_candidate_ix > 0 {
+                    let next_indent = match indent_adjustment {
+                        IndentAdjustment::NoIndent => 0,
+                        IndentAdjustment::SameIndent => base_indent.unwrap_or(0),
+                        IndentAdjustment::ExtraColumns(extra) => {
+                            if let Some(base_indent) = base_indent {
+                                let candidate = base_indent.saturating_add(extra);
+                                let candidate_indent_width =
+                                    self.width_for_char(' ') * candidate as f32;
+                                // Reserve headroom for any carried suffix from an earlier word boundary
+                                // (and at least 2 columns for a full-width character) so the continuation
+                                // line does not immediately exceed wrap width.
+                                let min_headroom =
+                                    carried_width.max(self.width_for_char(' ') * 2.0);
+                                if candidate_indent_width + min_headroom > wrap_width {
+                                    0
+                                } else {
+                                    Self::MAX_INDENT.min(candidate)
+                                }
+                            } else {
+                                0
+                            }
+                        }
+                    };
+
+                    if wrap_at_candidate {
                         last_wrap_ix = last_candidate_ix;
                         width -= last_candidate_width;
-                        last_candidate_ix = 0;
                     } else {
                         last_wrap_ix = ix;
                         width = item_width;
                     }
+                    last_candidate_ix = 0;
 
-                    if let Some(indent) = indent {
-                        width += self.width_for_char(' ') * indent as f32;
-                    }
+                    width += self.width_for_char(' ') * next_indent as f32;
 
-                    return Some(Boundary::new(last_wrap_ix, indent.unwrap_or(0)));
+                    return Some(Boundary::new(last_wrap_ix, next_indent));
                 }
 
                 prev_c = new_prev_c;
@@ -721,7 +772,11 @@ mod tests {
 
         assert_eq!(
             wrapper
-                .wrap_line(&[LineFragment::text("aa bbb cccc ddddd eeee")], px(72.))
+                .wrap_line(
+                    &[LineFragment::text("aa bbb cccc ddddd eeee")],
+                    px(72.),
+                    IndentAdjustment::default()
+                )
                 .collect::<Vec<_>>(),
             &[
                 Boundary::new(7, 0),
@@ -731,7 +786,11 @@ mod tests {
         );
         assert_eq!(
             wrapper
-                .wrap_line(&[LineFragment::text("aaa aaaaaaaaaaaaaaaaaa")], px(72.0))
+                .wrap_line(
+                    &[LineFragment::text("aaa aaaaaaaaaaaaaaaaaa")],
+                    px(72.0),
+                    IndentAdjustment::default()
+                )
                 .collect::<Vec<_>>(),
             &[
                 Boundary::new(4, 0),
@@ -741,7 +800,11 @@ mod tests {
         );
         assert_eq!(
             wrapper
-                .wrap_line(&[LineFragment::text("     aaaaaaa")], px(72.))
+                .wrap_line(
+                    &[LineFragment::text("     aaaaaaa")],
+                    px(72.),
+                    IndentAdjustment::default()
+                )
                 .collect::<Vec<_>>(),
             &[
                 Boundary::new(7, 5),
@@ -753,7 +816,8 @@ mod tests {
             wrapper
                 .wrap_line(
                     &[LineFragment::text("                            ")],
-                    px(72.)
+                    px(72.),
+                    IndentAdjustment::default()
                 )
                 .collect::<Vec<_>>(),
             &[
@@ -764,7 +828,11 @@ mod tests {
         );
         assert_eq!(
             wrapper
-                .wrap_line(&[LineFragment::text("          aaaaaaaaaaaaaa")], px(72.))
+                .wrap_line(
+                    &[LineFragment::text("          aaaaaaaaaaaaaa")],
+                    px(72.),
+                    IndentAdjustment::default()
+                )
                 .collect::<Vec<_>>(),
             &[
                 Boundary::new(7, 0),
@@ -782,7 +850,8 @@ mod tests {
                         LineFragment::text("aa bbb "),
                         LineFragment::text("cccc ddddd eeee")
                     ],
-                    px(72.)
+                    px(72.),
+                    IndentAdjustment::default()
                 )
                 .collect::<Vec<_>>(),
             &[
@@ -803,7 +872,8 @@ mod tests {
                         LineFragment::element(px(30.), 1),
                         LineFragment::text(" cccc")
                     ],
-                    px(72.)
+                    px(72.),
+                    IndentAdjustment::default()
                 )
                 .collect::<Vec<_>>(),
             &[
@@ -821,7 +891,8 @@ mod tests {
                         LineFragment::element(px(50.), 1),
                         LineFragment::text(" aaaa bbbb cccc dddd")
                     ],
-                    px(72.)
+                    px(72.),
+                    IndentAdjustment::default()
                 )
                 .collect::<Vec<_>>(),
             &[
@@ -841,7 +912,8 @@ mod tests {
                         LineFragment::element(px(100.), 1),
                         LineFragment::text(" more text")
                     ],
-                    px(72.)
+                    px(72.),
+                    IndentAdjustment::default()
                 )
                 .collect::<Vec<_>>(),
             &[
@@ -857,7 +929,8 @@ mod tests {
             wrapper
                 .wrap_line(
                     &[LineFragment::text("a\u{202F}b\u{00A0}c\u{2011}d e")],
-                    px(72.0)
+                    px(72.0),
+                    IndentAdjustment::default()
                 )
                 .collect::<Vec<_>>(),
             &[Boundary::new(12, 0),], // special chars above take up 3, 2 and 3 bytes, so boundary ends up at 12
@@ -1294,7 +1367,11 @@ mod tests {
 
         // The truncated text, when wrapped, must fit within max_lines lines.
         let wrap_count = wrapper
-            .wrap_line(&[LineFragment::text(&truncated)], wrap_width)
+            .wrap_line(
+                &[LineFragment::text(&truncated)],
+                wrap_width,
+                IndentAdjustment::default(),
+            )
             .count();
 
         assert!(
@@ -1359,7 +1436,11 @@ mod tests {
         );
 
         let wrap_count = wrapper
-            .wrap_line(&[LineFragment::text(&truncated)], wrap_width)
+            .wrap_line(
+                &[LineFragment::text(&truncated)],
+                wrap_width,
+                IndentAdjustment::default(),
+            )
             .count();
 
         assert!(
@@ -1582,6 +1663,259 @@ mod tests {
             text,
             "Text that fits exactly should not be modified: '{}'",
             result
+        );
+    }
+
+    #[test]
+    fn test_extra_columns_overflow_guard() {
+        let mut wrapper = build_wrapper();
+        let space_width = wrapper.width_for_char(' ');
+
+        // 6 spaces indent, wrap width 10 columns.
+        let text = "      ab cd ef gh";
+        let wrap_width = space_width * 10.0;
+
+        // When base_indent + extra overflows wrap width (6 + 8 + 2 > 10),
+        // indent must fall back to 0 instead of degrading to one character per row.
+        //
+        // Expected wrapped lines (10 columns):
+        //   |      ab  |  (row 0: 6 spaces + "ab ", len 9)
+        //   |cd ef gh  |  (row 1: 0 indent + "cd ef gh", len 8)
+        assert_eq!(
+            wrapper
+                .wrap_line(
+                    &[LineFragment::text(text)],
+                    wrap_width,
+                    IndentAdjustment::ExtraColumns(8),
+                )
+                .collect::<Vec<_>>(),
+            &[Boundary::new(9, 0)]
+        );
+
+        // When base_indent + extra fits within wrap width (6 + 2 + 2 <= 10),
+        // the extra indent is applied and not clamped.
+        //
+        // Expected wrapped lines (10 columns):
+        //   |      ab  |  (row 0: 6 spaces + "ab ", len 9)
+        //   |        cd|  (row 1: 8 spaces + "cd", len 10)
+        //   |        ef|  (row 2: 8 spaces + "ef", len 10)
+        //   |        gh|  (row 3: 8 spaces + "gh", len 10)
+        assert_eq!(
+            wrapper
+                .wrap_line(
+                    &[LineFragment::text(text)],
+                    wrap_width,
+                    IndentAdjustment::ExtraColumns(2),
+                )
+                .collect::<Vec<_>>(),
+            &[
+                Boundary::new(9, 8),
+                Boundary::new(11, 8),
+                Boundary::new(13, 8),
+                Boundary::new(15, 8),
+            ]
+        );
+
+        // When text contains full-width (two-column) glyphs, reserving headroom for a
+        // two-column character (candidate + 2 > wrap_width) ensures that candidate
+        // indents leaving only 1 column cannot accept the indent and overflow.
+        //
+        // 1 space indent, wrap width 10 columns.
+        // " 🦀🦀🦀🦀🦀🦀🦀🦀" with extra=8 (extra_two with tab_size=4):
+        // candidate = 1 + 8 = 9.
+        // With +2 headroom (9 + 2 > 10), indent falls back to 0.
+        //
+        // Expected wrapped lines (10 columns):
+        //   | 🦀🦀🦀🦀 |  (row 0: 1 space + 4 two-column glyphs, 9 cols)
+        //   |🦀🦀🦀🦀  |  (row 1: 0 indent + 4 two-column glyphs, 8 cols)
+        let full_width_text = " 🦀🦀🦀🦀🦀🦀🦀🦀";
+        assert_eq!(
+            wrapper
+                .wrap_line(
+                    &[LineFragment::text(full_width_text)],
+                    wrap_width,
+                    IndentAdjustment::ExtraColumns(8),
+                )
+                .collect::<Vec<_>>(),
+            &[Boundary::new(17, 0)]
+        );
+
+        // When the carried suffix fits within wrap width alongside extra indent
+        // (1 indent + 9 carried suffix = 10 <= 10), the extra indent is applied.
+        //
+        // Expected wrapped lines (10 columns):
+        //   |a         |  (row 0: "a ", len 2)
+        //   | abcdefghi|  (row 1: 1 indent + "abcdefghi", len 10)
+        assert_eq!(
+            wrapper
+                .wrap_line(
+                    &[LineFragment::text("a abcdefghi")],
+                    wrap_width,
+                    IndentAdjustment::ExtraColumns(1),
+                )
+                .collect::<Vec<_>>(),
+            &[Boundary::new(2, 1)]
+        );
+
+        // When extra indent exceeds wrap width by even 1 column
+        // (2 indent + 9 carried suffix = 11 > 10), indent falls back to 0.
+        //
+        // Expected wrapped lines (10 columns):
+        //   |a         |  (row 0: "a ", len 2)
+        //   |abcdefghi |  (row 1: 0 indent + "abcdefghi", len 9)
+        assert_eq!(
+            wrapper
+                .wrap_line(
+                    &[LineFragment::text("a abcdefghi")],
+                    wrap_width,
+                    IndentAdjustment::ExtraColumns(2),
+                )
+                .collect::<Vec<_>>(),
+            &[Boundary::new(2, 0)]
+        );
+
+        // When text wraps at an earlier word boundary, the carried suffix
+        // must be accounted for so indent + carried_suffix <= wrap_width.
+        //
+        // "a abcdefghij" with wrap_width 10 columns, ExtraColumns(8):
+        // candidate = 0 + 8 = 8.
+        // carried suffix = "abcdefghi" (9 columns).
+        // 8 indent + 9 carried suffix = 17 > 10, so indent falls back to 0.
+        //
+        // Expected wrapped lines (10 columns):
+        //   |a         |  (row 0: "a ", len 2)
+        //   |abcdefghij|  (row 1: 0 indent + "abcdefghij", len 10)
+        let carried_text = "a abcdefghij";
+        assert_eq!(
+            wrapper
+                .wrap_line(
+                    &[LineFragment::text(carried_text)],
+                    wrap_width,
+                    IndentAdjustment::ExtraColumns(8),
+                )
+                .collect::<Vec<_>>(),
+            &[Boundary::new(2, 0)]
+        );
+
+        // When a wider inline element is encountered after the first wrap,
+        // the overflow guard must evaluate whether the element fits with the extra indent.
+        // If text continues after the element row and wraps again, subsequent continuation
+        // lines resume the extra indent if their carried content fits.
+        //
+        // "abcdefghijk " followed by an 8-column element and "z 12":
+        // Row 0: "abcdefghij" (len 10)
+        // Row 1: "k " (2 cols) with 8 indent (len 10)
+        // Row 2: element (8 cols) cannot fit with 8 indent (8 + 8 = 16 > 10),
+        //        so indent falls back to 0. Element (8 cols) + "z " (2 cols) = len 10.
+        // Row 3: "12" (2 cols) fits with 8 indent (8 + 2 = 10 <= 10).
+        //
+        // Expected wrapped lines (10 columns):
+        //   |abcdefghij|  (row 0: 10 cols)
+        //   |        k |  (row 1: 8 indent + "k ", len 10)
+        //   |[ELEMENT]z|  (row 2: 0 indent + [ELEMENT (8)] + "z ", len 10)
+        //   |        12|  (row 3: 8 indent + "12", len 10)
+        let element_fragments = [
+            LineFragment::text("abcdefghijk "),
+            LineFragment::element(space_width * 8.0, 1),
+            LineFragment::text("z 12"),
+        ];
+        assert_eq!(
+            wrapper
+                .wrap_line(
+                    &element_fragments,
+                    wrap_width,
+                    IndentAdjustment::ExtraColumns(8),
+                )
+                .collect::<Vec<_>>(),
+            &[
+                Boundary::new(10, 8),
+                Boundary::new(12, 0),
+                Boundary::new(15, 8),
+            ]
+        );
+
+        // A line of only whitespace wrapping before any non-whitespace character
+        // must not have extra columns added to subsequent rows.
+        let spaces = "                    "; // 20 spaces
+        assert_eq!(
+            wrapper
+                .wrap_line(
+                    &[LineFragment::text(spaces)],
+                    wrap_width,
+                    IndentAdjustment::ExtraColumns(8),
+                )
+                .collect::<Vec<_>>(),
+            &[Boundary::new(10, 0)]
+        );
+
+        // When leading whitespace wraps before the first non-whitespace character,
+        // base_indent should reflect the leading whitespace on the row where non-whitespace begins.
+        // 14 spaces followed by "ab cd ef gh", wrap width 10:
+        // Row 0: 10 spaces (len 10) -> wraps at ix 10 with indent 0
+        // Row 1: 4 spaces + "ab cd" (len 9) -> wraps at ix 20
+        //        base_indent is 14 - 10 = 4.
+        //        With ExtraColumns(2), candidate = 4 + 2 = 6. 6 + 2 (headroom) = 8 <= 10.
+        //        Row 2 and subsequent rows get indent 6.
+        let multiline_indent_text = "              ab cd ef gh";
+        assert_eq!(
+            wrapper
+                .wrap_line(
+                    &[LineFragment::text(multiline_indent_text)],
+                    wrap_width,
+                    IndentAdjustment::ExtraColumns(2),
+                )
+                .collect::<Vec<_>>(),
+            &[
+                Boundary::new(10, 0),
+                Boundary::new(20, 6),
+                Boundary::new(23, 6),
+            ]
+        );
+
+        // When a word boundary precedes an oversized carried suffix that itself
+        // exceeds wrap_width (e.g. text followed by an inline element), wrapping
+        // at the earlier candidate would force the continuation row to immediately
+        // overflow even with 0 indent. The wrapper must reject the candidate and
+        // break before the overflowing item instead.
+        //
+        // "aaaaaaaaaaaaaaaaaaa a" (21 chars: 19 'a's, space, 'a') followed by 10-column element:
+        // Row 0: "aaaaaaaaaa" (10 chars, len 10) -> wraps at ix 10
+        // Row 1: "aaaaaaaa" (8 chars) with 2 indent (len 10) -> wraps at ix 18
+        // Row 2: "a a" (3 chars) with 2 indent (len 5)
+        //        candidate boundary at ix 20 (space)
+        //        Then element (10 cols): width becomes 5 + 10 = 15 > wrap_width (10).
+        //        Candidate would carry 'a' (1 col) + element (10 cols) = 11 cols > 10.
+        //        Because carried suffix (11) > wrap_width (10), candidate is rejected.
+        //        Wrapper breaks at ix 21 (before element) with indent 0.
+        // Row 3: element (10 cols, len 10)
+        let oversized_suffix_fragments = [
+            LineFragment::text("aaaaaaaaaaaaaaaaaaa a"),
+            LineFragment::element(space_width * 10.0, 1),
+        ];
+        assert_eq!(
+            wrapper
+                .wrap_line(
+                    &oversized_suffix_fragments,
+                    wrap_width,
+                    IndentAdjustment::ExtraColumns(2),
+                )
+                .collect::<Vec<_>>(),
+            &[
+                Boundary::new(10, 2),
+                Boundary::new(18, 2),
+                Boundary::new(21, 0),
+            ]
+        );
+
+        assert_eq!(
+            wrapper
+                .wrap_line(
+                    &[LineFragment::text("  aaaaaaaa")],
+                    space_width * 4.0,
+                    IndentAdjustment::ExtraColumns(u32::MAX),
+                )
+                .collect::<Vec<_>>(),
+            &[Boundary::new(4, 0), Boundary::new(8, 0)]
         );
     }
 }
