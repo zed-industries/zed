@@ -151,7 +151,7 @@ impl PathStyle {
             .as_ref()
             .to_str()
             .ok_or_else(|| anyhow::anyhow!("Path contains invalid UTF-8"))?;
-        let right = right.as_ref();
+        let right = self.normalize_separators(right);
         let right_string = right
             .to_str()
             .ok_or_else(|| anyhow::anyhow!("Path contains invalid UTF-8"))?;
