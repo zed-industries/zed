@@ -1720,6 +1720,15 @@ impl Item for MarkdownPreviewView {
             .unwrap_or_else(|| SharedString::from("Markdown Preview"))
     }
 
+    // Save As writes the source file, so suggest its name rather than the tab text, which can be a
+    // full path for files outside the project.
+    fn suggested_filename(&self, cx: &App) -> SharedString {
+        self.active_editor
+            .as_ref()
+            .map(|editor_state| editor_state.editor.read(cx).suggested_filename(cx))
+            .unwrap_or_else(|| SharedString::from("Markdown Preview"))
+    }
+
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
         self.active_editor
             .as_ref()?
@@ -2362,7 +2371,8 @@ mod tests {
     use workspace::item::{Item, ItemHandle, SerializableItem};
     use workspace::path_link::{OpenTarget, OpenTargetFoundBy};
     use workspace::{
-        AppState, ItemId, MultiWorkspace, Pane, SaveIntent, Workspace, WorkspaceId, open_paths,
+        AppState, ItemId, MultiWorkspace, OpenOptions, OpenVisible, Pane, SaveIntent, Workspace,
+        WorkspaceId, open_paths,
     };
 
     use super::{
@@ -2475,6 +2485,39 @@ mod tests {
                 format!("Preview {}", path!("docs/README.md")),
                 format!("Preview {}", path!("guide/README.md")),
             ]
+        );
+    }
+
+    #[gpui::test]
+    async fn preview_suggests_source_file_name_for_file_outside_the_project(
+        cx: &mut TestAppContext,
+    ) {
+        let (project, workspace, multi_workspace) = markdown_workspace(cx, json!({}), false).await;
+        let fs = project.read_with(cx, |project, _| project.fs().as_fake());
+        fs.insert_tree(path!("/outside"), json!({ "README.md": "# Readme\n" }))
+            .await;
+        multi_workspace
+            .update(cx, |_, window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.open_abs_path(
+                        PathBuf::from(path!("/outside/README.md")),
+                        OpenOptions {
+                            visible: Some(OpenVisible::None),
+                            ..Default::default()
+                        },
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        let preview = open_preview_for_active_editor(cx, &multi_workspace);
+
+        assert_eq!(
+            preview.read_with(cx, |preview, cx| preview.suggested_filename(cx)),
+            "README.md"
         );
     }
 
