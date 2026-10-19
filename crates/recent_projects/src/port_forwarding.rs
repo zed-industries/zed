@@ -137,6 +137,7 @@ pub struct PortForwardingPopover {
     preview_only: bool,
     focus_handle: FocusHandle,
     forwards: Vec<SshPortForwardOption>,
+    active_forwards: Vec<SshPortForwardOption>,
     editor: Option<ForwardEditor>,
     is_saving: bool,
     message: Option<SharedString>,
@@ -211,6 +212,7 @@ impl PortForwardingPopover {
             preview_only,
             focus_handle,
             forwards,
+            active_forwards: options.port_forwards.unwrap_or_default(),
             editor: None,
             is_saving: false,
             message,
@@ -547,6 +549,19 @@ impl Render for PortForwardingPopover {
                     .size(LabelSize::Small)
                     .color(Color::Muted),
             )
+            .when(
+                !self.preview_only
+                    && self.editor.is_none()
+                    && !self.is_saving
+                    && self.message.is_none()
+                    && self.forwards != self.active_forwards,
+                |this| {
+                    this.child(
+                        Button::new("restart-for-port-forwarding", "Restart Zed…")
+                            .on_click(|_, _, cx| workspace::reload(cx)),
+                    )
+                },
+            )
             .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
                 if this.editor.is_some() {
                     this.cancel_edit(cx);
@@ -572,6 +587,7 @@ impl PortForwardingPopover {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let delete_forward = forward.clone();
+        let browser_url = local_browser_url(&forward);
         h_flex()
             .id(format!("port-forward-row-{index}"))
             .w_full()
@@ -592,6 +608,23 @@ impl PortForwardingPopover {
                         this.begin_edit(Some(forward.clone()), window, cx);
                     })),
                 ),
+            )
+            .child(
+                IconButton::new(format!("open-port-forward-{index}"), IconName::ArrowUpRight)
+                    .shape(IconButtonShape::Square)
+                    .icon_size(IconSize::Small)
+                    .style(ButtonStyle::Subtle)
+                    .aria_label("Open local endpoint in browser")
+                    .disabled(self.editor.is_some() || self.is_saving || browser_url.is_none())
+                    .tooltip(Tooltip::text(match &browser_url {
+                        Some(url) => format!("Open {url} in browser (HTTP)"),
+                        None => "This local endpoint cannot be opened in a browser.".to_owned(),
+                    }))
+                    .on_click(move |_, _, cx| {
+                        if let Some(url) = &browser_url {
+                            cx.open_url(url);
+                        }
+                    }),
             )
             .child(
                 IconButton::new(format!("delete-port-forward-{index}"), IconName::Trash)
@@ -893,6 +926,22 @@ fn parse_endpoint(value: &str) -> Result<(Option<String>, u16), ForwardInputErro
     Ok((host, port))
 }
 
+fn local_browser_url(forward: &SshPortForwardOption) -> Option<String> {
+    let host = forward.local_host.as_deref().unwrap_or("localhost");
+    let host = if let Ok(address) = host.parse::<std::net::Ipv6Addr>() {
+        format!("[{address}]")
+    } else if !host.is_empty()
+        && host
+            .chars()
+            .all(|character| character.is_alphanumeric() || matches!(character, '.' | '-' | '_'))
+    {
+        host.to_owned()
+    } else {
+        return None;
+    };
+    Some(format!("http://{host}:{}", forward.local_port))
+}
+
 fn format_endpoint(host: &Option<String>, port: u16) -> String {
     match host {
         Some(host) if host.contains(':') => format!("[{host}]:{port}"),
@@ -1022,6 +1071,30 @@ mod tests {
             unrelated_connection.port_forwards,
             Some(vec![forward(Some("localhost"), 7070, Some("other"), 70)])
         );
+    }
+
+    #[test]
+    fn browser_urls_use_only_the_local_endpoint_over_http() {
+        assert_eq!(
+            local_browser_url(&forward(None, 8080, Some("remote"), 443)),
+            Some("http://localhost:8080".to_owned())
+        );
+        assert_eq!(
+            local_browser_url(&forward(Some("service.local"), 3000, None, 80)),
+            Some("http://service.local:3000".to_owned())
+        );
+        assert_eq!(
+            local_browser_url(&forward(Some("::1"), 8080, None, 80)),
+            Some("http://[::1]:8080".to_owned())
+        );
+        for host in [
+            "localhost/path",
+            "localhost?query",
+            "user@host",
+            "https://host",
+        ] {
+            assert!(local_browser_url(&forward(Some(host), 8080, None, 80)).is_none());
+        }
     }
 
     #[test]
@@ -1759,6 +1832,10 @@ mod tests {
             .load(paths::settings_file())
             .await
             .expect("initial settings should be readable");
+        let settings_write_path = fs
+            .canonicalize(paths::settings_file())
+            .await
+            .expect("settings write path should be canonicalized");
         let project = Project::test(fs.clone(), [], cx).await;
         let options = SshConnectionOptions {
             host: "example.com".to_owned().into(),
@@ -1776,11 +1853,15 @@ mod tests {
             }
         });
         let popover = root.read_with(cx, |root, _| root.popover.clone());
-        fs.fail_next_atomic_write("simulated settings write failure");
+        fs.set_atomic_write_error(
+            &settings_write_path,
+            "simulated settings write failure".to_owned(),
+        );
 
         click_port_forwarding_button(cx, "edit-port-forward-0");
         set_endpoint_values(&popover, "localhost:8081", "service:9001", cx);
         click_port_forwarding_button(cx, "save-port-forward");
+        fs.clear_atomic_write_error(&settings_write_path);
 
         assert_eq!(
             popover.read_with(cx, |popover, _| popover.forwards.clone()),
