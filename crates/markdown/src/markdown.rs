@@ -526,6 +526,8 @@ pub struct MarkdownOptions {
     pub render_mermaid_diagrams: bool,
     pub parse_heading_slugs: bool,
     pub render_metadata_blocks: bool,
+    /// Defers parsing until the first [`MarkdownElement`] layout or [`Markdown::ensure_parsed`].
+    /// After parsing starts, source updates parse eagerly even when off-screen.
     pub defer_parsing: bool,
 }
 
@@ -667,7 +669,7 @@ impl Markdown {
         )
     }
 
-    /// Creates markdown that is parsed on first render instead of at construction.
+    /// Creates Markdown with [`MarkdownOptions::defer_parsing`] enabled.
     pub fn new_deferred(
         source: impl Into<SharedString>,
         language_registry: Option<Arc<LanguageRegistry>>,
@@ -1220,6 +1222,8 @@ impl Markdown {
         self.context_menu_selected_markdown.as_ref()
     }
 
+    /// Starts parsing if still deferred; does not wait for completion.
+    /// Called automatically by [`MarkdownElement`] during layout.
     pub fn ensure_parsed(&mut self, cx: &mut Context<Self>) {
         if self.options.defer_parsing {
             self.options.defer_parsing = false;
@@ -1227,6 +1231,8 @@ impl Markdown {
         }
     }
 
+    /// Returns whether Markdown parsing or Mermaid rendering is in progress.
+    /// Unstarted deferred parsing does not count as pending.
     pub fn has_pending_render(&self) -> bool {
         self.pending_parse.is_some() || self.mermaid_state.has_pending_render()
     }
@@ -2547,9 +2553,14 @@ impl MarkdownElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<()> {
-        let autoscroll_index = self
-            .markdown
-            .update(cx, |markdown, _| markdown.autoscroll_request.take())?;
+        let autoscroll_index = self.markdown.update(cx, |markdown, _| {
+            let source_index = markdown.autoscroll_request?;
+            if markdown.has_pending_render() {
+                return None;
+            }
+            markdown.autoscroll_request = None;
+            Some(source_index)
+        })?;
         let (position, line_height) = rendered_text.position_for_source_index(autoscroll_index)?;
 
         match &self.autoscroll {

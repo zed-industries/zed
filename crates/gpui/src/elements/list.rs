@@ -644,8 +644,10 @@ impl ListState {
         state.follow_state.stop_following();
     }
 
-    /// Sets a predicate checked after layout to determine whether an item's height is final.
-    pub fn set_item_measurement_ready(&self, ready: impl Fn(usize, &App) -> bool + 'static) {
+    /// Sets a predicate queried after item layout to determine whether the measured height is stable.
+    /// Measurements reported as `false` remain provisional and are retried on later layouts.
+    /// The consumer must request a new frame when measurement becomes ready.
+    pub fn set_item_measurement_readiness(&self, ready: impl Fn(usize, &App) -> bool + 'static) {
         self.0.borrow_mut().item_measurement_ready = Some(Box::new(ready));
     }
 
@@ -960,20 +962,15 @@ impl StateInner {
             self.scroll_anchor = None;
             return;
         };
-        if self.is_provisional() && self.logical_scroll_top() == position {
-            return;
-        }
-
         let pending = self
             .scroll_anchor
-            .filter(|anchor| !anchor.provisional)
             .and_then(|anchor| anchor.pending)
             .filter(|_| position.item_ix < self.items.summary().count)
-            .and_then(|pending| match pending {
-                PendingScroll::Absolute(_) => {
+            .and_then(|pending| match (pending, self.is_provisional()) {
+                (PendingScroll::Absolute(_), _) | (_, true) => {
                     Some(PendingScroll::Absolute(position.offset_in_item))
                 }
-                PendingScroll::Proportional(_) => {
+                (PendingScroll::Proportional(_), false) => {
                     let mut cursor = self.items.cursor::<Count>(());
                     cursor.seek(&Count(position.item_ix), Bias::Right);
                     cursor
@@ -1124,6 +1121,9 @@ impl StateInner {
             max_item_width = max_item_width.max(size.width);
             provisional |= !ready;
             measured_items.push_back(item.with_measurement(size, ready));
+            if !ready && visible_height >= available_height {
+                break;
+            }
         }
         rendered_height += padding.bottom;
 
@@ -1205,9 +1205,11 @@ impl StateInner {
                     };
 
                     leading_overdraw += size.height;
-                    measured_items.push_front(
-                        item.with_measurement(size, self.is_item_ready(cursor.start().0, cx)),
-                    );
+                    let ready = self.is_item_ready(cursor.start().0, cx);
+                    measured_items.push_front(item.with_measurement(size, ready));
+                    if !ready {
+                        break;
+                    }
                 } else {
                     break;
                 }
@@ -2277,34 +2279,52 @@ mod test {
     #[gpui::test]
     fn test_unready_measurements_preserve_pending_fraction(cx: &mut TestAppContext) {
         let cx = cx.add_empty_window();
-        let state = ListState::new(10, crate::ListAlignment::Top, px(0.));
-        let painted = Rc::new(RefCell::new(Vec::new()));
-        let draw = |height, cx: &mut VisualTestContext| {
-            painted.borrow_mut().clear();
-            let painted = painted.clone();
-            draw_list(
-                &state,
-                200.,
-                move |index| painted_item(index, height, &painted),
-                cx,
-            );
-        };
-        let ready = item_readiness(&state, true);
-        state.scroll_to(list_offset(5, 50.));
-        draw(100., cx);
-        ready.set(false);
-        state.remeasure();
-        for height in [0., 200., 200.] {
-            draw(height, cx);
-            assert_eq!(state.logical_scroll_top(), list_offset(5, 50.));
+        for (provisional_height, destination, final_height, expected_offset) in [
+            (Some(200.), None, 200., 100.),
+            (None, Some(40.), 200., 80.),
+            (Some(200.), Some(50.), 200., 50.),
+            (Some(0.), Some(40.), 20., 20.),
+            (Some(10.), Some(40.), 100., 40.),
+            (Some(200.), Some(50.), 300., 50.),
+        ] {
+            let state = ListState::new(10, crate::ListAlignment::Top, px(0.));
+            let painted = Rc::new(RefCell::new(Vec::new()));
+            let draw = |height, cx: &mut VisualTestContext| {
+                painted.borrow_mut().clear();
+                let painted = painted.clone();
+                draw_list(
+                    &state,
+                    200.,
+                    move |index| {
+                        painted_item(index, if index == 5 { height } else { 100. }, &painted)
+                    },
+                    cx,
+                );
+            };
+            let ready = item_readiness(&state, true);
+            state.scroll_to(list_offset(5, 50.));
+            draw(100., cx);
+            ready.set(false);
+            state.remeasure();
+            if let Some(height) = provisional_height {
+                for height in [0., height, height] {
+                    draw(height, cx);
+                    assert_eq!(state.logical_scroll_top(), list_offset(5, 50.));
+                }
+            }
+            if let Some(offset) = destination {
+                state.scroll_to(list_offset(5, offset));
+            }
+            ready.set(true);
+            for _ in 0..2 {
+                draw(final_height, cx);
+                assert_eq!(state.logical_scroll_top(), list_offset(5, expected_offset));
+                assert_eq!(
+                    painted.borrow().first().copied(),
+                    Some((5, px(-expected_offset), px(final_height - expected_offset)))
+                );
+            }
         }
-        ready.set(true);
-        draw(200., cx);
-        assert_eq!(state.logical_scroll_top(), list_offset(5, 100.));
-        assert_eq!(
-            painted.borrow().as_slice(),
-            &[(5, px(-100.), px(100.)), (6, px(100.), px(300.)),]
-        );
     }
 
     #[gpui::test]
@@ -2361,7 +2381,7 @@ mod test {
                         cx,
                     );
                 };
-                state.set_item_measurement_ready(|index, _| index != 5);
+                state.set_item_measurement_readiness(|index, _| index != 5);
                 state.scroll_to(list_offset(5, 20.));
                 state.remeasure_items(5..6);
                 draw(cx);
@@ -2482,7 +2502,7 @@ mod test {
         {
             let state = ListState::new(3, crate::ListAlignment::Top, px(overdraw));
             let ready = Rc::new(Cell::new(false));
-            state.set_item_measurement_ready({
+            state.set_item_measurement_readiness({
                 let ready = ready.clone();
                 move |index, _| index != unready_item || ready.get()
             });
@@ -2535,6 +2555,66 @@ mod test {
     }
 
     #[gpui::test]
+    fn test_unready_overdraw_stops_at_first_pending_item(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        for anchor in [0, 10] {
+            let state = ListState::new(13, crate::ListAlignment::Top, px(100.));
+            let ready = Rc::new(Cell::new(false));
+            let initially_ready = move |index| {
+                if anchor == 0 { index < 2 } else { index >= 10 }
+            };
+            state.set_item_measurement_readiness({
+                let ready = ready.clone();
+                move |index, _| initially_ready(index) || ready.get()
+            });
+            state.scroll_to(list_offset(anchor, 0.));
+            let rendered = Rc::new(RefCell::new(Vec::new()));
+            let painted = Rc::new(RefCell::new(Vec::new()));
+            let expected_frames = if anchor == 0 {
+                [vec![0, 1, 2], vec![0, 1, 2], vec![0, 1, 2], vec![0, 1]]
+            } else {
+                [
+                    vec![10, 11, 12, 9],
+                    vec![10, 11, 9],
+                    vec![10, 11, 9],
+                    vec![10, 11],
+                ]
+            };
+            for (frame, expected_rendered) in expected_frames.into_iter().enumerate() {
+                let measurement_ready = frame >= 2;
+                ready.set(measurement_ready);
+                rendered.borrow_mut().clear();
+                painted.borrow_mut().clear();
+                draw_list(
+                    &state,
+                    200.,
+                    {
+                        let rendered = rendered.clone();
+                        let painted = painted.clone();
+                        move |index| {
+                            rendered.borrow_mut().push(index);
+                            let height = if initially_ready(index) || measurement_ready {
+                                100.
+                            } else {
+                                0.
+                            };
+                            painted_item(index, height, &painted)
+                        }
+                    },
+                    cx,
+                );
+                assert_eq!(*rendered.borrow(), expected_rendered);
+                assert_eq!(state.item_count(), 13);
+                assert_eq!(state.logical_scroll_top(), list_offset(anchor, 0.));
+                assert_eq!(
+                    painted.borrow().as_slice(),
+                    &[(anchor, px(0.), px(100.)), (anchor + 1, px(100.), px(200.))]
+                );
+            }
+        }
+    }
+
+    #[gpui::test]
     fn test_scrollbar_and_reset_do_not_resurrect_provisional(cx: &mut TestAppContext) {
         let cx = cx.add_empty_window();
         let state = ListState::new(20, crate::ListAlignment::Top, px(0.));
@@ -2549,7 +2629,7 @@ mod test {
                 cx,
             );
         };
-        state.set_item_measurement_ready(|index, _| index != 5);
+        state.set_item_measurement_readiness(|index, _| index != 5);
         assert!(!state.0.borrow().is_provisional());
         state.set_follow_mode(FollowMode::Tail);
         for intervening_frame in [false, true] {
@@ -2797,63 +2877,49 @@ mod test {
     #[gpui::test]
     fn test_scroll_after_remeasure_clamps_to_shrunk_item_height(cx: &mut TestAppContext) {
         let cx = cx.add_empty_window();
-
-        let item_height = Rc::new(Cell::new(100usize));
-        let state = ListState::new(20, crate::ListAlignment::Top, px(10.));
-
-        struct TestView {
-            state: ListState,
-            item_height: Rc<Cell<usize>>,
-        }
-
-        impl Render for TestView {
-            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                let height = self.item_height.get();
-                list(self.state.clone(), move |index, _, _| {
-                    let height = if index == 5 { height } else { 100 };
-                    div().h(px(height as f32)).w_full().into_any()
-                })
-                .w_full()
-                .h_full()
+        for provisional in [false, true] {
+            let state = ListState::new(20, crate::ListAlignment::Top, px(10.));
+            let painted = Rc::new(RefCell::new(Vec::new()));
+            let draw = |height, cx: &mut VisualTestContext| {
+                painted.borrow_mut().clear();
+                let painted = painted.clone();
+                draw_list(
+                    &state,
+                    200.,
+                    move |index| {
+                        painted_item(index, if index == 5 { height } else { 100. }, &painted)
+                    },
+                    cx,
+                );
+            };
+            let ready = item_readiness(&state, true);
+            state.scroll_to(list_offset(5, 40.));
+            draw(100., cx);
+            ready.set(!provisional);
+            state.remeasure_items(5..6);
+            if provisional {
+                draw(100., cx);
+            }
+            ready.set(true);
+            cx.simulate_event(ScrollWheelEvent {
+                position: point(px(50.), px(100.)),
+                delta: ScrollDelta::Pixels(point(px(0.), px(-30.))),
+                ..ScrollWheelEvent::default()
+            });
+            assert_eq!(state.logical_scroll_top(), list_offset(5, 70.));
+            for _ in 0..2 {
+                draw(50., cx);
+                assert_eq!(state.logical_scroll_top(), list_offset(5, 50.));
+                assert_eq!(
+                    painted
+                        .borrow()
+                        .iter()
+                        .find(|(index, _, _)| *index == 6)
+                        .copied(),
+                    Some((6, px(0.), px(100.)))
+                );
             }
         }
-
-        let view = {
-            let state = state.clone();
-            let item_height = item_height.clone();
-            cx.update(|_, cx| cx.new(|_| TestView { state, item_height }))
-        };
-
-        state.scroll_to(gpui::ListOffset {
-            item_ix: 5,
-            offset_in_item: px(40.),
-        });
-
-        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
-            view.clone().into_any_element()
-        });
-
-        // Item 5 shrinks from 100px to 50px and is remeasured...
-        item_height.set(50);
-        state.remeasure_items(5..6);
-
-        // ...and then the user scrolls down by 30px before the next frame,
-        // landing at offset 70.
-        cx.simulate_event(ScrollWheelEvent {
-            position: point(px(50.), px(100.)),
-            delta: ScrollDelta::Pixels(point(px(0.), px(-30.))),
-            ..Default::default()
-        });
-
-        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
-            view.into_any_element()
-        });
-
-        // The rebased pending scroll clamps the user's offset to the item's
-        // new height instead of leaving it pointing past the end of the item.
-        let offset = state.logical_scroll_top();
-        assert_eq!(offset.item_ix, 5);
-        assert_eq!(offset.offset_in_item, px(50.));
     }
 
     #[gpui::test]
@@ -3531,7 +3597,7 @@ mod test {
 
     fn item_readiness(state: &ListState, ready: bool) -> Rc<Cell<bool>> {
         let ready = Rc::new(Cell::new(ready));
-        state.set_item_measurement_ready({
+        state.set_item_measurement_readiness({
             let ready = ready.clone();
             move |_, _| ready.get()
         });

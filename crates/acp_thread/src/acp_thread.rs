@@ -966,7 +966,11 @@ impl AgentThreadEntry {
                         .filter_map(ToolCallContent::markdown)
                         .any(has_pending_render)
             }
-            Self::Elicitation(_) | Self::ContextCompaction(_) => false,
+            Self::ContextCompaction(compaction) => {
+                compaction.error.as_ref().is_some_and(has_pending_render)
+                    || compaction.summary.markdowns().any(has_pending_render)
+            }
+            Self::Elicitation(_) => false,
         }
     }
 
@@ -12903,6 +12907,12 @@ mod tests {
                     thread.to_markdown(cx),
                     format!("## Context Compaction (Completed)\n\n{summary}\n\n")
                 );
+                let entry = thread.entries.last().expect("compaction entry must exist");
+                assert!(!entry.has_pending_markdown_render(cx));
+                for markdown in compaction.summary.markdowns() {
+                    markdown.update(cx, |markdown, cx| markdown.ensure_parsed(cx));
+                }
+                assert!(entry.has_pending_markdown_render(cx));
             }
 
             thread
@@ -12934,6 +12944,13 @@ mod tests {
             assert_eq!(
                 thread.to_markdown(cx),
                 "## Context Compaction (Failed)\n\n**Error:** model unavailable\n\n"
+            );
+            assert!(
+                thread
+                    .entries
+                    .last()
+                    .expect("compaction entry must exist")
+                    .has_pending_markdown_render(cx)
             );
 
             for error in [

@@ -1476,7 +1476,7 @@ impl ConversationView {
         let count = thread.read(cx).entries().len();
         let list_state = ListState::new(0, gpui::ListAlignment::Top, px(2048.0));
         list_state.set_follow_mode(gpui::FollowMode::Tail);
-        list_state.set_item_measurement_ready({
+        list_state.set_item_measurement_readiness({
             let thread = thread.downgrade();
             move |index, cx| {
                 thread.upgrade().is_none_or(|thread| {
