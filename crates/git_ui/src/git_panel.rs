@@ -2640,7 +2640,7 @@ impl GitPanel {
         }
     }
 
-    fn view_file(&mut self, _: &ViewFile, window: &mut Window, cx: &mut Context<Self>) {
+    fn view_file(&mut self, allow_preview: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(repository) = self.active_repository.as_ref() else {
             return;
         };
@@ -2654,11 +2654,20 @@ impl GitPanel {
             })
             .collect::<Vec<_>>();
 
+        let allow_preview = allow_preview && project_paths.len() == 1;
         for project_path in project_paths {
             self.workspace
                 .update(cx, |workspace, cx| {
                     workspace
-                        .open_path_preview(project_path, None, false, false, true, window, cx)
+                        .open_path_preview(
+                            project_path,
+                            None,
+                            false,
+                            allow_preview,
+                            true,
+                            window,
+                            cx,
+                        )
                         .detach_and_notify_err(self.workspace.clone(), window, cx);
                 })
                 .log_err();
@@ -2764,7 +2773,7 @@ impl GitPanel {
                 self.open_solo_diff(!secondary, window, cx);
             }
             GitPanelClickBehavior::ViewFile => {
-                self.view_file(&Default::default(), window, cx);
+                self.view_file(!secondary, window, cx);
             }
         }
     }
@@ -9379,7 +9388,9 @@ impl Render for GitPanel {
                     panel.open_solo_diff(false, window, cx);
                 }),
             )
-            .on_action(cx.listener(Self::view_file))
+            .on_action(cx.listener(|panel, _: &ViewFile, window, cx| {
+                panel.view_file(false, window, cx);
+            }))
             .on_action(cx.listener(Self::view_file_history))
             .on_action(cx.listener(Self::copy_path))
             .on_action(cx.listener(Self::copy_relative_path))
@@ -10449,7 +10460,7 @@ mod tests {
 
         panel.update_in(&mut cx, |panel, window, cx| {
             panel.selected_entry = Some(entry_index);
-            panel.view_file(&ViewFile, window, cx);
+            panel.view_file(false, window, cx);
         });
         cx.run_until_parked();
 
@@ -10516,7 +10527,7 @@ mod tests {
 
         panel.update_in(&mut cx, |panel, window, cx| {
             panel.selected_entry = Some(entry_index);
-            panel.view_file(&ViewFile, window, cx);
+            panel.view_file(false, window, cx);
         });
         cx.run_until_parked();
 
@@ -10558,7 +10569,7 @@ mod tests {
 
         panel.update_in(&mut cx, |panel, window, cx| {
             panel.selected_entry = Some(entry_index);
-            panel.view_file(&ViewFile, window, cx);
+            panel.view_file(false, window, cx);
         });
         cx.run_until_parked();
 
@@ -10566,17 +10577,22 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_file_diff_preview_tabs(cx: &mut TestAppContext) {
+    async fn test_file_click_preview_tabs(cx: &mut TestAppContext) {
         init_test(cx);
 
-        for enabled in [true, false] {
+        for (enabled, click_action) in [
+            (true, GitPanelClickBehavior::FileDiff),
+            (false, GitPanelClickBehavior::FileDiff),
+            (true, GitPanelClickBehavior::ViewFile),
+            (false, GitPanelClickBehavior::ViewFile),
+        ] {
             cx.update(|cx| {
                 SettingsStore::update_global(cx, |store, cx| {
                     store.update_user_settings(cx, |settings| {
                         settings
                             .git_panel
                             .get_or_insert_default()
-                            .entry_primary_click_action = Some(GitPanelClickBehavior::FileDiff);
+                            .entry_primary_click_action = Some(click_action);
                         settings.preview_tabs.get_or_insert_default().enabled = Some(enabled);
                     });
                 });
@@ -10660,7 +10676,11 @@ mod tests {
 
             panel.update_in(&mut cx, |panel, window, cx| {
                 panel.selected_entry = entry_index_for_repo_path(panel, &repo_path("a.txt"));
-                panel.open_solo_diff(false, window, cx);
+                if click_action == GitPanelClickBehavior::FileDiff {
+                    panel.open_solo_diff(false, window, cx);
+                } else {
+                    panel.view_file(false, window, cx);
+                }
             });
             cx.run_until_parked();
             workspace.read_with(&cx, |workspace, cx| {
@@ -10705,7 +10725,7 @@ mod tests {
                     path!("/project/b.txt")
                 ))
             );
-            panel.view_file(&ViewFile, window, cx);
+            panel.view_file(false, window, cx);
         });
         cx.run_until_parked();
 
