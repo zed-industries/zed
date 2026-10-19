@@ -1661,6 +1661,10 @@ impl Item for MarkdownPreviewView {
                 params.max_title_len.unwrap_or(MAX_TAB_TITLE_LEN),
             ))
         });
+        let title = match &self.active_editor {
+            Some(editor_state) => format!("Preview {}", editor_state.editor.read(cx).title(cx)),
+            None => "Markdown Preview".to_string(),
+        };
         h_flex()
             .gap_1()
             .when(!params.selected, |tab| tab.track_focus(&self.focus_handle))
@@ -1674,10 +1678,11 @@ impl Item for MarkdownPreviewView {
                     })
                     .ok();
             })
-            // Like editor tabs, the directories needed to tell apart files with the same name are
-            // shown in the description rather than in the title.
+            // Like editor tabs, the title is only the file name, since `tab_content_text` can be a
+            // full path for files outside the project. The directories needed to tell apart files
+            // with the same name are shown in the description.
             .child(
-                Label::new(self.tab_content_text(0, cx))
+                Label::new(title)
                     .single_line()
                     .color(params.text_color())
                     .when(params.truncate_title_middle, |this| {
