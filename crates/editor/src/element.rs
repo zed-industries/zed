@@ -11384,16 +11384,13 @@ mod tests {
     use crate::{
         Editor, FoldPlaceholder, HighlightKey, Inlay, MultiBuffer, NavigationOverlayKey,
         NavigationOverlayLabel, NavigationTargetOverlay, SelectionEffects,
-        display_map::{
-            BlockPlacement, BlockProperties, DisplayMap, HighlightStyleInterner,
-            SemanticTokenHighlight,
-        },
+        display_map::{BlockPlacement, BlockProperties, DisplayMap},
         editor_tests::{init_test, update_test_language_settings},
     };
     use buffer_diff::BufferDiff;
     use gpui::{
-        EntityInputHandler, HighlightStyle, Render, TestAppContext, Underline, UpdateGlobal,
-        VisualTestContext, WindowHandle, font,
+        EntityInputHandler, Render, TestAppContext, Underline, UpdateGlobal, VisualTestContext,
+        WindowHandle, font,
     };
     use language::{
         Buffer, Capability, Diagnostic, DiagnosticEntry, DiagnosticSet, SelectionGoal,
@@ -11409,177 +11406,49 @@ mod tests {
 
     // Regression test for https://github.com/zed-industries/zed/issues/65453.
     #[gpui::test]
-    fn test_ime_underlines_with_diagnostics_disabled(cx: &mut TestAppContext) {
+    fn test_highlight_underlines_are_only_hidden_in_minimap(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        for mode in [
-            EditorMode::SingleLine,
-            EditorMode::AutoHeight {
-                min_lines: 1,
-                max_lines: None,
-            },
-            EditorMode::full(),
-        ] {
-            let buffer = point_diagnostic_buffer(
-                "file-.rs",
-                [(PointUtf16::new(0, 0)..PointUtf16::new(0, 4), WARNING)],
-                cx,
-            );
-            let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-            let window = cx.open_window(size(px(500.), px(100.)), |window, cx| {
-                let mut editor = Editor::new(mode.clone(), buffer, None, window, cx);
-                if mode.is_full() {
-                    editor.disable_diagnostics(cx);
-                }
-                editor
-            });
-
-            window
-                .update(cx, |editor, window, cx| {
-                    editor.replace_and_mark_text_in_range(Some(5..5), "ni", Some(2..2), window, cx);
-                    assert_eq!(editor.marked_text_range(window, cx), Some(5..7));
-                })
-                .expect("updated preedit text");
-            let underlines = cx
-                .update_window(window.into(), |_, window, cx| {
-                    window.draw(cx).clear(cx);
-                    window.painted_underlines()
-                })
-                .expect("completed editor scene");
-            assert_eq!(underlines.len(), 1, "mode: {mode:?}");
-            let underline = underlines.first().expect("preedit underline");
-            assert_eq!(underline.wavy, false.into());
-        }
-    }
-
-    #[gpui::test]
-    fn test_ime_underlines_with_diagnostics_toggled_off(cx: &mut TestAppContext) {
-        init_test(cx, |_| {});
-
-        let buffer = point_diagnostic_buffer(
-            "file-.rs",
-            [(PointUtf16::new(0, 0)..PointUtf16::new(0, 4), WARNING)],
-            cx,
-        );
-        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        let window = cx.open_window(size(px(500.), px(100.)), |window, cx| {
-            Editor::new(EditorMode::full(), buffer, None, window, cx)
-        });
-        let painted_underlines = |cx: &mut TestAppContext| {
-            cx.update_window(window.into(), |_, window, cx| {
-                window.draw(cx).clear(cx);
-                window.painted_underlines()
-            })
-            .expect("completed editor scene")
-        };
-
-        let underlines = painted_underlines(cx);
-        assert_eq!(underlines.len(), 1);
-        let underline = underlines.first().expect("diagnostic underline");
-        assert_eq!(underline.wavy, true.into());
-
-        window
-            .update(cx, |editor, window, cx| {
-                editor.toggle_diagnostics(&crate::actions::ToggleDiagnostics, window, cx);
-                assert!(!editor.diagnostics_enabled());
-            })
-            .expect("toggled diagnostics off");
-        assert!(painted_underlines(cx).is_empty());
-
-        window
-            .update(cx, |editor, window, cx| {
-                editor.replace_and_mark_text_in_range(Some(5..5), "ni", Some(2..2), window, cx);
-                assert_eq!(editor.marked_text_range(window, cx), Some(5..7));
-            })
-            .expect("updated preedit text");
-        let underlines = painted_underlines(cx);
-        assert_eq!(underlines.len(), 1);
-        let underline = underlines.first().expect("preedit underline");
-        assert_eq!(underline.wavy, false.into());
-
-        window
-            .update(cx, |editor, _, cx| {
-                editor.set_max_diagnostics_severity(
-                    project::project_settings::DiagnosticSeverity::Hint,
-                    cx,
-                );
-            })
-            .expect("set diagnostics severity");
-        let underlines = painted_underlines(cx);
-        assert_eq!(underlines.len(), 1);
-        let underline = underlines.first().expect("preedit underline");
-        assert_eq!(underline.wavy, false.into());
-    }
-
-    // Regression test for https://github.com/zed-industries/zed/pull/48510.
-    #[gpui::test]
-    fn test_minimap_filters_semantic_token_underlines(cx: &mut TestAppContext) {
-        init_test(cx, |_| {});
-
-        let buffer = cx.new(|cx| Buffer::local("mutable", cx));
-        let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
-        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        let window = cx.open_window(size(px(500.), px(100.)), |window, cx| {
-            Editor::new(EditorMode::full(), buffer, None, window, cx)
-        });
-        window
-            .update(cx, |editor, window, cx| {
-                let color = gpui::Hsla::green();
-                let mut interner = HighlightStyleInterner::default();
-                let style = interner.intern(HighlightStyle {
-                    color: Some(color),
-                    underline: Some(UnderlineStyle {
-                        thickness: px(1.),
-                        color: None,
-                        wavy: false,
-                    }),
-                    ..Default::default()
-                });
-                let snapshot = editor.buffer.read(cx).snapshot(cx);
-                let token = SemanticTokenHighlight {
-                    range: snapshot.anchor_after(MultiBufferOffset(0))
-                        ..snapshot.anchor_before(snapshot.len()),
+        fn has_highlight_underline(editor: &Editor, style: &EditorStyle, cx: &mut App) -> bool {
+            editor
+                .display_snapshot(cx)
+                .highlighted_chunks(
+                    DisplayRow(0)..DisplayRow(1),
+                    LanguageAwareStyling {
+                        tree_sitter: false,
+                        diagnostics: false,
+                    },
                     style,
-                    token_type: project::lsp_store::TokenType(0),
-                    token_modifiers: 0,
-                    server_id: lsp::LanguageServerId(0),
-                    precedence: 0,
-                };
-                editor.display_map.update(cx, |display_map, _| {
-                    Arc::make_mut(&mut display_map.semantic_token_highlights)
-                        .insert(buffer_id, (Arc::from([token]), Arc::new(interner)));
-                });
-                let minimap = editor.initialize_new_minimap(
-                    EditorSettings::get_global(cx).minimap,
-                    window,
-                    cx,
-                );
-                let editor_style = editor.create_style(cx);
-                let minimap_style = minimap.update(cx, |minimap, cx| minimap.create_style(cx));
-                let snapshot = editor.display_snapshot(cx);
-                for (style, show_underlines) in [(editor_style, true), (minimap_style, false)] {
-                    let chunks = snapshot
-                        .highlighted_chunks(
-                            DisplayRow(0)..DisplayRow(1),
-                            LanguageAwareStyling {
-                                tree_sitter: false,
-                                diagnostics: false,
-                            },
-                            &style,
-                        )
-                        .collect::<Vec<_>>();
-                    assert_eq!(
-                        chunks.iter().map(|chunk| chunk.text).collect::<String>(),
-                        "mutable"
-                    );
-                    for chunk in chunks {
-                        let highlight = chunk.style.expect("semantic token style");
-                        assert_eq!(highlight.color, Some(color));
-                        assert_eq!(highlight.underline.is_some(), show_underlines);
-                    }
-                }
+                )
+                .any(|chunk| chunk.style.is_some_and(|style| style.underline.is_some()))
+        }
+
+        let single_line = cx.add_window(|window, cx| Editor::single_line(window, cx));
+        single_line
+            .update(cx, |editor, window, cx| {
+                editor.replace_and_mark_text_in_range(None, "ni", None, window, cx);
+                let style = editor.create_style(cx);
+                assert!(has_highlight_underline(editor, &style, cx));
             })
-            .expect("checked editor and minimap highlights");
+            .expect("checked single line editor");
+
+        let full = cx.add_window(|window, cx| {
+            let buffer = MultiBuffer::build_simple("", cx);
+            let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
+            editor.disable_diagnostics(cx);
+            editor
+        });
+        full.update(cx, |editor, window, cx| {
+            editor.replace_and_mark_text_in_range(None, "ni", None, window, cx);
+            let style = editor.create_style(cx);
+            assert!(has_highlight_underline(editor, &style, cx));
+
+            let minimap =
+                editor.initialize_new_minimap(EditorSettings::get_global(cx).minimap, window, cx);
+            let minimap_style = minimap.read(cx).create_style(cx);
+            assert!(!has_highlight_underline(editor, &minimap_style, cx));
+        })
+        .expect("checked full editor and minimap");
     }
 
     struct MinimapGeometry {

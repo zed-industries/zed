@@ -624,6 +624,7 @@ mod tests {
     use indoc::indoc;
     use language::DiagnosticSourceKind;
     use lsp::LanguageServerId;
+    use project::project_settings::DiagnosticSeverity;
     use settings::{DelayMs, SettingsStore};
     use std::sync::{
         Arc,
@@ -687,6 +688,22 @@ mod tests {
                 1,
                 "inline diagnostics should appear after the language server publishes them"
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_disabled_diagnostics_ignore_severity_changes(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorTestContext::new(cx).await;
+
+        cx.update_editor(|editor, _, cx| {
+            assert!(editor.display_snapshot(cx).diagnostics_visible());
+
+            editor.disable_diagnostics(cx);
+            assert!(!editor.display_snapshot(cx).diagnostics_visible());
+
+            editor.set_max_diagnostics_severity(DiagnosticSeverity::Hint, cx);
+            assert!(!editor.display_snapshot(cx).diagnostics_visible());
         });
     }
 
