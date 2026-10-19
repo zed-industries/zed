@@ -42,7 +42,6 @@ use unicase::UniCase;
 
 pub use gpui_util::*;
 pub use path::PathExt;
-pub use path::normalize_path;
 pub use path::rel_path;
 
 #[cfg(any(test, feature = "test-support"))]
