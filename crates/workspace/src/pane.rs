@@ -7375,7 +7375,6 @@ mod tests {
             cx.subscribe(&pane, {
                 let add_item_event_count = add_item_event_count.clone();
                 move |_pane, event: &Event, _cx| {
-                    println!("Event: {:?}", event);
                     if matches!(event, Event::AddItem { .. }) {
                         add_item_event_count.set(add_item_event_count.get() + 1);
                     }
