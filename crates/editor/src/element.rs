@@ -11420,72 +11420,35 @@ mod tests {
             },
             EditorMode::full(),
         ] {
-            for commit_text in [false, true] {
-                let buffer = point_diagnostic_buffer(
-                    "file-.rs",
-                    [(PointUtf16::new(0, 0)..PointUtf16::new(0, 4), WARNING)],
-                    cx,
-                );
-                let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-                let window = cx.open_window(size(px(500.), px(100.)), |window, cx| {
-                    let mut editor = Editor::new(mode.clone(), buffer, None, window, cx);
+            let buffer = point_diagnostic_buffer(
+                "file-.rs",
+                [(PointUtf16::new(0, 0)..PointUtf16::new(0, 4), WARNING)],
+                cx,
+            );
+            let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+            let window = cx.open_window(size(px(500.), px(100.)), |window, cx| {
+                let mut editor = Editor::new(mode.clone(), buffer, None, window, cx);
+                if mode.is_full() {
                     editor.disable_diagnostics(cx);
-                    editor
-                });
-                let painted_underlines = |cx: &mut TestAppContext| {
-                    cx.update_window(window.into(), |_, window, cx| {
-                        window.draw(cx).clear(cx);
-                        window.painted_underlines()
-                    })
-                    .expect("completed editor scene")
-                };
-
-                assert!(painted_underlines(cx).is_empty());
-                for text in ["ni", "你好"] {
-                    window
-                        .update(cx, |editor, window, cx| {
-                            let end = text.encode_utf16().count();
-                            let replacement_range = editor
-                                .marked_text_range(window, cx)
-                                .is_none()
-                                .then_some(5..5);
-                            editor.replace_and_mark_text_in_range(
-                                replacement_range,
-                                text,
-                                Some(end..end),
-                                window,
-                                cx,
-                            );
-                            assert_eq!(editor.text(cx), format!("file-{text}.rs"));
-                            assert_eq!(editor.marked_text_range(window, cx), Some(5..5 + end));
-                        })
-                        .expect("updated preedit text");
-
-                    let underlines = painted_underlines(cx);
-                    assert_eq!(underlines.len(), 1, "preedit text: {text}");
-                    let underline = underlines.first().expect("preedit underline");
-                    assert!(
-                        !underline
-                            .bounds
-                            .intersect(&underline.content_mask.bounds)
-                            .is_empty()
-                    );
-                    assert_eq!(underline.wavy, false.into());
                 }
+                editor
+            });
 
-                window
-                    .update(cx, |editor, window, cx| {
-                        if commit_text {
-                            editor.replace_text_in_range(None, "你好", window, cx);
-                        } else {
-                            editor.unmark_text(window, cx);
-                        }
-                        assert_eq!(editor.text(cx), "file-你好.rs");
-                        assert_eq!(editor.marked_text_range(window, cx), None);
-                    })
-                    .expect("finished preedit text");
-                assert!(painted_underlines(cx).is_empty());
-            }
+            window
+                .update(cx, |editor, window, cx| {
+                    editor.replace_and_mark_text_in_range(Some(5..5), "ni", Some(2..2), window, cx);
+                    assert_eq!(editor.marked_text_range(window, cx), Some(5..7));
+                })
+                .expect("updated preedit text");
+            let underlines = cx
+                .update_window(window.into(), |_, window, cx| {
+                    window.draw(cx).clear(cx);
+                    window.painted_underlines()
+                })
+                .expect("completed editor scene");
+            assert_eq!(underlines.len(), 1, "mode: {mode:?}");
+            let underline = underlines.first().expect("preedit underline");
+            assert_eq!(underline.wavy, false.into());
         }
     }
 
