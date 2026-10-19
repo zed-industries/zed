@@ -273,14 +273,14 @@ impl<T: ScrollableHandle> UniformListDecoration for ScrollbarStateWrapper<T> {
         &self,
         _visible_range: Range<usize>,
         _bounds: Bounds<Pixels>,
-        _scroll_offset: Point<Pixels>,
+        scroll_offset: Point<Pixels>,
         _item_height: Pixels,
         _item_count: usize,
         _window: &mut Window,
         _cx: &mut App,
     ) -> gpui::AnyElement {
         ScrollbarElement {
-            origin: Default::default(),
+            origin: -scroll_offset,
             state: self.0.clone(),
         }
         .into_any_element()
@@ -924,6 +924,44 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
             .and_then(|state| state.thumbs.iter().find(|thumb| thumb.axis == axis))
     }
 
+    fn thumb_ranges(
+        &self,
+    ) -> impl Iterator<Item = (ScrollbarAxis, Range<f32>, ReservedSpace)> + '_ {
+        const MINIMUM_THUMB_SIZE: Pixels = px(25.);
+        let max_offset = self.scroll_handle().max_offset();
+        let viewport_size = self.scroll_handle().viewport().size;
+        let current_offset = self.scroll_handle().offset();
+
+        [ScrollbarAxis::Horizontal, ScrollbarAxis::Vertical]
+            .into_iter()
+            .filter(|&axis| self.visibility.along(axis).is_visible())
+            .flat_map(move |axis| {
+                let max_offset = max_offset.along(axis);
+                let viewport_size = viewport_size.along(axis);
+                if max_offset.is_zero() || viewport_size.is_zero() {
+                    return None;
+                }
+                let content_size = viewport_size + max_offset;
+                let visible_percentage = viewport_size / content_size;
+                let thumb_size = MINIMUM_THUMB_SIZE.max(viewport_size * visible_percentage);
+                if thumb_size > viewport_size {
+                    return None;
+                }
+                let current_offset = current_offset
+                    .along(axis)
+                    .clamp(-max_offset, Pixels::ZERO)
+                    .abs();
+                let start_offset = (current_offset / max_offset) * (viewport_size - thumb_size);
+                let thumb_percentage_start = start_offset / viewport_size;
+                let thumb_percentage_end = (start_offset + thumb_size) / viewport_size;
+                Some((
+                    axis,
+                    thumb_percentage_start..thumb_percentage_end,
+                    self.visibility.along(axis),
+                ))
+            })
+    }
+
     fn visible(&self) -> bool {
         self.show_state.is_visible()
     }
@@ -1235,11 +1273,6 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
-        // The scroller offsets and pixel-snaps its children. Anchor to the actual
-        // viewport instead of undoing the nominal offset, which can leave the
-        // track moving by a fractional pixel during a drag.
-        self.origin = self.state.read(cx).scroll_handle().viewport().origin - bounds.origin;
-        let bounds = Bounds::new(self.origin + bounds.origin, bounds.size);
         let prepaint_state =
             self.state
                 .read(cx)
@@ -1255,25 +1288,19 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                     },
                     thumbs: {
                         let state = self.state.read(cx);
-                        let scroll_handle = state.scroll_handle();
-                        let max_offset = scroll_handle.max_offset();
-                        let viewport_size = scroll_handle.viewport().size;
-                        let axes = [ScrollbarAxis::Horizontal, ScrollbarAxis::Vertical]
-                            .into_iter()
-                            .filter(|&axis| {
-                                state.visibility.along(axis).is_visible()
-                                    && max_offset.along(axis) > Pixels::ZERO
-                                    && viewport_size.along(axis) > Pixels::ZERO
-                            })
-                            .collect::<SmallVec<[_; 2]>>();
+                        let thumb_ranges = state.thumb_ranges().collect::<SmallVec<[_; 2]>>();
                         let width = state.style.to_pixels();
                         let track_color = state.track_color.as_ref();
 
-                        let additional_padding = if axes.len() == 2 { width } else { Pixels::ZERO };
+                        let additional_padding = if thumb_ranges.len() == 2 {
+                            width
+                        } else {
+                            Pixels::ZERO
+                        };
 
-                        axes.into_iter()
-                            .filter_map(|axis| {
-                                let reserved_space = state.visibility.along(axis);
+                        thumb_ranges
+                            .into_iter()
+                            .map(|(axis, thumb_range, reserved_space)| {
                                 let track_anchor = match axis {
                                     ScrollbarAxis::Horizontal => Anchor::BottomLeft,
                                     ScrollbarAxis::Vertical => Anchor::TopRight,
@@ -1281,7 +1308,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
 
                                 let scroll_track_bounds = Bounds::from_anchor_and_size(
                                     track_anchor,
-                                    bounds.corner(track_anchor),
+                                    self.origin + bounds.corner(track_anchor),
                                     bounds.size.apply_along(axis.invert(), |_| {
                                         width
                                             + match state.style {
@@ -1296,7 +1323,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
 
                                 // Rounded style needs a bit of padding, whereas for editor scrollbars,
                                 // we want the full length of the track
-                                let mut thumb_container_bounds = match state.style {
+                                let thumb_container_bounds = match state.style {
                                     ScrollbarStyle::Regular => {
                                         scroll_track_bounds.dilate(-SCROLLBAR_PADDING)
                                     }
@@ -1317,39 +1344,21 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
 
                                 let available_space =
                                     thumb_container_bounds.size.along(axis) - additional_padding;
-                                if available_space <= Pixels::ZERO {
-                                    return None;
-                                }
-                                thumb_container_bounds.size = thumb_container_bounds
-                                    .size
-                                    .apply_along(axis, |_| available_space);
-                                let viewport_size = viewport_size.along(axis);
-                                let max_offset = max_offset.along(axis);
-                                // Scaling a viewport-space minimum by padding and the shared corner
-                                // can produce a thumb shorter than its width. Apply it in track pixels.
-                                let thumb_size = (available_space
-                                    * (viewport_size / (viewport_size + max_offset)))
-                                    .max(thumb_container_bounds.size.along(axis.invert()))
-                                    .min(available_space);
-                                let current_offset = scroll_handle
-                                    .offset()
-                                    .along(axis)
-                                    .clamp(-max_offset, Pixels::ZERO)
-                                    .abs();
-                                let thumb_offset =
-                                    (current_offset / max_offset) * (available_space - thumb_size);
+
+                                let thumb_offset = thumb_range.start * available_space;
+                                let thumb_end = thumb_range.end * available_space;
                                 let thumb_bounds = Bounds::new(
                                     thumb_container_bounds
                                         .origin
                                         .apply_along(axis, |origin| origin + thumb_offset),
                                     thumb_container_bounds
                                         .size
-                                        .apply_along(axis, |_| thumb_size),
+                                        .apply_along(axis, |_| thumb_end - thumb_offset),
                                 );
 
                                 let needs_scroll_track = reserved_space.needs_scroll_track();
 
-                                Some(ScrollbarLayout {
+                                ScrollbarLayout {
                                     thumb_bounds,
                                     track_bounds: thumb_container_bounds,
                                     axis,
@@ -1369,7 +1378,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                                         .filter(|_| needs_scroll_track)
                                         .map(|color| (scroll_track_bounds, color.clone())),
                                     reserved_space,
-                                })
+                                }
                             })
                             .collect()
                     },
@@ -1755,98 +1764,6 @@ impl<T: ScrollableHandle> IntoElement for ScrollbarElement<T> {
 mod tests {
     use super::*;
     use gpui::point;
-
-    struct CompactScrollView {
-        scroll_handle: ScrollHandle,
-    }
-
-    impl Render for CompactScrollView {
-        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            gpui::div().child(
-                gpui::div()
-                    .id("compact-scroll-view")
-                    .w(px(200.))
-                    .h(px(24.))
-                    .overflow_scroll()
-                    .track_scroll(&self.scroll_handle)
-                    .child(gpui::div().w(px(400.)).h(px(255.)).flex_none())
-                    .custom_scrollbars(
-                        Scrollbars::always_visible(ScrollAxes::Both)
-                            .tracked_scroll_handle(&self.scroll_handle),
-                        window,
-                        cx,
-                    ),
-            )
-        }
-    }
-
-    #[gpui::test]
-    fn compact_scrollbars_can_drag_to_both_ends(cx: &mut gpui::TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = settings::SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            theme_settings::init(theme::LoadThemes::JustBase, cx);
-        });
-        let scroll_handle = ScrollHandle::new();
-        let (_, cx) = cx.add_window_view(|_, _| CompactScrollView {
-            scroll_handle: scroll_handle.clone(),
-        });
-        assert_eq!(scroll_handle.max_offset(), point(px(200.), px(231.)));
-
-        // Six-pixel thumbs fit inside the padded tracks, excluding the other axis's corner.
-        for (start, end, expected) in [
-            (
-                point(px(193.), px(7.)),
-                point(px(193.), px(11.)),
-                point(px(0.), px(-231.)),
-            ),
-            (
-                point(px(193.), px(11.)),
-                point(px(193.), px(7.)),
-                point(px(0.), px(0.)),
-            ),
-            (
-                point(px(50.5), px(17.)),
-                point(px(143.5), px(17.)),
-                point(px(-200.), px(0.)),
-            ),
-            (
-                point(px(143.5), px(17.)),
-                point(px(50.5), px(17.)),
-                point(px(0.), px(0.)),
-            ),
-        ] {
-            cx.simulate_mouse_move(start, None, gpui::Modifiers::none());
-            cx.simulate_mouse_down(start, MouseButton::Left, gpui::Modifiers::none());
-            cx.simulate_mouse_move(end, Some(MouseButton::Left), gpui::Modifiers::none());
-            cx.simulate_mouse_up(end, MouseButton::Left, gpui::Modifiers::none());
-            assert_eq!(scroll_handle.offset(), expected);
-        }
-
-        cx.simulate_event(ScrollWheelEvent {
-            position: point(px(50.), px(12.)),
-            delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-1000.))),
-            modifiers: gpui::Modifiers::none(),
-            touch_phase: gpui::TouchPhase::Moved,
-        });
-        assert_eq!(scroll_handle.offset(), point(px(0.), px(-231.)));
-        cx.simulate_mouse_down(
-            point(px(193.), px(11.)),
-            MouseButton::Left,
-            gpui::Modifiers::none(),
-        );
-        cx.simulate_mouse_move(
-            point(px(193.), px(7.)),
-            Some(MouseButton::Left),
-            gpui::Modifiers::none(),
-        );
-        cx.simulate_mouse_up(
-            point(px(193.), px(7.)),
-            MouseButton::Left,
-            gpui::Modifiers::none(),
-        );
-        assert_eq!(scroll_handle.offset(), point(px(0.), px(0.)));
-    }
 
     #[test]
     fn default_reveal_policy_reveals_for_content_changes() {

@@ -1673,7 +1673,12 @@ impl InfoPopover {
                                         )
                                     }),
                             )
-                            .custom_scrollbars(scrollbars, window, cx),
+                            .map(|content| {
+                                div()
+                                    .relative()
+                                    .child(content)
+                                    .custom_scrollbars(scrollbars, window, cx)
+                            }),
                     )
                 },
             )
