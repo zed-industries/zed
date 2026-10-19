@@ -1063,7 +1063,8 @@ struct ModelLimits {
 
 #[derive(Deserialize)]
 struct ModelTransport {
-    npm: String,
+    #[serde(default)]
+    npm: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1117,7 +1118,7 @@ fn parse_discovered_models(
             let transport = metadata
                 .provider
                 .as_ref()
-                .map(|provider| provider.npm.as_str())
+                .and_then(|model_provider| model_provider.npm.as_deref())
                 .or(provider.npm.as_deref());
             let protocol = transport.and_then(protocol_for_transport)?;
             let reasoning_effort_levels = metadata
@@ -1868,6 +1869,33 @@ mod tests {
         );
         assert_eq!(models[0].model.max_token_count(), 12345);
         assert_eq!(models[0].model.max_output_tokens(), Some(678));
+        assert_eq!(models[0].model.protocol(), ApiProtocol::OpenAiChat);
+    }
+
+    #[test]
+    fn test_parse_discovered_models_falls_back_when_model_transport_omits_npm() {
+        let models = parse_discovered_models(
+            r#"{
+                "opencode": {
+                    "npm": "@ai-sdk/openai-compatible",
+                    "models": {
+                        "glm-5": {
+                            "id": "glm-5",
+                            "name": "GLM-5",
+                            "tool_call": true,
+                            "modalities": {"input":["text"],"output":["text"]},
+                            "limit": {"context": 1000000},
+                            "provider": {"api": "https://opencode.ai/inference/openai/v1"}
+                        }
+                    }
+                }
+            }"#,
+            OpenCodeSubscription::Zen,
+        )
+        .unwrap();
+
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].model.id(), "glm-5");
         assert_eq!(models[0].model.protocol(), ApiProtocol::OpenAiChat);
     }
 
