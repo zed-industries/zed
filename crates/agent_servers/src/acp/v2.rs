@@ -1769,6 +1769,29 @@ mod tests {
                 .expect("session update");
         }
 
+        async fn drain_updates(&self, cx: &TestAppContext) {
+            // A round trip also covers notifications not yet enqueued on the foreground.
+            let error = bounded(
+                self.agent
+                    .send_request(acp::CreateElicitationRequest::new(
+                        acp::ElicitationFormMode::new(
+                            acp::ElicitationSessionScope::new("unbound-barrier"),
+                            acp::ElicitationSchema::new(),
+                        ),
+                        "Inbound ordering barrier",
+                    ))
+                    .block_task(),
+                cx,
+            )
+            .await
+            .expect_err("barrier has no session owner");
+            assert_eq!(
+                error,
+                agent_client_protocol::Error::internal_error()
+                    .data("unknown session: unbound-barrier")
+            );
+        }
+
         fn create(&self, cx: &mut TestAppContext) -> Task<Result<Entity<AcpThread>>> {
             cx.update(|cx| {
                 self.client.clone().new_session(
@@ -2526,6 +2549,11 @@ done
             harness.client.pending_session_updates.borrow().counts().0,
             2
         );
+        harness.drain_updates(cx).await;
+        assert_eq!(
+            harness.client.pending_session_updates.borrow().counts().1,
+            6
+        );
         let config = vec![acp::SessionConfigOption::boolean(
             "response", "Response", true,
         )];
@@ -2608,7 +2636,7 @@ done
                 acp::AgentMessage::new("retained").content(vec!["retained".into()]),
             ),
         );
-        cx.run_until_parked();
+        harness.drain_updates(cx).await;
         let rejection = agent_client_protocol::Error::new(-32042, "Creation rejected")
             .data(json!({"keep": [null, 7]}));
         failed_response
@@ -2655,15 +2683,18 @@ done
     async fn v2_new_sdk_abandonment_and_eof_clear_provisional_updates(cx: &mut TestAppContext) {
         for disconnect in [false, true] {
             let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
-            let mut creation = harness.create(cx);
-            harness.new_request(&mut creation, cx).await;
+            *harness.hold_new_responses.lock().expect("new mode") = true;
+            let creation = harness.create(cx);
+            let (_, responder) = bounded(harness.new_replies.recv(), cx)
+                .await
+                .expect("new request");
             harness.send_update(
                 "session",
                 acp::SessionUpdate::AgentMessage(
                     acp::AgentMessage::new("staged").content(vec!["staged".into()]),
                 ),
             );
-            cx.run_until_parked();
+            harness.drain_updates(cx).await;
             assert_eq!(
                 harness.client.pending_session_updates.borrow().counts().1,
                 1
@@ -2679,10 +2710,7 @@ done
                     harness.client.pending_session_updates.borrow().counts(),
                     (0, 0, 0)
                 );
-                harness
-                    .new_responses
-                    .try_send(Ok(initial_response()))
-                    .expect("late success");
+                responder.respond(initial_response()).expect("late success");
                 bounded(harness.closes.recv(), cx)
                     .await
                     .expect("close undelivered session");
@@ -2702,8 +2730,11 @@ done
     ) {
         let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
         let thread = harness.thread(cx).await;
-        let mut creation = harness.create(cx);
-        harness.new_request(&mut creation, cx).await;
+        *harness.hold_new_responses.lock().expect("new mode") = true;
+        let creation = harness.create(cx);
+        let (_, responder) = bounded(harness.new_replies.recv(), cx)
+            .await
+            .expect("new request");
         for _ in 0..=super::super::session_updates::MAX_PENDING_SESSION_UPDATES {
             harness.send_update(
                 "overflowed",
@@ -2718,10 +2749,9 @@ done
                 acp::SessionInfoUpdate::new().title("Live owner"),
             ),
         );
-        cx.run_until_parked();
-        harness
-            .new_responses
-            .try_send(Ok(acp::NewSessionResponse::new("overflowed")))
+        harness.drain_updates(cx).await;
+        responder
+            .respond(acp::NewSessionResponse::new("overflowed"))
             .expect("new response");
         assert!(
             bounded(creation, cx)
@@ -2761,14 +2791,16 @@ done
     async fn v2_new_sdk_abandoned_duplicate_does_not_close_a_live_owner(cx: &mut TestAppContext) {
         let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
         let thread = harness.thread(cx).await;
-        let mut creation = harness.create(cx);
-        harness.new_request(&mut creation, cx).await;
+        *harness.hold_new_responses.lock().expect("new mode") = true;
+        let creation = harness.create(cx);
+        let (_, responder) = bounded(harness.new_replies.recv(), cx)
+            .await
+            .expect("new request");
         drop(creation);
-        harness
-            .new_responses
-            .try_send(Ok(initial_response()))
+        responder
+            .respond(initial_response())
             .expect("duplicate late response");
-        cx.run_until_parked();
+        harness.drain_updates(cx).await;
         assert!(
             harness.closes.is_empty(),
             "abandoned cleanup cannot close an existing owner"
@@ -2820,8 +2852,11 @@ done
     async fn v2_new_sdk_preserves_pre_response_updates(cx: &mut TestAppContext) {
         use acp_thread::ForegroundActivity;
         let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        *harness.hold_new_responses.lock().expect("new mode") = true;
         let mut creating = harness.create(cx);
-        harness.new_request(&mut creating, cx).await;
+        let (_, responder) = bounded(harness.new_replies.recv(), cx)
+            .await
+            .expect("new request");
         for update in [
             acp::SessionUpdate::StateUpdate(acp::StateUpdate::Running(
                 acp::RunningStateUpdate::new(),
@@ -2860,14 +2895,14 @@ done
                 .send_notification(acp::UpdateSessionNotification::new("session", update))
                 .expect("pre-response update");
         }
-        bounded(drain_foreground_queue(&harness.client.dispatch_tx), cx)
-            .await
-            .expect("apply pre-response traffic before the response");
-        cx.run_until_parked();
+        harness.drain_updates(cx).await;
+        assert_eq!(
+            harness.client.pending_session_updates.borrow().counts().1,
+            7
+        );
         assert!((&mut creating).now_or_never().is_none());
-        harness
-            .new_responses
-            .try_send(Ok(initial_response()))
+        responder
+            .respond(initial_response())
             .expect("creation response");
         let thread = bounded(creating, cx).await.expect("created owner");
         thread.read_with(cx, |thread, cx| {
