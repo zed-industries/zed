@@ -282,17 +282,6 @@ impl PathStyle {
         }
     }
 
-    pub fn split(self, path_like: &str) -> (Option<&str>, &str) {
-        let Some(pos) = path_like.rfind(self.primary_separator()) else {
-            return (None, path_like);
-        };
-        let filename_start = pos + self.primary_separator().len();
-        (
-            Some(&path_like[..filename_start]),
-            &path_like[filename_start..],
-        )
-    }
-
     pub fn file_name<'a>(&self, path: &'a Path) -> Option<&'a OsStr> {
         self.components(path).next_back().and_then(|p| match p {
             Component::Normal(p) => Some(p),
@@ -376,36 +365,6 @@ impl PathStyle {
         };
         !path.is_empty() && self.is_sep_byte(path[0])
     }
-}
-
-/// Normalizes a path by resolving `.` and `..` components without
-/// requiring the path to exist on disk (unlike `canonicalize`).
-pub fn normalize_path(path: &Path) -> PathBuf {
-    use std::path::Component;
-    let mut components = path.components().peekable();
-    let mut ret = if let Some(c @ Component::Prefix(..)) = components.peek().cloned() {
-        components.next();
-        PathBuf::from(c.as_os_str())
-    } else {
-        PathBuf::new()
-    };
-
-    for component in components {
-        match component {
-            Component::Prefix(..) => unreachable!(),
-            Component::RootDir => {
-                ret.push(component.as_os_str());
-            }
-            Component::CurDir => {}
-            Component::ParentDir => {
-                ret.pop();
-            }
-            Component::Normal(c) => {
-                ret.push(c);
-            }
-        }
-    }
-    ret
 }
 
 #[cfg(test)]

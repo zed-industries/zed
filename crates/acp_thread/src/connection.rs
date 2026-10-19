@@ -443,15 +443,29 @@ impl AgentSessionInfo {
         }
     }
 
-    pub fn apply_update(&mut self, update: acp_v2::SessionInfoUpdate) -> bool {
+    pub fn apply_update(&mut self, update: impl Into<AgentSessionInfoUpdate>) -> bool {
+        let (title, updated_at, metadata) = match update.into() {
+            AgentSessionInfoUpdate::V1(update) => (
+                update.title,
+                update.updated_at,
+                crate::MetadataUpdate::V1(
+                    update.meta.map(MaybeUndefined::Value).unwrap_or_default(),
+                ),
+            ),
+            AgentSessionInfoUpdate::V2(update) => (
+                update.title,
+                update.updated_at,
+                crate::MetadataUpdate::V2(update.meta),
+            ),
+        };
         let mut changed = false;
-        if !update.title.is_undefined() {
-            let title = update.title.take().map(SharedString::from);
+        if !title.is_undefined() {
+            let title = title.take().map(SharedString::from);
             changed |= self.title != title;
             self.title = title;
         }
 
-        let updated_at = match update.updated_at {
+        let updated_at = match updated_at {
             MaybeUndefined::Undefined => None,
             MaybeUndefined::Null => Some(None),
             MaybeUndefined::Value(updated_at) => match DateTime::parse_from_rfc3339(&updated_at) {
@@ -467,23 +481,37 @@ impl AgentSessionInfo {
             self.updated_at = updated_at;
         }
 
-        if !update.meta.is_undefined() {
-            let meta = update.meta.take();
-            changed |= self.meta != meta;
-            self.meta = meta;
-        }
+        changed |= metadata.apply(&mut self.meta);
         changed
     }
 }
 
-pub fn session_info_update_from_v1(update: acp_v1::SessionInfoUpdate) -> acp_v2::SessionInfoUpdate {
-    let mut converted = acp_v2::SessionInfoUpdate::new()
-        .title(update.title)
-        .updated_at(update.updated_at);
-    if let Some(meta) = update.meta {
-        converted = converted.meta(meta);
+/// Retains wire provenance because v1 metadata replaces while v2 metadata patches.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AgentSessionInfoUpdate {
+    V1(acp_v1::SessionInfoUpdate),
+    V2(acp_v2::SessionInfoUpdate),
+}
+
+impl AgentSessionInfoUpdate {
+    pub(crate) fn has_title(&self) -> bool {
+        match self {
+            Self::V1(update) => !update.title.is_undefined(),
+            Self::V2(update) => !update.title.is_undefined(),
+        }
     }
-    converted
+}
+
+impl From<acp_v1::SessionInfoUpdate> for AgentSessionInfoUpdate {
+    fn from(update: acp_v1::SessionInfoUpdate) -> Self {
+        Self::V1(update)
+    }
+}
+
+impl From<acp_v2::SessionInfoUpdate> for AgentSessionInfoUpdate {
+    fn from(update: acp_v2::SessionInfoUpdate) -> Self {
+        Self::V2(update)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -491,7 +519,7 @@ pub enum SessionListUpdate {
     Refresh,
     SessionInfo {
         session_id: acp_v2::SessionId,
-        update: acp_v2::SessionInfoUpdate,
+        update: AgentSessionInfoUpdate,
     },
 }
 
@@ -1650,6 +1678,13 @@ mod tests {
                 true,
             ),
             (
+                json!({"_meta": {"literal": null}}),
+                original.title.clone(),
+                original.updated_at,
+                Some(acp_v2::Meta::from_iter([("literal".into(), json!(null))])),
+                true,
+            ),
+            (
                 json!({"_meta": null}),
                 original.title.clone(),
                 original.updated_at,
@@ -1659,14 +1694,8 @@ mod tests {
         ] {
             let legacy: acp_v1::SessionInfoUpdate =
                 serde_json::from_value(wire).expect("legacy patch");
-            let converted = session_info_update_from_v1(legacy.clone());
-            assert_eq!(
-                serde_json::to_value(&converted).expect("shared patch wire"),
-                serde_json::to_value(&legacy).expect("normalized legacy patch wire")
-            );
-
             let mut info = original.clone();
-            assert_eq!(info.apply_update(converted.clone()), changed);
+            assert_eq!(info.apply_update(legacy.clone()), changed);
             assert_eq!(
                 info,
                 AgentSessionInfo {
@@ -1676,7 +1705,7 @@ mod tests {
                     ..original.clone()
                 }
             );
-            assert!(!info.apply_update(converted), "identical patch is a no-op");
+            assert!(!info.apply_update(legacy), "identical patch is a no-op");
         }
 
         let mut info = original.clone();
@@ -1688,7 +1717,7 @@ mod tests {
                 ..original.clone()
             }
         );
-        assert!(info.apply_update(acp_v2::SessionInfoUpdate::new().meta(acp_v2::Meta::new())));
+        assert!(!info.apply_update(acp_v2::SessionInfoUpdate::new().meta(acp_v2::Meta::new())));
         assert_eq!(info.meta, Some(acp_v2::Meta::new()));
 
         let mut info = original.clone();
@@ -1709,5 +1738,45 @@ mod tests {
         assert!(!info.apply_update(
             acp_v2::SessionInfoUpdate::new().updated_at("invalid private timestamp")
         ));
+    }
+
+    #[test]
+    fn session_info_v2_metadata_patches_report_only_effective_changes() {
+        let mut info = AgentSessionInfo::new("metadata");
+        for (patch, expected, changed) in [
+            (json!({"_meta": {"missing": null}}), json!({}), false),
+            (json!({"_meta": {}}), json!({}), false),
+            (
+                json!({"_meta": {"keep": 1, "nested": {"old": true, "literal": null}}}),
+                json!({"keep": 1, "nested": {"old": true, "literal": null}}),
+                true,
+            ),
+            (
+                json!({"_meta": {"nested": {"new": true, "literal": null}}}),
+                json!({"keep": 1, "nested": {"new": true, "literal": null}}),
+                true,
+            ),
+            (
+                json!({"_meta": {"unknown": null}}),
+                json!({"keep": 1, "nested": {"new": true, "literal": null}}),
+                false,
+            ),
+            (
+                json!({"_meta": {"keep": null}}),
+                json!({"nested": {"new": true, "literal": null}}),
+                true,
+            ),
+            (json!({"_meta": null}), json!(null), true),
+            (json!({"_meta": null}), json!(null), false),
+        ] {
+            let update: acp_v2::SessionInfoUpdate =
+                serde_json::from_value(patch).expect("v2 session information");
+            assert_eq!(info.apply_update(update.clone()), changed);
+            assert_eq!(
+                serde_json::to_value(&info.meta).expect("metadata JSON"),
+                expected
+            );
+            assert!(!info.apply_update(update), "repeated patch is a no-op");
+        }
     }
 }
