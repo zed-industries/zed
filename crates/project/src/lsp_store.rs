@@ -7111,7 +7111,13 @@ impl LspStore {
 
         let position = {
             let buffer = buffer.read(cx);
-            buffer.anchor_after(position.to_point_utf16(buffer))
+            let position = position.to_point_utf16(buffer);
+
+            if trigger == "\n" {
+                buffer.anchor_after(position)
+            } else {
+                buffer.anchor_before(position)
+            }
         };
         Some(self.on_type_format_impl(buffer, position, trigger, push_to_history, cx))
     }
