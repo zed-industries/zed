@@ -13328,3 +13328,236 @@ fn entry_row_bounds(panel: &ProjectPanel, entry_id: ProjectEntryId) -> Bounds<Pi
         size(viewport.size.width, row_height),
     )
 }
+
+#[cfg(unix)]
+mod external_vcs_decorations {
+    use super::*;
+    use extension::*;
+    use gpui::EntityId;
+    use language::LanguageName;
+    use lsp::LanguageServerName;
+    use pretty_assertions::assert_eq;
+    use project::trusted_worktrees::{PathTrust, TrustedWorktrees};
+    use task::{SpawnInTerminal, ZedDebugConfig};
+
+    struct FixtureExtension {
+        manifest: Arc<ExtensionManifest>,
+        directory: Arc<Path>,
+    }
+
+    macro_rules! fixture_extension {
+        ($(async fn $method:ident($($parameters:tt)*) -> $result:ty;)*) => {
+            #[async_trait::async_trait]
+            impl Extension for FixtureExtension {
+                fn manifest(&self) -> Arc<ExtensionManifest> { self.manifest.clone() }
+                fn work_dir(&self) -> Arc<Path> { self.directory.clone() }
+                async fn vcs_provider_command(&self, _: Arc<str>, _: Arc<dyn WorktreeDelegate>) -> Result<Command> {
+                    Ok(Command {
+                        command: std::env::var_os("VCS_FIXTURE_PYTHON")
+                            .map(PathBuf::from).unwrap_or_else(|| which::which("python3").expect("public fixture Python")),
+                        args: vec![PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                            .join("../vcs/tests/fixture_provider.py").to_string_lossy().into_owned(),
+                            "--events".into(), self.directory.join("events.jsonl").to_string_lossy().into_owned()],
+                        env: Vec::new(),
+                    })
+                }
+                $(async fn $method($($parameters)*) -> $result { anyhow::bail!("fixture implements only VCS") })*
+            }
+        };
+    }
+
+    fixture_extension! {
+        async fn language_server_command(&self, _: LanguageServerName, _: LanguageName, _: Arc<dyn WorktreeDelegate>, _: EntityId) -> Result<Command>;
+        async fn language_server_initialization_options(&self, _: LanguageServerName, _: LanguageName, _: Arc<dyn WorktreeDelegate>, _: EntityId) -> Result<Option<String>>;
+        async fn language_server_workspace_configuration(&self, _: LanguageServerName, _: Arc<dyn WorktreeDelegate>, _: EntityId) -> Result<Option<String>>;
+        async fn language_server_initialization_options_schema(&self, _: LanguageServerName, _: Arc<dyn WorktreeDelegate>, _: EntityId) -> Result<Option<String>>;
+        async fn language_server_workspace_configuration_schema(&self, _: LanguageServerName, _: Arc<dyn WorktreeDelegate>, _: EntityId) -> Result<Option<String>>;
+        async fn language_server_additional_initialization_options(&self, _: LanguageServerName, _: LanguageServerName, _: Arc<dyn WorktreeDelegate>, _: EntityId) -> Result<Option<String>>;
+        async fn language_server_additional_workspace_configuration(&self, _: LanguageServerName, _: LanguageServerName, _: Arc<dyn WorktreeDelegate>, _: EntityId) -> Result<Option<String>>;
+        async fn labels_for_completions(&self, _: LanguageServerName, _: Vec<Completion>) -> Result<Vec<Option<CodeLabel>>>;
+        async fn labels_for_symbols(&self, _: LanguageServerName, _: Vec<Symbol>) -> Result<Vec<Option<CodeLabel>>>;
+        async fn complete_slash_command_argument(&self, _: SlashCommand, _: Vec<String>) -> Result<Vec<SlashCommandArgumentCompletion>>;
+        async fn run_slash_command(&self, _: SlashCommand, _: Vec<String>, _: Option<Arc<dyn WorktreeDelegate>>) -> Result<SlashCommandOutput>;
+        async fn context_server_command(&self, _: Arc<str>, _: Arc<dyn ProjectDelegate>) -> Result<Command>;
+        async fn context_server_configuration(&self, _: Arc<str>, _: Arc<dyn ProjectDelegate>) -> Result<Option<ContextServerConfiguration>>;
+        async fn suggest_docs_packages(&self, _: Arc<str>) -> Result<Vec<String>>;
+        async fn index_docs(&self, _: Arc<str>, _: Arc<str>, _: Arc<dyn KeyValueStoreDelegate>) -> Result<()>;
+        async fn get_dap_binary(&self, _: Arc<str>, _: DebugTaskDefinition, _: Option<PathBuf>, _: Arc<dyn WorktreeDelegate>) -> Result<DebugAdapterBinary>;
+        async fn dap_request_kind(&self, _: Arc<str>, _: serde_json::Value) -> Result<StartDebuggingRequestArgumentsRequest>;
+        async fn dap_config_to_scenario(&self, _: ZedDebugConfig) -> Result<DebugScenario>;
+        async fn dap_locator_create_scenario(&self, _: String, _: BuildTaskTemplate, _: String, _: String) -> Result<Option<DebugScenario>>;
+        async fn run_dap_locator(&self, _: String, _: SpawnInTerminal) -> Result<DebugRequest>;
+    }
+
+    #[gpui::test]
+    async fn external_provider_decorates_native_project_tree_without_git(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            project::trusted_worktrees::init(Default::default(), cx);
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let panel = settings.project_panel.get_or_insert_default();
+                    panel.git_status = Some(true);
+                    panel.git_status_indicator = Some(true);
+                    settings.session.get_or_insert_default().trust_all_worktrees = Some(false);
+                });
+            });
+        });
+        let directory = tempfile::tempdir().expect("fixture working directory");
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            directory.path(),
+            json!({
+                ".fixture-vcs": "",
+                "src": {"example.txt": "working text\n", "unchanged.txt": "unchanged\n"}
+            }),
+        )
+        .await;
+        let project = Project::test_with_worktree_trust(fs.clone(), [directory.path()], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        let (store, worktrees, worktree_id) = project.read_with(cx, |project, cx| {
+            (
+                project.vcs_store().expect("external VCS store").clone(),
+                project.worktree_store(),
+                project
+                    .worktrees(cx)
+                    .next()
+                    .expect("fixture worktree")
+                    .read(cx)
+                    .id(),
+            )
+        });
+        let extension = Arc::new(FixtureExtension {
+            manifest: Arc::new(serde_json::from_value(json!({
+                "id": "project-panel-fixture", "name": "Project panel fixture", "version": "0.1.0", "schema_version": 1,
+                "vcs_providers": {"fixture": {"root_markers": [".fixture-vcs"]}}
+            })).expect("fixture extension manifest")),
+            directory: Arc::from(directory.path()),
+        });
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |workspace, _| workspace.workspace().clone())
+            .expect("fixture workspace");
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = ProjectPanel::new(workspace, window, cx);
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.open_panel::<ProjectPanel>(window, cx);
+            panel
+        });
+        cx.run_until_parked();
+        let root_name = directory
+            .path()
+            .file_name()
+            .expect("fixture root name")
+            .to_string_lossy();
+        toggle_expand_dir(&panel, &format!("{root_name}/src"), cx);
+
+        let decorations = |cx: &mut VisualTestContext| {
+            panel.update_in(cx, |panel, window, cx| {
+                let mut result = Vec::new();
+                panel.for_each_visible_entry(0..20, window, cx, &mut |_, details, _, _| {
+                    result.push((
+                        details.path.as_unix_str().to_owned(),
+                        details.filename_text_color,
+                        git_status_indicator(details.git_status),
+                    ));
+                });
+                result
+            })
+        };
+        let before = decorations(cx);
+        assert!(before.iter().all(|(_, _, indicator)| indicator.is_none()));
+        cx.update(|_, cx| {
+            TrustedWorktrees::try_get_global(cx)
+                .expect("worktree trust")
+                .update(cx, |trust, cx| {
+                    trust.trust(
+                        &worktrees,
+                        HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+                        cx,
+                    );
+                });
+            ExtensionHostProxy::global(cx).register_vcs_provider(
+                extension.clone(),
+                "fixture".into(),
+                cx,
+            );
+        });
+        cx.condition(&store, |store, _| {
+            !store.errors().is_empty()
+                || store
+                    .repositories()
+                    .first()
+                    .is_some_and(|repository| repository.snapshot.is_some() && !repository.loading)
+        })
+        .await;
+        store.read_with(cx, |store, _| {
+            assert!(store.errors().is_empty(), "{:?}", store.errors())
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let actual = decorations(cx);
+        for path in ["src", "src/example.txt"] {
+            let (_, color, indicator) = actual
+                .iter()
+                .find(|(entry, _, _)| entry == path)
+                .expect("visible modified file or parent directory");
+            assert_eq!(*color, Color::Modified, "{path}");
+            assert_eq!(*indicator, Some(("M", Color::Modified)), "{path}");
+        }
+        let (_, color, indicator) = actual
+            .iter()
+            .find(|(path, _, _)| path == "src/unchanged.txt")
+            .expect("visible unchanged file");
+        let (_, original_color, _) = before
+            .iter()
+            .find(|(path, _, _)| path == "src/unchanged.txt")
+            .expect("original unchanged-file decoration");
+        assert_eq!(color, original_color);
+        assert_eq!(*indicator, None);
+        project.read_with(cx, |project, cx| {
+            assert!(project.git_store().read(cx).repositories().is_empty());
+        });
+        assert!(
+            fs.metadata(&directory.path().join(".git"))
+                .await
+                .expect("Git metadata lookup")
+                .is_none()
+        );
+        cx.update(|_, cx| {
+            ExtensionHostProxy::global(cx).unregister_vcs_provider(
+                "project-panel-fixture".into(),
+                "fixture".into(),
+                cx,
+            )
+        });
+        cx.condition(&store, |store, _| store.repositories().is_empty())
+            .await;
+        let events = directory.path().join("events.jsonl");
+        // The child writes its shutdown receipt outside GPUI's simulated clock.
+        smol::unblock(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            loop {
+                if std::fs::read_to_string(&events)
+                    .unwrap_or_default()
+                    .lines()
+                    .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+                    .any(|event| event["event"] == "exit-received")
+                {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "fixture shutdown timed out"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        })
+        .await;
+    }
+}
