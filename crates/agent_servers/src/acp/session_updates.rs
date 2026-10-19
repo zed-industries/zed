@@ -1,9 +1,146 @@
 use acp_thread::{AcpThread, MessageKind};
 use agent_client_protocol::schema::v2 as acp_v2;
 use anyhow::Result;
+use collections::HashMap;
 use gpui::Context;
+use std::collections::VecDeque;
 
 use super::terminal_updates::{DecodedTerminalNotification, DecodedTerminalUpdate};
+
+pub(super) const MAX_PENDING_SESSION_UPDATES: usize = 1024;
+const MAX_PENDING_SESSION_UPDATE_BYTES: usize = 16 * 1024 * 1024;
+
+#[derive(Default)]
+pub(super) struct PendingSessionUpdates {
+    generation: u64,
+    creations: HashMap<acp_v2::RequestId, PendingCreation>,
+    updates: VecDeque<PendingUpdate>,
+    encoded_bytes: usize,
+}
+
+struct PendingCreation {
+    generation: u64,
+    overflowed: bool,
+}
+
+struct PendingUpdate {
+    generation: u64,
+    encoded_bytes: usize,
+    notification: InboundSessionNotification,
+}
+
+impl PendingSessionUpdates {
+    #[cfg(test)]
+    pub(super) fn counts(&self) -> (usize, usize, usize) {
+        (self.creations.len(), self.updates.len(), self.encoded_bytes)
+    }
+
+    pub(super) fn begin(&mut self, request_id: acp_v2::RequestId) {
+        let generation = self.generation.checked_add(1);
+        if let Some(generation) = generation {
+            self.generation = generation;
+        }
+        self.creations.insert(
+            request_id,
+            PendingCreation {
+                generation: self.generation,
+                overflowed: generation.is_none(),
+            },
+        );
+    }
+
+    pub(super) fn stage(
+        &mut self,
+        notification: InboundSessionNotification,
+        encoded_bytes: usize,
+    ) -> Option<InboundSessionNotification> {
+        if !self.creations.values().any(|creation| !creation.overflowed) {
+            return Some(notification);
+        }
+        if self.updates.len() >= MAX_PENDING_SESSION_UPDATES
+            || encoded_bytes > MAX_PENDING_SESSION_UPDATE_BYTES.saturating_sub(self.encoded_bytes)
+        {
+            for creation in self.creations.values_mut() {
+                creation.overflowed = true;
+            }
+            self.updates.clear();
+            self.encoded_bytes = 0;
+            log::warn!("ACP pre-response session update staging exceeded its limits");
+            return None;
+        }
+        self.encoded_bytes += encoded_bytes;
+        self.updates.push_back(PendingUpdate {
+            generation: self.generation,
+            encoded_bytes,
+            notification,
+        });
+        None
+    }
+
+    pub(super) fn take(
+        &mut self,
+        request_id: &acp_v2::RequestId,
+        session_id: &acp_v2::SessionId,
+    ) -> Result<Vec<InboundSessionNotification>> {
+        let creation = self
+            .creations
+            .remove(request_id)
+            .ok_or_else(|| anyhow::anyhow!("Session creation is no longer pending"))?;
+        if creation.overflowed {
+            self.prune();
+            anyhow::bail!("ACP pre-response session update staging exceeded its limits");
+        }
+        let mut notifications = Vec::new();
+        // Session IDs correlate concurrent creations. The wire carries no request ID
+        // on these notifications, so provisional ID reuse by the agent remains ambiguous.
+        for update in std::mem::take(&mut self.updates) {
+            if &update.notification.session_id == session_id
+                && update.generation >= creation.generation
+            {
+                notifications.push(update.notification);
+            } else {
+                self.updates.push_back(update);
+            }
+        }
+        self.prune();
+        Ok(notifications)
+    }
+
+    pub(super) fn finish(&mut self, request_id: &acp_v2::RequestId) {
+        self.creations.remove(request_id);
+        self.prune();
+    }
+
+    pub(super) fn discard_session(&mut self, session_id: &acp_v2::SessionId) {
+        self.updates
+            .retain(|update| &update.notification.session_id != session_id);
+        self.prune();
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.creations.clear();
+        self.updates.clear();
+        self.encoded_bytes = 0;
+    }
+
+    fn prune(&mut self) {
+        let oldest = self
+            .creations
+            .values()
+            .filter(|creation| !creation.overflowed)
+            .map(|creation| creation.generation)
+            .min();
+        let mut encoded_bytes = 0;
+        self.updates.retain(|update| {
+            let keep = oldest.is_some_and(|oldest| update.generation >= oldest);
+            if keep {
+                encoded_bytes += update.encoded_bytes;
+            }
+            keep
+        });
+        self.encoded_bytes = encoded_bytes;
+    }
+}
 
 #[derive(Debug)]
 pub struct InboundSessionNotification {
@@ -196,5 +333,176 @@ impl InboundSessionNotification {
                 Ok(())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn request_id(value: i64) -> acp_v2::RequestId {
+        serde_json::from_value(json!(value)).expect("request ID")
+    }
+
+    fn notification(session_id: &str, text: &str) -> InboundSessionNotification {
+        acp_v2::UpdateSessionNotification::new(
+            session_id,
+            acp_v2::SessionUpdate::AgentMessage(
+                acp_v2::AgentMessage::new(text).content(vec![text.into()]),
+            ),
+        )
+        .try_into()
+        .expect("supported notification")
+    }
+
+    #[test]
+    fn concurrent_failure_preserves_other_creation_and_prunes_orphans() {
+        let mut pending = PendingSessionUpdates::default();
+        let first = request_id(1);
+        let second = request_id(2);
+        pending.begin(first.clone());
+        pending.begin(second.clone());
+        assert!(
+            pending
+                .stage(notification("first", "discarded"), 10)
+                .is_none()
+        );
+        assert!(
+            pending
+                .stage(notification("second", "retained"), 20)
+                .is_none()
+        );
+        pending.finish(&first);
+        let retained = pending
+            .take(&second, &"second".into())
+            .expect("second succeeds");
+        assert_eq!(retained.len(), 1);
+        assert_eq!(
+            retained.first().expect("notification").session_id,
+            "second".into()
+        );
+        assert_eq!(pending.counts(), (0, 0, 0));
+        pending.begin(request_id(3));
+        assert!(
+            pending
+                .take(&request_id(3), &"first".into())
+                .expect("fresh creation")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn later_creation_does_not_adopt_an_older_prefix() {
+        let mut pending = PendingSessionUpdates::default();
+        pending.begin(request_id(1));
+        assert!(pending.stage(notification("reused", "old"), 10).is_none());
+        pending.begin(request_id(2));
+        assert!(
+            pending
+                .take(&request_id(2), &"reused".into())
+                .expect("new creation")
+                .is_empty()
+        );
+        pending.finish(&request_id(1));
+        assert_eq!(pending.counts(), (0, 0, 0));
+        assert!(
+            pending
+                .stage(notification("unknown", "no owner"), 10)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn count_limit_fails_creation_without_publishing_partial_history() {
+        let mut pending = PendingSessionUpdates::default();
+        pending.begin(request_id(1));
+        for _ in 0..MAX_PENDING_SESSION_UPDATES {
+            assert!(pending.stage(notification("first", "entry"), 1).is_none());
+        }
+        assert_eq!(
+            pending.counts(),
+            (1, MAX_PENDING_SESSION_UPDATES, MAX_PENDING_SESSION_UPDATES)
+        );
+        assert!(
+            pending
+                .stage(notification("first", "overflow"), 1)
+                .is_none()
+        );
+        assert_eq!(pending.counts(), (1, 0, 0));
+        assert!(
+            pending
+                .take(&request_id(1), &"first".into())
+                .expect_err("bounded history")
+                .to_string()
+                .contains("limits")
+        );
+        assert_eq!(pending.counts(), (0, 0, 0));
+    }
+
+    #[test]
+    fn byte_limit_is_bounded_and_does_not_poison_later_creations() {
+        let mut pending = PendingSessionUpdates::default();
+        pending.begin(request_id(1));
+        assert!(
+            pending
+                .stage(
+                    notification("first", "entry"),
+                    MAX_PENDING_SESSION_UPDATE_BYTES
+                )
+                .is_none()
+        );
+        assert!(
+            pending
+                .stage(notification("first", "overflow"), 1)
+                .is_none()
+        );
+        pending.begin(request_id(2));
+        assert!(pending.stage(notification("second", "fresh"), 3).is_none());
+        assert!(pending.take(&request_id(1), &"first".into()).is_err());
+        assert_eq!(
+            pending
+                .take(&request_id(2), &"second".into())
+                .expect("fresh creation")
+                .len(),
+            1
+        );
+        assert_eq!(pending.counts(), (0, 0, 0));
+    }
+
+    #[test]
+    fn abandoned_success_discards_only_its_session() {
+        let mut pending = PendingSessionUpdates::default();
+        pending.begin(request_id(1));
+        pending.begin(request_id(2));
+        assert!(
+            pending
+                .stage(notification("first", "abandoned"), 1)
+                .is_none()
+        );
+        assert!(
+            pending
+                .stage(notification("second", "retained"), 2)
+                .is_none()
+        );
+        pending.finish(&request_id(1));
+        pending.discard_session(&"first".into());
+        assert_eq!(pending.counts(), (1, 1, 2));
+        assert_eq!(
+            pending
+                .take(&request_id(2), &"second".into())
+                .expect("second")
+                .len(),
+            1
+        );
+        pending.begin(request_id(3));
+        assert!(
+            pending
+                .stage(notification("third", "disconnect"), 4)
+                .is_none()
+        );
+        pending.clear();
+        assert_eq!(pending.counts(), (0, 0, 0));
+        assert!(pending.take(&request_id(3), &"third".into()).is_err());
     }
 }

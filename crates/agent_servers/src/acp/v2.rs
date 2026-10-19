@@ -1,6 +1,7 @@
 use super::{
     AcpDebugLog, AcpDebugMessage, AcpSession, ClientContext, ConfigOptions,
-    ContextServerConfiguration, ForegroundWork, UnsupportedVersion, drain_foreground_queue,
+    ContextServerConfiguration, ForegroundWork, PendingSessionUpdates, UnsupportedVersion,
+    apply_v2_session_notification, close_undelivered_session, drain_foreground_queue,
     enqueue_notification, first_class_terminal_auth_task, map_acp_error,
     mcp_configurations_for_project, runtime, transport, with_v2_client_ingress,
     work_dirs_from_session_info,
@@ -56,6 +57,22 @@ fn finish_request(request_id: acp::RequestId, cx: &mut AsyncApp, context: &Clien
     context.request_elicitations.update(cx, |store, cx| {
         store.finish_request(&request_id, cx);
     });
+}
+
+fn begin_session_creation(request_id: acp::RequestId, _cx: &mut AsyncApp, context: &ClientContext) {
+    if let Some(pending) = &context.pending_session_updates {
+        pending.borrow_mut().begin(request_id);
+    }
+}
+
+fn finish_session_creation(
+    request_id: acp::RequestId,
+    _cx: &mut AsyncApp,
+    context: &ClientContext,
+) {
+    if let Some(pending) = &context.pending_session_updates {
+        pending.borrow_mut().finish(&request_id);
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -126,6 +143,7 @@ pub struct AcpV2Connection {
     debug_log: AcpDebugLog,
     dispatch_tx: mpsc::UnboundedSender<ForegroundWork>,
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
+    pending_session_updates: Rc<RefCell<PendingSessionUpdates>>,
     session_owners: RefCell<HashMap<acp::SessionId, SessionOwner>>,
     _runtime: runtime::ClientRuntime,
     _stderr_task: Shared<Task<()>>,
@@ -220,8 +238,10 @@ impl AcpV2Connection {
     ) -> Result<Self> {
         let request_elicitations = cx.new(|_| ElicitationStore::default());
         let sessions = Rc::new(RefCell::new(HashMap::default()));
+        let pending_session_updates = Rc::new(RefCell::new(PendingSessionUpdates::default()));
         let context = ClientContext {
             sessions: sessions.clone(),
+            pending_session_updates: Some(pending_session_updates.clone()),
             session_list: Rc::new(RefCell::new(None)),
             request_elicitations: request_elicitations.clone(),
             active_request_scopes: Some(RefCell::new(Default::default())),
@@ -280,6 +300,7 @@ impl AcpV2Connection {
             debug_log,
             dispatch_tx,
             sessions,
+            pending_session_updates,
             session_owners: RefCell::new(HashMap::default()),
             _runtime: runtime,
             _stderr_task: stderr_task,
@@ -889,14 +910,11 @@ impl AcpV2Connection {
                     if application.is_none()
                         && let Some(session_id) = abandoned
                     {
-                        // Register cleanup, but never await later traffic in an ordered callback.
-                        connection
-                            .prepare_request(acp::CloseSessionRequest::new(session_id))
-                            .on_receiving_result(async move |result| {
-                                result.log_err();
-                                Ok(())
-                            })
-                            .log_err();
+                        enqueue_notification(
+                            &dispatch_tx,
+                            (session_id, connection.clone()),
+                            close_undelivered_session,
+                        );
                     }
                     drain_foreground_queue(&dispatch_tx).await.log_err();
                     Ok(())
@@ -998,36 +1016,98 @@ impl AgentConnection for AcpV2Connection {
         let request = acp::NewSessionRequest::new(context.cwd.clone())
             .additional_directories(context.additional_directories.clone())
             .mcp_servers(context.mcp_servers.clone());
-        let response = Self::ordered_request(
+        let request = self.connection.prepare_request(request);
+        let request_id = request.id().clone();
+        let (response, applied) = Self::ordered_prepared_response(
             &self.connection,
             &self.dispatch_tx,
             request,
-            || Ok(()),
+            {
+                let dispatch_tx = self.dispatch_tx.clone();
+                let request_id = request_id.clone();
+                move || {
+                    enqueue_notification(&dispatch_tx, request_id, begin_session_creation);
+                    Ok(())
+                }
+            },
             |response| Some(response.session_id.clone()),
+        );
+        let response = {
+            let dispatch_tx = self.dispatch_tx.clone();
+            async move {
+                let response = response.await?;
+                drain_foreground_queue(&dispatch_tx).await?;
+                Ok(response)
+            }
+            .boxed_local()
+        };
+        let response = Self::apply_ordered_response(
+            response,
+            applied,
+            &self.dispatch_tx,
             {
                 let this = self.clone();
+                let request_id = request_id.clone();
                 move |response, cx| {
-                    cx.update(|cx| {
-                        let thread = this.create_session_thread(
-                            response.session_id,
-                            project,
-                            context,
-                            None,
-                            cx,
-                        )?;
-                        this.apply_initial_state(
-                            &thread,
-                            response.config_options,
-                            response.available_commands,
-                            cx,
-                        )?;
-                        Ok(thread)
-                    })
+                    let session_id = response.session_id.clone();
+                    let notifications = this
+                        .pending_session_updates
+                        .borrow_mut()
+                        .take(&request_id, &session_id);
+                    let notifications = match notifications {
+                        Ok(notifications) => notifications,
+                        Err(error) => {
+                            enqueue_notification(
+                                &this.dispatch_tx,
+                                (session_id, this.connection.clone()),
+                                close_undelivered_session,
+                            );
+                            return Err(error);
+                        }
+                    };
+                    let thread = cx.update(|cx| {
+                        this.create_session_thread(session_id.clone(), project, context, None, cx)
+                    })?;
+                    let result = (|| {
+                        for notification in notifications {
+                            apply_v2_session_notification(
+                                notification,
+                                &thread.downgrade(),
+                                &this.sessions,
+                                cx,
+                            )?;
+                        }
+                        cx.update(|cx| {
+                            this.apply_initial_state(
+                                &thread,
+                                response.config_options,
+                                response.available_commands,
+                                cx,
+                            )
+                        })
+                    })();
+                    if let Err(error) = result {
+                        this.remove_session(&session_id, thread.entity_id());
+                        enqueue_notification(
+                            &this.dispatch_tx,
+                            (session_id, this.connection.clone()),
+                            close_undelivered_session,
+                        );
+                        return Err(error);
+                    }
+                    Ok(thread)
                 }
             },
             cx,
         );
-        cx.foreground_executor().spawn(response)
+        let cleanup = util::defer({
+            let dispatch_tx = self.dispatch_tx.clone();
+            move || enqueue_notification(&dispatch_tx, request_id, finish_session_creation)
+        });
+        cx.foreground_executor().spawn(async move {
+            let _cleanup = cleanup;
+            response.await
+        })
     }
 
     fn supports_load_session(&self) -> bool {
@@ -1465,6 +1545,9 @@ mod tests {
         new_requests: async_channel::Receiver<(acp::NewSessionRequest, acp::RequestId)>,
         new_responses:
             async_channel::Sender<Result<acp::NewSessionResponse, agent_client_protocol::Error>>,
+        new_replies:
+            async_channel::Receiver<(acp::NewSessionRequest, Responder<acp::NewSessionResponse>)>,
+        hold_new_responses: Arc<Mutex<bool>>,
         config_requests: async_channel::Receiver<acp::SetSessionConfigOptionRequest>,
         config_responses: async_channel::Sender<
             Result<acp::SetSessionConfigOptionResponse, agent_client_protocol::Error>,
@@ -1502,6 +1585,9 @@ mod tests {
             let (new_responses, new_received) = async_channel::unbounded::<
                 Result<acp::NewSessionResponse, agent_client_protocol::Error>,
             >();
+            let (new_reply_sender, new_replies) = async_channel::unbounded();
+            let hold_new_responses = Arc::new(Mutex::new(false));
+            let deferred_new = hold_new_responses.clone();
             let (list_sender, list_requests) = async_channel::unbounded();
             let (config_sender, config_requests) = async_channel::unbounded();
             let (config_responses, config_received) = async_channel::unbounded::<
@@ -1544,8 +1630,14 @@ mod tests {
                                     responder: Responder<acp::NewSessionResponse>,
                                     agent: V2ConnectionTo<Client>| {
                             new_sender
-                                .try_send((request, responder.id().clone()))
+                                .try_send((request.clone(), responder.id().clone()))
                                 .expect("record creation");
+                            if *deferred_new.lock().expect("new response mode") {
+                                new_reply_sender
+                                    .try_send((request, responder))
+                                    .expect("new reply receiver");
+                                return Ok(());
+                            }
                             match new_received.recv().await.expect("new response") {
                                 Ok(response) => {
                                     let session_id = response.session_id.clone();
@@ -1653,6 +1745,8 @@ mod tests {
                 cancellations,
                 new_requests,
                 new_responses,
+                new_replies,
+                hold_new_responses,
                 config_requests,
                 config_responses,
                 list_requests,
@@ -1661,6 +1755,12 @@ mod tests {
                 agent: received.await.expect("agent"),
                 _agent_task: agent_task,
             }
+        }
+
+        fn send_update(&self, session_id: &str, update: acp::SessionUpdate) {
+            self.agent
+                .send_notification(acp::UpdateSessionNotification::new(session_id, update))
+                .expect("session update");
         }
 
         fn create(&self, cx: &mut TestAppContext) -> Task<Result<Entity<AcpThread>>> {
@@ -2339,6 +2439,439 @@ done
     }
 
     #[gpui::test]
+    async fn v2_new_sdk_correlates_concurrent_prefixes_by_response_id(cx: &mut TestAppContext) {
+        use acp_thread::ForegroundActivity;
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        *harness.hold_new_responses.lock().expect("new mode") = true;
+        let filesystem = fs::FakeFs::new(cx.executor());
+        filesystem
+            .insert_tree(session_path(""), json!({"b": {}}))
+            .await;
+        let second_project = Project::test(filesystem, [session_path("b").as_path()], cx).await;
+        let mut first = harness.create(cx);
+        let second = cx.update(|cx| {
+            harness.client.clone().new_session(
+                second_project.clone(),
+                PathList::new(&[session_path("b")]),
+                cx,
+            )
+        });
+        let (request, response) = bounded(harness.new_replies.recv(), cx)
+            .await
+            .expect("first request");
+        let (other_request, other_response) = bounded(harness.new_replies.recv(), cx)
+            .await
+            .expect("second request");
+        let (first_response, second_response) = if request.cwd.0 == session_path("a") {
+            assert_eq!(other_request.cwd.0, session_path("b"));
+            (response, other_response)
+        } else {
+            assert_eq!(request.cwd.0, session_path("b"));
+            assert_eq!(other_request.cwd.0, session_path("a"));
+            (other_response, response)
+        };
+        harness.send_update(
+            "first",
+            acp::SessionUpdate::StateUpdate(acp::StateUpdate::Running(
+                acp::RunningStateUpdate::new(),
+            )),
+        );
+        harness.send_update(
+            "second",
+            acp::SessionUpdate::StateUpdate(acp::StateUpdate::RequiresAction(
+                acp::RequiresActionStateUpdate::new(),
+            )),
+        );
+        harness.send_update(
+            "first",
+            acp::SessionUpdate::AgentMessage(
+                acp::AgentMessage::new("first-message").content(vec!["first only".into()]),
+            ),
+        );
+        harness.send_update(
+            "second",
+            acp::SessionUpdate::AgentMessage(
+                acp::AgentMessage::new("second-message").content(vec!["second only".into()]),
+            ),
+        );
+        harness.send_update(
+            "second",
+            acp::SessionUpdate::ConfigOptionUpdate(acp::ConfigOptionUpdate::new(vec![
+                acp::SessionConfigOption::boolean("prefix", "Prefix", false),
+            ])),
+        );
+        harness.send_update(
+            "second",
+            acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate::new(vec![
+                acp::AvailableCommand::new("prefix", "Prefix"),
+            ])),
+        );
+        cx.run_until_parked();
+        assert_eq!(
+            harness.client.pending_session_updates.borrow().counts().0,
+            2
+        );
+        let config = vec![acp::SessionConfigOption::boolean(
+            "response", "Response", true,
+        )];
+        let commands = vec![acp::AvailableCommand::new("response", "Response")];
+        second_response
+            .respond(
+                acp::NewSessionResponse::new("second")
+                    .config_options(config.clone())
+                    .available_commands(commands.clone()),
+            )
+            .expect("second replies first");
+        let second_thread = bounded(second, cx).await.expect("second created");
+        assert!((&mut first).now_or_never().is_none());
+        second_thread.read_with(cx, |thread, cx| {
+            assert_eq!(
+                thread.foreground_activity(),
+                ForegroundActivity::RequiresAction
+            );
+            assert!(thread.to_markdown(cx).contains("second only"));
+            assert!(!thread.to_markdown(cx).contains("first only"));
+            assert_eq!(thread.available_commands(), commands);
+        });
+        let options = cx
+            .read(|cx| harness.client.session_config_options(&"second".into(), cx))
+            .expect("second config");
+        assert_eq!(options.config_options(), config);
+        first_response
+            .respond(acp::NewSessionResponse::new("first"))
+            .expect("first replies last");
+        let first_thread = bounded(first, cx).await.expect("first created");
+        first_thread.read_with(cx, |thread, cx| {
+            assert_eq!(thread.foreground_activity(), ForegroundActivity::Running);
+            assert!(thread.to_markdown(cx).contains("first only"));
+            assert!(!thread.to_markdown(cx).contains("second only"));
+        });
+        let owners = harness.client.session_owners.borrow();
+        assert_eq!(
+            owners
+                .get(&"first".into())
+                .expect("first owner")
+                .project_entity_id,
+            harness.project.entity_id()
+        );
+        assert_eq!(
+            owners
+                .get(&"second".into())
+                .expect("second owner")
+                .project_entity_id,
+            second_project.entity_id()
+        );
+        assert_eq!(
+            harness.client.pending_session_updates.borrow().counts(),
+            (0, 0, 0)
+        );
+    }
+
+    #[gpui::test]
+    async fn v2_new_sdk_concurrent_rejection_does_not_discard_successful_prefix(
+        cx: &mut TestAppContext,
+    ) {
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        *harness.hold_new_responses.lock().expect("new mode") = true;
+        let failed = harness.create(cx);
+        let (_, failed_response) = bounded(harness.new_replies.recv(), cx)
+            .await
+            .expect("failed creation");
+        let retained = harness.create(cx);
+        let (_, retained_response) = bounded(harness.new_replies.recv(), cx)
+            .await
+            .expect("retained creation");
+        harness.send_update(
+            "failed",
+            acp::SessionUpdate::AgentMessage(
+                acp::AgentMessage::new("discarded").content(vec!["discarded".into()]),
+            ),
+        );
+        harness.send_update(
+            "retained",
+            acp::SessionUpdate::AgentMessage(
+                acp::AgentMessage::new("retained").content(vec!["retained".into()]),
+            ),
+        );
+        cx.run_until_parked();
+        let rejection = agent_client_protocol::Error::new(-32042, "Creation rejected")
+            .data(json!({"keep": [null, 7]}));
+        failed_response
+            .respond_with_error(rejection.clone())
+            .expect("reject first");
+        assert_eq!(
+            bounded(failed, cx)
+                .await
+                .expect_err("rejection")
+                .downcast_ref::<agent_client_protocol::Error>(),
+            Some(&rejection)
+        );
+        retained_response
+            .respond(acp::NewSessionResponse::new("retained"))
+            .expect("successful response");
+        let thread = bounded(retained, cx)
+            .await
+            .expect("success survives unrelated rejection");
+        thread.read_with(cx, |thread, cx| {
+            assert!(thread.to_markdown(cx).contains("retained"));
+            assert!(!thread.to_markdown(cx).contains("discarded"));
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            harness.client.pending_session_updates.borrow().counts(),
+            (0, 0, 0)
+        );
+        let later = harness.create(cx);
+        let (_, response) = bounded(harness.new_replies.recv(), cx)
+            .await
+            .expect("later creation");
+        response
+            .respond(acp::NewSessionResponse::new("failed"))
+            .expect("later response");
+        assert!(
+            bounded(later, cx)
+                .await
+                .expect("later owner")
+                .read_with(cx, |thread, _| thread.entries().is_empty())
+        );
+    }
+
+    #[gpui::test]
+    async fn v2_new_sdk_abandonment_and_eof_clear_provisional_updates(cx: &mut TestAppContext) {
+        for disconnect in [false, true] {
+            let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+            let mut creation = harness.create(cx);
+            harness.new_request(&mut creation, cx).await;
+            harness.send_update(
+                "session",
+                acp::SessionUpdate::AgentMessage(
+                    acp::AgentMessage::new("staged").content(vec!["staged".into()]),
+                ),
+            );
+            cx.run_until_parked();
+            assert_eq!(
+                harness.client.pending_session_updates.borrow().counts().1,
+                1
+            );
+            if disconnect {
+                drop(harness._agent_task);
+                drop(harness.agent);
+                bounded(creation, cx).await.expect_err("EOF");
+            } else {
+                drop(creation);
+                cx.run_until_parked();
+                assert_eq!(
+                    harness.client.pending_session_updates.borrow().counts(),
+                    (0, 0, 0)
+                );
+                harness
+                    .new_responses
+                    .try_send(Ok(initial_response()))
+                    .expect("late success");
+                bounded(harness.closes.recv(), cx)
+                    .await
+                    .expect("close undelivered session");
+            }
+            cx.run_until_parked();
+            assert_eq!(
+                harness.client.pending_session_updates.borrow().counts(),
+                (0, 0, 0)
+            );
+            assert!(harness.client.sessions.borrow().is_empty());
+        }
+    }
+
+    #[gpui::test]
+    async fn v2_new_sdk_staging_limit_is_observable_and_preserves_live_owners(
+        cx: &mut TestAppContext,
+    ) {
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let thread = harness.thread(cx).await;
+        let mut creation = harness.create(cx);
+        harness.new_request(&mut creation, cx).await;
+        for _ in 0..=super::super::session_updates::MAX_PENDING_SESSION_UPDATES {
+            harness.send_update(
+                "overflowed",
+                acp::SessionUpdate::SessionInfoUpdate(
+                    acp::SessionInfoUpdate::new().title("prefix"),
+                ),
+            );
+        }
+        harness.send_update(
+            "session",
+            acp::SessionUpdate::SessionInfoUpdate(
+                acp::SessionInfoUpdate::new().title("Live owner"),
+            ),
+        );
+        cx.run_until_parked();
+        harness
+            .new_responses
+            .try_send(Ok(acp::NewSessionResponse::new("overflowed")))
+            .expect("new response");
+        assert!(
+            bounded(creation, cx)
+                .await
+                .expect_err("staging limit")
+                .to_string()
+                .contains("limits")
+        );
+        assert_eq!(
+            bounded(harness.closes.recv(), cx)
+                .await
+                .expect("close failed creation"),
+            acp::SessionId::new("overflowed")
+        );
+        assert_eq!(
+            thread.read_with(cx, |thread, _| thread.title()),
+            Some("Live owner".into())
+        );
+        assert_eq!(
+            harness.client.pending_session_updates.borrow().counts(),
+            (0, 0, 0)
+        );
+        assert_eq!(
+            harness
+                .client
+                .sessions
+                .borrow()
+                .get(&"session".into())
+                .expect("live")
+                .thread
+                .entity_id(),
+            thread.entity_id()
+        );
+    }
+
+    #[gpui::test]
+    async fn v2_new_sdk_abandoned_duplicate_does_not_close_a_live_owner(cx: &mut TestAppContext) {
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let thread = harness.thread(cx).await;
+        let mut creation = harness.create(cx);
+        harness.new_request(&mut creation, cx).await;
+        drop(creation);
+        harness
+            .new_responses
+            .try_send(Ok(initial_response()))
+            .expect("duplicate late response");
+        cx.run_until_parked();
+        assert!(
+            harness.closes.is_empty(),
+            "abandoned cleanup cannot close an existing owner"
+        );
+        assert_eq!(
+            harness
+                .client
+                .sessions
+                .borrow()
+                .get(&"session".into())
+                .expect("live owner")
+                .thread
+                .entity_id(),
+            thread.entity_id()
+        );
+    }
+
+    #[test]
+    fn v2_notification_budget_counts_encoded_payloads_without_copying_them() {
+        let notification = acp::UpdateSessionNotification::new(
+            "session",
+            acp::SessionUpdate::AgentMessage(
+                acp::AgentMessage::new("message")
+                    .content(vec!["unicode é and \"quotes\"".into()])
+                    .meta(meta("payload")),
+            ),
+        )
+        .meta(meta("delivery"));
+        assert_eq!(
+            super::super::notification_size(&notification).expect("counted"),
+            serde_json::to_vec(&notification).expect("serialized").len()
+        );
+    }
+
+    #[gpui::test]
+    async fn v2_new_sdk_unpublished_creation_does_not_admit_updates(cx: &mut TestAppContext) {
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let unpublished = harness.create(cx);
+        drop(unpublished);
+        cx.run_until_parked();
+        assert!(harness.new_requests.is_empty());
+        assert_eq!(
+            harness.client.pending_session_updates.borrow().counts(),
+            (0, 0, 0)
+        );
+    }
+
+    #[gpui::test]
+    async fn v2_new_sdk_preserves_pre_response_updates(cx: &mut TestAppContext) {
+        use acp_thread::ForegroundActivity;
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let mut creating = harness.create(cx);
+        harness.new_request(&mut creating, cx).await;
+        for update in [
+            acp::SessionUpdate::StateUpdate(acp::StateUpdate::Running(
+                acp::RunningStateUpdate::new(),
+            )),
+            acp::SessionUpdate::SessionInfoUpdate(
+                acp::SessionInfoUpdate::new()
+                    .title("Early title")
+                    .meta(meta("early")),
+            ),
+            acp::SessionUpdate::AgentMessage(
+                acp::AgentMessage::new("early-message").content(vec!["Early content".into()]),
+            ),
+            serde_json::from_value(json!({
+                "sessionUpdate": "tool_call_update", "toolCallId": "early-tool",
+                "title": "Early tool", "status": "in_progress",
+                "content": [{"type": "content", "content": {"type": "text", "text": "tool prefix"}}]
+            }))
+            .expect("tool update"),
+            serde_json::from_value(json!({
+                "sessionUpdate": "tool_call_content_chunk", "toolCallId": "early-tool",
+                "content": {"type": "content", "content": {"type": "text", "text": "tool suffix"}}
+            }))
+            .expect("tool chunk"),
+            acp::SessionUpdate::TerminalUpdate(
+                acp::TerminalUpdate::new("early-terminal")
+                    .command("echo")
+                    .output(acp::TerminalOutput::new("b2xk")),
+            ),
+            acp::SessionUpdate::TerminalOutputChunk(acp::TerminalOutputChunk::new(
+                "early-terminal",
+                "IQ==",
+            )),
+        ] {
+            harness
+                .agent
+                .send_notification(acp::UpdateSessionNotification::new("session", update))
+                .expect("pre-response update");
+        }
+        bounded(drain_foreground_queue(&harness.client.dispatch_tx), cx)
+            .await
+            .expect("apply pre-response traffic before the response");
+        cx.run_until_parked();
+        assert!((&mut creating).now_or_never().is_none());
+        harness
+            .new_responses
+            .try_send(Ok(initial_response()))
+            .expect("creation response");
+        let thread = bounded(creating, cx).await.expect("created owner");
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(thread.foreground_activity(), ForegroundActivity::Running);
+            assert_eq!(thread.session_info().title.as_deref(), Some("Early title"));
+            assert!(thread.to_markdown(cx).contains("Early content"));
+            let (_, tool) = thread.tool_call(&"early-tool".into()).expect("early tool");
+            assert_eq!(tool.content().len(), 2);
+            let terminal = thread
+                .terminal("early-terminal".into())
+                .expect("early terminal");
+            assert_eq!(
+                terminal.read(cx).inner().read(cx).get_content().trim_end(),
+                "old!"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn v2_session_sdk_registers_initial_state_before_immediate_notifications(
         cx: &mut TestAppContext,
     ) {
@@ -2747,6 +3280,70 @@ done
             harness.config_requests.is_empty(),
             "stale preflight must not publish a config RPC"
         );
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn v2_new_stdio_preserves_pre_response_updates_before_eof(cx: &mut TestAppContext) {
+        use acp_thread::ForegroundActivity;
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+            release_channel::init("0.0.0".parse().expect("version"), cx);
+        });
+        cx.executor().allow_parking();
+        let directory = tempfile::tempdir().expect("working directory");
+        let project = Project::example([directory.path()], &mut cx.to_async()).await;
+        let command = AgentServerCommand {
+            path: "/bin/sh".into(),
+            args: vec!["-c".into(), r#"
+while IFS= read -r request; do
+    id=${request#*\"id\":}
+    id=${id%%,*}
+    case "$request" in
+        *'"method":"initialize"'*)
+            printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":2,"info":{"name":"early-stdio","version":"1"},"capabilities":{"session":{}}}}\n' "$id"
+            ;;
+        *'"method":"session/new"'*)
+            printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"stdio-session","update":{"sessionUpdate":"state_update","state":"running"}}}\n'
+            printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"stdio-session","update":{"sessionUpdate":"agent_message","messageId":"first","content":[{"type":"text","text":"Early stdio message"}]}}}\n'
+            printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"stdio-session"}}\n' "$id"
+            exit 0
+            ;;
+        *) exit 43 ;;
+    esac
+done
+"#.into()],
+            env: None,
+        };
+        let client = Rc::new(
+            bounded(
+                AcpV2Connection::stdio(
+                    AgentId::new("early-stdio"),
+                    project.clone(),
+                    command,
+                    WeakEntity::new_invalid(),
+                    &mut cx.to_async(),
+                ),
+                cx,
+            )
+            .await
+            .expect("stdio connection"),
+        );
+        let creation = cx.update(|cx| {
+            client
+                .clone()
+                .new_session(project, PathList::new(&[directory.path()]), cx)
+        });
+        let thread = bounded(creation, cx)
+            .await
+            .expect("new response precedes EOF");
+        bounded(client.connection.incoming_closed(), cx).await;
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(thread.foreground_activity(), ForegroundActivity::Running);
+            assert!(thread.to_markdown(cx).contains("Early stdio message"));
+        });
+        assert_eq!(client.pending_session_updates.borrow().counts(), (0, 0, 0));
     }
 
     #[cfg(unix)]
