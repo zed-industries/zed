@@ -9,7 +9,7 @@ use extension::{Extension, ExtensionHostProxy, ExtensionVcsProviderProxy, Worktr
 use fs::Fs;
 use gpui::{
     App, AppContext, Context, Entity, EventEmitter, Global, ReadGlobal, SharedString, Subscription,
-    Task, TaskExt, WeakEntity,
+    Task, WeakEntity,
 };
 use language::{Buffer, BufferEvent};
 use settings::WorktreeId;
@@ -138,9 +138,22 @@ struct DiffState {
     diff: Entity<BufferDiff>,
     base: Option<Arc<str>>,
     base_loaded: bool,
+    loading: bool,
     generation: u64,
     update_task: Option<Task<()>>,
+    waiters: Vec<futures::channel::oneshot::Sender<Result<Entity<BufferDiff>, Arc<anyhow::Error>>>>,
     _subscription: Subscription,
+}
+
+impl DiffState {
+    fn finish_waiters(&mut self, result: Result<Entity<BufferDiff>>) {
+        let result = result.map_err(Arc::new);
+        for waiter in self.waiters.drain(..) {
+            if waiter.send(result.clone()).is_err() {
+                log::debug!("VCS diff consumer closed");
+            }
+        }
+    }
 }
 
 struct ReadOnlyDiffOperations;
@@ -591,7 +604,7 @@ impl VcsStore {
                         "Multiple VCS providers claim this folder; disable one provider".into(),
                     );
                 }
-                self.invalidate_diffs(&owner, cx);
+                self.invalidate_diffs(&owner, Some("VCS ownership is ambiguous"), cx);
             }
         }
         self.ensure_polling(cx);
@@ -637,7 +650,7 @@ impl VcsStore {
                 state.view.snapshot = None;
                 state.refresh_task = None;
             }
-            self.invalidate_diffs(&repository, cx);
+            self.invalidate_diffs(&repository, Some(&message), cx);
         }
         self.notify(cx);
     }
@@ -663,7 +676,7 @@ impl VcsStore {
             .cloned()
             .collect();
         for repository in repositories {
-            self.invalidate_diffs(&repository, cx);
+            self.invalidate_diffs(&repository, Some("VCS repository closed"), cx);
             self.repositories.remove(&repository);
         }
         if self.repositories.is_empty() {
@@ -735,7 +748,7 @@ impl VcsStore {
         repository.view.selected_baseline = baseline.clone();
         self.selected_baselines.insert(key.clone(), baseline);
         repository.view.snapshot = None;
-        self.invalidate_diffs(key, cx);
+        self.invalidate_diffs(key, None, cx);
         self.refresh(key, cx);
         Ok(())
     }
@@ -795,6 +808,19 @@ impl VcsStore {
                         repository.view.snapshot = Some(Arc::new(snapshot));
                         repository.view.error = None;
                         if changed {
+                            let closed_buffers: Vec<_> = this
+                                .diffs
+                                .iter()
+                                .filter(|(_, state)| {
+                                    state.repository == key && state.buffer.upgrade().is_none()
+                                })
+                                .map(|(buffer_id, _)| *buffer_id)
+                                .collect();
+                            for buffer_id in closed_buffers {
+                                if let Some(mut state) = this.diffs.remove(&buffer_id) {
+                                    state.finish_waiters(Err(anyhow!("VCS diff buffer closed")));
+                                }
+                            }
                             let buffers: Vec<_> = this
                                 .diffs
                                 .iter()
@@ -802,14 +828,15 @@ impl VcsStore {
                                 .filter_map(|(_, state)| state.buffer.upgrade())
                                 .collect();
                             for buffer in buffers {
-                                this.reload_diff(buffer, cx).detach_and_log_err(cx);
+                                this.start_diff_load(buffer, cx);
                             }
                         }
                         changed
                     }
                     Err(error) => {
-                        repository.view.error = Some(format!("{error:#}").into());
-                        this.invalidate_diffs(&key, cx);
+                        let message = format!("{error:#}");
+                        repository.view.error = Some(message.clone().into());
+                        this.invalidate_diffs(&key, Some(&message), cx);
                         true
                     }
                 };
@@ -1122,19 +1149,16 @@ impl VcsStore {
                     .get(&buffer_id)
                     .is_some_and(|state| !state.base_loaded)
                 {
-                    this.reload_diff(buffer, cx).detach_and_log_err(cx);
+                    if this
+                        .diffs
+                        .get(&buffer_id)
+                        .is_some_and(|state| !state.loading)
+                    {
+                        this.start_diff_load(buffer, cx);
+                    }
                     return;
                 }
-                if let Some(state) = this.diffs.get_mut(&buffer_id) {
-                    state.generation += 1;
-                    state.update_task = None;
-                    let base = state.base.clone();
-                    let snapshot = buffer.read(cx).text_snapshot();
-                    let task = state
-                        .diff
-                        .update(cx, |diff, cx| diff.set_base_text(base, snapshot, cx));
-                    state.update_task = Some(task);
-                }
+                this.update_cached_diff(buffer, cx);
             }
         });
         self.diffs.insert(
@@ -1146,8 +1170,10 @@ impl VcsStore {
                 diff,
                 base: None,
                 base_loaded: false,
+                loading: false,
                 generation: 0,
                 update_task: None,
+                waiters: Vec::new(),
                 _subscription: subscription,
             },
         );
@@ -1159,46 +1185,76 @@ impl VcsStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<BufferDiff>>> {
         let buffer_id = buffer.read(cx).remote_id();
-        if let Some(state) = self.diffs.get(&buffer_id)
-            && state.base_loaded
-        {
+        let Some(state) = self.diffs.get(&buffer_id) else {
+            return Task::ready(Err(anyhow!("VCS diff is unavailable")));
+        };
+        if state.base_loaded && !state.loading {
             return Task::ready(Ok(state.diff.clone()));
         }
-        self.reload_diff(buffer, cx)
+        let loading = state.loading;
+        let task = self.wait_for_diff(buffer_id, cx);
+        if !loading {
+            self.start_diff_load(buffer, cx);
+        }
+        task
     }
 
-    fn reload_diff(
+    fn wait_for_diff(
         &mut self,
-        buffer: Entity<Buffer>,
-        cx: &mut Context<Self>,
+        buffer_id: text::BufferId,
+        cx: &Context<Self>,
     ) -> Task<Result<Entity<BufferDiff>>> {
-        let buffer_id = buffer.read(cx).remote_id();
         let Some(state) = self.diffs.get_mut(&buffer_id) else {
             return Task::ready(Err(anyhow!("VCS diff is unavailable")));
         };
-        let Some(repository) = self.repositories.get(&state.repository) else {
-            return Task::ready(Err(anyhow!("VCS repository closed")));
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        state.waiters.retain(|waiter| !waiter.is_canceled());
+        state.waiters.push(sender);
+        cx.background_spawn(async move {
+            receiver
+                .await
+                .context("VCS diff owner closed")?
+                .map_err(|error| anyhow!("{error:#}"))
+        })
+    }
+
+    fn start_diff_load(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+        let buffer_id = buffer.read(cx).remote_id();
+        let Some(state) = self.diffs.get_mut(&buffer_id) else {
+            return;
         };
-        let Some(snapshot) = repository.view.snapshot.clone() else {
-            return Task::ready(Err(anyhow!("VCS snapshot is loading")));
-        };
-        if let Some(error) = &repository.view.error {
-            return Task::ready(Err(anyhow!("{error}")));
-        }
-        let connection = repository.connection.clone();
-        let root = match vcs::local_path(&repository.view.descriptor.scope_uri) {
-            Ok(root) => root,
-            Err(error) => return Task::ready(Err(error)),
+        let request = (|| {
+            let repository = self
+                .repositories
+                .get(&state.repository)
+                .context("VCS repository closed")?;
+            if let Some(error) = &repository.view.error {
+                bail!("{error}");
+            }
+            let Some(snapshot) = repository.view.snapshot.clone() else {
+                ensure!(repository.view.loading, "VCS snapshot is unavailable");
+                return Ok(None);
+            };
+            let root = vcs::local_path(&repository.view.descriptor.scope_uri)?;
+            Ok(Some((repository.connection.clone(), snapshot, root)))
+        })();
+        let (connection, snapshot, root) = match request {
+            Ok(Some(request)) => request,
+            Ok(None) => return,
+            Err(error) => {
+                state.finish_waiters(Err(error));
+                return;
+            }
         };
         let fs = self.fs.clone();
         let path = state.path.clone();
         state.base_loaded = false;
+        state.loading = true;
         state.generation += 1;
         let generation = state.generation;
         state.update_task = None;
-        let (sender, receiver) = futures::channel::oneshot::channel();
         state.update_task = Some(cx.spawn(async move |this, cx| {
-            let result: Result<Entity<BufferDiff>> = async {
+            let result: Result<Option<Arc<str>>> = async {
                 scoped_metadata(&root, &path, &fs).await?;
                 let content = connection
                     .read_content(
@@ -1208,11 +1264,11 @@ impl VcsStore {
                         path,
                     )
                     .await?;
-                let base = match content {
-                    Content::Absent => None,
+                match content {
+                    Content::Absent => Ok(None),
                     Content::Text { mut text } => {
                         text::LineEnding::normalize(&mut text);
-                        Some(Arc::<str>::from(text))
+                        Ok(Some(Arc::<str>::from(text)))
                     }
                     Content::Binary => {
                         bail!("Binary file: content is available only through its VCS provider")
@@ -1220,45 +1276,83 @@ impl VcsStore {
                     Content::Symlink { .. } => {
                         bail!("Symlink: target changes are displayed in the changes list")
                     }
+                }
+            }
+            .await;
+            this.update(cx, |this, cx| {
+                let Some(state) = this.diffs.get_mut(&buffer_id) else {
+                    return;
                 };
-                let (diff, update) = this.update(cx, |this, cx| -> Result<_> {
-                    let state = this.diffs.get_mut(&buffer_id).context("VCS diff closed")?;
+                if state.generation != generation {
+                    return;
+                }
+                let result = result.and_then(|base| {
                     ensure!(
-                        state.generation == generation,
-                        "VCS diff request was superseded"
-                    );
-                    let repository = this
-                        .repositories
-                        .get(&state.repository)
-                        .context("VCS repository closed")?;
-                    ensure!(
-                        repository
-                            .view
-                            .snapshot
-                            .as_ref()
+                        this.repositories
+                            .get(&state.repository)
+                            .and_then(|repository| repository.view.snapshot.as_ref())
                             .is_some_and(|current| current.revision_id == snapshot.revision_id
                                 && current.baseline_id == snapshot.baseline_id),
                         "VCS snapshot changed"
                     );
-                    state.base = base.clone();
-                    state.base_loaded = true;
-                    let current = buffer.read(cx).text_snapshot();
-                    let diff = state.diff.clone();
-                    let update = diff.update(cx, |diff, cx| diff.set_base_text(base, current, cx));
-                    Ok((diff, update))
-                })??;
-                update.await;
-                Ok(diff)
-            }
-            .await;
-            if sender.send(result).is_err() {
-                log::debug!("VCS diff consumer closed");
-            }
+                    Ok(base)
+                });
+                state.update_task = None;
+                match result {
+                    Ok(base) => {
+                        state.base = base;
+                        state.base_loaded = true;
+                        this.update_cached_diff(buffer, cx);
+                    }
+                    Err(error) => {
+                        state.loading = false;
+                        log::error!("Failed to load VCS diff content: {error:#}");
+                        state.finish_waiters(Err(error));
+                        let current = buffer.read(cx).text_snapshot();
+                        state.update_task = Some(state.diff.update(cx, |diff, cx| {
+                            diff.set_base_text(Some(current.text().into()), current, cx)
+                        }));
+                    }
+                }
+            })
+            .log_err();
         }));
-        cx.background_spawn(async move { receiver.await.context("VCS diff request cancelled")? })
     }
 
-    fn invalidate_diffs(&mut self, repository: &VcsRepositoryId, cx: &mut Context<Self>) {
+    fn update_cached_diff(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+        let buffer_id = buffer.read(cx).remote_id();
+        let Some(state) = self.diffs.get_mut(&buffer_id) else {
+            return;
+        };
+        state.generation += 1;
+        let generation = state.generation;
+        state.loading = true;
+        state.update_task = None;
+        let snapshot = buffer.read(cx).text_snapshot();
+        let update = state.diff.update(cx, |diff, cx| {
+            diff.set_base_text(state.base.clone(), snapshot, cx)
+        });
+        state.update_task = Some(cx.spawn(async move |this, cx| {
+            update.await;
+            this.update(cx, |this, _| {
+                if let Some(state) = this.diffs.get_mut(&buffer_id)
+                    && state.generation == generation
+                {
+                    state.update_task = None;
+                    state.loading = false;
+                    state.finish_waiters(Ok(state.diff.clone()));
+                }
+            })
+            .log_err();
+        }));
+    }
+
+    fn invalidate_diffs(
+        &mut self,
+        repository: &VcsRepositoryId,
+        error: Option<&str>,
+        cx: &mut Context<Self>,
+    ) {
         for state in self
             .diffs
             .values_mut()
@@ -1267,6 +1361,10 @@ impl VcsStore {
             state.generation += 1;
             state.update_task = None;
             state.base_loaded = false;
+            state.loading = false;
+            if let Some(error) = error {
+                state.finish_waiters(Err(anyhow!("{error}")));
+            }
             if let Some(buffer) = state.buffer.upgrade() {
                 let snapshot = buffer.read(cx).text_snapshot();
                 let current: Arc<str> = snapshot.text().into();

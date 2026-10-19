@@ -5,7 +5,7 @@ Usage: python3 crates/vcs/tests/fixture_provider.py --scenario normal --events F
 Feed Content-Length framed JSON-RPC. `--events` records test-only lifecycle events.
 Scenarios: normal, reply-eof, crash, error, pending, malformed, oversized,
 stderr-flood, descendant, early-exit, reordered, hang-after-exit,
-exit-leaves-descendant, polling-content. `reordered` holds the first
+exit-leaves-descendant, polling-content, changing-slow-content. `reordered` holds the first
 snapshot, then sends the second response before the first, even after cancellation.
 `descendant` creates one idle child in the
 same process group so the host's forced-close ownership can be tested.
@@ -13,6 +13,8 @@ same process group so the host's forced-close ownership can be tested.
 `exit-leaves-descendant` exits normally while its child keeps stdout open.
 `polling-content` creates fresh snapshot IDs; FILE.revision containing r43 moves
 later snapshots from r42 to r43 while older snapshot contents remain pinned.
+`changing-slow-content` changes each snapshot revision and leaves content requests
+pending while still processing snapshots, cancellation, and shutdown.
 """
 import argparse
 import json
@@ -26,7 +28,8 @@ MAX_MESSAGE_BYTES = 16 * 1024 * 1024
 EOF_TEXT = "baseline — r42\n" * 8192
 SCENARIOS = ("normal", "reply-eof", "crash", "error", "pending", "malformed",
              "oversized", "stderr-flood", "descendant", "early-exit", "reordered",
-             "hang-after-exit", "exit-leaves-descendant", "polling-content")
+             "hang-after-exit", "exit-leaves-descendant", "polling-content",
+             "changing-slow-content")
 
 
 def read_message():
@@ -116,7 +119,7 @@ def main():
             return 0
         if method == "$/cancelRequest":
             record("cancel-received", id=params["id"])
-            if args.scenario != "reordered":
+            if args.scenario not in ("reordered", "changing-slow-content"):
                 changed()
             continue
         if method == "initialize":
@@ -158,6 +161,9 @@ def main():
                 snapshot["id"] = f"snapshot:polling:{snapshots}"
                 snapshot["revisionId"] = revision
                 snapshot_revisions[snapshot["id"]] = revision
+            if args.scenario == "changing-slow-content":
+                snapshot["id"] = f"snapshot:changing:{snapshots}"
+                snapshot["revisionId"] = f"r{42 + snapshots}"
             if args.scenario == "reordered" and snapshots == 1:
                 held_snapshot = (identifier, snapshot)
                 record("snapshot-held", id=identifier)
@@ -167,6 +173,9 @@ def main():
                 reply(*held_snapshot)
                 held_snapshot = None
         elif method == "vcs/readContent":
+            if args.scenario == "changing-slow-content":
+                record("content-held", id=identifier, snapshot_id=params["snapshotId"])
+                continue
             path = params["path"]
             text = EOF_TEXT if args.scenario == "reply-eof" else "previous — r41\n" if params["baselineId"] == "previous" else "baseline — r42\n"
             if args.scenario == "polling-content":

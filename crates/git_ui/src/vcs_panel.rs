@@ -225,6 +225,16 @@ impl VcsPanel {
         }
     }
 
+    fn metadata_notice(&self) -> Option<&'static str> {
+        let change = self.rows.get(self.selected?)?.change.as_ref()?;
+        match change.kind {
+            ContentKind::File => None,
+            ContentKind::Binary => Some("Binary file — text diff is unavailable."),
+            ContentKind::Symlink => Some("Symbolic link — shown as metadata only in this preview."),
+            ContentKind::Submodule => Some("Submodule — shown as metadata only in this preview."),
+        }
+    }
+
     fn open_diff(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(row) = self.rows.get(index).cloned() else {
             return;
@@ -233,9 +243,9 @@ impl VcsPanel {
             return;
         };
         self.selected = Some(index);
+        self.error = None;
+        cx.notify();
         if change.kind != ContentKind::File {
-            self.error = Some("This change is listed with its metadata; a text diff is unavailable for binary, symlink or submodule content.".into());
-            cx.notify();
             return;
         }
         let Some(store) = self.store.clone() else {
@@ -250,7 +260,6 @@ impl VcsPanel {
                 .log_err();
             return;
         }
-        self.error = None;
         let task = store.update(cx, |store, cx| {
             store.open_diff(row.repository.clone(), row.path.clone(), cx)
         });
@@ -268,14 +277,18 @@ impl VcsPanel {
                     });
                     let workspace_entity = cx.entity();
                     let editor = cx.new(|cx| {
-                        SplittableEditor::new(
+                        let editor = SplittableEditor::new(
                             EditorSettings::get_global(cx).diff_view_style,
                             multibuffer,
                             project,
                             workspace_entity,
                             window,
                             cx,
-                        )
+                        );
+                        editor.rhs_editor().update(cx, |editor, cx| {
+                            editor.set_should_serialize(false, cx);
+                        });
+                        editor
                     });
                     workspace.add_item_to_active_pane(
                         Box::new(editor.clone()),
@@ -323,6 +336,12 @@ impl VcsPanel {
                     None => ("", Color::Muted),
                 };
                 if let Some(change) = &row.change {
+                    match change.kind {
+                        ContentKind::File => {}
+                        ContentKind::Binary => label.push_str(" (binary)"),
+                        ContentKind::Symlink => label.push_str(" (symlink)"),
+                        ContentKind::Submodule => label.push_str(" (submodule)"),
+                    }
                     if let Some(old_path) = &change.old_path {
                         label = format!("{old_path} → {label}");
                     }
@@ -438,6 +457,7 @@ impl Render for VcsPanel {
                         Button::new(("baseline", index), baseline.label.clone())
                             .toggle_state(repository.selected_baseline == baseline.id)
                             .on_click(cx.listener(move |this, _, _, cx| {
+                                this.error = None;
                                 if let Some(store) = this.store.clone() {
                                     if let Err(error) = store.update(cx, |store, cx| {
                                         store.set_baseline(&key, baseline_id.clone(), cx)
@@ -514,6 +534,14 @@ impl Render for VcsPanel {
             .when_some(self.error.clone(), |element, error| {
                 element.child(Label::new(error).color(Color::Error))
             })
+            .when_some(self.metadata_notice(), |element, notice| {
+                element.child(
+                    div()
+                        .px_2()
+                        .py_1()
+                        .child(Label::new(notice).color(Color::Muted)),
+                )
+            })
             .when(
                 self.rows.iter().all(|row| row.change.is_none())
                     && !has_errors
@@ -582,5 +610,99 @@ impl Panel for VcsPanel {
                 .store
                 .as_ref()
                 .is_some_and(|store| !store.read(cx).errors().is_empty())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use project::FakeFs;
+    use settings::{DiffViewStyle, SettingsStore};
+    use std::sync::Arc;
+    use workspace::MultiWorkspace;
+
+    #[gpui::test]
+    async fn metadata_selection_is_not_an_error_and_cached_text_clears_prior_error(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            language_model::init(cx);
+            editor::init(cx);
+            crate::init(cx);
+        });
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let buffer = cx.new(|cx| Buffer::local("working content\n", cx));
+        let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let editor = cx.new_window_entity(|window, cx| {
+            SplittableEditor::new(
+                DiffViewStyle::Unified,
+                multibuffer,
+                project.clone(),
+                workspace.clone(),
+                window,
+                cx,
+            )
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+        });
+        let panel = cx.new_window_entity(|_, cx| VcsPanel::new(workspace.downgrade(), project, cx));
+        panel.update_in(cx, |panel, window, cx| {
+            let repository = VcsRepositoryId {
+                worktree_id: settings::WorktreeId::from_usize(1),
+                extension_id: Arc::from("fixture"),
+                provider_id: Arc::from("fixture"),
+                repository_id: "opaque-repository".into(),
+            };
+            panel.rows = [
+                ("binary.bin", ContentKind::Binary),
+                ("working.txt", ContentKind::File),
+            ]
+            .into_iter()
+            .map(|(path, kind)| Row {
+                repository: repository.clone(),
+                path: path.into(),
+                label: path.into(),
+                depth: 1,
+                change: Some(Change {
+                    path: path.into(),
+                    old_path: None,
+                    status: ChangeStatus::Modified,
+                    kind,
+                    old_mode: None,
+                    new_mode: None,
+                }),
+            })
+            .collect();
+            panel
+                .opened
+                .insert((repository, "working.txt".into()), editor.downgrade());
+            panel.open_diff(0, window, cx);
+            assert!(
+                panel.error.is_none(),
+                "Metadata-only content must not become a provider error"
+            );
+            assert!(panel.metadata_notice().is_some());
+            panel.error = Some("previous provider failure".into());
+            panel.open_diff(1, window, cx);
+            assert!(
+                panel.error.is_none(),
+                "Opening an already cached text diff must clear a previous error"
+            );
+            assert_eq!(panel.selected, Some(1));
+            assert!(panel.metadata_notice().is_none());
+            panel.open_diff(0, window, cx);
+            panel.select_next(&menu::SelectNext, window, cx);
+            assert!(panel.metadata_notice().is_none());
+        });
     }
 }

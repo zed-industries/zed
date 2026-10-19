@@ -630,7 +630,12 @@ async fn baseline_change_updates_existing_live_diff_and_close_reopen_uses_new_se
     });
     cx.condition(&fixture.store, |store, _| store.repositories().is_empty())
         .await;
-    old_connection.shutdown().await.unwrap();
+    provider_event(
+        fixture.directory.path().join("reopen.jsonl"),
+        "exit-received",
+    )
+    .await;
+    assert!(!old_connection.is_alive());
     let (worktree, _) = fixture
         .project
         .update(cx, |project, cx| {
@@ -892,5 +897,201 @@ async fn unchanged_poll_reuses_baseline_but_new_revision_reloads_it(cx: &mut Tes
         2,
         "changed baseline revision must be loaded"
     );
+    stop(&fixture, cx).await;
+}
+
+#[gpui::test]
+async fn concurrent_diff_readers_share_content_and_keep_pending_edits(cx: &mut TestAppContext) {
+    let fixture = fixture(cx, false).await;
+    trust(&fixture, cx);
+    FixtureExtension::new("coalesced", fixture.directory.path(), "normal").register(cx);
+    ready(&fixture, cx).await;
+    let buffer = fixture
+        .project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(fixture.directory.path().join("src/example.txt"), cx)
+        })
+        .await
+        .unwrap();
+    let (first, second) = fixture.store.update(cx, |store, cx| {
+        (
+            store.open_buffer_diff(buffer.clone(), cx),
+            store.open_buffer_diff(buffer.clone(), cx),
+        )
+    });
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(
+            [(0..buffer.len(), "baseline — r42\nunsaved second line\n")],
+            None,
+            cx,
+        );
+    });
+    let (first, second) = futures::future::join(first, second).await;
+    let first = first.unwrap();
+    assert_eq!(first, second.unwrap());
+    first.read_with(cx, |diff, cx| {
+        assert_eq!(diff.base_text(cx).text(), "baseline — r42\n");
+        assert_eq!(
+            diff.snapshot(cx).buffer_snapshot().text(),
+            "baseline — r42\nunsaved second line\n"
+        );
+        assert_eq!(diff.changed_row_counts(), (1, 0));
+    });
+    let events = std::fs::read_to_string(fixture.directory.path().join("coalesced.jsonl")).unwrap();
+    assert_eq!(
+        events
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter(|event| event["method"] == "vcs/readContent")
+            .count(),
+        1
+    );
+    assert_eq!(
+        fixture
+            .fs
+            .load(&fixture.directory.path().join("src/example.txt"))
+            .await
+            .unwrap(),
+        "working text\n"
+    );
+    stop(&fixture, cx).await;
+}
+
+#[gpui::test]
+async fn superseded_diff_readers_wait_for_the_new_baseline(cx: &mut TestAppContext) {
+    let fixture = fixture(cx, false).await;
+    trust(&fixture, cx);
+    FixtureExtension::new("superseded-content", fixture.directory.path(), "normal").register(cx);
+    let repository = ready(&fixture, cx).await;
+    let buffer = fixture
+        .project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(fixture.directory.path().join("src/example.txt"), cx)
+        })
+        .await
+        .unwrap();
+    let (first, second, latest) = fixture.store.update(cx, |store, cx| {
+        let first = store.open_buffer_diff(buffer.clone(), cx);
+        let second = store.open_buffer_diff(buffer.clone(), cx);
+        store
+            .set_baseline(&repository.key, "previous".into(), cx)
+            .unwrap();
+        let latest = store.open_buffer_diff(buffer.clone(), cx);
+        (first, second, latest)
+    });
+    let (first, second, latest) = futures::join!(first, second, latest);
+    let first = first.unwrap();
+    assert_eq!(first, second.unwrap());
+    assert_eq!(first, latest.unwrap());
+    assert_eq!(
+        first.read_with(cx, |diff, cx| diff.base_text(cx).text()),
+        "previous — r41\n"
+    );
+    stop(&fixture, cx).await;
+}
+
+#[gpui::test]
+async fn coalesced_diff_readers_receive_real_provider_errors(cx: &mut TestAppContext) {
+    let fixture = fixture(cx, false).await;
+    trust(&fixture, cx);
+    FixtureExtension::new("content-error", fixture.directory.path(), "polling-content")
+        .register(cx);
+    let repository = ready(&fixture, cx).await;
+    let buffer = fixture
+        .project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(fixture.directory.path().join("src/example.txt"), cx)
+        })
+        .await
+        .unwrap();
+    let (first, second) = fixture.store.update(cx, |store, cx| {
+        let repository = store.repositories.get_mut(&repository.key).unwrap();
+        Arc::make_mut(repository.view.snapshot.as_mut().unwrap()).id = "expired".into();
+        (
+            store.open_buffer_diff(buffer.clone(), cx),
+            store.open_buffer_diff(buffer.clone(), cx),
+        )
+    });
+    let (first, second) = futures::future::join(first, second).await;
+    for result in [first, second] {
+        assert!(format!("{:#}", result.unwrap_err()).contains("Unknown fixture snapshot"));
+    }
+    stop(&fixture, cx).await;
+}
+
+#[gpui::test]
+async fn changing_snapshots_do_not_accumulate_internal_diff_waiters(cx: &mut TestAppContext) {
+    let fixture = fixture(cx, false).await;
+    trust(&fixture, cx);
+    FixtureExtension::new(
+        "slow-content",
+        fixture.directory.path(),
+        "changing-slow-content",
+    )
+    .register(cx);
+    let repository = ready(&fixture, cx).await;
+    let buffer = fixture
+        .project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(fixture.directory.path().join("src/example.txt"), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+    let first = fixture
+        .store
+        .update(cx, |store, cx| store.open_buffer_diff(buffer.clone(), cx));
+    provider_event(
+        fixture.directory.path().join("slow-content.jsonl"),
+        "content-held",
+    )
+    .await;
+    for _ in 0..4 {
+        fixture
+            .store
+            .update(cx, |store, cx| store.refresh(&repository.key, cx));
+        ready(&fixture, cx).await;
+        fixture.store.read_with(cx, |store, _| {
+            assert_eq!(store.diffs.get(&buffer_id).unwrap().waiters.len(), 1);
+        });
+    }
+    drop(first);
+    cx.run_until_parked();
+    let second = fixture
+        .store
+        .update(cx, |store, cx| store.open_buffer_diff(buffer, cx));
+    fixture.store.read_with(cx, |store, _| {
+        assert_eq!(
+            store.diffs.get(&buffer_id).unwrap().waiters.len(),
+            1,
+            "dropped readers must be pruned"
+        );
+    });
+    drop(second);
+    stop(&fixture, cx).await;
+}
+
+#[gpui::test]
+async fn closing_buffer_before_snapshot_completes_resolves_diff_waiter(cx: &mut TestAppContext) {
+    let fixture = fixture(cx, false).await;
+    trust(&fixture, cx);
+    FixtureExtension::new("closed-buffer", fixture.directory.path(), "normal").register(cx);
+    let repository = ready(&fixture, cx).await;
+    let buffer = cx.new(|cx| Buffer::local("working text\n", cx));
+    let weak_buffer = buffer.downgrade();
+    let waiting = fixture.store.update(cx, |store, cx| {
+        let current = store.repositories.get_mut(&repository.key).unwrap();
+        current.view.snapshot = None;
+        current.view.loading = true;
+        store.ensure_diff(&repository.key, "src/example.txt", &buffer, cx);
+        store.load_diff_if_needed(buffer.clone(), cx)
+    });
+    drop(buffer);
+    cx.run_until_parked();
+    assert!(weak_buffer.upgrade().is_none());
+    fixture
+        .store
+        .update(cx, |store, cx| store.refresh(&repository.key, cx));
+    assert!(format!("{:#}", waiting.await.unwrap_err()).contains("VCS diff buffer closed"));
     stop(&fixture, cx).await;
 }
