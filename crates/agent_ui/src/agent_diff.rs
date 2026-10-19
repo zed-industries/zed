@@ -1468,6 +1468,7 @@ impl AgentDiff {
                 self.update_reviewing_editors(workspace, window, cx);
             }
             AcpThreadEvent::TitleUpdated
+            | AcpThreadEvent::ActivityConfirmedIdle
             | AcpThreadEvent::StatusChanged
             | AcpThreadEvent::SubmissionUpdated(_)
             | AcpThreadEvent::TokenUsageUpdated(_)

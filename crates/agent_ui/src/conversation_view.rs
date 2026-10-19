@@ -344,6 +344,7 @@ impl Conversation {
                         }
                     }
                     AcpThreadEvent::NewEntry
+                    | AcpThreadEvent::ActivityConfirmedIdle
                     | AcpThreadEvent::StatusChanged
                     | AcpThreadEvent::SubmissionUpdated(_)
                     | AcpThreadEvent::TitleUpdated
@@ -762,6 +763,7 @@ fn affects_thread_metadata(event: &AcpThreadEvent) -> bool {
         | AcpThreadEvent::WorkingDirectoriesUpdated => true,
         // --
         AcpThreadEvent::EntryUpdated(_)
+        | AcpThreadEvent::ActivityConfirmedIdle
         | AcpThreadEvent::StatusChanged
         | AcpThreadEvent::SubmissionUpdated(_)
         | AcpThreadEvent::EntriesRemoved(_)
@@ -1833,6 +1835,26 @@ impl ConversationView {
         matches!(self.server_state, ServerState::Loading { .. })
     }
 
+    fn send_queued_after_confirmed_idle(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.root_thread_view().is_some_and(|active| {
+            active.update(cx, |active, cx| {
+                let is_first_editor_focused = active
+                    .message_queue
+                    .first()
+                    .is_some_and(|entry| entry.editor.focus_handle(cx).is_focused(window));
+                active.send_queued_message_after_generation_stopped(
+                    is_first_editor_focused,
+                    window,
+                    cx,
+                )
+            })
+        })
+    }
+
     fn handle_thread_event(
         &mut self,
         thread: &Entity<AcpThread>,
@@ -1852,6 +1874,11 @@ impl ConversationView {
             cx.emit(RootThreadUpdated);
         }
         match event {
+            AcpThreadEvent::ActivityConfirmedIdle => {
+                if !is_subagent {
+                    self.send_queued_after_confirmed_idle(window, cx);
+                }
+            }
             AcpThreadEvent::StatusChanged => {
                 if let Some(active) = self.thread_view(&session_id) {
                     active.update(cx, |active, cx| {
@@ -2059,22 +2086,7 @@ impl ConversationView {
                     return;
                 }
 
-                let sent_queued_message = if let Some(active) = self.root_thread_view() {
-                    active.update(cx, |active, cx| {
-                        // Don't auto-send while the user is editing the next message.
-                        let is_first_editor_focused = active
-                            .message_queue
-                            .first()
-                            .is_some_and(|entry| entry.editor.focus_handle(cx).is_focused(window));
-                        active.send_queued_message_after_generation_stopped(
-                            is_first_editor_focused,
-                            window,
-                            cx,
-                        )
-                    })
-                } else {
-                    false
-                };
+                let sent_queued_message = self.send_queued_after_confirmed_idle(window, cx);
 
                 // Skip notifying when a queued message was just auto-sent: the agent
                 // is not actually idle and a notification here would fire just before the
@@ -5003,6 +5015,144 @@ pub(crate) mod tests {
         finish_queued
             .send(Ok(acp_v2::PromptResponse::new("queued-echo")))
             .expect("queued submission pending");
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_unconfirmed_activity_allows_manual_send_but_defers_automatic_queue(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let connection = StubAgentConnection::new().with_receipt_submissions(true);
+        let (conversation, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(conversation.clone(), cx);
+        let view = active_thread(&conversation, cx);
+        let thread = view.read_with(cx, |view, _| view.thread.clone());
+        thread.update(cx, |thread, cx| thread.mark_activity_unconfirmed(cx));
+        view.update_in(cx, |view, window, cx| {
+            view.add_to_queue(vec!["queued".into()], vec![], window, cx);
+            assert!(!view.send_queued_message_after_generation_stopped(false, window, cx));
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("activity-unconfirmed").is_some());
+        assert!(connection.take_receipt_prompt().is_none());
+        let response = connection.defer_next_receipt_response();
+        message_editor(&conversation, cx).update_in(cx, |editor, window, cx| {
+            editor.set_text("manual", window, cx);
+        });
+        cx.run_until_parked();
+        let button = cx.debug_bounds("ICON-Send").expect("manual send button");
+        cx.simulate_click(button.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert_eq!(
+            connection.take_receipt_prompt(),
+            Some(vec!["manual".into()])
+        );
+        response
+            .send(Ok(acp_v2::PromptResponse::new("manual")))
+            .expect("receipt");
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_user_message(
+                    acp_v2::UserMessage::new("manual").content(vec!["manual".into()]),
+                    cx,
+                )
+                .expect("echo");
+        });
+        cx.run_until_parked();
+        view.read_with(cx, |view, cx| {
+            assert_eq!(view.thread.read(cx).status(), ThreadStatus::Unconfirmed);
+            assert_eq!(view.message_queue.len(), 1);
+            assert!(view.thread_error.is_none());
+            assert!(view.turn_fields.turn_started_at.is_none());
+            assert!(view.turn_fields.last_turn_duration.is_none());
+            assert!(!view.generating_indicator_in_list);
+        });
+        let response = connection.defer_next_receipt_response();
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Idle(
+                        acp_v2::IdleStateUpdate::new().stop_reason(acp_v2::StopReason::Cancelled),
+                    ),
+                    cx,
+                )
+                .expect("first confirmed idle");
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            connection.take_receipt_prompt(),
+            Some(vec!["queued".into()])
+        );
+        response
+            .send(Ok(acp_v2::PromptResponse::new("queued")))
+            .expect("queued receipt");
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_user_message(
+                    acp_v2::UserMessage::new("queued").content(vec!["queued".into()]),
+                    cx,
+                )
+                .expect("queued echo");
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("activity-unconfirmed").is_none());
+        view.read_with(cx, |view, cx| {
+            assert!(view.message_queue.is_empty());
+            assert_eq!(view.thread.read(cx).activity_generation(), 0);
+            assert!(view.turn_fields.last_turn_duration.is_none());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_unconfirmed_stop_and_send_waits_for_confirmed_idle(cx: &mut TestAppContext) {
+        init_test(cx);
+        let connection = StubAgentConnection::new().with_receipt_submissions(true);
+        let (conversation, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        let view = active_thread(&conversation, cx);
+        let thread = view.read_with(cx, |view, _| view.thread.clone());
+        thread.update(cx, |thread, cx| thread.mark_activity_unconfirmed(cx));
+        let editor = message_editor(&conversation, cx);
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("after stop", window, cx)
+        });
+        let response = connection.defer_next_receipt_response();
+        view.update_in(cx, |view, window, cx| view.interrupt_and_send(window, cx));
+        cx.run_until_parked();
+        assert_eq!(connection.take_cancel_calls().len(), 1);
+        assert!(connection.take_receipt_prompt().is_none());
+        assert_eq!(
+            editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "after stop"
+        );
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::RequiresAction(acp_v2::RequiresActionStateUpdate::new()),
+                    cx,
+                )
+                .expect("late blocked snapshot");
+        });
+        cx.run_until_parked();
+        assert!(connection.take_receipt_prompt().is_none());
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new()),
+                    cx,
+                )
+                .expect("confirmed idle");
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            connection.take_receipt_prompt(),
+            Some(vec!["after stop".into()])
+        );
+        response
+            .send(Ok(acp_v2::PromptResponse::new("after-stop")))
+            .expect("receipt");
         cx.run_until_parked();
     }
 

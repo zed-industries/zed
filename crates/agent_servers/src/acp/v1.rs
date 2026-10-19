@@ -4964,7 +4964,7 @@ mod tests {
             thread.read_with(cx, |thread, _| {
                 assert!(thread.uses_reported_activity());
                 assert_eq!(thread.foreground_activity(), phase);
-                assert_eq!(thread.foreground_state(), &expected);
+                assert_eq!(thread.foreground_state(), Some(&expected));
                 assert!(thread.latest_submission_id().is_none());
                 assert!(!thread.has_unsettled_submissions());
                 assert!(thread.entries().is_empty());
