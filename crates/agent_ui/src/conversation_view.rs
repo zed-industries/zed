@@ -6132,7 +6132,7 @@ pub(crate) mod tests {
             .expect("notices received before mounting the view should render");
         let max_height = cx.update(|window, _| rems_from_px(192_f32).to_pixels(window.rem_size()));
         assert!(notices.size.height <= max_height);
-        cx.simulate_event(gpui::ScrollWheelEvent {
+        cx.simulate_event(gpui::ScrollEvent {
             position: notices.center(),
             delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(-10_000.))),
             modifiers: gpui::Modifiers::default(),

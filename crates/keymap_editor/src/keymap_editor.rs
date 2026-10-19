@@ -20,7 +20,7 @@ use gpui::{
     FocusHandle, Focusable, Global, IsZero,
     KeyBindingContextPredicate::{And, Descendant, Equal, Identifier, Not, NotEqual, Or},
     KeyContext, KeybindingKeystroke, MouseButton, PlatformKeyboardMapper, Point, ScrollStrategy,
-    ScrollWheelEvent, Stateful, StyledText, Subscription, Task, TextStyleRefinement, WeakEntity,
+    ScrollEvent, Stateful, StyledText, Subscription, Task, TextStyleRefinement, WeakEntity,
     actions, anchored, deferred, div,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
@@ -2373,7 +2373,7 @@ impl Render for KeymapEditor {
                         }),
                     ),
             )
-            .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _, cx| {
+            .on_scroll(cx.listener(|this, event: &ScrollEvent, _, cx| {
                 // This ensures that the menu is not dismissed in cases where scroll events
                 // with a delta of zero are emitted
                 if !event.delta.pixel_delta(px(1.)).y.is_zero() {

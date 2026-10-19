@@ -6,7 +6,7 @@ use feature_flags::{DiffReviewFeatureFlag, FeatureFlagAppExt as _};
 use gpui::{
     AnyElement, App, AvailableSpace, ClickEvent, Context, DispatchPhase, Element, MouseButton,
     MouseClickEvent, MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent,
-    ParentElement, Pixels, PressureStage, ScrollDelta, ScrollWheelEvent, Window, anchored,
+    ParentElement, Pixels, PressureStage, ScrollDelta, ScrollEvent, Window, anchored,
     deferred, point, px,
 };
 use multi_buffer::MultiBufferRow;
@@ -502,7 +502,7 @@ impl EditorElement {
                 .fast_scroll_sensitivity
                 .max(0.01);
 
-            move |event: &ScrollWheelEvent, phase, window, cx| {
+            move |event: &ScrollEvent, phase, window, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
                     delta = delta.coalesce(event.delta);
 
