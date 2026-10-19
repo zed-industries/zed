@@ -8696,7 +8696,6 @@ impl Editor {
                     project.restart_language_servers_for_buffers(
                         multi_buffer.all_buffers().into_iter().collect(),
                         HashSet::default(),
-                        true,
                         cx,
                     );
                 });
