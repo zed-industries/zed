@@ -840,6 +840,41 @@ mod tests {
     }
 
     #[test]
+    fn test_layout_line_breaks_ligatures_between_runs_of_one_font() {
+        let fonts = AppleTextSystem::new();
+        fonts
+            .add_fonts(vec![
+                include_bytes!("../../../assets/fonts/lilex/Lilex-Regular.ttf")
+                    .as_slice()
+                    .into(),
+            ])
+            .unwrap();
+        let font_id = fonts.font_id(&font("Lilex")).unwrap();
+        let glyphs = |text: &str, lens: &[usize]| -> Vec<GlyphId> {
+            let runs = lens
+                .iter()
+                .map(|&len| FontRun { font_id, len })
+                .collect::<Vec<_>>();
+            fonts
+                .layout_line(text, px(16.), &runs)
+                .runs
+                .iter()
+                .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.id))
+                .collect()
+        };
+        let gt = glyphs(">", &[1])[0];
+
+        assert_ne!(glyphs(">>>", &[3]), vec![gt; 3], ">>> as one run");
+        assert_eq!(glyphs(">>>", &[1, 1, 1]), vec![gt; 3]);
+        let mut split = glyphs(">>", &[2]);
+        split.push(gt);
+        assert_eq!(glyphs(">>>", &[2, 1]), split);
+        let mut split = vec![gt];
+        split.extend(glyphs(">>", &[2]));
+        assert_eq!(glyphs(">>>", &[1, 2]), split);
+    }
+
+    #[test]
     fn test_layout_line_bom_char() {
         let fonts = AppleTextSystem::new();
         let font_id = fonts.font_id(&font("Helvetica")).unwrap();
