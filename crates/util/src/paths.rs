@@ -1048,9 +1048,10 @@ pub enum SortOrder {
     /// Pure Unicode codepoint comparison. No case folding, no natural number sorting.
     /// Uppercase ASCII sorts before lowercase. Accented characters sort after ASCII.
     Unicode,
-    /// Files are grouped by their lowercased extension in ascending order, with
-    /// extensionless files and dotfiles first. Within a group, names use the same
-    /// natural sort as `Default`.
+    /// Files are grouped by their last extension (case-insensitive) in ascending order,
+    /// with extensionless files, including dotfiles such as `.gitignore`, first.
+    /// Dotfiles with a further suffix, such as `.config.json`, keep that extension.
+    /// Within a group, names use the same natural sort as `Default`.
     Extension,
 }
 
@@ -1969,6 +1970,9 @@ mod tests {
             (RelPath::from_unix_str("file2.rs").unwrap(), true),
             (RelPath::from_unix_str("Makefile").unwrap(), true),
             (RelPath::from_unix_str(".gitignore").unwrap(), true),
+            (RelPath::from_unix_str(".config.json").unwrap(), true),
+            (RelPath::from_unix_str(".env.local").unwrap(), true),
+            (RelPath::from_unix_str("a.css").unwrap(), true),
             (RelPath::from_unix_str("archive.tar.gz").unwrap(), true),
             (RelPath::from_unix_str("src").unwrap(), false),
         ];
@@ -1981,7 +1985,10 @@ mod tests {
                 (RelPath::from_unix_str("src").unwrap(), false),
                 (RelPath::from_unix_str(".gitignore").unwrap(), true),
                 (RelPath::from_unix_str("Makefile").unwrap(), true),
+                (RelPath::from_unix_str("a.css").unwrap(), true),
                 (RelPath::from_unix_str("archive.tar.gz").unwrap(), true),
+                (RelPath::from_unix_str(".config.json").unwrap(), true),
+                (RelPath::from_unix_str(".env.local").unwrap(), true),
                 (RelPath::from_unix_str("a.py").unwrap(), true),
                 (RelPath::from_unix_str("a.RS").unwrap(), true),
                 (RelPath::from_unix_str("b.rs").unwrap(), true),

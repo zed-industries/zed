@@ -181,8 +181,9 @@ The `project_panel.sort_order` setting controls name comparison:
 - `"lower"` — lowercase names grouped first, then uppercase.
 - `"unicode"` — raw Unicode codepoint order with no case folding.
 - `"extension"` — files grouped by extension (case-insensitive, last suffix
-  only), with extensionless files and dotfiles first. Files with the same
-  extension are sorted by name.
+  only), with extensionless files, including dotfiles such as `.gitignore`,
+  first. Dotfiles with a further suffix, such as `.config.json`, keep that
+  extension. Files with the same extension are sorted by name.
 
 ## Other Actions
 
