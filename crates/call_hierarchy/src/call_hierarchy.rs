@@ -25,7 +25,7 @@ use ui::{
     KeyBinding, ListItem, ListItemSpacing, prelude::*, tooltip_container, utils::buffer_text_style,
 };
 use util::{ResultExt, paths::PathExt};
-use workspace::{DismissDecision, ModalView, Workspace};
+use workspace::{DismissDecision, ModalView, OpenOptions, Workspace};
 pub use zed_actions::{ShowIncomingCalls, ShowOutgoingCalls, ToggleDirection};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -641,13 +641,14 @@ impl PickerDelegate for CallHierarchyDelegate {
                     workspace.active_pane().clone()
                 };
 
+                let options = OpenOptions::for_navigation(cx);
                 let editor = workspace.open_project_item::<Editor>(
                     Some(pane),
                     buffer,
                     true,
                     true,
-                    true,
-                    true,
+                    options.keep_old_preview,
+                    options.allow_preview,
                     window,
                     cx,
                 );
@@ -1242,6 +1243,7 @@ mod tests {
     use language::{FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageName};
     use project::{CallHierarchyItem, FakeFs};
     use serde_json::json;
+    use settings::SettingsStore;
     use std::sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -1605,6 +1607,28 @@ mod tests {
             assert_eq!(delegate.calls.len(), 1);
             assert_eq!(delegate.calls[0].item.name, "helper");
             assert_eq!(delegate.calls[0].site_count, 1);
+        });
+
+        cx.update(|_, cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let preview_tabs = settings.preview_tabs.get_or_insert_default();
+                    preview_tabs.enabled = Some(true);
+                    preview_tabs.enable_preview_file_from_code_navigation = Some(false);
+                });
+            });
+        });
+        let picker = modal.read_with(cx, |view, _| view.picker.clone());
+        picker.update_in(cx, |picker, window, cx| {
+            picker.delegate.confirm(true, window, cx);
+        });
+        cx.run_until_parked();
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert_eq!(workspace.panes().len(), 2);
+            let pane = workspace.active_pane().read(cx);
+            assert_eq!(pane.items_len(), 1);
+            assert_eq!(pane.preview_item_id(), None);
+            assert!(pane.has_focus(window, cx));
         });
     }
 
