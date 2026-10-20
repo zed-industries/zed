@@ -171,10 +171,15 @@ pub struct AcpV2Connection {
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
     pending_session_updates: Rc<RefCell<PendingSessionUpdates>>,
     session_owners: Rc<RefCell<HashMap<acp::SessionId, SessionOwner>>>,
-    _runtime: runtime::ClientRuntime,
+    runtime: Rc<RefCell<Option<ConnectionRuntime>>>,
+}
+
+struct ConnectionRuntime {
+    _client: runtime::ClientRuntime,
     _stderr_task: Shared<Task<()>>,
     _wait_task: Option<Task<()>>,
     _child: Option<transport::OwnedChild>,
+    _quit_subscription: Option<gpui::Subscription>,
 }
 
 impl AcpV2Connection {
@@ -193,6 +198,13 @@ impl AcpV2Connection {
             debug_log,
         } = transport::spawn_stdio(&project, command, cx)?;
         let mut child = transport::OwnedChild(child);
+        let status = child
+            .0
+            .status()
+            .map(|result| {
+                result.map_err(|error| anyhow!("failed to wait for agent server exit: {error}"))
+            })
+            .boxed_local();
         let stderr_task = cx
             .background_spawn(async move {
                 stderr.await.log_err();
@@ -216,21 +228,14 @@ impl AcpV2Connection {
                     Lines::new(outgoing, incoming),
                     info,
                     debug_log,
-                    stderr_task,
+                    Some((child, stderr_task)),
                     &mut cx,
                 )
                 .await
             }
         }
         .boxed_local();
-        let status = child
-            .0
-            .status()
-            .map(|result| {
-                result.map_err(|error| anyhow!("failed to wait for agent server exit: {error}"))
-            })
-            .boxed_local();
-        let (mut connection, status, stderr_task) =
+        let (connection, status, stderr_task) =
             runtime::race_startup(initialized, status, stderr_task, &debug_log, cx).await?;
         let drained = {
             let sdk_connection = connection.connection.clone();
@@ -240,7 +245,11 @@ impl AcpV2Connection {
                 stderr_task,
             )
         };
-        connection._wait_task = Some(runtime::watch_process(
+        let mut runtime = connection.runtime.borrow_mut();
+        let owned = runtime
+            .as_mut()
+            .context("Agent connection shut down during startup")?;
+        owned._wait_task = Some(runtime::watch_process(
             status,
             drained,
             debug_log,
@@ -249,7 +258,7 @@ impl AcpV2Connection {
             },
             cx,
         ));
-        connection._child = Some(child);
+        drop(runtime);
         Ok(connection)
     }
 
@@ -259,9 +268,13 @@ impl AcpV2Connection {
         transport: impl ConnectTo<Client> + 'static,
         info: acp::Implementation,
         debug_log: AcpDebugLog,
-        stderr_task: Shared<Task<()>>,
+        process: Option<(transport::OwnedChild, Shared<Task<()>>)>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
+        let (child, stderr_task) = match process {
+            Some((child, stderr)) => (Some(child), stderr),
+            None => (None, Task::ready(()).shared()),
+        };
         let request_elicitations = cx.new(|_| ElicitationStore::default());
         let sessions = Rc::new(RefCell::new(HashMap::default()));
         let pending_session_updates = Rc::new(RefCell::new(PendingSessionUpdates::default()));
@@ -291,6 +304,28 @@ impl AcpV2Connection {
                     .await
                 });
         runtime.start_io(runtime::finish_connection(connection_future, cleanup), cx);
+        let runtime = Rc::new(RefCell::new(Some(ConnectionRuntime {
+            _client: runtime,
+            _stderr_task: stderr_task,
+            _wait_task: None,
+            _child: child,
+            _quit_subscription: None,
+        })));
+        let quit = cx.update(|cx| {
+            cx.on_app_quit({
+                let runtime = Rc::downgrade(&runtime);
+                move |_| {
+                    if let Some(runtime) = runtime.upgrade() {
+                        let owned = runtime.borrow_mut().take();
+                        drop(owned);
+                    }
+                    async {}
+                }
+            })
+        });
+        if let Some(runtime) = runtime.borrow_mut().as_mut() {
+            runtime._quit_subscription = Some(quit);
+        }
         let connection = received
             .await
             .context("Failed to receive ACP v2 connection handle")?;
@@ -316,6 +351,10 @@ impl AcpV2Connection {
         if initialize_response.protocol_version != ProtocolVersion::V2 {
             return Err(UnsupportedVersion.into());
         }
+        anyhow::ensure!(
+            runtime.borrow().is_some(),
+            "Agent connection shut down during startup"
+        );
         Ok(Self {
             id,
             connection,
@@ -328,10 +367,7 @@ impl AcpV2Connection {
             sessions,
             pending_session_updates,
             session_owners: Rc::new(RefCell::new(HashMap::default())),
-            _runtime: runtime,
-            _stderr_task: stderr_task,
-            _wait_task: None,
-            _child: None,
+            runtime,
         })
     }
 
@@ -1037,6 +1073,11 @@ impl AcpV2Connection {
 }
 
 impl AgentConnection for AcpV2Connection {
+    fn shutdown(&self) {
+        let runtime = self.runtime.borrow_mut().take();
+        drop(runtime);
+    }
+
     fn agent_id(&self) -> AgentId {
         self.id.clone()
     }
@@ -1919,7 +1960,7 @@ mod tests {
                     client_transport,
                     acp::Implementation::new("test", "1"),
                     AcpDebugLog::default(),
-                    Task::ready(()).shared(),
+                    None,
                     &mut cx.to_async(),
                 ),
                 cx,
@@ -3438,7 +3479,14 @@ done
         cx: &mut TestAppContext,
     ) {
         use acp_thread::{SubmissionDisconnected, SubmissionResponse, SubmissionState};
-        for outcome in ["cancelled", "echoed", "unechoed", "dropped", "eof"] {
+        for outcome in [
+            "cancelled",
+            "echoed",
+            "unechoed",
+            "dropped",
+            "eof",
+            "shutdown",
+        ] {
             let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
             let thread = harness
                 .resumed_thread(
@@ -3501,9 +3549,14 @@ done
                 receipt
                     .respond(acp::PromptResponse::new("unobserved"))
                     .expect("unobserved receipt");
-            } else if outcome == "eof" {
-                drop(harness._agent_task);
-                drop(harness.agent);
+            } else if outcome == "eof" || outcome == "shutdown" {
+                if outcome == "shutdown" {
+                    harness.client.shutdown();
+                    harness.client.shutdown();
+                } else {
+                    drop(harness._agent_task);
+                    drop(harness.agent);
+                }
                 let error = bounded(sending, cx)
                     .await
                     .expect_err("receipt observes transport loss");
@@ -5610,7 +5663,7 @@ done
                     client_transport,
                     acp::Implementation::new("client-test", "1"),
                     AcpDebugLog::default(),
-                    Task::ready(()).shared(),
+                    None,
                     &mut cx.to_async(),
                 ),
                 cx,
@@ -6245,7 +6298,7 @@ done
                 client_transport,
                 acp::Implementation::new("client", "1"),
                 AcpDebugLog::default(),
-                Task::ready(()).shared(),
+                None,
                 &mut cx.to_async(),
             ),
             cx,
@@ -6326,7 +6379,7 @@ done
                 client_transport,
                 acp::Implementation::new("test", "1"),
                 AcpDebugLog::default(),
-                Task::ready(()).shared(),
+                None,
                 &mut cx.to_async(),
             ),
             cx,
@@ -6347,6 +6400,126 @@ done
         assert_eq!(task.args, ["--base", "auth", ""]);
         assert_eq!(task.env.get("BASE").map(String::as_str), Some("1"));
         assert_eq!(task.env.get("EXTRA").map(String::as_str), Some("2"));
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn v2_stdio_shutdown_terminates_a_retained_connection(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+            release_channel::init("0.0.0".parse().expect("version"), cx);
+        });
+        cx.executor().allow_parking();
+        let directory = tempfile::tempdir().expect("working directory");
+        let project = Project::example([directory.path()], &mut cx.to_async()).await;
+        for quitting in [false, true] {
+            let client = bounded(
+            AcpV2Connection::stdio(
+                AgentId::new("shutdown-test"),
+                project.clone(),
+                AgentServerCommand {
+                    path: "/bin/sh".into(),
+                    args: vec![
+                        "-c".into(),
+                        r#"
+while IFS= read -r request; do
+    id=${request#*\"id\":}
+    id=${id%%,*}
+    case "$request" in
+        *'"method":"initialize"'*)
+            printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":2,"info":{"name":"shutdown-agent","version":"1"}}}\n' "$id"
+            ;;
+    esac
+done
+exec sleep 60
+"#
+                        .into(),
+                    ],
+                    env: None,
+                },
+                WeakEntity::new_invalid(),
+                &mut cx.to_async(),
+            ),
+            cx,
+        )
+        .await
+        .expect("initialize stdio");
+            let status = client
+                .runtime
+                .borrow_mut()
+                .as_mut()
+                .expect("live runtime")
+                ._child
+                .as_mut()
+                .expect("owned process")
+                .0
+                .status();
+            let pending = cx.background_spawn(
+                client
+                    .connection
+                    .send_request(acp::LogoutAuthRequest::new())
+                    .block_task(),
+            );
+            cx.run_until_parked();
+            if quitting {
+                cx.update(|cx| cx.shutdown());
+            } else {
+                client.shutdown();
+            }
+            client.shutdown();
+            let status = bounded(status, cx)
+                .await
+                .expect("wait for terminated agent");
+            use std::os::unix::process::ExitStatusExt as _;
+            assert_eq!(status.signal(), Some(9));
+            assert!(
+                bounded(pending, cx).await.is_err(),
+                "shutdown settles pending RPCs"
+            );
+            assert!(client.runtime.borrow().is_none());
+        }
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn v2_shutdown_terminates_a_process_during_initialization(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let mut command = std::process::Command::new("/bin/sh");
+        command.args(["-c", "IFS= read -r request"]);
+        let child = util::process::Child::spawn(
+            command,
+            std::process::Stdio::piped(),
+            std::process::Stdio::null(),
+            std::process::Stdio::null(),
+        )
+        .expect("spawn waiting child");
+        let mut child = transport::OwnedChild(child);
+        let status = child.0.status();
+        let (transport, _peer) = agent_client_protocol::Channel::duplex();
+        let connecting = cx.spawn(async move |mut cx| {
+            AcpV2Connection::connect(
+                AgentId::new("pending-shutdown"),
+                WeakEntity::new_invalid(),
+                transport,
+                acp::Implementation::new("client", "1"),
+                AcpDebugLog::default(),
+                Some((child, Task::ready(()).shared())),
+                &mut cx,
+            )
+            .await
+        });
+        cx.run_until_parked();
+        cx.update(|cx| cx.shutdown());
+        let status = bounded(status, cx)
+            .await
+            .expect("process terminated during startup");
+        use std::os::unix::process::ExitStatusExt as _;
+        assert_eq!(status.signal(), Some(9));
+        assert!(
+            bounded(connecting, cx).await.is_err(),
+            "initialization failed on shutdown"
+        );
     }
 
     #[cfg(unix)]

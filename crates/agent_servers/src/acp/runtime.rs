@@ -53,7 +53,10 @@ impl ClientRuntime {
         future: impl Future<Output = RpcResult<()>> + Send + 'static,
         cx: &AsyncApp,
     ) {
+        let dispatch_tx = self.dispatch_tx.clone();
         self.io_task = Some(cx.background_spawn(async move {
+            // Retained API handles can keep senders alive after disconnect cleanup completes.
+            let _close_dispatch = util::defer(move || dispatch_tx.close_channel());
             future.await.log_err();
         }));
     }
@@ -208,6 +211,7 @@ mod tests {
             pending_session_updates: None,
         };
         let (mut runtime, shutdown) = ClientRuntime::new(context, &mut cx.to_async());
+        let retained_sender = runtime.sender();
         let (transport, peer) = agent_client_protocol::Channel::duplex();
         let (sender, received) = oneshot::channel();
         runtime.start_io(
@@ -254,6 +258,7 @@ mod tests {
         drop(store);
         cx.run_until_parked();
         assert!(weak_store.upgrade().is_none(), "foreground owner leaked");
+        drop(retained_sender);
     }
 
     #[test]
