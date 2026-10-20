@@ -77,7 +77,7 @@ use util::{
 };
 use workspace::{
     CloseActiveItem, CloseAllItems, CloseOtherItems, MultiWorkspace, NavigationEntry, OpenOptions,
-    Pane, SplitDirection, ToolbarItemLocation, ViewId, Workspace,
+    Pane, PreviewMode, SplitDirection, ToolbarItemLocation, ViewId, Workspace,
     item::{FollowEvent, FollowableItem, Item, ItemHandle, SaveOptions},
     register_project_item,
 };
@@ -34899,6 +34899,15 @@ async fn test_goto_definition_close_ranges_open_singleton(cx: &mut TestAppContex
 #[gpui::test]
 async fn test_goto_definition_far_ranges_open_multibuffer(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                let preview_tabs = settings.preview_tabs.get_or_insert_default();
+                preview_tabs.enabled = Some(true);
+                preview_tabs.enable_preview_multibuffer_from_code_navigation = Some(true);
+            });
+        });
+    });
     let mut cx = EditorLspTestContext::new_rust(
         lsp::ServerCapabilities {
             definition_provider: Some(lsp::OneOf::Left(true)),
@@ -34959,7 +34968,7 @@ async fn test_goto_definition_far_ranges_open_multibuffer(cx: &mut TestAppContex
     let editors = cx.update_workspace(|workspace, _, cx| {
         workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>()
     });
-    cx.update_editor(|_, _, test_editor_cx| {
+    let multibuffer_editor = cx.update_editor(|_, _, test_editor_cx| {
         assert_eq!(
             editors.len(),
             2,
@@ -34978,6 +34987,58 @@ async fn test_goto_definition_far_ranges_open_multibuffer(cx: &mut TestAppContex
             multibuffer_text.contains("target_b"),
             "Multibuffer should contain the second definition"
         );
+        multibuffer_editor
+    });
+    let source_buffer =
+        cx.update_editor(|editor, _, cx| editor.buffer().read(cx).as_singleton().unwrap());
+    cx.update_workspace(|workspace, window, cx| {
+        let source_pane = workspace.active_pane().clone();
+        let open_locations =
+            |workspace: &mut Workspace, split, window: &mut Window, cx: &mut Context<Workspace>| {
+                Editor::open_locations_in_multibuffer(
+                    workspace,
+                    std::collections::HashMap::from([(
+                        source_buffer.clone(),
+                        vec![
+                            Point::new(3, 3)..Point::new(3, 11),
+                            Point::new(19, 3)..Point::new(19, 11),
+                        ],
+                    )]),
+                    "Definitions for target_a, target_b".to_owned(),
+                    split,
+                    PreviewMode::CodeNavigationMultibuffer,
+                    MultibufferSelectionMode::First,
+                    window,
+                    cx,
+                )
+                .unwrap()
+            };
+        let (reused_editor, pane) = open_locations(workspace, false, window, cx);
+        assert_eq!(reused_editor, multibuffer_editor);
+        assert_eq!(pane, source_pane);
+        assert_eq!(
+            pane.read(cx).preview_item_id(),
+            Some(multibuffer_editor.entity_id())
+        );
+
+        source_buffer.update(cx, |buffer, cx| {
+            let end = buffer.len();
+            buffer.edit([(end..end, "\n")], None, cx);
+        });
+        assert!(!multibuffer_editor.read(cx).preserve_preview(cx));
+        let (reused_editor, split_pane) = open_locations(workspace, true, window, cx);
+        assert_eq!(reused_editor, multibuffer_editor);
+        assert_ne!(split_pane, source_pane);
+        assert_eq!(
+            split_pane
+                .read(cx)
+                .active_item()
+                .and_then(|item| item.downcast::<Editor>()),
+            Some(multibuffer_editor.clone())
+        );
+        assert_eq!(split_pane.read(cx).preview_item_id(), None);
+        assert_eq!(split_pane.read(cx).items_len(), 1);
+        assert!(!multibuffer_editor.read(cx).preserve_preview(cx));
     });
 }
 
@@ -35335,6 +35396,7 @@ async fn test_find_all_references_preserves_preview_tab(cx: &mut TestAppContext)
                 let preview_tabs = settings.preview_tabs.get_or_insert_default();
                 preview_tabs.enabled = Some(true);
                 preview_tabs.enable_preview_multibuffer_from_code_navigation = Some(true);
+                preview_tabs.enable_keep_preview_on_code_navigation = Some(true);
             });
         });
     });
@@ -35397,14 +35459,110 @@ async fn test_find_all_references_preserves_preview_tab(cx: &mut TestAppContext)
     );
     cx.executor().run_until_parked();
 
-    cx.update_workspace(|workspace, _window, cx| {
-        let active_pane = workspace.active_pane().read(cx);
-
+    let source_buffer = cx.update_editor(|editor, _, cx| {
+        assert!(editor.is_dirty(cx));
+        assert!(!editor.can_preview(cx));
+        editor.buffer().read(cx).as_singleton().unwrap()
+    });
+    cx.update_workspace(|workspace, window, cx| {
+        let active_pane = workspace.active_pane().clone();
+        let editor = active_pane
+            .read(cx)
+            .active_item()
+            .and_then(|item| item.downcast::<Editor>())
+            .unwrap();
         assert_eq!(
-            active_pane.preview_item_id(),
-            Some(active_pane.active_item().unwrap().item_id()),
+            active_pane.read(cx).preview_item_id(),
+            Some(editor.entity_id()),
             "The preview item id should be the same as the id of the multibuffer"
         );
+        assert!(editor.read(cx).is_dirty(cx));
+        assert!(editor.read(cx).can_preview(cx));
+        assert!(editor.read(cx).preserve_preview(cx));
+
+        source_buffer.update(cx, |buffer, cx| {
+            let end = buffer.len();
+            buffer.edit([(end..end, "\n")], None, cx);
+        });
+        workspace.open_item(
+            active_pane,
+            Box::new(editor.clone()),
+            ItemOpenOptions {
+                preview: PreviewMode::CodeNavigationMultibuffer,
+                ..ItemOpenOptions::default()
+            },
+            window,
+            cx,
+        );
+        assert!(!editor.read(cx).preserve_preview(cx));
+    });
+    cx.executor().run_until_parked();
+    let preview_id = cx.update_workspace(|workspace, window, cx| {
+        let pane = workspace.active_pane().clone();
+        assert_eq!(pane.read(cx).preview_item_id(), None);
+        assert_eq!(pane.read(cx).items_len(), 2);
+        let editor = pane
+            .read(cx)
+            .active_item()
+            .and_then(|item| item.downcast::<Editor>())
+            .unwrap();
+        assert!(editor.read(cx).is_dirty(cx));
+        assert!(editor.read(cx).can_preview(cx));
+
+        let replacement = editor.update(cx, |editor, cx| cx.new(|cx| editor.clone(window, cx)));
+        workspace.open_item(
+            pane.clone(),
+            Box::new(replacement.clone()),
+            ItemOpenOptions {
+                preview: PreviewMode::CodeNavigationMultibuffer,
+                replace_item: Some(editor.entity_id()),
+                ..ItemOpenOptions::default()
+            },
+            window,
+            cx,
+        );
+        assert_eq!(pane.read(cx).index_for_item(&editor), Some(1));
+        assert_eq!(pane.read(cx).items_len(), 3);
+        assert_eq!(
+            pane.read(cx).preview_item_id(),
+            Some(replacement.entity_id())
+        );
+
+        let next_preview =
+            replacement.update(cx, |editor, cx| cx.new(|cx| editor.clone(window, cx)));
+        source_buffer.update(cx, |buffer, cx| {
+            let end = buffer.len();
+            buffer.edit([(end..end, "\n")], None, cx);
+        });
+        assert!(!replacement.read(cx).preserve_preview(cx));
+        assert_eq!(
+            pane.read(cx).preview_item_id(),
+            Some(replacement.entity_id())
+        );
+        workspace.open_item(
+            pane.clone(),
+            Box::new(next_preview.clone()),
+            ItemOpenOptions {
+                preview: PreviewMode::CodeNavigationMultibuffer,
+                ..ItemOpenOptions::default()
+            },
+            window,
+            cx,
+        );
+        assert_eq!(pane.read(cx).index_for_item(&replacement), Some(2));
+        assert_eq!(pane.read(cx).items_len(), 4);
+        assert_eq!(
+            pane.read(cx).preview_item_id(),
+            Some(next_preview.entity_id())
+        );
+        assert!(replacement.read(cx).preserve_preview(cx));
+        next_preview.entity_id()
+    });
+    cx.executor().run_until_parked();
+    cx.update_workspace(|workspace, _, cx| {
+        let pane = workspace.active_pane().read(cx);
+        assert_eq!(pane.preview_item_id(), Some(preview_id));
+        assert_eq!(pane.items_len(), 4);
     });
 }
 
@@ -39858,7 +40016,15 @@ async fn test_reveal_if_open_uses_user_setting_for_loaded_editor(cx: &mut TestAp
     });
 
     let revealed_editor = workspace.update_in(cx, |workspace, window, cx| {
-        workspace.open_project_item(None, buffer.clone(), true, true, false, false, window, cx)
+        workspace.open_project_item(
+            None,
+            buffer.clone(),
+            true,
+            true,
+            PreviewMode::Disabled,
+            window,
+            cx,
+        )
     });
     assert_eq!(revealed_editor, original_editor);
     assert_eq!(left_pane.read_with(cx, |pane, _| pane.items_len()), 1);
@@ -39873,8 +40039,7 @@ async fn test_reveal_if_open_uses_user_setting_for_loaded_editor(cx: &mut TestAp
             buffer,
             true,
             true,
-            false,
-            false,
+            PreviewMode::Disabled,
             window,
             cx,
         )
@@ -49428,7 +49593,7 @@ async fn test_in_preview_key_context(cx: &mut TestAppContext) {
                 (worktree_id, rel_path("test.txt")),
                 None,
                 true,
-                true,
+                PreviewMode::Enabled,
                 true,
                 window,
                 cx,
@@ -49452,8 +49617,14 @@ async fn test_in_preview_key_context(cx: &mut TestAppContext) {
         );
     });
 
-    pane.update(cx, |pane, _cx| {
-        pane.unpreview_item_if_preview(editor.entity_id());
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.open_item(
+            pane.clone(),
+            Box::new(editor.clone()),
+            ItemOpenOptions::default(),
+            window,
+            cx,
+        );
     });
 
     editor.update_in(cx, |editor, window, cx| {

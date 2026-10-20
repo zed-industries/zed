@@ -25,7 +25,7 @@ use ui::{
     KeyBinding, ListItem, ListItemSpacing, prelude::*, tooltip_container, utils::buffer_text_style,
 };
 use util::{ResultExt, paths::PathExt};
-use workspace::{DismissDecision, ModalView, OpenOptions, Workspace};
+use workspace::{DismissDecision, ModalView, PreviewMode, Workspace};
 pub use zed_actions::{ShowIncomingCalls, ShowOutgoingCalls, ToggleDirection};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -641,14 +641,12 @@ impl PickerDelegate for CallHierarchyDelegate {
                     workspace.active_pane().clone()
                 };
 
-                let options = OpenOptions::for_navigation(cx);
                 let editor = workspace.open_project_item::<Editor>(
                     Some(pane),
                     buffer,
                     true,
                     true,
-                    options.keep_old_preview,
-                    options.allow_preview,
+                    PreviewMode::CodeNavigation,
                     window,
                     cx,
                 );

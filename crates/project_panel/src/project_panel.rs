@@ -73,8 +73,9 @@ use util::{
     rel_path::{RelPath, RelPathBuf},
 };
 use workspace::{
-    DraggedSelection, OpenInTerminal, OpenMode, OpenOptions, OpenVisible, PreviewTabsSettings,
-    SelectedEntry, SplitDirection, Workspace, WorkspaceSettings, copy_file_permalink,
+    DraggedSelection, OpenInTerminal, OpenMode, OpenOptions, OpenVisible, PreviewMode,
+    PreviewTabsSettings, SelectedEntry, SplitDirection, Workspace, WorkspaceSettings,
+    copy_file_permalink,
     dock::{DockPosition, Panel, PanelEvent},
     focus_follows_mouse::FocusFollowsMouse as _,
     notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
@@ -623,11 +624,11 @@ pub enum Event {
     OpenedEntry {
         entry_id: ProjectEntryId,
         focus_opened_item: bool,
-        allow_preview: bool,
+        preview: PreviewMode,
     },
     SplitEntry {
         entry_id: ProjectEntryId,
-        allow_preview: bool,
+        preview: PreviewMode,
         split_direction: Option<SplitDirection>,
     },
     Focus,
@@ -934,7 +935,7 @@ impl ProjectPanel {
                 &Event::OpenedEntry {
                     entry_id,
                     focus_opened_item,
-                    allow_preview,
+                    preview,
                 } => {
                     if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx)
                         && let Some(entry) = worktree.read(cx).entry_for_id(entry_id) {
@@ -951,7 +952,7 @@ impl ProjectPanel {
                                     },
                                     None,
                                     focus_opened_item,
-                                    allow_preview,
+                                    preview,
                                     true,
                                     window, cx,
                                 )
@@ -990,7 +991,7 @@ impl ProjectPanel {
                 }
                 &Event::SplitEntry {
                     entry_id,
-                    allow_preview,
+                    preview,
                     split_direction,
                 } => {
                     if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx)
@@ -1001,7 +1002,7 @@ impl ProjectPanel {
                                         worktree_id: worktree.read(cx).id(),
                                         path: entry.path.clone(),
                                     },
-                                    allow_preview,
+                                    preview,
                                     split_direction,
                                     window, cx,
                                 )
@@ -1958,11 +1959,11 @@ impl ProjectPanel {
     }
 
     fn open(&mut self, _: &Open, window: &mut Window, cx: &mut Context<Self>) {
-        let preview_tabs_enabled =
-            PreviewTabsSettings::get_global(cx).enable_preview_from_project_panel;
+        let focus_opened_item =
+            !PreviewTabsSettings::get_global(cx).enable_preview_from_project_panel;
         self.open_internal(
-            preview_tabs_enabled,
-            !preview_tabs_enabled,
+            PreviewMode::ProjectPanel,
+            focus_opened_item,
             None,
             window,
             cx,
@@ -1970,7 +1971,7 @@ impl ProjectPanel {
     }
 
     fn open_permanent(&mut self, _: &OpenPermanent, window: &mut Window, cx: &mut Context<Self>) {
-        self.open_internal(false, true, None, window, cx);
+        self.open_internal(PreviewMode::Disabled, true, None, window, cx);
     }
 
     fn open_split_vertical(
@@ -1979,7 +1980,13 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_internal(false, true, Some(SplitDirection::vertical(cx)), window, cx);
+        self.open_internal(
+            PreviewMode::Disabled,
+            true,
+            Some(SplitDirection::vertical(cx)),
+            window,
+            cx,
+        );
     }
 
     fn open_split_horizontal(
@@ -1989,7 +1996,7 @@ impl ProjectPanel {
         cx: &mut Context<Self>,
     ) {
         self.open_internal(
-            false,
+            PreviewMode::Disabled,
             true,
             Some(SplitDirection::horizontal(cx)),
             window,
@@ -2040,7 +2047,7 @@ impl ProjectPanel {
 
     fn open_internal(
         &mut self,
-        allow_preview: bool,
+        preview: PreviewMode,
         focus_opened_item: bool,
         split_direction: Option<SplitDirection>,
         window: &mut Window,
@@ -2049,9 +2056,9 @@ impl ProjectPanel {
         if let Some((_, entry)) = self.selected_entry(cx) {
             if entry.is_file() {
                 if split_direction.is_some() {
-                    self.split_entry(entry.id, allow_preview, split_direction, cx);
+                    self.split_entry(entry.id, preview, split_direction, cx);
                 } else {
-                    self.open_entry(entry.id, focus_opened_item, allow_preview, cx);
+                    self.open_entry(entry.id, focus_opened_item, preview, cx);
                 }
                 cx.notify();
             } else {
@@ -2290,7 +2297,12 @@ impl ProjectPanel {
                         if is_new_entry && !is_dir {
                             let settings = ProjectPanelSettings::get_global(cx);
                             if settings.auto_open.should_open_on_create() {
-                                project_panel.open_entry(new_entry.id, true, false, cx);
+                                project_panel.open_entry(
+                                    new_entry.id,
+                                    true,
+                                    PreviewMode::Disabled,
+                                    cx,
+                                );
                             }
                         }
                         cx.notify();
@@ -2417,28 +2429,28 @@ impl ProjectPanel {
         &mut self,
         entry_id: ProjectEntryId,
         focus_opened_item: bool,
-        allow_preview: bool,
+        preview: PreviewMode,
 
         cx: &mut Context<Self>,
     ) {
         cx.emit(Event::OpenedEntry {
             entry_id,
             focus_opened_item,
-            allow_preview,
+            preview,
         });
     }
 
     fn split_entry(
         &mut self,
         entry_id: ProjectEntryId,
-        allow_preview: bool,
+        preview: PreviewMode,
         split_direction: Option<SplitDirection>,
 
         cx: &mut Context<Self>,
     ) {
         cx.emit(Event::SplitEntry {
             entry_id,
-            allow_preview,
+            preview,
             split_direction,
         });
     }
@@ -3775,7 +3787,7 @@ impl ProjectPanel {
                                         project_panel.open_entry(
                                             entry.id,
                                             disambiguation_range.is_none(),
-                                            false,
+                                            PreviewMode::Disabled,
                                             cx,
                                         );
                                     }
@@ -5090,7 +5102,7 @@ impl ProjectPanel {
                     if open_file_after_drop && !opened_entries.is_empty() {
                         let settings = ProjectPanelSettings::get_global(cx);
                         if settings.auto_open.should_open_on_drop() {
-                            this.open_entry(opened_entries[0], true, false, cx);
+                            this.open_entry(opened_entries[0], true, PreviewMode::Disabled, cx);
                             did_open = true;
                         }
                     }
@@ -6515,7 +6527,7 @@ impl ProjectPanel {
                         }
                     } else if event.modifiers().secondary() {
                         if event.click_count() > 1 {
-                            project_panel.split_entry(entry_id, false, None, cx);
+                            project_panel.split_entry(entry_id, PreviewMode::Disabled, None, cx);
                         } else {
                             project_panel.selection = Some(selection);
                             if let Some(position) = project_panel
@@ -6560,12 +6572,14 @@ impl ProjectPanel {
                             project_panel.toggle_expanded(entry_id, window, cx);
                         }
                     } else {
-                        let preview_tabs_enabled =
-                            PreviewTabsSettings::get_global(cx).enable_preview_from_project_panel;
                         let click_count = event.click_count();
                         let focus_opened_item = click_count > 1;
-                        let allow_preview = preview_tabs_enabled && click_count == 1;
-                        project_panel.open_entry(entry_id, focus_opened_item, allow_preview, cx);
+                        let preview = if click_count == 1 {
+                            PreviewMode::ProjectPanel
+                        } else {
+                            PreviewMode::Disabled
+                        };
+                        project_panel.open_entry(entry_id, focus_opened_item, preview, cx);
                     }
                 }),
             )
@@ -6575,7 +6589,7 @@ impl ProjectPanel {
                         return;
                     }
 
-                    project_panel.open_entry(entry_id, true, false, cx);
+                    project_panel.open_entry(entry_id, true, PreviewMode::Disabled, cx);
                     cx.stop_propagation();
                 }),
             )

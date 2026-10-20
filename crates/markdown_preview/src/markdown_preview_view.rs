@@ -41,8 +41,7 @@ use util::{
     rel_path::RelPath,
 };
 use workspace::item::{
-    Item, ItemBufferKind, ItemHandle, PreviewTabsSettings, SaveOptions, SerializableItem,
-    TabContentParams,
+    Item, ItemBufferKind, ItemHandle, SaveOptions, SerializableItem, TabContentParams,
 };
 use workspace::notifications::{NotifyResultExt, NotifyTaskExt};
 use workspace::path_link::{PathMatching, resolve_open_target};
@@ -50,7 +49,7 @@ use workspace::searchable::{
     Direction, SearchEvent, SearchOptions, SearchToken, SearchableItem, SearchableItemHandle,
 };
 use workspace::{
-    ItemId, ItemNavHistory, OpenOptions, Pane, SaveIntent, Workspace, WorkspaceId,
+    ItemId, ItemNavHistory, ItemOpenOptions, Pane, PreviewMode, SaveIntent, Workspace, WorkspaceId,
     delete_unloaded_items,
 };
 use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
@@ -169,33 +168,31 @@ impl MarkdownPreviewView {
                     return;
                 };
                 let replaces_editor = !item.is_dirty(cx);
-                let replaces_temporary_editor =
-                    replaces_editor && pane.read(cx).is_active_preview_item(item.item_id());
-                let activate = workspace.active_pane() == &pane
+                let preview = if pane.read(cx).preview_item_id() == Some(item.item_id()) {
+                    PreviewMode::Enabled
+                } else {
+                    PreviewMode::Disabled
+                };
+                let activate_pane = workspace.active_pane() == &pane
                     && pane
                         .read(cx)
                         .active_item()
                         .is_some_and(|active_item| active_item.item_id() == item.item_id());
                 let focus = editor.focus_handle(cx).contains_focused(window, cx);
-                let preview = Self::activate_or_add_preview(
+                Self::activate_or_add_preview(
                     workspace,
                     editor,
-                    pane.clone(),
-                    activate,
-                    focus,
+                    pane,
+                    ItemOpenOptions {
+                        preview,
+                        activate_pane,
+                        focus,
+                        replace_item: replaces_editor.then_some(item.item_id()),
+                        ..ItemOpenOptions::default()
+                    },
                     window,
                     cx,
                 );
-                if !replaces_editor {
-                    return;
-                }
-                pane.update(cx, |pane, cx| {
-                    if replaces_temporary_editor {
-                        pane.replace_preview_item_id(preview.entity_id(), window, cx);
-                    } else {
-                        pane.remove_item(item.item_id(), false, false, window, cx);
-                    }
-                });
             },
         )
         .detach();
@@ -220,24 +217,21 @@ impl MarkdownPreviewView {
         workspace.register_action(move |workspace, _: &OpenFollowingPreview, window, cx| {
             if let Some(editor) = Self::resolve_active_item_as_markdown_editor(workspace, cx) {
                 // Check if there's already a following preview
-                let existing_follow_view_idx = {
-                    let active_pane = workspace.active_pane().read(cx);
-                    active_pane
-                        .items_of_type::<MarkdownPreviewView>()
-                        .find(|view| view.read(cx).mode == MarkdownPreviewMode::Follow)
-                        .and_then(|view| active_pane.index_for_item(&view))
-                };
-
-                if let Some(existing_follow_view_idx) = existing_follow_view_idx {
-                    workspace.active_pane().update(cx, |pane, cx| {
-                        pane.activate_item(existing_follow_view_idx, true, true, window, cx);
-                    });
-                } else {
-                    let view = Self::create_following_markdown_view(workspace, editor, window, cx);
-                    workspace.active_pane().update(cx, |pane, cx| {
-                        pane.add_item(Box::new(view.clone()), true, true, None, window, cx)
-                    });
-                }
+                let existing_follow_view = workspace
+                    .active_pane()
+                    .read(cx)
+                    .items_of_type::<MarkdownPreviewView>()
+                    .find(|view| view.read(cx).mode == MarkdownPreviewMode::Follow);
+                let view = existing_follow_view.unwrap_or_else(|| {
+                    Self::create_following_markdown_view(workspace, editor, window, cx)
+                });
+                workspace.open_item(
+                    workspace.active_pane().clone(),
+                    Box::new(view),
+                    ItemOpenOptions::default(),
+                    window,
+                    cx,
+                );
                 cx.notify();
             }
         });
@@ -250,7 +244,14 @@ impl MarkdownPreviewView {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        Self::activate_or_add_preview(workspace, editor, pane, true, true, window, cx);
+        Self::activate_or_add_preview(
+            workspace,
+            editor,
+            pane,
+            ItemOpenOptions::default(),
+            window,
+            cx,
+        );
     }
 
     pub fn open_preview_to_the_side_of_pane(
@@ -265,8 +266,11 @@ impl MarkdownPreviewView {
             workspace,
             editor.clone(),
             target_pane,
-            false,
-            false,
+            ItemOpenOptions {
+                activate_pane: false,
+                focus: false,
+                ..ItemOpenOptions::default()
+            },
             window,
             cx,
         );
@@ -277,36 +281,25 @@ impl MarkdownPreviewView {
         workspace: &mut Workspace,
         editor: Entity<Editor>,
         pane: Entity<Pane>,
-        activate: bool,
-        focus: bool,
+        options: ItemOpenOptions,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<MarkdownPreviewView> {
-        let existing_view =
-            Self::find_existing_independent_preview_item_idx(pane.read(cx), &editor, cx);
-        let view = if let Some((existing_view, existing_view_idx)) = existing_view {
-            pane.update(cx, |pane, cx| {
-                pane.activate_item(existing_view_idx, activate, focus, window, cx);
-            });
-            existing_view
-        } else {
-            let view = Self::create_markdown_view(workspace, editor, window, cx);
-            pane.update(cx, |pane, cx| {
-                pane.add_item(Box::new(view.clone()), activate, focus, None, window, cx)
-            });
-            view
-        };
+        let existing_view = Self::find_existing_independent_preview(pane.read(cx), &editor, cx);
+        let view = existing_view
+            .unwrap_or_else(|| Self::create_markdown_view(workspace, editor, window, cx));
+        workspace.open_item(pane, Box::new(view.clone()), options, window, cx);
         cx.notify();
         view
     }
 
-    fn find_existing_independent_preview_item_idx(
+    fn find_existing_independent_preview(
         pane: &Pane,
         editor: &Entity<Editor>,
         cx: &App,
-    ) -> Option<(Entity<MarkdownPreviewView>, usize)> {
+    ) -> Option<Entity<MarkdownPreviewView>> {
         let target_buffer = editor.read(cx).buffer().read(cx).as_singleton()?;
-        let view = pane.items_of_type::<MarkdownPreviewView>().find(|view| {
+        pane.items_of_type::<MarkdownPreviewView>().find(|view| {
             // Only look for independent (Default mode) previews, not Follow previews.
             // Match by buffer entity rather than editor entity so the lookup survives
             // workspace restoration, where the preview's bound editor may differ from
@@ -314,9 +307,7 @@ impl MarkdownPreviewView {
             // wrap the same source buffer.
             view.read(cx).mode == MarkdownPreviewMode::Default
                 && view.read(cx).is_previewing(&target_buffer, cx)
-        })?;
-        let index = pane.index_for_item(&view)?;
-        Some((view, index))
+        })
     }
 
     fn is_previewing(&self, buffer: &Entity<Buffer>, cx: &App) -> bool {
@@ -1454,9 +1445,6 @@ fn open_markdown_link_in_preview(
                 return;
             }
 
-            let options = OpenOptions::for_navigation(cx);
-            let allow_preview =
-                PreviewTabsSettings::get_global(cx).enabled && options.allow_preview;
             let existing_view = find_preview_for_buffer(workspace, &buffer, cx);
             let pane = existing_view
                 .as_ref()
@@ -1468,46 +1456,22 @@ fn open_markdown_link_in_preview(
                         .and_then(|view| workspace.pane_for(&view))
                 })
                 .unwrap_or_else(|| workspace.active_pane().clone());
-            pane.update(cx, |pane, _| {
-                if !options.keep_old_preview
-                    && let Some(old_item) = pane.active_item()
-                    && Some(old_item.item_id()) != existing_view.as_ref().map(Entity::entity_id)
-                {
-                    pane.unpreview_item_if_preview(old_item.item_id());
-                }
-            });
-
-            if let Some(existing_view) = existing_view {
-                workspace.activate_item(&existing_view, true, true, window, cx);
-                if !allow_preview {
-                    pane.update(cx, |pane, _| {
-                        pane.unpreview_item_if_preview(existing_view.entity_id());
-                    });
-                }
-                existing_view.update(cx, |view, cx| {
-                    view.navigate_to_link_target(link_target, window, cx);
+            let preview = existing_view.unwrap_or_else(|| {
+                let editor = cx.new(|cx| {
+                    Editor::for_buffer(buffer, Some(workspace.project().clone()), window, cx)
                 });
-                return;
-            }
-
-            let allow_preview = allow_preview && !buffer.read(cx).is_dirty();
-            let editor = cx.new(|cx| {
-                Editor::for_buffer(buffer, Some(workspace.project().clone()), window, cx)
+                MarkdownPreviewView::create_markdown_view(workspace, editor, window, cx)
             });
-            let preview = MarkdownPreviewView::create_markdown_view(workspace, editor, window, cx);
-            pane.update(cx, |pane, cx| {
-                let destination_index = allow_preview
-                    .then(|| pane.replace_preview_item_id(preview.entity_id(), window, cx))
-                    .flatten();
-                pane.add_item(
-                    Box::new(preview.clone()),
-                    true,
-                    true,
-                    destination_index,
-                    window,
-                    cx,
-                );
-            });
+            workspace.open_item(
+                pane,
+                Box::new(preview.clone()),
+                ItemOpenOptions {
+                    preview: PreviewMode::CodeNavigation,
+                    ..ItemOpenOptions::default()
+                },
+                window,
+                cx,
+            );
             preview.update(cx, |view, cx| {
                 view.navigate_to_link_target(link_target, window, cx);
             });
@@ -1669,6 +1633,12 @@ impl EventEmitter<SearchEvent> for MarkdownPreviewView {}
 
 impl Item for MarkdownPreviewView {
     type Event = MarkdownPreviewEvent;
+
+    fn can_preview(&self, cx: &App) -> bool {
+        self.active_editor
+            .as_ref()
+            .is_none_or(|state| !state.editor.read(cx).buffer().read(cx).is_dirty(cx))
+    }
 
     fn act_as_type<'a>(
         &'a self,
@@ -2413,7 +2383,7 @@ mod tests {
     use workspace::path_link::{OpenTarget, OpenTargetFoundBy};
     use workspace::{
         AppState, AutosaveSetting, ItemId, MultiWorkspace, OpenOptions, OpenVisible, Pane,
-        SaveIntent, Workspace, WorkspaceId, open_paths,
+        PreviewMode, SaveIntent, Workspace, WorkspaceId, open_paths,
     };
 
     use super::{
@@ -4614,7 +4584,7 @@ mod tests {
                             test_project_path(&project, path, cx),
                             None,
                             true,
-                            true,
+                            PreviewMode::Enabled,
                             true,
                             window,
                             cx,
@@ -4707,7 +4677,7 @@ mod tests {
                         test_project_path(&project, "background.md", cx),
                         Some(plain_pane.downgrade()),
                         false,
-                        false,
+                        PreviewMode::Disabled,
                         false,
                         window,
                         cx,

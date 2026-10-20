@@ -23,7 +23,7 @@ use ui::{
     ScrollAxes, StatefulInteractiveElement, Tooltip, WithScrollbar, prelude::*,
 };
 use util::paths::PathExt;
-use workspace::Workspace;
+use workspace::{PreviewMode, Workspace};
 use zed_actions::{ToggleEnableBreakpoint, UnsetBreakpoint};
 
 actions!(
@@ -138,7 +138,7 @@ impl BreakpointList {
         &mut self,
         path: Arc<Path>,
         row: u32,
-        allow_preview: bool,
+        preview: PreviewMode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -155,7 +155,7 @@ impl BreakpointList {
                             (worktree_id, relative_path),
                             None,
                             true,
-                            allow_preview,
+                            preview,
                             true,
                             window,
                             cx,
@@ -379,7 +379,7 @@ impl BreakpointList {
             BreakpointEntryKind::LineBreakpoint(line_breakpoint) => {
                 let path = line_breakpoint.breakpoint.path.clone();
                 let row = line_breakpoint.breakpoint.row;
-                self.go_to_line_breakpoint(path, row, false, window, cx);
+                self.go_to_line_breakpoint(path, row, PreviewMode::Disabled, window, cx);
             }
             BreakpointEntryKind::DataBreakpoint(_)
             | BreakpointEntryKind::ExceptionBreakpoint(_) => {}
@@ -925,7 +925,7 @@ impl LineBreakpoint {
                             breakpoint_list.go_to_line_breakpoint(
                                 path.clone(),
                                 row,
-                                event.click_count() == 1,
+                                PreviewMode::from(event.click_count() == 1),
                                 window,
                                 cx,
                             );

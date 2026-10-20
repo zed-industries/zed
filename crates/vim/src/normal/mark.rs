@@ -142,7 +142,7 @@ impl Vim {
                 OpenOptions {
                     visible: Some(workspace::OpenVisible::All),
                     focus: Some(true),
-                    ..OpenOptions::for_navigation(cx)
+                    ..OpenOptions::for_navigation()
                 },
                 window,
                 cx,

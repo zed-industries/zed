@@ -25,7 +25,7 @@ use theme_settings::ThemeSettings;
 use time::OffsetDateTime;
 use ui::{ContextMenu, CopyButton, Divider, prelude::*, tooltip_container};
 use util::paths::PathStyle;
-use workspace::{Workspace, item::PreviewTabsSettings, notifications::NotifyTaskExt as _};
+use workspace::{ItemOpenOptions, PreviewMode, Workspace, notifications::NotifyTaskExt as _};
 
 const GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED: usize = 20;
 const GIT_BLAME_GUTTER_MARGIN: Rems = rems(0.5);
@@ -710,17 +710,14 @@ fn open_buffer_blame_at_revision(
                         )
                     });
                     editor.update(cx, |editor, cx| editor.set_blame(git_blame, window, cx));
-                    let destination_index = if PreviewTabsSettings::get_global(cx).enabled {
-                        workspace.active_pane().update(cx, |pane, cx| {
-                            pane.replace_preview_item_id(editor.entity_id(), window, cx)
-                        })
-                    } else {
-                        None
-                    };
-                    workspace.add_item_to_active_pane(
+                    workspace.open_item(
+                        workspace.active_pane().clone(),
                         Box::new(editor),
-                        destination_index,
-                        true,
+                        ItemOpenOptions {
+                            preview: PreviewMode::Enabled,
+                            activate_pane: false,
+                            ..ItemOpenOptions::default()
+                        },
                         window,
                         cx,
                     );
@@ -740,7 +737,19 @@ fn activate_existing_blame_editor(
 ) -> bool {
     match existing_blame_editor(workspace, repository, path, revision, cx) {
         Some(existing) => {
-            workspace.activate_item(&existing, true, true, window, cx);
+            let Some(pane) = workspace.pane_for(&existing) else {
+                return false;
+            };
+            workspace.open_item(
+                pane,
+                Box::new(existing),
+                ItemOpenOptions {
+                    preview: PreviewMode::Enabled,
+                    ..ItemOpenOptions::default()
+                },
+                window,
+                cx,
+            );
             true
         }
         None => false,

@@ -55,6 +55,75 @@ use util::{
     serde::default_true, truncate_and_remove_front,
 };
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PreviewMode {
+    #[default]
+    Disabled,
+    Enabled,
+    ProjectPanel,
+    FileFinder,
+    FromMultibuffer,
+    CodeNavigation,
+    CodeNavigationMultibuffer,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ItemOpenOptions {
+    pub preview: PreviewMode,
+    pub activate_pane: bool,
+    pub focus: bool,
+    pub activate: bool,
+    pub destination_index: Option<usize>,
+    pub replace_item: Option<EntityId>,
+}
+
+impl From<bool> for PreviewMode {
+    fn from(allow_preview: bool) -> Self {
+        if allow_preview {
+            Self::Enabled
+        } else {
+            Self::Disabled
+        }
+    }
+}
+
+impl Default for ItemOpenOptions {
+    fn default() -> Self {
+        Self {
+            preview: PreviewMode::Disabled,
+            activate_pane: true,
+            focus: true,
+            activate: true,
+            destination_index: None,
+            replace_item: None,
+        }
+    }
+}
+
+impl PreviewMode {
+    fn resolve(self, cx: &App) -> (bool, bool) {
+        let settings = PreviewTabsSettings::get_global(cx);
+        let allow_preview = match self {
+            Self::Disabled => false,
+            Self::Enabled => true,
+            Self::ProjectPanel => settings.enable_preview_from_project_panel,
+            Self::FileFinder => settings.enable_preview_from_file_finder,
+            Self::FromMultibuffer => settings.enable_preview_from_multibuffer,
+            Self::CodeNavigation => settings.enable_preview_file_from_code_navigation,
+            Self::CodeNavigationMultibuffer => {
+                settings.enable_preview_multibuffer_from_code_navigation
+            }
+        };
+        let keep_old_preview = match self {
+            Self::FromMultibuffer | Self::CodeNavigation => {
+                settings.enable_keep_preview_on_code_navigation
+            }
+            _ => true,
+        };
+        (settings.enabled && allow_preview, keep_old_preview)
+    }
+}
+
 /// A selected entry in e.g. project panel.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SelectedEntry {
@@ -1068,20 +1137,109 @@ impl Pane {
         }
     }
 
-    pub(crate) fn open_item(
+    pub fn open_item(
+        &mut self,
+        item: Box<dyn ItemHandle>,
+        options: ItemOpenOptions,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let item_id = item.item_id();
+        let active_item_id = self.active_item().map(|item| item.item_id());
+        let (allow_preview, keep_old_preview) = options.preview.resolve(cx);
+        let allow_preview = allow_preview && item.can_preview(cx);
+        let existing_index = self.index_for_item_id(item_id);
+        let replacement = options.replace_item.and_then(|old_id| {
+            self.items.iter().enumerate().find_map(|(index, old_item)| {
+                (old_item.item_id() == old_id
+                    && old_id != item_id
+                    && !old_item.is_dirty(cx)
+                    && old_item.can_preview(cx))
+                .then_some((index, old_id))
+            })
+        });
+        let was_preview = self.preview_item_id == Some(item_id)
+            || (existing_index.is_none()
+                && replacement.is_some_and(|(_, old_id)| self.preview_item_id == Some(old_id)));
+
+        if options.activate
+            && !keep_old_preview
+            && let Some(old_item) = self.active_item()
+            && old_item.item_id() != item_id
+            && replacement.is_none_or(|(_, old_id)| old_id != old_item.item_id())
+        {
+            self.unpreview_item_if_preview(old_item.item_id());
+        }
+
+        let preview_was_active = self.preview_item_idx() == Some(self.active_item_index);
+        if let Some((_, old_id)) = replacement {
+            self.remove_item(old_id, false, false, window, cx);
+        }
+
+        if let Some(index) = self.index_for_item_id(item_id) {
+            if !allow_preview {
+                self.unpreview_item_if_preview(item_id);
+            }
+            if options.activate {
+                self.activate_item(index, options.activate_pane, options.focus, window, cx);
+            }
+            return;
+        }
+
+        let allow_preview = allow_preview && (replacement.is_none() || was_preview);
+        let destination_index = options
+            .destination_index
+            .or_else(|| replacement.map(|(index, _)| index));
+        let destination_index = if allow_preview {
+            if let Some(old_preview) = self.preview_item()
+                && (!old_preview.can_preview(cx)
+                    || (old_preview.is_dirty(cx) && !old_preview.preserve_preview(cx)))
+            {
+                self.unpreview_item_if_preview(old_preview.item_id());
+            }
+            let destination_index = self
+                .close_current_preview_item(window, cx)
+                .or(destination_index);
+            item.on_preview(cx);
+            destination_index
+        } else {
+            destination_index
+        };
+
+        if allow_preview && preview_was_active {
+            self.set_preview_item_id(Some(item_id), cx);
+        }
+        if let Some(text) = item.telemetry_event_text(cx) {
+            telemetry::event!(text);
+        }
+        self.add_item_inner(
+            item,
+            options.activate_pane,
+            options.focus,
+            options.activate,
+            destination_index,
+            window,
+            cx,
+        );
+        if !options.activate
+            && let Some(index) = active_item_id.and_then(|id| self.index_for_item_id(id))
+        {
+            self.active_item_index = index;
+        }
+        if allow_preview && !preview_was_active {
+            self.set_preview_item_id(Some(item_id), cx);
+        }
+    }
+
+    pub(crate) fn open_project_path(
         &mut self,
         project_entry_id: Option<ProjectEntryId>,
         project_path: ProjectPath,
-        focus_item: bool,
-        keep_old_preview: bool,
-        allow_preview: bool,
-        activate: bool,
-        suggested_position: Option<usize>,
+        options: ItemOpenOptions,
         window: &mut Window,
         cx: &mut Context<Self>,
         build_item: WorkspaceItemBuilder,
     ) -> Box<dyn ItemHandle> {
-        let allow_preview = allow_preview && PreviewTabsSettings::get_global(cx).enabled;
         let mut existing_item = None;
         if let Some(project_entry_id) = project_entry_id {
             for (index, item) in self.items.iter().enumerate() {
@@ -1105,74 +1263,19 @@ impl Pane {
             }
         }
 
-        if activate
-            && !keep_old_preview
-            && let Some(old_item) = self.active_item()
-            && existing_item
-                .as_ref()
-                .is_none_or(|(_, item)| item.item_id() != old_item.item_id())
-        {
-            self.unpreview_item_if_preview(old_item.item_id());
-        }
-
-        let preview_was_active = self.preview_item_idx() == Some(self.active_item_index);
-
-        let set_up_existing_item =
-            |index: usize, pane: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
-                if let Some(item) = pane.items.get(index)
-                    && (!allow_preview || item.is_dirty(cx))
-                {
-                    pane.unpreview_item_if_preview(item.item_id());
-                }
-                if activate {
-                    pane.activate_item(index, focus_item, focus_item, window, cx);
-                }
-            };
-        let set_up_new_item = |new_item: Box<dyn ItemHandle>,
-                               destination_index: Option<usize>,
-                               allow_preview: bool,
-                               pane: &mut Self,
-                               window: &mut Window,
-                               cx: &mut Context<Self>| {
-            let new_item_id = new_item.item_id();
-
-            if allow_preview && preview_was_active {
-                pane.set_preview_item_id(Some(new_item_id), cx);
-            }
-
-            if let Some(text) = new_item.telemetry_event_text(cx) {
-                telemetry::event!(text);
-            }
-
-            pane.add_item_inner(
-                new_item,
-                true,
-                focus_item,
-                activate,
-                destination_index,
+        if let Some((_, existing_item)) = existing_item {
+            self.open_item(
+                existing_item.clone(),
+                ItemOpenOptions {
+                    activate_pane: options.focus,
+                    ..options
+                },
                 window,
                 cx,
             );
-
-            if allow_preview && !preview_was_active {
-                pane.set_preview_item_id(Some(new_item_id), cx);
-            }
-        };
-
-        if let Some((index, existing_item)) = existing_item {
-            set_up_existing_item(index, self, window, cx);
             existing_item
         } else {
             let new_item = build_item(self, window, cx);
-            let allow_preview = allow_preview && !new_item.is_dirty(cx);
-
-            // If the item is being opened as preview and we have an existing preview tab,
-            // open the new item in the position of the existing preview tab.
-            let destination_index = if allow_preview {
-                self.close_current_preview_item(window, cx)
-            } else {
-                suggested_position
-            };
 
             // A special case that won't ever get a `project_entry_id` but has to be deduplicated nonetheless.
             if let Some(invalid_buffer_view) = new_item.downcast::<InvalidItemView>() {
@@ -1191,41 +1294,25 @@ impl Pane {
                     }
                 }
 
-                let resulting_item = match already_open_view {
-                    Some(already_open_view) => {
-                        if let Some(index) = self.index_for_item_id(already_open_view.item_id()) {
-                            set_up_existing_item(index, self, window, cx);
-                        }
-                        Box::new(already_open_view) as Box<_>
+                let options = if already_open_view.is_some() {
+                    ItemOpenOptions {
+                        activate_pane: options.focus,
+                        ..options
                     }
-                    None => {
-                        set_up_new_item(
-                            new_item.clone(),
-                            destination_index,
-                            allow_preview,
-                            self,
-                            window,
-                            cx,
-                        );
-                        new_item
-                    }
+                } else {
+                    options
                 };
-
+                let resulting_item = already_open_view
+                    .map(|view| Box::new(view) as Box<dyn ItemHandle>)
+                    .unwrap_or(new_item);
+                self.open_item(resulting_item.clone(), options, window, cx);
                 self.close_items(window, cx, SaveIntent::Skip, &|existing_item| {
                     views_to_close.contains(&existing_item)
                 })
                 .detach();
-
                 resulting_item
             } else {
-                set_up_new_item(
-                    new_item.clone(),
-                    destination_index,
-                    allow_preview,
-                    self,
-                    window,
-                    cx,
-                );
+                self.open_item(new_item.clone(), options, window, cx);
                 new_item
             }
         }
@@ -4104,14 +4191,13 @@ impl Pane {
                                             );
                                         }
                                         let new_item_handle = to_pane.update(cx, |pane, cx| {
-                                            pane.open_item(
+                                            pane.open_project_path(
                                                 project_entry_id,
                                                 project_path,
-                                                true,
-                                                true,
-                                                false,
-                                                true,
-                                                target,
+                                                ItemOpenOptions {
+                                                    destination_index: target,
+                                                    ..ItemOpenOptions::default()
+                                                },
                                                 window,
                                                 cx,
                                                 build_item,
@@ -9082,6 +9168,141 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_open_item_resolves_preview_sources(cx: &mut TestAppContext) {
+        init_test(cx);
+        for (preview, enabled_setting) in [
+            (PreviewMode::ProjectPanel, 0),
+            (PreviewMode::FileFinder, 1),
+            (PreviewMode::FromMultibuffer, 2),
+            (PreviewMode::CodeNavigation, 3),
+            (PreviewMode::CodeNavigationMultibuffer, 4),
+        ] {
+            for enabled in [true, false] {
+                let options = ItemOpenOptions {
+                    preview,
+                    ..ItemOpenOptions::default()
+                };
+                let project = Project::test(FakeFs::new(cx.executor()), None, cx).await;
+                cx.update_global(|store: &mut SettingsStore, cx| {
+                    store.update_user_settings(cx, |settings| {
+                        let settings = settings.preview_tabs.get_or_insert_default();
+                        settings.enabled = Some(true);
+                        settings.enable_preview_from_project_panel =
+                            Some(enabled == (enabled_setting == 0));
+                        settings.enable_preview_from_file_finder =
+                            Some(enabled == (enabled_setting == 1));
+                        settings.enable_preview_from_multibuffer =
+                            Some(enabled == (enabled_setting == 2));
+                        settings.enable_preview_file_from_code_navigation =
+                            Some(enabled == (enabled_setting == 3));
+                        settings.enable_preview_multibuffer_from_code_navigation =
+                            Some(enabled == (enabled_setting == 4));
+                        settings.enable_keep_preview_on_code_navigation = Some(true);
+                    });
+                });
+                let (workspace, cx) =
+                    cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+                let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+                pane.update_in(cx, |pane, window, cx| {
+                    let first = cx.new(TestItem::new);
+                    let second = cx.new(TestItem::new);
+                    pane.open_item(Box::new(first.clone()), options, window, cx);
+                    pane.open_item(Box::new(second.clone()), options, window, cx);
+                    let expected = if enabled {
+                        vec![second.entity_id()]
+                    } else {
+                        vec![first.entity_id(), second.entity_id()]
+                    };
+                    assert_eq!(
+                        pane.items().map(|item| item.item_id()).collect::<Vec<_>>(),
+                        expected
+                    );
+                    assert_eq!(
+                        pane.preview_item_id(),
+                        enabled.then_some(second.entity_id())
+                    );
+                    cx.update_global(|store: &mut SettingsStore, cx| {
+                        store.update_user_settings(cx, |settings| {
+                            settings
+                                .preview_tabs
+                                .get_or_insert_default()
+                                .enable_keep_preview_on_code_navigation = Some(false);
+                        });
+                    });
+                    let third = cx.new(TestItem::new);
+                    pane.open_item(Box::new(third.clone()), options, window, cx);
+                    let expected = match (enabled, preview) {
+                        (false, _) => {
+                            vec![first.entity_id(), second.entity_id(), third.entity_id()]
+                        }
+                        (true, PreviewMode::CodeNavigation | PreviewMode::FromMultibuffer) => {
+                            vec![second.entity_id(), third.entity_id()]
+                        }
+                        (true, _) => vec![third.entity_id()],
+                    };
+                    assert_eq!(
+                        pane.items().map(|item| item.item_id()).collect::<Vec<_>>(),
+                        expected
+                    );
+                    assert_eq!(pane.preview_item_id(), enabled.then_some(third.entity_id()));
+                });
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_open_item_replaces_without_activating(cx: &mut TestAppContext) {
+        init_test(cx);
+        for (source_index, reuse_target) in [(0, false), (2, false), (0, true), (2, true)] {
+            let project = Project::test(FakeFs::new(cx.executor()), None, cx).await;
+            let (workspace, cx) =
+                cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+            let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+            pane.update_in(cx, |pane, window, cx| {
+                let items = (0..3).map(|_| cx.new(TestItem::new)).collect::<Vec<_>>();
+                for item in &items {
+                    pane.open_item(
+                        Box::new(item.clone()),
+                        ItemOpenOptions::default(),
+                        window,
+                        cx,
+                    );
+                }
+                let active = &items[1];
+                let source = &items[source_index];
+                let target = if reuse_target {
+                    items[2 - source_index].clone()
+                } else {
+                    cx.new(TestItem::new)
+                };
+                pane.activate_item(1, true, true, window, cx);
+                pane.set_preview_item_id(Some(source.entity_id()), cx);
+                pane.open_item(
+                    Box::new(target.clone()),
+                    ItemOpenOptions {
+                        preview: PreviewMode::Enabled,
+                        activate: false,
+                        activate_pane: false,
+                        focus: false,
+                        replace_item: Some(source.entity_id()),
+                        ..ItemOpenOptions::default()
+                    },
+                    window,
+                    cx,
+                );
+                assert_eq!(pane.items_len(), if reuse_target { 2 } else { 3 });
+                assert_eq!(pane.active_item().unwrap().item_id(), active.entity_id());
+                assert!(active.focus_handle(cx).is_focused(window));
+                assert_eq!(pane.index_for_item(source), None);
+                assert_eq!(
+                    pane.preview_item_id(),
+                    (!reuse_target).then_some(target.entity_id())
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
     async fn test_open_item_keeps_dirty_items_permanent(cx: &mut TestAppContext) {
         init_test(cx);
         for keep_old_preview in [true, false] {
@@ -9102,16 +9323,23 @@ mod tests {
                                  keep_old_preview,
                                  window: &mut Window,
                                  cx: &mut Context<Pane>| {
+                    cx.update_global(|store: &mut SettingsStore, cx| {
+                        store.update_user_settings(cx, |settings| {
+                            settings
+                                .preview_tabs
+                                .get_or_insert_default()
+                                .enable_keep_preview_on_code_navigation = Some(keep_old_preview);
+                        });
+                    });
                     let item = project_item.read(cx);
                     let is_dirty = item.is_dirty;
-                    pane.open_item(
+                    pane.open_project_path(
                         item.entry_id,
                         item.project_path.clone().unwrap(),
-                        true,
-                        keep_old_preview,
-                        true,
-                        true,
-                        None,
+                        ItemOpenOptions {
+                            preview: PreviewMode::CodeNavigation,
+                            ..ItemOpenOptions::default()
+                        },
                         window,
                         cx,
                         Box::new(move |_, _, cx| {
@@ -9160,13 +9388,13 @@ mod tests {
                 assert_eq!(pane.items_len(), if keep_old_preview { 2 } else { 3 });
 
                 pane.set_preview_item_id(Some(clean_item.item_id()), cx);
-                assert!(OpenOptions::for_navigation(cx).allow_preview);
+                let options = OpenOptions::for_navigation();
                 cx.update_global(|store: &mut SettingsStore, cx| {
                     store.update_user_settings(cx, |settings| {
                         settings.preview_tabs.get_or_insert_default().enabled = Some(false);
                     });
                 });
-                assert!(!OpenOptions::for_navigation(cx).allow_preview);
+                assert_eq!(options.preview, PreviewMode::CodeNavigation);
                 assert_eq!(pane.preview_item_id(), Some(clean_item.item_id()));
                 let next_project_item = TestProjectItem::new(3, "next.txt", cx);
                 let next_item = open_item(pane, next_project_item, true, window, cx);
@@ -9698,7 +9926,7 @@ mod tests {
                                     },
                                     None,
                                     true,
-                                    allow_preview,
+                                    PreviewMode::from(allow_preview),
                                     true,
                                     window,
                                     cx,

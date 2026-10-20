@@ -270,10 +270,11 @@ use ui::{
 use ui_input::ErasedEditor;
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
 use workspace::{
-    CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, NavigationEntry, OpenInTerminal,
-    OpenTerminal, Pane, RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME, SplitDirection,
-    TabBarSettings, Toast, ViewId, Workspace, WorkspaceId, WorkspaceSettings,
-    item::{ItemBufferKind, ItemHandle, PreviewTabsSettings, SaveOptions},
+    CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, ItemOpenOptions,
+    NavigationEntry, OpenInTerminal, OpenTerminal, Pane, PreviewMode, RestoreOnStartupBehavior,
+    SERIALIZATION_THROTTLE_TIME, SplitDirection, TabBarSettings, Toast, ViewId, Workspace,
+    WorkspaceId, WorkspaceSettings,
+    item::{ItemBufferKind, ItemHandle, SaveOptions},
     notifications::{DetachAndPromptErr, NotificationId, NotifyResultExt, NotifyTaskExt},
     searchable::{SearchEvent, SelectSearchOptions},
 };
@@ -9272,7 +9273,7 @@ impl Editor {
                     locations,
                     format!("Selections for '{title}'"),
                     false,
-                    false,
+                    PreviewMode::Disabled,
                     MultibufferSelectionMode::All,
                     window,
                     cx,
@@ -10701,40 +10702,32 @@ impl Editor {
                                 // Handle file-less buffers separately: those are not really the project items, so won't have a project path or entity id,
                                 // so `workspace.open_project_item` will never find them, always opening a new editor.
                                 // Instead, we try to activate the existing editor in the pane first.
-                                let (editor, pane_item_index, pane_item_id) =
-                                    pane.read(cx).items().enumerate().find_map(|(i, item)| {
-                                        let editor = item.downcast::<Editor>()?;
-                                        let singleton_buffer =
-                                            editor.read(cx).buffer().read(cx).as_singleton()?;
-                                        if singleton_buffer == buffer {
-                                            Some((editor, i, item.item_id()))
-                                        } else {
-                                            None
-                                        }
-                                    })?;
-                                pane.update(cx, |pane, cx| {
-                                    pane.activate_item(pane_item_index, true, true, window, cx);
-                                    if !PreviewTabsSettings::get_global(cx)
-                                        .enable_preview_from_multibuffer
-                                    {
-                                        pane.unpreview_item_if_preview(pane_item_id);
-                                    }
-                                });
+                                let editor = pane.read(cx).items().find_map(|item| {
+                                    let editor = item.downcast::<Editor>()?;
+                                    let singleton_buffer =
+                                        editor.read(cx).buffer().read(cx).as_singleton()?;
+                                    (singleton_buffer == buffer).then_some(editor)
+                                })?;
+                                workspace.open_item(
+                                    pane.clone(),
+                                    Box::new(editor.clone()),
+                                    ItemOpenOptions {
+                                        preview: PreviewMode::FromMultibuffer,
+                                        ..ItemOpenOptions::default()
+                                    },
+                                    window,
+                                    cx,
+                                );
                                 Some(editor)
                             })
                             .flatten()
                             .unwrap_or_else(|| {
-                                let keep_old_preview = PreviewTabsSettings::get_global(cx)
-                                    .enable_keep_preview_on_code_navigation;
-                                let allow_new_preview = PreviewTabsSettings::get_global(cx)
-                                    .enable_preview_from_multibuffer;
                                 workspace.open_project_item::<Self>(
                                     split.then_some(pane.clone()),
                                     buffer,
                                     true,
                                     true,
-                                    keep_old_preview,
-                                    allow_new_preview,
+                                    PreviewMode::FromMultibuffer,
                                     window,
                                     cx,
                                 )

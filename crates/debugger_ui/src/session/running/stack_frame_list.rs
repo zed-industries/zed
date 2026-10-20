@@ -18,7 +18,7 @@ use project::debugger::breakpoint_store::ActiveStackFrame;
 use project::debugger::session::{Session, SessionEvent, StackFrame, ThreadStatus};
 use project::{ProjectItem, ProjectPath};
 use ui::{Tooltip, WithScrollbar, prelude::*};
-use workspace::{Workspace, WorkspaceId};
+use workspace::{PreviewMode, Workspace, WorkspaceId};
 
 use super::RunningState;
 
@@ -471,7 +471,7 @@ impl StackFrameList {
                             project_path,
                             debug_pane,
                             true,
-                            true,
+                            PreviewMode::Enabled,
                             open_preview,
                             window,
                             cx,

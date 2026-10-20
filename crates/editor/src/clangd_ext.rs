@@ -99,7 +99,7 @@ pub fn switch_source_header(
                     path,
                     OpenOptions {
                         visible: Some(OpenVisible::None),
-                        ..OpenOptions::for_navigation(cx)
+                        ..OpenOptions::for_navigation()
                     },
                     window,
                     cx,

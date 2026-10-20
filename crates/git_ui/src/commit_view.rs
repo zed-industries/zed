@@ -38,11 +38,11 @@ use std::{
 use theme::ActiveTheme;
 use ui::{ContextMenu, DiffStat, Disclosure, Divider, Tooltip, WithScrollbar, prelude::*};
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath, truncate_and_trailoff};
-use workspace::item::{PreviewTabsSettings, TabTooltipContent};
+use workspace::item::TabTooltipContent;
 use workspace::{
-    Item, ItemHandle, ItemNavHistory, OpenOptions, ToolbarItemEvent, ToolbarItemLocation,
-    ToolbarItemView, Workspace, item::ItemEvent, notifications::NotifyTaskExt, pane::SaveIntent,
-    searchable::SearchableItemHandle,
+    Item, ItemHandle, ItemNavHistory, ItemOpenOptions, OpenOptions, PreviewMode, ToolbarItemEvent,
+    ToolbarItemLocation, ToolbarItemView, Workspace, item::ItemEvent, notifications::NotifyTaskExt,
+    pane::SaveIntent, searchable::SearchableItemHandle,
 };
 
 use crate::commit_tooltip::CommitAvatar;
@@ -196,7 +196,7 @@ impl CommitView {
             workspace,
             stash,
             file_filter,
-            allow_preview,
+            PreviewMode::from(allow_preview),
             false,
             window,
             cx,
@@ -209,7 +209,7 @@ impl CommitView {
         workspace: WeakEntity<Workspace>,
         stash: Option<usize>,
         file_filter: Option<RepoPath>,
-        allow_preview: bool,
+        preview: PreviewMode,
         ignore_shallow_boundary: bool,
         window: &mut Window,
         cx: &mut App,
@@ -259,35 +259,21 @@ impl CommitView {
                         });
 
                         let pane = workspace.active_pane();
-                        pane.update(cx, |pane, cx| {
-                            let allow_preview =
-                                allow_preview && PreviewTabsSettings::get_global(cx).enabled;
-                            let existing = pane.items().enumerate().find_map(|(index, item)| {
-                                let view = item.downcast::<CommitView>()?;
-                                (view.read(cx).commit.sha == commit_sha)
-                                    .then_some((index, item.item_id()))
-                            });
-                            let destination_index = if let Some((index, item_id)) = existing {
-                                let was_preview = pane.preview_item_id() == Some(item_id);
-                                pane.remove_item(item_id, false, false, window, cx);
-                                if allow_preview && was_preview {
-                                    pane.replace_preview_item_id(commit_view.item_id(), window, cx);
-                                }
-                                Some(index)
-                            } else if allow_preview {
-                                pane.replace_preview_item_id(commit_view.item_id(), window, cx)
-                            } else {
-                                None
-                            };
-                            pane.add_item(
-                                Box::new(commit_view),
-                                true,
-                                true,
-                                destination_index,
-                                window,
-                                cx,
-                            );
-                        })
+                        let replace_item = pane.read(cx).items().find_map(|item| {
+                            let view = item.downcast::<CommitView>()?;
+                            (view.read(cx).commit.sha == commit_sha).then_some(item.item_id())
+                        });
+                        workspace.open_item(
+                            pane.clone(),
+                            Box::new(commit_view),
+                            ItemOpenOptions {
+                                preview,
+                                replace_item,
+                                ..ItemOpenOptions::default()
+                            },
+                            window,
+                            cx,
+                        );
                     })
                     .log_err()
             })
@@ -610,7 +596,7 @@ impl CommitView {
                                                     workspace,
                                                     stash,
                                                     file_filter,
-                                                    allow_preview,
+                                                    PreviewMode::from(allow_preview),
                                                     false,
                                                     window,
                                                     cx,
@@ -647,7 +633,7 @@ impl CommitView {
                                     workspace.clone(),
                                     stash,
                                     file_filter.clone(),
-                                    allow_preview,
+                                    PreviewMode::from(allow_preview),
                                     true,
                                     window,
                                     cx,
@@ -703,9 +689,8 @@ impl CommitView {
                         None,
                         OpenOptions {
                             focus: Some(false),
-                            allow_preview: PreviewTabsSettings::get_global(cx)
-                                .enable_preview_from_multibuffer,
-                            ..OpenOptions::for_navigation(cx)
+                            preview: PreviewMode::FromMultibuffer,
+                            ..OpenOptions::default()
                         },
                         true,
                         window,
@@ -1751,10 +1736,10 @@ mod tests {
             )
         });
         let focus_handle = workspace.update_in(cx, |workspace, window, cx| {
-            workspace.add_item_to_active_pane(
+            workspace.open_item(
+                workspace.active_pane().clone(),
                 Box::new(commit_view.clone()),
-                None,
-                true,
+                ItemOpenOptions::default(),
                 window,
                 cx,
             );
@@ -1822,8 +1807,19 @@ mod tests {
                 });
             });
             workspace.active_pane().update(cx, |pane, cx| {
-                pane.activate_item(0, false, false, window, cx);
-                pane.replace_preview_item_id(commit_view.entity_id(), window, cx);
+                pane.remove_item(commit_view.entity_id(), false, false, window, cx);
+                pane.open_item(
+                    Box::new(commit_view.clone()),
+                    ItemOpenOptions {
+                        preview: PreviewMode::Enabled,
+                        activate_pane: false,
+                        focus: false,
+                        destination_index: Some(0),
+                        ..ItemOpenOptions::default()
+                    },
+                    window,
+                    cx,
+                );
                 assert_eq!(pane.preview_item_id(), Some(commit_view.entity_id()));
                 assert_eq!(
                     pane.active_item().map(|item| item.item_id()),

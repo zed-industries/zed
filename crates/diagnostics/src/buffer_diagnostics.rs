@@ -927,7 +927,7 @@ impl Render for BufferDiagnosticsEditor {
                                                 .open_path_with_options(
                                                     buffer_diagnostics.project_path.clone(),
                                                     None,
-                                                    OpenOptions::for_navigation(cx),
+                                                    OpenOptions::for_navigation(),
                                                     true,
                                                     window,
                                                     cx,

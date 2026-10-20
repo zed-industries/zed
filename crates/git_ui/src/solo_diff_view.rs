@@ -30,9 +30,9 @@ use std::{
 use ui::{DiffStat, Divider, Tooltip, prelude::*};
 use util::paths::{PathExt as _, PathStyle};
 use workspace::{
-    Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
-    Workspace,
-    item::{ItemEvent, PreviewTabsSettings, SaveOptions},
+    Item, ItemHandle, ItemNavHistory, ItemOpenOptions, PreviewMode, ToolbarItemEvent,
+    ToolbarItemLocation, ToolbarItemView, Workspace,
+    item::{ItemEvent, SaveOptions},
     notifications::NotifyTaskExt,
     searchable::SearchableItemHandle,
 };
@@ -63,20 +63,26 @@ impl SoloDiffView {
             return Task::ready(Err(anyhow::anyhow!("workspace was dropped")));
         };
 
+        let preview = PreviewMode::from(allow_preview);
         let existing = workspace_entity
             .read(cx)
             .items_of_type::<SoloDiffView>(cx)
             .find(|item| item.read(cx).matches(&repository, &entry.repo_path, cx));
         if let Some(existing) = existing {
             workspace_entity.update(cx, |workspace, cx| {
-                if !allow_preview && let Some(pane) = workspace.pane_for(&existing) {
-                    pane.update(cx, |pane, _| {
-                        pane.unpreview_item_if_preview(existing.entity_id())
-                    });
+                if let Some(pane) = workspace.pane_for(&existing) {
+                    workspace.open_item(
+                        pane,
+                        Box::new(existing.clone()),
+                        ItemOpenOptions {
+                            preview,
+                            ..ItemOpenOptions::default()
+                        },
+                        window,
+                        cx,
+                    );
                 }
-                workspace.activate_item(&existing, true, true, window, cx);
             });
-            existing.focus_handle(cx).focus(window, cx);
             return Task::ready(Ok(existing));
         }
 
@@ -105,9 +111,6 @@ impl SoloDiffView {
                 .await?;
 
             workspace_entity.update_in(cx, |workspace, window, cx| {
-                let allow_preview = allow_preview
-                    && PreviewTabsSettings::get_global(cx).enabled
-                    && !buffer.read(cx).is_dirty();
                 let workspace_handle = cx.entity();
                 let view = cx.new(|cx| {
                     Self::new(
@@ -122,17 +125,14 @@ impl SoloDiffView {
                     )
                 });
 
-                let destination_index = if allow_preview {
-                    workspace.active_pane().update(cx, |pane, cx| {
-                        pane.replace_preview_item_id(view.entity_id(), window, cx)
-                    })
-                } else {
-                    None
-                };
-                workspace.add_item_to_active_pane(
+                workspace.open_item(
+                    workspace.active_pane().clone(),
                     Box::new(view.clone()),
-                    destination_index,
-                    true,
+                    ItemOpenOptions {
+                        preview,
+                        activate_pane: false,
+                        ..ItemOpenOptions::default()
+                    },
                     window,
                     cx,
                 );
@@ -401,6 +401,10 @@ impl Focusable for SoloDiffView {
 
 impl Item for SoloDiffView {
     type Event = EditorEvent;
+
+    fn can_preview(&self, cx: &App) -> bool {
+        !self.buffer.read(cx).is_dirty()
+    }
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
         Some(Icon::new(IconName::Diff).color(Color::Muted))

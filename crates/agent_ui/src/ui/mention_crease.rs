@@ -12,7 +12,7 @@ use rope::Point;
 use settings::Settings;
 use theme_settings::ThemeSettings;
 use ui::{ButtonLike, TintColor, Tooltip, prelude::*, utils::replace_control_characters};
-use workspace::{OpenOptions, Workspace};
+use workspace::{ItemOpenOptions, OpenOptions, PreviewMode, Workspace};
 
 use crate::open_abs_path_at_point;
 
@@ -286,7 +286,7 @@ fn open_skill_file(
     }
 
     workspace
-        .open_abs_path(skill_file_path, OpenOptions::for_navigation(cx), window, cx)
+        .open_abs_path(skill_file_path, OpenOptions::for_navigation(), window, cx)
         .detach_and_log_err(cx);
 }
 
@@ -331,26 +331,13 @@ fn open_skill_content_buffer(
             .update(cx, |buffer, cx| buffer.set_title(title, cx));
         editor
     });
-    let options = OpenOptions::for_navigation(cx);
-    let pane = workspace.active_pane().clone();
-    let destination_index = pane.update(cx, |pane, cx| {
-        if !options.keep_old_preview
-            && let Some(item) = pane.active_item()
-        {
-            pane.unpreview_item_if_preview(item.item_id());
-        }
-        if options.allow_preview {
-            pane.replace_preview_item_id(editor.entity_id(), window, cx)
-        } else {
-            None
-        }
-    });
-    workspace.add_item(
-        pane,
+    workspace.open_item(
+        workspace.active_pane().clone(),
         Box::new(editor),
-        destination_index,
-        true,
-        true,
+        ItemOpenOptions {
+            preview: PreviewMode::CodeNavigation,
+            ..ItemOpenOptions::default()
+        },
         window,
         cx,
     );

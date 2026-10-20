@@ -10,7 +10,7 @@ use project::{
 };
 use std::{ops::Range, path::Path, sync::Arc};
 use ui::{WithScrollbar, prelude::*};
-use workspace::Workspace;
+use workspace::{PreviewMode, Workspace};
 
 pub struct ModuleList {
     scroll_handle: UniformListScrollHandle,
@@ -107,7 +107,7 @@ impl ModuleList {
                         project_path,
                         None,
                         false,
-                        true,
+                        PreviewMode::Enabled,
                         true,
                         window,
                         cx,

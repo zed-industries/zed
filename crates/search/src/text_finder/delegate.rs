@@ -50,9 +50,9 @@ use ui::{
 };
 use util::ResultExt;
 use workspace::SplitDirection;
-use workspace::Workspace;
-use workspace::item::{ItemSettings, PreviewTabsSettings};
+use workspace::item::ItemSettings;
 use workspace::pane::Pane;
+use workspace::{PreviewMode, Workspace};
 
 use super::{Fold, SearchMatch, Unfold};
 use crate::project_search::{ActiveSettings, ProjectSearch};
@@ -503,7 +503,7 @@ impl Delegate {
         search_match: &SearchMatch,
         pane: Option<WeakEntity<Pane>>,
         focus: bool,
-        allow_preview: bool,
+        preview: PreviewMode,
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) {
@@ -514,7 +514,7 @@ impl Delegate {
             return;
         };
         let open_task = workspace.update(cx, |workspace, cx| {
-            workspace.open_path_preview(path, pane, focus, allow_preview, true, window, cx)
+            workspace.open_path_preview(path, pane, focus, preview, true, window, cx)
         });
         cx.spawn_in(window, async move |_, cx| {
             let item = open_task.await.log_err()?;
@@ -559,7 +559,7 @@ impl Delegate {
                     &selected_match.0,
                     Some(new_pane.downgrade()),
                     focus,
-                    false,
+                    PreviewMode::Disabled,
                     window,
                     cx,
                 );
@@ -577,7 +577,7 @@ impl Delegate {
             return;
         };
         let open_task = workspace.update(cx, |workspace, cx| {
-            workspace.split_path_preview(path, false, Some(direction), window, cx)
+            workspace.split_path_preview(path, PreviewMode::Disabled, Some(direction), window, cx)
         });
         let row = line_number.saturating_sub(1);
         cx.spawn_in(window, async move |_, cx| {
@@ -955,9 +955,12 @@ impl PickerDelegate for Delegate {
         let Some(selected_match) = self.selected_search_match().cloned() else {
             return;
         };
-        let allow_preview =
-            !is_click && PreviewTabsSettings::get_global(cx).enable_preview_from_file_finder;
-        self.open_match(&selected_match, None, true, allow_preview, window, cx);
+        let preview = if is_click {
+            PreviewMode::Disabled
+        } else {
+            PreviewMode::FileFinder
+        };
+        self.open_match(&selected_match, None, true, preview, window, cx);
 
         cx.emit(DismissEvent);
     }
@@ -1019,7 +1022,14 @@ impl PickerDelegate for Delegate {
         let count = selected.len();
         for (i, selected_match) in selected.iter().enumerate() {
             let is_last = i + 1 == count;
-            self.open_match(&selected_match.0, None, is_last, false, window, cx);
+            self.open_match(
+                &selected_match.0,
+                None,
+                is_last,
+                PreviewMode::Disabled,
+                window,
+                cx,
+            );
         }
         cx.emit(DismissEvent);
     }

@@ -45,8 +45,8 @@ use util::{
     rel_path::RelPath,
 };
 use workspace::{
-    MAX_RECENT_SELECTIONS, ModalView, OpenChannelNotesById, OpenOptions, OpenVisible,
-    SplitDirection, Workspace, item::PreviewTabsSettings, notifications::NotifyResultExt, pane,
+    MAX_RECENT_SELECTIONS, ModalView, OpenChannelNotesById, OpenOptions, OpenVisible, PreviewMode,
+    SplitDirection, Workspace, notifications::NotifyResultExt, pane,
 };
 use zed_actions::search::ToggleIncludeIgnored;
 
@@ -350,7 +350,13 @@ impl FileFinder {
                     Match::Channel { .. } => return,
                 };
                 let open_task = workspace.update(cx, move |workspace, cx| {
-                    workspace.split_path_preview(path, false, Some(split_direction), window, cx)
+                    workspace.split_path_preview(
+                        path,
+                        PreviewMode::Disabled,
+                        Some(split_direction),
+                        window,
+                        cx,
+                    )
                 });
                 open_task.detach_and_log_err(cx);
             }
@@ -1620,18 +1626,22 @@ impl FileFinderDelegate {
         let Some(m) = self.matches.get(self.selected_index()).cloned() else {
             return;
         };
-        let allow_preview = PreviewTabsSettings::get_global(cx).enable_preview_from_file_finder;
-        self.open_match(m, secondary, dismiss_after_open, allow_preview, window, cx);
+        self.open_match(
+            m,
+            secondary,
+            dismiss_after_open,
+            PreviewMode::FileFinder,
+            window,
+            cx,
+        );
     }
 
-    /// `allow_preview` is forced off for batch opens so every file gets its
-    /// own tab instead of consecutive opens reusing one preview tab.
     fn open_match(
         &mut self,
         m: Match,
         secondary: bool,
         dismiss_after_open: bool,
-        allow_preview: bool,
+        preview: PreviewMode,
         window: &mut Window,
         cx: &mut Context<Picker<FileFinderDelegate>>,
     ) {
@@ -1658,13 +1668,13 @@ impl FileFinderDelegate {
                                  window: &mut Window,
                                  cx: &mut Context<Workspace>| {
                 if secondary {
-                    workspace.split_path_preview(project_path, allow_preview, None, window, cx)
+                    workspace.split_path_preview(project_path, preview, None, window, cx)
                 } else {
                     workspace.open_path_preview(
                         project_path,
                         None,
                         focus_item,
-                        allow_preview,
+                        preview,
                         true,
                         window,
                         cx,
@@ -1675,13 +1685,19 @@ impl FileFinderDelegate {
             match &m {
                 Match::CreateNew(project_path) => {
                     if secondary {
-                        workspace.split_path_preview(project_path.clone(), false, None, window, cx)
+                        workspace.split_path_preview(
+                            project_path.clone(),
+                            PreviewMode::Disabled,
+                            None,
+                            window,
+                            cx,
+                        )
                     } else {
                         workspace.open_path_preview(
                             project_path.clone(),
                             None,
                             focus_item,
-                            false,
+                            PreviewMode::Disabled,
                             true,
                             window,
                             cx,
@@ -1706,20 +1722,14 @@ impl FileFinderDelegate {
                             cx,
                         )
                     } else if secondary {
-                        workspace.split_abs_path(
-                            path.absolute.clone(),
-                            false,
-                            allow_preview,
-                            window,
-                            cx,
-                        )
+                        workspace.split_abs_path(path.absolute.clone(), false, preview, window, cx)
                     } else {
                         workspace.open_abs_path(
                             path.absolute.clone(),
                             OpenOptions {
                                 visible: Some(OpenVisible::None),
                                 focus: Some(focus_item),
-                                allow_preview,
+                                preview,
                                 ..OpenOptions::default()
                             },
                             window,
@@ -1817,7 +1827,7 @@ impl FileFinderDelegate {
                         path,
                         Some(new_pane.downgrade()),
                         focus_item,
-                        false,
+                        PreviewMode::Disabled,
                         true,
                         window,
                         cx,
@@ -2104,7 +2114,14 @@ impl PickerDelegate for FileFinderDelegate {
         let count = selected.len();
         for (i, selected_match) in selected.into_iter().enumerate() {
             let is_last = i + 1 == count;
-            self.open_match(selected_match.0, secondary, is_last, false, window, cx);
+            self.open_match(
+                selected_match.0,
+                secondary,
+                is_last,
+                PreviewMode::Disabled,
+                window,
+                cx,
+            );
         }
     }
 

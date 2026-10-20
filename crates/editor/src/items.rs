@@ -915,6 +915,17 @@ impl Item for Editor {
         self.buffer().read(cx).read(cx).is_dirty()
     }
 
+    fn can_preview(&self, cx: &App) -> bool {
+        !self.buffer.read(cx).is_singleton() || !self.is_dirty(cx)
+    }
+
+    fn on_preview(&mut self, cx: &mut Context<Self>) {
+        if !self.buffer.read(cx).is_singleton() {
+            self.buffer
+                .update(cx, |buffer, cx| buffer.refresh_preview(cx));
+        }
+    }
+
     fn capability(&self, cx: &App) -> Capability {
         self.capability(cx)
     }
@@ -2198,7 +2209,7 @@ pub async fn open_resolved_target(
                 vec![path_to_open.path.clone()],
                 OpenOptions {
                     visible: Some(OpenVisible::OnlyDirectories),
-                    ..OpenOptions::for_navigation(cx)
+                    ..OpenOptions::for_navigation()
                 },
                 None,
                 window,
@@ -2561,7 +2572,7 @@ pub(crate) fn handle_lsp_show_document(
         OpenOptions {
             visible: Some(OpenVisible::None),
             focus: Some(request.take_focus),
-            ..OpenOptions::for_navigation(cx)
+            ..OpenOptions::for_navigation()
         },
         window,
         cx,

@@ -3225,14 +3225,13 @@ impl Workspace {
                         })?;
 
                         pane.update_in(cx, |pane, window, cx| {
-                            let item = pane.open_item(
+                            let item = pane.open_project_path(
                                 project_entry_id,
                                 project_path,
-                                true,
-                                true,
-                                entry.is_preview,
-                                true,
-                                None,
+                                ItemOpenOptions {
+                                    preview: PreviewMode::from(entry.is_preview),
+                                    ..ItemOpenOptions::default()
+                                },
                                 window, cx,
                                 build_item,
                             );
@@ -3252,7 +3251,7 @@ impl Workspace {
                                 pane.active_item().map(|p| p.item_id())
                             })?;
                             let open_by_abs_path = workspace.update_in(cx, |workspace, window, cx| {
-                                workspace.open_abs_path(abs_path.clone(), OpenOptions { visible: Some(OpenVisible::None), allow_preview: entry.is_preview, ..OpenOptions::default() }, window, cx)
+                                workspace.open_abs_path(abs_path.clone(), OpenOptions { visible: Some(OpenVisible::None), preview: PreviewMode::from(entry.is_preview), ..OpenOptions::default() }, window, cx)
                             })?;
                             match open_by_abs_path
                                 .await
@@ -4018,7 +4017,9 @@ impl Workspace {
     ) -> Task<Vec<Option<anyhow::Result<Box<dyn ItemHandle>>>>> {
         let fs = self.app_state.fs.clone();
 
-        options.allow_preview &= abs_paths.len() == 1;
+        if abs_paths.len() != 1 {
+            options.preview = PreviewMode::Disabled;
+        }
         let caller_ordered_abs_paths = abs_paths.clone();
 
         // Sort the paths to ensure we add worktrees for parents before their children.
@@ -4202,7 +4203,7 @@ impl Workspace {
             ResolvedPath::ProjectPath { project_path, .. } => self.open_path_with_options(
                 project_path,
                 None,
-                OpenOptions::for_navigation(cx),
+                OpenOptions::for_navigation(),
                 true,
                 window,
                 cx,
@@ -4211,7 +4212,7 @@ impl Workspace {
                 PathBuf::from(path),
                 OpenOptions {
                     visible: Some(OpenVisible::None),
-                    ..OpenOptions::for_navigation(cx)
+                    ..OpenOptions::for_navigation()
                 },
                 window,
                 cx,
@@ -4993,6 +4994,17 @@ impl Workspace {
         });
     }
 
+    pub fn open_item(
+        &mut self,
+        pane: Entity<Pane>,
+        item: Box<dyn ItemHandle>,
+        options: ItemOpenOptions,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        pane.update(cx, |pane, cx| pane.open_item(item, options, window, cx));
+    }
+
     pub fn split_item(
         &mut self,
         split_direction: SplitDirection,
@@ -5039,7 +5051,7 @@ impl Workspace {
         &mut self,
         abs_path: PathBuf,
         visible: bool,
-        allow_preview: bool,
+        preview: PreviewMode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
@@ -5049,7 +5061,7 @@ impl Workspace {
             let (_worktree, path) = project_path_task.await?;
             workspace
                 .update_in(cx, |workspace, window, cx| {
-                    workspace.split_path_preview(path, allow_preview, None, window, cx)
+                    workspace.split_path_preview(path, preview, None, window, cx)
                 })?
                 .await
         })
@@ -5066,7 +5078,15 @@ impl Workspace {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
-        self.open_path_preview(path, pane, focus_item, false, true, window, cx)
+        self.open_path_preview(
+            path,
+            pane,
+            focus_item,
+            PreviewMode::Disabled,
+            true,
+            window,
+            cx,
+        )
     }
 
     pub fn open_path_preview(
@@ -5074,7 +5094,7 @@ impl Workspace {
         path: impl Into<ProjectPath>,
         pane: Option<WeakEntity<Pane>>,
         focus_item: bool,
-        allow_preview: bool,
+        preview: PreviewMode,
         activate: bool,
         window: &mut Window,
         cx: &mut App,
@@ -5084,7 +5104,7 @@ impl Workspace {
             pane,
             OpenOptions {
                 focus: Some(focus_item),
-                allow_preview,
+                preview,
                 ..OpenOptions::default()
             },
             activate,
@@ -5136,14 +5156,15 @@ impl Workspace {
             };
 
             pane.update_in(cx, |pane, window, cx| {
-                pane.open_item(
+                pane.open_project_path(
                     project_entry_id,
                     project_path,
-                    options.focus.unwrap_or(true),
-                    options.keep_old_preview,
-                    options.allow_preview,
-                    activate,
-                    None,
+                    ItemOpenOptions {
+                        preview: options.preview,
+                        focus: options.focus.unwrap_or(true),
+                        activate,
+                        ..ItemOpenOptions::default()
+                    },
                     window,
                     cx,
                     build_item,
@@ -5221,7 +5242,7 @@ impl Workspace {
                 path,
                 OpenOptions {
                     visible: Some(OpenVisible::None),
-                    ..OpenOptions::for_navigation(cx)
+                    ..OpenOptions::for_navigation()
                 },
                 window,
                 cx,
@@ -5286,7 +5307,7 @@ impl Workspace {
             let task = self.open_path_with_options(
                 project_path,
                 None,
-                OpenOptions::for_navigation(cx),
+                OpenOptions::for_navigation(),
                 true,
                 window,
                 cx,
@@ -5312,13 +5333,13 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
-        self.split_path_preview(path, false, None, window, cx)
+        self.split_path_preview(path, PreviewMode::Disabled, None, window, cx)
     }
 
     pub fn split_path_preview(
         &mut self,
         path: impl Into<ProjectPath>,
-        allow_preview: bool,
+        preview: PreviewMode,
         split_direction: Option<SplitDirection>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -5333,7 +5354,7 @@ impl Workspace {
         if let Member::Pane(center_pane) = &self.center.root
             && center_pane.read(cx).items_len() == 0
         {
-            return self.open_path_preview(path, Some(pane), true, allow_preview, true, window, cx);
+            return self.open_path_preview(path, Some(pane), true, preview, true, window, cx);
         }
 
         let project_path = path.into();
@@ -5349,14 +5370,13 @@ impl Workspace {
                     cx,
                 );
                 new_pane.update(cx, |new_pane, cx| {
-                    Some(new_pane.open_item(
+                    Some(new_pane.open_project_path(
                         project_entry_id,
                         project_path,
-                        true,
-                        true,
-                        allow_preview,
-                        true,
-                        None,
+                        ItemOpenOptions {
+                            preview,
+                            ..ItemOpenOptions::default()
+                        },
                         window,
                         cx,
                         build_item,
@@ -5426,8 +5446,7 @@ impl Workspace {
         project_item: Entity<T::Item>,
         activate_pane: bool,
         focus_item: bool,
-        keep_old_preview: bool,
-        allow_new_preview: bool,
+        preview: PreviewMode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<T>
@@ -5457,49 +5476,28 @@ impl Workspace {
             .as_ref()
             .map(|(pane, _)| pane.clone())
             .unwrap_or(requested_pane);
-        let old_item_id = pane.read(cx).active_item().map(|item| item.item_id());
-
-        if let Some((_, item)) = existing_item {
-            if !keep_old_preview
-                && let Some(old_id) = old_item_id
-                && old_id != item.item_id()
-            {
-                // switching to a different item, so unpreview old active item
-                pane.update(cx, |pane, _| {
-                    pane.unpreview_item_if_preview(old_id);
-                });
-            }
-
-            self.activate_item(&item, activate_pane, focus_item, window, cx);
-            if !allow_new_preview {
-                pane.update(cx, |pane, _| {
-                    pane.unpreview_item_if_preview(item.item_id());
-                });
-            }
-            return item;
-        }
-
-        let item = pane.update(cx, |pane, cx| {
-            cx.new(|cx| {
-                T::for_project_item(self.project().clone(), Some(pane), project_item, window, cx)
+        let item = existing_item.map(|(_, item)| item).unwrap_or_else(|| {
+            pane.update(cx, |pane, cx| {
+                cx.new(|cx| {
+                    T::for_project_item(
+                        self.project().clone(),
+                        Some(pane),
+                        project_item,
+                        window,
+                        cx,
+                    )
+                })
             })
         });
-        let mut destination_index = None;
-        pane.update(cx, |pane, cx| {
-            if !keep_old_preview && let Some(old_id) = old_item_id {
-                pane.unpreview_item_if_preview(old_id);
-            }
-            if allow_new_preview {
-                destination_index = pane.replace_preview_item_id(item.item_id(), window, cx);
-            }
-        });
-
-        self.add_item(
+        self.open_item(
             pane,
             Box::new(item.clone()),
-            destination_index,
-            activate_pane,
-            focus_item,
+            ItemOpenOptions {
+                preview,
+                activate_pane,
+                focus: focus_item,
+                ..ItemOpenOptions::default()
+            },
             window,
             cx,
         );
@@ -11046,8 +11044,7 @@ pub enum WorkspaceMatching {
 pub struct OpenOptions {
     pub visible: Option<OpenVisible>,
     pub focus: Option<bool>,
-    pub allow_preview: bool,
-    pub keep_old_preview: bool,
+    pub preview: PreviewMode,
     pub workspace_matching: WorkspaceMatching,
     /// Whether to add unmatched directories to the existing window's sidebar
     /// rather than opening a new window. Defaults to true, matching the default
@@ -11065,8 +11062,7 @@ impl Default for OpenOptions {
         Self {
             visible: None,
             focus: None,
-            allow_preview: false,
-            keep_old_preview: true,
+            preview: PreviewMode::Disabled,
             workspace_matching: WorkspaceMatching::default(),
             add_dirs_to_sidebar: true,
             wait: false,
@@ -11079,11 +11075,9 @@ impl Default for OpenOptions {
 }
 
 impl OpenOptions {
-    pub fn for_navigation(cx: &App) -> Self {
-        let settings = PreviewTabsSettings::get_global(cx);
+    pub fn for_navigation() -> Self {
         Self {
-            allow_preview: settings.enabled && settings.enable_preview_file_from_code_navigation,
-            keep_old_preview: settings.enable_keep_preview_on_code_navigation,
+            preview: PreviewMode::CodeNavigation,
             ..Self::default()
         }
     }
@@ -11336,8 +11330,7 @@ pub fn open_paths(
                             abs_paths,
                             OpenOptions {
                                 visible: Some(open_visible),
-                                allow_preview: open_options.allow_preview,
-                                keep_old_preview: open_options.keep_old_preview,
+                                preview: open_options.preview,
                                 ..OpenOptions::default()
                             },
                             None,
@@ -18846,7 +18839,7 @@ mod tests {
                     .update_in(cx, |workspace, window, cx| {
                         workspace.split_path_preview(
                             (worktree_id, rel_path("one.png")),
-                            true,
+                            PreviewMode::Enabled,
                             None,
                             window,
                             cx,
@@ -18867,7 +18860,7 @@ mod tests {
                         workspace.open_path_with_options(
                             (worktree_id, rel_path("one.png")),
                             None,
-                            OpenOptions::for_navigation(cx),
+                            OpenOptions::for_navigation(),
                             true,
                             window,
                             cx,
@@ -18925,7 +18918,7 @@ mod tests {
                             (worktree_id, rel_path("three.png")),
                             None,
                             true,
-                            true,
+                            PreviewMode::Enabled,
                             true,
                             window,
                             cx,
@@ -18940,7 +18933,6 @@ mod tests {
                             None,
                             OpenOptions {
                                 focus: Some(false),
-                                keep_old_preview: false,
                                 ..OpenOptions::default()
                             },
                             false,
@@ -18962,7 +18954,7 @@ mod tests {
                                 None,
                                 OpenOptions {
                                     focus: Some(false),
-                                    ..OpenOptions::for_navigation(cx)
+                                    ..OpenOptions::for_navigation()
                                 },
                                 activate,
                                 window,
@@ -19026,7 +19018,7 @@ mod tests {
                         workspace.open_paths(
                             paths.iter().map(PathBuf::from).collect(),
                             OpenOptions {
-                                allow_preview,
+                                preview: PreviewMode::from(allow_preview),
                                 ..OpenOptions::default()
                             },
                             None,
@@ -19133,7 +19125,7 @@ mod tests {
                     workspace.open_abs_path(
                         PathBuf::from("/root/one.png"),
                         OpenOptions {
-                            allow_preview: true,
+                            preview: PreviewMode::Enabled,
                             ..OpenOptions::default()
                         },
                         window,
@@ -19181,7 +19173,7 @@ mod tests {
                         workspace.split_abs_path(
                             PathBuf::from("/root/one.png"),
                             false,
-                            allow_preview,
+                            PreviewMode::from(allow_preview),
                             window,
                             cx,
                         )
@@ -19292,11 +19284,7 @@ mod tests {
                     workspace.open_path_with_options(
                         (worktree_id, rel_path("two.png")),
                         None,
-                        OpenOptions {
-                            allow_preview: true,
-                            keep_old_preview: false,
-                            ..OpenOptions::default()
-                        },
+                        OpenOptions::for_navigation(),
                         true,
                         window,
                         cx,

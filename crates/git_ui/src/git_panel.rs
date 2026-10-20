@@ -98,7 +98,7 @@ use util::paths::PathStyle;
 use util::{ResultExt, TryFutureExt, markdown::MarkdownInlineCode, maybe, rel_path::RelPath};
 use workspace::SERIALIZATION_THROTTLE_TIME;
 use workspace::{
-    Item, ModalView, Workspace,
+    Item, ModalView, PreviewMode, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
 };
@@ -2663,7 +2663,7 @@ impl GitPanel {
                             project_path,
                             None,
                             false,
-                            allow_preview,
+                            PreviewMode::from(allow_preview),
                             true,
                             window,
                             cx,

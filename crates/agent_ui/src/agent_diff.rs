@@ -1833,7 +1833,7 @@ impl AgentDiff {
                 let task = workspace.open_path_with_options(
                     path,
                     None,
-                    OpenOptions::for_navigation(cx),
+                    OpenOptions::for_navigation(),
                     true,
                     window,
                     cx,
@@ -2353,7 +2353,7 @@ mod tests {
             .update_in(cx, |workspace, window, cx| {
                 workspace.open_abs_path(
                     Path::new(path!("/test/file3")).to_path_buf(),
-                    OpenOptions::for_navigation(cx),
+                    OpenOptions::for_navigation(),
                     window,
                     cx,
                 )

@@ -36,7 +36,7 @@ use util::{
     paths::PathStyle,
     rel_path::{RelPath, RelPathBuf},
 };
-use workspace::{Item, SaveIntent, Workspace, notifications::NotifyResultExt};
+use workspace::{Item, PreviewMode, SaveIntent, Workspace, notifications::NotifyResultExt};
 use workspace::{SplitDirection, notifications::DetachAndPromptErr};
 use zed_actions::{OpenDocs, RevealTarget};
 
@@ -567,7 +567,13 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             };
 
             workspace
-                .split_path_preview(project_path, false, Some(direction), window, cx)
+                .split_path_preview(
+                    project_path,
+                    PreviewMode::Disabled,
+                    Some(direction),
+                    window,
+                    cx,
+                )
                 .detach_and_log_err(cx);
         })
     });

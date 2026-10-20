@@ -50,7 +50,7 @@ use ui::{
 };
 use url::Url;
 use util::markdown::source_position_from_fragment;
-use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME, item::PreviewTabsSettings};
+use workspace::{OpenOptions, PreviewMode, SERIALIZATION_THROTTLE_TIME};
 
 use super::elicitation::{
     ElicitationCard, ElicitationCardHandlers, ElicitationFormState, should_render_elicitation,
@@ -1527,7 +1527,7 @@ impl ThreadView {
                 .update(cx, |workspace, cx| {
                     workspace.split_path_preview(
                         project_path,
-                        PreviewTabsSettings::get_global(cx).enable_preview_from_multibuffer,
+                        PreviewMode::FromMultibuffer,
                         None,
                         window,
                         cx,
@@ -1541,9 +1541,8 @@ impl ThreadView {
                         project_path,
                         None,
                         OpenOptions {
-                            allow_preview: PreviewTabsSettings::get_global(cx)
-                                .enable_preview_from_multibuffer,
-                            ..OpenOptions::for_navigation(cx)
+                            preview: PreviewMode::FromMultibuffer,
+                            ..OpenOptions::default()
                         },
                         true,
                         window,
@@ -6726,7 +6725,6 @@ impl Render for TokenUsageTooltip {
                                                                         paths::agents_file()
                                                                             .clone(),
                                                                         OpenOptions::for_navigation(
-                                                                            cx,
                                                                         ),
                                                                         window,
                                                                         cx,
@@ -11096,7 +11094,7 @@ impl ThreadView {
                     workspace.open_path_with_options(
                         project_path,
                         None,
-                        OpenOptions::for_navigation(cx),
+                        OpenOptions::for_navigation(),
                         true,
                         window,
                         cx,
@@ -11104,7 +11102,7 @@ impl ThreadView {
                 } else {
                     workspace.open_abs_path(
                         tool_call_location.path.clone(),
-                        OpenOptions::for_navigation(cx),
+                        OpenOptions::for_navigation(),
                         window,
                         cx,
                     )
@@ -13878,7 +13876,7 @@ pub(crate) fn open_link(
                 skill_file_path, ..
             } => {
                 workspace
-                    .open_abs_path(skill_file_path, OpenOptions::for_navigation(cx), window, cx)
+                    .open_abs_path(skill_file_path, OpenOptions::for_navigation(), window, cx)
                     .detach_and_log_err(cx);
             }
         })
@@ -14223,17 +14221,20 @@ mod tests {
             .await
             .unwrap();
 
-        for (split, allow_preview, pane_count) in
-            [(false, true, 1), (true, true, 2), (true, false, 3)]
-        {
+        for (split, enabled, from_multibuffer, pane_count) in [
+            (false, true, true, 1),
+            (true, true, true, 2),
+            (true, true, false, 3),
+            (true, false, true, 4),
+        ] {
             cx.update(|_, cx| {
                 SettingsStore::update_global(cx, |store, cx| {
                     store.update_user_settings(cx, |settings| {
                         let preview_tabs = settings.preview_tabs.get_or_insert_default();
-                        preview_tabs.enabled = Some(true);
-                        preview_tabs.enable_preview_from_multibuffer = Some(allow_preview);
+                        preview_tabs.enabled = Some(enabled);
+                        preview_tabs.enable_preview_from_multibuffer = Some(from_multibuffer);
                         preview_tabs.enable_preview_file_from_code_navigation =
-                            Some(!allow_preview);
+                            Some(!from_multibuffer);
                     });
                 });
             });
@@ -14254,7 +14255,7 @@ mod tests {
                 assert_eq!(pane.items_len(), 1);
                 assert_eq!(
                     pane.preview_item_id(),
-                    allow_preview.then_some(editor.entity_id())
+                    (enabled && from_multibuffer).then_some(editor.entity_id())
                 );
                 editor
             });

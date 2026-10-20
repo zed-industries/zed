@@ -1168,7 +1168,7 @@ pub fn open_markdown_url(
                 path,
                 OpenOptions {
                     visible: Some(OpenVisible::None),
-                    ..OpenOptions::for_navigation(cx)
+                    ..OpenOptions::for_navigation()
                 },
                 window,
                 cx,

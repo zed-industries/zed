@@ -1474,19 +1474,12 @@ impl Editor {
                         window.defer(cx, move |window, cx| {
                             let target_editor: Entity<Self> =
                                 workspace.update(cx, |workspace, cx| {
-                                    let preview_tabs_settings = PreviewTabsSettings::get_global(cx);
-                                    let keep_old_preview = preview_tabs_settings
-                                        .enable_keep_preview_on_code_navigation;
-                                    let allow_new_preview = preview_tabs_settings
-                                        .enable_preview_file_from_code_navigation;
-
                                     workspace.open_project_item(
                                         None,
                                         target_buffer.clone(),
                                         true,
                                         true,
-                                        keep_old_preview,
-                                        allow_new_preview,
+                                        PreviewMode::CodeNavigation,
                                         window,
                                         cx,
                                     )
@@ -1523,14 +1516,12 @@ impl Editor {
                 } else {
                     format!("References to {target}")
                 };
-                let allow_preview = PreviewTabsSettings::get_global(cx)
-                    .enable_preview_multibuffer_from_code_navigation;
                 Self::open_locations_in_multibuffer(
                     workspace,
                     locations,
                     title,
                     false,
-                    allow_preview,
+                    PreviewMode::CodeNavigationMultibuffer,
                     MultibufferSelectionMode::First,
                     window,
                     cx,
@@ -1817,15 +1808,13 @@ impl Editor {
 
                 let opened = workspace
                     .update_in(cx, |workspace, window, cx| {
-                        let allow_preview = PreviewTabsSettings::get_global(cx)
-                            .enable_preview_multibuffer_from_code_navigation;
                         if let Some((target_editor, target_pane)) =
                             Self::open_locations_in_multibuffer(
                                 workspace,
                                 locations,
                                 title,
                                 split,
-                                allow_preview,
+                                PreviewMode::CodeNavigationMultibuffer,
                                 MultibufferSelectionMode::First,
                                 window,
                                 cx,
@@ -1955,19 +1944,12 @@ impl Editor {
                                         workspace.active_pane().clone()
                                     };
 
-                                    let preview_tabs_settings = PreviewTabsSettings::get_global(cx);
-                                    let keep_old_preview = preview_tabs_settings
-                                        .enable_keep_preview_on_code_navigation;
-                                    let allow_new_preview = preview_tabs_settings
-                                        .enable_preview_file_from_code_navigation;
-
                                     let editor = workspace.open_project_item(
                                         split.then_some(requested_pane.clone()),
                                         target_buffer.clone(),
                                         true,
                                         true,
-                                        keep_old_preview,
-                                        allow_new_preview,
+                                        PreviewMode::CodeNavigation,
                                         window,
                                         cx,
                                     );
@@ -2196,7 +2178,7 @@ impl Editor {
         locations: std::collections::HashMap<Entity<Buffer>, Vec<Range<Point>>>,
         title: String,
         split: bool,
-        allow_preview: bool,
+        preview: PreviewMode,
         multibuffer_selection_mode: MultibufferSelectionMode,
         window: &mut Window,
         cx: &mut Context<Workspace>,
@@ -2302,30 +2284,27 @@ impl Editor {
             }
         });
 
-        let item = Box::new(editor.clone());
-
         let pane = if split {
             workspace.adjacent_pane(window, cx)
         } else {
             workspace.active_pane().clone()
         };
-        let activate_pane = split;
-
-        let mut destination_index = None;
-        pane.update(cx, |pane, cx| {
-            if allow_preview && !was_existing {
-                destination_index = pane.replace_preview_item_id(item.item_id(), window, cx);
-                editor.update(cx, |editor, cx| {
-                    editor
-                        .buffer
-                        .update(cx, |buffer, cx| buffer.refresh_preview(cx))
-                });
-            }
-            if was_existing && !allow_preview {
-                pane.unpreview_item_if_preview(item.item_id());
-            }
-            pane.add_item(item, activate_pane, true, destination_index, window, cx);
-        });
+        let preview = if was_existing && pane.read(cx).index_for_item(&editor).is_none() {
+            PreviewMode::Disabled
+        } else {
+            preview
+        };
+        workspace.open_item(
+            pane.clone(),
+            Box::new(editor.clone()),
+            ItemOpenOptions {
+                preview,
+                activate_pane: split,
+                ..ItemOpenOptions::default()
+            },
+            window,
+            cx,
+        );
 
         Some((editor, pane))
     }

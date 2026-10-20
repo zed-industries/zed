@@ -2474,13 +2474,20 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
     );
     cx.run_until_parked();
 
-    for allow_preview in [true, false] {
+    for (enabled, enable_from_finder, preview, expect_preview, dismiss_after_open) in [
+        (true, false, PreviewMode::Enabled, true, false),
+        (true, true, PreviewMode::Disabled, false, true),
+        (true, true, PreviewMode::FileFinder, true, true),
+        (true, false, PreviewMode::FileFinder, false, false),
+        (false, true, PreviewMode::FileFinder, false, false),
+        (false, true, PreviewMode::Enabled, false, true),
+    ] {
         cx.update(|_, cx| {
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings(cx, |settings| {
                     let preview_tabs = settings.preview_tabs.get_or_insert_default();
-                    preview_tabs.enabled = Some(true);
-                    preview_tabs.enable_preview_from_file_finder = Some(!allow_preview);
+                    preview_tabs.enabled = Some(enabled);
+                    preview_tabs.enable_preview_from_file_finder = Some(enable_from_finder);
                 });
             });
             assert!(
@@ -2503,8 +2510,8 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
                     panel_match: None,
                 },
                 false,
-                allow_preview,
-                allow_preview,
+                dismiss_after_open,
+                preview,
                 window,
                 cx,
             );
@@ -2519,9 +2526,9 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
             assert_eq!(pane.items_len(), 1);
             assert_eq!(
                 pane.preview_item_id(),
-                allow_preview.then_some(editor.entity_id())
+                expect_preview.then_some(editor.entity_id())
             );
-            if !allow_preview {
+            if !dismiss_after_open {
                 assert!(finder.focus_handle(cx).contains_focused(window, cx));
             }
         });

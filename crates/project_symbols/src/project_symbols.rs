@@ -13,7 +13,7 @@ use theme::ActiveTheme;
 use theme_settings::ThemeSettings;
 use util::ResultExt;
 use workspace::{
-    OpenOptions, Workspace,
+    PreviewMode, Workspace,
     ui::{LabelLike, ListItem, ListItemSpacing, prelude::*},
 };
 
@@ -140,14 +140,12 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                         workspace.active_pane().clone()
                     };
 
-                    let options = OpenOptions::for_navigation(cx);
                     let editor = workspace.open_project_item::<Editor>(
                         secondary.then_some(pane),
                         buffer,
                         true,
                         true,
-                        options.keep_old_preview,
-                        options.allow_preview,
+                        PreviewMode::CodeNavigation,
                         window,
                         cx,
                     );
@@ -350,7 +348,7 @@ mod tests {
     use settings::SettingsStore;
     use std::{path::Path, sync::Arc};
     use util::path;
-    use workspace::MultiWorkspace;
+    use workspace::{MultiWorkspace, OpenOptions};
 
     #[gpui::test]
     async fn test_project_symbols(cx: &mut TestAppContext) {
@@ -520,7 +518,7 @@ mod tests {
                 workspace.open_abs_path(
                     Path::new(path!("/dir/origin.rs")).to_path_buf(),
                     OpenOptions {
-                        allow_preview: true,
+                        preview: PreviewMode::Enabled,
                         ..OpenOptions::default()
                     },
                     window,

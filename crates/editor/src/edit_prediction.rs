@@ -1685,7 +1685,7 @@ impl Editor {
             let item = workspace.open_path_with_options(
                 project_path,
                 None,
-                OpenOptions::for_navigation(cx),
+                OpenOptions::for_navigation(),
                 true,
                 window,
                 cx,

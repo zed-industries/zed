@@ -54,7 +54,7 @@ use std::{
 };
 use unindent::Unindent as _;
 use util::{path, rel_path::rel_path, uri};
-use workspace::{Pane, ParticipantLocation};
+use workspace::{Pane, ParticipantLocation, PreviewMode};
 
 #[ctor::ctor(unsafe)]
 fn init_logger() {
@@ -7844,7 +7844,15 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     // Open item 1 as preview
     workspace
         .update_in(cx, |workspace, window, cx| {
-            workspace.open_path_preview(path_1.clone(), None, true, true, true, window, cx)
+            workspace.open_path_preview(
+                path_1.clone(),
+                None,
+                true,
+                PreviewMode::Enabled,
+                true,
+                window,
+                cx,
+            )
         })
         .await
         .unwrap();
@@ -7865,7 +7873,15 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     // Open item 2 as preview
     workspace
         .update_in(cx, |workspace, window, cx| {
-            workspace.open_path_preview(path_2.clone(), None, true, true, true, window, cx)
+            workspace.open_path_preview(
+                path_2.clone(),
+                None,
+                true,
+                PreviewMode::Enabled,
+                true,
+                window,
+                cx,
+            )
         })
         .await
         .unwrap();
@@ -8009,7 +8025,15 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     // Open item 2 as preview in right pane
     workspace
         .update_in(cx, |workspace, window, cx| {
-            workspace.open_path_preview(path_2.clone(), None, true, true, true, window, cx)
+            workspace.open_path_preview(
+                path_2.clone(),
+                None,
+                true,
+                PreviewMode::Enabled,
+                true,
+                window,
+                cx,
+            )
         })
         .await
         .unwrap();
@@ -8047,7 +8071,15 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     // Open item 2 as preview in left pane
     workspace
         .update_in(cx, |workspace, window, cx| {
-            workspace.open_path_preview(path_2.clone(), None, true, true, true, window, cx)
+            workspace.open_path_preview(
+                path_2.clone(),
+                None,
+                true,
+                PreviewMode::Enabled,
+                true,
+                window,
+                cx,
+            )
         })
         .await
         .unwrap();
