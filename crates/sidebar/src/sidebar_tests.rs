@@ -157,6 +157,7 @@ fn assert_remote_project_integration_sidebar_state(
     let mut saw_remote_thread = false;
     for entry in &sidebar.contents.entries {
         match entry {
+            ListEntry::FolderHeader { .. } => panic!("unexpected folder header"),
             ListEntry::ProjectHeader { label, .. } => {
                 assert_eq!(
                     label.as_ref(),
@@ -561,6 +562,10 @@ fn visible_entries_as_strings(
                     ""
                 };
                 match entry {
+                    ListEntry::FolderHeader { name, expanded, .. } => {
+                        let icon = if *expanded { "v" } else { ">" };
+                        format!("{} ({}){}", icon, name, selected)
+                    }
                     ListEntry::ProjectHeader { label, key, .. } => {
                         let icon = if sidebar.is_group_collapsed(key, cx) {
                             ">"
@@ -5073,7 +5078,9 @@ async fn test_rename_thread_from_sidebar_updates_title_override(cx: &mut TestApp
                     thread.metadata.thread_id,
                     thread.metadata.display_title(),
                 )),
-                ListEntry::ProjectHeader { .. } | ListEntry::Terminal(_) => None,
+                ListEntry::FolderHeader { .. }
+                | ListEntry::ProjectHeader { .. }
+                | ListEntry::Terminal(_) => None,
             })
             .expect("sidebar should have a thread entry")
     });
@@ -5159,7 +5166,9 @@ async fn test_rename_thread_from_sidebar_updates_title_override(cx: &mut TestApp
             .iter()
             .find_map(|entry| match entry {
                 ListEntry::Thread(thread) => Some(thread),
-                ListEntry::ProjectHeader { .. } | ListEntry::Terminal(_) => None,
+                ListEntry::FolderHeader { .. }
+                | ListEntry::ProjectHeader { .. }
+                | ListEntry::Terminal(_) => None,
             })
             .expect("renamed thread should match the search");
         let title = thread.metadata.display_title();
@@ -5198,7 +5207,9 @@ async fn test_rename_selected_thread_action_renames_selected_thread(cx: &mut Tes
             .enumerate()
             .find_map(|(ix, entry)| match entry {
                 ListEntry::Thread(thread) => Some((ix, thread.metadata.thread_id)),
-                ListEntry::ProjectHeader { .. } | ListEntry::Terminal(_) => None,
+                ListEntry::FolderHeader { .. }
+                | ListEntry::ProjectHeader { .. }
+                | ListEntry::Terminal(_) => None,
             })
             .expect("sidebar should have a thread entry")
     });
@@ -7213,6 +7224,7 @@ async fn test_clicking_worktree_thread_does_not_briefly_render_as_separate_proje
         let mut saw_expected_thread = false;
         for entry in &sidebar.contents.entries {
             match entry {
+                ListEntry::FolderHeader { .. } => panic!("unexpected folder header"),
                 ListEntry::ProjectHeader { label, .. } => {
                     assert_eq!(
                         label.as_ref(),
