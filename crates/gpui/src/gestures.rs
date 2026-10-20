@@ -397,6 +397,49 @@ impl InputEvent for TouchDragEvent {
 impl GestureEvent for TouchDragEvent {}
 impl MouseEvent for TouchDragEvent {}
 
+/// A back-navigation gesture, such as the iOS swipe from the leading screen
+/// edge.
+///
+/// Elements receive it through
+/// [`InteractiveElement::on_back`](crate::InteractiveElement::on_back).
+/// The innermost element under [`Self::start_position`] claims the whole
+/// gesture when it starts; the platform cancels the gesture if no element does.
+/// Every phase is delivered at the start position, so the claiming element
+/// should stay in place while it animates its contents.
+#[derive(Clone, Debug, Default)]
+pub struct BackEvent {
+    /// The phase of the gesture.
+    pub phase: BackPhase,
+    /// Where the gesture started.
+    pub start_position: Point<Pixels>,
+    /// How far the gesture has travelled toward going back, from 0 to 1.
+    pub progress: f32,
+}
+
+/// The phase of a [`BackEvent`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BackPhase {
+    /// The gesture began. Claiming it here routes the remaining phases to the
+    /// same element.
+    #[default]
+    Started,
+    /// The gesture moved; [`BackEvent::progress`] changed.
+    Progressed,
+    /// The gesture ended and the platform decided to go back.
+    Committed,
+    /// The gesture ended without going back.
+    Cancelled,
+}
+
+impl Sealed for BackEvent {}
+impl InputEvent for BackEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::Back(self)
+    }
+}
+impl GestureEvent for BackEvent {}
+impl MouseEvent for BackEvent {}
+
 /// A phased long-press gesture recognized from a touch.
 #[derive(Clone, Debug)]
 pub struct LongPressEvent {

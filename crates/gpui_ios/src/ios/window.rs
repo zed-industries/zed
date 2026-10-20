@@ -13,16 +13,16 @@ use super::events::*;
 use super::text_input::TextInputView;
 use super::{CallbackSlot, IosDisplay, platform::IosPlatformState};
 use gpui::{
-    AnyWindowHandle, Bounds, Capslock, Corners, DevicePixels, DispatchEventResult, DisplayId,
-    Edges, GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
-    Scene, Size, TextInputConfiguration, TextInputStateChange, TouchEvent, TouchId, TouchPhase,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowInsets,
-    WindowParams, WindowVisibility, px, size,
+    AnyWindowHandle, BackEvent, BackPhase, Bounds, Capslock, Corners, DevicePixels,
+    DispatchEventResult, DisplayId, Edges, GpuSpecs, Modifiers, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton,
+    PromptLevel, RequestFrameOptions, Scene, Size, TextInputConfiguration, TextInputStateChange,
+    TouchEvent, TouchId, TouchPhase, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControlArea, WindowInsets, WindowParams, WindowVisibility, px, size,
 };
 use gpui_apple::metal_renderer::{Context as MetalContext, MetalRenderer};
 use objc2::rc::Retained;
-use objc2::runtime::{AnyClass, AnyObject};
+use objc2::runtime::{AnyClass, AnyObject, ProtocolObject};
 use objc2::{
     ClassType, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel,
 };
@@ -36,8 +36,10 @@ use objc2_ui_kit::{
     UIKeyboardWillChangeFrameNotification, UIKeyboardWillHideNotification, UIStatusBarStyle,
 };
 use objc2_ui_kit::{
-    UICornerConfiguration, UICornerRadius, UIEvent, UIPanGestureRecognizer, UIRectCorner, UIScreen,
-    UIScrollTypeMask, UITouch, UITraitCollection, UITraitEnvironment, UIUserInterfaceStyle, UIView,
+    UICornerConfiguration, UICornerRadius, UIEvent, UIGestureRecognizer,
+    UIGestureRecognizerDelegate, UIPanGestureRecognizer, UIRectCorner, UIRectEdge, UIScreen,
+    UIScreenEdgePanGestureRecognizer, UIScrollTypeMask, UITouch, UITraitCollection,
+    UITraitEnvironment, UIUserInterfaceLayoutDirection, UIUserInterfaceStyle, UIView,
     UIViewAutoresizing, UIViewController, UIWindow, UIWindowScene,
 };
 use parking_lot::Mutex;
@@ -188,6 +190,21 @@ define_class!(
                 .with_window(|window| window.handle_scroll(recognizer));
         }
 
+        #[unsafe(method(handleBackGesture:))]
+        fn handle_back_gesture(&self, recognizer: &UIScreenEdgePanGestureRecognizer) {
+            self.ivars()
+                .with_window(|window| window.handle_back_gesture(recognizer));
+        }
+    }
+
+    unsafe impl UIGestureRecognizerDelegate for MetalView {
+        // Only the back-gesture recognizer uses this view as its delegate.
+        #[unsafe(method(gestureRecognizerShouldBegin:))]
+        fn gesture_recognizer_should_begin(&self, recognizer: &UIGestureRecognizer) -> bool {
+            self.ivars()
+                .with_window(|window| window.begin_back_gesture(recognizer))
+                .unwrap_or(false)
+        }
     }
 );
 
@@ -262,6 +279,8 @@ pub(crate) struct IosWindowState {
     appearance_changed_callback: CallbackSlot<Box<dyn FnMut()>>,
     insets_changed_callback: CallbackSlot<Box<dyn FnMut(WindowInsets)>>,
     keyboard_dismiss_touch: Cell<Option<KeyboardDismissTouch>>,
+    /// Where the back gesture an element claimed started, while it runs.
+    back_gesture_start: Cell<Option<Point<Pixels>>>,
     keyboard_height: Cell<f32>,
     /// Current mouse position (from touch)
     mouse_position: Cell<Point<Pixels>>,
@@ -344,6 +363,30 @@ impl IosWindow {
         scroll_recognizer.setCancelsTouchesInView(false);
         view.addGestureRecognizer(&scroll_recognizer);
 
+        // The leading-edge swipe is iOS's back gesture. The delegate lets it
+        // begin only when an element claims it; it then cancels the touches it
+        // took over, so GPUI's own recognizer abandons any pan it had started.
+        let back_target: &AnyObject = &view;
+        // SAFETY: `MetalView` implements `handleBackGesture:` and owns the recognizer.
+        let back_recognizer = unsafe {
+            UIScreenEdgePanGestureRecognizer::initWithTarget_action(
+                UIScreenEdgePanGestureRecognizer::alloc(main_thread),
+                Some(back_target),
+                Some(sel!(handleBackGesture:)),
+            )
+        };
+        back_recognizer.setEdges(
+            if view.effectiveUserInterfaceLayoutDirection()
+                == UIUserInterfaceLayoutDirection::RightToLeft
+            {
+                UIRectEdge::Right
+            } else {
+                UIRectEdge::Left
+            },
+        );
+        back_recognizer.setDelegate(Some(ProtocolObject::from_ref(&*view)));
+        view.addGestureRecognizer(&back_recognizer);
+
         let view_controller = ViewController::new(main_thread);
         view_controller.setView(Some(&view));
         window.setRootViewController(Some(&view_controller));
@@ -398,6 +441,7 @@ impl IosWindow {
             appearance_changed_callback: CallbackSlot::default(),
             insets_changed_callback: CallbackSlot::default(),
             keyboard_dismiss_touch: Cell::new(None),
+            back_gesture_start: Cell::new(None),
             keyboard_height: Cell::new(0.),
             mouse_position: Cell::new(Point::default()),
             modifiers: Cell::new(Modifiers::default()),
@@ -511,6 +555,41 @@ impl IosWindowState {
         self.modifiers.set(event.modifiers);
         self.input_callback
             .with(|callback| callback(PlatformInput::Scroll(event)));
+    }
+
+    /// Offers a starting back gesture to GPUI, returning whether an element
+    /// claimed it.
+    fn begin_back_gesture(&self, recognizer: &UIGestureRecognizer) -> bool {
+        let location = recognizer.locationInView(Some(&self.view));
+        let start_position = Point::new(px(location.x as f32), px(location.y as f32));
+        let claimed = self
+            .input_callback
+            .with(|callback| {
+                callback(PlatformInput::Back(BackEvent {
+                    phase: BackPhase::Started,
+                    start_position,
+                    progress: 0.,
+                }))
+            })
+            .is_some_and(|result| result.default_prevented);
+        self.back_gesture_start
+            .set(claimed.then_some(start_position));
+        claimed
+    }
+
+    /// Delivers a step of a claimed back gesture.
+    fn handle_back_gesture(&self, recognizer: &UIScreenEdgePanGestureRecognizer) {
+        let Some(start_position) = self.back_gesture_start.get() else {
+            return;
+        };
+        let Some(event) = back_event(recognizer, &self.view, start_position) else {
+            return;
+        };
+        if matches!(event.phase, BackPhase::Committed | BackPhase::Cancelled) {
+            self.back_gesture_start.set(None);
+        }
+        self.input_callback
+            .with(|callback| callback(PlatformInput::Back(event)));
     }
 
     fn handle_keyboard_dismiss_touch(&self, event: &TouchEvent) {

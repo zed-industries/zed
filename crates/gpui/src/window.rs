@@ -5761,6 +5761,10 @@ impl Window {
                 self.mouse_position = touch_drag.start_position;
                 PlatformInput::TouchDrag(touch_drag)
             }
+            PlatformInput::Back(back) => {
+                self.mouse_position = back.start_position;
+                PlatformInput::Back(back)
+            }
             PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
         };
 
@@ -7919,11 +7923,11 @@ mod tests {
     };
 
     use crate::{
-        AnyWindowHandle, AppContext as _, Bounds, ContentMask, Context, DispatchPhase,
-        DragMoveEvent, Empty, ExternalDragPayload, ExternalPaths, FileDragPaths, FileDropEvent,
-        FocusHandle, InputEvent as _, InteractiveElement as _, IntoElement, KeyDownEvent,
-        Keystroke, LongPressEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement,
-        Pixels, PlatformInput, Point, Render, RequestFrameOptions, ScaledPixels,
+        AnyWindowHandle, AppContext as _, BackEvent, BackPhase, Bounds, ContentMask, Context,
+        DispatchPhase, DragMoveEvent, Empty, ExternalDragPayload, ExternalPaths, FileDragPaths,
+        FileDropEvent, FocusHandle, InputEvent as _, InteractiveElement as _, IntoElement,
+        KeyDownEvent, Keystroke, LongPressEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+        ParentElement, Pixels, PlatformInput, Point, Render, RequestFrameOptions, ScaledPixels,
         StatefulInteractiveElement as _, Styled, TestAppContext, TouchDragEvent, TouchEvent,
         TouchId, TouchPhase, Underline, UnderlineStyle, Window, WindowAppearance, WindowOptions,
         canvas, div, hsla, point, px, size,
@@ -9244,6 +9248,58 @@ mod tests {
                 (TouchPhase::Ended, px(40.)),
             ]
         );
+    }
+
+    #[gpui::test]
+    fn back_gesture_is_claimed_by_the_innermost_listener(cx: &mut TestAppContext) {
+        let claims = Rc::new(RefCell::new(Vec::new()));
+        let window = cx.add_window({
+            let claims = claims.clone();
+            move |_, _| BackListeners { claims }
+        });
+        let dispatch_back = |cx: &mut TestAppContext, x: f32| {
+            window
+                .update(cx, |_, window, cx| {
+                    window
+                        .dispatch_event(
+                            BackEvent {
+                                phase: BackPhase::Started,
+                                start_position: point(px(x), px(10.)),
+                                progress: 0.,
+                            }
+                            .to_platform_input(),
+                            cx,
+                        )
+                        .default_prevented
+                })
+                .unwrap()
+        };
+        assert!(dispatch_back(cx, 10.));
+        assert!(dispatch_back(cx, 80.));
+        assert!(!dispatch_back(cx, 150.));
+        assert_eq!(claims.borrow().as_slice(), ["inner", "outer"]);
+    }
+
+    struct BackListeners {
+        claims: Rc<RefCell<Vec<&'static str>>>,
+    }
+
+    impl Render for BackListeners {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let claim = |name: &'static str| {
+                let claims = self.claims.clone();
+                move |_: &BackEvent, _: &mut Window, _: &mut crate::App| {
+                    claims.borrow_mut().push(name)
+                }
+            };
+            div().size_full().child(
+                div()
+                    .w(px(100.))
+                    .h_full()
+                    .on_back(claim("outer"))
+                    .child(div().w(px(50.)).h_full().on_back(claim("inner"))),
+            )
+        }
     }
 
     struct TouchDragListener {
