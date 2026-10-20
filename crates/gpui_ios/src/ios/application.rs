@@ -423,12 +423,10 @@ mod tests {
             move |urls| received.borrow_mut().extend(urls)
         }));
         let url_string = "https://example.com/thread/123?source=link#selection";
-        let url = NSURL::URLWithString(&NSString::from_str(url_string))
-            .expect("test URL is valid");
-        let activity = NSUserActivity::initWithActivityType(
-            NSUserActivity::alloc(),
-            unsafe { NSUserActivityTypeBrowsingWeb },
-        );
+        let url = NSURL::URLWithString(&NSString::from_str(url_string)).expect("test URL is valid");
+        let activity = NSUserActivity::initWithActivityType(NSUserActivity::alloc(), unsafe {
+            NSUserActivityTypeBrowsingWeb
+        });
         state.continue_user_activity(&activity);
         assert!(received.borrow().is_empty());
 
