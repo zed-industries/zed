@@ -230,9 +230,6 @@ pub(crate) struct IosWindowState {
     view: Retained<MetalView>,
     /// The hidden text input view for keyboard input
     text_input_view: Retained<TextInputView>,
-    /// A transparent view filling the window whose concentric corner radii
-    /// report the display's corners. `None` before iOS 26.
-    corner_probe: Option<Retained<UIView>>,
     /// Current bounds in pixels
     bounds: Cell<Bounds<Pixels>>,
     /// Scale factor
@@ -318,6 +315,17 @@ impl IosWindow {
         view.setUserInteractionEnabled(true);
         view.setMultipleTouchEnabled(true);
 
+        // UIKit has no public API for the display's corner radius, but since
+        // iOS 26 a view filling the window with a container-concentric corner
+        // configuration resolves its radii to the display's. This only sets the
+        // layer's corner radius; without `masksToBounds` the Metal drawable is
+        // not clipped.
+        if reports_corner_radii(&view) {
+            view.setCornerConfiguration(&UICornerConfiguration::configurationWithRadius(
+                &UICornerRadius::containerConcentricRadius(),
+            ));
+        }
+
         // Trackpad and mouse-wheel scrolling reaches UIKit apps only through a
         // pan recognizer that accepts scroll types. With no allowed touch types
         // it never claims finger touches, so those keep reaching `touchesBegan`
@@ -342,8 +350,6 @@ impl IosWindow {
 
         // Make the window visible
         window.makeKeyAndVisible();
-
-        let corner_probe = display_corner_probe(&window, main_thread);
 
         // Create a hidden text input view for keyboard handling.
         // Uses our custom GPUITextInputView which implements UIKeyInput
@@ -374,7 +380,6 @@ impl IosWindow {
             view_controller,
             view,
             text_input_view,
-            corner_probe,
             bounds: Cell::new(screen_bounds),
             scale_factor: Cell::new(scale_factor),
             input_handler: CallbackSlot::default(),
@@ -591,10 +596,10 @@ impl IosWindowState {
     }
 
     fn display_corner_radii(&self) -> Corners<Pixels> {
-        let Some(probe) = &self.corner_probe else {
+        if !reports_corner_radii(&self.view) {
             return Corners::default();
-        };
-        let radius = |corner| px(probe.effectiveRadiusForCorner(corner) as f32);
+        }
+        let radius = |corner| px(self.view.effectiveRadiusForCorner(corner) as f32);
         Corners {
             top_left: radius(UIRectCorner::TopLeft),
             top_right: radius(UIRectCorner::TopRight),
@@ -706,30 +711,9 @@ impl IosWindowState {
     }
 }
 
-/// Installs a view whose corners are concentric with the window's container.
-///
-/// UIKit has no public API for the display's corner radius, but since iOS 26 a
-/// full-window view with a container-concentric corner configuration resolves
-/// its radii to the display's. The probe sits behind all content and ignores
-/// touches. Returns `None` on earlier iOS versions, which lack these APIs.
-fn display_corner_probe(
-    window: &UIWindow,
-    main_thread: MainThreadMarker,
-) -> Option<Retained<UIView>> {
-    let probe = UIView::new(main_thread);
-    if !probe.respondsToSelector(sel!(effectiveRadiusForCorner:)) {
-        return None;
-    }
-    probe.setCornerConfiguration(&UICornerConfiguration::configurationWithRadius(
-        &UICornerRadius::containerConcentricRadius(),
-    ));
-    probe.setUserInteractionEnabled(false);
-    probe.setFrame(window.bounds());
-    probe.setAutoresizingMask(
-        UIViewAutoresizing::FlexibleWidth | UIViewAutoresizing::FlexibleHeight,
-    );
-    window.insertSubview_atIndex(&probe, 0);
-    Some(probe)
+/// Whether UIKit can resolve corner configurations, which arrived in iOS 26.
+fn reports_corner_radii(view: &UIView) -> bool {
+    view.respondsToSelector(sel!(effectiveRadiusForCorner:))
 }
 
 impl Drop for IosWindow {
