@@ -545,7 +545,7 @@ impl Copilot {
             &mut cx.to_async(),
         );
         initializer(&mut fake_server);
-        let node_runtime = NodeRuntime::unavailable();
+        let node_runtime = NodeRuntime::unavailable(cx.executor());
         let send_focus_notification = Subscription::new(|| {});
         let this = cx.new(|cx| Self {
             server_id: LanguageServerId(0),
@@ -1437,7 +1437,7 @@ mod tests {
         let copilot = cx.new(|cx| Copilot {
             server_id: LanguageServerId(0),
             fs: FakeFs::new(cx.background_executor().clone()),
-            node_runtime: NodeRuntime::unavailable(),
+            node_runtime: NodeRuntime::unavailable(cx.background_executor().clone()),
             server: CopilotServer::Disabled,
             buffers: Default::default(),
             _subscriptions: vec![],
@@ -1783,7 +1783,7 @@ mod tests {
         let copilot = cx.new(|cx| Copilot {
             server_id: LanguageServerId(0),
             fs: FakeFs::new(cx.background_executor().clone()),
-            node_runtime: NodeRuntime::unavailable(),
+            node_runtime: NodeRuntime::unavailable(cx.background_executor().clone()),
             server: CopilotServer::Disabled,
             buffers: Default::default(),
             _subscriptions: vec![],

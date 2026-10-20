@@ -422,8 +422,12 @@ async fn find_eslint_version(
     requested_file: Option<&Path>,
 ) -> Result<Option<Version>> {
     for directory in ancestor_directories(worktree_root, requested_file) {
-        if let Some(version) =
-            read_package_installed_version(directory.join("node_modules"), "eslint").await?
+        if let Some(version) = read_package_installed_version(
+            delegate.background_executor(),
+            directory.join("node_modules"),
+            "eslint",
+        )
+        .await?
         {
             return Ok(Some(version));
         }

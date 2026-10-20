@@ -2089,7 +2089,7 @@ impl Project {
         let project = cx.update(|cx| {
             Project::local(
                 client,
-                node_runtime::NodeRuntime::unavailable(),
+                node_runtime::NodeRuntime::unavailable(cx.background_executor().clone()),
                 user_store,
                 Arc::new(languages),
                 fs,
@@ -2149,7 +2149,7 @@ impl Project {
         let project = cx.update(|cx| {
             Project::local(
                 client,
-                node_runtime::NodeRuntime::unavailable(),
+                node_runtime::NodeRuntime::unavailable(cx.background_executor().clone()),
                 user_store,
                 Arc::new(languages),
                 fs,

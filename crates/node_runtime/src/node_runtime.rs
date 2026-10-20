@@ -1,16 +1,18 @@
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_compression::futures::bufread::GzipDecoder;
+use async_lock::Mutex;
 use async_tar::Archive;
 use chrono::{DateTime, Utc};
-use futures::{AsyncReadExt, FutureExt as _, channel::oneshot, future::Shared};
+use futures::io::BufReader;
+use futures::{FutureExt as _, channel::oneshot, future::Shared};
+use gpui::BackgroundExecutor;
 use http_client::{Host, HttpClient, Url};
 use log::Level;
 use semver::{Version, VersionReq};
 use serde::Deserialize;
-use smol::io::BufReader;
-use smol::{fs, lock::Mutex};
 use std::collections::HashMap;
 use std::fmt::Display;
+use std::io::Read;
 use std::{
     env::{self, consts},
     ffi::{OsStr, OsString},
@@ -49,7 +51,7 @@ pub enum VersionStrategy<'a> {
 }
 
 #[derive(Clone)]
-pub struct NodeRuntime(Arc<Mutex<NodeRuntimeState>>);
+pub struct NodeRuntime(Arc<Mutex<NodeRuntimeState>>, BackgroundExecutor);
 
 struct NodeRuntimeState {
     http: Arc<dyn HttpClient>,
@@ -61,27 +63,34 @@ struct NodeRuntimeState {
 
 impl NodeRuntime {
     pub fn new(
+        exec: BackgroundExecutor,
         http: Arc<dyn HttpClient>,
         shell_env_loaded: Option<oneshot::Receiver<()>>,
         options: watch::Receiver<Option<NodeBinaryOptions>>,
     ) -> Self {
-        NodeRuntime(Arc::new(Mutex::new(NodeRuntimeState {
-            http,
-            instance: None,
-            last_options: None,
-            options,
-            shell_env_loaded: shell_env_loaded.unwrap_or(oneshot::channel().1).shared(),
-        })))
+        NodeRuntime(
+            Arc::new(Mutex::new(NodeRuntimeState {
+                http,
+                instance: None,
+                last_options: None,
+                options,
+                shell_env_loaded: shell_env_loaded.unwrap_or(oneshot::channel().1).shared(),
+            })),
+            exec,
+        )
     }
 
-    pub fn unavailable() -> Self {
-        NodeRuntime(Arc::new(Mutex::new(NodeRuntimeState {
-            http: Arc::new(http_client::BlockedHttpClient),
-            instance: None,
-            last_options: None,
-            options: watch::channel(Some(NodeBinaryOptions::default())).1,
-            shell_env_loaded: oneshot::channel().1.shared(),
-        })))
+    pub fn unavailable(exec: BackgroundExecutor) -> Self {
+        NodeRuntime(
+            Arc::new(Mutex::new(NodeRuntimeState {
+                http: Arc::new(http_client::BlockedHttpClient),
+                instance: None,
+                last_options: None,
+                options: watch::channel(Some(NodeBinaryOptions::default())).1,
+                shell_env_loaded: oneshot::channel().1.shared(),
+            })),
+            exec,
+        )
     }
 
     async fn instance(&self) -> Box<dyn NodeRuntimeTrait> {
@@ -110,23 +119,24 @@ impl NodeRuntime {
         }
 
         if let Some((node, npm)) = options.use_paths.as_ref() {
-            let instance = match SystemNodeRuntime::new(node.clone(), npm.clone()).await {
-                Ok(instance) => {
-                    log::info!("using Node.js from `node.path` in settings: {:?}", instance);
-                    Box::new(instance)
-                }
-                Err(err) => {
-                    // failure case not cached, since it's cheap to check again
-                    return Box::new(UnavailableNodeRuntime {
-                        error_message: format!(
-                            "failure checking Node.js from `node.path` in settings ({}): {:?}",
-                            node.display(),
-                            err
-                        )
-                        .into(),
-                    });
-                }
-            };
+            let instance =
+                match SystemNodeRuntime::new(self.1.clone(), node.clone(), npm.clone()).await {
+                    Ok(instance) => {
+                        log::info!("using Node.js from `node.path` in settings: {:?}", instance);
+                        Box::new(instance)
+                    }
+                    Err(err) => {
+                        // failure case not cached, since it's cheap to check again
+                        return Box::new(UnavailableNodeRuntime {
+                            error_message: format!(
+                                "failure checking Node.js from `node.path` in settings ({}): {:?}",
+                                node.display(),
+                                err
+                            )
+                            .into(),
+                        });
+                    }
+                };
             state.instance = Some(instance.boxed_clone());
             state.last_options = Some(options);
             return instance;
@@ -134,7 +144,7 @@ impl NodeRuntime {
 
         let system_node_error = if options.allow_path_lookup {
             state.shell_env_loaded.clone().await.ok();
-            match SystemNodeRuntime::detect().await {
+            match SystemNodeRuntime::detect(self.1.clone()).await {
                 Ok(instance) => {
                     log::info!("using Node.js found on PATH: {:?}", instance);
                     state.instance = Some(instance.boxed_clone());
@@ -156,7 +166,7 @@ impl NodeRuntime {
                     "`node.ignore_system_version` is `true` in settings".to_string(),
                 ),
             };
-            match ManagedNodeRuntime::install_if_needed(&state.http).await {
+            match ManagedNodeRuntime::install_if_needed(self.1.clone(), &state.http).await {
                 Ok(instance) => {
                     log::log!(
                         log_level,
@@ -369,7 +379,15 @@ impl NodeRuntime {
         // In the case of the local system not having the package installed,
         // or in the instances where we fail to parse package.json data,
         // we attempt to install the package.
-        if fs::metadata(local_executable_path).await.is_err() {
+        if self
+            .1
+            .spawn_blocking({
+                let local_executable_path = local_executable_path.to_path_buf();
+                move || std::fs::metadata(&local_executable_path)
+            })
+            .await
+            .is_err()
+        {
             log::debug!(
                 "npm package cache miss package={package_name:?} reason=missing-executable executable={}",
                 local_executable_path.display()
@@ -600,6 +618,7 @@ trait NodeRuntimeTrait: Send + Sync {
 
 #[derive(Clone)]
 struct ManagedNodeRuntime {
+    exec: BackgroundExecutor,
     installation_path: PathBuf,
 }
 
@@ -616,7 +635,10 @@ impl ManagedNodeRuntime {
     #[cfg(windows)]
     const NPM_PATH: &str = "node_modules/npm/bin/npm-cli.js";
 
-    async fn install_if_needed(http: &Arc<dyn HttpClient>) -> Result<Self> {
+    async fn install_if_needed(
+        exec: BackgroundExecutor,
+        http: &Arc<dyn HttpClient>,
+    ) -> Result<Self> {
         log::info!("Node runtime install_if_needed");
 
         let os = match consts::OS {
@@ -640,7 +662,14 @@ impl ManagedNodeRuntime {
         let npm_file = node_dir.join(Self::NPM_PATH);
         let node_ca_certs = env::var(NODE_CA_CERTS_ENV_VAR).unwrap_or_else(|_| String::new());
 
-        let valid = if fs::metadata(&node_binary).await.is_ok() {
+        let valid = if exec
+            .spawn_blocking({
+                let node_binary = node_binary.clone();
+                move || std::fs::metadata(&node_binary)
+            })
+            .await
+            .is_ok()
+        {
             let result = util::command::new_command(&node_binary)
                 .env(NODE_CA_CERTS_ENV_VAR, node_ca_certs)
                 .arg(npm_file)
@@ -678,10 +707,15 @@ impl ManagedNodeRuntime {
         };
 
         if !valid {
-            _ = fs::remove_dir_all(&node_containing_dir).await;
-            fs::create_dir(&node_containing_dir)
-                .await
-                .context("error creating node containing dir")?;
+            exec.spawn_blocking({
+                let node_containing_dir = node_containing_dir.clone();
+                move || {
+                    _ = std::fs::remove_dir_all(&node_containing_dir);
+                    std::fs::create_dir(&node_containing_dir)
+                        .context("error creating node containing dir")
+                }
+            })
+            .await?;
 
             let archive_type = match consts::OS {
                 "macos" | "linux" => ArchiveType::TarGz,
@@ -718,15 +752,21 @@ impl ManagedNodeRuntime {
             log::info!("Extracted Node.js to {}", node_containing_dir.display())
         }
 
-        _ = fs::remove_dir_all(node_dir.join("cache")).await;
+        exec.spawn_blocking({
+            let node_dir = node_dir.clone();
+            move || {
+                _ = std::fs::remove_dir_all(node_dir.join("cache"));
 
-        // Note: Not in the `if !valid {}` so we can populate these for existing installations
-        _ = fs::create_dir(node_dir.join("cache")).await;
-        _ = fs::write(node_dir.join("blank_user_npmrc"), []).await;
-        _ = fs::write(node_dir.join("blank_global_npmrc"), []).await;
-
+                // Note: Not in the `if !valid {}` so we can populate these for existing installations
+                _ = std::fs::create_dir(node_dir.join("cache"));
+                _ = std::fs::write(node_dir.join("blank_user_npmrc"), []);
+                _ = std::fs::write(node_dir.join("blank_global_npmrc"), []);
+            }
+        })
+        .await;
         anyhow::Ok(ManagedNodeRuntime {
             installation_path: node_dir,
+            exec,
         })
     }
 }
@@ -813,11 +853,23 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
         let npm_file = self.installation_path.join(Self::NPM_PATH);
 
         anyhow::ensure!(
-            smol::fs::metadata(&node_binary).await.is_ok(),
+            self.exec
+                .spawn_blocking({
+                    let node_binary = node_binary.clone();
+                    move || std::fs::metadata(&node_binary)
+                })
+                .await
+                .is_ok(),
             "missing node binary file"
         );
         anyhow::ensure!(
-            smol::fs::metadata(&npm_file).await.is_ok(),
+            self.exec
+                .spawn_blocking({
+                    let npm_file = npm_file.clone();
+                    move || std::fs::metadata(&npm_file)
+                })
+                .await
+                .is_ok(),
             "missing npm file"
         );
 
@@ -845,7 +897,12 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
         local_package_directory: &Path,
         name: &str,
     ) -> Result<Option<Version>> {
-        read_package_installed_version(local_package_directory.join("node_modules"), name).await
+        read_package_installed_version(
+            self.exec.clone(),
+            local_package_directory.join("node_modules"),
+            name,
+        )
+        .await
     }
 }
 
@@ -929,20 +986,22 @@ impl SystemNode {
     /// Returns a typed failure if lookup or execution fails, the version cannot
     /// be parsed, or the executable reports a version older than 22.0.0.
     pub async fn discover(
+        exec: BackgroundExecutor,
         configured_path: Option<PathBuf>,
         search_path: Option<OsString>,
     ) -> std::result::Result<Self, NodeDiscoveryError> {
-        let path = smol::unblock({
-            let search_path = search_path.clone();
-            move || {
-                find_node_path(
-                    configured_path.as_deref(),
-                    search_path.as_deref(),
-                    Path::new("."),
-                )
-            }
-        })
-        .await?;
+        let path = exec
+            .spawn_blocking({
+                let search_path = search_path.clone();
+                move || {
+                    find_node_path(
+                        configured_path.as_deref(),
+                        search_path.as_deref(),
+                        Path::new("."),
+                    )
+                }
+            })
+            .await?;
         let mut command = util::command::new_command(&path);
         command.arg("--version").kill_on_drop(true);
         if let Some(search_path) = search_path {
@@ -1018,32 +1077,40 @@ fn check_node_version(
 
 #[derive(Debug, Clone)]
 pub struct SystemNodeRuntime {
+    exec: BackgroundExecutor,
     node: PathBuf,
     npm: PathBuf,
     scratch_dir: PathBuf,
 }
 
 impl SystemNodeRuntime {
-    async fn new(node: PathBuf, npm: PathBuf) -> Result<Self> {
-        let node = SystemNode::discover(Some(node), env::var_os("PATH"))
+    async fn new(exec: BackgroundExecutor, node: PathBuf, npm: PathBuf) -> Result<Self> {
+        let node = SystemNode::discover(exec.clone(), Some(node), env::var_os("PATH"))
             .await?
             .path;
         let scratch_dir = paths::data_dir().join("node");
-        fs::create_dir(&scratch_dir).await.ok();
-        _ = fs::remove_dir_all(scratch_dir.join("cache")).await;
-        fs::create_dir(scratch_dir.join("cache")).await.ok();
 
+        exec.spawn_blocking({
+            let scratch_dir = scratch_dir.clone();
+            move || {
+                std::fs::create_dir(&scratch_dir).ok();
+                _ = std::fs::remove_dir_all(scratch_dir.join("cache")).ok();
+                std::fs::create_dir(scratch_dir.join("cache")).ok();
+            }
+        })
+        .await;
         Ok(Self {
+            exec,
             node,
             npm,
             scratch_dir,
         })
     }
 
-    async fn detect() -> std::result::Result<Self, DetectError> {
+    async fn detect(exec: BackgroundExecutor) -> std::result::Result<Self, DetectError> {
         let node = which::which("node").map_err(DetectError::NotInPath)?;
         let npm = which::which("npm").map_err(DetectError::NotInPath)?;
-        Self::new(node, npm).await.map_err(DetectError::Other)
+        Self::new(exec, node, npm).await.map_err(DetectError::Other)
     }
 }
 
@@ -1130,18 +1197,25 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
         local_package_directory: &Path,
         name: &str,
     ) -> Result<Option<Version>> {
-        read_package_installed_version(local_package_directory.join("node_modules"), name).await
+        read_package_installed_version(
+            self.exec.clone(),
+            local_package_directory.join("node_modules"),
+            name,
+        )
+        .await
         // todo: allow returning a globally installed version (requires callers not to hard-code the path)
     }
 }
 
 pub async fn read_package_installed_version(
+    exec: BackgroundExecutor,
     node_module_directory: PathBuf,
     name: &str,
 ) -> Result<Option<Version>> {
     let package_json_path = node_module_directory.join(name).join("package.json");
 
-    let mut file = match fs::File::open(package_json_path).await {
+    let fut = exec.spawn_blocking(move || std::fs::File::open(package_json_path));
+    let mut file = match fut.await {
         Ok(file) => file,
         Err(err) => {
             if err.kind() == io::ErrorKind::NotFound {
@@ -1157,13 +1231,19 @@ pub async fn read_package_installed_version(
         version: Version,
     }
 
-    let mut contents = String::new();
-    file.read_to_string(&mut contents).await?;
+    let contents = exec
+        .spawn_blocking(move || {
+            let mut contents = String::new();
+            file.read_to_string(&mut contents)?;
+            anyhow::Ok(contents)
+        })
+        .await?;
     let package_json: PackageJson = serde_json::from_str(&contents)?;
     Ok(Some(package_json.version))
 }
 
 pub async fn read_package_executable(
+    exec: BackgroundExecutor,
     node_module_directory: PathBuf,
     name: &str,
 ) -> Result<PathBuf> {
@@ -1182,11 +1262,19 @@ pub async fn read_package_executable(
     }
 
     let package_json_path = package_directory.join("package.json");
-    let mut file = fs::File::open(&package_json_path)
-        .await
-        .with_context(|| format!("opening {}", package_json_path.display()))?;
-    let mut contents = String::new();
-    file.read_to_string(&mut contents).await?;
+
+    let contents = exec
+        .spawn_blocking({
+            let package_json_path = package_json_path.clone();
+            move || {
+                let mut file = std::fs::File::open(&package_json_path)
+                    .with_context(|| format!("opening {}", package_json_path.display()))?;
+                let mut contents = String::new();
+                file.read_to_string(&mut contents)?;
+                anyhow::Ok(contents)
+            }
+        })
+        .await?;
     let package_json: PackageJson = serde_json::from_str(&contents)
         .with_context(|| format!("parsing {}", package_json_path.display()))?;
 

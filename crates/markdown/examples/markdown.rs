@@ -40,7 +40,7 @@ pub fn main() {
         cx.set_global(store);
         cx.bind_keys([KeyBinding::new("cmd-c", markdown::Copy, None)]);
 
-        let node_runtime = NodeRuntime::unavailable();
+        let node_runtime = NodeRuntime::unavailable(cx.background_executor().clone());
         theme_settings::init(LoadThemes::JustBase, cx);
 
         let fs = fs::FakeFs::new(cx.background_executor().clone());
