@@ -28913,13 +28913,48 @@ async fn test_on_type_formatting_does_not_rewind_over_intervening_edits(cx: &mut
 #[gpui::test]
 async fn test_on_type_formatting_after_newline_uses_autoindented_position(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
-    assert_on_type_formatting_after_newline_keeps_cursor_in_body(false, cx).await;
-}
+    for async_autoindent in [false, true] {
+        let mut cx = EditorLspTestContext::new_typescript(
+            lsp::ServerCapabilities {
+                document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
+                    first_trigger_character: "\n".to_string(),
+                    more_trigger_character: None,
+                }),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
 
-#[gpui::test]
-async fn test_on_type_formatting_after_newline_waits_for_async_autoindent(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
-    assert_on_type_formatting_after_newline_keeps_cursor_in_body(true, cx).await;
+        cx.set_state("function foo() {ˇ}\n");
+        if async_autoindent {
+            cx.update_buffer(|buffer, _| buffer.set_sync_parse_timeout(None));
+        }
+
+        // Mirrors Ruby LSP closing a block: a newline and the closing keyword inserted at the cursor.
+        let mut request = cx.set_request_handler::<lsp::request::OnTypeFormatting, _, _>(
+            |_, params, _| async move {
+                let position = params.text_document_position.position;
+                assert_eq!(position, lsp::Position::new(1, 4));
+                Ok(Some(vec![
+                    lsp::TextEdit {
+                        range: lsp::Range::new(position, position),
+                        new_text: "\n".to_string(),
+                    },
+                    lsp::TextEdit {
+                        range: lsp::Range::new(position, position),
+                        new_text: "end".to_string(),
+                    },
+                ]))
+            },
+        );
+
+        cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+        cx.run_until_parked();
+
+        cx.assert_editor_state("function foo() {\n    ˇ\nend\n}\n");
+        assert!(request.next().await.is_some());
+    }
 }
 
 #[gpui::test]
@@ -28964,53 +28999,25 @@ async fn test_on_type_formatting_after_newline_ignores_subsequent_input(cx: &mut
 }
 
 #[gpui::test]
-async fn test_on_type_formatting_after_newline_with_unchanged_indent(cx: &mut TestAppContext) {
+async fn test_on_type_formatting_after_newline_with_existing_indent(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     for async_autoindent in [false, true] {
-        assert_on_type_formatting_request_position(
-            async_autoindent,
-            "\n",
-            "function f() {ˇ    let n = 1;\n}\n",
-            |editor, window, cx| editor.newline(&Newline, window, cx),
-            lsp::Position::new(1, 0),
-            "function f() {\nˇ    let n = 1;\n}\n",
-            cx,
-        )
-        .await;
-    }
-}
-
-#[gpui::test]
-async fn test_on_type_formatting_after_newline_with_reduced_indent(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
-    for async_autoindent in [false, true] {
-        assert_on_type_formatting_request_position(
-            async_autoindent,
-            "\n",
-            "function f() {ˇ        let n = 1;\n}\n",
-            |editor, window, cx| editor.newline(&Newline, window, cx),
-            lsp::Position::new(1, 0),
-            "function f() {\nˇ    let n = 1;\n}\n",
-            cx,
-        )
-        .await;
-    }
-}
-
-#[gpui::test]
-async fn test_on_type_formatting_after_newline_with_replaced_indent(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
-    for async_autoindent in [false, true] {
-        assert_on_type_formatting_request_position(
-            async_autoindent,
-            "\n",
-            "function f() {ˇ\tlet n = 1;\n}\n",
-            |editor, window, cx| editor.newline(&Newline, window, cx),
-            lsp::Position::new(1, 4),
-            "function f() {\n    ˇlet n = 1;\n}\n",
-            cx,
-        )
-        .await;
+        for (whitespace, expected_whitespace, expected_column) in [
+            ("    ", "ˇ    ", 0),
+            ("        ", "ˇ    ", 0),
+            ("\t", "    ˇ", 4),
+        ] {
+            assert_on_type_formatting_request_position(
+                async_autoindent,
+                "\n",
+                &format!("function f() {{ˇ{whitespace}let n = 1;\n}}\n"),
+                |editor, window, cx| editor.newline(&Newline, window, cx),
+                lsp::Position::new(1, expected_column),
+                &format!("function f() {{\n{expected_whitespace}let n = 1;\n}}\n"),
+                cx,
+            )
+            .await;
+        }
     }
 }
 
@@ -29019,36 +29026,12 @@ async fn test_on_type_formatting_after_newline_ignores_input_while_autoindent_is
     cx: &mut TestAppContext,
 ) {
     init_test(cx, |_| {});
-    assert_on_type_formatting_request_position(
-        true,
-        "\n",
-        "function f() {\n    let n = 1;ˇ\n}\n",
-        |editor, window, cx| {
-            editor.newline(&Newline, window, cx);
-            editor.handle_input("n", window, cx);
-        },
-        lsp::Position::new(2, 4),
-        "function f() {\n    let n = 1;\n    nˇ\n}\n",
-        cx,
-    )
-    .await;
-    assert_on_type_formatting_request_position(
-        true,
-        "\n",
-        "function f() {\n    let n = 1;ˇ\n}\n",
-        |editor, window, cx| {
-            editor.newline(&Newline, window, cx);
-            editor.handle_input("n;\nn", window, cx);
-        },
-        lsp::Position::new(2, 4),
-        "function f() {\n    let n = 1;\n    n;\n    nˇ\n}\n",
-        cx,
-    )
-    .await;
-    for (previous_line, input, expected_line) in [
-        ("    let n = 1;", " n", "    nˇ"),
-        ("", " n", "    nˇ"),
-        ("    let n = 1;", "\tn", "   \tnˇ"),
+    for (previous_line, input, expected_line, expected_column) in [
+        ("    let n = 1;", "n", "    nˇ", 4),
+        ("    let n = 1;", "n;\nn", "    n;\n    nˇ", 4),
+        ("    let n = 1;", " n", "    nˇ", 3),
+        ("", " n", "    nˇ", 3),
+        ("    let n = 1;", "\tn", "   \tnˇ", 3),
     ] {
         assert_on_type_formatting_request_position(
             true,
@@ -29058,7 +29041,7 @@ async fn test_on_type_formatting_after_newline_ignores_input_while_autoindent_is
                 editor.newline(&Newline, window, cx);
                 editor.handle_input(input, window, cx);
             },
-            lsp::Position::new(2, 3),
+            lsp::Position::new(2, expected_column),
             &format!("function f() {{\n{previous_line}\n{expected_line}\n}}\n"),
             cx,
         )
@@ -29148,92 +29131,6 @@ async fn test_on_type_formatting_does_not_pin_cursor_moved_while_autoindent_is_p
     cx.run_until_parked();
 
     cx.assert_editor_state("function f() {\n    let a = ˇ1;\n}\n");
-    assert!(request.next().await.is_some());
-}
-
-async fn assert_on_type_formatting_request_position(
-    async_autoindent: bool,
-    trigger: &'static str,
-    initial_state: &str,
-    edit: impl FnOnce(&mut Editor, &mut Window, &mut Context<Editor>),
-    expected_position: lsp::Position,
-    expected_state: &str,
-    cx: &mut TestAppContext,
-) {
-    let mut cx = EditorLspTestContext::new_typescript(
-        lsp::ServerCapabilities {
-            document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
-                first_trigger_character: trigger.to_string(),
-                more_trigger_character: None,
-            }),
-            ..Default::default()
-        },
-        cx,
-    )
-    .await;
-
-    cx.set_state(initial_state);
-    if async_autoindent {
-        cx.update_buffer(|buffer, _| buffer.set_sync_parse_timeout(None));
-    }
-
-    let mut request = cx.set_request_handler::<lsp::request::OnTypeFormatting, _, _>(
-        move |_, params, _| async move {
-            assert_eq!(params.ch, trigger);
-            assert_eq!(params.text_document_position.position, expected_position);
-            Ok(Some(vec![]))
-        },
-    );
-
-    cx.update_editor(edit);
-    cx.run_until_parked();
-
-    cx.assert_editor_state(expected_state);
-    assert!(request.next().await.is_some());
-}
-
-async fn assert_on_type_formatting_after_newline_keeps_cursor_in_body(
-    async_autoindent: bool,
-    cx: &mut TestAppContext,
-) {
-    let mut cx = EditorLspTestContext::new_typescript(
-        lsp::ServerCapabilities {
-            document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
-                first_trigger_character: "\n".to_string(),
-                more_trigger_character: None,
-            }),
-            ..Default::default()
-        },
-        cx,
-    )
-    .await;
-
-    cx.set_state("function foo() {ˇ}\n");
-    if async_autoindent {
-        cx.update_buffer(|buffer, _| buffer.set_sync_parse_timeout(None));
-    }
-
-    // Mirrors Ruby LSP closing a block: a newline and the closing keyword inserted at the cursor.
-    let mut request =
-        cx.set_request_handler::<lsp::request::OnTypeFormatting, _, _>(|_, params, _| async move {
-            let position = params.text_document_position.position;
-            assert_eq!(position, lsp::Position::new(1, 4));
-            Ok(Some(vec![
-                lsp::TextEdit {
-                    range: lsp::Range::new(position, position),
-                    new_text: "\n".to_string(),
-                },
-                lsp::TextEdit {
-                    range: lsp::Range::new(position, position),
-                    new_text: "end".to_string(),
-                },
-            ]))
-        });
-
-    cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
-    cx.run_until_parked();
-
-    cx.assert_editor_state("function foo() {\n    ˇ\nend\n}\n");
     assert!(request.next().await.is_some());
 }
 
@@ -51104,4 +51001,45 @@ async fn test_soft_wrap_indent_updated_on_file_move_between_directories(
         .update(cx, |editor, window, cx| editor.snapshot(window, cx))
         .unwrap();
     assert_eq!(snapshot.soft_wrap_indent(DisplayRow(0)), Some(0));
+}
+
+async fn assert_on_type_formatting_request_position(
+    async_autoindent: bool,
+    trigger: &'static str,
+    initial_state: &str,
+    edit: impl FnOnce(&mut Editor, &mut Window, &mut Context<Editor>),
+    expected_position: lsp::Position,
+    expected_state: &str,
+    cx: &mut TestAppContext,
+) {
+    let mut cx = EditorLspTestContext::new_typescript(
+        lsp::ServerCapabilities {
+            document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
+                first_trigger_character: trigger.to_string(),
+                more_trigger_character: None,
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state(initial_state);
+    if async_autoindent {
+        cx.update_buffer(|buffer, _| buffer.set_sync_parse_timeout(None));
+    }
+
+    let mut request = cx.set_request_handler::<lsp::request::OnTypeFormatting, _, _>(
+        move |_, params, _| async move {
+            assert_eq!(params.ch, trigger);
+            assert_eq!(params.text_document_position.position, expected_position);
+            Ok(Some(vec![]))
+        },
+    );
+
+    cx.update_editor(edit);
+    cx.run_until_parked();
+
+    cx.assert_editor_state(expected_state);
+    assert!(request.next().await.is_some());
 }
