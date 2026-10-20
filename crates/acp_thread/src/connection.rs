@@ -125,12 +125,20 @@ pub trait AgentConnection {
         Task::ready(Err(anyhow::Error::msg("Loading sessions is not supported")))
     }
 
-    /// Whether this agent supports closing existing sessions.
+    /// Whether this agent supports explicitly closing existing sessions.
     fn supports_close_session(&self) -> bool {
         false
     }
 
-    /// Close an existing session. Allows the agent to free the session from memory.
+    /// Whether conversation teardown should invoke `close_session`.
+    /// The default preserves existing UI cleanup; backend-owned release hooks are separate.
+    /// Autonomous backends can opt out without disabling explicit close support.
+    fn should_close_sessions_on_release(&self) -> bool {
+        self.supports_close_session()
+    }
+
+    /// Close an existing session and free its resources. This may cancel remote work;
+    /// automatic cleanup must also respect `should_close_sessions_on_release`.
     fn close_session(
         self: Rc<Self>,
         _session_id: &acp_v2::SessionId,
@@ -232,7 +240,8 @@ pub trait AgentConnection {
         None
     }
 
-    fn cancel(&self, session_id: &acp_v2::SessionId, cx: &mut App);
+    /// Requests cancellation; success does not establish that execution stopped.
+    fn cancel(&self, session_id: &acp_v2::SessionId, cx: &mut App) -> Result<()>;
 
     /// Request-scoped elicitations are connection-level because they can arrive before a session
     /// thread exists. Session-scoped elicitations stay in the thread timeline, but use
@@ -434,15 +443,29 @@ impl AgentSessionInfo {
         }
     }
 
-    pub fn apply_update(&mut self, update: acp_v2::SessionInfoUpdate) -> bool {
+    pub fn apply_update(&mut self, update: impl Into<AgentSessionInfoUpdate>) -> bool {
+        let (title, updated_at, metadata) = match update.into() {
+            AgentSessionInfoUpdate::V1(update) => (
+                update.title,
+                update.updated_at,
+                crate::MetadataUpdate::V1(
+                    update.meta.map(MaybeUndefined::Value).unwrap_or_default(),
+                ),
+            ),
+            AgentSessionInfoUpdate::V2(update) => (
+                update.title,
+                update.updated_at,
+                crate::MetadataUpdate::V2(update.meta),
+            ),
+        };
         let mut changed = false;
-        if !update.title.is_undefined() {
-            let title = update.title.take().map(SharedString::from);
+        if !title.is_undefined() {
+            let title = title.take().map(SharedString::from);
             changed |= self.title != title;
             self.title = title;
         }
 
-        let updated_at = match update.updated_at {
+        let updated_at = match updated_at {
             MaybeUndefined::Undefined => None,
             MaybeUndefined::Null => Some(None),
             MaybeUndefined::Value(updated_at) => match DateTime::parse_from_rfc3339(&updated_at) {
@@ -458,23 +481,37 @@ impl AgentSessionInfo {
             self.updated_at = updated_at;
         }
 
-        if !update.meta.is_undefined() {
-            let meta = update.meta.take();
-            changed |= self.meta != meta;
-            self.meta = meta;
-        }
+        changed |= metadata.apply(&mut self.meta);
         changed
     }
 }
 
-pub fn session_info_update_from_v1(update: acp_v1::SessionInfoUpdate) -> acp_v2::SessionInfoUpdate {
-    let mut converted = acp_v2::SessionInfoUpdate::new()
-        .title(update.title)
-        .updated_at(update.updated_at);
-    if let Some(meta) = update.meta {
-        converted = converted.meta(meta);
+/// Retains wire provenance because v1 metadata replaces while v2 metadata patches.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AgentSessionInfoUpdate {
+    V1(acp_v1::SessionInfoUpdate),
+    V2(acp_v2::SessionInfoUpdate),
+}
+
+impl AgentSessionInfoUpdate {
+    pub(crate) fn has_title(&self) -> bool {
+        match self {
+            Self::V1(update) => !update.title.is_undefined(),
+            Self::V2(update) => !update.title.is_undefined(),
+        }
     }
-    converted
+}
+
+impl From<acp_v1::SessionInfoUpdate> for AgentSessionInfoUpdate {
+    fn from(update: acp_v1::SessionInfoUpdate) -> Self {
+        Self::V1(update)
+    }
+}
+
+impl From<acp_v2::SessionInfoUpdate> for AgentSessionInfoUpdate {
+    fn from(update: acp_v2::SessionInfoUpdate) -> Self {
+        Self::V2(update)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -482,7 +519,7 @@ pub enum SessionListUpdate {
     Refresh,
     SessionInfo {
         session_id: acp_v2::SessionId,
-        update: acp_v2::SessionInfoUpdate,
+        update: AgentSessionInfoUpdate,
     },
 }
 
@@ -866,7 +903,7 @@ mod test_support {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use action_log::ActionLog;
-    use collections::HashMap;
+    use collections::{HashMap, VecDeque};
     use futures::{channel::oneshot, future::try_join_all};
     use gpui::{AppContext as _, WeakEntity};
     use parking_lot::Mutex;
@@ -924,15 +961,23 @@ mod test_support {
         permission_requests: HashMap<acp_v2::ToolCallId, PermissionOptions>,
         next_prompt_updates: Arc<Mutex<Vec<StubPromptUpdate>>>,
         next_prompt_response: Arc<Mutex<Option<oneshot::Receiver<Result<acp_v1::PromptResponse>>>>>,
+        auth_methods: Vec<acp_v2::AuthMethod>,
+        next_authenticate_response: Arc<Mutex<Option<oneshot::Receiver<Result<()>>>>>,
+        next_load_error: Arc<Mutex<Option<anyhow::Error>>>,
         next_receipt_response:
             Arc<Mutex<Option<oneshot::Receiver<Result<acp_v2::PromptResponse>>>>>,
         receipt_prompt: Arc<Mutex<Option<Vec<acp_v2::ContentBlock>>>>,
         next_truncate: Arc<Mutex<Option<oneshot::Receiver<()>>>>,
+        close_session_calls: Arc<Mutex<Vec<acp_v2::SessionId>>>,
+        next_close_responses: Arc<Mutex<VecDeque<oneshot::Receiver<Result<()>>>>>,
         set_title_calls: Arc<Mutex<Vec<(acp_v2::SessionId, SharedString)>>>,
         cancel_calls: Arc<Mutex<Vec<acp_v2::SessionId>>>,
+        next_cancel_error: Arc<Mutex<Option<anyhow::Error>>>,
         supports_receipt_submissions: bool,
         supports_retry: bool,
         supports_load_session: bool,
+        supports_close_session: bool,
+        close_sessions_on_release: bool,
         supports_session_additional_directories: bool,
         supports_set_title: bool,
         agent_id: AgentId,
@@ -963,16 +1008,24 @@ mod test_support {
             Self {
                 next_prompt_updates: Default::default(),
                 next_prompt_response: Default::default(),
+                auth_methods: Vec::new(),
+                next_authenticate_response: Default::default(),
+                next_load_error: Default::default(),
                 next_receipt_response: Default::default(),
                 receipt_prompt: Default::default(),
                 next_truncate: Default::default(),
+                close_session_calls: Default::default(),
+                next_close_responses: Default::default(),
                 set_title_calls: Default::default(),
                 cancel_calls: Default::default(),
+                next_cancel_error: Default::default(),
                 permission_requests: HashMap::default(),
                 sessions: Arc::default(),
                 supports_receipt_submissions: false,
                 supports_retry: false,
                 supports_load_session: false,
+                supports_close_session: false,
+                close_sessions_on_release: true,
                 supports_session_additional_directories: false,
                 supports_set_title: true,
                 agent_id: AgentId::new("stub"),
@@ -984,6 +1037,10 @@ mod test_support {
                         .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
                 ),
             }
+        }
+
+        pub fn set_next_load_error(&self, error: anyhow::Error) {
+            *self.next_load_error.lock() = Some(error);
         }
 
         pub fn set_next_prompt_updates(&self, updates: Vec<acp_v1::SessionUpdate>) {
@@ -1011,6 +1068,22 @@ mod test_support {
             sender
         }
 
+        pub fn with_auth_methods(mut self, methods: Vec<acp_v2::AuthMethod>) -> Self {
+            self.auth_methods = methods;
+            self
+        }
+
+        pub fn defer_next_authenticate_response(&self) -> oneshot::Sender<Result<()>> {
+            let (sender, receiver) = oneshot::channel();
+            assert!(
+                self.next_authenticate_response
+                    .lock()
+                    .replace(receiver)
+                    .is_none()
+            );
+            sender
+        }
+
         pub fn defer_next_receipt_response(
             &self,
         ) -> oneshot::Sender<Result<acp_v2::PromptResponse>> {
@@ -1032,8 +1105,22 @@ mod test_support {
             std::mem::take(&mut *self.set_title_calls.lock())
         }
 
+        pub fn take_close_session_calls(&self) -> Vec<acp_v2::SessionId> {
+            std::mem::take(&mut *self.close_session_calls.lock())
+        }
+
+        pub fn defer_next_close_response(&self) -> oneshot::Sender<Result<()>> {
+            let (sender, receiver) = oneshot::channel();
+            self.next_close_responses.lock().push_back(receiver);
+            sender
+        }
+
         pub fn take_cancel_calls(&self) -> Vec<acp_v2::SessionId> {
             std::mem::take(&mut *self.cancel_calls.lock())
+        }
+
+        pub fn set_next_cancel_error(&self, error: anyhow::Error) {
+            assert!(self.next_cancel_error.lock().replace(error).is_none());
         }
 
         pub fn defer_next_truncate(&self) -> oneshot::Sender<()> {
@@ -1052,6 +1139,16 @@ mod test_support {
 
         pub fn with_supports_load_session(mut self, supports_load_session: bool) -> Self {
             self.supports_load_session = supports_load_session;
+            self
+        }
+
+        pub fn with_supports_close_session(mut self, supports_close_session: bool) -> Self {
+            self.supports_close_session = supports_close_session;
+            self
+        }
+
+        pub fn with_close_sessions_on_release(mut self, close_sessions_on_release: bool) -> Self {
+            self.close_sessions_on_release = close_sessions_on_release;
             self
         }
 
@@ -1173,7 +1270,7 @@ mod test_support {
         }
 
         fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
-            &[]
+            &self.auth_methods
         }
 
         fn model_selector(
@@ -1198,6 +1295,29 @@ mod test_support {
             self.supports_load_session
         }
 
+        fn supports_close_session(&self) -> bool {
+            self.supports_close_session
+        }
+
+        fn should_close_sessions_on_release(&self) -> bool {
+            self.supports_close_session && self.close_sessions_on_release
+        }
+
+        fn close_session(
+            self: Rc<Self>,
+            session_id: &acp_v2::SessionId,
+            cx: &mut App,
+        ) -> Task<Result<()>> {
+            if !self.supports_close_session {
+                return Task::ready(Err(anyhow::Error::msg("Closing sessions is not supported")));
+            }
+            self.close_session_calls.lock().push(session_id.clone());
+            match self.next_close_responses.lock().pop_front() {
+                Some(response) => cx.spawn(async move |_| response.await?),
+                None => Task::ready(Ok(())),
+            }
+        }
+
         fn supports_session_additional_directories(&self) -> bool {
             self.supports_session_additional_directories
         }
@@ -1214,6 +1334,9 @@ mod test_support {
                 return Task::ready(Err(anyhow::Error::msg("Loading sessions is not supported")));
             }
 
+            if let Some(error) = self.next_load_error.lock().take() {
+                return Task::ready(Err(error));
+            }
             let thread = self.create_session(session_id, project, work_dirs, title, cx);
             Task::ready(Ok(thread))
         }
@@ -1221,9 +1344,14 @@ mod test_support {
         fn authenticate(
             &self,
             _method_id: acp_v2::AuthMethodId,
-            _cx: &mut App,
+            cx: &mut App,
         ) -> Task<gpui::Result<()>> {
-            unimplemented!()
+            match self.next_authenticate_response.lock().take() {
+                Some(response) => cx.spawn(async move |_| response.await?),
+                None => Task::ready(Err(anyhow::Error::msg(
+                    "No deferred authentication response",
+                ))),
+            }
         }
 
         fn validate_prompt_content(&self, content: &[acp_v2::ContentBlock]) -> Result<()> {
@@ -1331,18 +1459,24 @@ mod test_support {
                 .then(|| Rc::new(StubAgentSessionRetry) as Rc<dyn AgentSessionRetry>)
         }
 
-        fn cancel(&self, session_id: &acp_v2::SessionId, _cx: &mut App) {
+        fn cancel(&self, session_id: &acp_v2::SessionId, _cx: &mut App) -> Result<()> {
             self.cancel_calls.lock().push(session_id.clone());
+            if let Some(error) = self.next_cancel_error.lock().take() {
+                return Err(error);
+            }
             if let Some(end_turn_tx) = self
                 .sessions
                 .lock()
                 .get_mut(session_id)
-                .unwrap()
+                .ok_or_else(|| anyhow::anyhow!("Session not found"))?
                 .response_tx
                 .take()
             {
-                end_turn_tx.send(acp_v1::StopReason::Cancelled).unwrap();
+                end_turn_tx
+                    .send(acp_v1::StopReason::Cancelled)
+                    .map_err(|_| anyhow::anyhow!("Prompt observer was released"))?;
             }
+            Ok(())
         }
 
         fn set_title(
@@ -1578,6 +1712,13 @@ mod tests {
                 true,
             ),
             (
+                json!({"_meta": {"literal": null}}),
+                original.title.clone(),
+                original.updated_at,
+                Some(acp_v2::Meta::from_iter([("literal".into(), json!(null))])),
+                true,
+            ),
+            (
                 json!({"_meta": null}),
                 original.title.clone(),
                 original.updated_at,
@@ -1587,14 +1728,8 @@ mod tests {
         ] {
             let legacy: acp_v1::SessionInfoUpdate =
                 serde_json::from_value(wire).expect("legacy patch");
-            let converted = session_info_update_from_v1(legacy.clone());
-            assert_eq!(
-                serde_json::to_value(&converted).expect("shared patch wire"),
-                serde_json::to_value(&legacy).expect("normalized legacy patch wire")
-            );
-
             let mut info = original.clone();
-            assert_eq!(info.apply_update(converted.clone()), changed);
+            assert_eq!(info.apply_update(legacy.clone()), changed);
             assert_eq!(
                 info,
                 AgentSessionInfo {
@@ -1604,7 +1739,7 @@ mod tests {
                     ..original.clone()
                 }
             );
-            assert!(!info.apply_update(converted), "identical patch is a no-op");
+            assert!(!info.apply_update(legacy), "identical patch is a no-op");
         }
 
         let mut info = original.clone();
@@ -1616,7 +1751,7 @@ mod tests {
                 ..original.clone()
             }
         );
-        assert!(info.apply_update(acp_v2::SessionInfoUpdate::new().meta(acp_v2::Meta::new())));
+        assert!(!info.apply_update(acp_v2::SessionInfoUpdate::new().meta(acp_v2::Meta::new())));
         assert_eq!(info.meta, Some(acp_v2::Meta::new()));
 
         let mut info = original.clone();
@@ -1637,5 +1772,45 @@ mod tests {
         assert!(!info.apply_update(
             acp_v2::SessionInfoUpdate::new().updated_at("invalid private timestamp")
         ));
+    }
+
+    #[test]
+    fn session_info_v2_metadata_patches_report_only_effective_changes() {
+        let mut info = AgentSessionInfo::new("metadata");
+        for (patch, expected, changed) in [
+            (json!({"_meta": {"missing": null}}), json!({}), false),
+            (json!({"_meta": {}}), json!({}), false),
+            (
+                json!({"_meta": {"keep": 1, "nested": {"old": true, "literal": null}}}),
+                json!({"keep": 1, "nested": {"old": true, "literal": null}}),
+                true,
+            ),
+            (
+                json!({"_meta": {"nested": {"new": true, "literal": null}}}),
+                json!({"keep": 1, "nested": {"new": true, "literal": null}}),
+                true,
+            ),
+            (
+                json!({"_meta": {"unknown": null}}),
+                json!({"keep": 1, "nested": {"new": true, "literal": null}}),
+                false,
+            ),
+            (
+                json!({"_meta": {"keep": null}}),
+                json!({"nested": {"new": true, "literal": null}}),
+                true,
+            ),
+            (json!({"_meta": null}), json!(null), true),
+            (json!({"_meta": null}), json!(null), false),
+        ] {
+            let update: acp_v2::SessionInfoUpdate =
+                serde_json::from_value(patch).expect("v2 session information");
+            assert_eq!(info.apply_update(update.clone()), changed);
+            assert_eq!(
+                serde_json::to_value(&info.meta).expect("metadata JSON"),
+                expected
+            );
+            assert!(!info.apply_update(update), "repeated patch is a no-op");
+        }
     }
 }
