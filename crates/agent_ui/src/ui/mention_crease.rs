@@ -286,15 +286,7 @@ fn open_skill_file(
     }
 
     workspace
-        .open_abs_path(
-            skill_file_path,
-            OpenOptions {
-                focus: Some(true),
-                ..Default::default()
-            },
-            window,
-            cx,
-        )
+        .open_abs_path(skill_file_path, OpenOptions::for_navigation(cx), window, cx)
         .detach_and_log_err(cx);
 }
 
@@ -339,8 +331,29 @@ fn open_skill_content_buffer(
             .update(cx, |buffer, cx| buffer.set_title(title, cx));
         editor
     });
+    let options = OpenOptions::for_navigation(cx);
     let pane = workspace.active_pane().clone();
-    workspace.add_item(pane, Box::new(editor), None, true, true, window, cx);
+    let destination_index = pane.update(cx, |pane, cx| {
+        if !options.keep_old_preview
+            && let Some(item) = pane.active_item()
+        {
+            pane.unpreview_item_if_preview(item.item_id());
+        }
+        if options.allow_preview {
+            pane.replace_preview_item_id(editor.entity_id(), window, cx)
+        } else {
+            None
+        }
+    });
+    workspace.add_item(
+        pane,
+        Box::new(editor),
+        destination_index,
+        true,
+        true,
+        window,
+        cx,
+    );
 }
 
 fn reveal_in_project_panel(
@@ -393,4 +406,177 @@ fn open_thread(
             panel.open_thread(id, None, Some(name.into()), window, cx);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{TestAppContext, UpdateGlobal};
+    use project::{FakeFs, Project};
+    use serde_json::json;
+    use settings::SettingsStore;
+    use util::path;
+    use workspace::MultiWorkspace;
+
+    #[gpui::test]
+    async fn test_skill_preview_navigation(cx: &mut TestAppContext) {
+        crate::test_support::init_test(cx);
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let preview_tabs = settings.preview_tabs.get_or_insert_default();
+                    preview_tabs.enabled = Some(true);
+                    preview_tabs.enable_preview_file_from_code_navigation = Some(true);
+                    preview_tabs.enable_keep_preview_on_code_navigation = Some(true);
+                });
+            });
+        });
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({"skill": {"SKILL.md": "disk skill"}}),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |workspace, _| workspace.workspace().clone());
+        let mut disk_editor = None;
+        for _ in 0..2 {
+            workspace.update_in(cx, |workspace, window, cx| {
+                open_skill_file(
+                    workspace,
+                    PathBuf::from(path!("/project/skill/SKILL.md")),
+                    window,
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+            let editor = workspace.read_with(cx, |workspace, cx| {
+                let pane = workspace.active_pane().read(cx);
+                let editor = workspace.active_item_as::<Editor>(cx).unwrap();
+                assert_eq!(pane.items_len(), 1);
+                assert_eq!(pane.preview_item_id(), Some(editor.entity_id()));
+                assert!(!editor.read(cx).read_only(cx));
+                editor
+            });
+            if let Some(previous) = disk_editor.replace(editor.clone()) {
+                assert_eq!(previous, editor);
+            }
+        }
+        let disk_editor = disk_editor.unwrap();
+        disk_editor.update_in(cx, |editor, window, cx| {
+            editor.insert("edited ", window, cx)
+        });
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(workspace.active_pane().read(cx).preview_item_id(), None);
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            open_skill_file(
+                workspace,
+                PathBuf::from("<built-in>/create-skill/SKILL.md"),
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            let pane = workspace.active_pane().read(cx);
+            let editor = workspace.active_item_as::<Editor>(cx).unwrap();
+            assert_eq!(pane.items_len(), 2);
+            assert_eq!(pane.preview_item_id(), Some(editor.entity_id()));
+            assert!(editor.read(cx).read_only(cx));
+            let buffer = editor.read(cx).buffer().read(cx).as_singleton().unwrap();
+            assert!(buffer.read(cx).file().is_none());
+            assert_eq!(project.read(cx).opened_buffers(cx).len(), 1);
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            open_skill_content_buffer(
+                workspace,
+                "migrated".to_string(),
+                "local skill content",
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        let migrated_editor = workspace.read_with(cx, |workspace, cx| {
+            let pane = workspace.active_pane().read(cx);
+            let editor = workspace.active_item_as::<Editor>(cx).unwrap();
+            assert_eq!(pane.items_len(), 2);
+            assert_eq!(pane.preview_item_id(), Some(editor.entity_id()));
+            assert!(editor.read(cx).read_only(cx));
+            assert_eq!(editor.read(cx).text(cx), "local skill content");
+            editor
+        });
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .preview_tabs
+                        .get_or_insert_default()
+                        .enable_keep_preview_on_code_navigation = Some(false);
+                });
+            });
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            open_skill_content_buffer(workspace, "next".to_string(), "next skill", window, cx);
+        });
+        workspace.read_with(cx, |workspace, cx| {
+            let pane = workspace.active_pane().read(cx);
+            assert_eq!(pane.items_len(), 3);
+            assert_eq!(pane.index_for_item(&migrated_editor), Some(1));
+            assert_eq!(
+                pane.preview_item_id(),
+                pane.active_item().map(|item| item.item_id())
+            );
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            open_skill_file(
+                workspace,
+                PathBuf::from(path!("/project/skill/SKILL.md")),
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            let pane = workspace.active_pane().read(cx);
+            assert_eq!(pane.items_len(), 3);
+            assert_eq!(pane.preview_item_id(), None);
+            assert_eq!(
+                workspace.active_item_as::<Editor>(cx),
+                Some(disk_editor.clone())
+            );
+            assert_eq!(disk_editor.read(cx).text(cx), "edited disk skill");
+        });
+        for (enabled, code_navigation, item_count) in [(true, false, 4), (false, true, 5)] {
+            cx.update(|_, cx| {
+                SettingsStore::update_global(cx, |store, cx| {
+                    store.update_user_settings(cx, |settings| {
+                        let preview_tabs = settings.preview_tabs.get_or_insert_default();
+                        preview_tabs.enabled = Some(enabled);
+                        preview_tabs.enable_preview_file_from_code_navigation =
+                            Some(code_navigation);
+                    });
+                });
+            });
+            workspace.update_in(cx, |workspace, window, cx| {
+                open_skill_content_buffer(
+                    workspace,
+                    "permanent".to_string(),
+                    "permanent skill",
+                    window,
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+            workspace.read_with(cx, |workspace, cx| {
+                let pane = workspace.active_pane().read(cx);
+                assert_eq!(pane.items_len(), item_count);
+                assert_eq!(pane.preview_item_id(), None);
+            });
+        }
+    }
 }
