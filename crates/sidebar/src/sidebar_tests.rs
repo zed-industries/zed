@@ -15121,3 +15121,79 @@ async fn test_find_or_create_workspace_returns_the_created_remote_workspace(
         "the local workspace should have re-activated during the open"
     );
 }
+
+#[gpui::test]
+async fn test_project_folders_and_project_order(cx: &mut TestAppContext) {
+    use workspace::ProjectGroup;
+
+    let project = init_test_project("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    let key = |name: &str| ProjectGroupKey::new(None, PathList::new(&[PathBuf::from(name)]));
+    let folder = multi_workspace.update(cx, |mw, cx| {
+        for name in ["/zeta", "/alpha", "/mid"] {
+            mw.test_add_project_group(ProjectGroup {
+                key: key(name),
+                workspaces: Vec::new(),
+                expanded: true,
+            });
+        }
+        let folder = mw.create_project_folder("Work".into(), cx);
+        mw.move_project_group(&key("/mid"), Some(folder), None, cx);
+        folder
+    });
+    cx.run_until_parked();
+
+    let headers = |cx: &mut gpui::VisualTestContext| {
+        visible_entries_as_strings(&sidebar, cx)
+            .into_iter()
+            .filter(|entry| entry.starts_with("v ") || entry.starts_with("> "))
+            .collect::<Vec<_>>()
+    };
+
+    // Folders come first, then top-level projects in manual order.
+    assert_eq!(
+        headers(cx),
+        [
+            "v (Work)",
+            "v [mid]",
+            "v [my-project]",
+            "v [zeta]",
+            "v [alpha]"
+        ]
+    );
+
+    cx.update(|_, cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .agent
+                    .get_or_insert_default()
+                    .set_sidebar_project_order(SidebarProjectOrder::Alphabetical);
+            });
+        });
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        headers(cx),
+        [
+            "v (Work)",
+            "v [mid]",
+            "v [alpha]",
+            "v [my-project]",
+            "v [zeta]"
+        ]
+    );
+
+    // A collapsed folder hides its projects.
+    multi_workspace.update(cx, |mw, cx| {
+        mw.set_project_folder_expanded(folder, false, cx)
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        headers(cx),
+        ["> (Work)", "v [alpha]", "v [my-project]", "v [zeta]"]
+    );
+}
