@@ -1396,16 +1396,23 @@ fn resolve_cd_in_worktrees(
     let is_absolute = path_style.is_absolute(&cd_path);
 
     worktree_roots.iter().find_map(|(root_name, abs_path)| {
-        let prefix = if is_absolute {
-            path_style.normalize_lexically(&abs_path)
+        let abs_path = path_style.normalize_lexically(abs_path);
+        let prefix: &Path = if is_absolute {
+            &abs_path
         } else {
-            PathBuf::from(*root_name)
+            Path::new(*root_name)
         };
-        let subpath = path_style.strip_prefix(&cd_path, &prefix).ok()?;
-        if subpath.is_empty() {
-            Some(abs_path.clone())
+        let subpath = path_style.strip_prefix(&cd_path, prefix).ok()?;
+        let resolved_path = if subpath.is_empty() {
+            abs_path.clone()
         } else {
-            path_style.join_path(abs_path, subpath).ok()
+            path_style.join_path(&abs_path, subpath).ok()?
+        };
+
+        if path_style.starts_with(&resolved_path, &abs_path) {
+            Some(resolved_path)
+        } else {
+            None
         }
     })
 }
