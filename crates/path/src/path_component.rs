@@ -8,7 +8,7 @@
 //! private inherent methods on `Prefix` live in the local [`PrefixExt`] trait.
 
 use crate::PathStyle;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 pub use std::path::Prefix;
 use std::path::{Path, PathBuf};
 
@@ -497,36 +497,32 @@ impl PathBufExt for PathBuf {
     fn styled_push(&mut self, path: impl AsRef<Path>, path_style: PathStyle) {
         let path = path.as_ref();
         // in general, a separator is needed if the rightmost byte is not a separator
-        let buf = self.inner.as_encoded_bytes();
-        let mut need_sep = buf.last().map(|c| !is_sep_byte(*c)).unwrap_or(false);
+        let buf = self.as_os_str().as_encoded_bytes();
+        let mut need_sep = buf
+            .last()
+            .map(|c| !path_style.is_sep_byte(*c))
+            .unwrap_or(false);
 
         // in the special case of `C:` on Windows, do *not* add a separator
-        let comps = self.components();
+        let comps = path_style.components(self);
 
         if comps.prefix_len() > 0
             && comps.prefix_len() == comps.path.len()
-            && comps.prefix.unwrap().is_drive()
+            && comps.prefix.is_some_and(|p| p.is_drive())
         {
             need_sep = false
         }
 
-        let need_clear = if cfg!(target_os = "cygwin") {
-            // If path is absolute and its prefix is none, it is like `/foo`,
-            // and will be handled below.
-            path.prefix().is_some()
-        } else {
-            // On Unix: prefix is always None.
-            path.is_absolute() || path.prefix().is_some()
-        };
+        let path_comps = path_style.components(path);
 
         // absolute `path` replaces `self`
-        if need_clear {
-            self.inner.clear();
+        if path_style.is_absolute(path) || path_comps.prefix().is_some() {
+            self.clear();
 
         // verbatim paths need . and .. removed
-        } else if comps.prefix_verbatim() && !path.inner.is_empty() {
+        } else if comps.prefix_verbatim() && !path.is_empty() {
             let mut buf: Vec<_> = comps.collect();
-            for c in path.components() {
+            for c in path_comps {
                 match c {
                     Component::RootDir => {
                         buf.truncate(1);
@@ -547,9 +543,9 @@ impl PathBufExt for PathBuf {
 
             for c in buf {
                 if need_sep && c != Component::RootDir {
-                    res.push(MAIN_SEPARATOR_STR);
+                    res.push(path_style.primary_separator());
                 }
-                res.push(c.as_os_str());
+                res.push(c.as_os_str(path_style));
 
                 need_sep = match c {
                     Component::RootDir => false,
@@ -560,19 +556,22 @@ impl PathBufExt for PathBuf {
                 }
             }
 
-            self.inner = res;
+            *self.as_mut_os_string() = res;
             return;
 
         // `path` has a root but no prefix, e.g., `\windows` (Windows only)
-        } else if path.has_root() {
-            let prefix_len = self.components().prefix_remaining();
-            self.inner.truncate(prefix_len);
+        } else if path_style.has_root(path) {
+            let prefix = match path_style.components(self).next() {
+                Some(Component::Prefix(prefix)) => prefix.raw.to_os_string(),
+                _ => OsString::new(),
+            };
+            *self.as_mut_os_string() = prefix;
 
         // `path` is a pure relative path
         } else if need_sep {
-            self.inner.push(MAIN_SEPARATOR_STR);
+            self.as_mut_os_string().push(path_style.primary_separator());
         }
 
-        self.inner.push(path);
+        self.as_mut_os_string().push(path);
     }
 }
