@@ -41,7 +41,8 @@ use util::{
     rel_path::RelPath,
 };
 use workspace::item::{
-    Item, ItemBufferKind, ItemHandle, SaveOptions, SerializableItem, TabContentParams,
+    Item, ItemBufferKind, ItemHandle, PreviewTabsSettings, SaveOptions, SerializableItem,
+    TabContentParams,
 };
 use workspace::notifications::{NotifyResultExt, NotifyTaskExt};
 use workspace::path_link::{PathMatching, resolve_open_target};
@@ -49,7 +50,8 @@ use workspace::searchable::{
     Direction, SearchEvent, SearchOptions, SearchToken, SearchableItem, SearchableItemHandle,
 };
 use workspace::{
-    ItemId, ItemNavHistory, Pane, SaveIntent, Workspace, WorkspaceId, delete_unloaded_items,
+    ItemId, ItemNavHistory, OpenOptions, Pane, SaveIntent, Workspace, WorkspaceId,
+    delete_unloaded_items,
 };
 use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
 
@@ -126,6 +128,7 @@ impl Global for SuppressedAutoPreviews {}
 pub enum MarkdownPreviewEvent {
     SourceEditorChanged,
     SourceFileHandleChanged,
+    SourceEdited,
 }
 
 enum PreviewLinkTarget {
@@ -568,6 +571,9 @@ impl MarkdownPreviewView {
                     | EditorEvent::DirtyChanged
                     | EditorEvent::BuffersEdited { .. } => {
                         this.update_markdown_from_active_editor(true, false, window, cx);
+                        if matches!(event, EditorEvent::BufferEdited) {
+                            cx.emit(MarkdownPreviewEvent::SourceEdited);
+                        }
                     }
                     EditorEvent::FileHandleChanged => {
                         this.base_directory =
@@ -1448,25 +1454,59 @@ fn open_markdown_link_in_preview(
                 return;
             }
 
-            if let Some(existing_view) = find_preview_for_buffer(workspace, &buffer, cx) {
+            let options = OpenOptions::for_navigation(cx);
+            let allow_preview =
+                PreviewTabsSettings::get_global(cx).enabled && options.allow_preview;
+            let existing_view = find_preview_for_buffer(workspace, &buffer, cx);
+            let pane = existing_view
+                .as_ref()
+                .and_then(|view| workspace.pane_for(view))
+                .or_else(|| {
+                    source_view
+                        .as_ref()
+                        .and_then(|view| view.upgrade())
+                        .and_then(|view| workspace.pane_for(&view))
+                })
+                .unwrap_or_else(|| workspace.active_pane().clone());
+            pane.update(cx, |pane, _| {
+                if !options.keep_old_preview
+                    && let Some(old_item) = pane.active_item()
+                    && Some(old_item.item_id()) != existing_view.as_ref().map(Entity::entity_id)
+                {
+                    pane.unpreview_item_if_preview(old_item.item_id());
+                }
+            });
+
+            if let Some(existing_view) = existing_view {
                 workspace.activate_item(&existing_view, true, true, window, cx);
+                if !allow_preview {
+                    pane.update(cx, |pane, _| {
+                        pane.unpreview_item_if_preview(existing_view.entity_id());
+                    });
+                }
                 existing_view.update(cx, |view, cx| {
                     view.navigate_to_link_target(link_target, window, cx);
                 });
                 return;
             }
 
+            let allow_preview = allow_preview && !buffer.read(cx).is_dirty();
             let editor = cx.new(|cx| {
                 Editor::for_buffer(buffer, Some(workspace.project().clone()), window, cx)
             });
             let preview = MarkdownPreviewView::create_markdown_view(workspace, editor, window, cx);
-            let pane = source_view
-                .as_ref()
-                .and_then(|view| view.upgrade())
-                .and_then(|view| workspace.pane_for(&view))
-                .unwrap_or_else(|| workspace.active_pane().clone());
             pane.update(cx, |pane, cx| {
-                pane.add_item(Box::new(preview.clone()), true, true, None, window, cx);
+                let destination_index = allow_preview
+                    .then(|| pane.replace_preview_item_id(preview.entity_id(), window, cx))
+                    .flatten();
+                pane.add_item(
+                    Box::new(preview.clone()),
+                    true,
+                    true,
+                    destination_index,
+                    window,
+                    cx,
+                );
             });
             preview.update(cx, |view, cx| {
                 view.navigate_to_link_target(link_target, window, cx);
@@ -1826,6 +1866,7 @@ impl Item for MarkdownPreviewView {
 
     fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(workspace::item::ItemEvent)) {
         match event {
+            MarkdownPreviewEvent::SourceEdited => f(workspace::item::ItemEvent::Edit),
             MarkdownPreviewEvent::SourceEditorChanged
             | MarkdownPreviewEvent::SourceFileHandleChanged => {
                 f(workspace::item::ItemEvent::UpdateTab);
@@ -2356,7 +2397,7 @@ mod tests {
     use gpui::UpdateGlobal as _;
     use gpui::{
         App, AppContext as _, Entity, Focusable as _, Modifiers, MouseButton, MouseDownEvent,
-        MouseUpEvent, TestAppContext, VisualTestContext, WindowHandle, px,
+        MouseUpEvent, SharedString, TestAppContext, VisualTestContext, WindowHandle, px,
     };
     use language::{Buffer, DiskState, Point};
     use project::{Project, ProjectPath};
@@ -2371,12 +2412,12 @@ mod tests {
     use workspace::item::{Item, ItemHandle, SerializableItem};
     use workspace::path_link::{OpenTarget, OpenTargetFoundBy};
     use workspace::{
-        AppState, ItemId, MultiWorkspace, OpenOptions, OpenVisible, Pane, SaveIntent, Workspace,
-        WorkspaceId, open_paths,
+        AppState, AutosaveSetting, ItemId, MultiWorkspace, OpenOptions, OpenVisible, Pane,
+        SaveIntent, Workspace, WorkspaceId, open_paths,
     };
 
     use super::{
-        MarkdownPreviewView, filter_non_rendered_matches, open_preview_url,
+        MarkdownPreviewView, filter_non_rendered_matches, handle_url_click, open_preview_url,
         reset_persisted_font_size,
     };
 
@@ -2914,6 +2955,29 @@ mod tests {
             "preview should scroll down to the linked heading, got {heading_scroll_offset:?}"
         );
 
+        for url in ["#notes", "notes.md#target-section"] {
+            multi_workspace.update_in(cx, |_, window, cx| {
+                handle_url_click(
+                    SharedString::from(url),
+                    &preview.downgrade(),
+                    Some(PathBuf::from(path!("/project"))),
+                    &workspace_weak,
+                    window,
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+            workspace.read_with(cx, |workspace, cx| {
+                let pane = workspace.active_pane().read(cx);
+                assert_eq!(pane.items_len(), 1);
+                assert_eq!(pane.preview_item_id(), Some(preview.entity_id()));
+            });
+        }
+        assert_eq!(
+            preview.read_with(cx, |preview, _| preview.scroll_handle.offset()),
+            heading_scroll_offset
+        );
+
         let preview_editor = preview.read_with(cx, |preview, _| {
             preview.active_editor.as_ref().unwrap().editor.clone()
         });
@@ -3085,6 +3149,255 @@ mod tests {
                     .map(|state| state.editor.clone()),
                 Some(raw_editor.clone())
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn markdown_link_preview_tabs_replace_and_retain_sources(cx: &mut TestAppContext) {
+        let (project, workspace, multi_workspace) = markdown_workspace(
+            cx,
+            json!({
+                "first.md": "# First\n",
+                "second.md": "# Second\n",
+                "third.md": "# Third\n",
+                "plain.txt": "Plain\n",
+            }),
+            false,
+        )
+        .await;
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let preview_tabs = settings.preview_tabs.get_or_insert_default();
+                    preview_tabs.enabled = Some(true);
+                    preview_tabs.enable_preview_file_from_code_navigation = Some(true);
+                    preview_tabs.enable_keep_preview_on_code_navigation = Some(true);
+                });
+            });
+        });
+        let first = open_markdown_preview_link(cx, &multi_workspace, "first.md", None);
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let other_pane = multi_workspace
+            .update(cx, |_, window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.split_pane(pane.clone(), workspace::SplitDirection::Right, window, cx)
+                })
+            })
+            .unwrap();
+        let plain = open_project_file(
+            cx,
+            &project,
+            &multi_workspace,
+            "plain.txt",
+            Some(&other_pane),
+            true,
+        )
+        .await;
+        workspace.read_with(cx, |workspace, _| {
+            assert_eq!(workspace.active_pane(), &other_pane);
+        });
+        let second = open_markdown_preview_link(cx, &multi_workspace, "second.md", Some(&first));
+        cx.update(|cx| {
+            assert_eq!(workspace.read(cx).active_pane(), &pane);
+            assert_eq!(pane.read(cx).items_len(), 1);
+            assert_eq!(pane.read(cx).preview_item_id(), Some(second.entity_id()));
+            assert_eq!(pane.read(cx).index_for_item(&first), None);
+            assert_eq!(
+                other_pane.read(cx).active_item().unwrap().item_id(),
+                plain.item_id()
+            );
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .preview_tabs
+                        .get_or_insert_default()
+                        .enable_keep_preview_on_code_navigation = Some(false);
+                });
+            });
+        });
+        let third = open_markdown_preview_link(cx, &multi_workspace, "third.md", Some(&second));
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(
+                pane.items().map(|item| item.item_id()).collect::<Vec<_>>(),
+                vec![second.entity_id(), third.entity_id()]
+            );
+            assert_eq!(pane.preview_item_id(), Some(third.entity_id()));
+        });
+        assert_eq!(
+            open_markdown_preview_link(cx, &multi_workspace, "second.md", Some(&third)),
+            second
+        );
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.items_len(), 2);
+            assert_eq!(pane.preview_item_id(), None);
+        });
+    }
+
+    #[gpui::test]
+    async fn markdown_link_preview_tabs_respect_disabled_settings(cx: &mut TestAppContext) {
+        let (_, workspace, multi_workspace) = markdown_workspace(
+            cx,
+            json!({
+                "first.md": "# First\n",
+                "second.md": "# Second\n",
+                "third.md": "# Third\n",
+            }),
+            false,
+        )
+        .await;
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let preview_tabs = settings.preview_tabs.get_or_insert_default();
+                    preview_tabs.enabled = Some(true);
+                    preview_tabs.enable_preview_file_from_code_navigation = Some(true);
+                    preview_tabs.enable_keep_preview_on_code_navigation = Some(true);
+                });
+            });
+        });
+        let first = open_markdown_preview_link(cx, &multi_workspace, "first.md", None);
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.preview_item_id(), Some(first.entity_id()));
+        });
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .preview_tabs
+                        .get_or_insert_default()
+                        .enable_preview_file_from_code_navigation = Some(false);
+                });
+            });
+        });
+        let second = open_markdown_preview_link(cx, &multi_workspace, "second.md", Some(&first));
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.items_len(), 2);
+            assert_eq!(pane.preview_item_id(), Some(first.entity_id()));
+        });
+        assert_eq!(
+            open_markdown_preview_link(cx, &multi_workspace, "first.md", Some(&second)),
+            first
+        );
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.items_len(), 2);
+            assert_eq!(pane.preview_item_id(), None);
+        });
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let preview_tabs = settings.preview_tabs.get_or_insert_default();
+                    preview_tabs.enabled = Some(false);
+                    preview_tabs.enable_preview_file_from_code_navigation = Some(true);
+                });
+            });
+        });
+        let third = open_markdown_preview_link(cx, &multi_workspace, "third.md", Some(&first));
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(
+                pane.items().map(|item| item.item_id()).collect::<Vec<_>>(),
+                vec![first.entity_id(), third.entity_id(), second.entity_id()]
+            );
+            assert_eq!(pane.preview_item_id(), None);
+        });
+    }
+
+    #[gpui::test]
+    async fn markdown_link_preview_tabs_preserve_unsaved_changes(cx: &mut TestAppContext) {
+        let original_todo = "- [ ] Finish work\n\n[Next](next.md)\n";
+        let (project, workspace, multi_workspace) = markdown_workspace(
+            cx,
+            json!({
+                "todo.md": original_todo,
+                "next.md": "# Next\n\n[Dirty](dirty.md)\n",
+                "dirty.md": "# Dirty\n",
+            }),
+            false,
+        )
+        .await;
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.workspace.autosave = Some(AutosaveSetting::Off);
+                    let preview_tabs = settings.preview_tabs.get_or_insert_default();
+                    preview_tabs.enabled = Some(true);
+                    preview_tabs.enable_preview_file_from_code_navigation = Some(true);
+                    preview_tabs.enable_keep_preview_on_code_navigation = Some(true);
+                });
+            });
+        });
+        let todo = open_markdown_preview_link(cx, &multi_workspace, "todo.md", None);
+        let todo_id = todo.entity_id();
+        let pane = workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(workspace.items_of_type::<Editor>(cx).count(), 0);
+            let pane = workspace.active_pane().clone();
+            assert_eq!(pane.read(cx).items_len(), 1);
+            assert_eq!(pane.read(cx).preview_item_id(), Some(todo_id));
+            pane
+        });
+        multi_workspace
+            .update(cx, |_, window, cx| {
+                let editor = todo.read(cx).active_editor.as_ref().unwrap().editor.clone();
+                MarkdownPreviewView::apply_checkbox_toggle_to_editor(&editor, 2..5, true, cx);
+                MarkdownPreviewView::refresh_preview(todo.downgrade(), window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        pane.read_with(cx, |pane, _| assert_eq!(pane.preview_item_id(), None));
+
+        let next = open_markdown_preview_link(cx, &multi_workspace, "next.md", Some(&todo));
+        drop(todo);
+        cx.run_until_parked();
+        pane.read_with(cx, |pane, cx| {
+            assert_eq!(
+                pane.items().map(|item| item.item_id()).collect::<Vec<_>>(),
+                vec![todo_id, next.entity_id()]
+            );
+            assert_eq!(pane.preview_item_id(), Some(next.entity_id()));
+            let todo = pane
+                .items_of_type::<MarkdownPreviewView>()
+                .find(|preview| preview.entity_id() == todo_id)
+                .unwrap();
+            let editor = &todo.read(cx).active_editor.as_ref().unwrap().editor;
+            let buffer = editor.read(cx).buffer().read(cx).as_singleton().unwrap();
+            assert!(buffer.read(cx).is_dirty());
+            assert_eq!(
+                buffer.read(cx).text(),
+                "- [x] Finish work\n\n[Next](next.md)\n"
+            );
+        });
+        let fs = project.read_with(cx, |project, _| project.fs().clone());
+        assert_eq!(
+            fs.load(path!("/project/todo.md").as_ref()).await.unwrap(),
+            original_todo
+        );
+
+        let dirty_buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/project/dirty.md"), cx)
+            })
+            .await
+            .unwrap();
+        dirty_buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "unsaved\n")], None, cx);
+            assert!(buffer.is_dirty());
+        });
+        let dirty = open_markdown_preview_link(cx, &multi_workspace, "dirty.md", Some(&next));
+        drop(dirty_buffer);
+        pane.read_with(cx, |pane, cx| {
+            assert_eq!(
+                pane.items().map(|item| item.item_id()).collect::<Vec<_>>(),
+                vec![todo_id, next.entity_id(), dirty.entity_id()]
+            );
+            assert_eq!(pane.preview_item_id(), Some(next.entity_id()));
+            let editor = &dirty.read(cx).active_editor.as_ref().unwrap().editor;
+            assert_eq!(
+                editor.read(cx).buffer().read(cx).read(cx).text(),
+                "unsaved\n# Dirty\n"
+            );
+        });
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(workspace.items_of_type::<Editor>(cx).count(), 0);
         });
     }
 
@@ -4627,6 +4940,41 @@ mod tests {
             MarkdownPreviewView::get_folder_for_active_editor(editor, cx)
         });
         assert_eq!(folder, Some(PathBuf::from("/remote/project/docs")));
+    }
+
+    fn open_markdown_preview_link(
+        cx: &mut TestAppContext,
+        multi_workspace: &WindowHandle<MultiWorkspace>,
+        path: &str,
+        source: Option<&Entity<MarkdownPreviewView>>,
+    ) -> Entity<MarkdownPreviewView> {
+        multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                open_preview_url(
+                    SharedString::from(path.to_string()),
+                    None,
+                    Some(PathBuf::from(path!("/project"))),
+                    source.map(Entity::downgrade),
+                    &multi_workspace.workspace().downgrade(),
+                    window,
+                    cx,
+                );
+            })
+            .unwrap();
+        cx.run_until_parked();
+        let preview = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                let preview = multi_workspace
+                    .workspace()
+                    .read(cx)
+                    .active_item_as::<MarkdownPreviewView>(cx)
+                    .unwrap();
+                assert!(preview.read(cx).focus_handle.is_focused(window));
+                preview
+            })
+            .unwrap();
+        assert_eq!(preview_source_path(cx, &preview).as_ref(), rel_path(path));
+        preview
     }
 
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
