@@ -1434,6 +1434,8 @@ mod tests {
         // models frequently write paths with forward slashes; both must match.
         let windows_roots = vec![("worktree", PathBuf::from("C:\\work\\worktree"))];
 
+        let windows_verbatim_roots = vec![("worktree", PathBuf::from(r"\\?\C:\work\worktree"))];
+
         // absolute paths
         assert_eq!(
             resolve_cd_in_worktrees("/b/worktree", Unix, &unix_roots),
@@ -1538,6 +1540,17 @@ mod tests {
             resolve_cd_in_worktrees("C:\\work\\worktree\\..\\escape", Windows, &windows_roots),
             None,
             "a Windows-absolute path that escapes its worktree via `..` is rejected"
+        );
+
+        // Windows verbatim path
+        assert_eq!(
+            resolve_cd_in_worktrees(
+                r"\\?\C:\work\worktree\../another",
+                Windows,
+                &windows_verbatim_roots
+            ),
+            None,
+            "The Windows verbatim path should not return a path that escapes its worktree"
         );
     }
 
