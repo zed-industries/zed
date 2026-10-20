@@ -969,11 +969,12 @@ async fn test_hover_values_keyboard_selection_scrolls_into_view(
         gpui::point(gpui::px(0.), gpui::px(10.)),
     ] {
         let before = scroll_handle.offset();
-        editor_cx.simulate_event(gpui::ScrollWheelEvent {
+        editor_cx.simulate_event(gpui::ScrollEvent {
             position,
             delta: gpui::ScrollDelta::Pixels(delta),
             modifiers: Modifiers::none(),
             touch_phase: gpui::TouchPhase::Moved,
+            source: gpui::ScrollSource::Pointer,
         });
         editor_cx.run_until_parked();
         assert_eq!(scroll_handle.bounds(), viewport);
