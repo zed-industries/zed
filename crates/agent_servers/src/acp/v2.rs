@@ -6851,6 +6851,8 @@ exec sleep 60
         )
         .expect("spawn waiting child");
         let mut child = transport::OwnedChild(child);
+        // status() closes the child's stdin; keep it open so only shutdown ends the process.
+        let stdin = child.0.stdin.take().expect("child stdin");
         let status = child.0.status();
         let (transport, _peer) = agent_client_protocol::Channel::duplex();
         let connecting = cx.spawn(async move |mut cx| {
@@ -6876,6 +6878,7 @@ exec sleep 60
             .expect("process terminated during startup");
         use std::os::unix::process::ExitStatusExt as _;
         assert_eq!(status.signal(), Some(9));
+        drop(stdin);
         assert!(
             bounded(connecting, cx).await.is_err(),
             "initialization failed on shutdown"

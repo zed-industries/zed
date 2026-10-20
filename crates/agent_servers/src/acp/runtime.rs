@@ -344,6 +344,8 @@ mod tests {
         )
         .expect("spawn waiting child");
         let mut child = crate::acp::transport::OwnedChild(child);
+        // status() closes stdin, which must not end the child before the guard kills it.
+        let stdin = child.0.stdin.take().expect("child stdin");
         let status = child.0.status();
         drop(child);
         let timeout = cx.background_executor.timer(Duration::from_secs(5));
@@ -354,5 +356,6 @@ mod tests {
         };
         use std::os::unix::process::ExitStatusExt as _;
         assert_eq!(status.signal(), Some(9));
+        drop(stdin);
     }
 }
