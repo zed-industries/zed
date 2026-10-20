@@ -1714,6 +1714,13 @@ fn compute_code_block_highlights(parsed: &ParsedMarkdown) -> CodeBlockHighlights
 }
 
 fn highlight_code_block(block: PendingCodeBlock, code_block_highlights: &mut CodeBlockHighlights) {
+    if let [(event_index, text)] = block.texts.as_slice() {
+        let resolved = block.language.highlight_text_resolved(*text, 0..text.len());
+        if !resolved.runs.is_empty() {
+            code_block_highlights.insert(*event_index, resolved);
+        }
+        return;
+    }
     let mut combined = String::new();
     let mut text_offsets = Vec::with_capacity(block.texts.len());
     for (_, text) in &block.texts {
@@ -1722,12 +1729,8 @@ fn highlight_code_block(block: PendingCodeBlock, code_block_highlights: &mut Cod
     }
     let resolved = block
         .language
-        .highlight_text_resolved(&Rope::from(combined.as_str()), 0..combined.len());
+        .highlight_text_resolved(combined.as_str(), 0..combined.len());
     if resolved.runs.is_empty() {
-        return;
-    }
-    if let [(event_index, _)] = block.texts.as_slice() {
-        code_block_highlights.insert(*event_index, resolved);
         return;
     }
     let mut runs = resolved.runs.iter().peekable();
@@ -4217,9 +4220,7 @@ impl MarkdownElementBuilder {
             let runs = if resolved.is_current() {
                 resolved.runs.clone()
             } else {
-                language
-                    .highlight_text_resolved(&Rope::from(text), 0..text.len())
-                    .runs
+                language.highlight_text_resolved(text, 0..text.len()).runs
             };
             let mut offset = 0;
             for (run_range, highlight_id) in runs.iter() {
@@ -5282,7 +5283,7 @@ mod tests {
     use gpui::{
         Background, DevicePixels, Font, FontId, FontMetrics, FontRun, GlyphId, LineLayout,
         Modifiers, NoopTextSystem, PlatformTextSystem, RenderGlyphParams, RenderImage, ScrollDelta,
-        ScrollWheelEvent, Size, TestAppContext, TestDispatcher, TextRenderingMode, TouchPhase,
+        ScrollEvent, Size, TestAppContext, TestDispatcher, TextRenderingMode, TouchPhase,
         UpdateGlobal, VisualTestContext, size,
     };
     use language::{Language, LanguageConfig, LanguageMatcher};
@@ -5585,11 +5586,12 @@ mod tests {
             Some(visible_character_index),
         );
 
-        cx.simulate_event(ScrollWheelEvent {
+        cx.simulate_event(ScrollEvent {
             position: visible_position,
             delta: ScrollDelta::Pixels(point(px(-400.), px(0.))),
             modifiers: Modifiers::default(),
             touch_phase: TouchPhase::Moved,
+            source: gpui::ScrollSource::Pointer,
         });
         cx.run_until_parked();
         let rendered = rendered_text
@@ -5751,7 +5753,9 @@ mod tests {
         let code_text = "fn main() {}\n";
         let code_start = source.find(code_text).unwrap();
         let cached = cached_code_block_highlights(&markdown, code_start, cx);
-        let expected = language.highlight_text(&Rope::from(code_text), 0..code_text.len());
+        let expected = language
+            .highlight_text(&Rope::from(code_text), 0..code_text.len())
+            .collect::<Vec<_>>();
         assert_eq!(
             cached.runs.to_vec(),
             expected,
@@ -7986,11 +7990,12 @@ mod tests {
             (event_position, right_cell_bounds)
         };
 
-        cx.simulate_event(ScrollWheelEvent {
+        cx.simulate_event(ScrollEvent {
             position: event_position,
             delta: ScrollDelta::Pixels(point(px(-100.), px(0.))),
             modifiers: Modifiers::default(),
             touch_phase: TouchPhase::Moved,
+            source: gpui::ScrollSource::Pointer,
         });
         cx.run_until_parked();
 
@@ -8082,11 +8087,12 @@ mod tests {
         assert_eq!(visible_bounds.left(), quad_bounds.left());
         let event_position = visible_bounds.center();
 
-        cx.simulate_event(ScrollWheelEvent {
+        cx.simulate_event(ScrollEvent {
             position: event_position,
             delta: ScrollDelta::Pixels(point(px(-100.), px(0.))),
             modifiers: Modifiers::default(),
             touch_phase: TouchPhase::Moved,
+            source: gpui::ScrollSource::Pointer,
         });
         cx.run_until_parked();
 

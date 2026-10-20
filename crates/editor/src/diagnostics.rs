@@ -276,6 +276,7 @@ impl Editor {
 
     pub fn disable_diagnostics(&mut self, cx: &mut Context<Self>) {
         self.diagnostics_enabled = false;
+        self.set_max_diagnostics_severity(DiagnosticSeverity::Off, cx);
         self.dismiss_diagnostics(cx);
         self.inline_diagnostics_update = Task::ready(());
         self.inline_diagnostics.clear();
@@ -304,7 +305,11 @@ impl Editor {
     }
 
     pub fn set_max_diagnostics_severity(&mut self, severity: DiagnosticSeverity, cx: &mut App) {
-        self.diagnostics_max_severity = severity;
+        self.diagnostics_max_severity = if self.diagnostics_enabled() {
+            severity
+        } else {
+            DiagnosticSeverity::Off
+        };
         self.display_map.update(cx, |display_map, _| {
             display_map.diagnostics_max_severity = self.diagnostics_max_severity;
         });
@@ -619,6 +624,7 @@ mod tests {
     use indoc::indoc;
     use language::DiagnosticSourceKind;
     use lsp::LanguageServerId;
+    use project::project_settings::DiagnosticSeverity;
     use settings::{DelayMs, SettingsStore};
     use std::sync::{
         Arc,
@@ -682,6 +688,22 @@ mod tests {
                 1,
                 "inline diagnostics should appear after the language server publishes them"
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_disabled_diagnostics_ignore_severity_changes(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorTestContext::new(cx).await;
+
+        cx.update_editor(|editor, _, cx| {
+            assert!(editor.display_snapshot(cx).diagnostics_visible());
+
+            editor.disable_diagnostics(cx);
+            assert!(!editor.display_snapshot(cx).diagnostics_visible());
+
+            editor.set_max_diagnostics_severity(DiagnosticSeverity::Hint, cx);
+            assert!(!editor.display_snapshot(cx).diagnostics_visible());
         });
     }
 

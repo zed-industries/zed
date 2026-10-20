@@ -1,6 +1,9 @@
 use crate::ReceiptSessionSubmissions;
 use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
-use futures::{channel::oneshot, future::BoxFuture};
+use futures::{
+    channel::oneshot,
+    future::{BoxFuture, LocalBoxFuture},
+};
 use gpui::{SharedString, Task};
 use std::collections::BTreeMap;
 use std::{
@@ -28,6 +31,61 @@ pub enum SubmissionResponse {
     Accepted(acp_v2::PromptResponse),
 }
 
+/// The transport response and, for ordered transports, acknowledgement of model application.
+/// The shared tracker applies the outcome before acknowledging; transports must not
+/// wait for that acknowledgement before producing their response.
+pub struct ReceiptSubmission {
+    pub(crate) response: LocalBoxFuture<'static, anyhow::Result<acp_v2::PromptResponse>>,
+    pub(crate) applied: Option<oneshot::Sender<bool>>,
+}
+
+impl ReceiptSubmission {
+    /// The acknowledgement reports successful or failed model application.
+    /// Dropping it instead means application was abandoned.
+    pub fn ordered(
+        response: LocalBoxFuture<'static, anyhow::Result<acp_v2::PromptResponse>>,
+        applied: oneshot::Sender<bool>,
+    ) -> Self {
+        Self {
+            response,
+            applied: Some(applied),
+        }
+    }
+}
+
+impl From<Task<anyhow::Result<acp_v2::PromptResponse>>> for ReceiptSubmission {
+    fn from(response: Task<anyhow::Result<acp_v2::PromptResponse>>) -> Self {
+        Self {
+            response: Box::pin(response),
+            applied: None,
+        }
+    }
+}
+
+/// A local receipt withdrawn by cancellation before the message was accepted.
+#[derive(Debug)]
+pub struct SubmissionCancelled;
+
+impl fmt::Display for SubmissionCancelled {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("Submission cancelled before acceptance")
+    }
+}
+
+impl std::error::Error for SubmissionCancelled {}
+
+/// Local loss of a receipt waiter does not establish that the agent rejected the message.
+#[derive(Debug)]
+pub struct SubmissionDisconnected;
+
+impl fmt::Display for SubmissionDisconnected {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("Agent connection lost before submission acceptance was confirmed")
+    }
+}
+
+impl std::error::Error for SubmissionDisconnected {}
+
 pub struct Submission {
     pub id: SubmissionId,
     pub response: BoxFuture<'static, anyhow::Result<Option<SubmissionResponse>>>,
@@ -50,12 +108,16 @@ impl Future for Submission {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
 pub enum SubmissionState {
     Pending,
     Accepted {
         receipt: acp_v2::PromptResponse,
         echoed: bool,
+    },
+    Disconnected {
+        /// Absence means acceptance is unknown, not that insertion failed.
+        receipt: Option<acp_v2::PromptResponse>,
     },
     Completed,
     Failed(SharedString),
@@ -66,6 +128,7 @@ pub struct SubmissionRecord {
     pub content: Arc<[acp_v2::ContentBlock]>,
     pub state: SubmissionState,
     task: Option<Task<()>>,
+    disconnect_sender: Option<oneshot::Sender<()>>,
 }
 
 impl fmt::Debug for SubmissionRecord {
@@ -90,7 +153,9 @@ impl SubmissionRecord {
         self.is_unsettled()
             || matches!(
                 self.state,
-                SubmissionState::Failed(_) | SubmissionState::Cancelled
+                SubmissionState::Failed(_)
+                    | SubmissionState::Cancelled
+                    | SubmissionState::Disconnected { .. }
             )
     }
 }
@@ -128,6 +193,12 @@ impl SessionSubmissions {
         self.records.values().any(SubmissionRecord::is_unsettled)
     }
 
+    pub(crate) fn pending_receipt_ids(&self) -> impl Iterator<Item = SubmissionId> {
+        self.records.iter().filter_map(|(id, record)| {
+            matches!(record.state, SubmissionState::Pending).then_some(*id)
+        })
+    }
+
     pub(crate) fn recoverable(&self) -> impl Iterator<Item = (SubmissionId, &SubmissionRecord)> {
         self.records.iter().filter_map(|(id, record)| {
             (self.receipt_transport.is_some() && record.is_recoverable()).then_some((*id, record))
@@ -145,22 +216,74 @@ impl SessionSubmissions {
                 content,
                 state: SubmissionState::Pending,
                 task: None,
+                disconnect_sender: None,
             },
         );
         id
     }
 
-    pub(crate) fn track(&mut self, id: SubmissionId, task: Task<()>) {
+    pub(crate) fn track(
+        &mut self,
+        id: SubmissionId,
+        task: Task<()>,
+        disconnect_sender: Option<oneshot::Sender<()>>,
+    ) {
         if let Some(record) = self.records.get_mut(&id) {
             record.task = Some(task);
+            record.disconnect_sender = disconnect_sender;
         }
     }
 
-    pub(crate) fn settle(&mut self, id: SubmissionId, state: SubmissionState) {
-        if let Some(record) = self.records.get_mut(&id) {
-            record.state = state;
-        }
+    pub(crate) fn settle(&mut self, id: SubmissionId, state: SubmissionState) -> bool {
+        let changed = self.records.get_mut(&id).is_some_and(|record| {
+            drop(record.disconnect_sender.take());
+            match &mut record.state {
+                SubmissionState::Disconnected { receipt } => {
+                    // A ready receipt can race with disconnect cleanup. Retain its
+                    // acceptance evidence without reopening the disconnected record.
+                    if receipt.is_none()
+                        && let SubmissionState::Accepted {
+                            receipt: accepted, ..
+                        } = state
+                    {
+                        *receipt = Some(accepted);
+                        return true;
+                    }
+                    false
+                }
+                _ => {
+                    record.state = state;
+                    true
+                }
+            }
+        });
         self.prune();
+        changed
+    }
+
+    pub(crate) fn disconnect(&mut self) -> Vec<SubmissionId> {
+        if self.receipt_transport.is_none() {
+            return Vec::new();
+        }
+        let mut changed = Vec::new();
+        for (id, record) in &mut self.records {
+            let receipt = match &record.state {
+                SubmissionState::Pending => None,
+                SubmissionState::Accepted {
+                    receipt,
+                    echoed: false,
+                } => Some(receipt.clone()),
+                _ => continue,
+            };
+            record.state = SubmissionState::Disconnected { receipt };
+            if let Some(sender) = record.disconnect_sender.take()
+                && sender.send(()).is_err()
+            {
+                log::debug!("Submission already finished before disconnect notification");
+            }
+            changed.push(*id);
+        }
+        changed
     }
 
     pub(crate) fn observe_echo(&mut self, message_id: &acp_v2::MessageId) -> Vec<SubmissionId> {
@@ -206,43 +329,57 @@ impl SessionSubmissions {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ForegroundActivity {
+    Unconfirmed,
     Idle,
     Running,
     RequiresAction,
 }
 
+impl ForegroundActivity {
+    pub fn is_active(self) -> bool {
+        matches!(self, Self::Running | Self::RequiresAction)
+    }
+}
+
 pub(crate) struct SessionActivity {
-    state: acp_v2::StateUpdate,
+    state: Option<acp_v2::StateUpdate>,
     generation: u64,
     started_at: Option<Instant>,
     duration: Option<Duration>,
     first_entry_index: usize,
     cancel_waiters: Vec<oneshot::Sender<()>>,
+    observation_closed: bool,
 }
 
 impl Default for SessionActivity {
     fn default() -> Self {
         Self {
-            state: acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new()),
+            state: Some(acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new())),
             generation: 0,
             started_at: None,
             duration: None,
             first_entry_index: 0,
             cancel_waiters: Vec::new(),
+            observation_closed: false,
         }
     }
 }
 
 impl SessionActivity {
-    pub(crate) fn state(&self) -> &acp_v2::StateUpdate {
-        &self.state
+    pub(crate) fn state(&self) -> Option<&acp_v2::StateUpdate> {
+        self.state.as_ref()
+    }
+
+    pub(crate) fn mark_unconfirmed(&mut self) {
+        self.state = None;
     }
 
     pub(crate) fn phase(&self) -> ForegroundActivity {
         match self.state {
-            acp_v2::StateUpdate::Idle(_) => ForegroundActivity::Idle,
-            acp_v2::StateUpdate::RequiresAction(_) => ForegroundActivity::RequiresAction,
-            _ => ForegroundActivity::Running,
+            None => ForegroundActivity::Unconfirmed,
+            Some(acp_v2::StateUpdate::Idle(_)) => ForegroundActivity::Idle,
+            Some(acp_v2::StateUpdate::RequiresAction(_)) => ForegroundActivity::RequiresAction,
+            Some(_) => ForegroundActivity::Running,
         }
     }
 
@@ -268,29 +405,58 @@ impl SessionActivity {
 
     pub(crate) fn update(&mut self, state: acp_v2::StateUpdate, first_entry_index: usize) {
         let previous = self.phase();
-        self.state = state;
+        self.state = Some(state);
         let current = self.phase();
-        if previous == ForegroundActivity::Idle && current != ForegroundActivity::Idle {
+        if !previous.is_active() && current.is_active() {
             self.generation += 1;
             self.started_at = Some(Instant::now());
             self.duration = None;
             self.first_entry_index = first_entry_index;
-        } else if previous != ForegroundActivity::Idle && current == ForegroundActivity::Idle {
+        } else if previous.is_active() && current == ForegroundActivity::Idle {
             self.duration = self.started_at.map(|started| started.elapsed());
-            for waiter in self.cancel_waiters.drain(..) {
-                if waiter.send(()).is_err() {
-                    log::debug!("Foreground cancellation observer was dropped");
-                }
+        }
+        if current == ForegroundActivity::Idle {
+            self.complete_cancel_waiters();
+        }
+    }
+
+    fn complete_cancel_waiters(&mut self) {
+        for waiter in self.cancel_waiters.drain(..) {
+            if waiter.send(()).is_err() {
+                log::debug!("Foreground cancellation observer was dropped");
             }
         }
     }
 
-    pub(crate) fn wait_for_idle(&mut self) -> Option<oneshot::Receiver<()>> {
+    pub(crate) fn finish_close(&mut self) {
+        self.observation_closed = true;
+        self.complete_cancel_waiters();
+    }
+
+    pub(crate) fn ensure_observable(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.observation_closed,
+            "Session closed or agent connection lost before cancellation was confirmed"
+        );
+        Ok(())
+    }
+
+    pub(crate) fn observation_closed(&self) -> bool {
+        self.observation_closed
+    }
+
+    pub(crate) fn close_observation(&mut self) {
+        self.observation_closed = true;
+        self.cancel_waiters.clear();
+    }
+
+    pub(crate) fn wait_for_idle(&mut self) -> anyhow::Result<Option<oneshot::Receiver<()>>> {
+        self.ensure_observable()?;
         if self.phase() == ForegroundActivity::Idle {
-            return None;
+            return Ok(None);
         }
         let (sender, receiver) = oneshot::channel();
         self.cancel_waiters.push(sender);
-        Some(receiver)
+        Ok(Some(receiver))
     }
 }

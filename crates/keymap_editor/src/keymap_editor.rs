@@ -19,8 +19,8 @@ use gpui::{
     Action, AppContext as _, AsyncApp, ClickEvent, Context, DismissEvent, Entity, EventEmitter,
     FocusHandle, Focusable, Global, IsZero,
     KeyBindingContextPredicate::{And, Descendant, Equal, Identifier, Not, NotEqual, Or},
-    KeyContext, KeybindingKeystroke, MouseButton, PlatformKeyboardMapper, Point, ScrollStrategy,
-    ScrollWheelEvent, Stateful, StyledText, Subscription, Task, TextStyleRefinement, WeakEntity,
+    KeyContext, KeybindingKeystroke, MouseButton, PlatformKeyboardMapper, Point, ScrollEvent,
+    ScrollStrategy, Stateful, StyledText, Subscription, Task, TextStyleRefinement, WeakEntity,
     actions, anchored, deferred, div,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
@@ -2373,7 +2373,7 @@ impl Render for KeymapEditor {
                         }),
                     ),
             )
-            .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _, cx| {
+            .on_scroll(cx.listener(|this, event: &ScrollEvent, _, cx| {
                 // This ensures that the menu is not dismissed in cases where scroll events
                 // with a delta of zero are emitted
                 if !event.delta.pixel_delta(px(1.)).y.is_zero() {
@@ -2425,13 +2425,12 @@ impl RenderOnce for SyntaxHighlightedText {
 
         let text = self.text.clone();
 
-        let highlights = self
-            .language
-            .highlight_text(&text.as_ref().into(), 0..text.len());
-        let mut runs = Vec::with_capacity(highlights.len());
+        let mut runs = Vec::new();
         let mut offset = 0;
 
-        for (highlight_range, highlight_id) in highlights {
+        for (highlight_range, highlight_id) in
+            self.language.highlight_text(text.as_str(), 0..text.len())
+        {
             // Add un-highlighted text before the current highlight
             if highlight_range.start > offset {
                 runs.push(text_style.to_run(highlight_range.start - offset));
