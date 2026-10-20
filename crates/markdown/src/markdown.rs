@@ -1962,8 +1962,8 @@ impl MarkdownElement {
         } else {
             // Flex treats an item's bottom as its baseline, and the renderer puts
             // the formula baseline there.
-            builder.modify_current_div(|el| el.flex().flex_row().flex_wrap().items_baseline());
             builder.use_flex_line_breaks();
+            builder.modify_current_div(|el| el.flex().flex_row().flex_wrap().items_baseline());
             builder.push_sourced_element(range, math_element);
         }
     }
@@ -4097,6 +4097,7 @@ impl MarkdownElementBuilder {
             .table
             .in_cell
             .then(|| self.table.current_cell_alignment());
+        self.use_flex_line_breaks();
         self.modify_current_div(|el| {
             let el = el.flex().flex_row().flex_wrap();
             // Table cells center their content vertically and apply column alignment via a
@@ -4121,7 +4122,6 @@ impl MarkdownElementBuilder {
                 }
             }
         });
-        self.use_flex_line_breaks();
         self.append_child(child.into_any_element());
     }
 
@@ -6256,6 +6256,44 @@ mod tests {
             " and thus there exists a prefix-free code",
             "splitting must not drop or reorder text"
         );
+    }
+
+    #[gpui::test]
+    fn test_flex_paragraph_splits_text_before_image(cx: &mut TestAppContext) {
+        let image = test_image(cx);
+        let rendered = render_markdown_with_image_resolver(
+            "and thus there exists a prefix-free code ![alt](https://example.com/a.png)",
+            MarkdownOptions::default(),
+            move |_, _| Some(ImageSource::Render(image.clone())),
+            cx,
+        );
+        let words: Vec<_> = rendered
+            .lines
+            .iter()
+            .map(|line| line.layout.wrapped_text())
+            .collect();
+        assert!(words.len() > 4, "expected a child per word, got {words:?}");
+        assert_eq!(words.concat(), "and thus there exists a prefix-free code ");
+    }
+
+    #[gpui::test]
+    fn test_flex_paragraph_splits_text_before_inline_math(cx: &mut TestAppContext) {
+        let rendered = render_markdown_with_options(
+            "a push adds an offset $b$ to the turn",
+            None,
+            MarkdownOptions {
+                render_math: true,
+                ..Default::default()
+            },
+            cx,
+        );
+        let words: Vec<_> = rendered
+            .lines
+            .iter()
+            .map(|line| line.layout.wrapped_text())
+            .collect();
+        assert!(words.len() > 4, "expected a child per word, got {words:?}");
+        assert_eq!(words.concat(), "a push adds an offset  to the turn");
     }
 
     #[gpui::test]
