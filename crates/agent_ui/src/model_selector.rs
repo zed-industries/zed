@@ -445,6 +445,11 @@ async fn fuzzy_search(
         query: &str,
         executor: BackgroundExecutor,
     ) -> Vec<AgentModelInfo> {
+        let names = model_list
+            .iter()
+            .enumerate()
+            .map(|(index, model)| StringMatchCandidate::new(index, model.name.clone()))
+            .collect::<Vec<_>>();
         let candidates = model_list
             .iter()
             .enumerate()
@@ -459,25 +464,11 @@ async fn fuzzy_search(
                 )
             })
             .collect::<Vec<_>>();
-        let mut matches = fuzzy_nucleo::match_strings_async(
-            &candidates,
-            query,
-            fuzzy_nucleo::Case::Ignore,
-            fuzzy_nucleo::LengthPenalty::On,
-            model_list.len(),
-            &Default::default(),
-            executor,
-        )
-        .await;
 
-        matches.sort_unstable_by_key(|mat| {
-            let candidate = &candidates[mat.candidate_id];
-            (Reverse(OrderedFloat(mat.score)), candidate.id)
-        });
-
-        matches
+        match_names_with_metadata(&names, &candidates, query, executor)
+            .await
             .into_iter()
-            .map(|mat| model_list[mat.candidate_id].clone())
+            .map(|index| model_list[index].clone())
             .collect()
     }
 
@@ -499,6 +490,56 @@ async fn fuzzy_search(
             ))
         }
     }
+}
+
+pub(crate) async fn match_names_with_metadata(
+    names: &[StringMatchCandidate],
+    candidates: &[StringMatchCandidate],
+    query: &str,
+    executor: BackgroundExecutor,
+) -> Vec<usize> {
+    let cancel_flag = Default::default();
+    let (mut name_matches, mut metadata_matches) = futures::join!(
+        fuzzy_nucleo::match_strings_async(
+            names,
+            query,
+            fuzzy_nucleo::Case::Ignore,
+            fuzzy_nucleo::LengthPenalty::On,
+            names.len(),
+            &cancel_flag,
+            executor.clone(),
+        ),
+        fuzzy_nucleo::match_strings_async(
+            candidates,
+            query,
+            fuzzy_nucleo::Case::Ignore,
+            fuzzy_nucleo::LengthPenalty::On,
+            candidates.len(),
+            &cancel_flag,
+            executor,
+        ),
+    );
+
+    // Metadata should expand the results without changing the relevance of name matches.
+    let sorting_key = |matched: &fuzzy_nucleo::StringMatch| {
+        (Reverse(OrderedFloat(matched.score)), matched.candidate_id)
+    };
+    name_matches.sort_unstable_by_key(sorting_key);
+    metadata_matches.sort_unstable_by_key(sorting_key);
+
+    let matched_name_ids: HashSet<_> = name_matches
+        .iter()
+        .map(|matched| matched.candidate_id)
+        .collect();
+    name_matches
+        .into_iter()
+        .chain(
+            metadata_matches
+                .into_iter()
+                .filter(|matched| !matched_name_ids.contains(&matched.candidate_id)),
+        )
+        .map(|matched| matched.candidate_id)
+        .collect()
 }
 
 #[cfg(test)]
@@ -716,8 +757,25 @@ mod tests {
         let results = fuzzy_search(models.clone(), "GPT 5.6".into(), cx.executor()).await;
         assert_models_eq(results, vec![("OpenAI", vec!["GPT-5.6 Sol"])]);
 
+        let results = fuzzy_search(models.clone(), "openai 5.6".into(), cx.executor()).await;
+        assert_models_eq(results, vec![("OpenAI", vec!["GPT-5.6 Sol"])]);
+
         let results = fuzzy_search(models, "openai".into(), cx.executor()).await;
         assert_models_eq(results, vec![("OpenAI", vec!["GPT-5.6 Sol"])]);
+    }
+
+    #[gpui::test]
+    async fn test_fuzzy_match_prioritizes_names_over_group(cx: &mut TestAppContext) {
+        let models = create_model_list(vec![(
+            "High Provider",
+            vec!["Reasoner", "Extra High", "High"],
+        )]);
+
+        let results = fuzzy_search(models, "high".into(), cx.executor()).await;
+        assert_models_eq(
+            results,
+            vec![("High Provider", vec!["High", "Extra High", "Reasoner"])],
+        );
     }
 
     #[gpui::test]

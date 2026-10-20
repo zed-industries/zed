@@ -1,4 +1,4 @@
-use std::{cmp::Reverse, rc::Rc, sync::Arc};
+use std::{rc::Rc, sync::Arc};
 
 use acp_thread::AgentSessionConfigOptions;
 use agent_client_protocol::schema::v2 as acp;
@@ -10,7 +10,6 @@ use fuzzy_nucleo::StringMatchCandidate;
 use gpui::{
     App, BackgroundExecutor, Context, DismissEvent, Entity, Subscription, Task, Window, prelude::*,
 };
-use ordered_float::OrderedFloat;
 use picker::popover_menu::PickerPopoverMenu;
 use picker::{Picker, PickerDelegate};
 use settings::{AgentConfigOptionValue, SettingsStore};
@@ -22,6 +21,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use util::ResultExt as _;
 use zed_actions::agent::ToggleModelSelector;
 
+use crate::model_selector::match_names_with_metadata;
 use crate::ui::documentation_aside_side;
 use crate::{
     CycleFavoriteModels, CycleModeSelector, CycleThinkingEffort, ToggleProfileSelector,
@@ -1074,6 +1074,11 @@ async fn fuzzy_search_options(
     query: &str,
     executor: BackgroundExecutor,
 ) -> Vec<ConfigOptionValue> {
+    let names = options
+        .iter()
+        .enumerate()
+        .map(|(index, option)| StringMatchCandidate::new(index, option.name.clone()))
+        .collect::<Vec<_>>();
     let candidates = options
         .iter()
         .enumerate()
@@ -1091,25 +1096,10 @@ async fn fuzzy_search_options(
         })
         .collect::<Vec<_>>();
 
-    let mut matches = fuzzy_nucleo::match_strings_async(
-        &candidates,
-        query,
-        fuzzy_nucleo::Case::Ignore,
-        fuzzy_nucleo::LengthPenalty::On,
-        options.len(),
-        &Default::default(),
-        executor,
-    )
-    .await;
-
-    matches.sort_unstable_by_key(|mat| {
-        let candidate = &candidates[mat.candidate_id];
-        (Reverse(OrderedFloat(mat.score)), candidate.id)
-    });
-
-    matches
+    match_names_with_metadata(&names, &candidates, query, executor)
+        .await
         .into_iter()
-        .map(|mat| options[mat.candidate_id].clone())
+        .map(|index| options[index].clone())
         .collect()
 }
 
@@ -1184,6 +1174,7 @@ mod tests {
             "openai",
             "openai/gpt-5.6-sol",
             "flagship",
+            "openai reasoning",
         ] {
             assert_eq!(
                 option_names(fuzzy_search_options(options.clone(), query, executor.clone()).await),
@@ -1191,6 +1182,62 @@ mod tests {
                 "query {query:?} should match the GPT model",
             );
         }
+    }
+
+    #[gpui::test]
+    async fn config_option_search_ranks_names_before_metadata(executor: BackgroundExecutor) {
+        let options = vec![
+            ConfigOptionValue {
+                value: acp::SessionConfigValueId::new("reasoner"),
+                name: "Reasoner".to_string(),
+                description: Some("High reasoning effort".to_string()),
+                group: None,
+            },
+            ConfigOptionValue {
+                value: acp::SessionConfigValueId::new("xhigh"),
+                name: "Extra High".to_string(),
+                description: None,
+                group: None,
+            },
+            ConfigOptionValue {
+                value: acp::SessionConfigValueId::new("high"),
+                name: "High".to_string(),
+                description: Some(
+                    "High effort with advanced reasoning for complex tasks.".to_string(),
+                ),
+                group: None,
+            },
+        ];
+
+        assert_eq!(
+            option_names(fuzzy_search_options(options, "high", executor).await),
+            ["High", "Extra High", "Reasoner"],
+        );
+    }
+
+    #[gpui::test]
+    async fn config_option_search_preserves_name_order_with_different_metadata(
+        executor: BackgroundExecutor,
+    ) {
+        let options = vec![
+            ConfigOptionValue {
+                value: acp::SessionConfigValueId::new("model-a"),
+                name: "Model A".to_string(),
+                description: Some("Advanced reasoning for complex tasks".to_string()),
+                group: Some("Provider A".to_string()),
+            },
+            ConfigOptionValue {
+                value: acp::SessionConfigValueId::new("b"),
+                name: "Model B".to_string(),
+                description: None,
+                group: None,
+            },
+        ];
+
+        assert_eq!(
+            option_names(fuzzy_search_options(options, "model", executor).await),
+            ["Model A", "Model B"],
+        );
     }
 
     #[gpui::test]
