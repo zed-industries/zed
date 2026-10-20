@@ -1329,14 +1329,27 @@ impl Render for RawCell {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use collections::HashSet;
     use gpui::TestAppContext;
+    use indoc::indoc;
+    use language::LanguageConfig;
     use settings::SettingsStore;
 
-    fn run_cell_language_test(
-        cx: &mut TestAppContext,
-        cell_source: &str,
-        expected_languages: &[&str],
-    ) {
+    fn markdown_inline_lang() -> Language {
+        Language::new(
+            LanguageConfig {
+                name: "Markdown-Inline".into(),
+                hidden: true,
+                ..LanguageConfig::default()
+            },
+            Some(tree_sitter_md::INLINE_LANGUAGE.into()),
+        )
+        .with_highlights_query("(emphasis) @emphasis")
+        .unwrap()
+    }
+
+    fn run_cell_language_test(cx: &mut TestAppContext, cell_source: &str, expected_langs: &[&str]) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
@@ -1346,14 +1359,10 @@ mod tests {
 
         let languages = Arc::new(LanguageRegistry::test(cx.executor()));
 
-        for (lang_name, lang_fn) in [
-            ("markdown", tree_sitter_md::LANGUAGE),
-            ("markdown-inline", tree_sitter_md::INLINE_LANGUAGE),
-            ("typescript", tree_sitter_typescript::LANGUAGE_TYPESCRIPT),
-            ("python", tree_sitter_python::LANGUAGE),
-        ] {
-            languages.add(languages::language(lang_name, lang_fn.into()));
-        }
+        languages.add(languages::json_lang());
+        languages.add(languages::rust_lang());
+        languages.add(languages::markdown_lang());
+        languages.add(Arc::new(markdown_inline_lang()));
 
         let metadata: CellMetadata = serde_json::from_str("{}").unwrap();
 
@@ -1388,19 +1397,16 @@ mod tests {
                 .collect::<Vec<_>>()
         });
 
-        let mut expected_names = expected_languages.to_vec();
-        let mut sorted_names = detected_names
+        let actual = detected_names
             .iter()
-            .map(|it| it.as_ref())
-            .collect::<Vec<_>>();
+            .map(|name| name.as_ref())
+            .collect::<HashSet<&str>>();
 
-        expected_names.sort();
-        sorted_names.sort();
-
+        let expected = expected_langs.iter().copied().collect::<HashSet<&str>>();
         assert_eq!(
-            expected_names, sorted_names,
-            "detected languages {sorted_names:?} do not match expected {expected_names:?}"
-        );
+            expected, actual,
+            "cell languages mismatch: expected {expected:?}, got {actual:?}"
+        )
     }
 
     #[gpui::test]
@@ -1408,13 +1414,27 @@ mod tests {
         run_cell_language_test(cx, "Hello, World!", &["Markdown", "Markdown-Inline"]);
         run_cell_language_test(
             cx,
-            "Some *emphasized* text\n```ts\nconst foo = 42;\n```\n",
-            &["Markdown", "Markdown-Inline", "TypeScript"],
+            indoc! {r#"
+                Some *emphasized* text
+                ```json
+                { "foo": "bar" }
+                ```
+            "#},
+            &["Markdown", "Markdown-Inline", "JSON"],
         );
         run_cell_language_test(
             cx,
-            "```ts\nconst f = () => {};\n```\n```py\nprint('Hello')\n```\n",
-            &["Markdown", "Python", "TypeScript"],
+            indoc! {r#"
+                ```json
+                [ "a", "b", { "foo": "bar" }]
+                ```
+                ```rs
+                fn main() {
+                    println!("Hello, World!");
+                }
+                ```
+            "#},
+            &["Markdown", "JSON", "Rust"],
         );
     }
 }
