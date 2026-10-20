@@ -10915,7 +10915,7 @@ pub fn worktrees_directory_for_repo(
     );
     let directory = Path::new(worktree_directory_setting);
     let resolved = if path_style.is_absolute(directory) {
-        PathBuf::from(path_style.normalize(worktree_directory_setting))
+        path_style.normalize_lexically(worktree_directory_setting)
     } else {
         let is_drive_relative =
             path_style.is_windows() && worktree_directory_setting.as_bytes().get(1) == Some(&b':');
@@ -11534,7 +11534,7 @@ mod tests {
     use git::repository::{RepoPath, repo_path};
     use gpui::proptest::prelude::*;
     use gpui::{TestAppContext, UpdateGlobal};
-    use rand::{SeedableRng, rngs::StdRng};
+    use rand::{Rng as _, SeedableRng, rngs::StdRng};
     use serde_json::json;
     use settings::SettingsStore;
     use std::path::{Path, PathBuf};

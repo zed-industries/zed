@@ -36,7 +36,7 @@ pub(crate) type PlatformScreenCaptureFrame =
     objc2_core_foundation::CFRetained<objc2_core_video::CVImageBuffer>;
 
 use crate::{
-    Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
+    Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds, Corners,
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Edges, ExternalDragPayload, Font,
     FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap,
     LineLayout, MissingGlyphSink, Pixels, PlatformGestures, PlatformInput, Point, Priority,
@@ -1166,6 +1166,11 @@ pub struct WindowInsets {
     /// (iOS: derived from `keyboardWillShow`/frame-change notifications.
     /// Android: `WindowInsets.Type.ime()`.)
     pub ime: Edges<Pixels>,
+    /// The radii of the window's visible corners where the display rounds
+    /// them, and zero where corners are square or the platform can't say.
+    /// Content inset from an edge by `d` lines up with the display by using a
+    /// radius of `radius - d`. (iOS 26+: a concentric `UICornerConfiguration`.)
+    pub corner_radii: Corners<Pixels>,
 }
 
 impl WindowInsets {

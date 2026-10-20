@@ -1052,7 +1052,7 @@ impl VisualTestContext {
         })
     }
 
-    /// Simulate an event from the platform, e.g. a ScrollWheelEvent
+    /// Simulate an event from the platform, e.g. a ScrollEvent
     /// Make sure you've called [VisualTestContext::draw] first!
     pub fn simulate_event<E: InputEvent>(&mut self, event: E) {
         self.test_window(self.window)
