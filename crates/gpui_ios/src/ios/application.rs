@@ -164,7 +164,7 @@ impl IosApplicationState {
     }
 
     fn continue_user_activity(&self, activity: &NSUserActivity) {
-        if activity.activityType().as_ref() != unsafe { NSUserActivityTypeBrowsingWeb } {
+        if &*activity.activityType() != unsafe { NSUserActivityTypeBrowsingWeb } {
             return;
         }
         let Some(url) = activity.webpageURL().and_then(|url| url.absoluteString()) else {
@@ -414,6 +414,7 @@ mod tests {
 
     #[test]
     fn browsing_activity_delivers_url_without_losing_query_or_fragment() {
+        use objc2::AnyThread;
         use objc2_foundation::NSURL;
 
         let state = IosApplicationState::default();
@@ -423,12 +424,10 @@ mod tests {
             move |urls| received.borrow_mut().extend(urls)
         }));
         let url_string = "https://example.com/thread/123?source=link#selection";
-        let url = NSURL::URLWithString(&NSString::from_str(url_string))
-            .expect("test URL is valid");
-        let activity = NSUserActivity::initWithActivityType(
-            NSUserActivity::alloc(),
-            unsafe { NSUserActivityTypeBrowsingWeb },
-        );
+        let url = NSURL::URLWithString(&NSString::from_str(url_string)).expect("test URL is valid");
+        let activity = NSUserActivity::initWithActivityType(NSUserActivity::alloc(), unsafe {
+            NSUserActivityTypeBrowsingWeb
+        });
         state.continue_user_activity(&activity);
         assert!(received.borrow().is_empty());
 
