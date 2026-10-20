@@ -38,6 +38,7 @@ use git_ui::project_diff::ProjectDiffToolbar;
 use git_ui::solo_diff_view::{SoloDiffGitToolbar, SoloDiffStyleToolbar};
 use git_ui::staged_diff::StagedDiffToolbar;
 use git_ui::unstaged_diff::UnstagedDiffToolbar;
+use git_ui_core::file_diff_view::FileDiffStyleToolbar;
 use gpui::{
     Action, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, DismissEvent,
     Element, Entity, FocusHandle, Focusable, Image, ImageFormat, KeyBinding, ParentElement,
@@ -87,7 +88,7 @@ use std::{
     sync::atomic::{self, AtomicBool},
 };
 use terminal_view::terminal_panel::{self, TerminalPanel};
-use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, deserialize_icon_theme};
+use theme::{ActiveTheme, SystemAppearance, ThemeRegistry};
 use theme_settings::{ThemeSettings, load_user_theme};
 use ui::{Navigable, NavigableEntry, PopoverMenuHandle, TintColor, prelude::*};
 use util::markdown::MarkdownString;
@@ -421,6 +422,7 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
         } else {
             None
         },
+        use_display_p3: WorkspaceSettings::get_global(cx).use_display_p3,
         ..Default::default()
     }
 }
@@ -1466,6 +1468,8 @@ fn initialize_pane(
             toolbar.add_item(multibuffer_hint, window, cx);
             let solo_diff_style_toolbar = cx.new(SoloDiffStyleToolbar::new);
             toolbar.add_item(solo_diff_style_toolbar, window, cx);
+            let file_diff_style_toolbar = cx.new(FileDiffStyleToolbar::new);
+            toolbar.add_item(file_diff_style_toolbar, window, cx);
             let breadcrumbs = cx.new(|_| Breadcrumbs::new());
             toolbar.add_item(breadcrumbs, window, cx);
             let buffer_search_bar = cx.new(|cx| {
@@ -2830,18 +2834,24 @@ pub(crate) fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &mut A
             scope.spawn(async move {
                 match load_target {
                     LoadTarget::Theme(theme_path) => {
-                        if let Some(bytes) = fs.load_bytes(&theme_path).await.log_err()
+                        if let Some(bytes) = fs
+                            .load_bytes(&theme_path)
+                            .await
+                            .with_context(|| format!("loading theme bytes from {theme_path:?}"))
+                            .log_err()
                             && load_user_theme(theme_registry, &bytes).log_err().is_some()
                         {
                             reload_tasks.lock().push(ReloadTarget::Theme);
                         }
                     }
                     LoadTarget::IconTheme((icon_theme_path, icons_root_path)) => {
-                        if let Some(bytes) = fs.load_bytes(&icon_theme_path).await.log_err()
-                            && let Some(icon_theme_family) =
-                                deserialize_icon_theme(&bytes).log_err()
+                        if let Some(bytes) = fs
+                            .load_bytes(&icon_theme_path)
+                            .await
+                            .with_context(|| format!("loading icon bytes from {icon_theme_path:?}"))
+                            .log_err()
                             && theme_registry
-                                .load_icon_theme(icon_theme_family, &icons_root_path)
+                                .load_icon_theme(&icon_theme_path, &icons_root_path, bytes)
                                 .log_err()
                                 .is_some()
                         {
@@ -4869,7 +4879,7 @@ mod tests {
         let initial_font_size =
             cx.update(|_, cx| ThemeSettings::get_global(cx).buffer_font_size(cx).as_f32());
 
-        cx.simulate_event(gpui::ScrollWheelEvent {
+        cx.simulate_event(gpui::ScrollEvent {
             position: mouse_position,
             delta: gpui::ScrollDelta::Pixels(point(px(0.), px(1.))),
             modifiers: event_modifiers,
@@ -4897,7 +4907,7 @@ mod tests {
             window.draw(cx).clear(cx);
         });
 
-        cx.simulate_event(gpui::ScrollWheelEvent {
+        cx.simulate_event(gpui::ScrollEvent {
             position: mouse_position,
             delta: gpui::ScrollDelta::Pixels(point(px(0.), px(1.))),
             modifiers: event_modifiers,
@@ -4916,7 +4926,7 @@ mod tests {
             window.draw(cx).clear(cx);
         });
 
-        cx.simulate_event(gpui::ScrollWheelEvent {
+        cx.simulate_event(gpui::ScrollEvent {
             position: mouse_position,
             delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-1.))),
             modifiers: event_modifiers,
@@ -4947,7 +4957,7 @@ mod tests {
             window.draw(cx).clear(cx);
         });
 
-        cx.simulate_event(gpui::ScrollWheelEvent {
+        cx.simulate_event(gpui::ScrollEvent {
             position: mouse_position,
             delta: gpui::ScrollDelta::Pixels(point(px(0.), px(1.))),
             modifiers: event_modifiers,
@@ -5974,6 +5984,7 @@ mod tests {
                 "toolchain",
                 "variable_list",
                 "vim",
+                "which_key",
                 "window",
                 "workspace",
                 "worktree_picker",

@@ -4,8 +4,8 @@ use gpui::{
     Capslock, ClipboardEntry, ClipboardItem, ClipboardString, DispatchEventResult, GestureTuning,
     Image, ImageFormat, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection,
-    Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent, TouchEvent, TouchId, TouchPhase,
-    point, px,
+    Pixels, PlatformInput, Point, ScrollDelta, ScrollEvent, ScrollSource, TouchEvent, TouchId,
+    TouchPhase, point, px,
 };
 use wasm_bindgen::prelude::*;
 
@@ -468,10 +468,13 @@ impl WebWindowInner {
 
     /// Cancels touch default handling separately because iOS does not consistently
     /// transfer pointer-event cancellation to the corresponding touch event.
+    /// During native scrolling, touchend may be non-cancelable.
     fn register_touch_end(self: &Rc<Self>) -> EventListenerHandle {
         self.listen_non_passive("touchend", move |event: JsValue| {
             let event: web_sys::Event = event.unchecked_into();
-            event.prevent_default();
+            if event.cancelable() {
+                event.prevent_default();
+            }
         })
     }
 
@@ -524,11 +527,7 @@ impl WebWindowInner {
         let callback = wasm_bindgen::closure::Closure::once_into_js({
             let this = Rc::clone(self);
             move || {
-                this.state.borrow_mut().is_active = true;
-                this.with_callback(
-                    |callbacks| &mut callbacks.active_status_change,
-                    |callback| callback(true),
-                );
+                this.refresh_active_status();
             }
         });
         if let Err(error) = self
@@ -664,11 +663,12 @@ impl WebWindowInner {
                 current_state.modifiers = modifiers;
             }
 
-            this.dispatch_input(PlatformInput::ScrollWheel(ScrollWheelEvent {
+            this.dispatch_input(PlatformInput::Scroll(ScrollEvent {
                 position,
                 delta,
                 modifiers,
                 touch_phase: TouchPhase::Moved,
+                source: ScrollSource::Pointer,
             }));
         })
     }
@@ -723,6 +723,20 @@ impl WebWindowInner {
 
             let is_held = event.repeat();
             let key_char = compute_key_char(&event, &key, &modifiers);
+
+            // The software keyboard must edit the mirror itself: cancelling
+            // keydown prevents iOS from updating its autocorrect context and
+            // from delivering the corresponding beforeinput/input events.
+            if this.touch_input
+                && this.ime_mirror.virtual_keyboard_enabled()
+                && this.state.borrow().input_handler.is_some()
+                && !modifiers.platform
+                && !modifiers.control
+                && !modifiers.alt
+                && (key_char.is_some() || matches!(key.as_str(), "backspace" | "delete" | "enter"))
+            {
+                return;
+            }
 
             let keystroke = Keystroke {
                 modifiers,
@@ -1161,36 +1175,30 @@ impl WebWindowInner {
 
     fn register_focus(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
-        self.listen_input("focus", move |_event: JsValue| {
-            if this.suppress_focus_status_events.get() {
-                return;
-            }
-            {
-                let mut state = this.state.borrow_mut();
-                state.is_active = true;
-            }
-            this.with_callback(
-                |callbacks| &mut callbacks.active_status_change,
-                |callback| callback(true),
-            );
-        })
+        EventListenerHandle::add(
+            self.browser_window.as_ref(),
+            "focus",
+            move |_event: JsValue| {
+                if this.suppress_focus_status_events.get() {
+                    return;
+                }
+                this.refresh_active_status();
+            },
+        )
     }
 
     fn register_blur(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
-        self.listen_input("blur", move |_event: JsValue| {
-            if this.suppress_focus_status_events.get() {
-                return;
-            }
-            {
-                let mut state = this.state.borrow_mut();
-                state.is_active = false;
-            }
-            this.with_callback(
-                |callbacks| &mut callbacks.active_status_change,
-                |callback| callback(false),
-            );
-        })
+        EventListenerHandle::add(
+            self.browser_window.as_ref(),
+            "blur",
+            move |_event: JsValue| {
+                if this.suppress_focus_status_events.get() {
+                    return;
+                }
+                this.refresh_active_status();
+            },
+        )
     }
 
     fn register_pointer_enter(self: &Rc<Self>) -> EventListenerHandle {

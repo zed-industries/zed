@@ -10,7 +10,6 @@ mod available_languages;
 mod buffer;
 mod diagnostic;
 mod diagnostic_set;
-mod file_content;
 mod language_registry;
 
 pub mod language_settings;
@@ -39,7 +38,7 @@ use collections::{HashMap, HashSet};
 use futures::Future;
 use futures::future::LocalBoxFuture;
 use futures::lock::OwnedMutexGuard;
-use gpui::{App, AsyncApp, Entity, EntityId};
+use gpui::{App, AsyncApp, Entity, EntityId, SharedString};
 use http_client::HttpClient;
 
 pub use language_core::{
@@ -50,6 +49,7 @@ pub use language_core::{
 
 use futures::future::FutureExt as _;
 use language_core::highlight_cache::{MAX_TEXT_HIGHLIGHT_ENTRY_BYTES, TextHighlightKey};
+use language_core::highlight_map::HighlightCaptureRef;
 pub use language_core::{
     BlockCommentConfig, BracketPair, BracketPairConfig, BracketPairContent, BracketsConfig,
     BracketsPatternConfig, CodeLabel, CodeLabelBuilder, DebugVariablesConfig, DebuggerTextObject,
@@ -79,13 +79,14 @@ use std::{
     ffi::OsStr,
     fmt::Debug,
     hash::Hash,
-    mem,
+    iter, mem,
     ops::{DerefMut, Range},
     path::{Path, PathBuf},
     str,
     sync::{Arc, LazyLock},
 };
-use syntax_map::{QueryCursorHandle, SyntaxSnapshot, flattened_highlight_regions};
+use streaming_iterator::StreamingIterator as _;
+use syntax_map::{QueryCursorHandle, TextProvider, flatten_capture_regions};
 use task::RunnableTag;
 pub use task_context::{ContextLocation, ContextProvider};
 pub use text_diff::{
@@ -108,9 +109,6 @@ pub use diagnostic::{
     Diagnostic, DiagnosticMessage, DiagnosticSourceKind, RelatedInformation, RelatedLocation,
 };
 pub use diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup};
-pub use file_content::{
-    ByteContent, DecodedText, FILE_ANALYSIS_BYTES, analyze_byte_content, decode_text, encode_text,
-};
 pub use language_registry::{
     BinaryStatus, LanguageNotFound, LanguageQueries, LanguageRegistry, QueryFile,
     QueryFileContents, QueryFiles,
@@ -179,9 +177,12 @@ pub static PLAIN_TEXT: LazyLock<Arc<Language>> = LazyLock::new(|| {
             soft_wrap: Some(SoftWrap::EditorWidth),
             autoclose_before: ")]}".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["txt".to_owned()],
+                path_suffixes: vec![SharedString::new_static("txt")],
                 first_line_pattern: None,
-                modeline_aliases: vec!["text".to_owned(), "txt".to_owned()],
+                modeline_aliases: vec![
+                    SharedString::new_static("text"),
+                    SharedString::new_static("txt"),
+                ],
             })
             .into(),
             brackets: BracketPairConfig {
@@ -378,6 +379,12 @@ impl CachedLspAdapter {
 
     pub fn name(&self) -> LanguageServerName {
         self.adapter.name()
+    }
+
+    /// Returns whether the language server only starts for the given language
+    /// when it is explicitly listed in the `language_servers` setting.
+    pub fn is_opt_in_for(&self, language: &LanguageName) -> bool {
+        self.adapter.is_opt_in_for(language)
     }
 
     pub async fn get_language_server_command(
@@ -660,6 +667,13 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
         HashMap::default()
     }
 
+    /// Whether the `...` wildcard in the `language_servers` setting excludes this
+    /// language server for the given language, so that it only starts when
+    /// listed explicitly.
+    fn is_opt_in_for(&self, _language: &LanguageName) -> bool {
+        false
+    }
+
     /// Support custom initialize params.
     fn prepare_initialize_params(
         &self,
@@ -927,6 +941,7 @@ pub struct FakeLspAdapter {
     pub disk_based_diagnostics_progress_token: Option<String>,
     pub disk_based_diagnostics_sources: Vec<String>,
     pub language_server_binary: LanguageServerBinary,
+    pub opt_in_languages: HashSet<LanguageName>,
 
     pub capabilities: lsp::ServerCapabilities,
     pub initializer: Option<Box<dyn 'static + Send + Sync + Fn(&mut lsp::FakeLanguageServer)>>,
@@ -1117,17 +1132,18 @@ impl Language {
         self.toolchain.clone()
     }
 
-    pub fn highlight_text<'a>(
-        self: &'a Arc<Self>,
-        text: &'a Rope,
+    pub fn highlight_text<Source: HighlightSource + ?Sized>(
+        self: &Arc<Self>,
+        text: &Source,
         range: Range<usize>,
-    ) -> Vec<(Range<usize>, HighlightId)> {
-        self.highlight_text_resolved(text, range).runs.to_vec()
+    ) -> impl Iterator<Item = (Range<usize>, HighlightId)> + 'static + use<Source> {
+        self.highlight_text_resolved(text, 0..text.source_len())
+            .runs_in_range(range)
     }
 
     pub fn highlight_text_resolved(
         self: &Arc<Self>,
-        text: &Rope,
+        text: &(impl HighlightSource + ?Sized),
         range: Range<usize>,
     ) -> ResolvedHighlights {
         let Some(grammar) = &self.grammar else {
@@ -1136,58 +1152,62 @@ impl Language {
         let Some(highlights_config) = &grammar.highlights_config else {
             return ResolvedHighlights::default();
         };
-        let highlights = if text.len() > MAX_TEXT_HIGHLIGHT_ENTRY_BYTES {
-            self.compute_resolved_highlights(grammar, text)
+        let text_len = text.source_len();
+        let highlights = if text_len > MAX_TEXT_HIGHLIGHT_ENTRY_BYTES {
+            Self::compute_resolved_highlights(grammar, &highlights_config.query, text)
         } else {
-            let key = TextHighlightKey::new(text.chunks(), text.len());
+            let key = TextHighlightKey::new(text.source_chunks(), text_len);
             match highlights_config
                 .text_highlight_cache
-                .get(&key, text.chunks())
+                .get(&key, text.source_chunks())
             {
                 Some(highlights) => highlights,
-                None => highlights_config.text_highlight_cache.insert(
-                    key,
-                    Arc::from(text.chunks().collect::<String>()),
-                    self.compute_resolved_highlights(grammar, text),
-                ),
+                None => {
+                    let mut cached_text = String::with_capacity(text_len);
+                    cached_text.extend(text.source_chunks());
+                    highlights_config.text_highlight_cache.insert(
+                        key,
+                        cached_text,
+                        Self::compute_resolved_highlights(grammar, &highlights_config.query, text),
+                    )
+                }
             }
         };
-        if range.start == 0 && range.end >= text.len() {
+        if range.start == 0 && range.end >= text_len {
             return highlights;
         }
         ResolvedHighlights {
             sources: highlights.sources.clone(),
-            runs: highlights
-                .runs
-                .iter()
-                .filter(|(run_range, _)| run_range.start < range.end && run_range.end > range.start)
-                .map(|(run_range, highlight_id)| {
-                    (
-                        run_range.start.max(range.start) - range.start
-                            ..run_range.end.min(range.end) - range.start,
-                        *highlight_id,
-                    )
-                })
-                .collect(),
+            runs: highlights.runs_in_range(range).collect(),
         }
     }
 
     fn compute_resolved_highlights(
-        self: &Arc<Self>,
         grammar: &Arc<Grammar>,
-        text: &Rope,
+        query: &tree_sitter::Query,
+        text: &(impl HighlightSource + ?Sized),
     ) -> ResolvedHighlights {
         let highlight_map = grammar.highlight_map();
-        let tree = parse_text(grammar, text, None);
-        let captures =
-            SyntaxSnapshot::single_tree_captures(0..text.len(), text, &tree, self, |grammar| {
-                grammar
-                    .highlights_config
-                    .as_ref()
-                    .map(|config| &config.query)
+        let text_len = text.source_len();
+        let tree = text.parse(grammar);
+        let regions = with_query_cursor(|cursor| {
+            cursor.set_byte_range(0..text_len);
+            let mut captures = cursor.captures(query, tree.root_node(), text.text_provider());
+            let capture_refs = iter::from_fn(move || {
+                let (query_match, capture_index) = captures.next()?;
+                let capture = query_match.captures[*capture_index];
+                Some((
+                    capture.node.byte_range(),
+                    HighlightCaptureRef {
+                        grammar_index: 0,
+                        capture_id: CaptureId(capture.index),
+                    },
+                ))
             });
+            flatten_capture_regions(0..text_len, capture_refs)
+        });
         let mut runs = Vec::<(Range<usize>, HighlightId)>::new();
-        for region in flattened_highlight_regions(captures, 0..text.len()) {
+        for region in regions {
             let highlight_id = region
                 .stack
                 .iter()
@@ -1212,7 +1232,7 @@ impl Language {
         }
     }
 
-    pub fn path_suffixes(&self) -> &[String] {
+    pub fn path_suffixes(&self) -> &[SharedString] {
         &self.config.matcher.path_suffixes
     }
 
@@ -1267,7 +1287,7 @@ pub fn build_highlight_map(capture_names: &[&str], theme: &SyntaxTheme) -> Highl
 }
 
 impl LanguageScope {
-    pub fn path_suffixes(&self) -> &[String] {
+    pub fn path_suffixes(&self) -> &[SharedString] {
         self.language.path_suffixes()
     }
 
@@ -1447,6 +1467,54 @@ impl Debug for Language {
     }
 }
 
+pub trait HighlightSource {
+    fn source_len(&self) -> usize;
+    fn source_chunks(&self) -> impl Iterator<Item = &str>;
+    fn parse(&self, grammar: &Grammar) -> Tree;
+    fn text_provider<'a>(&'a self) -> impl tree_sitter::TextProvider<&'a [u8]> + 'a;
+}
+
+impl HighlightSource for str {
+    fn source_len(&self) -> usize {
+        self.len()
+    }
+
+    fn source_chunks(&self) -> impl Iterator<Item = &str> {
+        iter::once(self)
+    }
+
+    fn parse(&self, grammar: &Grammar) -> Tree {
+        with_parser(|parser| {
+            parser
+                .set_language(&grammar.ts_language)
+                .expect("incompatible grammar");
+            parser.parse(self, None).unwrap()
+        })
+    }
+
+    fn text_provider<'a>(&'a self) -> impl tree_sitter::TextProvider<&'a [u8]> + 'a {
+        self.as_bytes()
+    }
+}
+
+impl HighlightSource for Rope {
+    fn source_len(&self) -> usize {
+        self.len()
+    }
+
+    fn source_chunks(&self) -> impl Iterator<Item = &str> {
+        self.chunks()
+    }
+
+    fn parse(&self, grammar: &Grammar) -> Tree {
+        parse_text(grammar, self, None)
+    }
+
+    fn text_provider<'a>(&'a self) -> impl tree_sitter::TextProvider<&'a [u8]> + 'a {
+        TextProvider(self)
+    }
+}
+
 pub(crate) fn parse_text(grammar: &Grammar, text: &Rope, old_tree: Option<Tree>) -> Tree {
     with_parser(|parser| {
         parser
@@ -1457,7 +1525,7 @@ pub(crate) fn parse_text(grammar: &Grammar, text: &Rope, old_tree: Option<Tree>)
             .parse_with_options(
                 &mut move |offset, _| {
                     chunks.seek(offset);
-                    chunks.next().unwrap_or("").as_bytes()
+                    chunks.peek_bytes().unwrap_or_default()
                 },
                 old_tree.as_ref(),
                 None,
@@ -1554,6 +1622,7 @@ impl Default for FakeLspAdapter {
                 arguments: vec![],
                 env: Default::default(),
             },
+            opt_in_languages: HashSet::default(),
             label_for_completion: None,
         }
     }
@@ -1654,6 +1723,10 @@ impl LspAdapter for FakeLspAdapter {
     ) -> Option<CodeLabel> {
         let label_for_completion = self.label_for_completion.as_ref()?;
         label_for_completion(item, language)
+    }
+
+    fn is_opt_in_for(&self, language: &LanguageName) -> bool {
+        self.opt_in_languages.contains(language)
     }
 
     fn is_extension(&self) -> bool {
@@ -1820,12 +1893,19 @@ mod tests {
             Arc::ptr_eq(&highlights.runs, &memoized.runs),
             "repeated highlighting of the same text must be memoized"
         );
+        let memoized_str = language.highlight_text_resolved(code, 0..code.len());
+        assert!(
+            Arc::ptr_eq(&highlights.runs, &memoized_str.runs),
+            "str and rope sources of the same text must share memoized highlights"
+        );
         let partial = language.highlight_text_resolved(&Rope::from(code), 0..2);
         assert!(
             !Arc::ptr_eq(&highlights.runs, &partial.runs),
             "a different range must not reuse the memoized highlights"
         );
         assert_eq!(partial.runs.as_ref(), &[(0..2, highlights.runs[0].1)]);
+
+        let runs = language.highlight_text(String::from(code).as_str(), 1..5);
 
         let richer_theme = SyntaxTheme::new(
             [
@@ -1837,6 +1917,13 @@ mod tests {
             .map(|(name, color)| (name.to_string(), (*color).into())),
         );
         language.set_theme(&richer_theme);
+        assert_eq!(
+            runs.map(|(range, highlight_id)| {
+                (range, theme.get_capture_name(highlight_id).unwrap())
+            })
+            .collect::<Vec<_>>(),
+            vec![(0..1, "keyword"), (1..4, "function")]
+        );
         assert!(
             !highlights.is_current(),
             "a theme change must invalidate previously resolved highlights"
@@ -1897,6 +1984,14 @@ mod tests {
             first_highlights.runs.as_ref(),
             small_highlights.runs.as_ref(),
             "texts over the cache entry cap must still be highlighted"
+        );
+        assert_eq!(
+            language
+                .highlight_text_resolved(oversized_code.as_str(), 0..oversized_code.len())
+                .runs
+                .as_ref(),
+            first_highlights.runs.as_ref(),
+            "str and rope sources must be highlighted identically"
         );
         let second_highlights =
             language.highlight_text_resolved(&oversized_rope, 0..oversized_code.len());

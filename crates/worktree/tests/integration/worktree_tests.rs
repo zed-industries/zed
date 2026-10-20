@@ -870,6 +870,93 @@ async fn test_scan_symlinks_always(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_relative_path_for_external_abs_path(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.scan_symlinks =
+                    Some(settings::ScanSymlinksSetting::Always);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "dir1": {
+                "deps": {},
+                "src": {
+                    "a.rs": "",
+                },
+            },
+            "lib": {
+                "a": {
+                    "deep": {
+                        "d.rs": "",
+                    },
+                    "x.rs": "",
+                },
+                "b": {
+                    "b.rs": "",
+                },
+                "c.rs": "",
+            },
+            "other": {
+                "file.rs": "",
+            },
+        }),
+    )
+    .await;
+
+    fs.create_symlink("/root/dir1/deps/lib".as_ref(), "../../lib".into())
+        .await
+        .unwrap();
+
+    let tree = Worktree::local(
+        Path::new("/root/dir1"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    tree.read_with(cx, |tree, _| {
+        let snapshot = tree.as_local().unwrap().snapshot();
+        let lookup = |abs_path: &str| {
+            snapshot
+                .relative_path_for_external_abs_path(Path::new(abs_path))
+                .map(|path| path.as_unix_str().to_string())
+        };
+        assert_eq!(
+            lookup("/root/lib/a/x.rs").as_deref(),
+            Some("deps/lib/a/x.rs")
+        );
+        assert_eq!(lookup("/root/lib/c.rs").as_deref(), Some("deps/lib/c.rs"));
+        assert_eq!(
+            lookup("/root/lib/zzz/new.rs").as_deref(),
+            Some("deps/lib/zzz/new.rs")
+        );
+        assert_eq!(
+            lookup("/root/lib/b-x/file.rs").as_deref(),
+            Some("deps/lib/b-x/file.rs")
+        );
+        assert_eq!(lookup("/root/lib").as_deref(), Some("deps/lib"));
+        assert_eq!(lookup("/root/other/file.rs"), None);
+        assert_eq!(lookup("/root/dir1/src/a.rs"), None);
+    });
+}
+
+#[gpui::test]
 async fn test_scan_symlinks_expanded(cx: &mut TestAppContext) {
     init_test(cx);
 
@@ -1573,8 +1660,10 @@ async fn test_root_rescan_keeps_root_watcher_registered(cx: &mut TestAppContext)
     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
         .await;
 
-    // Dropping and re-registering the root watch would open a window in
-    // which filesystem events are lost.
+    // Dropping and re-registering the recursive root watch would open a window
+    // in which filesystem events are lost. Non-recursive watches may have been
+    // lost in the overflow, so the rescan reinstalls the root watch before
+    // reading the root again.
     fs.emit_fs_event("/root", Some(PathEventKind::Rescan));
     tree.flush_fs_events(cx).await;
 
@@ -1583,7 +1672,65 @@ async fn test_root_rescan_keeps_root_watcher_registered(cx: &mut TestAppContext)
         .into_iter()
         .filter(|path| path == Path::new("/root"))
         .count();
-    assert_eq!(root_watch_calls, 1);
+    let expected_root_watch_calls = if cfg!(any(target_os = "windows", target_os = "macos")) {
+        1
+    } else {
+        2
+    };
+    assert_eq!(root_watch_calls, expected_root_watch_calls);
+}
+
+// Native watches are recursive on macOS and Windows, so the new directory is
+// covered by the root watch and never watched separately.
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+#[gpui::test]
+async fn test_new_directory_scan_does_not_miss_event_before_adding_watcher(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree("/root", json!({})).await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    fs.create_file_before_next_watch_add("/root/new-directory", "/root/new-directory/file.txt");
+    fs.create_dir(Path::new("/root/new-directory"))
+        .await
+        .unwrap();
+
+    wait_for_condition(cx, |cx| {
+        tree.read_with(cx, |tree, _| {
+            tree.entry_for_path(rel_path("new-directory/file.txt"))
+                .is_some()
+        })
+    })
+    .await;
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| entry.path.as_ref())
+                .collect::<Vec<_>>(),
+            vec![
+                rel_path(""),
+                rel_path("new-directory"),
+                rel_path("new-directory/file.txt"),
+            ]
+        );
+    });
 }
 
 #[gpui::test]
@@ -2067,10 +2214,10 @@ async fn test_file_scan_inclusions(cx: &mut TestAppContext) {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
                 settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![]));
-                settings.project.worktree.file_scan_inclusions = Some(vec![
-                    "node_modules/**/package.json".to_string(),
+                settings.project.worktree.file_scan_inclusions = Some(SplicingVec::from(vec![
                     "**/.DS_Store".to_string(),
-                ]);
+                    "node_modules/**/package.json".to_string(),
+                ]));
             });
         });
     });
@@ -2109,6 +2256,184 @@ async fn test_file_scan_inclusions(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_file_scan_inclusions_from_project_settings(cx: &mut TestAppContext) {
+    init_test(cx);
+    let worktree_id = WorktreeId::from_proto(0);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![
+                    "...".to_string(),
+                    "[".to_string(),
+                    "ignored/**/excluded.project".to_string(),
+                ]));
+                settings.project.worktree.file_scan_inclusions = Some(SplicingVec::from(vec![
+                    "...".to_string(),
+                    "ignored/**/*.user".to_string(),
+                ]));
+            });
+            store
+                .set_local_settings(
+                    worktree_id,
+                    LocalSettingsPath::InWorktree(Arc::from(RelPath::empty())),
+                    LocalSettingsKind::Settings,
+                    Some(r#"{ "file_scan_inclusions": ["...", "ignored/**/*.project"] }"#),
+                    cx,
+                )
+                .expect("valid project settings");
+        });
+    });
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".env.local": "",
+            ".git": {},
+            ".gitignore": ".env*\n/ignored/\n/one/\n/three/\nunmatched.txt\n",
+            "ignored": {
+                "nested": {
+                    "excluded.project": "",
+                    "included.project": "",
+                    "included.user": "",
+                    "unmatched.txt": ""
+                }
+            },
+            "one": { "two": { "file.rs": "" } },
+            "three": { "file.rs": "" },
+            "unmatched.txt": ""
+        }),
+    )
+    .await;
+
+    let tree = build_worktree(fs, path!("/root"), cx).await;
+    tree.read_with(cx, |tree, _| {
+        for path in [
+            ".env.local",
+            "ignored",
+            "ignored/nested",
+            "ignored/nested/included.project",
+            "ignored/nested/included.user",
+        ] {
+            assert!(
+                tree.entry_for_path(rel_path(path))
+                    .is_some_and(|entry| entry.is_ignored && entry.is_always_included),
+                "expected {path} to be ignored by Git and included by settings"
+            );
+        }
+        for path in ["ignored/nested/unmatched.txt", "unmatched.txt"] {
+            assert!(
+                tree.entry_for_path(rel_path(path))
+                    .is_some_and(|entry| entry.is_ignored && !entry.is_always_included),
+                "expected {path} to remain ignored"
+            );
+        }
+        assert_eq!(tree.entry_for_path(rel_path(".git")), None);
+        assert_eq!(
+            tree.entry_for_path(rel_path("ignored/nested/excluded.project")),
+            None
+        );
+        assert_eq!(
+            tree.files(false, 0)
+                .map(|entry| entry.path.as_ref())
+                .collect::<Vec<_>>(),
+            vec![
+                rel_path(".env.local"),
+                rel_path(".gitignore"),
+                rel_path("ignored/nested/included.project"),
+                rel_path("ignored/nested/included.user"),
+            ]
+        );
+    });
+
+    let ignored_directories = ["ignored", "ignored/nested", "one", "one/two", "three"];
+    for (settings, included_paths, always_included_directories) in [
+        (
+            r#"{ "file_scan_inclusions": ["...", "ignored/**/*.project", "{one/two,three}/file.rs", "invalid/["] }"#,
+            vec![
+                rel_path(".env.local"),
+                rel_path(".gitignore"),
+                rel_path("ignored/nested/included.project"),
+                rel_path("ignored/nested/included.user"),
+                rel_path("one/two/file.rs"),
+                rel_path("three/file.rs"),
+            ],
+            &ignored_directories[..],
+        ),
+        (
+            r#"{ "file_scan_inclusions": ["{one/two,three}/file.rs"] }"#,
+            vec![
+                rel_path(".gitignore"),
+                rel_path("one/two/file.rs"),
+                rel_path("three/file.rs"),
+            ],
+            &["one", "one/two", "three"][..],
+        ),
+        (
+            r#"{ "file_scan_inclusions": ["ignored/{nested,missing}/included.project"] }"#,
+            vec![
+                rel_path(".gitignore"),
+                rel_path("ignored/nested/included.project"),
+            ],
+            &["ignored", "ignored/nested"][..],
+        ),
+        (
+            r#"{ "file_scan_inclusions": ["ignored/**/*.project"] }"#,
+            vec![
+                rel_path(".gitignore"),
+                rel_path("ignored/nested/included.project"),
+            ],
+            &["ignored", "ignored/nested"][..],
+        ),
+        (
+            r#"{ "file_scan_inclusions": ["invalid/["] }"#,
+            vec![rel_path(".gitignore")],
+            &[][..],
+        ),
+        (
+            r#"{ "file_scan_inclusions": [] }"#,
+            vec![rel_path(".gitignore")],
+            &[][..],
+        ),
+    ] {
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store
+                    .set_local_settings(
+                        worktree_id,
+                        LocalSettingsPath::InWorktree(Arc::from(RelPath::empty())),
+                        LocalSettingsKind::Settings,
+                        Some(settings),
+                        cx,
+                    )
+                    .expect("valid project settings");
+            });
+        });
+        cx.run_until_parked();
+        tree.read_with(cx, |tree, _| {
+            tree.as_local().expect("local worktree").scan_complete()
+        })
+        .await;
+        tree.read_with(cx, |tree, _| {
+            for path in ignored_directories {
+                assert_eq!(
+                    tree.entry_for_path(rel_path(path))
+                        .is_some_and(|entry| entry.is_always_included),
+                    always_included_directories.contains(&path),
+                    "ancestor inclusion for {path} with {settings}"
+                );
+            }
+            assert_eq!(
+                tree.files(false, 0)
+                    .map(|entry| entry.path.as_ref())
+                    .collect::<Vec<_>>(),
+                included_paths
+            );
+        });
+    }
+}
+
+#[gpui::test]
 async fn test_file_scan_exclusions_overrules_inclusions(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
@@ -2139,7 +2464,7 @@ async fn test_file_scan_exclusions_overrules_inclusions(cx: &mut TestAppContext)
                 settings.project.worktree.file_scan_exclusions =
                     Some(SplicingVec::from(vec!["**/.DS_Store".to_string()]));
                 settings.project.worktree.file_scan_inclusions =
-                    Some(vec!["**/.DS_Store".to_string()]);
+                    Some(SplicingVec::from(vec!["**/.DS_Store".to_string()]));
             });
         });
     });
@@ -2202,7 +2527,7 @@ async fn test_file_scan_inclusions_reindexes_on_setting_change(cx: &mut TestAppC
             store.update_user_settings(cx, |settings| {
                 settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![]));
                 settings.project.worktree.file_scan_inclusions =
-                    Some(vec!["node_modules/**".to_string()]);
+                    Some(SplicingVec::from(vec!["node_modules/**".to_string()]));
             });
         });
     });
@@ -2236,7 +2561,7 @@ async fn test_file_scan_inclusions_reindexes_on_setting_change(cx: &mut TestAppC
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
                 settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![]));
-                settings.project.worktree.file_scan_inclusions = Some(vec![]);
+                settings.project.worktree.file_scan_inclusions = Some(SplicingVec::from(vec![]));
             });
         });
     });
@@ -2421,7 +2746,8 @@ async fn test_hidden_files(cx: &mut TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.hidden_files = Some(vec!["**/*.log".to_string()]);
+                settings.project.worktree.hidden_files =
+                    Some(SplicingVec::from(vec!["**/*.log".to_string()]));
             });
         });
     });
@@ -2448,6 +2774,124 @@ async fn test_hidden_files(cx: &mut TestAppContext) {
             ]
         );
     });
+}
+
+#[gpui::test]
+async fn test_hidden_files_from_project_settings(cx: &mut TestAppContext) {
+    init_test(cx);
+    let worktree_id = WorktreeId::from_proto(0);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".hidden_dir": {
+                "nested.rs": ""
+            },
+            ".hidden_file": "",
+            "app.log": "",
+            "generated": {
+                "nested.rs": ""
+            },
+            "visible.rs": ""
+        }),
+    )
+    .await;
+    let tree = build_worktree(fs, path!("/root"), cx).await;
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .filter(|entry| entry.is_hidden)
+                .map(|entry| entry.path.as_ref())
+                .collect::<Vec<_>>(),
+            vec![
+                rel_path(".hidden_dir"),
+                rel_path(".hidden_dir/nested.rs"),
+                rel_path(".hidden_file"),
+            ]
+        );
+    });
+
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.hidden_files = Some(SplicingVec::from(vec![
+                    "**/*.log".to_string(),
+                    SplicingVec::REST.to_string(),
+                ]));
+            });
+        });
+    });
+
+    for (settings, hidden_paths) in [
+        (
+            None,
+            vec![
+                rel_path(".hidden_dir"),
+                rel_path(".hidden_dir/nested.rs"),
+                rel_path(".hidden_file"),
+                rel_path("app.log"),
+            ],
+        ),
+        (
+            Some(r#"{ "hidden_files": ["**/generated", "..."] }"#),
+            vec![
+                rel_path(".hidden_dir"),
+                rel_path(".hidden_dir/nested.rs"),
+                rel_path(".hidden_file"),
+                rel_path("app.log"),
+                rel_path("generated"),
+                rel_path("generated/nested.rs"),
+            ],
+        ),
+        (
+            Some(r#"{ "hidden_files": ["**/generated"] }"#),
+            vec![rel_path("generated"), rel_path("generated/nested.rs")],
+        ),
+        (Some(r#"{ "hidden_files": [] }"#), vec![]),
+    ] {
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store
+                    .set_local_settings(
+                        worktree_id,
+                        LocalSettingsPath::InWorktree(Arc::from(RelPath::empty())),
+                        LocalSettingsKind::Settings,
+                        settings,
+                        cx,
+                    )
+                    .expect("valid project settings");
+            });
+        });
+        cx.run_until_parked();
+        tree.read_with(cx, |tree, _| {
+            tree.as_local().expect("local worktree").scan_complete()
+        })
+        .await;
+        tree.read_with(cx, |tree, _| {
+            assert_eq!(
+                tree.entries(true, 0)
+                    .filter(|entry| entry.is_hidden)
+                    .map(|entry| entry.path.as_ref())
+                    .collect::<Vec<_>>(),
+                hidden_paths
+            );
+            assert_eq!(
+                tree.entries(true, 0)
+                    .map(|entry| entry.path.as_ref())
+                    .collect::<Vec<_>>(),
+                vec![
+                    rel_path(""),
+                    rel_path(".hidden_dir"),
+                    rel_path(".hidden_dir/nested.rs"),
+                    rel_path(".hidden_file"),
+                    rel_path("app.log"),
+                    rel_path("generated"),
+                    rel_path("generated/nested.rs"),
+                    rel_path("visible.rs"),
+                ]
+            );
+        });
+    }
 }
 
 #[gpui::test]
@@ -6108,6 +6552,193 @@ async fn test_remote_worktree_without_git_emits_root_repo_event_after_first_upda
 }
 
 #[gpui::test]
+async fn test_remote_single_file_worktree_abs_path(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+    });
+
+    let worktree = cx.update(|cx| {
+        Worktree::remote(
+            1,
+            clock::ReplicaId::new(1),
+            proto::WorktreeMetadata {
+                id: 1,
+                root_name: "config".to_string(),
+                visible: true,
+                abs_path: "/home/user/.ssh/config".to_string(),
+                root_repo_common_dir: None,
+                root_repo_is_linked_worktree: false,
+            },
+            AnyProtoClient::new(NoopProtoClient::new()),
+            PathStyle::Unix,
+            cx,
+        )
+    });
+
+    let file = worktree::File {
+        worktree,
+        path: Arc::from(rel_path("")),
+        disk_state: language::DiskState::New,
+        entry_id: None,
+        is_local: false,
+        is_private: false,
+    };
+
+    cx.read(|cx| {
+        assert_eq!(
+            language::File::full_path(&file, cx),
+            PathBuf::from("config")
+        );
+        assert_eq!(
+            language::File::file_system_abs_path(&file, cx),
+            Some(PathBuf::from("/home/user/.ssh/config"))
+        );
+    });
+}
+
+#[gpui::test]
+fn test_remote_worktree_language_matching(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.update_global::<SettingsStore, _>(|store, cx| {
+        store.update_user_settings(cx, |settings| {
+            settings
+                .project
+                .all_languages
+                .file_types
+                .get_or_insert_default()
+                .0
+                .extend([
+                    (
+                        "Plain Text".into(),
+                        vec![
+                            "repo/templates/*.html".into(),
+                            #[cfg(unix)]
+                            r"repo\\raw\\*.html".into(),
+                        ]
+                        .into(),
+                    ),
+                    ("SSH Config".into(), vec!["**/.ssh/config".into()].into()),
+                ]);
+        });
+    });
+    let registry = Arc::new(language::LanguageRegistry::test(cx.executor()));
+    for (name, suffixes) in [
+        ("Plain Text", vec![]),
+        ("SSH Config", vec![]),
+        ("HTML", vec!["html".into()]),
+        ("Git Commit", vec!["COMMIT_EDITMSG".into()]),
+        ("INI", vec!["config".into()]),
+    ] {
+        registry.register_test_language(language::LanguageConfig {
+            name: name.into(),
+            matcher: language::LanguageMatcher {
+                path_suffixes: suffixes,
+                ..Default::default()
+            }
+            .into(),
+            ..Default::default()
+        });
+    }
+
+    let mut actual = Vec::new();
+    for (root_name, abs_path, path, path_style) in [
+        ("repo", "/tmp/repo", "templates/index.html", PathStyle::Unix),
+        ("config", "/home/user/.ssh/config", "", PathStyle::Unix),
+        (
+            "COMMIT_EDITMSG",
+            r"C:\review60307\COMMIT_EDITMSG",
+            "",
+            PathStyle::Windows,
+        ),
+        (
+            "COMMIT_EDITMSG",
+            r"\\server\share\COMMIT_EDITMSG",
+            "",
+            PathStyle::Windows,
+        ),
+        (
+            "config",
+            r"C:\Users\user\.ssh\config",
+            "",
+            PathStyle::Windows,
+        ),
+        (
+            "config",
+            r"\\server\share\.ssh\config",
+            "",
+            PathStyle::Windows,
+        ),
+        (
+            "config",
+            "C:/Users/user/.ssh/config",
+            "",
+            PathStyle::Windows,
+        ),
+        (".ssh", r"C:\Users\用户\.ssh", "config", PathStyle::Windows),
+        (
+            "repo",
+            r"C:\repo",
+            "templates/index.html",
+            PathStyle::Windows,
+        ),
+        #[cfg(unix)]
+        ("config", r"/home/user\.ssh/config", "", PathStyle::Unix),
+        #[cfg(unix)]
+        ("repo", r"C:\repo", "raw/index.html", PathStyle::Windows),
+    ] {
+        cx.update(|cx| {
+            let worktree = Worktree::remote(
+                1,
+                clock::ReplicaId::new(1),
+                proto::WorktreeMetadata {
+                    id: 1,
+                    root_name: root_name.into(),
+                    visible: true,
+                    abs_path: abs_path.into(),
+                    root_repo_common_dir: None,
+                    root_repo_is_linked_worktree: false,
+                },
+                AnyProtoClient::new(NoopProtoClient::new()),
+                path_style,
+                cx,
+            );
+            let file: Arc<dyn language::File> = Arc::new(worktree::File {
+                worktree,
+                path: Arc::from(rel_path(path)),
+                disk_state: language::DiskState::New,
+                entry_id: None,
+                is_local: false,
+                is_private: false,
+            });
+            actual.push(
+                registry
+                    .language_for_file(&file, None, cx)
+                    .and_then(|id| registry.language_name_for_id(id)),
+            );
+        });
+    }
+    assert_eq!(
+        actual,
+        vec![
+            Some("Plain Text".into()),
+            Some("SSH Config".into()),
+            Some("Git Commit".into()),
+            Some("Git Commit".into()),
+            Some("SSH Config".into()),
+            Some("SSH Config".into()),
+            Some("SSH Config".into()),
+            Some("SSH Config".into()),
+            Some("Plain Text".into()),
+            #[cfg(unix)]
+            Some("INI".into()),
+            #[cfg(unix)]
+            Some("Plain Text".into()),
+        ]
+    );
+}
+
+#[gpui::test]
 async fn test_remote_worktree_with_git_emits_root_repo_event_when_repo_info_arrives(
     cx: &mut TestAppContext,
 ) {
@@ -6818,7 +7449,7 @@ async fn test_file_scan_depth_pierced_by_inclusions(cx: &mut TestAppContext) {
             store.update_user_settings(cx, |settings| {
                 settings.project.worktree.file_scan_depth = Some(1);
                 settings.project.worktree.file_scan_inclusions =
-                    Some(vec!["junk/a/b/c/deep.txt".to_string()]);
+                    Some(SplicingVec::from(vec!["junk/a/b/c/deep.txt".to_string()]));
             });
         });
     });

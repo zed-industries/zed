@@ -1202,12 +1202,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
 
     // Start a new instance of the language server.
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(
-            vec![buffer.clone()],
-            HashSet::default(),
-            true,
-            cx,
-        )
+        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx)
     });
     cx.executor().run_until_parked();
 
@@ -1248,12 +1243,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     .await;
     cx.executor().run_until_parked();
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(
-            vec![buffer.clone()],
-            HashSet::default(),
-            true,
-            cx,
-        )
+        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx)
     });
 
     // The extension re-fetches the latest version of the language server.
@@ -3573,7 +3563,7 @@ async fn test_extension_cannot_shadow_language_registered_outside_extensions(
     language_registry.register_test_language(LanguageConfig {
         name: LanguageName::new("Shared"),
         matcher: Arc::new(LanguageMatcher {
-            path_suffixes: vec!["builtin".to_string()],
+            path_suffixes: vec!["builtin".into()],
             ..LanguageMatcher::default()
         }),
         ..LanguageConfig::default()
@@ -3650,7 +3640,7 @@ languages = ["languages/shared"]
     language_registry.register_test_language(LanguageConfig {
         name: LanguageName::new("Shared"),
         matcher: Arc::new(LanguageMatcher {
-            path_suffixes: vec!["builtin".to_string()],
+            path_suffixes: vec!["builtin".into()],
             ..LanguageMatcher::default()
         }),
         ..LanguageConfig::default()

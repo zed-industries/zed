@@ -3774,10 +3774,18 @@ impl MultiBufferSnapshot {
         cursor.seek(&start);
 
         std::iter::from_fn(move || {
-            let region = cursor.region()?;
-            if region.range.start > end {
-                return None;
-            }
+            let Some(region) = cursor.region().filter(|region| {
+                region.range.start < end || (region.range.start == end && start == end)
+            }) else {
+                let excerpt = cursor.excerpt()?;
+                if excerpt.text_summary.len != 0 || end != self.len() {
+                    return None;
+                }
+                let buffer = excerpt.buffer_snapshot(self);
+                let offset = BufferOffset(excerpt.range.context.start.to_offset(buffer));
+                cursor.next_excerpt();
+                return Some((buffer, offset..offset, None));
+            };
             let start_overshoot = start.saturating_sub(region.range.start);
             let end_overshoot = end.saturating_sub(region.range.start);
             let start = region
@@ -4950,7 +4958,7 @@ impl MultiBufferSnapshot {
                                     base_text_byte_range.start..base_text_offset,
                                 );
                             position.0.add_text_dim(&position_in_hunk);
-                        } else if at_transform_end {
+                        } else if at_transform_end && base_text_offset > base_text_byte_range.end {
                             // diff_base offset falls outside this hunk's range;
                             // advance to see if the next transform is a better fit.
                             diff_transforms.next();
