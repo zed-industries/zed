@@ -40,8 +40,8 @@ use ui::{ContextMenu, DiffStat, Disclosure, Divider, Tooltip, WithScrollbar, pre
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath, truncate_and_trailoff};
 use workspace::item::{PreviewTabsSettings, TabTooltipContent};
 use workspace::{
-    Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
-    Workspace, item::ItemEvent, notifications::NotifyTaskExt, pane::SaveIntent,
+    Item, ItemHandle, ItemNavHistory, OpenOptions, ToolbarItemEvent, ToolbarItemLocation,
+    ToolbarItemView, Workspace, item::ItemEvent, notifications::NotifyTaskExt, pane::SaveIntent,
     searchable::SearchableItemHandle,
 };
 
@@ -698,7 +698,19 @@ impl CommitView {
         self.workspace
             .update(cx, |workspace, cx| {
                 workspace
-                    .open_path_preview(project_path, None, false, false, true, window, cx)
+                    .open_path_with_options(
+                        project_path,
+                        None,
+                        OpenOptions {
+                            focus: Some(false),
+                            allow_preview: PreviewTabsSettings::get_global(cx)
+                                .enable_preview_from_multibuffer,
+                            ..OpenOptions::for_navigation(cx)
+                        },
+                        true,
+                        window,
+                        cx,
+                    )
                     .detach_and_log_err(cx);
             })
             .log_err();
@@ -1551,10 +1563,15 @@ fn stash_matches_index(sha: &str, stash_index: usize, repo: &Repository) -> bool
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{EmptyView, TestAppContext};
+    use gpui::{EmptyView, TestAppContext, UpdateGlobal};
     use indoc::indoc;
     use language::{Language, LanguageConfig, LanguageMatcher, markdown_lang};
+    use project::FakeFs;
+    use serde_json::json;
     use settings::SettingsStore;
+    use theme::LoadThemes;
+    use util::path;
+    use workspace::MultiWorkspace;
 
     #[gpui::test]
     async fn test_build_buffer_resolves_injected_languages(cx: &mut TestAppContext) {
@@ -1669,6 +1686,176 @@ mod tests {
                 Some("JSONC"),
             ]
         );
+    }
+
+    #[gpui::test]
+    async fn test_open_file_at_head_preview_tabs(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            theme_settings::init(LoadThemes::JustBase, cx);
+            language_model::init(cx);
+            editor::init(cx);
+            crate::init(cx);
+        });
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "first.rs": "first.rs working copy\n",
+                "second.rs": "second.rs working copy\n",
+                "third.rs": "third.rs working copy\n",
+                "fourth.rs": "fourth.rs working copy\n",
+                "fifth.rs": "fifth.rs working copy\n",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |workspace, _| workspace.workspace().clone());
+        cx.run_until_parked();
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("repository should exist")
+        });
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project
+                .worktrees(cx)
+                .next()
+                .expect("worktree should exist")
+                .read(cx)
+                .id()
+        });
+        let commit_view = cx.new_window_entity(|window, cx| {
+            CommitView::new(
+                CommitDetails {
+                    sha: "1111111111111111111111111111111111111111".into(),
+                    message: "initial commit".into(),
+                    ..CommitDetails::default()
+                },
+                CommitDiff {
+                    files: Vec::new(),
+                    is_shallow_boundary: false,
+                },
+                repository,
+                project,
+                workspace.clone(),
+                workspace.downgrade(),
+                None,
+                None,
+                window,
+                cx,
+            )
+        });
+        let focus_handle = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(
+                Box::new(commit_view.clone()),
+                None,
+                true,
+                window,
+                cx,
+            );
+            cx.focus_handle()
+        });
+
+        for (name, enabled, from_multibuffer, expected_count, expected_preview) in [
+            ("first.rs", true, true, 2, Some("first.rs")),
+            ("second.rs", true, true, 2, Some("second.rs")),
+            ("second.rs", true, false, 2, None),
+            ("first.rs", true, true, 3, Some("first.rs")),
+            ("second.rs", true, true, 3, Some("first.rs")),
+            ("third.rs", false, true, 4, None),
+            ("third.rs", true, true, 4, None),
+            ("fourth.rs", true, false, 5, None),
+        ] {
+            cx.update(|window, cx| {
+                SettingsStore::update_global(cx, |store, cx| {
+                    store.update_user_settings(cx, |settings| {
+                        let preview_tabs = settings.preview_tabs.get_or_insert_default();
+                        preview_tabs.enabled = Some(enabled);
+                        preview_tabs.enable_preview_from_multibuffer = Some(from_multibuffer);
+                        preview_tabs.enable_keep_preview_on_code_navigation = Some(true);
+                    });
+                });
+                focus_handle.focus(window, cx);
+            });
+            let file = Arc::new(GitBlob {
+                path: RepoPath::new(name).expect("valid repository path"),
+                worktree_id,
+                is_deleted: false,
+                is_binary: false,
+                display_name: format!("1111111 - {name}"),
+            }) as Arc<dyn File>;
+            commit_view.update_in(cx, |view, window, cx| {
+                view.open_file_at_head(&file, window, cx);
+            });
+            cx.run_until_parked();
+
+            workspace.update_in(cx, |workspace, window, cx| {
+                let pane = workspace.active_pane().read(cx);
+                assert_eq!(pane.items_len(), expected_count);
+                assert_eq!(
+                    pane.preview_item()
+                        .map(|item| item.tab_content_text(0, cx))
+                        .as_deref(),
+                    expected_preview,
+                );
+                let editor = pane
+                    .active_item()
+                    .and_then(|item| item.downcast::<Editor>())
+                    .expect("working copy should be active");
+                assert_eq!(editor.read(cx).text(cx), format!("{name} working copy\n"));
+                assert!(focus_handle.is_focused(window));
+            });
+        }
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let preview_tabs = settings.preview_tabs.get_or_insert_default();
+                    preview_tabs.enabled = Some(true);
+                    preview_tabs.enable_preview_from_multibuffer = Some(true);
+                    preview_tabs.enable_keep_preview_on_code_navigation = Some(false);
+                });
+            });
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.activate_item(0, false, false, window, cx);
+                pane.replace_preview_item_id(commit_view.entity_id(), window, cx);
+                assert_eq!(pane.preview_item_id(), Some(commit_view.entity_id()));
+                assert_eq!(
+                    pane.active_item().map(|item| item.item_id()),
+                    Some(commit_view.entity_id()),
+                );
+            });
+            focus_handle.focus(window, cx);
+        });
+        let file = Arc::new(GitBlob {
+            path: RepoPath::new("fifth.rs").expect("valid repository path"),
+            worktree_id,
+            is_deleted: false,
+            is_binary: false,
+            display_name: "1111111 - fifth.rs".to_owned(),
+        }) as Arc<dyn File>;
+        commit_view.update_in(cx, |view, window, cx| {
+            view.open_file_at_head(&file, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let pane = workspace.active_pane().read(cx);
+            assert_eq!(pane.items_len(), 6);
+            assert_eq!(pane.index_for_item(&commit_view), Some(0));
+            let editor = pane
+                .active_item()
+                .and_then(|item| item.downcast::<Editor>())
+                .expect("working copy should be active");
+            assert_eq!(pane.preview_item_id(), Some(editor.entity_id()));
+            assert_eq!(editor.read(cx).text(cx), "fifth.rs working copy\n");
+            assert!(focus_handle.is_focused(window));
+        });
     }
 
     fn markdown_inline_lang() -> Language {
