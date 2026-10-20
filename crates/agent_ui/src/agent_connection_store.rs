@@ -1,7 +1,7 @@
 use std::rc::{Rc, Weak};
 
 use acp_thread::{AgentConnection, LoadError};
-use agent_servers::AcpConnection;
+use agent_servers::{AcpConnection, AcpDebugMessage, AcpV2Connection};
 use agent_servers::{AgentServer, AgentServerDelegate};
 use anyhow::Result;
 use collections::HashMap;
@@ -63,7 +63,25 @@ impl EventEmitter<AgentConnectionEntryEvent> for AgentConnectionEntry {}
 #[derive(Clone)]
 pub struct ActiveAcpConnection {
     pub agent_id: project::AgentId,
-    pub connection: Rc<AcpConnection>,
+    pub connection: Rc<dyn AgentConnection>,
+}
+
+impl ActiveAcpConnection {
+    pub fn subscribe_debug_messages(
+        &self,
+    ) -> Option<(
+        Vec<AcpDebugMessage>,
+        async_channel::Receiver<AcpDebugMessage>,
+    )> {
+        if let Some(connection) = self.connection.clone().downcast::<AcpConnection>() {
+            Some(connection.subscribe_debug_messages())
+        } else {
+            self.connection
+                .clone()
+                .downcast::<AcpV2Connection>()
+                .map(|connection| connection.subscribe_debug_messages())
+        }
+    }
 }
 
 pub struct AgentConnectionStore {
@@ -132,14 +150,16 @@ impl AgentConnectionStore {
         self.entries
             .values()
             .filter_map(|entry| match entry.read(cx) {
-                AgentConnectionEntry::Connected(state) => state
-                    .connection
-                    .clone()
-                    .downcast::<AcpConnection>()
-                    .map(|connection| ActiveAcpConnection {
-                        agent_id: state.connection.agent_id(),
-                        connection,
-                    }),
+                AgentConnectionEntry::Connected(state) => {
+                    let connection = state.connection.clone();
+                    let concrete = connection.clone().into_any();
+                    (concrete.is::<AcpConnection>() || concrete.is::<AcpV2Connection>()).then(
+                        || ActiveAcpConnection {
+                            agent_id: connection.agent_id(),
+                            connection,
+                        },
+                    )
+                }
                 AgentConnectionEntry::Connecting { .. } | AgentConnectionEntry::Error { .. } => {
                     None
                 }

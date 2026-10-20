@@ -126,6 +126,13 @@ impl AcpDebugMessage {
 struct AcpDebugLogState {
     messages: VecDeque<AcpDebugMessage>,
     subscribers: Vec<async_channel::Sender<AcpDebugMessage>>,
+    // Startup fallback must not depend on eviction from the diagnostic backlog.
+    initialization: Option<InitializationExchange>,
+}
+
+struct InitializationExchange {
+    request_id: RequestId,
+    response: Option<Result<Option<serde_json::Value>, Error>>,
 }
 
 #[derive(Clone, Default)]
@@ -134,6 +141,18 @@ pub(super) struct AcpDebugLog {
 }
 
 impl AcpDebugLog {
+    pub(super) fn initialization_response(
+        &self,
+    ) -> Option<Result<Option<serde_json::Value>, Error>> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .initialization
+            .as_ref()?
+            .response
+            .clone()
+    }
+
     pub(super) fn subscribe(
         &self,
     ) -> (
@@ -166,6 +185,29 @@ impl AcpDebugLog {
 
         state.subscribers.retain(|sender| !sender.is_closed());
         for message in messages {
+            match (message.direction, &message.message) {
+                (
+                    AcpDebugMessageDirection::Outgoing,
+                    AcpDebugMessageContent::Request { id, method, .. },
+                ) if method.as_ref() == "initialize" && state.initialization.is_none() => {
+                    state.initialization = Some(InitializationExchange {
+                        request_id: id.clone(),
+                        response: None,
+                    });
+                }
+                (
+                    AcpDebugMessageDirection::Incoming,
+                    AcpDebugMessageContent::Response { id, result },
+                ) => {
+                    if let Some(initialization) = &mut state.initialization
+                        && initialization.request_id == *id
+                        && initialization.response.is_none()
+                    {
+                        initialization.response = Some(result.clone());
+                    }
+                }
+                _ => {}
+            }
             if state.messages.len() == MAX_DEBUG_BACKLOG_MESSAGES {
                 state.messages.pop_front();
             }
@@ -205,6 +247,49 @@ impl AcpDebugLog {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn initialization_evidence_is_correlated_and_survives_backlog_eviction() {
+        let log = AcpDebugLog::default();
+        log.record_line(
+            AcpDebugMessageDirection::Outgoing,
+            r#"{"jsonrpc":"2.0","id":"initialize","method":"initialize","params":{"protocolVersion":2}}"#,
+        );
+        log.record_line(
+            AcpDebugMessageDirection::Incoming,
+            r#"{"jsonrpc":"2.0","id":"unrelated","result":{"protocolVersion":1}}"#,
+        );
+        assert!(log.initialization_response().is_none());
+        log.record_line(
+            AcpDebugMessageDirection::Incoming,
+            r#"{"jsonrpc":"2.0","id":"initialize","error":{"code":-32022,"message":"Unsupported","data":{"requested":2,"supported":[1]}}}"#,
+        );
+        log.record_line(
+            AcpDebugMessageDirection::Incoming,
+            r#"{"jsonrpc":"2.0","id":"initialize","result":{"protocolVersion":2}}"#,
+        );
+        for _ in 0..MAX_DEBUG_BACKLOG_MESSAGES {
+            log.record_line(
+                AcpDebugMessageDirection::Incoming,
+                r#"{"jsonrpc":"2.0","method":"_noise"}"#,
+            );
+        }
+        let error = log
+            .initialization_response()
+            .expect("retained initialization")
+            .expect_err("first response wins");
+        assert_eq!(error.code, Error::new(-32022, "").code);
+        assert_eq!(
+            error.data,
+            Some(serde_json::json!({"requested": 2, "supported": [1]}))
+        );
+        assert!(
+            log.subscribe().0.iter().all(|message| matches!(
+                message.message,
+                AcpDebugMessageContent::Notification { .. }
+            ))
+        );
+    }
 
     #[test]
     fn preserves_shared_request_ids_payloads_and_runtime_error_data() {

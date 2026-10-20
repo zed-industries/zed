@@ -183,7 +183,7 @@ fn shared_session_error(error: Arc<anyhow::Error>) -> anyhow::Error {
     }
 }
 
-/// An unselected v2 backend with auth, initial sessions/config and receipt-driven prompts.
+/// An ACP v2 backend with auth, initial sessions/config and receipt-driven prompts.
 pub struct AcpV2Connection {
     id: AgentId,
     connection: V2ConnectionTo<Agent>,
@@ -211,6 +211,7 @@ struct StdioStartup {
     child: transport::OwnedChild,
     stderr_task: Shared<Task<()>>,
     runtime: Rc<RefCell<Option<ConnectionRuntime>>>,
+    drain: Option<futures::channel::oneshot::Sender<LocalBoxFuture<'static, ()>>>,
 }
 
 impl AcpV2Connection {
@@ -251,6 +252,7 @@ impl AcpV2Connection {
         // Keep cleanup from killing the child before startup error arbitration can
         // distinguish a protocol rejection from a natural process exit.
         let startup_runtime = Rc::new(RefCell::new(None));
+        let (drain_sender, drain_received) = futures::channel::oneshot::channel();
         let initialized = {
             let mut cx = cx.clone();
             let debug_log = debug_log.clone();
@@ -267,6 +269,7 @@ impl AcpV2Connection {
                         child,
                         stderr_task,
                         runtime,
+                        drain: Some(drain_sender),
                     }),
                     &mut cx,
                 )
@@ -274,17 +277,17 @@ impl AcpV2Connection {
             }
         }
         .boxed_local();
-        let result = runtime::race_startup(initialized, status, stderr_task, &debug_log, cx).await;
+        let drained = async move {
+            match drain_received.await {
+                Ok(drained) => drained.await,
+                Err(_) => stderr_task.await,
+            }
+        }
+        .boxed_local();
+        let result = runtime::race_startup(initialized, status, drained, &debug_log, cx).await;
         drop(startup_runtime);
-        let (connection, status, stderr_task) = result?;
-        let drained = {
-            let sdk_connection = connection.connection.clone();
-            runtime::drain_transport(
-                async move { sdk_connection.incoming_closed().await },
-                connection.dispatch_tx.clone(),
-                stderr_task,
-            )
-        };
+        let (connection, status, drained) =
+            result.map_err(|error| super::initialization_error(error, &debug_log))?;
         let mut runtime = connection.runtime.borrow_mut();
         let owned = runtime
             .as_mut()
@@ -311,9 +314,19 @@ impl AcpV2Connection {
         startup: Option<StdioStartup>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
-        let (runtime, child, stderr_task) = match startup {
-            Some(startup) => (startup.runtime, Some(startup.child), startup.stderr_task),
-            None => (Rc::new(RefCell::new(None)), None, Task::ready(()).shared()),
+        let (runtime, child, stderr_task, drain_sender) = match startup {
+            Some(startup) => (
+                startup.runtime,
+                Some(startup.child),
+                startup.stderr_task,
+                startup.drain,
+            ),
+            None => (
+                Rc::new(RefCell::new(None)),
+                None,
+                Task::ready(()).shared(),
+                None,
+            ),
         };
         let request_elicitations = cx.new(|_| ElicitationStore::default());
         let sessions = Rc::new(RefCell::new(HashMap::default()));
@@ -344,6 +357,7 @@ impl AcpV2Connection {
                     .await
                 });
         client_runtime.start_io(runtime::finish_connection(connection_future, cleanup), cx);
+        let stderr_for_drain = stderr_task.clone();
         *runtime.borrow_mut() = Some(ConnectionRuntime {
             _client: client_runtime,
             _stderr_task: stderr_task,
@@ -369,6 +383,18 @@ impl AcpV2Connection {
         let connection = received
             .await
             .context("Failed to receive ACP v2 connection handle")?;
+        if let Some(sender) = drain_sender {
+            let sdk_connection = connection.clone();
+            let drained = runtime::drain_transport(
+                async move { sdk_connection.incoming_closed().await },
+                dispatch_tx.clone(),
+                stderr_for_drain,
+            )
+            .boxed_local();
+            if sender.send(drained).is_err() {
+                log::debug!("ACP startup drain observer was released");
+            }
+        }
         let supports_terminal_auth = agent_server_store.upgrade().is_some_and(|store| {
             store.update(cx, |store, _| store.get_external_agent(&id).is_some())
         });
@@ -6866,6 +6892,7 @@ exec sleep 60
                     child,
                     stderr_task: Task::ready(()).shared(),
                     runtime: Rc::new(RefCell::new(None)),
+                    drain: None,
                 }),
                 &mut cx,
             )
