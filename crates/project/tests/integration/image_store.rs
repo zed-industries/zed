@@ -1,6 +1,7 @@
 use fs::{FakeFs, Fs};
 use gpui::{
-    Context, IntoElement, Render, TestAppContext, VisualTestContext, WeakEntity, Window, px, size,
+    Context, Entity, IntoElement, Render, TestAppContext, VisualTestContext, WeakEntity, Window,
+    px, size,
 };
 use project::Project;
 use project::ProjectPath;
@@ -253,4 +254,59 @@ async fn test_use_image_location_revalidates_found_location(cx: &mut TestAppCont
     cx.run_until_parked();
     assert_eq!(view.read_with(cx, |view, _| view.location.clone()), second);
     assert_eq!(draw(cx), second);
+}
+
+#[gpui::test]
+async fn test_use_image_location_recheck_notifies_every_view(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/project"), json!({})).await;
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+    let new_view = || ImageLocationTestView {
+        project: project.downgrade(),
+        paths: vec![path!("/outside/shared.ppm").to_string()],
+        location: None,
+        renders: 0,
+    };
+    let first_window = cx.add_window(|_, _| new_view());
+    let second_window = cx.add_window(|_, _| new_view());
+    let first_view = first_window.root(cx).unwrap();
+    let second_view = second_window.root(cx).unwrap();
+    let first_cx = &mut VisualTestContext::from_window(*first_window, cx);
+    cx.run_until_parked();
+    let location = |view: &Entity<ImageLocationTestView>, cx: &mut TestAppContext| {
+        view.read_with(cx, |view, _| view.location.clone())
+    };
+    let renders = |view: &Entity<ImageLocationTestView>, cx: &mut TestAppContext| {
+        view.read_with(cx, |view, _| view.renders)
+    };
+    assert_eq!(location(&first_view, cx), None);
+    assert_eq!(location(&second_view, cx), None);
+
+    fs.insert_tree(
+        path!("/outside"),
+        json!({"shared.ppm": "P3\n1 1\n255\n255 0 0\n"}),
+    )
+    .await;
+    cx.executor().advance_clock(IMAGE_RECHECK_DELAY);
+    let second_renders_before_recheck = renders(&second_view, cx);
+    first_cx.draw(Default::default(), size(px(10.), px(10.)), {
+        let view = first_view.clone();
+        move |_, _| view.into_any_element()
+    });
+    let first_renders_before_hit = renders(&first_view, cx);
+    assert_eq!(
+        renders(&second_view, cx),
+        second_renders_before_recheck,
+        "only the first view draws once the recheck is due"
+    );
+    cx.run_until_parked();
+
+    let expected = Some(ImageLocation::Local(
+        Path::new(path!("/outside/shared.ppm")).into(),
+    ));
+    assert!(renders(&first_view, cx) > first_renders_before_hit);
+    assert!(renders(&second_view, cx) > second_renders_before_recheck);
+    assert_eq!(location(&first_view, cx), expected);
+    assert_eq!(location(&second_view, cx), expected);
 }

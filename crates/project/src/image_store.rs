@@ -16,6 +16,7 @@ use language::{DiskState, File};
 use parking_lot::Mutex;
 use rpc::{AnyProtoClient, ErrorExt as _, TypedEnvelope, proto};
 use std::future::Future;
+use std::mem;
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -190,6 +191,7 @@ struct ImagePathResolution {
     location: Option<ImageLocation>,
     /// Holds the elapsed recheck delay once the next check is due.
     recheck_due: Arc<Mutex<Option<Duration>>>,
+    views: Arc<Mutex<HashSet<EntityId>>>,
 }
 
 enum ImagePathResolver {}
@@ -211,6 +213,7 @@ impl Asset for ImagePathResolver {
             ImagePathResolution {
                 location,
                 recheck_due,
+                views: Arc::default(),
             }
         }
     }
@@ -230,21 +233,23 @@ fn schedule_recheck(
         .detach();
 }
 
-// A changed result evicts the cached entry so the next render resolves it again; an unchanged
+// A changed result evicts the cached entry and redraws every view that showed it; an unchanged
 // one only re-arms the timer, so a visible image costs one check per delay and never redraws.
 fn recheck_image_location(
     source: ImagePathSource,
     resolution: ImagePathResolution,
     delay: Duration,
-    view: EntityId,
     cx: &mut App,
 ) {
     let executor = cx.background_executor().clone();
     cx.spawn(async move |cx| {
         if source.resolve(log::Level::Debug, cx).await != resolution.location {
+            let views = mem::take(&mut *resolution.views.lock());
             cx.update(|cx| {
                 cx.remove_asset::<ImagePathResolver>(&source);
-                cx.notify(view);
+                for view in views {
+                    cx.notify(view);
+                }
             });
         } else {
             let next_delay = (delay * 2).min(MAX_IMAGE_RECHECK_DELAY);
@@ -262,10 +267,11 @@ pub fn use_image_location(
 ) -> Option<ImageLocation> {
     let source = ImagePathSource { project, paths };
     let resolution = window.use_asset::<ImagePathResolver>(&source, cx)?;
+    resolution.views.lock().insert(window.current_view());
     let location = resolution.location.clone();
     let elapsed_delay = resolution.recheck_due.lock().take();
     if let Some(delay) = elapsed_delay {
-        recheck_image_location(source, resolution, delay, window.current_view(), cx);
+        recheck_image_location(source, resolution, delay, cx);
     }
     location
 }
