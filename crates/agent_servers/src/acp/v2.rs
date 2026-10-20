@@ -6913,15 +6913,18 @@ exec sleep 60
                 None,
             ),
         ] {
-            let error = bounded(
-                AcpV2Connection::stdio(
-                    AgentId::new("startup-rejection"),
-                    project.clone(),
-                    AgentServerCommand {
-                        path: "/bin/sh".into(),
-                        args: vec![
-                            "-c".into(),
-                            r#"
+            // Linux pidfd polling needs stable task wakers, not the test root's tracing wakers.
+            let connecting = cx.spawn({
+                let project = project.clone();
+                async move |mut cx| {
+                    AcpV2Connection::stdio(
+                        AgentId::new("startup-rejection"),
+                        project,
+                        AgentServerCommand {
+                            path: "/bin/sh".into(),
+                            args: vec![
+                                "-c".into(),
+                                r#"
 while IFS= read -r request; do
     case "$request" in
         *'"method":"initialize"'*)
@@ -6933,21 +6936,23 @@ while IFS= read -r request; do
 done
 exec sleep 60
 "#
-                            .into(),
-                        ],
-                        env: Some(HashMap::from_iter([(
-                            "ACP_STARTUP_RESPONSE".into(),
-                            response.into(),
-                        )])),
-                    },
-                    WeakEntity::new_invalid(),
-                    &mut cx.to_async(),
-                ),
-                cx,
-            )
-            .await
-            .err()
-            .expect("startup rejection");
+                                .into(),
+                            ],
+                            env: Some(HashMap::from_iter([(
+                                "ACP_STARTUP_RESPONSE".into(),
+                                response.into(),
+                            )])),
+                        },
+                        WeakEntity::new_invalid(),
+                        &mut cx,
+                    )
+                    .await
+                }
+            });
+            let error = bounded(connecting, cx)
+                .await
+                .err()
+                .expect("startup rejection");
             if let Some(expected) = expected {
                 let actual = error
                     .downcast_ref::<agent_client_protocol::Error>()
