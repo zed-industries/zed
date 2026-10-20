@@ -122,6 +122,98 @@ async fn test_fake_fs(executor: BackgroundExecutor) {
 }
 
 #[gpui::test]
+async fn fake_fs_atomic_write_errors_are_path_specific_and_persist_until_cleared(
+    executor: BackgroundExecutor,
+) {
+    let fs = FakeFs::new(executor);
+    let target = PathBuf::from(path!("/root/target.txt"));
+    let target_with_dot_segments = PathBuf::from(path!("/root"))
+        .join("nested")
+        .join("..")
+        .join("target.txt");
+    let unrelated = PathBuf::from(path!("/root/unrelated.txt"));
+
+    fs.atomic_write(target.clone(), "before".to_owned())
+        .await
+        .expect("initial target write should succeed");
+    fs.set_atomic_write_error(
+        &target_with_dot_segments,
+        "injected write failure".to_owned(),
+    );
+
+    fs.atomic_write(unrelated.clone(), "unrelated".to_owned())
+        .await
+        .expect("writes to unrelated paths should succeed");
+    assert_eq!(
+        fs.load(&unrelated)
+            .await
+            .expect("unrelated file should be readable"),
+        "unrelated"
+    );
+
+    for replacement in ["first attempt", "second attempt"] {
+        let error = fs
+            .atomic_write(target.clone(), replacement.to_owned())
+            .await
+            .expect_err("writes to the configured path should fail");
+        assert!(error.to_string().contains("injected write failure"));
+    }
+    assert_eq!(
+        fs.load(&target)
+            .await
+            .expect("the original target should remain readable"),
+        "before"
+    );
+
+    fs.clear_atomic_write_error(&target);
+    fs.atomic_write(target.clone(), "after".to_owned())
+        .await
+        .expect("target writes should succeed after clearing the error");
+    assert_eq!(
+        fs.load(&target)
+            .await
+            .expect("the target should be readable after clearing the error"),
+        "after"
+    );
+}
+
+#[gpui::test]
+#[cfg(windows)]
+async fn fake_fs_atomic_write_errors_ignore_windows_drive_prefix(executor: BackgroundExecutor) {
+    let fs = FakeFs::new(executor);
+    let path_without_prefix = PathBuf::from(r"\root\settings.json");
+    let path_with_prefix = PathBuf::from(r"C:\root\settings.json");
+
+    fs.atomic_write(path_without_prefix.clone(), "before".to_owned())
+        .await
+        .expect("initial settings write should succeed");
+    fs.set_atomic_write_error(&path_with_prefix, "injected write failure".to_owned());
+
+    let error = fs
+        .atomic_write(path_without_prefix.clone(), "after".to_owned())
+        .await
+        .expect_err("the matching path should fail without its drive prefix");
+    assert!(error.to_string().contains("injected write failure"));
+    assert_eq!(
+        fs.load(&path_without_prefix)
+            .await
+            .expect("settings should remain readable"),
+        "before"
+    );
+
+    fs.clear_atomic_write_error(&path_without_prefix);
+    fs.atomic_write(path_without_prefix.clone(), "after".to_owned())
+        .await
+        .expect("settings writes should succeed after clearing the error");
+    assert_eq!(
+        fs.load(&path_without_prefix)
+            .await
+            .expect("settings should be readable after clearing the error"),
+        "after"
+    );
+}
+
+#[gpui::test]
 async fn test_copy_recursive_with_single_file(executor: BackgroundExecutor) {
     let fs = FakeFs::new(executor.clone());
     fs.insert_tree(
