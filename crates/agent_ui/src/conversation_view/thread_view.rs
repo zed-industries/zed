@@ -11060,12 +11060,18 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        let (tool_call_location, agent_location) = self
-            .thread
-            .read(cx)
-            .entries()
-            .get(entry_ix)?
-            .location(location_ix)?;
+        let (tool_call_location, agent_location) = {
+            let thread = self.thread.read(cx);
+            let AgentThreadEntry::ToolCall(tool_call) = thread.entries().get(entry_ix)? else {
+                return None;
+            };
+            let tool_call_location = tool_call.locations.get(location_ix)?.clone();
+            let agent_location = tool_call
+                .resolved_locations
+                .get(location_ix)
+                .and_then(Clone::clone);
+            (tool_call_location, agent_location)
+        };
 
         let project_path = self
             .project
@@ -11095,25 +11101,26 @@ impl ThreadView {
             .spawn(cx, async move |cx| {
                 let item = open_task.await?;
 
-                let Some(active_editor) = item.downcast::<Editor>() else {
-                    return anyhow::Ok(());
-                };
-
-                active_editor.update_in(cx, |editor, window, cx| {
-                    let snapshot = editor.buffer().read(cx).snapshot(cx);
-                    if snapshot.as_singleton().is_some()
-                        && let Some(anchor) = snapshot.anchor_in_excerpt(agent_location.position)
-                    {
-                        editor.change_selections(Default::default(), window, cx, |selections| {
-                            selections.select_anchor_ranges([anchor..anchor]);
-                        })
-                    } else {
-                        let row = tool_call_location.line.unwrap_or_default();
-                        editor.change_selections(Default::default(), window, cx, |selections| {
-                            selections.select_ranges([Point::new(row, 0)..Point::new(row, 0)]);
-                        })
-                    }
-                })?;
+                if let Some(agent_location) = agent_location
+                    && let Some(active_editor) = item.downcast::<Editor>()
+                {
+                    active_editor.update_in(cx, |editor, window, cx| {
+                        let snapshot = editor.buffer().read(cx).snapshot(cx);
+                        if snapshot.as_singleton().is_some()
+                            && let Some(anchor) =
+                                snapshot.anchor_in_excerpt(agent_location.position)
+                        {
+                            editor.change_selections(Default::default(), window, cx, |selections| {
+                                selections.select_anchor_ranges([anchor..anchor]);
+                            })
+                        } else {
+                            let row = tool_call_location.line.unwrap_or_default();
+                            editor.change_selections(Default::default(), window, cx, |selections| {
+                                selections.select_ranges([Point::new(row, 0)..Point::new(row, 0)]);
+                            })
+                        }
+                    })?;
+                }
 
                 anyhow::Ok(())
             })
@@ -15060,6 +15067,96 @@ mod tests {
         }
 
         fn flush(&self) {}
+    }
+
+    #[gpui::test]
+    async fn test_open_read_tool_call_png_is_not_an_editor(cx: &mut gpui::TestAppContext) {
+        use std::path::PathBuf;
+
+        use agent_client_protocol::schema::v1 as acp;
+
+        super::super::tests::init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.create_dir(Path::new(path!("/project")))
+            .await
+            .expect("project dir");
+        // 1x1 PNG. The leading bytes are binary, so buffer resolution fails.
+        let png_bytes = vec![
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00,
+            0x00, 0x90, 0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x9C, 0x63, 0xF8, 0xCF, 0xC0, 0x00, 0x00, 0x03, 0x01, 0x01, 0x00, 0xC9, 0xFE, 0x92,
+            0xEF, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+        ];
+        let image_path = PathBuf::from(path!("/project/screenshot.png"));
+        fs.insert_file(&image_path, png_bytes).await;
+
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| crate::AgentPanel::new(workspace, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        let connection = acp_thread::StubAgentConnection::new();
+        crate::test_support::open_thread_with_connection(&panel, connection.clone(), cx);
+        let session_id = crate::test_support::active_session_id(&panel, cx);
+        cx.update(|_window, cx| {
+            connection.send_update(
+                session_id,
+                acp::SessionUpdate::ToolCall(
+                    acp::ToolCall::new(acp::ToolCallId::new("read-png"), "Read screenshot.png")
+                        .kind(acp::ToolKind::Read)
+                        .status(acp::ToolCallStatus::Completed)
+                        .locations(vec![acp::ToolCallLocation::new(image_path)]),
+                ),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let thread_view = panel.read_with(cx, |panel, cx| {
+            panel
+                .active_thread_view(cx)
+                .expect("thread view should be active")
+        });
+        let entry_ix = thread_view.read_with(cx, |thread_view, cx| {
+            let entries = thread_view.thread.read(cx).entries();
+            let entry_ix = entries
+                .iter()
+                .position(|entry| matches!(entry, AgentThreadEntry::ToolCall(_)))
+                .expect("read tool call");
+            assert!(
+                entries[entry_ix].location(0).is_none(),
+                "png locations do not resolve to a buffer"
+            );
+            entry_ix
+        });
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.open_tool_call_location(entry_ix, 0, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.read_with(cx, |workspace, cx| {
+            let item = workspace
+                .active_item(cx)
+                .expect("png tool call should open an item");
+            assert!(
+                item.tab_content_text(0, cx).contains("screenshot.png"),
+                "opened item should be the png"
+            );
+            assert!(item.downcast::<Editor>().is_none());
+        });
     }
 }
 
