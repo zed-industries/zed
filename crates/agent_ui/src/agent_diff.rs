@@ -31,8 +31,8 @@ use std::{
 use ui::{CommonAnimationExt, Divider, IconButtonShape, KeyBinding, Tooltip, prelude::*};
 use util::{ResultExt, truncate_and_trailoff};
 use workspace::{
-    Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
-    Workspace,
+    Item, ItemHandle, ItemNavHistory, OpenOptions, ToolbarItemEvent, ToolbarItemLocation,
+    ToolbarItemView, Workspace,
     item::{ItemEvent, SaveOptions, TabContentParams, TabTooltipContent},
     searchable::SearchableItemHandle,
 };
@@ -1830,7 +1830,14 @@ impl AgentDiff {
             drop(keys);
 
             if let Some(path) = next_project_path {
-                let task = workspace.open_path(path, None, true, window, cx);
+                let task = workspace.open_path_with_options(
+                    path,
+                    None,
+                    OpenOptions::for_navigation(cx),
+                    true,
+                    window,
+                    cx,
+                );
                 let task = cx.spawn(async move |_, _cx| task.await.map(|_| ()));
                 return Some(task);
             }
@@ -2047,7 +2054,13 @@ mod tests {
         });
 
         cx.update(|cx| {
-            SettingsStore::update_global(cx, |store, _cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let preview_tabs = settings.preview_tabs.get_or_insert_default();
+                    preview_tabs.enabled = Some(true);
+                    preview_tabs.enable_preview_file_from_code_navigation = Some(true);
+                    preview_tabs.enable_keep_preview_on_code_navigation = Some(true);
+                });
                 let mut agent_settings = store.get::<AgentSettings>(None).clone();
                 agent_settings.single_file_review = true;
                 store.override_global(agent_settings);
@@ -2060,8 +2073,11 @@ mod tests {
             json!({"file1": "abc\ndef\nghi\njkl\nmno\npqr\nstu\nvwx\nyz"}),
         )
         .await;
-        fs.insert_tree(path!("/test"), json!({"file2": "abc\ndef\nghi"}))
-            .await;
+        fs.insert_tree(
+            path!("/test"),
+            json!({"file2": "abc\ndef\nghi", "file3": "unchanged"}),
+        )
+        .await;
 
         let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
         let buffer_path1 = project
@@ -2313,6 +2329,12 @@ mod tests {
             .read_with(cx, |editor, cx| editor.active_project_path(cx))
             .unwrap();
         assert_eq!(editor2_path, buffer_path2);
+        workspace.read_with(cx, |workspace, cx| {
+            let pane = workspace.active_pane().read(cx);
+            assert_eq!(pane.items_len(), 2);
+            assert_eq!(pane.preview_item_id(), None);
+            assert!(buffer2.read(cx).is_dirty());
+        });
 
         assert_eq!(
             editor2.read_with(cx, |editor, cx| editor.text(cx)),
@@ -2326,6 +2348,46 @@ mod tests {
                 .range(),
             Point::new(0, 0)..Point::new(0, 0)
         );
+
+        let preview = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_abs_path(
+                    Path::new(path!("/test/file3")).to_path_buf(),
+                    OpenOptions::for_navigation(cx),
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            let pane = workspace.active_pane().read(cx);
+            assert_eq!(
+                pane.items().map(|item| item.item_id()).collect::<Vec<_>>(),
+                [editor1.entity_id(), editor2.entity_id(), preview.item_id()],
+            );
+            assert_eq!(pane.preview_item_id(), Some(preview.item_id()));
+            assert_eq!(buffer2.read(cx).text(), "Abc\ndef\ngHi");
+            assert!(buffer2.read(cx).is_dirty());
+            assert!(editor2.read(cx).can_save(cx));
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.activate_item(&editor2, true, true, window, cx);
+        });
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(
+                workspace.active_item_as::<Editor>(cx),
+                Some(editor2.clone())
+            );
+        });
+        assert!(diff_toolbar.read_with(cx, |toolbar, _| matches!(
+            toolbar.active_item,
+            Some(AgentDiffToolbarItem::Editor {
+                state: EditorState::Reviewing,
+                ..
+            })
+        )));
 
         // Editor 1 toolbar is hidden since all changes have been reviewed
         workspace.update_in(cx, |workspace, window, cx| {
