@@ -8,6 +8,10 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
+[package.metadata.cargo-shear]
+# Used by the path-included production module and the gpui::bench expansion.
+ignored = ["futures", "gpui_platform"]
+
 [dev-dependencies]
 collections.workspace = true
 criterion.workspace = true

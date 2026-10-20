@@ -15,17 +15,24 @@ where
     T: Clone + Send + 'static,
     BuildCandidates: Fn(usize, &T) -> (StringMatchCandidate, StringMatchCandidate) + Send + 'static,
 {
-    let (names, candidates): (Vec<_>, Vec<_>) = values
-        .iter()
-        .enumerate()
-        .map(|(index, value)| build_candidates(index, value))
-        .unzip();
+    let query = query.to_owned();
+    // Preparing and cloning candidates can block input even though matching is already asynchronous.
+    executor
+        .clone()
+        .spawn(async move {
+            let (names, candidates): (Vec<_>, Vec<_>) = values
+                .iter()
+                .enumerate()
+                .map(|(index, value)| build_candidates(index, value))
+                .unzip();
 
-    match_names_with_metadata(&names, &candidates, query, executor)
+            match_names_with_metadata(&names, &candidates, &query, executor)
+                .await
+                .into_iter()
+                .map(|index| values[index].clone())
+                .collect()
+        })
         .await
-        .into_iter()
-        .map(|index| values[index].clone())
-        .collect()
 }
 
 async fn match_names_with_metadata(

@@ -717,6 +717,26 @@ mod tests {
         );
     }
 
+    #[gpui::test(iterations = 20)]
+    async fn test_model_search_builds_candidates_in_background(executor: BackgroundExecutor) {
+        let background_executor = executor.clone();
+        let results = model_search::search(
+            vec!["High".to_string()],
+            "high",
+            executor,
+            move |index, name| {
+                assert!(!background_executor.is_main_thread());
+                (
+                    StringMatchCandidate::new(index, name.clone()),
+                    StringMatchCandidate::new(index, name.clone()),
+                )
+            },
+        )
+        .await;
+
+        assert_eq!(results, ["High"]);
+    }
+
     #[gpui::test]
     fn test_favorites_section_appears_when_favorites_exist(_cx: &mut TestAppContext) {
         let models = create_model_list(vec![
