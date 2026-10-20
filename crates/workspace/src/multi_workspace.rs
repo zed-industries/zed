@@ -1117,6 +1117,54 @@ impl MultiWorkspace {
         true
     }
 
+    /// Drops a project group onto `target`. It joins the target's folder and
+    /// lands before the target when dragged up, or after it when dragged down.
+    pub fn drop_project_group_on(
+        &mut self,
+        key: &ProjectGroupKey,
+        target: &ProjectGroupKey,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let position = |key: &ProjectGroupKey| {
+            self.project_groups
+                .iter()
+                .position(|group| group.key == *key)
+        };
+        let (Some(from), Some(to)) = (position(key), position(target)) else {
+            return false;
+        };
+        let folder = self.project_groups[to].folder;
+        let before = if from < to {
+            self.project_groups[to + 1..]
+                .iter()
+                .find(|group| group.folder == folder)
+                .map(|group| group.key.clone())
+        } else {
+            Some(target.clone())
+        };
+        self.move_project_group(key, folder, before.as_ref(), cx)
+    }
+
+    /// Drops a folder onto `target`, before it when dragged up and after it
+    /// when dragged down.
+    pub fn drop_project_folder_on(
+        &mut self,
+        id: ProjectFolderId,
+        target: ProjectFolderId,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let position = |id: ProjectFolderId| self.project_folders.iter().position(|f| f.id == id);
+        let (Some(from), Some(to)) = (position(id), position(target)) else {
+            return false;
+        };
+        let before = if from < to {
+            self.project_folders.get(to + 1).map(|folder| folder.id)
+        } else {
+            Some(target)
+        };
+        self.move_project_folder(id, before, cx)
+    }
+
     fn project_groups_changed(&mut self, cx: &mut Context<Self>) {
         cx.emit(MultiWorkspaceEvent::ProjectGroupsChanged);
         self.serialize(cx);
