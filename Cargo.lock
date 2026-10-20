@@ -7602,6 +7602,8 @@ dependencies = [
  "parking_lot",
  "raw-window-handle",
  "slotmap",
+ "theme",
+ "ui",
  "uuid",
 ]
 
