@@ -17992,6 +17992,232 @@ pub(crate) mod tests {
         cx.run_until_parked();
     }
 
+    fn upsert_permission_test_tool(
+        thread: &Entity<AcpThread>,
+        tool_call_id: &str,
+        cx: &mut VisualTestContext,
+    ) {
+        let update = serde_json::from_value(serde_json::json!({
+            "toolCallId": tool_call_id,
+            "title": "Write permission smoke",
+            "kind": "edit",
+            "status": "in_progress",
+        }))
+        .expect("tool fixture");
+        thread
+            .update(cx, |thread, cx| thread.upsert_wire_tool_call(update, cx))
+            .expect("tool update");
+    }
+
+    #[gpui::test]
+    async fn test_generic_tool_permissions_attach_to_existing_tool(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        upsert_permission_test_tool(&thread, "permission-tool", cx);
+        cx.run_until_parked();
+        let request = generic_permission_prompt(
+            &thread,
+            Some(serde_json::json!({
+                "type": "tool_call", "toolCall": {"toolCallId": "permission-tool"}
+            })),
+            cx,
+        );
+        let (first_id, first_response) =
+            request_test_generic_permission(&thread, request.clone(), cx);
+        let (second_id, second_response) =
+            request_test_generic_permission(&thread, request.clone(), cx);
+        cx.run_until_parked();
+        let card = cx
+            .debug_bounds("tool-call-permission-tool-standalone")
+            .expect("existing tool card");
+        for request_id in [first_id, second_id] {
+            let selector = Box::leak(
+                format!("generic-permission-option-{request_id:?}-custom").into_boxed_str(),
+            );
+            let control = cx.debug_bounds(selector).expect("attached choice");
+            assert!(control.top() >= card.top() && control.bottom() <= card.bottom());
+            assert!(control.left() >= card.left() && control.right() <= card.right());
+        }
+        assert!(cx.debug_bounds("standalone-generic-permissions").is_none());
+        assert!(
+            cx.debug_bounds("generic-permission-tool-permission-tool")
+                .is_none()
+        );
+        thread.read_with(cx, |thread, _| {
+            let (_, tool) = thread.tool_call(&"permission-tool".into()).expect("tool");
+            assert!(tool.authorization_id().is_none());
+            assert_eq!(tool.status(), acp_thread::ToolCallStatus::InProgress);
+            assert_eq!(thread.entries().len(), 1);
+        });
+        click_generic_permission(second_id, Some("custom"), cx);
+        assert_eq!(
+            second_response.await,
+            acp_v2::RequestPermissionOutcome::Selected(acp_v2::SelectedPermissionOutcome::new(
+                "custom"
+            ))
+        );
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.permission_request(first_id).is_some());
+            assert!(thread.permission_request(second_id).is_none());
+        });
+        click_generic_permission(first_id, None, cx);
+        assert_eq!(
+            first_response.await,
+            acp_v2::RequestPermissionOutcome::Cancelled
+        );
+        thread.read_with(cx, |thread, _| {
+            let (_, tool) = thread.tool_call(&"permission-tool".into()).expect("tool");
+            assert_eq!(tool.status(), acp_thread::ToolCallStatus::InProgress);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_generic_tool_permission_moves_when_its_tool_arrives(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        let request = generic_permission_prompt(
+            &thread,
+            Some(serde_json::json!({
+                "type": "tool_call", "toolCall": {"toolCallId": "late-permission-tool"}
+            })),
+            cx,
+        );
+        let (request_id, response) = request_test_generic_permission(&thread, request, cx);
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("standalone-generic-permissions").is_some());
+        thread.read_with(cx, |thread, _| assert!(thread.entries().is_empty()));
+        upsert_permission_test_tool(&thread, "late-permission-tool", cx);
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("standalone-generic-permissions").is_none());
+        assert!(
+            cx.debug_bounds("tool-call-late-permission-tool-standalone")
+                .is_some()
+        );
+        click_generic_permission(request_id, Some("reject"), cx);
+        assert_eq!(
+            response.await,
+            acp_v2::RequestPermissionOutcome::Selected(acp_v2::SelectedPermissionOutcome::new(
+                "reject"
+            ))
+        );
+        thread.read_with(cx, |thread, _| assert_eq!(thread.entries().len(), 1));
+    }
+
+    #[gpui::test]
+    async fn test_generic_tool_permission_floats_only_when_offscreen(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        upsert_permission_test_tool(&thread, "floating-permission-tool", cx);
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new(
+                        "More content\n\n".repeat(100).into(),
+                    )),
+                    cx,
+                )
+                .expect("following message");
+        });
+        let request = generic_permission_prompt(
+            &thread,
+            Some(serde_json::json!({
+                "type": "tool_call", "toolCall": {"toolCallId": "floating-permission-tool"}
+            })),
+            cx,
+        );
+        let (request_id, response) = request_test_generic_permission(&thread, request, cx);
+        cx.run_until_parked();
+        thread_view.update(cx, |view, cx| {
+            view.list_state.scroll_to(ListOffset {
+                item_ix: 0,
+                offset_in_item: px(0.0),
+            });
+            cx.notify();
+        });
+        cx.run_until_parked();
+        thread_view.update_in(cx, |view, window, cx| {
+            assert!(
+                view.render_main_agent_awaiting_permission(window, cx)
+                    .is_none()
+            );
+        });
+        thread_view.update(cx, |view, cx| {
+            view.list_state.scroll_to_end();
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("tool-call-floating-permission-tool-floating")
+                .is_some()
+        );
+        click_generic_permission(request_id, Some("once"), cx);
+        assert_eq!(
+            response.await,
+            acp_v2::RequestPermissionOutcome::Selected(acp_v2::SelectedPermissionOutcome::new(
+                "once"
+            ))
+        );
+        thread_view.update_in(cx, |view, window, cx| {
+            assert!(
+                view.render_main_agent_awaiting_permission(window, cx)
+                    .is_none()
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_generic_tool_permission_with_multiple_terminals(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        thread
+            .update(cx, |thread, cx| {
+                thread.upsert_wire_tool_call(
+                    acp_v2::ToolCallUpdate::new("terminal-permission")
+                        .title("Run command")
+                        .kind(acp_v2::ToolKind::Execute)
+                        .content(vec![
+                            acp_v2::ToolCallContent::Terminal(acp_v2::Terminal::new("first")),
+                            acp_v2::ToolCallContent::Terminal(acp_v2::Terminal::new("second")),
+                        ]),
+                    cx,
+                )
+            })
+            .expect("reported terminals");
+        let request = generic_permission_prompt(
+            &thread,
+            Some(serde_json::json!({
+                "type": "tool_call", "toolCall": {"toolCallId": "terminal-permission"}
+            })),
+            cx,
+        );
+        let (request_id, response) = request_test_generic_permission(&thread, request, cx);
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("standalone-generic-permissions").is_none());
+        click_generic_permission(request_id, Some("always"), cx);
+        assert_eq!(
+            response.await,
+            acp_v2::RequestPermissionOutcome::Selected(acp_v2::SelectedPermissionOutcome::new(
+                "always"
+            ))
+        );
+    }
+
     #[gpui::test]
     async fn test_generic_permissions_render_without_transcript_anchors(cx: &mut TestAppContext) {
         init_test(cx);
@@ -18364,6 +18590,16 @@ pub(crate) mod tests {
         assert_eq!(outcome.option_id, acp_v2::PermissionOptionId::new("custom"));
         assert!(root.read_with(cx, |thread, _| thread.permission_request(root_id).is_some()));
 
+        upsert_permission_test_tool(&root, "shared-permission-tool", cx);
+        upsert_permission_test_tool(&child, "shared-permission-tool", cx);
+        let child_request = generic_permission_prompt(
+            &child,
+            Some(serde_json::json!({
+                "type": "tool_call", "toolCall": {"toolCallId": "shared-permission-tool"}
+            })),
+            cx,
+        )
+        .description(None);
         let (child_id, child_response) = request_test_generic_permission(&child, child_request, cx);
         root.update(cx, |thread, cx| {
             let spawn = acp_v1::ToolCall::new("spawn-child", "Running child")
@@ -18399,6 +18635,17 @@ pub(crate) mod tests {
         let root_selector: &'static str =
             Box::leak(format!("generic-permission-cancel-{root_id:?}").into_boxed_str());
         assert!(cx.debug_bounds(root_selector).is_none());
+        assert!(cx.debug_bounds("standalone-generic-permissions").is_none());
+        let child_card = cx
+            .debug_bounds("tool-call-shared-permission-tool-standalone")
+            .expect("child tool card");
+        let child_selector =
+            Box::leak(format!("generic-permission-cancel-{child_id:?}").into_boxed_str());
+        let child_control = cx.debug_bounds(child_selector).expect("child control");
+        assert!(
+            child_control.top() >= child_card.top()
+                && child_control.bottom() <= child_card.bottom()
+        );
         click_generic_permission(child_id, None, cx);
         assert_eq!(
             child_response.await,

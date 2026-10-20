@@ -930,6 +930,18 @@ impl ThreadView {
 
         subscriptions.push(cx.observe(&thread, |_, _, cx| cx.notify()));
         subscriptions.push(cx.observe(&conversation, |_, _, cx| cx.notify()));
+        subscriptions.push(cx.subscribe(&thread, |this, _, event, cx| {
+            if matches!(
+                event,
+                AcpThreadEvent::ToolAuthorizationRequested(_)
+                    | AcpThreadEvent::ToolAuthorizationReceived(_)
+            ) {
+                // Request-owned controls change row height without changing the tool snapshot.
+                this.list_state
+                    .remeasure_items(0..this.list_state.item_count());
+                cx.notify();
+            }
+        }));
 
         let has_slash_completions = session_capabilities.read().has_slash_completions();
         let placeholder = placeholder_text(agent_display_name.as_ref(), has_slash_completions);
@@ -4130,6 +4142,62 @@ impl ThreadView {
             .collect()
     }
 
+    fn permission_tool_call<'a>(
+        thread: &'a AcpThread,
+        request: &acp_v2::RequestPermissionRequest,
+    ) -> Option<(usize, &'a ToolCall)> {
+        if &request.session_id != thread.session_id() {
+            return None;
+        }
+        let acp_v2::RequestPermissionSubject::ToolCall(subject) = request.subject.as_ref()? else {
+            return None;
+        };
+        thread.tool_call(&subject.tool_call.tool_call_id)
+    }
+
+    fn render_generic_tool_permissions(
+        &self,
+        active_session_id: &acp_v2::SessionId,
+        tool_call: &ToolCall,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
+        // Embedded child rows keep their session-labelled prompt in the parent permission area.
+        if active_session_id != &self.session_id {
+            return None;
+        }
+        let conversation = self.conversation.read(cx);
+        let thread = self.thread.read(cx);
+        let cards = conversation
+            .permission_requests
+            .get(&self.session_id)?
+            .iter()
+            .filter_map(|request_id| {
+                let request = thread.permission_request(*request_id)?.generic_request()?;
+                let (_, subject) = Self::permission_tool_call(thread, request)?;
+                (subject.id == tool_call.id).then(|| {
+                    self.render_generic_permission_card(
+                        self.session_id.clone(),
+                        *request_id,
+                        request,
+                        None,
+                        cx,
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        if cards.is_empty() {
+            return None;
+        }
+        Some(
+            v_flex()
+                .id("generic-tool-permissions")
+                .max_h(px(320.0))
+                .overflow_y_scroll()
+                .children(cards)
+                .into_any(),
+        )
+    }
+
     fn render_generic_permissions(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let conversation = self.conversation.read(cx);
         let mut cards = Vec::new();
@@ -4148,6 +4216,11 @@ impl ThreadView {
                 else {
                     continue;
                 };
+                if session_id == &self.session_id
+                    && Self::permission_tool_call(thread, request).is_some()
+                {
+                    continue;
+                }
                 let source = if session_id == &self.session_id {
                     None
                 } else {
@@ -4171,6 +4244,7 @@ impl ThreadView {
         Some(
             v_flex()
                 .id("generic-permissions")
+                .debug_selector(|| "standalone-generic-permissions".to_string())
                 .max_h(px(320.0))
                 .overflow_y_scroll()
                 .children(cards)
@@ -4199,13 +4273,18 @@ impl ThreadView {
                     )
                     .child(format!("Working directory: {}", command.cwd.0.display())),
             ),
-            Some(acp_v2::RequestPermissionSubject::ToolCall(subject)) => Some(
-                v_flex()
-                    .debug_selector(|| {
-                        format!("generic-permission-tool-{}", subject.tool_call.tool_call_id)
-                    })
-                    .child(format!("Tool call: {}", subject.tool_call.tool_call_id)),
-            ),
+            Some(acp_v2::RequestPermissionSubject::ToolCall(subject))
+                if Self::permission_tool_call(self.thread.read(cx), request).is_none() =>
+            {
+                Some(
+                    v_flex()
+                        .debug_selector(|| {
+                            format!("generic-permission-tool-{}", subject.tool_call.tool_call_id)
+                        })
+                        .child(format!("Tool call: {}", subject.tool_call.tool_call_id)),
+                )
+            }
+            Some(acp_v2::RequestPermissionSubject::ToolCall(_)) => None,
             Some(acp_v2::RequestPermissionSubject::Other(subject)) => Some(
                 v_flex()
                     .debug_selector(|| format!("generic-permission-unknown-{}", subject.type_))
@@ -4408,18 +4487,33 @@ impl ThreadView {
         window: &Window,
         cx: &Context<Self>,
     ) -> Option<AnyElement> {
-        if self.is_subagent() {
-            return None;
-        }
-
         let active_session_id = self.thread.read(cx).session_id().clone();
         let conversation = self.conversation.read(cx);
-        let tool_call_id = conversation.pending_tool_call_for_session(&active_session_id, cx)?;
-        let pending_count =
-            conversation.pending_tool_call_count_for_session(&active_session_id, cx);
-
         let thread = self.thread.read(cx);
-        let (entry_ix, tool_call) = thread.tool_call(&tool_call_id)?;
+        let request =
+            conversation.pending_permission_request_for_session(&active_session_id, cx)?;
+        let (entry_ix, tool_call) = if let Some(request) = request.generic_request() {
+            Self::permission_tool_call(thread, request)?
+        } else {
+            if self.is_subagent() {
+                return None;
+            }
+            let tool_call_id =
+                conversation.pending_tool_call_for_session(&active_session_id, cx)?;
+            thread.tool_call(&tool_call_id)?
+        };
+        let pending_count = conversation
+            .permission_requests
+            .get(&active_session_id)?
+            .iter()
+            .filter_map(|id| thread.permission_request(*id))
+            .filter(|request| {
+                request.legacy_tool_call_id().is_some()
+                    || request.generic_request().is_some_and(|request| {
+                        Self::permission_tool_call(thread, request).is_some()
+                    })
+            })
+            .count();
 
         let scroll_icon = if self.list_state.item_is_above_viewport(entry_ix)? {
             IconName::ArrowUp
@@ -8750,7 +8844,9 @@ impl ThreadView {
         let permission_request = tool_call
             .authorization_id()
             .and_then(|id| self.thread.read(cx).permission_request(id));
-        let needs_confirmation = permission_request.is_some();
+        let generic_permissions =
+            self.render_generic_tool_permissions(active_session_id, tool_call, cx);
+        let needs_confirmation = permission_request.is_some() || generic_permissions.is_some();
 
         let output = terminal_data.output();
         let command_finished = output.is_some()
@@ -8927,6 +9023,9 @@ impl ThreadView {
                     cx,
                 ))
             })
+            .children(
+                generic_permissions.filter(|_| tool_call.terminals().next() == Some(terminal)),
+            )
             .into_any()
     }
 
@@ -9024,47 +9123,56 @@ impl ThreadView {
             layout.id_str()
         )));
 
-        div().w_full().id(container_id).map(|this| {
-            if tool_call.is_subagent() {
-                this.child(
-                    self.render_subagent_tool_call(
+        div()
+            .w_full()
+            .id(container_id)
+            .debug_selector(|| format!("tool-call-{}-{}", tool_call.id.0, layout.id_str()))
+            .map(|this| {
+                if tool_call.is_subagent() {
+                    this.child(
+                        self.render_subagent_tool_call(
+                            active_session_id,
+                            entry_ix,
+                            tool_call,
+                            tool_call
+                                .subagent_session_info
+                                .as_ref()
+                                .map(|i| i.session_id.clone()),
+                            focus_handle,
+                            window,
+                            cx,
+                        ),
+                    )
+                    .children(self.render_generic_tool_permissions(
                         active_session_id,
-                        entry_ix,
                         tool_call,
-                        tool_call
-                            .subagent_session_info
-                            .as_ref()
-                            .map(|i| i.session_id.clone()),
-                        focus_handle,
-                        window,
                         cx,
-                    ),
-                )
-            } else if has_terminals {
-                this.children(tool_call.terminals().map(|terminal| {
-                    self.render_terminal_tool_call(
+                    ))
+                } else if has_terminals {
+                    this.children(tool_call.terminals().map(|terminal| {
+                        self.render_terminal_tool_call(
+                            active_session_id,
+                            entry_ix,
+                            terminal,
+                            tool_call,
+                            focus_handle,
+                            layout,
+                            window,
+                            cx,
+                        )
+                    }))
+                } else {
+                    this.child(self.render_tool_call(
                         active_session_id,
                         entry_ix,
-                        terminal,
                         tool_call,
                         focus_handle,
                         layout,
                         window,
                         cx,
-                    )
-                }))
-            } else {
-                this.child(self.render_tool_call(
-                    active_session_id,
-                    entry_ix,
-                    tool_call,
-                    focus_handle,
-                    layout,
-                    window,
-                    cx,
-                ))
-            }
-        })
+                    ))
+                }
+            })
     }
 
     fn render_tool_call(
@@ -9085,8 +9193,11 @@ impl ThreadView {
             _ => false,
         };
 
+        let generic_permissions =
+            self.render_generic_tool_permissions(active_session_id, tool_call, cx);
         let needs_confirmation =
-            matches!(tool_call.status(), ToolCallStatus::WaitingForConfirmation);
+            matches!(tool_call.status(), ToolCallStatus::WaitingForConfirmation)
+                || generic_permissions.is_some();
         let is_terminal_tool = matches!(tool_call.kind(), acp_v2::ToolKind::Execute);
 
         let is_edit = matches!(tool_call.kind(), acp_v2::ToolKind::Edit)
@@ -9126,7 +9237,8 @@ impl ThreadView {
         let is_open = self
             .entry_view_state
             .read(cx)
-            .is_tool_call_content_visible(tool_call);
+            .is_tool_call_content_visible(tool_call)
+            || generic_permissions.is_some();
 
         let input_output_header = |label: SharedString| {
             Label::new(label)
@@ -9579,6 +9691,7 @@ impl ThreadView {
                 }
             })
             .children(permission_buttons)
+            .children(generic_permissions)
     }
 
     /// A small "Learn more" link to the sandboxing docs, deep-linked to
