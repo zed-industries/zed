@@ -25,7 +25,7 @@ use theme_settings::ThemeSettings;
 use time::OffsetDateTime;
 use ui::{ContextMenu, CopyButton, Divider, prelude::*, tooltip_container};
 use util::paths::PathStyle;
-use workspace::{Workspace, notifications::NotifyTaskExt as _};
+use workspace::{Workspace, item::PreviewTabsSettings, notifications::NotifyTaskExt as _};
 
 const GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED: usize = 20;
 const GIT_BLAME_GUTTER_MARGIN: Rems = rems(0.5);
@@ -710,7 +710,20 @@ fn open_buffer_blame_at_revision(
                         )
                     });
                     editor.update(cx, |editor, cx| editor.set_blame(git_blame, window, cx));
-                    workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+                    let destination_index = if PreviewTabsSettings::get_global(cx).enabled {
+                        workspace.active_pane().update(cx, |pane, cx| {
+                            pane.replace_preview_item_id(editor.entity_id(), window, cx)
+                        })
+                    } else {
+                        None
+                    };
+                    workspace.add_item_to_active_pane(
+                        Box::new(editor),
+                        destination_index,
+                        true,
+                        window,
+                        cx,
+                    );
                 })
             }
         })
@@ -775,5 +788,129 @@ fn blame_entry_relative_timestamp(blame_entry: &BlameEntry) -> String {
             )
         }
         Err(_) => "Error parsing date".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use git::{blame::Blame, repository::repo_path};
+    use gpui::{Focusable, TestAppContext, UpdateGlobal};
+    use project::{FakeFs, Project};
+    use serde_json::json;
+    use settings::SettingsStore;
+    use theme::LoadThemes;
+    use util::path;
+    use workspace::MultiWorkspace;
+
+    #[gpui::test]
+    async fn test_historical_blame_preview_tabs(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+            theme_settings::init(LoadThemes::JustBase, cx);
+            language_model::init(cx);
+            editor::init(cx);
+            crate::init(cx);
+        });
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({".git": {}, "first.rs": "working copy\n", "second.rs": "working copy\n"}),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |workspace, _| workspace.workspace().clone());
+        cx.run_until_parked();
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("repository should exist")
+        });
+        let first = "1111111111111111111111111111111111111111"
+            .parse::<Oid>()
+            .expect("valid revision");
+        let second = "2222222222222222222222222222222222222222"
+            .parse::<Oid>()
+            .expect("valid revision");
+        let mut previous = None;
+
+        for (name, revision, enabled, expected_count, expected_preview) in [
+            ("first.rs", first, true, 1, Some("first.rs @ 1111111")),
+            ("second.rs", first, true, 1, Some("second.rs @ 1111111")),
+            ("first.rs", second, true, 1, Some("first.rs @ 2222222")),
+            ("first.rs", second, true, 1, Some("first.rs @ 2222222")),
+            ("first.rs", second, false, 1, None),
+            ("first.rs", second, true, 1, None),
+            ("first.rs", first, true, 2, Some("first.rs @ 1111111")),
+            ("first.rs", second, true, 2, Some("first.rs @ 1111111")),
+            ("second.rs", first, false, 3, None),
+        ] {
+            let content = format!("{name} at {revision}\n");
+            fs.with_git_state(path!("/project/.git").as_ref(), false, |state| {
+                state.refs.insert("HEAD".to_owned(), revision.to_string());
+                state
+                    .head_contents
+                    .insert(repo_path(name), content.as_bytes().to_vec());
+                state
+                    .blames_at_revision
+                    .insert((repo_path(name), revision), Blame::default());
+            })
+            .expect("repository should exist");
+            cx.update(|_, cx| {
+                SettingsStore::update_global(cx, |store, cx| {
+                    store.update_user_settings(cx, |settings| {
+                        settings.preview_tabs.get_or_insert_default().enabled = Some(enabled);
+                    });
+                });
+            });
+            multi_workspace.update_in(cx, |_, window, cx| {
+                for _ in 0..2 {
+                    open_buffer_blame_at_revision(
+                        repository.clone(),
+                        workspace.downgrade(),
+                        repo_path(name),
+                        revision,
+                        window,
+                        cx,
+                    );
+                }
+            });
+            cx.run_until_parked();
+            let editor = workspace.read_with(cx, |workspace, cx| {
+                let pane = workspace.active_pane().read(cx);
+                assert_eq!(pane.items_len(), expected_count);
+                assert_eq!(
+                    pane.preview_item()
+                        .map(|item| item.tab_content_text(0, cx))
+                        .as_deref(),
+                    expected_preview,
+                );
+                pane.active_item()
+                    .and_then(|item| item.downcast::<Editor>())
+                    .expect("blame editor should be active")
+            });
+            editor.update_in(cx, |editor, window, cx| {
+                assert_eq!(editor.text(cx), content);
+                assert!(editor.read_only(cx));
+                assert!(editor.focus_handle(cx).is_focused(window));
+                assert_eq!(
+                    editor
+                        .blame()
+                        .expect("blame should exist")
+                        .read(cx)
+                        .highlighted_sha(),
+                    Some(revision)
+                );
+            });
+            if let Some((previous_name, previous_revision, previous_id)) = previous
+                && (name, revision) == (previous_name, previous_revision)
+            {
+                assert_eq!(editor.entity_id(), previous_id);
+            }
+            previous = Some((name, revision, editor.entity_id()));
+        }
     }
 }
