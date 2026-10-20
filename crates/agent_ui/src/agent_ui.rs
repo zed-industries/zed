@@ -1242,6 +1242,10 @@ mod tests {
     }
 
     #[gpui::test]
+    #[cfg_attr(
+        target_os = "windows",
+        ignore = "`Project::test` uses the host path style but the test worktree is Unix-style"
+    )]
     async fn test_agent_image_lookup_uses_remote_worktree_entries(cx: &mut TestAppContext) {
         crate::test_support::init_test(cx);
         let project = Project::test(fs::FakeFs::new(cx.executor()), [], cx).await;
