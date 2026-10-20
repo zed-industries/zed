@@ -651,6 +651,50 @@ async fn test_resolve_image_at_abs_path_over_remote(
     assert!(outside.is_err());
 }
 
+#[gpui::test]
+async fn test_resolve_image_at_abs_path_over_remote_maps_canonical_path_into_worktree(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project": {"real": {"shot.ppm": "P3\n1 1\n255\n255 0 0\n"}}
+        }),
+    )
+    .await;
+    fs.insert_symlink(
+        path!("/code/alias"),
+        PathBuf::from(path!("/code/project/real")),
+    )
+    .await;
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project"), true, cx)
+        })
+        .await
+        .expect("remote worktree should open");
+    let worktree_id = worktree.read_with(cx, |worktree, _cx| worktree.id());
+    cx.run_until_parked();
+
+    let location = project
+        .update(cx, |project, cx| {
+            project.resolve_image_at_abs_path(path!("/code/alias/shot.ppm"), cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        location,
+        Some(image_store::ImageLocation::Project(ProjectPath {
+            worktree_id,
+            path: rel_path("real/shot.ppm").into(),
+        }))
+    );
+}
+
 struct RemoteImageLocationTestView {
     project: gpui::WeakEntity<Project>,
     paths: Vec<String>,

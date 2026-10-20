@@ -5275,26 +5275,34 @@ impl Project {
             let Some(resolved_path) = resolve.await? else {
                 return Ok(None);
             };
-            project.read_with(cx, |project, cx| match resolved_path {
-                ResolvedPath::ProjectPath { project_path, .. } => {
-                    let worktree = project
-                        .worktree_for_id(project_path.worktree_id, cx)
-                        .context("worktree was closed")?;
-                    if worktree.read(cx).is_local() {
-                        let abs_path = project
-                            .absolute_path(&project_path, cx)
-                            .context("absolutizing image path")?;
-                        Ok(Some(ImageLocation::Local(abs_path.into())))
-                    } else {
-                        Ok(Some(ImageLocation::Project(project_path)))
+            project.read_with(cx, |project, cx| {
+                let project_path = match resolved_path {
+                    ResolvedPath::ProjectPath { project_path, .. } => project_path,
+                    ResolvedPath::AbsPath { path, .. } => {
+                        // The canonical target can lie in a worktree even when the requested
+                        // spelling of the path does not, e.g. after following a symlink.
+                        let Some(project_path) =
+                            project.project_path_for_absolute_path(Path::new(&path), cx)
+                        else {
+                            anyhow::ensure!(
+                                project.is_local(),
+                                "cannot load an image outside the project's worktrees over a remote connection: {path}"
+                            );
+                            return Ok(Some(ImageLocation::Local(Path::new(&path).into())));
+                        };
+                        project_path
                     }
-                }
-                ResolvedPath::AbsPath { path, .. } => {
-                    anyhow::ensure!(
-                        project.is_local(),
-                        "cannot load an image outside the project's worktrees over a remote connection: {path}"
-                    );
-                    Ok(Some(ImageLocation::Local(Path::new(&path).into())))
+                };
+                let worktree = project
+                    .worktree_for_id(project_path.worktree_id, cx)
+                    .context("worktree was closed")?;
+                if worktree.read(cx).is_local() {
+                    let abs_path = project
+                        .absolute_path(&project_path, cx)
+                        .context("absolutizing image path")?;
+                    Ok(Some(ImageLocation::Local(abs_path.into())))
+                } else {
+                    Ok(Some(ImageLocation::Project(project_path)))
                 }
             })?
         })
