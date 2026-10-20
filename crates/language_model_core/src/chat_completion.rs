@@ -1745,13 +1745,12 @@ mod tests {
 
         let finish_events = mapper.map_event(finish_tool_calls_event());
         assert!(finish_events.iter().all(|event| event.is_ok()));
-        let tool_uses = completed_tool_calls(
-            &finish_events
-                .iter()
-                .filter_map(|event| event.as_ref().ok())
-                .cloned()
-                .collect::<Vec<_>>(),
-        );
+        let finish_ok_events = finish_events
+            .iter()
+            .filter_map(|event| event.as_ref().ok())
+            .cloned()
+            .collect::<Vec<_>>();
+        let tool_uses = completed_tool_calls(&finish_ok_events);
         assert_eq!(tool_uses.len(), 1);
         assert_eq!(tool_uses[0].id.to_string(), "call_keep");
         assert_eq!(tool_uses[0].name.as_ref(), "read_file");
