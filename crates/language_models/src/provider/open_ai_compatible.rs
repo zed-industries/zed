@@ -396,14 +396,16 @@ fn chat_completion_max_tokens_parameter(
 }
 
 fn supports_none_reasoning_effort(model: &AvailableModel) -> bool {
-    model.reasoning_effort.is_some()
+    model.capabilities.supports_none_reasoning_effort
 }
 
 fn chat_completion_reasoning_effort(
     request: &LanguageModelRequest,
     model: &AvailableModel,
 ) -> Option<open_ai::ReasoningEffort> {
-    if model.reasoning_effort == Some(open_ai::ReasoningEffort::None) {
+    if model.reasoning_effort == Some(open_ai::ReasoningEffort::None)
+        && supports_none_reasoning_effort(model)
+    {
         return Some(open_ai::ReasoningEffort::None);
     }
 
@@ -529,6 +531,18 @@ mod tests {
         );
 
         request.thinking_allowed = false;
+        assert_eq!(chat_completion_reasoning_effort(&request, &model), None);
+    }
+
+    #[test]
+    fn chat_completion_reasoning_effort_sends_none_when_supported() {
+        let mut model = available_model(Some(open_ai::ReasoningEffort::Medium));
+        model.capabilities.supports_none_reasoning_effort = true;
+        let request = LanguageModelRequest {
+            thinking_allowed: false,
+            ..Default::default()
+        };
+
         assert_eq!(
             chat_completion_reasoning_effort(&request, &model),
             Some(open_ai::ReasoningEffort::None)
@@ -547,14 +561,18 @@ mod tests {
     }
 
     #[test]
-    fn chat_completion_reasoning_effort_preserves_explicit_none() {
-        let model = available_model(Some(open_ai::ReasoningEffort::None));
+    fn chat_completion_reasoning_effort_can_preserve_explicit_none() {
+        let mut model = available_model(Some(open_ai::ReasoningEffort::None));
+        // Without an explicitly configured "none" effort, a non-reasoning
+        // default must still omit the effort for servers that reject "none".
         let request = LanguageModelRequest {
             thinking_allowed: true,
-            thinking_effort: Some("high".to_string()),
             ..Default::default()
         };
 
+        assert_eq!(chat_completion_reasoning_effort(&request, &model), None);
+
+        model.capabilities.supports_none_reasoning_effort = true;
         assert_eq!(
             chat_completion_reasoning_effort(&request, &model),
             Some(open_ai::ReasoningEffort::None)
@@ -667,13 +685,14 @@ mod tests {
 
     #[test]
     fn configured_reasoning_effort_supports_none_reasoning_effort() {
-        assert!(supports_none_reasoning_effort(&available_model(Some(
+        assert!(!supports_none_reasoning_effort(&available_model(Some(
             open_ai::ReasoningEffort::Medium
         ))));
-        assert!(supports_none_reasoning_effort(&available_model(Some(
-            open_ai::ReasoningEffort::None
-        ))));
         assert!(!supports_none_reasoning_effort(&available_model(None)));
+
+        let mut model = available_model(Some(open_ai::ReasoningEffort::Medium));
+        model.capabilities.supports_none_reasoning_effort = true;
+        assert!(supports_none_reasoning_effort(&model));
     }
 
     #[test]

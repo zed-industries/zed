@@ -502,6 +502,7 @@ By default, OpenAI-compatible models inherit these capabilities:
 - `chat_completions`: `true`
 - `interleaved_reasoning`: `false`
 - `max_tokens_parameter`: `false`
+- `supports_none_reasoning_effort`: `false`
 
 If a model only works with the Responses API, set `capabilities.chat_completions` to `false`. Zed will use the Responses endpoint for that model.
 
@@ -527,7 +528,8 @@ If the model requires the Responses API for reasoning state, set `capabilities.c
               "prompt_cache_key": false,
               "chat_completions": false,
               "interleaved_reasoning": false,
-              "max_tokens_parameter": false
+              "max_tokens_parameter": false,
+              "supports_none_reasoning_effort": false
             }
           }
         ]
@@ -538,6 +540,8 @@ If the model requires the Responses API for reasoning state, set `capabilities.c
 ```
 
 Valid settings values are `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, and `"max"`. Use `"none"` in `settings.json` when you need to force reasoning off for an endpoint; the provider setup UI exposes the non-`none` values for thinking-capable models. For chat-completions endpoints that should receive prior thinking back in a dedicated `reasoning_content` field, also set `capabilities.interleaved_reasoning` to `true`. If the endpoint expects the output-token limit as `max_tokens` instead of `max_completion_tokens`, set `capabilities.max_tokens_parameter` to `true`.
+
+Many OpenAI-compatible endpoints reject `reasoning_effort: "none"`, accepting only `low`/`medium`/`high` or an omitted field. Zed therefore omits the effort on non-reasoning requests (such as background thread-title generation) unless you set `capabilities.supports_none_reasoning_effort` to `true`, which is intended for endpoints that follow OpenAI's own API and accept `"none"` as a way to disable reasoning.
 
 For example, a chat-completions endpoint with the maximum OpenAI-style reasoning effort, streamed thinking, and `max_tokens` output limits can be configured as:
 
@@ -560,7 +564,8 @@ For example, a chat-completions endpoint with the maximum OpenAI-style reasoning
               "prompt_cache_key": false,
               "chat_completions": true,
               "interleaved_reasoning": true,
-              "max_tokens_parameter": true
+              "max_tokens_parameter": true,
+              "supports_none_reasoning_effort": true
             }
           }
         ]
