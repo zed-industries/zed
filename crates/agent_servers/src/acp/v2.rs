@@ -6923,9 +6923,13 @@ exec sleep 60
                             "-c".into(),
                             r#"
 while IFS= read -r request; do
-    id=${request#*\"id\":}
-    id=${id%%,*}
-    printf '{"jsonrpc":"2.0","id":%s,%s}\n' "$id" "$ACP_STARTUP_RESPONSE"
+    case "$request" in
+        *'"method":"initialize"'*)
+            id=${request#*\"id\":}
+            id=${id%%,*}
+            printf '{"jsonrpc":"2.0","id":%s,%s}\n' "$id" "$ACP_STARTUP_RESPONSE"
+            ;;
+    esac
 done
 exec sleep 60
 "#
