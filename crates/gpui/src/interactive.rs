@@ -547,8 +547,9 @@ pub enum ScrollSource {
     /// A mouse wheel, or any device the platform cannot identify.
     #[default]
     Wheel,
-    /// A trackpad or other continuous scrolling surface, such as a Magic
-    /// Mouse, that the platform reports separately from wheel clicks.
+    /// A trackpad or other continuous scrolling device that the platform
+    /// reports separately from wheel clicks. This includes a Magic Mouse and
+    /// mice whose drivers smooth wheel scrolling into continuous deltas.
     Trackpad,
     /// A pan of a finger on a touchscreen, recognized by GPUI, including the
     /// momentum GPUI synthesizes after the finger lifts.
