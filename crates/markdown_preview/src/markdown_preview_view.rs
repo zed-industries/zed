@@ -26,7 +26,10 @@ use markdown::{
     MarkdownOptions, MarkdownStyle,
 };
 use project::search::SearchQuery;
-use project::{Project, ProjectPath, Worktree, image_store};
+use project::{
+    Project, ProjectPath, Worktree,
+    image_store::{self, ImageLocation},
+};
 use settings::{SeedQuerySetting, Settings, update_settings_file};
 use theme::{SystemAppearance, Theme, ThemeRegistry};
 use theme_settings::ThemeSettings;
@@ -1118,7 +1121,7 @@ impl MarkdownPreviewView {
             .show_root_block_markers()
             .image_resolver({
                 let base_directory = self.base_directory.clone();
-                move |dest_url, _window, cx| {
+                move |dest_url, window, cx| {
                     resolve_preview_image(
                         dest_url,
                         base_directory.as_deref(),
@@ -1126,6 +1129,7 @@ impl MarkdownPreviewView {
                         project.as_ref(),
                         source_project_path.as_ref(),
                         PathStyle::local(),
+                        window,
                         cx,
                     )
                 }
@@ -1521,7 +1525,8 @@ fn resolve_preview_image(
     project: Option<&Entity<Project>>,
     source_project_path: Option<&ProjectPath>,
     client_path_style: PathStyle,
-    cx: &App,
+    window: &mut Window,
+    cx: &mut App,
 ) -> Option<ImageSource> {
     if dest_url.starts_with("data:") {
         return None;
@@ -1562,6 +1567,27 @@ fn resolve_preview_image(
     };
 
     if let Some(project) = project {
+        // Collapsing `..` lexically is wrong after a symlinked directory, so the filesystem
+        // has to resolve it.
+        let path_with_parent_components = lookup_worktree.as_ref().and_then(|worktree| {
+            preview_image_path_with_parent_components(
+                &decoded,
+                workspace_relative_path,
+                source_project_path,
+                worktree,
+                cx,
+            )
+        });
+        if let Some(path) = path_with_parent_components {
+            let project = project.downgrade();
+            return match image_store::use_image_location(project.clone(), vec![path], window, cx)? {
+                ImageLocation::Local(path) => Some(ImageSource::Resource(Resource::Path(path))),
+                ImageLocation::Project(path) => {
+                    Some(image_store::project_image_source(project, path))
+                }
+            };
+        }
+
         let project_path = lookup_worktree.as_ref().and_then(|worktree| {
             resolve_project_path_for_preview_image(
                 &decoded,
@@ -1618,6 +1644,28 @@ fn preview_lookup_worktree(
         Some(source) => project.worktree_for_id(source.worktree_id, cx),
         None => project.worktrees(cx).next(),
     }
+}
+
+fn preview_image_path_with_parent_components(
+    decoded_path: &str,
+    workspace_relative_path: Option<&str>,
+    source_project_path: Option<&ProjectPath>,
+    worktree: &Entity<Worktree>,
+    cx: &App,
+) -> Option<String> {
+    let worktree = worktree.read(cx);
+    let path_style = worktree.path_style();
+    let path = if let Some(workspace_relative_path) = workspace_relative_path {
+        path_style.join(worktree.abs_path(), workspace_relative_path)?
+    } else if path_style.is_absolute(Path::new(decoded_path)) {
+        decoded_path.to_owned()
+    } else {
+        let source_directory = worktree.absolutize(source_project_path?.path.parent()?);
+        path_style.join(source_directory, decoded_path)?
+    };
+    path.split(path_style.separators_ch())
+        .any(|component| component == "..")
+        .then_some(path)
 }
 
 fn resolve_project_path_for_preview_image(
@@ -2391,8 +2439,9 @@ mod tests {
     use fs::FakeFs;
     use gpui::UpdateGlobal as _;
     use gpui::{
-        App, AppContext as _, Entity, Focusable as _, Modifiers, MouseButton, MouseDownEvent,
-        MouseUpEvent, TestAppContext, VisualTestContext, WindowHandle, px,
+        App, AppContext as _, Context, Entity, Focusable as _, IntoElement, Modifiers, MouseButton,
+        MouseDownEvent, MouseUpEvent, Render, TestAppContext, VisualTestContext, Window,
+        WindowHandle, px,
     };
     use language::{Buffer, DiskState, Point};
     use project::{Project, ProjectPath};
@@ -2584,7 +2633,8 @@ mod tests {
     }
 
     #[gpui::test]
-    fn resolves_workspace_absolute_preview_image_path_and_rejects_missing(cx: &mut App) {
+    fn resolves_workspace_absolute_preview_image_path_and_rejects_missing(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
         let tree = TempTree::new(json!({
             "docs": {},
             "test_image.png": "mock data"
@@ -2594,32 +2644,39 @@ mod tests {
         let image_file = workspace_directory.join("test_image.png");
 
         for workspace_root_relative_path in ["/test_image.png", "\\test_image.png"] {
-            let resolved = resolve_preview_image(
-                workspace_root_relative_path,
+            let resolved = cx.update(|window, cx| {
+                resolve_preview_image(
+                    workspace_root_relative_path,
+                    Some(&base_directory),
+                    Some(workspace_directory),
+                    None,
+                    None,
+                    PathStyle::local(),
+                    window,
+                    cx,
+                )
+            });
+            assert_resolved_preview_image_path(resolved, image_file.as_path());
+        }
+
+        let missing = cx.update(|window, cx| {
+            resolve_preview_image(
+                "/missing_image.png",
                 Some(&base_directory),
                 Some(workspace_directory),
                 None,
                 None,
                 PathStyle::local(),
+                window,
                 cx,
-            );
-            assert_resolved_preview_image_path(resolved, image_file.as_path());
-        }
-
-        let missing = resolve_preview_image(
-            "/missing_image.png",
-            Some(&base_directory),
-            Some(workspace_directory),
-            None,
-            None,
-            PathStyle::local(),
-            cx,
-        );
+            )
+        });
         assert!(missing.is_none());
     }
 
     #[gpui::test]
-    fn resolves_file_url_preview_image_and_rejects_missing(cx: &mut App) {
+    fn resolves_file_url_preview_image_and_rejects_missing(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
         let tree = TempTree::new(json!({
             "docs": {},
             "test image.png": "mock data"
@@ -2633,15 +2690,18 @@ mod tests {
             file_url.as_str().contains("%20"),
             "fixture must exercise percent-encoded file URLs"
         );
-        let resolved = resolve_preview_image(
-            file_url.as_str(),
-            Some(&base_directory),
-            Some(workspace_directory),
-            None,
-            None,
-            PathStyle::local(),
-            cx,
-        );
+        let resolved = cx.update(|window, cx| {
+            resolve_preview_image(
+                file_url.as_str(),
+                Some(&base_directory),
+                Some(workspace_directory),
+                None,
+                None,
+                PathStyle::local(),
+                window,
+                cx,
+            )
+        });
         // On Windows `TempTree` yields a verbatim `\\?\` path, while the URL
         // round-trip yields the plain form of the same path.
         match resolved {
@@ -2654,15 +2714,18 @@ mod tests {
 
         let missing_url =
             url::Url::from_file_path(workspace_directory.join("missing.png")).unwrap();
-        let missing = resolve_preview_image(
-            missing_url.as_str(),
-            Some(&base_directory),
-            Some(workspace_directory),
-            None,
-            None,
-            PathStyle::local(),
-            cx,
-        );
+        let missing = cx.update(|window, cx| {
+            resolve_preview_image(
+                missing_url.as_str(),
+                Some(&base_directory),
+                Some(workspace_directory),
+                None,
+                None,
+                PathStyle::local(),
+                window,
+                cx,
+            )
+        });
         assert!(missing.is_none());
     }
 
@@ -2678,7 +2741,8 @@ mod tests {
             path: rel_path("docs/readme.md").into(),
         };
 
-        let resolved = cx.update(|cx| {
+        let cx = cx.add_empty_window();
+        let resolved = cx.update(|window, cx| {
             resolve_preview_image(
                 "images/example.png",
                 Some(Path::new("/remote/project/docs")),
@@ -2686,12 +2750,13 @@ mod tests {
                 Some(&project),
                 Some(&source_project_path),
                 PathStyle::local(),
+                window,
                 cx,
             )
         });
         assert!(matches!(resolved, Some(ImageSource::Custom(_))));
 
-        let outside_worktree = cx.update(|cx| {
+        let outside_worktree = resolve_preview_image_in_view(cx, move |window, cx| {
             resolve_preview_image(
                 "../../outside/example.png",
                 Some(Path::new("/remote/project/docs")),
@@ -2699,6 +2764,7 @@ mod tests {
                 Some(&project),
                 Some(&source_project_path),
                 PathStyle::local(),
+                window,
                 cx,
             )
         });
@@ -2717,12 +2783,13 @@ mod tests {
             path: rel_path("docs/readme.md").into(),
         };
 
+        let cx = cx.add_empty_window();
         let cases = [Some(&source_project_path), None]
             .into_iter()
             .flat_map(|source| [PathStyle::Unix, PathStyle::Windows].map(|style| (source, style)));
         for (source_project_path, client_path_style) in cases {
-            let resolve = |dest_url: &str, cx: &mut TestAppContext| {
-                cx.update(|cx| {
+            let resolve = |dest_url: &str, cx: &mut VisualTestContext| {
+                cx.update(|window, cx| {
                     resolve_preview_image(
                         dest_url,
                         Some(Path::new("/remote/project/docs")),
@@ -2730,6 +2797,7 @@ mod tests {
                         Some(&project),
                         source_project_path,
                         client_path_style,
+                        window,
                         cx,
                     )
                 })
@@ -2761,8 +2829,9 @@ mod tests {
         let client_image = SanitizedPath::new(tree.path()).as_path().join("shot.png");
         let client_image = client_image.to_str().unwrap();
 
-        let resolve = |project: Option<&Entity<Project>>, cx: &mut TestAppContext| {
-            cx.update(|cx| {
+        let cx = cx.add_empty_window();
+        let resolve = |project: Option<&Entity<Project>>, cx: &mut VisualTestContext| {
+            cx.update(|window, cx| {
                 resolve_preview_image(
                     client_image,
                     None,
@@ -2770,6 +2839,7 @@ mod tests {
                     project,
                     None,
                     PathStyle::local(),
+                    window,
                     cx,
                 )
             })
@@ -2795,7 +2865,8 @@ mod tests {
             path: rel_path("docs/readme.md").into(),
         };
 
-        let resolved = cx.update(|cx| {
+        let cx = cx.add_empty_window();
+        let resolved = cx.update(|window, cx| {
             resolve_preview_image(
                 "images/example.png",
                 Some(Path::new("/remote/project/docs")),
@@ -2803,12 +2874,13 @@ mod tests {
                 Some(&project),
                 Some(&source_project_path),
                 PathStyle::Windows,
+                window,
                 cx,
             )
         });
 
         assert!(matches!(resolved, Some(ImageSource::Custom(_))));
-        let project_path = cx.update(|cx| {
+        let project_path = cx.update(|_, cx| {
             resolve_project_path_for_preview_image(
                 "images/example.png",
                 None,
@@ -2825,7 +2897,7 @@ mod tests {
             rel_path("docs/images/example.png").into()
         );
 
-        let absolute_project_path = cx.update(|cx| {
+        let absolute_project_path = cx.update(|_, cx| {
             resolve_project_path_for_preview_image(
                 "/remote/project/docs/images/example.png",
                 None,
@@ -2856,7 +2928,8 @@ mod tests {
             path: rel_path("docs/readme.md").into(),
         };
 
-        let resolved = cx.update(|cx| {
+        let cx = cx.add_empty_window();
+        let resolved = cx.update(|window, cx| {
             resolve_preview_image(
                 "/images/root.png",
                 Some(Path::new("/remote/project/docs")),
@@ -2864,12 +2937,13 @@ mod tests {
                 Some(&project),
                 Some(&source_project_path),
                 PathStyle::Windows,
+                window,
                 cx,
             )
         });
         assert!(matches!(resolved, Some(ImageSource::Custom(_))));
 
-        let project_path = cx.update(|cx| {
+        let project_path = cx.update(|_, cx| {
             resolve_project_path_for_preview_image(
                 "/images/root.png",
                 Some("images/root.png"),
@@ -2886,6 +2960,54 @@ mod tests {
                 path: rel_path("images/root.png").into(),
             })
         );
+    }
+
+    #[cfg(not(windows))]
+    #[gpui::test]
+    async fn resolves_preview_image_parent_components_through_symlinks(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        let tree = TempTree::new(json!({
+            "real": {"sub": {}, "shot.ppm": "P3\n1 1\n255\n255 0 0\n"},
+            "shot.ppm": "P3\n1 1\n255\n0 0 255\n",
+            "readme.md": "",
+        }));
+        let root = tree.path().to_path_buf();
+        std::os::unix::fs::symlink(root.join("real/sub"), root.join("hop")).unwrap();
+        let project =
+            Project::test(fs::RealFs::new(None, cx.executor()), [root.as_path()], cx).await;
+        let source_project_path = ProjectPath {
+            worktree_id: project.read_with(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            }),
+            path: rel_path("readme.md").into(),
+        };
+        let file_url = format!(
+            "{}%2F..%2Fshot.ppm",
+            url::Url::from_file_path(root.join("hop")).unwrap()
+        );
+
+        for dest_url in [file_url.as_str(), "hop/../shot.ppm", "/hop/../shot.ppm"] {
+            let resolved = resolve_preview_image_in_view(cx, {
+                let dest_url = dest_url.to_owned();
+                let root = root.clone();
+                let project = project.clone();
+                let source_project_path = source_project_path.clone();
+                move |window, cx| {
+                    resolve_preview_image(
+                        &dest_url,
+                        Some(&root),
+                        Some(&root),
+                        Some(&project),
+                        Some(&source_project_path),
+                        PathStyle::local(),
+                        window,
+                        cx,
+                    )
+                }
+            });
+            assert_resolved_preview_image_path(resolved, &root.join("real/shot.ppm"));
+        }
     }
 
     #[gpui::test]
@@ -4991,6 +5113,30 @@ mod tests {
             modifiers: Modifiers::default(),
             click_count,
         });
+    }
+
+    struct PreviewImageTestView {
+        resolve: Box<dyn Fn(&mut Window, &mut App) -> Option<ImageSource>>,
+        resolved: Option<ImageSource>,
+    }
+
+    impl Render for PreviewImageTestView {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            self.resolved = (self.resolve)(window, cx);
+            gpui::Empty
+        }
+    }
+
+    fn resolve_preview_image_in_view(
+        cx: &mut TestAppContext,
+        resolve: impl Fn(&mut Window, &mut App) -> Option<ImageSource> + 'static,
+    ) -> Option<ImageSource> {
+        let (view, cx) = cx.add_window_view(|_, _| PreviewImageTestView {
+            resolve: Box::new(resolve),
+            resolved: None,
+        });
+        cx.run_until_parked();
+        view.read_with(cx, |view, _| view.resolved.clone())
     }
 
     fn markdown_fixture_directory(tree: &TempTree) -> PathBuf {
