@@ -484,6 +484,7 @@ dependencies = [
  "fs",
  "futures 0.3.34",
  "fuzzy",
+ "fuzzy_nucleo",
  "git",
  "git_ui_core",
  "gpui",
@@ -551,6 +552,19 @@ dependencies = [
  "watch",
  "workspace",
  "zed_actions",
+]
+
+[[package]]
+name = "agent_ui_benchmarks"
+version = "0.1.0"
+dependencies = [
+ "collections",
+ "criterion",
+ "futures 0.3.34",
+ "fuzzy_nucleo",
+ "gpui",
+ "gpui_platform",
+ "ordered-float 5.5.0",
 ]
 
 [[package]]

@@ -11,7 +11,7 @@ use anyhow::Context;
 #[cfg(all(unix, not(target_family = "wasm")))]
 use std::os::unix::prelude::OsStrExt;
 use std::{
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     path::{Path, PathBuf},
 };
 #[cfg(windows)]
@@ -151,14 +151,14 @@ impl PathStyle {
             .as_ref()
             .to_str()
             .ok_or_else(|| anyhow::anyhow!("Path contains invalid UTF-8"))?;
-        let right = right.as_ref();
+        let right = self.normalize_separators(right);
         let right_string = right
             .to_str()
             .ok_or_else(|| anyhow::anyhow!("Path contains invalid UTF-8"))?;
         let joined = self
             .join(left, right_string)
             .ok_or_else(|| anyhow::anyhow!("Path must be relative: {right:?}"))?;
-        Ok(PathBuf::from(self.normalize(&joined)))
+        Ok(self.normalize_lexically(&joined))
     }
 
     pub fn join_path_preserving_components(
@@ -180,105 +180,35 @@ impl PathStyle {
         Ok(PathBuf::from(&joined))
     }
 
-    pub fn normalize(self, path_like: &str) -> String {
-        match self {
-            PathStyle::Windows => {
-                let drive_and_remainder = path_like.split_once(':').filter(|(drive, _)| {
-                    let mut characters = drive.chars();
-                    characters
-                        .next()
-                        .is_some_and(|character| character.is_ascii_alphabetic())
-                        && characters.next().is_none()
-                });
-                let unc_remainder = path_like
-                    .strip_prefix("\\\\")
-                    .or_else(|| path_like.strip_prefix("//"));
+    pub fn normalize_separators(&self, path: impl AsRef<Path>) -> PathBuf {
+        self.collect_components(self.components(path.as_ref()))
+    }
 
-                let (prefix, remainder) = if let Some((drive, remainder)) = drive_and_remainder {
-                    if let Some(remainder) = remainder
-                        .strip_prefix('\\')
-                        .or_else(|| remainder.strip_prefix('/'))
-                    {
-                        (format!("{drive}:\\"), remainder)
-                    } else {
-                        (format!("{drive}:"), remainder)
+    pub fn normalize_lexically(self, path: impl AsRef<Path>) -> PathBuf {
+        let path = path.as_ref();
+        let mut normalized: Vec<Component<'_>> = Vec::new();
+
+        for component in self.components(path) {
+            match component {
+                Component::CurDir => {}
+                Component::ParentDir => match normalized.last() {
+                    Some(Component::Normal(_)) => {
+                        normalized.pop();
                     }
-                } else if let Some(remainder) = unc_remainder {
-                    let (server, remainder) = match remainder.split_once(['\\', '/']) {
-                        Some(parts) => parts,
-                        None => return path_like.to_string(),
-                    };
-                    let (share, remainder) = match remainder.split_once(['\\', '/']) {
-                        Some(parts) => parts,
-                        None => return format!("\\\\{server}\\{remainder}"),
-                    };
-                    (format!("\\\\{server}\\{share}\\"), remainder)
-                } else if let Some(remainder) = path_like
-                    .strip_prefix('\\')
-                    .or_else(|| path_like.strip_prefix('/'))
-                {
-                    ("\\".to_string(), remainder)
-                } else {
-                    (String::new(), path_like)
-                };
-
-                let mut components: Vec<&str> = Vec::new();
-                for component in remainder.split(['\\', '/']) {
-                    match component {
-                        "" | "." => {}
-                        ".." => {
-                            if components.last().is_some_and(|c| *c != "..") {
-                                components.pop();
-                            } else if prefix.is_empty() {
-                                components.push(component);
-                            }
-                        }
-                        component => components.push(component),
-                    }
-                }
-
-                let normalized = components.join("\\");
-                if prefix.is_empty() {
-                    normalized
-                } else {
-                    format!("{prefix}{normalized}")
+                    // There is no parent above a root, so discard the attempt.
+                    Some(Component::RootDir) => {}
+                    _ => normalized.push(component),
+                },
+                Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
+                    normalized.push(component);
                 }
             }
-            PathStyle::Unix => {
-                let is_absolute = path_like.starts_with('/');
-                let remainder = if is_absolute {
-                    path_like.trim_start_matches('/')
-                } else {
-                    path_like
-                };
+        }
 
-                let mut components = Vec::new();
-                for component in remainder.split(self.separators_ch()) {
-                    match component {
-                        "" | "." => {}
-                        ".." => {
-                            if components
-                                .last()
-                                .is_some_and(|component| *component != "..")
-                            {
-                                components.pop();
-                            } else if !is_absolute {
-                                components.push(component);
-                            }
-                        }
-                        component => components.push(component),
-                    }
-                }
-
-                let normalized = components.join(self.primary_separator());
-                if is_absolute && normalized.is_empty() {
-                    "/".to_string()
-                } else if is_absolute {
-                    format!("/{normalized}")
-                } else {
-                    normalized
-                }
-            }
+        if normalized.is_empty() && !path.as_os_str().is_empty() {
+            PathBuf::from(".")
+        } else {
+            self.collect_components(normalized)
         }
     }
 
@@ -365,6 +295,40 @@ impl PathStyle {
         };
         !path.is_empty() && self.is_sep_byte(path[0])
     }
+
+    /// Collects `components` into a `PathBuf`, replacing std's
+    /// `impl<P: AsRef<Path>> FromIterator<P> for PathBuf` (which is implemented
+    /// in terms of `PathBuf::push`) with a [`PathStyle`]-aware version.
+    ///
+    /// Unlike std's implementation, this appends each component's raw `OsStr`
+    /// rather than pushing it as a standalone path. That distinction matters for
+    /// Windows verbatim paths: `\\?\C:\a/b` has a single `Normal("a/b")`
+    /// component, std lib is buggy here (rust-lang/rust#164467)
+    fn collect_components<'a>(
+        self,
+        components: impl IntoIterator<Item = Component<'a>>,
+    ) -> PathBuf {
+        let mut result = OsString::new();
+        let mut need_sep = false;
+
+        for component in components {
+            match component {
+                Component::Prefix(_) | Component::RootDir => {
+                    result.push(component.as_os_str(self));
+                    need_sep = false;
+                }
+                _ => {
+                    if need_sep {
+                        result.push(self.primary_separator());
+                    }
+                    result.push(component.as_os_str(self));
+                    need_sep = true;
+                }
+            }
+        }
+
+        PathBuf::from(result)
+    }
 }
 
 #[cfg(test)]
@@ -404,63 +368,111 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_uses_path_style_separator() {
-        assert_eq!(
-            PathStyle::Unix.normalize("/home/user/dev/../worktrees/./zed"),
-            "/home/user/worktrees/zed"
-        );
-        assert_eq!(
-            PathStyle::Windows.normalize("C:\\Users\\user\\dev\\worktrees"),
-            "C:\\Users\\user\\dev\\worktrees"
-        );
+    fn test_normalize_separators() {
+        let paths_and_normalized_unix = [
+            ("", ""),
+            ("/", "/"),
+            ("a//b/", "a/b"),
+            ("./a/./b", "./a/b"),
+            ("a/../b", "a/../b"),
+            (r"a\b", r"a\b"),
+        ];
+        for (path, normalized) in paths_and_normalized_unix {
+            assert_eq!(
+                PathStyle::Unix.normalize_separators(path).as_os_str(),
+                OsStr::new(normalized),
+                "normalize_separators({path:?})"
+            );
+        }
+
+        let paths_and_normalized_windows = [
+            ("C:/Users/user", r"C:\Users\user"),
+            (r"C:/Users//.\user/", r"C:\Users\user"),
+            ("./Users", r".\Users"),
+            ("Users/../worktrees", r"Users\..\worktrees"),
+            // no normalization inside Path prefixes
+            (r"//server/share/dev", r"//server/share\dev"),
+            (r"\\?\C:\Users/user", r"\\?\C:\Users/user"),
+        ];
+        for (path, normalized) in paths_and_normalized_windows {
+            assert_eq!(
+                PathStyle::Windows.normalize_separators(path).as_os_str(),
+                OsStr::new(normalized),
+                "normalize_separators({path:?})"
+            );
+        }
     }
 
     #[test]
-    fn test_normalize_windows_path_regardless_of_host_platform() {
-        assert_eq!(
-            PathStyle::Windows.normalize(r"C:\Users\user\dev\..\worktrees"),
-            r"C:\Users\user\worktrees"
-        );
-        assert_eq!(
-            PathStyle::Windows.normalize(r"C:\Users\.\worktrees"),
-            r"C:\Users\worktrees"
-        );
-        assert_eq!(
-            PathStyle::Windows.normalize(r"C:\Users\user\dev\sub\..\..\worktrees"),
-            r"C:\Users\user\worktrees"
-        );
-        assert_eq!(
-            PathStyle::Windows.normalize("C:/Users/user/dev/../worktrees"),
-            r"C:\Users\user\worktrees"
-        );
-        assert_eq!(
-            PathStyle::Windows.normalize(r"C:/Users\user/dev\..\worktrees"),
-            r"C:\Users\user\worktrees"
-        );
-        assert_eq!(
-            PathStyle::Windows.normalize(r"C:\Users/user\.\worktrees"),
-            r"C:\Users\user\worktrees"
-        );
-        assert_eq!(
-            PathStyle::Windows.normalize(r"\\server\share\dev\..\worktrees"),
-            r"\\server\share\worktrees"
-        );
-        assert_eq!(
-            PathStyle::Windows.normalize(r"//server\share/dev\..\worktrees"),
-            r"\\server\share\worktrees"
-        );
-        assert_eq!(
-            PathStyle::Windows.normalize(r"\dev\..\worktrees"),
-            r"\worktrees"
-        );
-        assert_eq!(
-            PathStyle::Windows.normalize(r"dev\..\worktrees"),
-            r"worktrees"
-        );
-        assert_eq!(
-            PathStyle::Windows.normalize(r"C:\..\worktrees"),
-            r"C:\worktrees"
-        );
+    fn test_normalize_lexically() {
+        let paths_and_normalized_unix = [
+            ("", ""),
+            ("/", "/"),
+            ("/a/b/c", "/a/b/c"),
+            ("/a/b/c/.././d", "/a/b/d"),
+            ("/..", "/"),
+            ("/../a/b", "/a/b"),
+            ("./a", "a"),
+            ("a//b/", "a/b"),
+            ("a/..", "."),
+            ("../..", "../.."),
+            ("a/../../b", "../b"),
+            ("a/..b/...", "a/..b/..."),
+            (r"a\..\b", r"a\..\b"),
+        ];
+        for (path, normalized) in paths_and_normalized_unix {
+            assert_eq!(
+                PathStyle::Unix.normalize_lexically(path).as_os_str(),
+                OsStr::new(normalized),
+                "normalize_lexically({path:?})"
+            );
+        }
+
+        let paths_and_normalized_windows = [
+            (
+                r"C:\Users\user\dev\..\worktrees",
+                r"C:\Users\user\worktrees",
+            ),
+            (r"C:\Users\.\worktrees", r"C:\Users\worktrees"),
+            (
+                r"C:\Users\user\dev\sub\..\..\worktrees",
+                r"C:\Users\user\worktrees",
+            ),
+            ("C:/Users/user/dev/../worktrees", r"C:\Users\user\worktrees"),
+            (
+                r"C:/Users\user/dev\..\worktrees",
+                r"C:\Users\user\worktrees",
+            ),
+            (r"C:\Users/user\.\worktrees", r"C:\Users\user\worktrees"),
+            (
+                r"\\server\share\dev\..\worktrees",
+                r"\\server\share\worktrees",
+            ),
+            (r"\\server\share\..\worktrees", r"\\server\share\worktrees"),
+            // no normalization inside Path prefixes
+            (
+                r"//server/share/dev\sub\worktrees",
+                r"//server/share\dev\sub\worktrees",
+            ),
+            (r"//./pipe/dev\..\worktrees", r"//./pipe\worktrees"),
+            (r"c:/Users/user", r"c:\Users\user"),
+            // `//?/` is not a verbatim prefix, so it must not become `\\?\`.
+            (r"//?/C:/Users/user", r"//?/C:\Users\user"),
+            (r"\dev\..\worktrees", r"\worktrees"),
+            (r"dev\..\worktrees", r"worktrees"),
+            (r"C:\..\worktrees", r"C:\worktrees"),
+            (r"C:..\worktrees", r"C:..\worktrees"),
+            (r"..\..\worktrees", r"..\..\worktrees"),
+            (r"\\server\share", r"\\server\share\"),
+            (r"\\?\C:\Users/user", r"\\?\C:\Users/user"),
+        ];
+        for (path, normalized) in paths_and_normalized_windows {
+            assert_eq!(
+                PathStyle::Windows.normalize_lexically(path).as_os_str(),
+                OsStr::new(normalized),
+                "normalize_lexically({path:?})"
+            );
+        }
     }
 
     #[test]
