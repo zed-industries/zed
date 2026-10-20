@@ -142,7 +142,7 @@ impl Vim {
                 OpenOptions {
                     visible: Some(workspace::OpenVisible::All),
                     focus: Some(true),
-                    ..Default::default()
+                    ..OpenOptions::for_navigation(cx)
                 },
                 window,
                 cx,
@@ -374,7 +374,8 @@ pub fn jump_motion(
 mod test {
     use crate::test::{NeovimBackedTestContext, VimTestContext};
     use editor::Editor;
-    use gpui::TestAppContext;
+    use gpui::{BorrowAppContext, TestAppContext};
+    use settings::SettingsStore;
     use std::path::Path;
     use util::path;
     use workspace::{CloseActiveItem, OpenOptions};
@@ -401,6 +402,15 @@ mod test {
     #[gpui::test]
     async fn test_global_mark_overwrite(cx: &mut TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
+        cx.workspace(|_, _, cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let preview_tabs = settings.preview_tabs.get_or_insert_default();
+                    preview_tabs.enabled = Some(true);
+                    preview_tabs.enable_preview_file_from_code_navigation = Some(true);
+                });
+            });
+        });
 
         let path = Path::new(path!("/first.rs"));
         let fs = cx.workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
@@ -460,6 +470,10 @@ mod test {
             let file_path = file.as_local().unwrap().abs_path(cx);
 
             assert_eq!(file_path.to_str().unwrap(), path!("/second.rs"));
+            assert_eq!(
+                workspace.active_pane().read(cx).preview_item_id(),
+                Some(active_editor.entity_id())
+            );
         })
     }
 }
