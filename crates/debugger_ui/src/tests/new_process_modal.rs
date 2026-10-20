@@ -48,7 +48,9 @@ async fn test_one_off_debug_task_inherits_working_directory(
         }));
     });
 
-    let workspace = workspace.read_with(cx, |multi, _| multi.workspace().clone()).unwrap();
+    let workspace = workspace
+        .read_with(cx, |multi, _| multi.workspace().clone())
+        .unwrap();
 
     // Open a Rust buffer so `confirm_input` can derive a debug adapter from the
     // active buffer's language and reach the DAP locators.
@@ -71,7 +73,9 @@ async fn test_one_off_debug_task_inherits_working_directory(
         })
         .await
         .unwrap();
-    buffer.update(cx, |buffer, cx| buffer.set_language(Some(rust_language), cx));
+    buffer.update(cx, |buffer, cx| {
+        buffer.set_language(Some(rust_language), cx)
+    });
     let editor = cx.new_window_entity(|window, cx| {
         Editor::for_buffer(buffer, Some(project.clone()), window, cx)
     });
