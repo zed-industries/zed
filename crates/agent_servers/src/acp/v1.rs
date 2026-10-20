@@ -227,8 +227,9 @@ impl AcpSessionList {
     pub(super) fn send_info_update(
         &self,
         session_id: acp_v2::SessionId,
-        update: acp_v2::SessionInfoUpdate,
+        update: impl Into<acp_thread::AgentSessionInfoUpdate>,
     ) {
+        let update = update.into();
         self.updates_tx
             .try_send(acp_thread::SessionListUpdate::SessionInfo { session_id, update })
             .log_err();
@@ -531,6 +532,7 @@ impl AcpConnection {
             session_list: client_session_list.clone(),
             request_elicitations: request_elicitations.clone(),
             active_request_scopes: None,
+            pending_session_updates: None,
         };
         let (mut runtime, shutdown) = runtime::ClientRuntime::new(dispatch_context, cx);
         let dispatch_tx = runtime.sender();
@@ -940,7 +942,7 @@ impl AcpConnection {
                 let connection = self.connection.clone();
                 let dispatch_tx = self.dispatch_tx.clone();
                 let supports_close = self.agent_supports_session_close();
-                async move |cx| {
+                async move |_cx| {
                     if thread.upgrade().is_none() {
                         if let Some(this) = this.upgrade() {
                             this.remove_session(&session_id, thread.entity_id());
@@ -984,14 +986,7 @@ impl AcpConnection {
                                 )));
                             };
                             session.session_modes = modes;
-                            session.config_options = config_options.clone();
-                            session.default_config_task = config_options.as_ref().map(|options| {
-                                connection_state.apply_default_config_options(
-                                    &session_id,
-                                    options,
-                                    cx,
-                                )
-                            });
+                            session.config_options = config_options;
                         }
                         connection_state.remove_pending_session(&session_id, thread.entity_id());
                         return Ok(());
@@ -2185,6 +2180,7 @@ pub mod test_support {
             session_list: client_session_list.clone(),
             request_elicitations: request_elicitations.clone(),
             active_request_scopes: None,
+            pending_session_updates: None,
         };
         let dispatch_task = cx.spawn({
             let mut dispatch_rx = dispatch_rx;
@@ -3547,7 +3543,7 @@ mod tests {
                 json!({"updatedAt": null, "_meta": {}}),
                 Some("Agent title"),
                 Some("Agent title"),
-                Some(acp_v2::Meta::new()),
+                Some(v2_terminal_meta("session")),
                 None,
             ),
             (
@@ -3575,7 +3571,7 @@ mod tests {
                 panic!("session-info list update");
             };
             assert_eq!(updated_id, session_id);
-            assert_eq!(update, expected_update);
+            assert_eq!(update, expected_update.into());
             listed.apply_update(update);
             assert_eq!(listed.title.as_deref(), expected_list_title);
             assert_eq!(listed.meta, expected_meta);
@@ -3761,7 +3757,7 @@ mod tests {
             cx.subscribe(&harness.thread, {
                 let events = events.clone();
                 move |_, event, _| {
-                    if matches!(event, AcpThreadEvent::TokenUsageUpdated) {
+                    if matches!(event, AcpThreadEvent::TokenUsageUpdated(_)) {
                         *events.borrow_mut() += 1;
                     }
                     assert!(!matches!(event, AcpThreadEvent::Error));
@@ -3960,7 +3956,13 @@ mod tests {
                 "replacement"
             );
             assert_eq!(tool.terminals().cloned().collect::<Vec<_>>(), terminals);
-            assert_eq!(tool.meta, Some(v2_terminal_meta("replacement")));
+            assert_eq!(
+                tool.meta,
+                Some(
+                    serde_json::from_value(json!({"scope": "replacement", "old": true}))
+                        .expect("patched metadata")
+                )
+            );
             assert_eq!(tool.raw_input, Some(json!({"path": "./a/../b"})));
             assert_eq!(tool.locations.len(), 1);
         });
@@ -4173,7 +4175,7 @@ mod tests {
                 panic!("historical updates retain first-seen rows");
             };
             assert_eq!(user.content.source_blocks().len(), 3);
-            assert_eq!(user.meta, Some(acp_v2::Meta::new()));
+            assert_eq!(user.meta, Some(v2_terminal_meta("user")));
             assert_eq!(later.content.to_markdown(cx), "later");
             let [
                 AssistantMessageChunk::Message { block, meta, .. },
@@ -4964,7 +4966,7 @@ mod tests {
             thread.read_with(cx, |thread, _| {
                 assert!(thread.uses_reported_activity());
                 assert_eq!(thread.foreground_activity(), phase);
-                assert_eq!(thread.foreground_state(), &expected);
+                assert_eq!(thread.foreground_state(), Some(&expected));
                 assert!(thread.latest_submission_id().is_none());
                 assert!(!thread.has_unsettled_submissions());
                 assert!(thread.entries().is_empty());
@@ -6263,6 +6265,65 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn loaded_sessions_do_not_apply_config_defaults(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+        });
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/", serde_json::json!({"a": {}})).await;
+        let project = project::Project::test(fs, [std::path::Path::new("/a")], cx).await;
+        let (connection, requests) = connect_config_defaults_test_agent(cx).await;
+        connection.defaults.set(
+            None,
+            HashMap::from_iter([("web_search".into(), AgentConfigOptionValue::Boolean(true))]),
+        );
+        let connection = Rc::new(connection);
+        let returned = vec![acp::SessionConfigOption::boolean(
+            "web_search",
+            "Web Search",
+            false,
+        )];
+        let session_id = acp_v2::SessionId::new("saved-config");
+        let thread = cx
+            .update(|cx| {
+                connection.clone().open_or_create_session(
+                    session_id.clone(),
+                    project,
+                    PathList::new(&[std::path::Path::new("/a")]),
+                    None,
+                    {
+                        let returned = returned.clone();
+                        |_, _, _| {
+                            async move {
+                                Ok(SessionConfigResponse {
+                                    modes: None,
+                                    config_options: Some(returned),
+                                })
+                            }
+                            .boxed_local()
+                        }
+                    },
+                    cx,
+                )
+            })
+            .await
+            .expect("load preserves saved settings");
+        cx.run_until_parked();
+        assert!(
+            requests.lock().expect("config requests").is_empty(),
+            "load must not send saved defaults"
+        );
+        let options = cx
+            .read(|cx| connection.session_config_options(thread.read(cx).session_id(), cx))
+            .expect("loaded config");
+        assert_eq!(
+            options.config_options(),
+            acp_thread::config_options::from_v1(returned).expect("v2 projection")
+        );
+    }
+
+    #[gpui::test]
     async fn default_config_options_apply_boolean_defaults(cx: &mut gpui::TestAppContext) {
         let (connection, set_config_requests) = connect_config_defaults_test_agent_with_handler(
             |_| {
@@ -6597,6 +6658,21 @@ mod tests {
             })
             .await
             .expect("load initial session");
+        // Exercise the new-session task lifetime without making load apply defaults.
+        let options = connection
+            .sessions
+            .borrow()
+            .get(&session_id)
+            .and_then(|session| session.config_options.clone())
+            .expect("session config");
+        let defaults =
+            connection.apply_default_config_options(&session_id, &options, &mut cx.to_async());
+        connection
+            .sessions
+            .borrow_mut()
+            .get_mut(&session_id)
+            .expect("registered session")
+            .default_config_task = Some(defaults);
         cx.run_until_parked();
         assert_eq!(requests.lock().expect("requests").len(), 1);
         drop(thread);
@@ -7372,6 +7448,7 @@ exit 7
             session_list: client_session_list.clone(),
             request_elicitations: request_elicitations.clone(),
             active_request_scopes: None,
+            pending_session_updates: None,
         };
         // `TestAppContext::spawn` hands out an `AsyncApp` by value, whereas the
         // production path uses `Context::spawn` which hands out `&mut AsyncApp`.
@@ -7754,6 +7831,7 @@ exit 7
             session_list: Rc::new(RefCell::new(None)),
             request_elicitations: store.clone(),
             active_request_scopes: None,
+            pending_session_updates: None,
         };
         let (dispatch_tx, mut dispatch_rx) = mpsc::unbounded::<ForegroundWork>();
         let dispatch_task = cx.spawn(move |mut cx| async move {
@@ -7876,6 +7954,7 @@ exit 7
             session_list: Rc::new(RefCell::new(None)),
             request_elicitations: cx.new(|_| ElicitationStore::default()),
             active_request_scopes: None,
+            pending_session_updates: None,
         };
         let (sender, mut receiver) = mpsc::unbounded::<ForegroundWork>();
         let cleanup = settle_after_disconnect(sender.clone()).boxed().shared();
@@ -9532,10 +9611,7 @@ fn handle_session_notification(
     if let acp::SessionUpdate::SessionInfoUpdate(info_update) = &notification.update
         && let Some(session_list) = ctx.session_list.borrow().as_ref()
     {
-        session_list.send_info_update(
-            session_id.clone(),
-            acp_thread::session_info_update_from_v1(info_update.clone()),
-        );
+        session_list.send_info_update(session_id.clone(), info_update.clone());
     }
 
     // Abandoned loads can keep replaying until their wire operation settles.
