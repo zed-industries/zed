@@ -30,7 +30,7 @@ use std::{
 use text::{Anchor, BufferSnapshot, OffsetRangeExt};
 use ui::{Button, ButtonStyle, Icon, IconName, Label, Tooltip, h_flex, prelude::*};
 use workspace::{
-    ItemHandle, ItemNavHistory, Workspace,
+    ItemHandle, ItemNavHistory, OpenOptions, Workspace,
     item::{Item, ItemEvent, TabContentParams},
 };
 
@@ -924,9 +924,10 @@ impl Render for BufferDiagnosticsEditor {
                                     if let Some(workspace) = Workspace::for_window(window, cx) {
                                         workspace.update(cx, |workspace, cx| {
                                             workspace
-                                                .open_path(
+                                                .open_path_with_options(
                                                     buffer_diagnostics.project_path.clone(),
                                                     None,
+                                                    OpenOptions::for_navigation(cx),
                                                     true,
                                                     window,
                                                     cx,
