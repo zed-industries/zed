@@ -330,6 +330,8 @@ To add custom instructions that apply only to commit message generation, use the
 }
 ```
 
+The name of the current branch is also included in the prompt, so instructions can refer to it, for example to extract a ticket number from a branch like `feature/PROJ-123-new-menu`.
+
 These instructions are sent to the model in addition to any instruction files, such as `.rules` or `AGENTS.md`. To add instructions that apply to both commit messages and the agent more broadly, use the global `AGENTS.md` file located at `~/.config/zed/AGENTS.md` on macOS and Linux, `%APPDATA%\Zed\AGENTS.md` on Windows.
 
 > Before Zed v1.4.0, this was done through the Rules Library, which has been removed.
