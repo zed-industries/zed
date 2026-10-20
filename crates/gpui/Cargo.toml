@@ -47,6 +47,13 @@ screen-capture = [
 windows-manifest = ["dep:embed-resource"]
 profiler = ["dep:hdrhistogram"]
 stacker = ["dep:stacksafe"]
+hot-reload = [
+    "dep:async-tungstenite",
+    "dep:dioxus-cli-config",
+    "dep:dioxus-devtools-types",
+    "dep:smol",
+    "dep:subsecond",
+]
 
 [lib]
 path = "src/gpui.rs"
@@ -126,6 +133,13 @@ async-channel = { workspace = true, features = ["std"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 pollster.workspace = true
+
+[target.'cfg(any(target_os = "macos", target_os = "linux", target_os = "windows", target_os = "ios"))'.dependencies]
+async-tungstenite = { workspace = true, optional = true }
+dioxus-cli-config = { version = "=0.7.10", optional = true }
+dioxus-devtools-types = { version = "=0.7.10", optional = true }
+smol = { workspace = true, optional = true }
+subsecond = { version = "=0.7.10", optional = true }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 getrandom = { version = "0.3.4", features = ["wasm_js"] }

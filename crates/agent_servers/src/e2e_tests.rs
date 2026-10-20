@@ -277,7 +277,10 @@ where
         tool_call.id.clone()
     });
 
-    thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+    thread
+        .update(cx, |thread, cx| thread.cancel(cx))
+        .await
+        .expect("cancellation succeeds");
     full_turn.await.unwrap();
     thread.read_with(cx, |thread, _cx| {
         let AgentThreadEntry::ToolCall(tool_call) = &thread.entries()[first_tool_call_ix] else {

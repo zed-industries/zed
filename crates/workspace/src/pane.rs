@@ -3687,7 +3687,7 @@ impl Pane {
             .overflow_x_scroll()
             .w_full()
             .track_scroll(&self.tab_bar_scroll_handle)
-            .on_scroll_wheel(cx.listener(|this, _, _, _| {
+            .on_scroll(cx.listener(|this, _, _, _| {
                 this.suppress_scroll = true;
             }))
             .children(unpinned_tabs)

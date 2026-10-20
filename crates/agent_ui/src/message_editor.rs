@@ -328,6 +328,11 @@ async fn resolve_pasted_context_items(
     let mut items = Vec::new();
     let mut added_worktrees = Vec::new();
     let default_image_name: SharedString = "Image".into();
+    // A bitmap and image files in the clipboard are usually the same image (e.g. a
+    // screenshot saved to a temporary file), so skip image files when there's a bitmap.
+    let has_clipboard_image = entries
+        .iter()
+        .any(|entry| matches!(entry, ClipboardEntry::Image(_)));
 
     for entry in entries {
         match entry {
@@ -355,7 +360,7 @@ async fn resolve_pasted_context_items(
                         })
                         .await
                     {
-                        if supports_images {
+                        if supports_images && !has_clipboard_image {
                             items.push(ResolvedPastedContextItem::Image(image, name));
                         }
                         continue;
@@ -5204,6 +5209,40 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_paste_external_file_path_with_line_breaks_in_name(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (message_editor, editor, mut cx) =
+            setup_paste_test_message_editor(json!({"a\r\nb.txt": "content"}), cx).await;
+        paste_external_paths(
+            &message_editor,
+            vec![PathBuf::from(path!("/project/a\r\nb.txt"))],
+            &mut cx,
+        );
+
+        let expected_uri = MentionUri::File {
+            abs_path: path!("/project/a\r\nb.txt").into(),
+        }
+        .to_uri()
+        .to_string();
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(editor.text(cx), format!("[@a\nb.txt]({expected_uri}) "));
+        });
+
+        let contents = mention_contents(&message_editor, &mut cx).await;
+        let [(uri, Mention::Text { content, .. })] = contents.as_slice() else {
+            panic!("Unexpected mentions");
+        };
+        assert_eq!(content, "content");
+        assert_eq!(
+            uri,
+            &MentionUri::File {
+                abs_path: path!("/project/a\r\nb.txt").into(),
+            }
+        );
+    }
+
+    #[gpui::test]
     async fn test_paste_external_directory_path_inserts_directory_mention(cx: &mut TestAppContext) {
         init_test(cx);
         let (message_editor, editor, mut cx) = setup_paste_test_message_editor(
@@ -5428,6 +5467,171 @@ mod tests {
                 } if content == "content"
             )
         }));
+    }
+
+    #[gpui::test]
+    async fn test_paste_raw_image_takes_priority_over_image_files(cx: &mut TestAppContext) {
+        init_test(cx);
+        let directory = tempfile::tempdir().expect("create image directory");
+        let (image, raw_image) = paste_test_image();
+        let paths = ["first.png", "second.png"].map(|name| directory.path().join(name));
+        for path in &paths {
+            image
+                .save_with_format(path, image::ImageFormat::Png)
+                .expect("write png");
+        }
+
+        for inline in [false, true] {
+            for raw_first in [false, true] {
+                for image_count in [1, 2] {
+                    let (message_editor, editor, mut cx) =
+                        setup_paste_test_message_editor(json!({"file.txt": "content"}), cx).await;
+                    let image_paths = paths.iter().take(image_count).cloned().collect();
+                    let mut entries = vec![
+                        ClipboardEntry::ExternalPaths(ExternalPaths(image_paths)),
+                        ClipboardEntry::Image(raw_image.clone()),
+                    ];
+                    if raw_first {
+                        entries.reverse();
+                    }
+                    paste_image_context(&message_editor, entries, inline, &mut cx);
+
+                    let image_uri = MentionUri::PastedImage {
+                        name: "Image".into(),
+                    };
+                    editor.update(&mut cx, |editor, cx| {
+                        assert_eq!(editor.text(cx), format!("{} ", image_uri.as_link()));
+                    });
+                    let contents = mention_contents(&message_editor, &mut cx).await;
+                    assert_eq!(contents.len(), 1);
+                    assert!(matches!(
+                        contents.first(),
+                        Some((uri, Mention::Image(_))) if uri == &image_uri
+                    ));
+                }
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_paste_raw_image_keeps_non_image_files(cx: &mut TestAppContext) {
+        init_test(cx);
+        let directory = tempfile::tempdir().expect("create clipboard directory");
+        std::fs::write(directory.path().join("notes.txt"), "plain text")
+            .expect("write non-image file");
+        let (image, raw_image) = paste_test_image();
+
+        let path = directory.path().join("notes.txt");
+
+        for inline in [false, true] {
+            let (message_editor, editor, mut cx) =
+                setup_paste_test_message_editor(json!({"file.txt": "content"}), cx).await;
+            let fs = message_editor.read_with(&cx, |message_editor, cx| {
+                message_editor
+                    .workspace
+                    .upgrade()
+                    .expect("workspace")
+                    .read(cx)
+                    .project()
+                    .read(cx)
+                    .fs()
+                    .clone()
+            });
+            fs.as_fake()
+                .insert_tree(directory.path(), json!({"notes.txt": "plain text"}))
+                .await;
+            paste_image_context(
+                &message_editor,
+                vec![
+                    ClipboardEntry::ExternalPaths(ExternalPaths(vec![path.clone()].into())),
+                    ClipboardEntry::Image(raw_image.clone()),
+                ],
+                inline,
+                &mut cx,
+            );
+
+            let image_uri = MentionUri::PastedImage {
+                name: "Image".into(),
+            };
+            let contents = mention_contents(&message_editor, &mut cx).await;
+            let Some((_, Mention::Image(pasted_image))) =
+                contents.iter().find(|(uri, _)| uri == &image_uri)
+            else {
+                panic!("Expected raw image");
+            };
+            let bytes = base64::prelude::BASE64_STANDARD
+                .decode(pasted_image.data.as_ref())
+                .expect("decode pasted image");
+            assert_eq!(
+                image::load_from_memory(&bytes)
+                    .expect("load pasted image")
+                    .to_rgb8(),
+                image.to_rgb8(),
+            );
+
+            // The inline prompt only handles images, so it ignores other files.
+            let mut expected_text = String::new();
+            if !inline {
+                let file_uri = MentionUri::File {
+                    abs_path: path.clone(),
+                };
+                expected_text.push_str(&format!("{} ", file_uri.as_link()));
+                assert!(contents.iter().any(|(uri, mention)| {
+                    uri == &file_uri
+                        && matches!(mention, Mention::Text { content, .. } if content == "plain text")
+                }));
+            }
+            expected_text.push_str(&format!("{} ", image_uri.as_link()));
+            assert_eq!(contents.len(), if inline { 1 } else { 2 });
+            editor.update(&mut cx, |editor, cx| {
+                assert_eq!(editor.text(cx), expected_text);
+            });
+        }
+    }
+
+    fn paste_test_image() -> (image::DynamicImage, gpui::Image) {
+        let image = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            2,
+            2,
+            image::Rgb([32, 96, 160]),
+        ));
+        let mut bitmap = std::io::Cursor::new(Vec::new());
+        image
+            .write_to(&mut bitmap, image::ImageFormat::Bmp)
+            .expect("encode clipboard bitmap");
+        let raw_image = gpui::Image::from_bytes(gpui::ImageFormat::Bmp, bitmap.into_inner());
+        (image, raw_image)
+    }
+
+    fn paste_image_context(
+        message_editor: &Entity<MessageEditor>,
+        entries: Vec<ClipboardEntry>,
+        inline: bool,
+        cx: &mut VisualTestContext,
+    ) {
+        cx.write_to_clipboard(ClipboardItem { entries });
+        message_editor.update_in(cx, |message_editor, window, cx| {
+            message_editor
+                .session_capabilities
+                .write()
+                .set_prompt_capabilities(
+                    acp_v2::PromptCapabilities::new().image(acp_v2::PromptImageCapabilities::new()),
+                );
+            if inline {
+                crate::mention_set::paste_images_as_context(
+                    message_editor.editor().clone(),
+                    message_editor.mention_set().clone(),
+                    message_editor.workspace.clone(),
+                    window,
+                    cx,
+                )
+                .expect("handle image clipboard")
+                .detach();
+            } else {
+                message_editor.paste(&Paste, window, cx);
+            }
+        });
+        cx.run_until_parked();
     }
 
     async fn setup_paste_test_message_editor(

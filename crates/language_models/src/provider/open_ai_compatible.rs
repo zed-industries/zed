@@ -370,6 +370,7 @@ fn supported_thinking_effort_levels(model: &AvailableModel) -> Vec<LanguageModel
             name: effort.label().into(),
             value: effort.value().into(),
             is_default: effort == default_effort,
+            supports_disabling_thinking: None,
         })
         .collect()
 }

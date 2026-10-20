@@ -1060,7 +1060,7 @@ impl TerminalElement {
         }
 
         if content_mode.is_scrollable() {
-            self.interactivity.on_scroll_wheel({
+            self.interactivity.on_scroll({
                 let terminal_view = self.terminal_view.downgrade();
                 move |e, window, cx| {
                     terminal_view

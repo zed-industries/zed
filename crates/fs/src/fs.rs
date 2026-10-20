@@ -64,7 +64,7 @@ use git::{
     status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
 #[cfg(feature = "test-support")]
-use path::normalize_path;
+use util::paths::normalize_path;
 
 #[cfg(feature = "test-support")]
 use smol::io::AsyncReadExt;

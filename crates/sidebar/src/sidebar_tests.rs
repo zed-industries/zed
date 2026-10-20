@@ -4146,8 +4146,33 @@ async fn test_archive_selected_thread_archives_closed_linked_worktree(cx: &mut T
     });
 
     focus_sidebar(&sidebar, cx);
-    sidebar.update_in(cx, |sidebar, _window, _cx| {
+    let previous_status = sidebar.update_in(cx, |sidebar, _window, _cx| {
         sidebar.selection = Some(thread_index);
+        let Some(ListEntry::Thread(thread)) = sidebar.contents.entries.get_mut(thread_index) else {
+            panic!("expected selected thread");
+        };
+        std::mem::replace(
+            &mut Arc::make_mut(thread).status,
+            AgentThreadStatus::Unconfirmed,
+        )
+    });
+    cx.dispatch_action(ArchiveSelectedThread);
+    cx.run_until_parked();
+    assert_eq!(
+        cx.update(|_, cx| {
+            ThreadMetadataStore::global(cx)
+                .read(cx)
+                .entry_by_session(&worktree_session_id)
+                .map(|thread| thread.archived)
+        }),
+        Some(false),
+        "unconfirmed activity must not permit archival"
+    );
+    sidebar.update_in(cx, |sidebar, _window, _cx| {
+        let Some(ListEntry::Thread(thread)) = sidebar.contents.entries.get_mut(thread_index) else {
+            panic!("expected selected thread");
+        };
+        Arc::make_mut(thread).status = previous_status;
     });
     cx.dispatch_action(ArchiveSelectedThread);
     for _ in 0..8 {

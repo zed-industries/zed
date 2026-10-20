@@ -10,6 +10,7 @@ use gpui::{
 use image::RgbaImage;
 use objc2::runtime::AnyObject;
 
+use core_graphics::color_space::{CGColorSpace, kCGColorSpaceDisplayP3};
 use foreign_types::{ForeignType, ForeignTypeRef};
 use metal::{
     CAMetalLayer, CommandQueue, MTLGPUFamily, MTLPixelFormat, MTLResourceOptions, NSRange,
@@ -48,8 +49,9 @@ pub unsafe fn new_renderer(
     _native_view: *mut c_void,
     _bounds: gpui::Size<f32>,
     transparent: bool,
+    use_display_p3: bool,
 ) -> Renderer {
-    MetalRenderer::new(context, transparent)
+    MetalRenderer::new(context, transparent, use_display_p3)
 }
 
 pub struct InstanceBufferPool {
@@ -148,10 +150,14 @@ pub struct PathRasterizationVertex {
 
 impl MetalRenderer {
     /// Creates a new MetalRenderer with a CAMetalLayer for window-based rendering.
-    pub fn new(instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>, transparent: bool) -> Self {
+    pub fn new(
+        instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
+        transparent: bool,
+        use_display_p3: bool,
+    ) -> Self {
         let device = Self::create_device();
         let layer = metal::MetalLayer::new();
-        Self::configure_layer(&layer, &device, transparent);
+        Self::configure_layer(&layer, &device, transparent, use_display_p3);
         Self::new_internal(device, Some(layer), !transparent, instance_buffer_pool)
     }
 
@@ -170,13 +176,38 @@ impl MetalRenderer {
             metal::MetalLayerRef::from_ptr(ptr::from_ref(layer).cast_mut().cast::<CAMetalLayer>())
         }
         .to_owned();
-        Self::configure_layer(&layer, &device, transparent);
+        Self::configure_layer(&layer, &device, transparent, false);
         Self::new_internal(device, Some(layer), !transparent, instance_buffer_pool)
     }
 
-    fn configure_layer(layer: &metal::MetalLayerRef, device: &metal::DeviceRef, transparent: bool) {
+    fn configure_layer(
+        layer: &metal::MetalLayerRef,
+        device: &metal::DeviceRef,
+        transparent: bool,
+        use_display_p3: bool,
+    ) {
         layer.set_device(device);
         layer.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
+        // metal-rs doesn't bind these setters, so view the same object through
+        // objc2's typed CAMetalLayer binding.
+        let objc2_layer: &objc2_quartz_core::CAMetalLayer = unsafe { &*layer.as_ptr().cast() };
+        if use_display_p3 {
+            // SAFETY: The constant is extern, from Core Graphics
+            let display_p3_name = unsafe { kCGColorSpaceDisplayP3 };
+            if let Some(display_p3_color_space) = CGColorSpace::create_with_name(display_p3_name) {
+                // SAFETY: `layer` is a CAMetalLayer and the color space remains valid for the call.
+                // 'metal-rs' does not expose CAMetalLayer's typed `colorspace` setter.
+                // Could be replaced with a native binding via objc2-* in future
+                unsafe {
+                    let _: () = objc2::msg_send![
+                        objc2_layer,
+                        setColorspace: display_p3_color_space.as_ptr().cast::<c_void>()
+                    ];
+                }
+            } else {
+                log::error!("unable to create the Display P3 color space");
+            }
+        }
         // Support direct-to-display rendering if the window is not transparent
         // https://developer.apple.com/documentation/metal/managing-your-game-window-for-metal-in-macos
         layer.set_opaque(!transparent);
@@ -186,9 +217,6 @@ impl MetalRenderer {
         // presentation cost, even when `test-support` is compiled in.
         #[cfg(all(feature = "test-support", debug_assertions))]
         layer.set_framebuffer_only(false);
-        // metal-rs doesn't bind these setters, so view the same object through
-        // objc2's typed CAMetalLayer binding.
-        let objc2_layer: &objc2_quartz_core::CAMetalLayer = unsafe { &*layer.as_ptr().cast() };
         objc2_layer.setAllowsNextDrawableTimeout(false);
         objc2_layer.setNeedsDisplayOnBoundsChange(true);
         // UIKit sizes a view's backing layer itself; only AppKit-hosted

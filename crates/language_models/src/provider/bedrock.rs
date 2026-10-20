@@ -1004,26 +1004,31 @@ fn converse_language_model(model: &ConverseModel) -> LanguageModel {
                     name: "Low".into(),
                     value: "low".into(),
                     is_default: false,
+                    supports_disabling_thinking: None,
                 },
                 language_model::LanguageModelEffortLevel {
                     name: "Medium".into(),
                     value: "medium".into(),
                     is_default: is_gpt_6_astra,
+                    supports_disabling_thinking: None,
                 },
                 language_model::LanguageModelEffortLevel {
                     name: "High".into(),
                     value: "high".into(),
                     is_default: !is_gpt_6_astra,
+                    supports_disabling_thinking: None,
                 },
                 language_model::LanguageModelEffortLevel {
                     name: "XHigh".into(),
                     value: "xhigh".into(),
                     is_default: false,
+                    supports_disabling_thinking: None,
                 },
                 language_model::LanguageModelEffortLevel {
                     name: "Max".into(),
                     value: "max".into(),
                     is_default: false,
+                    supports_disabling_thinking: None,
                 },
             ]
             .into_iter()
@@ -1229,6 +1234,7 @@ fn mantle_supported_effort_levels(model: &MantleModel) -> Vec<LanguageModelEffor
             name: effort.label().into(),
             value: effort.value().into(),
             is_default: effort == default_effort,
+            supports_disabling_thinking: None,
         })
         .collect()
 }

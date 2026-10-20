@@ -965,9 +965,6 @@ impl MultiWorkspace {
 
         let task = self.remove(workspaces, RemovalIntent::CloseProject, window, cx);
 
-        self.project_groups.retain(|group| group.key != *group_key);
-        cx.emit(MultiWorkspaceEvent::ProjectGroupsChanged);
-
         task
     }
 
@@ -1819,6 +1816,18 @@ impl MultiWorkspace {
             let (removed_any, reopen_key) = this.update_in(cx, |this, window, cx| {
                 let mut removed_any = false;
                 let displayed_workspace = this.workspace().clone();
+
+                // wait for should_continue to be true before removing project groups
+                if intent == RemovalIntent::CloseProject {
+                    let workspace_to_delete_keys = workspaces
+                        .iter()
+                        .map(|workspace| workspace.read(cx).project_group_key(cx))
+                        .collect::<Vec<_>>();
+
+                    this.project_groups
+                        .retain(|group| !workspace_to_delete_keys.contains(&group.key));
+                    cx.emit(MultiWorkspaceEvent::ProjectGroupsChanged);
+                }
 
                 for workspace in &workspaces {
                     if *workspace == displayed_workspace {

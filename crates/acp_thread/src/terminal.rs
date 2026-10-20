@@ -791,9 +791,7 @@ impl Terminal {
                     );
                 });
             }
-            if !meta.is_undefined() {
-                state.meta = meta.take();
-            }
+            crate::MetadataUpdate::V2(meta).apply(&mut state.meta);
             if let Some(meta) = output_meta {
                 state.output_meta = meta;
             }

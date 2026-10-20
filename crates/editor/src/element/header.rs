@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::path::Path;
 use std::rc::Rc;
 
@@ -683,15 +684,23 @@ pub(crate) fn render_buffer_header(
     let can_open_excerpts = file.is_none_or(|file| file.can_open());
     let path_style = file.map(|file| file.path_style(cx));
     let relative_path = buffer.resolve_file_path(include_root, cx);
-    let (parent_path, filename) = if let Some(path) = &relative_path {
-        if let Some(path_style) = path_style {
-            let (dir, file_name) = path_style.split(path);
-            (dir.map(|dir| dir.to_owned()), Some(file_name.to_owned()))
-        } else {
-            (None, Some(path.clone()))
+    let (parent_path, filename) = match (&relative_path, path_style) {
+        (Some(path), Some(path_style)) => {
+            match path_style
+                .file_name(Path::new(path))
+                .and_then(OsStr::to_str)
+            {
+                Some(file_name) => (
+                    path.strip_suffix(file_name)
+                        .filter(|parent| !parent.is_empty())
+                        .map(ToOwned::to_owned),
+                    Some(file_name.to_owned()),
+                ),
+                None => (None, Some(path.clone())),
+            }
         }
-    } else {
-        (None, None)
+        (Some(path), None) => (None, Some(path.clone())),
+        (None, _) => (None, None),
     };
     let focus_handle = editor_read.focus_handle(cx);
     let colors = cx.theme().colors();

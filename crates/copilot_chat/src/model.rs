@@ -53,6 +53,7 @@ pub fn language_model(model: &CopilotChatModel) -> LanguageModel {
                     name,
                     value: language_model::SharedString::from(level.clone()),
                     is_default: level == "high",
+                    supports_disabling_thinking: None,
                 }
             })
             .collect()

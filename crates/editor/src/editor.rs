@@ -17,6 +17,7 @@ mod bracket_colorization;
 mod clangd_ext;
 pub mod code_context_menus;
 mod code_lens;
+mod debugger_hover;
 pub mod display_map;
 mod document_colors;
 mod document_links;
@@ -2837,6 +2838,10 @@ impl Editor {
 
         if self.signature_help_state.has_multiple_signatures() {
             key_context.add("showing_signature_help");
+        }
+
+        if self.hover_state.keyboard_debugger_hover_active() {
+            key_context.add("DebuggerHover");
         }
 
         // Disable vim contexts when a sub-editor (e.g. rename/inline assistant) is focused.
@@ -11550,7 +11555,7 @@ impl Editor {
             inlay_hints_style: make_inlay_hints_style(cx),
             edit_prediction_styles: make_suggestion_styles(cx),
             unnecessary_code_fade: settings.unnecessary_code_fade,
-            show_underlines: self.diagnostics_enabled(),
+            show_underlines: !self.mode.is_minimap(),
         }
     }
 
@@ -11864,6 +11869,15 @@ pub trait SemanticsProvider {
         cx: &mut App,
     ) -> Option<Task<Option<Vec<project::Hover>>>>;
 
+    fn debugger_hover(
+        &self,
+        _buffer: &Entity<Buffer>,
+        _position: text::Anchor,
+        _cx: &mut App,
+    ) -> Option<Task<Option<project::DebuggerHover>>> {
+        None
+    }
+
     fn inline_values(
         &self,
         buffer_handle: Entity<Buffer>,
@@ -11940,6 +11954,18 @@ impl SemanticsProvider for WeakEntity<Project> {
     ) -> Option<Task<Option<Vec<project::Hover>>>> {
         self.update(cx, |project, cx| project.hover(buffer, position, cx))
             .ok()
+    }
+
+    fn debugger_hover(
+        &self,
+        buffer: &Entity<Buffer>,
+        position: text::Anchor,
+        cx: &mut App,
+    ) -> Option<Task<Option<project::DebuggerHover>>> {
+        self.update(cx, |project, cx| {
+            project.debugger_hover(buffer, position, cx)
+        })
+        .ok()
     }
 
     fn document_highlights(
