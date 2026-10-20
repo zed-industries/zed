@@ -871,7 +871,7 @@ impl LanguageModelClient for OpenCodeLanguageModelProvider {
                     request.max_output_tokens =
                         request.effective_max_output_tokens(config.model.max_output_tokens());
                 }
-                let mode = if config.supports_thinking && request.thinking_allowed {
+                let mode = if config.supports_thinking {
                     google_ai::GoogleModelMode::Thinking {
                         budget_tokens: None,
                     }
@@ -979,6 +979,7 @@ fn language_model(model: &DiscoveredModel, subscription: OpenCodeSubscription) -
                         name: name.into(),
                         value: value.into(),
                         is_default: i == default_index,
+                        supports_disabling_thinking: None,
                     }
                 })
                 .collect()
@@ -1062,7 +1063,7 @@ struct ModelLimits {
 
 #[derive(Deserialize)]
 struct ModelTransport {
-    npm: String,
+    npm: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1116,7 +1117,7 @@ fn parse_discovered_models(
             let transport = metadata
                 .provider
                 .as_ref()
-                .map(|provider| provider.npm.as_str())
+                .and_then(|provider| provider.npm.as_deref())
                 .or(provider.npm.as_deref());
             let protocol = transport.and_then(protocol_for_transport)?;
             let reasoning_effort_levels = metadata
@@ -1827,6 +1828,50 @@ mod tests {
             ] {
                 let models = parse_discovered_models(&catalog.to_string(), subscription)?;
                 assert_eq!(models.len(), expected_count, "{subscription:?}: {catalog}",);
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_discovery_inherits_transport_unless_model_overrides_it() -> Result<()> {
+        for (model_provider, expected_protocol) in [
+            (serde_json::Value::Null, ApiProtocol::OpenAiChat),
+            (
+                serde_json::json!({"api": "https://opencode.ai/inference/openai/v1"}),
+                ApiProtocol::OpenAiChat,
+            ),
+            (
+                serde_json::json!({"npm": "@ai-sdk/anthropic"}),
+                ApiProtocol::Anthropic,
+            ),
+        ] {
+            let provider = serde_json::json!({
+                "npm": "@ai-sdk/openai-compatible",
+                "models": {
+                    "model": {
+                        "id": "model",
+                        "name": "Model",
+                        "tool_call": true,
+                        "modalities": {"output": ["text"]},
+                        "limit": {"context": 1000},
+                        "provider": model_provider,
+                    },
+                },
+            });
+            let catalog = serde_json::json!({
+                "opencode": provider,
+                "opencode-go": provider,
+            })
+            .to_string();
+            for subscription in [OpenCodeSubscription::Zen, OpenCodeSubscription::Go] {
+                let models = parse_discovered_models(&catalog, subscription)?;
+                assert_eq!(models.len(), 1, "{subscription:?}: {model_provider}");
+                assert_eq!(
+                    models[0].model.protocol(),
+                    expected_protocol,
+                    "{subscription:?}: {model_provider}",
+                );
             }
         }
         Ok(())

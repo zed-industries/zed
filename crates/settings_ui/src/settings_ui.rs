@@ -6189,10 +6189,10 @@ pub mod test {
         });
         draw_settings_page(&view, px(400.), px(600.) + last_height * 2., cx);
         draw_settings_page(&view, px(400.), px(600.) + last_height, cx);
-        cx.simulate_event(gpui::ScrollWheelEvent {
+        cx.simulate_event(gpui::ScrollEvent {
             position: point(px(200.), px(100.)),
             delta: gpui::ScrollDelta::Pixels(point(px(0.), -last_height)),
-            ..gpui::ScrollWheelEvent::default()
+            ..gpui::ScrollEvent::default()
         });
         draw_settings_page(&view, px(400.), px(600.), cx);
         let viewport = list_state.viewport_bounds();
@@ -6302,10 +6302,10 @@ pub mod test {
             });
             let expected_offset = match input {
                 ScrollInput::Wheel => {
-                    cx.simulate_event(gpui::ScrollWheelEvent {
+                    cx.simulate_event(gpui::ScrollEvent {
                         position: point(px(200.), px(100.)),
                         delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-32.))),
-                        ..gpui::ScrollWheelEvent::default()
+                        ..gpui::ScrollEvent::default()
                     });
                     px(-32.)
                 }
