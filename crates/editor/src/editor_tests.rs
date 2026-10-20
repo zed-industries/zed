@@ -50105,6 +50105,10 @@ async fn test_lsp_show_document(cx: &mut TestAppContext) {
         let editor = workspace
             .active_item_as::<Editor>(cx)
             .expect("an editor should be opened for the shown document");
+        assert_eq!(
+            workspace.active_pane().read(cx).preview_item_id(),
+            Some(editor.entity_id())
+        );
         editor.update(cx, |editor, cx| {
             let path = editor
                 .buffer()
@@ -50201,6 +50205,10 @@ async fn test_lsp_show_document_without_take_focus(cx: &mut TestAppContext) {
             opened_editor.entity_id(),
             initial_editor.entity_id(),
             "the shown document should become the active item"
+        );
+        assert_eq!(
+            workspace.active_pane().read(cx).preview_item_id(),
+            Some(opened_editor.entity_id())
         );
     });
 }

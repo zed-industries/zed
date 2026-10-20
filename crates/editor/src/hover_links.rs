@@ -1539,6 +1539,11 @@ mod tests {
                 "dir/file2.rs",
                 "cmd-click on a file path should open that file"
             );
+            let pane = workspace.active_pane().read(cx);
+            assert_eq!(
+                pane.preview_item_id(),
+                pane.active_item().map(|item| item.item_id())
+            );
         });
 
         assert_eq!(

@@ -2196,9 +2196,9 @@ pub async fn open_resolved_target(
         .update_in(cx, |workspace, window, cx| {
             workspace.open_paths(
                 vec![path_to_open.path.clone()],
-                workspace::OpenOptions {
-                    visible: Some(workspace::OpenVisible::OnlyDirectories),
-                    ..Default::default()
+                OpenOptions {
+                    visible: Some(OpenVisible::OnlyDirectories),
+                    ..OpenOptions::for_navigation(cx)
                 },
                 None,
                 window,
@@ -2561,7 +2561,7 @@ pub(crate) fn handle_lsp_show_document(
         OpenOptions {
             visible: Some(OpenVisible::None),
             focus: Some(request.take_focus),
-            ..OpenOptions::default()
+            ..OpenOptions::for_navigation(cx)
         },
         window,
         cx,
@@ -3310,6 +3310,12 @@ mod tests {
         });
         // Column 4 is the fourth character of `aéøbc` (the `b`), which starts at byte 5.
         assert_eq!(cursor, language::Point::new(1, 5));
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(
+                workspace.active_pane().read(cx).preview_item_id(),
+                Some(editor.entity_id())
+            );
+        });
     }
 
     #[gpui::test]

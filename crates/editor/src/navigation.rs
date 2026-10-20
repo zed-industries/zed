@@ -1868,9 +1868,6 @@ impl Editor {
                         Ok(Navigated::Yes)
                     }
                     Some(Either::Right(file_target)) => {
-                        // TODO(andrew): respect preview tab settings
-                        //               `enable_keep_preview_on_code_navigation` and
-                        //               `enable_preview_file_from_code_navigation`
                         let Some(workspace) = workspace else {
                             return Ok(Navigated::No);
                         };
