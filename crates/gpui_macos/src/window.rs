@@ -2817,7 +2817,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                 | PlatformInput::MouseUp(_)
                 | PlatformInput::MousePressure(_)
                 | PlatformInput::MouseExited(_)
-                | PlatformInput::ScrollWheel(_)
+                | PlatformInput::Scroll(_)
                 | PlatformInput::Pinch(_)
         ) {
             lock.cursor_visible.store(true, Ordering::Relaxed);

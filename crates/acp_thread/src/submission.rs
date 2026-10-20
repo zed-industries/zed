@@ -108,7 +108,7 @@ impl Future for Submission {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
 pub enum SubmissionState {
     Pending,
     Accepted {
@@ -439,6 +439,10 @@ impl SessionActivity {
             "Session closed or agent connection lost before cancellation was confirmed"
         );
         Ok(())
+    }
+
+    pub(crate) fn observation_closed(&self) -> bool {
+        self.observation_closed
     }
 
     pub(crate) fn close_observation(&mut self) {
