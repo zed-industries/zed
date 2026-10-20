@@ -13,7 +13,7 @@ use theme::ActiveTheme;
 use theme_settings::ThemeSettings;
 use util::ResultExt;
 use workspace::{
-    Workspace,
+    OpenOptions, Workspace,
     ui::{LabelLike, ListItem, ListItemSpacing, prelude::*},
 };
 
@@ -140,13 +140,14 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                         workspace.active_pane().clone()
                     };
 
+                    let options = OpenOptions::for_navigation(cx);
                     let editor = workspace.open_project_item::<Editor>(
                         secondary.then_some(pane),
                         buffer,
                         true,
                         true,
-                        true,
-                        true,
+                        options.keep_old_preview,
+                        options.allow_preview,
                         window,
                         cx,
                     );
@@ -356,7 +357,7 @@ mod tests {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/dir"), json!({ "test.rs": "" }))
+        fs.insert_tree(path!("/dir"), json!({ "test.rs": "", "origin.rs": "" }))
             .await;
 
         let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
@@ -502,6 +503,45 @@ mod tests {
         cx.run_until_parked();
         symbols.read_with(cx, |symbols, _| {
             assert_eq!(symbols.delegate.matches.len(), 1);
+        });
+
+        cx.update(|_, cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let preview_tabs = settings.preview_tabs.get_or_insert_default();
+                    preview_tabs.enabled = Some(true);
+                    preview_tabs.enable_preview_file_from_code_navigation = Some(true);
+                    preview_tabs.enable_keep_preview_on_code_navigation = Some(false);
+                });
+            });
+        });
+        let origin = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_abs_path(
+                    Path::new(path!("/dir/origin.rs")).to_path_buf(),
+                    OpenOptions {
+                        allow_preview: true,
+                        ..OpenOptions::default()
+                    },
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .expect("origin should open");
+        symbols.update_in(cx, |picker, window, cx| {
+            picker.delegate.confirm(false, window, cx);
+        });
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            let pane = workspace.active_pane().read(cx);
+            let editor = workspace
+                .active_item_as::<Editor>(cx)
+                .expect("symbol editor");
+            assert_eq!(editor.read(cx).title(cx), "test.rs");
+            assert_eq!(pane.items_len(), 2);
+            assert_eq!(pane.preview_item_id(), Some(editor.entity_id()));
+            assert!(pane.index_for_item(origin.as_ref()).is_some());
         });
     }
 
