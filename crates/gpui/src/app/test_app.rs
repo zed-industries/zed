@@ -444,14 +444,14 @@ impl<V: 'static + Render> TestAppWindow<V> {
         self.simulate_mouse_up(position, button);
     }
 
-    /// Simulate a trackpad scroll event.
+    /// Simulate a precise pointer scroll, as from a trackpad.
     pub fn simulate_scroll(&mut self, position: Point<Pixels>, delta: Point<Pixels>) {
         self.simulate_event(crate::ScrollEvent {
             position,
             delta: crate::ScrollDelta::Pixels(delta),
             modifiers: Default::default(),
             touch_phase: crate::TouchPhase::Moved,
-            source: crate::ScrollSource::Trackpad,
+            source: crate::ScrollSource::Pointer,
         });
     }
 

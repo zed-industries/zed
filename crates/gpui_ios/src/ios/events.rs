@@ -5,8 +5,8 @@ use gpui::{
 };
 use objc2_core_foundation::CGPoint;
 use objc2_ui_kit::{
-    UIGestureRecognizerState, UIKeyModifierFlags, UIPanGestureRecognizer, UIScrollTypeMask,
-    UITouch, UITouchPhase, UIView,
+    UIGestureRecognizerState, UIKeyModifierFlags, UIPanGestureRecognizer, UITouch, UITouchPhase,
+    UIView,
 };
 
 pub fn touch_location_in_view(touch: &UITouch, view: &UIView) -> Point<Pixels> {
@@ -32,8 +32,6 @@ pub fn touch_id(touch: &UITouch) -> TouchId {
 /// The recognizer's translation is reset after each step, so every event carries
 /// only the movement since the previous one. UIKit reports the translation in
 /// the direction the content should move, which matches GPUI's pixel deltas.
-/// The source comes from the scroll types the recognizer accepts: the window
-/// installs one recognizer for continuous scrolls and one for discrete ones.
 /// Returns `None` for states that carry no scroll.
 pub fn scroll_event(recognizer: &UIPanGestureRecognizer, view: &UIView) -> Option<ScrollEvent> {
     let touch_phase = match recognizer.state() {
@@ -56,11 +54,7 @@ pub fn scroll_event(recognizer: &UIPanGestureRecognizer, view: &UIView) -> Optio
         )),
         modifiers: modifiers(recognizer.modifierFlags()),
         touch_phase,
-        source: if recognizer.allowedScrollTypesMask() == UIScrollTypeMask::Continuous {
-            ScrollSource::Trackpad
-        } else {
-            ScrollSource::Wheel
-        },
+        source: ScrollSource::Pointer,
     })
 }
 

@@ -544,13 +544,11 @@ pub type ScrollWheelEvent = ScrollEvent;
 /// The kind of input that produced a [`ScrollEvent`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ScrollSource {
-    /// A mouse wheel, or any device the platform cannot identify.
+    /// A scroll the platform reported from a pointing device, such as a mouse
+    /// wheel or a trackpad. [`ScrollDelta::precise`] tells continuous devices
+    /// apart from wheel notches.
     #[default]
-    Wheel,
-    /// A trackpad or other continuous scrolling device that the platform
-    /// reports separately from wheel clicks. This includes a Magic Mouse and
-    /// mice whose drivers smooth wheel scrolling into continuous deltas.
-    Trackpad,
+    Pointer,
     /// A pan of a finger on a touchscreen, recognized by GPUI, including the
     /// momentum GPUI synthesizes after the finger lifts.
     Touch,

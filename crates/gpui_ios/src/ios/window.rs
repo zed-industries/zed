@@ -315,26 +315,23 @@ impl IosWindow {
         view.setUserInteractionEnabled(true);
         view.setMultipleTouchEnabled(true);
 
-        // Trackpad and mouse-wheel scrolling reaches UIKit apps only through
-        // pan recognizers that accept scroll types. With no allowed touch types
-        // they never claim finger touches, so those keep reaching
-        // `touchesBegan` and GPUI's own recognizer. A recognizer can't report
-        // which kind of scroll it received, so each kind gets its own.
-        for scroll_types in [UIScrollTypeMask::Continuous, UIScrollTypeMask::Discrete] {
-            let scroll_target: &AnyObject = &view;
-            // SAFETY: `MetalView` implements `handleScroll:` and owns the recognizer.
-            let scroll_recognizer = unsafe {
-                UIPanGestureRecognizer::initWithTarget_action(
-                    UIPanGestureRecognizer::alloc(main_thread),
-                    Some(scroll_target),
-                    Some(sel!(handleScroll:)),
-                )
-            };
-            scroll_recognizer.setAllowedScrollTypesMask(scroll_types);
-            scroll_recognizer.setAllowedTouchTypes(&NSArray::new());
-            scroll_recognizer.setCancelsTouchesInView(false);
-            view.addGestureRecognizer(&scroll_recognizer);
-        }
+        // Trackpad and mouse-wheel scrolling reaches UIKit apps only through a
+        // pan recognizer that accepts scroll types. With no allowed touch types
+        // it never claims finger touches, so those keep reaching `touchesBegan`
+        // and GPUI's own recognizer.
+        let scroll_target: &AnyObject = &view;
+        // SAFETY: `MetalView` implements `handleScroll:` and owns the recognizer.
+        let scroll_recognizer = unsafe {
+            UIPanGestureRecognizer::initWithTarget_action(
+                UIPanGestureRecognizer::alloc(main_thread),
+                Some(scroll_target),
+                Some(sel!(handleScroll:)),
+            )
+        };
+        scroll_recognizer.setAllowedScrollTypesMask(UIScrollTypeMask::All);
+        scroll_recognizer.setAllowedTouchTypes(&NSArray::new());
+        scroll_recognizer.setCancelsTouchesInView(false);
+        view.addGestureRecognizer(&scroll_recognizer);
 
         let view_controller = ViewController::new(main_thread);
         view_controller.setView(Some(&view));

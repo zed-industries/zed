@@ -269,13 +269,10 @@ pub(crate) unsafe fn platform_input_from_native(
                     native_event.scrollingDeltaY() as f32,
                 );
 
-                let (delta, source) = if native_event.hasPreciseScrollingDeltas() == YES {
-                    (
-                        ScrollDelta::Pixels(raw_data.map(px)),
-                        ScrollSource::Trackpad,
-                    )
+                let delta = if native_event.hasPreciseScrollingDeltas() == YES {
+                    ScrollDelta::Pixels(raw_data.map(px))
                 } else {
-                    (ScrollDelta::Lines(raw_data), ScrollSource::Wheel)
+                    ScrollDelta::Lines(raw_data)
                 };
 
                 PlatformInput::Scroll(ScrollEvent {
@@ -286,7 +283,7 @@ pub(crate) unsafe fn platform_input_from_native(
                     delta,
                     touch_phase: phase,
                     modifiers: read_modifiers(native_event),
-                    source,
+                    source: ScrollSource::Pointer,
                 })
             }),
             NSEventType::NSLeftMouseDragged

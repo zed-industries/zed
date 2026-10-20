@@ -2690,18 +2690,12 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     let discrete = state.discrete_scroll_delta.take();
                     if let Some(continuous) = continuous {
                         if let Some(window) = state.mouse_focused_window.clone() {
-                            let source = match state.axis_source {
-                                AxisSource::Finger | AxisSource::Continuous => {
-                                    ScrollSource::Trackpad
-                                }
-                                _ => ScrollSource::Wheel,
-                            };
                             let input = PlatformInput::Scroll(ScrollEvent {
                                 position: state.mouse_location.unwrap(),
                                 delta: ScrollDelta::Pixels(continuous),
                                 modifiers: state.modifiers,
                                 touch_phase: TouchPhase::Moved,
-                                source,
+                                source: ScrollSource::Pointer,
                             });
                             drop(state);
                             window.handle_input(input);
@@ -2714,7 +2708,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                             delta: ScrollDelta::Lines(discrete),
                             modifiers: state.modifiers,
                             touch_phase: TouchPhase::Moved,
-                            source: ScrollSource::Wheel,
+                            source: ScrollSource::Pointer,
                         });
                         drop(state);
                         window.handle_input(input);

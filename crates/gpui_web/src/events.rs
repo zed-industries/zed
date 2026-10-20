@@ -663,14 +663,12 @@ impl WebWindowInner {
                 current_state.modifiers = modifiers;
             }
 
-            // Browsers report trackpads and wheels through the same `wheel`
-            // event without saying which device produced it.
             this.dispatch_input(PlatformInput::Scroll(ScrollEvent {
                 position,
                 delta,
                 modifiers,
                 touch_phase: TouchPhase::Moved,
-                source: ScrollSource::Wheel,
+                source: ScrollSource::Pointer,
             }));
         })
     }
