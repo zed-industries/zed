@@ -1,4 +1,5 @@
 use std::sync::Arc;
+#[cfg(test)]
 use std::sync::Mutex;
 
 use anyhow::{Context as _, Result};
@@ -172,6 +173,7 @@ pub fn start_debug_session<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
 
 /// The inputs a [`dap::DapLocator`] receives when asked to resolve a debug
 /// scenario, captured by [`FakeLocator`] so tests can assert on them.
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CapturedScenarioRequest {
     pub task_template: task::TaskTemplate,
@@ -181,10 +183,12 @@ pub struct CapturedScenarioRequest {
 
 /// A [`dap::DapLocator`] used in tests that captures the arguments passed to
 /// `create_scenario` instead of resolving a debug scenario.
+#[cfg(test)]
 pub struct FakeLocator {
     pub captured: Arc<Mutex<Option<CapturedScenarioRequest>>>,
 }
 
+#[cfg(test)]
 #[async_trait::async_trait]
 impl dap::DapLocator for FakeLocator {
     fn name(&self) -> gpui::SharedString {
