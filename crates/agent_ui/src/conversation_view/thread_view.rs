@@ -50,7 +50,7 @@ use ui::{
 };
 use url::Url;
 use util::markdown::source_position_from_fragment;
-use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
+use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME, item::PreviewTabsSettings};
 
 use super::elicitation::{
     ElicitationCard, ElicitationCardHandlers, ElicitationFormState, should_render_elicitation,
@@ -11077,7 +11077,17 @@ impl ThreadView {
             .workspace
             .update(cx, |workspace, cx| {
                 if let Some(project_path) = project_path {
-                    workspace.open_path(project_path, None, true, window, cx)
+                    let allow_preview = PreviewTabsSettings::get_global(cx)
+                        .enable_preview_file_from_code_navigation;
+                    workspace.open_path_preview(
+                        project_path,
+                        None,
+                        true,
+                        allow_preview,
+                        true,
+                        window,
+                        cx,
+                    )
                 } else {
                     workspace.open_abs_path(
                         tool_call_location.path.clone(),
@@ -13741,8 +13751,21 @@ pub(crate) fn open_link(
                         return anyhow::Ok(());
                     };
                     let Some(task) = workspace
-                        .update_in(cx, |workspace, window, cx| {
-                            workspace.open_resolved_path(target, window, cx)
+                        .update_in(cx, |workspace, window, cx| match target {
+                            ResolvedPath::ProjectPath { project_path, .. } => {
+                                let allow_preview = PreviewTabsSettings::get_global(cx)
+                                    .enable_preview_file_from_code_navigation;
+                                workspace.open_path_preview(
+                                    project_path,
+                                    None,
+                                    true,
+                                    allow_preview,
+                                    true,
+                                    window,
+                                    cx,
+                                )
+                            }
+                            target => workspace.open_resolved_path(target, window, cx),
                         })
                         .ok()
                     else {
@@ -14244,6 +14267,112 @@ mod tests {
                 .and_then(|item| item.project_path(cx))
                 .expect("file should be open");
             assert!(*active.path == *"src/main.rs");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_open_link_preview_tabs(cx: &mut gpui::TestAppContext) {
+        crate::test_support::init_test(cx);
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let preview_tabs = settings.preview_tabs.get_or_insert_default();
+                    preview_tabs.enabled = Some(true);
+                    preview_tabs.enable_preview_file_from_code_navigation = Some(true);
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({"first.rs": "first\n", "second.rs": "first\nsecond\n"}),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |workspace, _| workspace.workspace().clone());
+        let workspace_weak = workspace.downgrade();
+        let selection_url = MentionUri::Selection {
+            abs_path: Some(PathBuf::from(path!("/project/second.rs"))),
+            line_range: 1..=1,
+            column: Some(2),
+        }
+        .to_uri()
+        .to_string();
+
+        for (url, expected_path, expected_point) in [
+            ("first.rs", "first.rs", Point::new(0, 0)),
+            (selection_url.as_str(), "second.rs", Point::new(1, 2)),
+        ] {
+            multi_workspace.update_in(cx, |_, window, cx| {
+                open_link(
+                    SharedString::from(url.to_string()),
+                    &workspace_weak,
+                    window,
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+            let editor = workspace.read_with(cx, |workspace, cx| {
+                let pane = workspace.active_pane().read(cx);
+                let active = pane.active_item().expect("file should be open");
+                assert_eq!(pane.items_len(), 1);
+                assert_eq!(pane.preview_item_id(), Some(active.item_id()));
+                assert_eq!(
+                    active
+                        .project_path(cx)
+                        .expect("file should have a path")
+                        .path
+                        .as_unix_str(),
+                    expected_path,
+                );
+                active
+                    .downcast::<Editor>()
+                    .expect("file should be open in an editor")
+            });
+            editor.update_in(cx, |editor, window, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                assert_eq!(
+                    editor.selections.newest::<Point>(&snapshot).head(),
+                    expected_point
+                );
+                assert!(editor.focus_handle(cx).is_focused(window));
+            });
+        }
+
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .preview_tabs
+                        .get_or_insert_default()
+                        .enable_preview_file_from_code_navigation = Some(false);
+                });
+            });
+        });
+        multi_workspace.update_in(cx, |_, window, cx| {
+            open_link(
+                SharedString::from(selection_url),
+                &workspace_weak,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            let pane = workspace.active_pane().read(cx);
+            assert_eq!(pane.items_len(), 1);
+            assert_eq!(pane.preview_item_id(), None);
+            assert_eq!(
+                pane.active_item()
+                    .and_then(|item| item.project_path(cx))
+                    .expect("file should be open")
+                    .path
+                    .as_unix_str(),
+                "second.rs",
+            );
         });
     }
 
