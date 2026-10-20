@@ -1706,13 +1706,21 @@ impl FileFinderDelegate {
                             cx,
                         )
                     } else if secondary {
-                        workspace.split_abs_path(path.absolute.clone(), false, window, cx)
+                        workspace.split_abs_path(
+                            path.absolute.clone(),
+                            false,
+                            allow_preview,
+                            window,
+                            cx,
+                        )
                     } else {
                         workspace.open_abs_path(
                             path.absolute.clone(),
                             OpenOptions {
                                 visible: Some(OpenVisible::None),
-                                ..Default::default()
+                                focus: Some(focus_item),
+                                allow_preview,
+                                ..OpenOptions::default()
                             },
                             window,
                             cx,

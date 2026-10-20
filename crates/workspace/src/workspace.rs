@@ -3229,6 +3229,7 @@ impl Workspace {
                                 project_entry_id,
                                 project_path,
                                 true,
+                                true,
                                 entry.is_preview,
                                 true,
                                 None,
@@ -3251,7 +3252,7 @@ impl Workspace {
                                 pane.active_item().map(|p| p.item_id())
                             })?;
                             let open_by_abs_path = workspace.update_in(cx, |workspace, window, cx| {
-                                workspace.open_abs_path(abs_path.clone(), OpenOptions { visible: Some(OpenVisible::None), ..Default::default() }, window, cx)
+                                workspace.open_abs_path(abs_path.clone(), OpenOptions { visible: Some(OpenVisible::None), allow_preview: entry.is_preview, ..OpenOptions::default() }, window, cx)
                             })?;
                             match open_by_abs_path
                                 .await
@@ -4010,13 +4011,14 @@ impl Workspace {
     pub fn open_paths(
         &mut self,
         mut abs_paths: Vec<PathBuf>,
-        options: OpenOptions,
+        mut options: OpenOptions,
         pane: Option<WeakEntity<Pane>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Vec<Option<anyhow::Result<Box<dyn ItemHandle>>>>> {
         let fs = self.app_state.fs.clone();
 
+        options.allow_preview &= abs_paths.len() == 1;
         let caller_ordered_abs_paths = abs_paths.clone();
 
         // Sort the paths to ensure we add worktrees for parents before their children.
@@ -4061,6 +4063,7 @@ impl Workspace {
                 let abs_path: Arc<Path> = SanitizedPath::new(&abs_path).as_path().into();
                 let fs = fs.clone();
                 let pane = pane.clone();
+                let options = options.clone();
                 let task = cx.spawn(async move |cx| {
                     let (worktree, project_path) = project_path?;
                     let (entry_is_directory, worktree_is_local) =
@@ -4085,10 +4088,11 @@ impl Workspace {
                     } else {
                         Some(
                             this.update_in(cx, |this, window, cx| {
-                                this.open_path(
+                                this.open_path_with_options(
                                     project_path,
                                     pane,
-                                    options.focus.unwrap_or(true),
+                                    options,
+                                    true,
                                     window,
                                     cx,
                                 )
@@ -4195,14 +4199,19 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
         match path {
-            ResolvedPath::ProjectPath { project_path, .. } => {
-                self.open_path(project_path, None, true, window, cx)
-            }
+            ResolvedPath::ProjectPath { project_path, .. } => self.open_path_with_options(
+                project_path,
+                None,
+                OpenOptions::for_navigation(cx),
+                true,
+                window,
+                cx,
+            ),
             ResolvedPath::AbsPath { path, .. } => self.open_abs_path(
                 PathBuf::from(path),
                 OpenOptions {
                     visible: Some(OpenVisible::None),
-                    ..Default::default()
+                    ..OpenOptions::for_navigation(cx)
                 },
                 window,
                 cx,
@@ -5030,14 +5039,18 @@ impl Workspace {
         &mut self,
         abs_path: PathBuf,
         visible: bool,
+        allow_preview: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
         let project_path_task =
             Workspace::project_path_for_path(self.project.clone(), &abs_path, visible, cx);
-        cx.spawn_in(window, async move |this, cx| {
-            let (_, path) = project_path_task.await?;
-            this.update_in(cx, |this, window, cx| this.split_path(path, window, cx))?
+        cx.spawn_in(window, async move |workspace, cx| {
+            let (_worktree, path) = project_path_task.await?;
+            workspace
+                .update_in(cx, |workspace, window, cx| {
+                    workspace.split_path_preview(path, allow_preview, None, window, cx)
+                })?
                 .await
         })
     }
@@ -5062,6 +5075,29 @@ impl Workspace {
         pane: Option<WeakEntity<Pane>>,
         focus_item: bool,
         allow_preview: bool,
+        activate: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
+        self.open_path_with_options(
+            path,
+            pane,
+            OpenOptions {
+                focus: Some(focus_item),
+                allow_preview,
+                ..OpenOptions::default()
+            },
+            activate,
+            window,
+            cx,
+        )
+    }
+
+    pub fn open_path_with_options(
+        &mut self,
+        path: impl Into<ProjectPath>,
+        pane: Option<WeakEntity<Pane>>,
+        options: OpenOptions,
         activate: bool,
         window: &mut Window,
         cx: &mut App,
@@ -5103,8 +5139,9 @@ impl Workspace {
                 pane.open_item(
                     project_entry_id,
                     project_path,
-                    focus_item,
-                    allow_preview,
+                    options.focus.unwrap_or(true),
+                    options.keep_old_preview,
+                    options.allow_preview,
                     activate,
                     None,
                     window,
@@ -5178,13 +5215,13 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let mut open_abs_path = |this: &mut Self, path, cx: &mut _| {
+        let mut open_abs_path = |workspace: &mut Self, path, cx: &mut Context<Self>| {
             let url_or_path = url_or_path.to_owned();
-            let task = this.open_abs_path(
+            let task = workspace.open_abs_path(
                 path,
                 OpenOptions {
                     visible: Some(OpenVisible::None),
-                    ..Default::default()
+                    ..OpenOptions::for_navigation(cx)
                 },
                 window,
                 cx,
@@ -5246,7 +5283,14 @@ impl Workspace {
         });
         if let Some(project_path) = project_path {
             let url_or_path = url_or_path.to_owned();
-            let task = self.open_path(project_path, None, true, window, cx);
+            let task = self.open_path_with_options(
+                project_path,
+                None,
+                OpenOptions::for_navigation(cx),
+                true,
+                window,
+                cx,
+            );
             (**cx)
                 .spawn(async move |cx| {
                     if task.await.is_err() {
@@ -5289,7 +5333,7 @@ impl Workspace {
         if let Member::Pane(center_pane) = &self.center.root
             && center_pane.read(cx).items_len() == 0
         {
-            return self.open_path(path, Some(pane), true, window, cx);
+            return self.open_path_preview(path, Some(pane), true, allow_preview, true, window, cx);
         }
 
         let project_path = path.into();
@@ -5308,6 +5352,7 @@ impl Workspace {
                     Some(new_pane.open_item(
                         project_entry_id,
                         project_path,
+                        true,
                         true,
                         allow_preview,
                         true,
@@ -11001,6 +11046,8 @@ pub enum WorkspaceMatching {
 pub struct OpenOptions {
     pub visible: Option<OpenVisible>,
     pub focus: Option<bool>,
+    pub allow_preview: bool,
+    pub keep_old_preview: bool,
     pub workspace_matching: WorkspaceMatching,
     /// Whether to add unmatched directories to the existing window's sidebar
     /// rather than opening a new window. Defaults to true, matching the default
@@ -11018,6 +11065,8 @@ impl Default for OpenOptions {
         Self {
             visible: None,
             focus: None,
+            allow_preview: false,
+            keep_old_preview: true,
             workspace_matching: WorkspaceMatching::default(),
             add_dirs_to_sidebar: true,
             wait: false,
@@ -11030,6 +11079,15 @@ impl Default for OpenOptions {
 }
 
 impl OpenOptions {
+    pub fn for_navigation(cx: &App) -> Self {
+        let settings = PreviewTabsSettings::get_global(cx);
+        Self {
+            allow_preview: settings.enabled && settings.enable_preview_file_from_code_navigation,
+            keep_old_preview: settings.enable_keep_preview_on_code_navigation,
+            ..Self::default()
+        }
+    }
+
     fn should_reuse_existing_window(&self) -> bool {
         !matches!(
             self.workspace_matching,
@@ -11278,7 +11336,9 @@ pub fn open_paths(
                             abs_paths,
                             OpenOptions {
                                 visible: Some(open_visible),
-                                ..Default::default()
+                                allow_preview: open_options.allow_preview,
+                                keep_old_preview: open_options.keep_old_preview,
+                                ..OpenOptions::default()
                             },
                             None,
                             window,
@@ -18460,24 +18520,38 @@ mod tests {
         // Model
         struct TestPngItem {
             project_path: ProjectPath,
+            entry_id: Option<ProjectEntryId>,
         }
 
         impl project::ProjectItem for TestPngItem {
             fn try_open(
-                _project: &Entity<Project>,
+                project: &Entity<Project>,
                 path: &ProjectPath,
                 cx: &mut App,
             ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
-                if path.path.extension().unwrap() == "png" {
+                let absolute_path = project.read(cx).absolute_path(path, cx)?;
+                if absolute_path
+                    .extension()
+                    .is_some_and(|extension| extension == "png")
+                {
                     let project_path = path.clone();
-                    Some(cx.spawn(async move |cx| Ok(cx.new(|_| TestPngItem { project_path }))))
+                    let entry_id = project
+                        .read(cx)
+                        .entry_for_path(path, cx)
+                        .map(|entry| entry.id);
+                    Some(cx.spawn(async move |cx| {
+                        Ok(cx.new(|_| TestPngItem {
+                            project_path,
+                            entry_id,
+                        }))
+                    }))
                 } else {
                     None
                 }
             }
 
             fn entry_id(&self, _: &App) -> Option<ProjectEntryId> {
-                None
+                self.entry_id
             }
 
             fn project_path(&self, _: &App) -> Option<ProjectPath> {
@@ -18732,6 +18806,411 @@ mod tests {
         }
 
         #[gpui::test]
+        async fn test_navigation_preview_options(cx: &mut TestAppContext) {
+            init_test(cx);
+            cx.update(register_project_item::<TestPngItemView>);
+
+            let fs = FakeFs::new(cx.executor());
+            fs.insert_tree(
+                "/root",
+                json!({ "one.png": "", "two.png": "", "three.png": "", "four.png": "" }),
+            )
+            .await;
+
+            for (enabled, allow_preview, keep_old_preview, expected_items) in [
+                (true, true, false, 2),
+                (true, true, true, 1),
+                (true, false, false, 2),
+                (true, false, true, 2),
+                (false, true, false, 2),
+                (false, true, true, 2),
+                (false, false, false, 2),
+                (false, false, true, 2),
+            ] {
+                let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+                let worktree_id = project.read_with(cx, |project, cx| {
+                    project.worktrees(cx).next().unwrap().read(cx).id()
+                });
+                cx.update_global(|store: &mut SettingsStore, cx| {
+                    store.update_user_settings(cx, |settings| {
+                        let settings = settings.preview_tabs.get_or_insert_default();
+                        settings.enabled = Some(enabled);
+                        settings.enable_preview_file_from_code_navigation = Some(allow_preview);
+                        settings.enable_keep_preview_on_code_navigation = Some(keep_old_preview);
+                    });
+                });
+                let (workspace, cx) = cx
+                    .add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+                let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+                let first = workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.split_path_preview(
+                            (worktree_id, rel_path("one.png")),
+                            true,
+                            None,
+                            window,
+                            cx,
+                        )
+                    })
+                    .await
+                    .unwrap();
+                workspace.read_with(cx, |workspace, cx| {
+                    assert_eq!(workspace.panes.len(), 1);
+                    assert_eq!(
+                        pane.read(cx).preview_item_id(),
+                        enabled.then_some(first.item_id())
+                    );
+                });
+
+                let same = workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.open_path_with_options(
+                            (worktree_id, rel_path("one.png")),
+                            None,
+                            OpenOptions::for_navigation(cx),
+                            true,
+                            window,
+                            cx,
+                        )
+                    })
+                    .await
+                    .unwrap();
+                assert_eq!(same.item_id(), first.item_id());
+                pane.read_with(cx, |pane, _| {
+                    assert_eq!(pane.items_len(), 1);
+                    assert_eq!(
+                        pane.preview_item_id(),
+                        (enabled && allow_preview).then_some(first.item_id())
+                    );
+                });
+
+                let second = workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.open_resolved_path(
+                            ResolvedPath::ProjectPath {
+                                project_path: ProjectPath::from((worktree_id, rel_path("two.png"))),
+                                is_dir: false,
+                            },
+                            window,
+                            cx,
+                        )
+                    })
+                    .await
+                    .unwrap();
+                pane.read_with(cx, |pane, _| {
+                    assert_eq!(pane.items_len(), expected_items);
+                    assert_eq!(pane.active_item().unwrap().item_id(), second.item_id());
+                    assert_eq!(
+                        pane.preview_item_id(),
+                        (enabled && allow_preview).then_some(second.item_id())
+                    );
+                });
+
+                let permanent = workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.open_path(
+                            (worktree_id, rel_path("two.png")),
+                            None,
+                            true,
+                            window,
+                            cx,
+                        )
+                    })
+                    .await
+                    .unwrap();
+                assert_eq!(permanent.item_id(), second.item_id());
+                let third = workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.open_path_preview(
+                            (worktree_id, rel_path("three.png")),
+                            None,
+                            true,
+                            true,
+                            true,
+                            window,
+                            cx,
+                        )
+                    })
+                    .await
+                    .unwrap();
+                workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.open_path_with_options(
+                            (worktree_id, rel_path("four.png")),
+                            None,
+                            OpenOptions {
+                                focus: Some(false),
+                                keep_old_preview: false,
+                                ..OpenOptions::default()
+                            },
+                            false,
+                            window,
+                            cx,
+                        )
+                    })
+                    .await
+                    .unwrap();
+                pane.read_with(cx, |pane, _| {
+                    assert_eq!(pane.active_item().unwrap().item_id(), third.item_id());
+                    assert_eq!(pane.preview_item_id(), enabled.then_some(third.item_id()));
+                });
+                for activate in [false, true] {
+                    let reused = workspace
+                        .update_in(cx, |workspace, window, cx| {
+                            workspace.open_path_with_options(
+                                (worktree_id, rel_path("two.png")),
+                                None,
+                                OpenOptions {
+                                    focus: Some(false),
+                                    ..OpenOptions::for_navigation(cx)
+                                },
+                                activate,
+                                window,
+                                cx,
+                            )
+                        })
+                        .await
+                        .unwrap();
+                    assert_eq!(reused.item_id(), second.item_id());
+                    pane.update_in(cx, |pane, window, cx| {
+                        assert_eq!(pane.items_len(), expected_items + 2);
+                        assert_eq!(
+                            pane.active_item().unwrap().item_id(),
+                            if activate {
+                                second.item_id()
+                            } else {
+                                third.item_id()
+                            },
+                        );
+                        assert_eq!(
+                            pane.preview_item_id(),
+                            (enabled && (!activate || keep_old_preview)).then_some(third.item_id())
+                        );
+                        if !activate {
+                            assert!(third.item_focus_handle(cx).is_focused(window));
+                        }
+                    });
+                }
+            }
+        }
+
+        #[gpui::test]
+        async fn test_open_paths_preview_options(cx: &mut TestAppContext) {
+            init_test(cx);
+            cx.update(register_project_item::<TestPngItemView>);
+            cx.update_global(|store: &mut SettingsStore, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.preview_tabs.get_or_insert_default().enabled = Some(true);
+                });
+            });
+            let fs = FakeFs::new(cx.executor());
+            fs.insert_tree(
+                "/root",
+                json!({ "one.png": "", "two.png": "", "directory": {} }),
+            )
+            .await;
+
+            for (paths, allow_preview, expected_items, expected_preview) in [
+                (Vec::new(), true, 0, None),
+                (vec!["/root/one.png"], false, 1, None),
+                (vec!["/root/one.png"], true, 1, Some("one.png")),
+                (vec!["/root/one.png", "/root/two.png"], true, 2, None),
+                (vec!["/root/one.png", "/root/one.png"], true, 1, None),
+                (vec!["/root/one.png", "/root/directory"], true, 1, None),
+            ] {
+                let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+                let (workspace, cx) = cx
+                    .add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+                let results = workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.open_paths(
+                            paths.iter().map(PathBuf::from).collect(),
+                            OpenOptions {
+                                allow_preview,
+                                ..OpenOptions::default()
+                            },
+                            None,
+                            window,
+                            cx,
+                        )
+                    })
+                    .await;
+                assert_eq!(results.len(), paths.len());
+                for result in results.into_iter().flatten() {
+                    result.unwrap();
+                }
+                workspace.read_with(cx, |workspace, cx| {
+                    let pane = workspace.active_pane().read(cx);
+                    assert_eq!(pane.items_len(), expected_items);
+                    assert_eq!(
+                        pane.preview_item()
+                            .and_then(|item| item.project_path(cx))
+                            .map(|path| path.path),
+                        expected_preview.map(|path| Arc::<RelPath>::from(rel_path(path))),
+                    );
+                });
+            }
+        }
+
+        #[gpui::test]
+        async fn test_navigation_preview_absolute_paths(cx: &mut TestAppContext) {
+            init_test(cx);
+            cx.update(register_project_item::<TestPngItemView>);
+            cx.update_global(|store: &mut SettingsStore, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let settings = settings.preview_tabs.get_or_insert_default();
+                    settings.enabled = Some(true);
+                    settings.enable_preview_file_from_code_navigation = Some(true);
+                    settings.enable_keep_preview_on_code_navigation = Some(false);
+                });
+            });
+            let fs = FakeFs::new(cx.executor());
+            fs.insert_tree("/root", json!({ "one.png": "", "two.png": "" }))
+                .await;
+            let project = Project::test(fs, ["/root".as_ref()], cx).await;
+            let (workspace, cx) =
+                cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+            let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+            let first = workspace
+                .update_in(cx, |workspace, window, cx| {
+                    workspace.open_resolved_path(
+                        ResolvedPath::AbsPath {
+                            path: "/root/one.png".to_owned(),
+                            is_dir: false,
+                        },
+                        window,
+                        cx,
+                    )
+                })
+                .await
+                .unwrap();
+            pane.read_with(cx, |pane, _| {
+                assert_eq!(pane.preview_item_id(), Some(first.item_id()));
+            });
+            workspace.update_in(cx, |workspace, window, cx| {
+                workspace.open_url_or_file("/root/two.png", None, window, cx);
+            });
+            cx.run_until_parked();
+            pane.read_with(cx, |pane, cx| {
+                assert_eq!(pane.items_len(), 2);
+                let second = pane.active_item().unwrap();
+                assert_eq!(
+                    second.project_path(cx).unwrap().path.as_ref(),
+                    rel_path("two.png")
+                );
+                assert_eq!(pane.preview_item_id(), Some(second.item_id()));
+            });
+            workspace.update_in(cx, |workspace, window, cx| {
+                workspace.open_url_or_file("file:///root/one.png", None, window, cx);
+            });
+            cx.run_until_parked();
+            pane.read_with(cx, |pane, _| {
+                assert_eq!(pane.items_len(), 2);
+                assert_eq!(pane.active_item().unwrap().item_id(), first.item_id());
+                assert_eq!(pane.preview_item_id(), None);
+            });
+        }
+
+        #[gpui::test]
+        async fn test_navigation_history_absolute_preview_fallback(cx: &mut TestAppContext) {
+            init_test(cx);
+            cx.update(register_project_item::<TestPngItemView>);
+            cx.update_global(|store: &mut SettingsStore, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let settings = settings.preview_tabs.get_or_insert_default();
+                    settings.enabled = Some(true);
+                    settings.enable_preview_file_from_code_navigation = Some(false);
+                });
+            });
+            let fs = FakeFs::new(cx.executor());
+            fs.insert_tree("/root", json!({ "one.png": "" })).await;
+            let project = Project::test(fs, [], cx).await;
+            let (workspace, cx) =
+                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+            let item = workspace
+                .update_in(cx, |workspace, window, cx| {
+                    workspace.open_abs_path(
+                        PathBuf::from("/root/one.png"),
+                        OpenOptions {
+                            allow_preview: true,
+                            ..OpenOptions::default()
+                        },
+                        window,
+                        cx,
+                    )
+                })
+                .await
+                .unwrap()
+                .downcast::<TestPngItemView>()
+                .unwrap();
+            let worktree_id = item.read_with(cx, |item, _| item.project_path.worktree_id);
+            pane.update(cx, |pane, cx| {
+                assert_eq!(
+                    pane.nav_history().path_for_item(item.item_id()).unwrap().1,
+                    Some(PathBuf::from("/root/one.png")),
+                );
+                pane.nav_history_for_item(&item).push::<()>(None, None, cx);
+            });
+            pane.update_in(cx, |pane, window, cx| {
+                pane.close_item_by_id(item.item_id(), SaveIntent::Skip, window, cx)
+            })
+            .await
+            .unwrap();
+            drop(item);
+            cx.run_until_parked();
+            project.read_with(cx, |project, cx| {
+                assert!(project.worktree_for_id(worktree_id, cx).is_none());
+            });
+            workspace
+                .update_in(cx, |workspace, window, cx| {
+                    workspace.go_back(pane.downgrade(), window, cx)
+                })
+                .await
+                .unwrap();
+            pane.read_with(cx, |pane, cx| {
+                assert_eq!(pane.items_len(), 1);
+                let item = pane.active_item().unwrap();
+                assert_eq!(item.project_path(cx).unwrap().path.as_ref(), rel_path(""));
+                assert_eq!(pane.preview_item_id(), Some(item.item_id()));
+            });
+
+            for (allow_preview, expected_panes) in [(true, 2), (false, 3)] {
+                let split_item = workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.split_abs_path(
+                            PathBuf::from("/root/one.png"),
+                            false,
+                            allow_preview,
+                            window,
+                            cx,
+                        )
+                    })
+                    .await
+                    .unwrap();
+                workspace.read_with(cx, |workspace, cx| {
+                    assert_eq!(workspace.panes.len(), expected_panes);
+                    let split_pane = workspace.active_pane().read(cx);
+                    assert_eq!(split_pane.items_len(), 1);
+                    assert_eq!(
+                        split_pane.active_item().unwrap().item_id(),
+                        split_item.item_id()
+                    );
+                    assert_eq!(
+                        split_pane.preview_item_id(),
+                        allow_preview.then_some(split_item.item_id())
+                    );
+                    let source_pane = pane.read(cx);
+                    assert_eq!(source_pane.items_len(), 1);
+                    assert_eq!(
+                        source_pane.preview_item_id(),
+                        Some(source_pane.active_item().unwrap().item_id())
+                    );
+                });
+            }
+        }
+
+        #[gpui::test]
         async fn test_reveal_if_open(cx: &mut TestAppContext) {
             init_test(cx);
             cx.update(register_project_item::<TestPngItemView>);
@@ -18810,12 +19289,27 @@ mod tests {
 
             let revealed_two = workspace
                 .update_in(cx, |workspace, window, cx| {
-                    workspace.open_path((worktree_id, rel_path("two.png")), None, true, window, cx)
+                    workspace.open_path_with_options(
+                        (worktree_id, rel_path("two.png")),
+                        None,
+                        OpenOptions {
+                            allow_preview: true,
+                            keep_old_preview: false,
+                            ..OpenOptions::default()
+                        },
+                        true,
+                        window,
+                        cx,
+                    )
                 })
                 .await
                 .unwrap();
 
             assert_eq!(revealed_two.item_id(), two_in_left_pane.item_id());
+            assert_eq!(
+                left_pane.read_with(cx, |pane, _| pane.preview_item_id()),
+                None
+            );
             assert_eq!(left_pane.read_with(cx, |pane, _| pane.items_len()), 2);
             assert_eq!(right_pane.read_with(cx, |pane, _| pane.items_len()), 1);
             workspace.read_with(cx, |workspace, _| {
@@ -18856,6 +19350,14 @@ mod tests {
         async fn test_open_url_or_file_resolves_remote_base_path(cx: &mut TestAppContext) {
             init_test(cx);
             cx.update(register_project_item::<TestPngItemView>);
+            cx.update_global(|store: &mut SettingsStore, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let settings = settings.preview_tabs.get_or_insert_default();
+                    settings.enabled = Some(true);
+                    settings.enable_preview_file_from_code_navigation = Some(true);
+                    settings.enable_keep_preview_on_code_navigation = Some(false);
+                });
+            });
 
             let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
             let worktree = project.update(cx, |project, cx| {
@@ -18887,6 +19389,23 @@ mod tests {
             let project_path = opened_item.read_with(cx, |item, _| item.project_path.clone());
             assert_eq!(project_path.worktree_id, worktree_id);
             assert_eq!(project_path.path.as_ref(), rel_path("docs/sibling.png"));
+            workspace.update_in(cx, |workspace, window, cx| {
+                let pane = workspace.active_pane().read(cx);
+                assert_eq!(pane.preview_item_id(), Some(opened_item.item_id()));
+                workspace.open_url_or_file(
+                    "./sibling.png",
+                    Some(Path::new("/remote/project/docs")),
+                    window,
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+            workspace.read_with(cx, |workspace, cx| {
+                let pane = workspace.active_pane().read(cx);
+                assert_eq!(pane.items_len(), 1);
+                assert_eq!(pane.active_item().unwrap().item_id(), opened_item.item_id());
+                assert_eq!(pane.preview_item_id(), Some(opened_item.item_id()));
+            });
         }
 
         #[gpui::test]

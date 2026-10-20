@@ -1073,6 +1073,7 @@ impl Pane {
         project_entry_id: Option<ProjectEntryId>,
         project_path: ProjectPath,
         focus_item: bool,
+        keep_old_preview: bool,
         allow_preview: bool,
         activate: bool,
         suggested_position: Option<usize>,
@@ -1080,6 +1081,7 @@ impl Pane {
         cx: &mut Context<Self>,
         build_item: WorkspaceItemBuilder,
     ) -> Box<dyn ItemHandle> {
+        let allow_preview = allow_preview && PreviewTabsSettings::get_global(cx).enabled;
         let mut existing_item = None;
         if let Some(project_entry_id) = project_entry_id {
             for (index, item) in self.items.iter().enumerate() {
@@ -1103,11 +1105,23 @@ impl Pane {
             }
         }
 
+        if activate
+            && !keep_old_preview
+            && let Some(old_item) = self.active_item()
+            && existing_item
+                .as_ref()
+                .is_none_or(|(_, item)| item.item_id() != old_item.item_id())
+        {
+            self.unpreview_item_if_preview(old_item.item_id());
+        }
+
         let preview_was_active = self.preview_item_idx() == Some(self.active_item_index);
 
         let set_up_existing_item =
             |index: usize, pane: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
-                if !allow_preview && let Some(item) = pane.items.get(index) {
+                if let Some(item) = pane.items.get(index)
+                    && (!allow_preview || item.is_dirty(cx))
+                {
                     pane.unpreview_item_if_preview(item.item_id());
                 }
                 if activate {
@@ -1116,6 +1130,7 @@ impl Pane {
             };
         let set_up_new_item = |new_item: Box<dyn ItemHandle>,
                                destination_index: Option<usize>,
+                               allow_preview: bool,
                                pane: &mut Self,
                                window: &mut Window,
                                cx: &mut Context<Self>| {
@@ -1148,6 +1163,9 @@ impl Pane {
             set_up_existing_item(index, self, window, cx);
             existing_item
         } else {
+            let new_item = build_item(self, window, cx);
+            let allow_preview = allow_preview && !new_item.is_dirty(cx);
+
             // If the item is being opened as preview and we have an existing preview tab,
             // open the new item in the position of the existing preview tab.
             let destination_index = if allow_preview {
@@ -1156,7 +1174,6 @@ impl Pane {
                 suggested_position
             };
 
-            let new_item = build_item(self, window, cx);
             // A special case that won't ever get a `project_entry_id` but has to be deduplicated nonetheless.
             if let Some(invalid_buffer_view) = new_item.downcast::<InvalidItemView>() {
                 let mut already_open_view = None;
@@ -1182,7 +1199,14 @@ impl Pane {
                         Box::new(already_open_view) as Box<_>
                     }
                     None => {
-                        set_up_new_item(new_item.clone(), destination_index, self, window, cx);
+                        set_up_new_item(
+                            new_item.clone(),
+                            destination_index,
+                            allow_preview,
+                            self,
+                            window,
+                            cx,
+                        );
                         new_item
                     }
                 };
@@ -1194,7 +1218,14 @@ impl Pane {
 
                 resulting_item
             } else {
-                set_up_new_item(new_item.clone(), destination_index, self, window, cx);
+                set_up_new_item(
+                    new_item.clone(),
+                    destination_index,
+                    allow_preview,
+                    self,
+                    window,
+                    cx,
+                );
                 new_item
             }
         }
@@ -4076,6 +4107,7 @@ impl Pane {
                                             pane.open_item(
                                                 project_entry_id,
                                                 project_path,
+                                                true,
                                                 true,
                                                 false,
                                                 true,
@@ -9047,6 +9079,102 @@ mod tests {
             assert_eq!(item.save_count, 0);
             assert_eq!(item.save_as_count, 0);
         });
+    }
+
+    #[gpui::test]
+    async fn test_open_item_keeps_dirty_items_permanent(cx: &mut TestAppContext) {
+        init_test(cx);
+        for keep_old_preview in [true, false] {
+            let project = Project::test(FakeFs::new(cx.executor()), None, cx).await;
+            cx.update_global(|store: &mut SettingsStore, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let settings = settings.preview_tabs.get_or_insert_default();
+                    settings.enabled = Some(true);
+                    settings.enable_preview_file_from_code_navigation = Some(true);
+                });
+            });
+            let (workspace, cx) =
+                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+            pane.update_in(cx, |pane, window, cx| {
+                let open_item = |pane: &mut Pane,
+                                 project_item: Entity<TestProjectItem>,
+                                 keep_old_preview,
+                                 window: &mut Window,
+                                 cx: &mut Context<Pane>| {
+                    let item = project_item.read(cx);
+                    let is_dirty = item.is_dirty;
+                    pane.open_item(
+                        item.entry_id,
+                        item.project_path.clone().unwrap(),
+                        true,
+                        keep_old_preview,
+                        true,
+                        true,
+                        None,
+                        window,
+                        cx,
+                        Box::new(move |_, _, cx| {
+                            Box::new(cx.new(|cx| {
+                                TestItem::new(cx)
+                                    .with_dirty(is_dirty)
+                                    .with_project_items(&[project_item])
+                            }))
+                        }),
+                    )
+                };
+                let source = cx.new(TestItem::new);
+                pane.add_item(Box::new(source.clone()), true, true, None, window, cx);
+                pane.set_preview_item_id(Some(source.entity_id()), cx);
+
+                let dirty_project_item = TestProjectItem::new_dirty(1, "dirty.txt", cx);
+                let dirty_item = open_item(
+                    pane,
+                    dirty_project_item.clone(),
+                    keep_old_preview,
+                    window,
+                    cx,
+                );
+                assert_eq!(pane.items_len(), 2);
+                assert_eq!(pane.active_item().unwrap().item_id(), dirty_item.item_id());
+                assert_eq!(
+                    pane.preview_item_id(),
+                    keep_old_preview.then_some(source.entity_id())
+                );
+
+                let clean_project_item = TestProjectItem::new(2, "clean.txt", cx);
+                let clean_item = open_item(pane, clean_project_item, true, window, cx);
+                assert_eq!(pane.items_len(), if keep_old_preview { 2 } else { 3 });
+                assert_eq!(pane.preview_item_id(), Some(clean_item.item_id()));
+                assert_eq!(
+                    pane.item_for_entry(dirty_project_item.read(cx).entry_id.unwrap(), cx)
+                        .map(|item| item.item_id()),
+                    Some(dirty_item.item_id()),
+                );
+                assert!(dirty_item.is_dirty(cx));
+
+                pane.set_preview_item_id(Some(dirty_item.item_id()), cx);
+                let reused = open_item(pane, dirty_project_item, keep_old_preview, window, cx);
+                assert_eq!(reused.item_id(), dirty_item.item_id());
+                assert_eq!(pane.preview_item_id(), None);
+                assert_eq!(pane.items_len(), if keep_old_preview { 2 } else { 3 });
+
+                pane.set_preview_item_id(Some(clean_item.item_id()), cx);
+                assert!(OpenOptions::for_navigation(cx).allow_preview);
+                cx.update_global(|store: &mut SettingsStore, cx| {
+                    store.update_user_settings(cx, |settings| {
+                        settings.preview_tabs.get_or_insert_default().enabled = Some(false);
+                    });
+                });
+                assert!(!OpenOptions::for_navigation(cx).allow_preview);
+                assert_eq!(pane.preview_item_id(), Some(clean_item.item_id()));
+                let next_project_item = TestProjectItem::new(3, "next.txt", cx);
+                let next_item = open_item(pane, next_project_item, true, window, cx);
+                assert_eq!(pane.active_item().unwrap().item_id(), next_item.item_id());
+                assert_eq!(pane.items_len(), if keep_old_preview { 3 } else { 4 });
+                assert_eq!(pane.preview_item_id(), Some(clean_item.item_id()));
+            });
+        }
     }
 
     fn init_test(cx: &mut TestAppContext) {

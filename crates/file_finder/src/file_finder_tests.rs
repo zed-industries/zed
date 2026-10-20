@@ -2472,6 +2472,70 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
         ],
         "Should keep external file with history updates",
     );
+    cx.run_until_parked();
+
+    for allow_preview in [true, false] {
+        cx.update(|_, cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let preview_tabs = settings.preview_tabs.get_or_insert_default();
+                    preview_tabs.enabled = Some(true);
+                    preview_tabs.enable_preview_from_file_finder = Some(!allow_preview);
+                });
+            });
+            assert!(
+                workspace
+                    .read(cx)
+                    .project()
+                    .read(cx)
+                    .worktree_for_id(external_worktree_id, cx)
+                    .is_none()
+            );
+        });
+        let finder = open_file_picker(&workspace, cx);
+        finder.update_in(cx, |picker, window, cx| {
+            picker.delegate.open_match(
+                Match::History {
+                    path: initial_history_items
+                        .first()
+                        .expect("external history")
+                        .clone(),
+                    panel_match: None,
+                },
+                false,
+                allow_preview,
+                allow_preview,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        workspace.update_in(cx, |workspace, window, cx| {
+            let pane = workspace.active_pane().read(cx);
+            let editor = workspace
+                .active_item_as::<Editor>(cx)
+                .expect("external editor");
+            assert_eq!(editor.read(cx).title(cx), "third.rs");
+            assert_eq!(pane.items_len(), 1);
+            assert_eq!(
+                pane.preview_item_id(),
+                allow_preview.then_some(editor.entity_id())
+            );
+            if !allow_preview {
+                assert!(finder.focus_handle(cx).contains_focused(window, cx));
+            }
+        });
+        cx.dispatch_action(Cancel);
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.active_pane().update(cx, |pane, cx| {
+                    pane.close_active_item(&CloseActiveItem::default(), window, cx)
+                })
+            })
+            .await
+            .expect("external editor should close");
+        cx.run_until_parked();
+    }
 }
 
 #[gpui::test]
