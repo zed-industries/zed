@@ -245,14 +245,14 @@ impl BlameRenderer for GitBlameRenderer {
                             let blame_entry = blame_entry.clone();
                             let repository = repository.clone();
                             let workspace = workspace.clone();
-                            move |_, window, cx| {
+                            move |event, window, cx| {
                                 CommitView::open(
                                     blame_entry.sha.to_string(),
                                     repository.downgrade(),
                                     workspace.clone(),
                                     None,
                                     None,
-                                    false,
+                                    event.click_count() == 1,
                                     window,
                                     cx,
                                 )
@@ -487,14 +487,14 @@ impl BlameRenderer for GitBlameRenderer {
                                                         .size(IconSize::Small)
                                                         .color(Color::Muted),
                                                 )
-                                                .on_click(move |_, window, cx| {
+                                                .on_click(move |event, window, cx| {
                                                     CommitView::open(
                                                         commit_summary.sha.clone().into(),
                                                         repository.downgrade(),
                                                         workspace.clone(),
                                                         None,
                                                         None,
-                                                        false,
+                                                        event.click_count() == 1,
                                                         window,
                                                         cx,
                                                     );

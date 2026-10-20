@@ -7113,14 +7113,14 @@ impl GitPanel {
                         .on_click({
                             let commit = commit.clone();
                             let repo = active_repository.downgrade();
-                            move |_, window, cx| {
+                            move |event, window, cx| {
                                 CommitView::open(
                                     commit.sha.to_string(),
                                     repo.clone(),
                                     workspace.clone(),
                                     None,
                                     None,
-                                    false,
+                                    event.click_count() == 1,
                                     window,
                                     cx,
                                 );

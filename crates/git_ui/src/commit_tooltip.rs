@@ -443,14 +443,14 @@ impl Render for CommitTooltip {
                                                     .color(Color::Muted),
                                             )
                                             .on_click(
-                                                move |_, window, cx| {
+                                                move |event, window, cx| {
                                                     CommitView::open(
                                                         commit_summary.sha.to_string(),
                                                         repo.downgrade(),
                                                         workspace.clone(),
                                                         None,
                                                         None,
-                                                        false,
+                                                        event.click_count() == 1,
                                                         window,
                                                         cx,
                                                     );

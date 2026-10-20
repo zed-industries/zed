@@ -252,26 +252,6 @@ impl ChangedFileEntry {
         }
     }
 
-    fn open_in_commit_view(
-        &self,
-        commit_sha: &SharedString,
-        repository: &WeakEntity<Repository>,
-        workspace: &WeakEntity<Workspace>,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        CommitView::open(
-            commit_sha.to_string(),
-            repository.clone(),
-            workspace.clone(),
-            None,
-            Some(self.repo_path.clone()),
-            false,
-            window,
-            cx,
-        );
-    }
-
     fn render(
         &self,
         ix: usize,
@@ -313,8 +293,17 @@ impl ChangedFileEntry {
             })
             .on_click({
                 let entry = self.clone();
-                move |_, window, cx| {
-                    entry.open_in_commit_view(&commit_sha, &repository, &workspace, window, cx);
+                move |event, window, cx| {
+                    CommitView::open(
+                        commit_sha.to_string(),
+                        repository.clone(),
+                        workspace.clone(),
+                        None,
+                        Some(entry.repo_path.clone()),
+                        event.click_count() == 1,
+                        window,
+                        cx,
+                    );
                 }
             })
             .into_any_element()
