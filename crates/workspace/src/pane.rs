@@ -1347,9 +1347,8 @@ impl Pane {
             }
         }
 
-        // only new adds should be treated as "added". treating existing items as "added" would cause listeners
+        // only new adds or replaced items should be treated as "added". treating existing items as "added" would cause listeners
         // like markdown auto preview to treat a pane move as a new item / fresh open.
-        // if the item replaced an existing item in a pane, treat it as a new item
         if existing_item_index.is_none() || replaces_existing_item_in_pane {
             cx.emit(Event::AddItem { item: item.clone() });
         }
