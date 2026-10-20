@@ -10,7 +10,7 @@ use regex::Regex;
 
 use fs::Fs;
 use http_client::HttpClient;
-use util::{ResultExt, command::Command, normalize_path};
+use util::{ResultExt, command::Command, paths::normalize_path};
 
 use crate::{
     DevContainerConfig, DevContainerContext,

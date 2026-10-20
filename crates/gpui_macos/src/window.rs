@@ -991,6 +991,7 @@ impl MacWindow {
             display_id,
             window_min_size,
             tabbing_identifier,
+            use_display_p3,
             ..
         }: WindowParams,
         cursor_visible: Arc<AtomicBool>,
@@ -1124,6 +1125,7 @@ impl MacWindow {
                     native_view as *mut _,
                     bounds.size.map(|pixels| pixels.as_f32()),
                     false,
+                    use_display_p3,
                 ),
                 request_frame_callback: None,
                 event_callback: None,
@@ -2842,7 +2844,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                 | PlatformInput::MouseUp(_)
                 | PlatformInput::MousePressure(_)
                 | PlatformInput::MouseExited(_)
-                | PlatformInput::ScrollWheel(_)
+                | PlatformInput::Scroll(_)
                 | PlatformInput::Pinch(_)
         ) {
             lock.cursor_visible.store(true, Ordering::Relaxed);

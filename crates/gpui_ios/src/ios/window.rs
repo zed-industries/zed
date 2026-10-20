@@ -22,18 +22,23 @@ use gpui::{
 };
 use gpui_apple::metal_renderer::{Context as MetalContext, MetalRenderer};
 use objc2::rc::Retained;
-use objc2::runtime::AnyClass;
-use objc2::{ClassType, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
+use objc2::runtime::{AnyClass, AnyObject};
+use objc2::{
+    ClassType, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel,
+};
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
-use objc2_foundation::{NSNotification, NSNotificationCenter, NSObjectProtocol, NSSet, NSValue};
+use objc2_foundation::{
+    NSArray, NSNotification, NSNotificationCenter, NSObjectProtocol, NSSet, NSValue,
+};
 use objc2_quartz_core::CAMetalLayer;
 use objc2_ui_kit::{
     NSValueUIGeometryExtensions, UIKeyboardFrameEndUserInfoKey,
     UIKeyboardWillChangeFrameNotification, UIKeyboardWillHideNotification, UIStatusBarStyle,
 };
 use objc2_ui_kit::{
-    UIEvent, UIScreen, UITouch, UITraitCollection, UITraitEnvironment, UIUserInterfaceStyle,
-    UIView, UIViewAutoresizing, UIViewController, UIWindow, UIWindowScene,
+    UIEvent, UIPanGestureRecognizer, UIScreen, UIScrollTypeMask, UITouch, UITraitCollection,
+    UITraitEnvironment, UIUserInterfaceStyle, UIView, UIViewAutoresizing, UIViewController,
+    UIWindow, UIWindowScene,
 };
 use parking_lot::Mutex;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, UiKitDisplayHandle, UiKitWindowHandle};
@@ -177,6 +182,12 @@ define_class!(
             self.handle_touches(touches, event);
         }
 
+        #[unsafe(method(handleScroll:))]
+        fn handle_scroll(&self, recognizer: &UIPanGestureRecognizer) {
+            self.ivars()
+                .with_window(|window| window.handle_scroll(recognizer));
+        }
+
     }
 );
 
@@ -303,6 +314,24 @@ impl IosWindow {
         // Enable user interaction on the Metal view for touch handling
         view.setUserInteractionEnabled(true);
         view.setMultipleTouchEnabled(true);
+
+        // Trackpad and mouse-wheel scrolling reaches UIKit apps only through a
+        // pan recognizer that accepts scroll types. With no allowed touch types
+        // it never claims finger touches, so those keep reaching `touchesBegan`
+        // and GPUI's own recognizer.
+        let scroll_target: &AnyObject = &view;
+        // SAFETY: `MetalView` implements `handleScroll:` and owns the recognizer.
+        let scroll_recognizer = unsafe {
+            UIPanGestureRecognizer::initWithTarget_action(
+                UIPanGestureRecognizer::alloc(main_thread),
+                Some(scroll_target),
+                Some(sel!(handleScroll:)),
+            )
+        };
+        scroll_recognizer.setAllowedScrollTypesMask(UIScrollTypeMask::All);
+        scroll_recognizer.setAllowedTouchTypes(&NSArray::new());
+        scroll_recognizer.setCancelsTouchesInView(false);
+        view.addGestureRecognizer(&scroll_recognizer);
 
         let view_controller = ViewController::new(main_thread);
         view_controller.setView(Some(&view));
@@ -460,6 +489,17 @@ impl IosWindowState {
         self.handle_keyboard_dismiss_touch(&event);
         self.input_callback
             .with(|callback| callback(PlatformInput::Touch(event)));
+    }
+
+    /// Delivers one step of a trackpad or mouse-wheel scroll gesture.
+    fn handle_scroll(&self, recognizer: &UIPanGestureRecognizer) {
+        let Some(event) = scroll_event(recognizer, &self.view) else {
+            return;
+        };
+        self.mouse_position.set(event.position);
+        self.modifiers.set(event.modifiers);
+        self.input_callback
+            .with(|callback| callback(PlatformInput::Scroll(event)));
     }
 
     fn handle_keyboard_dismiss_touch(&self, event: &TouchEvent) {
