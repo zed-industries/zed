@@ -5684,6 +5684,11 @@ impl Window {
                 PlatformInput::ModifiersChanged(modifiers_changed)
             }
             PlatformInput::Scroll(scroll_wheel) => {
+                // Native pointer scrolling replaces a finger fling, rather than
+                // letting two independent momentum streams move the same content.
+                if scroll_wheel.source == crate::ScrollSource::Pointer {
+                    self.touch_gestures.cancel_momentum();
+                }
                 self.mouse_position = scroll_wheel.position;
                 self.modifiers = scroll_wheel.modifiers;
                 PlatformInput::Scroll(scroll_wheel)
@@ -9225,6 +9230,33 @@ mod tests {
             })
             .unwrap();
         assert_eq!(b_focus_count.get(), 1);
+    }
+
+    #[gpui::test]
+    fn native_scroll_interrupts_touch_momentum(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| crate::Empty);
+        dispatch_touch(window, cx, TouchId(1), TouchPhase::Started, 0.);
+        cx.executor().advance_clock(Duration::from_millis(16));
+        dispatch_touch(window, cx, TouchId(1), TouchPhase::Moved, 30.);
+        cx.executor().advance_clock(Duration::from_millis(16));
+        dispatch_touch(window, cx, TouchId(1), TouchPhase::Moved, 60.);
+        dispatch_touch(window, cx, TouchId(1), TouchPhase::Ended, 60.);
+        window
+            .update(cx, |_, window, cx| {
+                assert!(window.touch_gestures.has_momentum());
+                window.dispatch_event(
+                    PlatformInput::Scroll(crate::ScrollEvent {
+                        position: Point::default(),
+                        delta: crate::ScrollDelta::Pixels(point(px(0.), px(-10.))),
+                        modifiers: crate::Modifiers::default(),
+                        touch_phase: TouchPhase::Started,
+                        source: crate::ScrollSource::Pointer,
+                    }),
+                    cx,
+                );
+                assert!(!window.touch_gestures.has_momentum());
+            })
+            .unwrap();
     }
 
     #[gpui::test]

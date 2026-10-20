@@ -985,7 +985,13 @@ impl<T: ScrollableHandle> Render for ScrollbarState<T> {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         ScrollbarElement {
             state: cx.entity(),
-            origin: Default::default(),
+            // Automatically tracked scrollbars are children of the scrolling div.
+            // Cancel its translation to keep the track in viewport coordinates.
+            origin: if self.manually_added {
+                Point::default()
+            } else {
+                -self.scroll_handle().offset()
+            },
         }
     }
 }
@@ -1449,7 +1455,10 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                         })
                         .collect()
                 },
-                parent_bounds_hitbox: window.insert_hitbox(bounds, HitboxBehavior::Normal),
+                parent_bounds_hitbox: window.insert_hitbox(
+                    Bounds::new(self.origin + bounds.origin, bounds.size),
+                    HitboxBehavior::Normal,
+                ),
             });
         if prepaint_state.as_ref().is_some_and(|state| {
             let scrollbar_state = self.state.read(cx);
