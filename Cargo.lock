@@ -555,6 +555,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent_ui_benchmarks"
+version = "0.1.0"
+dependencies = [
+ "collections",
+ "criterion",
+ "futures 0.3.34",
+ "fuzzy_nucleo",
+ "gpui",
+ "gpui_platform",
+ "ordered-float 5.5.0",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"

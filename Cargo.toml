@@ -10,6 +10,7 @@ members = [
     "crates/agent_settings",
     "crates/agent_skills",
     "crates/agent_ui",
+    "crates/agent_ui_benchmarks",
     "crates/ai_onboarding",
     "crates/anthropic",
     "crates/askpass",

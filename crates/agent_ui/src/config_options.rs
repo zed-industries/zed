@@ -21,7 +21,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use util::ResultExt as _;
 use zed_actions::agent::ToggleModelSelector;
 
-use crate::model_selector::match_names_with_metadata;
+use crate::model_search;
 use crate::ui::documentation_aside_side;
 use crate::{
     CycleFavoriteModels, CycleModeSelector, CycleThinkingEffort, ToggleProfileSelector,
@@ -1074,15 +1074,9 @@ async fn fuzzy_search_options(
     query: &str,
     executor: BackgroundExecutor,
 ) -> Vec<ConfigOptionValue> {
-    let names = options
-        .iter()
-        .enumerate()
-        .map(|(index, option)| StringMatchCandidate::new(index, option.name.clone()))
-        .collect::<Vec<_>>();
-    let candidates = options
-        .iter()
-        .enumerate()
-        .map(|(index, option)| {
+    model_search::search(options, query, executor, |index, option| {
+        (
+            StringMatchCandidate::new(index, option.name.clone()),
             StringMatchCandidate::new(
                 index,
                 format!(
@@ -1092,15 +1086,10 @@ async fn fuzzy_search_options(
                     option.description.as_deref().unwrap_or_default(),
                     option.value.0,
                 ),
-            )
-        })
-        .collect::<Vec<_>>();
-
-    match_names_with_metadata(&names, &candidates, query, executor)
-        .await
-        .into_iter()
-        .map(|index| options[index].clone())
-        .collect()
+            ),
+        )
+    })
+    .await
 }
 
 fn find_option_name(

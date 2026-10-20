@@ -1,4 +1,4 @@
-use std::{cmp::Reverse, rc::Rc, sync::Arc};
+use std::{rc::Rc, sync::Arc};
 
 use acp_thread::{
     AgentModelIcon, AgentModelId, AgentModelInfo, AgentModelList, AgentModelSelector,
@@ -13,13 +13,13 @@ use gpui::{
     TaskExt, WeakEntity,
 };
 use itertools::Itertools;
-use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use settings::SettingsStore;
 use ui::{DocumentationAside, IntoElement, prelude::*};
 use util::ResultExt;
 use zed_actions::agent::OpenSettings;
 
+use crate::model_search;
 use crate::ui::{
     ModelSelectorFooter, ModelSelectorHeader, ModelSelectorListItem, documentation_aside_side,
 };
@@ -445,15 +445,9 @@ async fn fuzzy_search(
         query: &str,
         executor: BackgroundExecutor,
     ) -> Vec<AgentModelInfo> {
-        let names = model_list
-            .iter()
-            .enumerate()
-            .map(|(index, model)| StringMatchCandidate::new(index, model.name.clone()))
-            .collect::<Vec<_>>();
-        let candidates = model_list
-            .iter()
-            .enumerate()
-            .map(|(index, model)| {
+        model_search::search(model_list, query, executor, move |index, model| {
+            (
+                StringMatchCandidate::new(index, model.name.clone()),
                 StringMatchCandidate::new(
                     index,
                     format!(
@@ -461,15 +455,10 @@ async fn fuzzy_search(
                         model.name,
                         group_name.as_deref().unwrap_or_default()
                     ),
-                )
-            })
-            .collect::<Vec<_>>();
-
-        match_names_with_metadata(&names, &candidates, query, executor)
-            .await
-            .into_iter()
-            .map(|index| model_list[index].clone())
-            .collect()
+                ),
+            )
+        })
+        .await
     }
 
     match model_list {
@@ -490,56 +479,6 @@ async fn fuzzy_search(
             ))
         }
     }
-}
-
-pub(crate) async fn match_names_with_metadata(
-    names: &[StringMatchCandidate],
-    candidates: &[StringMatchCandidate],
-    query: &str,
-    executor: BackgroundExecutor,
-) -> Vec<usize> {
-    let cancel_flag = Default::default();
-    let (mut name_matches, mut metadata_matches) = futures::join!(
-        fuzzy_nucleo::match_strings_async(
-            names,
-            query,
-            fuzzy_nucleo::Case::Ignore,
-            fuzzy_nucleo::LengthPenalty::On,
-            names.len(),
-            &cancel_flag,
-            executor.clone(),
-        ),
-        fuzzy_nucleo::match_strings_async(
-            candidates,
-            query,
-            fuzzy_nucleo::Case::Ignore,
-            fuzzy_nucleo::LengthPenalty::On,
-            candidates.len(),
-            &cancel_flag,
-            executor,
-        ),
-    );
-
-    // Metadata should expand the results without changing the relevance of name matches.
-    let sorting_key = |matched: &fuzzy_nucleo::StringMatch| {
-        (Reverse(OrderedFloat(matched.score)), matched.candidate_id)
-    };
-    name_matches.sort_unstable_by_key(sorting_key);
-    metadata_matches.sort_unstable_by_key(sorting_key);
-
-    let matched_name_ids: HashSet<_> = name_matches
-        .iter()
-        .map(|matched| matched.candidate_id)
-        .collect();
-    name_matches
-        .into_iter()
-        .chain(
-            metadata_matches
-                .into_iter()
-                .filter(|matched| !matched_name_ids.contains(&matched.candidate_id)),
-        )
-        .map(|matched| matched.candidate_id)
-        .collect()
 }
 
 #[cfg(test)]
