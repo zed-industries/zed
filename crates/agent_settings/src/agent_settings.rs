@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 use settings::{
     DockPosition, DockSide, IntoGpui, LanguageModelParameters, LanguageModelSelection,
     NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, RegisterSetting, Settings, SettingsContent,
-    SettingsStore, SidebarDockPosition, SidebarSide, ThinkingBlockDisplay, ToolPermissionMode,
-    update_settings_file, update_settings_file_with_completion,
+    SettingsStore, SidebarDockPosition, SidebarProjectOrder, SidebarSide, ThinkingBlockDisplay,
+    ToolPermissionMode, update_settings_file, update_settings_file_with_completion,
 };
 use util::ResultExt as _;
 
@@ -208,6 +208,7 @@ pub struct AgentSettings {
     pub dock: DockPosition,
     pub flexible: bool,
     pub sidebar_side: SidebarDockPosition,
+    pub sidebar_project_order: SidebarProjectOrder,
     pub default_width: Pixels,
     pub default_height: Pixels,
     pub max_content_width: Option<Pixels>,
@@ -759,6 +760,7 @@ impl Settings for AgentSettings {
             button: agent.button.unwrap(),
             dock: agent.dock.unwrap(),
             sidebar_side: agent.sidebar_side.unwrap(),
+            sidebar_project_order: agent.sidebar_project_order.unwrap(),
             default_width: agent.default_width.unwrap().into_gpui(),
             default_height: agent.default_height.unwrap().into_gpui(),
             max_content_width: if agent.limit_content_width.unwrap() {

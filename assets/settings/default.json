@@ -1084,6 +1084,9 @@
     "flexible": true,
     // Where to position the threads sidebar. Can be 'left' or 'right'.
     "sidebar_side": "left",
+    // How projects are ordered in the threads sidebar.
+    // Can be 'manual', 'alphabetical', or 'recent'.
+    "sidebar_project_order": "manual",
     // Default width when the agent panel is docked to the left or right.
     "default_width": 640,
     // Default height when the agent panel is docked to the bottom.

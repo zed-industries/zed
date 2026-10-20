@@ -8266,7 +8266,7 @@ fn collaboration_page() -> SettingsPage {
 }
 
 fn ai_page(cx: &App) -> SettingsPage {
-    fn general_section() -> [SettingsPageItem; 6] {
+    fn general_section() -> [SettingsPageItem; 7] {
         [
             SettingsPageItem::SectionHeader("General"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -8292,6 +8292,29 @@ fn ai_page(cx: &App) -> SettingsPage {
                     pick: |settings_content| settings_content.agent.as_ref()?.sidebar_side.as_ref(),
                     write: |settings_content, value, _| {
                         settings_content.agent.get_or_insert_default().sidebar_side = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Threads Sidebar Project Order",
+                description: "How projects are ordered in the threads sidebar.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent.sidebar_project_order"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .sidebar_project_order
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .sidebar_project_order = value;
                     },
                 }),
                 metadata: None,

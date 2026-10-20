@@ -36,6 +36,32 @@ pub enum SidebarDockPosition {
     Right,
 }
 
+/// How projects are ordered in the threads sidebar.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SidebarProjectOrder {
+    /// Keep the order set by dragging or by Move Up / Move Down.
+    #[default]
+    Manual,
+    /// Sort projects by name.
+    Alphabetical,
+    /// Show projects with the most recent thread activity first.
+    Recent,
+}
+
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum SidebarSide {
     #[default]
@@ -214,6 +240,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: left
     pub sidebar_side: Option<SidebarDockPosition>,
+    /// How projects are ordered in the threads sidebar.
+    ///
+    /// Default: manual
+    pub sidebar_project_order: Option<SidebarProjectOrder>,
     /// Default width in pixels when the agent panel is docked to the left or right.
     ///
     /// Default: 640
@@ -366,6 +396,10 @@ impl AgentSettingsContent {
 
     pub fn set_sidebar_side(&mut self, position: SidebarDockPosition) {
         self.sidebar_side = Some(position);
+    }
+
+    pub fn set_sidebar_project_order(&mut self, order: SidebarProjectOrder) {
+        self.sidebar_project_order = Some(order);
     }
 
     pub fn set_flexible_size(&mut self, flexible: bool) {
