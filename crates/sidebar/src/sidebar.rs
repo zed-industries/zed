@@ -41,7 +41,8 @@ use menu::{
 use notifications::status_toast::StatusToast;
 use platform_title_bar::apply_title_bar_insets;
 use project::{
-    AgentId, AgentRegistryStore, Event as ProjectEvent, WorktreeId, repo_identity_path_if_local,
+    AgentId, AgentRegistryStore, Event as ProjectEvent, ProjectHost, WorktreeId,
+    repo_identity_path_if_local,
 };
 use recent_projects::sidebar_recent_projects::SidebarRecentProjects;
 use remote::RemoteConnectionOptions;
@@ -561,6 +562,32 @@ fn root_repository_snapshots(
 
 fn workspace_path_list(workspace: &Entity<Workspace>, cx: &App) -> PathList {
     PathList::new(&workspace.read(cx).root_paths(cx))
+}
+
+fn find_workspace_for_thread(
+    multi_workspace: &MultiWorkspace,
+    thread: &ThreadMetadata,
+    cx: &App,
+) -> Option<Entity<Workspace>> {
+    let requested_host = thread
+        .remote_connection
+        .as_ref()
+        .map_or(ProjectHost::Local, ProjectHost::Remote);
+
+    multi_workspace
+        .workspaces()
+        .find(|workspace| {
+            if workspace_path_list(workspace, cx) != *thread.folder_paths() {
+                return false;
+            }
+
+            workspace
+                .read(cx)
+                .project()
+                .read(cx)
+                .matches_host(&requested_host, cx)
+        })
+        .cloned()
 }
 
 fn linked_worktree_path_lists_for_workspaces(
@@ -4123,21 +4150,16 @@ impl Sidebar {
         .detach_and_log_err(cx);
     }
 
-    fn find_open_workspace_for_path_list(
+    fn find_open_workspace_for_thread(
         &self,
-        path_list: &PathList,
-        remote_connection: Option<&RemoteConnectionOptions>,
+        thread: &ThreadMetadata,
         cx: &App,
     ) -> Option<(WindowHandle<MultiWorkspace>, Entity<Workspace>)> {
         cx.windows()
             .into_iter()
             .filter_map(|window| window.downcast::<MultiWorkspace>())
             .find_map(|window| {
-                let workspace =
-                    window
-                        .read(cx)
-                        .ok()?
-                        .workspace_for_paths(path_list, remote_connection, cx)?;
+                let workspace = find_workspace_for_thread(window.read(cx).ok()?, thread, cx)?;
 
                 Some((window, workspace))
             })
@@ -4167,11 +4189,9 @@ impl Sidebar {
                 self.activate_thread_locally(&metadata, &workspace, false, window, cx);
             } else {
                 let path_list = metadata.folder_paths().clone();
-                if let Some((target_window, workspace)) = self.find_open_workspace_for_path_list(
-                    &path_list,
-                    metadata.remote_connection.as_ref(),
-                    cx,
-                ) {
+                if let Some((target_window, workspace)) =
+                    self.find_open_workspace_for_thread(&metadata, cx)
+                {
                     self.activate_thread_in_other_window(metadata, workspace, target_window, cx);
                 } else {
                     let key = ProjectGroupKey::from_worktree_paths(
@@ -4209,21 +4229,13 @@ impl Sidebar {
 
                         let current_workspace =
                             this.multi_workspace.upgrade().and_then(|multi_workspace| {
-                                multi_workspace.read(cx).workspace_for_paths(
-                                    &path_list,
-                                    metadata.remote_connection.as_ref(),
-                                    cx,
-                                )
+                                find_workspace_for_thread(multi_workspace.read(cx), &metadata, cx)
                             });
 
                         if let Some(workspace) = current_workspace {
                             this.activate_thread_locally(&metadata, &workspace, false, window, cx);
-                        } else if let Some((target_window, workspace)) = this
-                            .find_open_workspace_for_path_list(
-                                &path_list,
-                                metadata.remote_connection.as_ref(),
-                                cx,
-                            )
+                        } else if let Some((target_window, workspace)) =
+                            this.find_open_workspace_for_thread(&metadata, cx)
                         {
                             this.activate_thread_in_other_window(
                                 metadata,

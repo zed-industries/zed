@@ -1703,7 +1703,7 @@ impl WorkspaceDb {
     ) -> Result<RemoteConnectionId> {
         let identity = RemoteConnectionIdentity::from(&options);
         let kind;
-        let user: Option<String>;
+        let user: Option<Cow<'_, str>>;
         let mut host = None;
         let mut port = None;
         let mut distro = None;
@@ -1742,13 +1742,13 @@ impl WorkspaceDb {
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionIdentity::Mock { id } => {
                 kind = RemoteConnectionKind::Ssh;
-                host = Some(format!("mock-{}", id));
-                user = Some(format!("mock-user-{}", id));
+                host = Some(format!("mock-{}", id).into());
+                user = Some(format!("mock-user-{}", id).into());
             }
         }
 
-        if let RemoteConnectionOptions::Docker(options) = options {
-            name = Some(options.name);
+        if let RemoteConnectionOptions::Docker(options) = &options {
+            name = Some(options.name.as_str());
             use_podman = Some(options.use_podman);
             remote_env = serde_json::to_string(&options.remote_env).ok();
         }
@@ -1756,28 +1756,28 @@ impl WorkspaceDb {
         Self::get_or_create_remote_connection_query(
             this,
             kind,
-            host,
+            host.as_deref(),
             port,
-            user,
-            distro,
+            user.as_deref(),
+            distro.as_deref(),
             name,
-            container_id,
+            container_id.as_deref(),
             use_podman,
-            remote_env,
+            remote_env.as_deref(),
         )
     }
 
     fn get_or_create_remote_connection_query(
         this: &Connection,
         kind: RemoteConnectionKind,
-        host: Option<String>,
+        host: Option<&str>,
         port: Option<u16>,
-        user: Option<String>,
-        distro: Option<String>,
-        name: Option<String>,
-        container_id: Option<String>,
+        user: Option<&str>,
+        distro: Option<&str>,
+        name: Option<&str>,
+        container_id: Option<&str>,
         use_podman: Option<bool>,
-        remote_env: Option<String>,
+        remote_env: Option<&str>,
     ) -> Result<RemoteConnectionId> {
         if let Some(id) = this.select_row_bound(sql!(
             SELECT id
@@ -1793,12 +1793,12 @@ impl WorkspaceDb {
             LIMIT 1
         ))?((
             kind.serialize(),
-            host.clone(),
+            host,
             port,
-            user.clone(),
-            distro.clone(),
-            name.clone(),
-            container_id.clone(),
+            user,
+            distro,
+            name,
+            container_id,
         ))? {
             Ok(RemoteConnectionId(id))
         } else {
@@ -2749,14 +2749,16 @@ async fn resolve_local_workspace_identity(fs: &dyn Fs, paths: &PathList) -> Opti
 fn dedupe_recent_workspaces(
     workspaces: impl IntoIterator<Item = RecentWorkspace>,
 ) -> Vec<RecentWorkspace> {
-    let mut indices_by_key: HashMap<(Option<RemoteConnectionIdentity>, Vec<PathBuf>), usize> =
-        HashMap::default();
+    let mut indices_by_key: HashMap<
+        (Option<RemoteConnectionIdentity<'static>>, Vec<PathBuf>),
+        usize,
+    > = HashMap::default();
     let mut result: Vec<RecentWorkspace> = Vec::new();
     for workspace in workspaces {
         let location_identity = match &workspace.location {
             SerializedWorkspaceLocation::Local => None,
             SerializedWorkspaceLocation::Remote(connection) => {
-                Some(RemoteConnectionIdentity::from(connection))
+                Some(RemoteConnectionIdentity::from(connection).into_owned())
             }
         };
         let key = (location_identity, workspace.identity_paths.paths().to_vec());

@@ -113,7 +113,7 @@ pub use prettier_store::PrettierStore;
 use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent};
 #[cfg(target_os = "windows")]
 use remote::wsl_path_to_windows_path;
-use remote::{RemoteClient, RemoteConnectionIdentity, RemoteConnectionOptions};
+use remote::{RemoteClient, RemoteConnectionOptions};
 use rpc::{
     AnyProtoClient, ErrorCode,
     proto::{LanguageServerPromptResponse, REMOTE_SERVER_PROJECT_ID},
@@ -212,10 +212,10 @@ pub enum OpenedBufferEvent {
     Err(BufferId, Arc<anyhow::Error>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum ProjectHost {
+#[derive(Debug, Clone)]
+pub enum ProjectHost<'a> {
     Local,
-    Remote(RemoteConnectionIdentity),
+    Remote(&'a RemoteConnectionOptions),
 }
 
 /// Semantics-aware entity that is relevant to one or more [`Worktree`] with the files.
@@ -2428,14 +2428,23 @@ impl Project {
             .map(|remote| remote.read(cx).connection_options())
     }
 
-    pub fn host_identity(&self, cx: &App) -> Option<ProjectHost> {
+    pub fn path_host<'a>(&self, cx: &'a App) -> Option<ProjectHost<'a>> {
         if let Some(connection) = self.remote_connection_options(cx) {
-            Some(ProjectHost::Remote(connection.into()))
+            Some(ProjectHost::Remote(connection))
         } else if self.is_local() {
             Some(ProjectHost::Local)
         } else {
-            // Collaboration guests have no host identity.
+            // Collaboration guests cannot resolve paths directly on their host.
             None
+        }
+    }
+
+    pub fn matches_host(&self, requested: &ProjectHost<'_>, cx: &App) -> bool {
+        match requested {
+            ProjectHost::Local => self.is_local(),
+            ProjectHost::Remote(requested) => self
+                .remote_connection_options(cx)
+                .is_some_and(|connection| connection.matches_project_connection(requested)),
         }
     }
 
@@ -6854,27 +6863,11 @@ impl Project {
 ///
 /// Paths are mapped to their main worktree path first so we can group
 /// workspaces by main repos.
-#[derive(Clone, Debug, Default)]
+#[derive(PartialEq, Eq, Hash, Clone, Debug, Default)]
 pub struct ProjectGroupKey {
     /// The paths of the main worktrees for this project group.
     paths: PathList,
     host: Option<RemoteConnectionOptions>,
-}
-
-impl PartialEq for ProjectGroupKey {
-    fn eq(&self, other: &Self) -> bool {
-        self.paths == other.paths
-            && self.host.as_ref().map(|o| o.identity()) == other.host.as_ref().map(|o| o.identity())
-    }
-}
-
-impl Eq for ProjectGroupKey {}
-
-impl std::hash::Hash for ProjectGroupKey {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.paths.hash(state);
-        self.host.as_ref().map(|o| o.identity()).hash(state);
-    }
 }
 
 impl ProjectGroupKey {
@@ -6936,6 +6929,11 @@ impl ProjectGroupKey {
 
     pub fn host(&self) -> Option<&RemoteConnectionOptions> {
         self.host.as_ref()
+    }
+
+    pub fn matches_identity(&self, other: &Self) -> bool {
+        self.paths == other.paths
+            && self.host.as_ref().map(|o| o.identity()) == other.host.as_ref().map(|o| o.identity())
     }
 }
 

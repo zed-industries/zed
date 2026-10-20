@@ -45,11 +45,11 @@ pub enum SerializedWorkspaceLocation {
     Remote(RemoteConnectionOptions),
 }
 
-impl From<&SerializedWorkspaceLocation> for ProjectHost {
-    fn from(location: &SerializedWorkspaceLocation) -> Self {
+impl<'a> From<&'a SerializedWorkspaceLocation> for ProjectHost<'a> {
+    fn from(location: &'a SerializedWorkspaceLocation) -> Self {
         match location {
             SerializedWorkspaceLocation::Local => Self::Local,
-            SerializedWorkspaceLocation::Remote(connection) => Self::Remote(connection.into()),
+            SerializedWorkspaceLocation::Remote(connection) => Self::Remote(connection),
         }
     }
 }

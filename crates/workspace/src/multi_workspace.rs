@@ -7,7 +7,7 @@ use gpui::{
     WindowId, actions, deferred, px,
 };
 pub use project::ProjectGroupKey;
-use project::{DisableAiSettings, Project, ProjectHost};
+use project::{DisableAiSettings, Project};
 use remote::RemoteConnectionOptions;
 use settings::Settings;
 pub use settings::SidebarSide;
@@ -1070,19 +1070,14 @@ impl MultiWorkspace {
         host: Option<&RemoteConnectionOptions>,
         cx: &App,
     ) -> Option<Entity<Workspace>> {
-        let requested_host = host.map_or(ProjectHost::Local, |connection| {
-            ProjectHost::Remote(connection.into())
-        });
-
         for workspace in self.workspaces() {
             let workspace_state = workspace.read(cx);
             let root_paths = PathList::new(&workspace_state.root_paths(cx));
-            let host_matches = workspace_state
-                .project()
-                .read(cx)
-                .host_identity(cx)
-                .as_ref()
-                == Some(&requested_host);
+            let project = workspace_state.project().read(cx);
+            let host_matches: bool = match host {
+                Some(host) => project.remote_connection_options(cx) == Some(host),
+                None => project.is_local(),
+            };
             let paths_match = root_paths == *path_list;
             if host_matches && paths_match {
                 return Some(workspace.clone());

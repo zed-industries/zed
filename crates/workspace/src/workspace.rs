@@ -10926,8 +10926,25 @@ pub struct WorkspaceOpenTarget {
     pub visible: OpenVisible,
 }
 
+fn matches_requested_host(lhost: &ProjectHost<'_>, rhost: &ProjectHost<'_>) -> bool {
+    match (lhost, rhost) {
+        (ProjectHost::Local, ProjectHost::Local) => true,
+        (
+            ProjectHost::Remote(RemoteConnectionOptions::Wsl(lopts)),
+            ProjectHost::Remote(RemoteConnectionOptions::Wsl(ropts)),
+        ) => {
+            // WSL entry points do not consistently specify the user.
+            lopts.distro_name == ropts.distro_name
+        }
+        (ProjectHost::Remote(lopts), ProjectHost::Remote(ropts)) => {
+            lopts.matches_project_connection(ropts)
+        }
+        _ => false,
+    }
+}
+
 pub fn workspace_windows_for_host<'a>(
-    host: &'a ProjectHost,
+    host: &'a ProjectHost<'_>,
     cx: &'a App,
 ) -> impl Iterator<Item = WindowHandle<MultiWorkspace>> + 'a {
     cx.windows()
@@ -10940,14 +10957,14 @@ pub fn workspace_windows_for_host<'a>(
                         .read(cx)
                         .project
                         .read(cx)
-                        .host_identity(cx)
-                        .is_some_and(|project_host| project_host == *host)
+                        .path_host(cx)
+                        .is_some_and(|project_host| matches_requested_host(&project_host, host))
                 })
             })
         })
 }
 
-fn preferred_target_for_files(host: &ProjectHost, cx: &App) -> Option<WorkspaceOpenTarget> {
+fn preferred_target_for_files(host: &ProjectHost<'_>, cx: &App) -> Option<WorkspaceOpenTarget> {
     let target_for_window = |window: WindowHandle<MultiWorkspace>| {
         let multi_workspace = window.read(cx).ok()?;
         let active_workspace = multi_workspace.workspace();
@@ -10956,8 +10973,8 @@ fn preferred_target_for_files(host: &ProjectHost, cx: &App) -> Option<WorkspaceO
                 .read(cx)
                 .project
                 .read(cx)
-                .host_identity(cx)
-                .is_some_and(|project_host| project_host == *host)
+                .path_host(cx)
+                .is_some_and(|project_host| matches_requested_host(&project_host, host))
         };
 
         let workspace = if matches_host(active_workspace) {
@@ -10995,7 +11012,7 @@ fn preferred_target_for_files(host: &ProjectHost, cx: &App) -> Option<WorkspaceO
 pub fn find_existing_workspace(
     abs_paths: &[PathBuf],
     open_options: &OpenOptions,
-    host: &ProjectHost,
+    host: &ProjectHost<'_>,
     cx: &mut AsyncApp,
 ) -> Option<WorkspaceOpenTarget> {
     cx.update(|cx| {
@@ -11014,8 +11031,8 @@ pub fn find_existing_workspace(
                         let project = workspace_ref.project.read(cx);
 
                         if project
-                            .host_identity(cx)
-                            .is_none_or(|project_host| project_host != *host)
+                            .path_host(cx)
+                            .is_none_or(|project_host| !matches_requested_host(&project_host, host))
                         {
                             continue;
                         }

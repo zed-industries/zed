@@ -1,77 +1,76 @@
-use crate::{
-    RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions,
-    transport::ssh::SshConnectionHost,
-};
+use crate::{RemoteConnectionOptions, transport::ssh::SshConnectionHost};
+use std::borrow::Cow;
 
 /// Identifies a remote host for project and workspace matching.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum RemoteConnectionIdentity {
+pub enum RemoteConnectionIdentity<'a> {
     Ssh {
-        host: String,
-        username: Option<String>,
+        host: Cow<'a, str>,
+        username: Option<Cow<'a, str>>,
         port: Option<u16>,
     },
     Wsl {
-        distro_name: String,
-        user: Option<String>,
+        distro_name: Cow<'a, str>,
+        user: Option<Cow<'a, str>>,
     },
     Docker {
-        container_id: String,
-        remote_user: String,
+        container_id: Cow<'a, str>,
+        remote_user: Cow<'a, str>,
     },
     #[cfg(any(test, feature = "test-support"))]
     Mock { id: u64 },
 }
 
-impl From<&RemoteConnectionOptions> for RemoteConnectionIdentity {
-    fn from(options: &RemoteConnectionOptions) -> Self {
+impl RemoteConnectionIdentity<'_> {
+    pub fn into_owned(self) -> RemoteConnectionIdentity<'static> {
+        match self {
+            Self::Ssh {
+                host,
+                username,
+                port,
+            } => RemoteConnectionIdentity::Ssh {
+                host: Cow::Owned(host.into_owned()),
+                username: username.map(|username| Cow::Owned(username.into_owned())),
+                port,
+            },
+            Self::Wsl { distro_name, user } => RemoteConnectionIdentity::Wsl {
+                distro_name: Cow::Owned(distro_name.into_owned()),
+                user: user.map(|user| Cow::Owned(user.into_owned())),
+            },
+            Self::Docker {
+                container_id,
+                remote_user,
+            } => RemoteConnectionIdentity::Docker {
+                container_id: Cow::Owned(container_id.into_owned()),
+                remote_user: Cow::Owned(remote_user.into_owned()),
+            },
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Mock { id } => RemoteConnectionIdentity::Mock { id },
+        }
+    }
+}
+
+impl<'a> From<&'a RemoteConnectionOptions> for RemoteConnectionIdentity<'a> {
+    fn from(options: &'a RemoteConnectionOptions) -> Self {
         match options {
-            RemoteConnectionOptions::Ssh(options) => options.into(),
-            RemoteConnectionOptions::Wsl(options) => options.into(),
+            RemoteConnectionOptions::Ssh(options) => Self::Ssh {
+                host: match &options.host {
+                    SshConnectionHost::Hostname(hostname) => Cow::Borrowed(hostname),
+                    SshConnectionHost::IpAddr(address) => Cow::Owned(address.to_string()),
+                },
+                username: options.username.as_deref().map(Cow::Borrowed),
+                port: options.port,
+            },
+            RemoteConnectionOptions::Wsl(options) => Self::Wsl {
+                distro_name: Cow::Borrowed(&options.distro_name),
+                user: options.user.as_deref().map(Cow::Borrowed),
+            },
             RemoteConnectionOptions::Docker(options) => Self::Docker {
-                container_id: options.container_id.clone(),
-                remote_user: options.remote_user.clone(),
+                container_id: Cow::Borrowed(&options.container_id),
+                remote_user: Cow::Borrowed(&options.remote_user),
             },
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(options) => Self::Mock { id: options.id },
-        }
-    }
-}
-
-impl From<&SshConnectionOptions> for RemoteConnectionIdentity {
-    fn from(options: &SshConnectionOptions) -> Self {
-        Self::Ssh {
-            host: options.host.to_string(),
-            username: options.username.clone(),
-            port: options.port,
-        }
-    }
-}
-
-impl From<&settings_content::SshConnection> for RemoteConnectionIdentity {
-    fn from(connection: &settings_content::SshConnection) -> Self {
-        Self::Ssh {
-            host: SshConnectionHost::from(connection.host.as_str()).to_string(),
-            username: connection.username.clone(),
-            port: connection.port,
-        }
-    }
-}
-
-impl From<&WslConnectionOptions> for RemoteConnectionIdentity {
-    fn from(options: &WslConnectionOptions) -> Self {
-        Self::Wsl {
-            distro_name: options.distro_name.clone(),
-            user: options.user.clone(),
-        }
-    }
-}
-
-impl From<&settings_content::WslConnection> for RemoteConnectionIdentity {
-    fn from(connection: &settings_content::WslConnection) -> Self {
-        Self::Wsl {
-            distro_name: connection.distro_name.clone(),
-            user: connection.user.clone(),
         }
     }
 }
@@ -86,31 +85,45 @@ mod tests {
     };
 
     #[test]
-    fn ssh_identity_ignores_non_persisted_runtime_fields() {
-        let left = RemoteConnectionOptions::Ssh(SshConnectionOptions {
-            host: "example.com".into(),
-            username: Some("anth".to_string()),
-            port: Some(2222),
-            password: Some("secret".to_string()),
-            args: Some(vec!["-v".to_string()]),
-            connection_timeout: Some(30),
-            nickname: Some("work".to_string()),
-            upload_binary_over_ssh: true,
-            ..Default::default()
-        });
-        let right = RemoteConnectionOptions::Ssh(SshConnectionOptions {
-            host: "example.com".into(),
-            username: Some("anth".to_string()),
-            port: Some(2222),
-            password: None,
-            args: None,
-            connection_timeout: None,
-            nickname: None,
-            upload_binary_over_ssh: false,
-            ..Default::default()
-        });
+    fn ssh_connection_matching() {
+        let left = |args| {
+            RemoteConnectionOptions::Ssh(SshConnectionOptions {
+                host: "example.com".into(),
+                username: Some("anth".to_string()),
+                port: Some(2222),
+                password: Some("secret".to_string()),
+                args,
+                connection_timeout: Some(30),
+                nickname: Some("work".to_string()),
+                upload_binary_over_ssh: true,
+                ..Default::default()
+            })
+        };
+        let right = |args| {
+            RemoteConnectionOptions::Ssh(SshConnectionOptions {
+                host: "example.com".into(),
+                username: Some("anth".to_string()),
+                port: Some(2222),
+                password: None,
+                args,
+                connection_timeout: None,
+                nickname: None,
+                upload_binary_over_ssh: false,
+                ..Default::default()
+            })
+        };
 
-        assert_eq!(left.identity(), right.identity());
+        for (left_args, right_args, expected) in [
+            (Some(vec!["-v".into()]), Some(vec!["-v".into()]), true),
+            (Some(vec!["-v".into()]), Some(vec!["-q".into()]), false),
+            (None, Some(vec![]), true),
+        ] {
+            let left = left(left_args);
+            let right = right(right_args);
+
+            assert_eq!(left.identity(), right.identity());
+            assert_eq!(left.matches_project_connection(&right), expected);
+        }
     }
 
     #[test]
@@ -129,6 +142,7 @@ mod tests {
         });
 
         assert_ne!(left.identity(), right.identity());
+        assert!(!left.matches_project_connection(&right));
     }
 
     #[test]

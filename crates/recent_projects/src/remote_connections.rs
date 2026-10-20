@@ -11,8 +11,8 @@ use gpui::{AppContext, AsyncApp, PromptLevel, WindowHandle};
 
 use project::{ProjectHost, trusted_worktrees};
 use remote::{
-    DockerConnectionOptions, Interactive, RemoteConnection, RemoteConnectionIdentity,
-    RemoteConnectionOptions, SshConnectionOptions,
+    DockerConnectionOptions, Interactive, RemoteConnection, RemoteConnectionOptions,
+    SshConnectionOptions,
 };
 pub use settings::SshConnection;
 use settings::{DevContainerConnection, ExtendingVec, RegisterSetting, Settings, WslConnection};
@@ -42,9 +42,9 @@ impl RemoteSettings {
     }
 
     pub fn fill_connection_options_from_settings(&self, options: &mut SshConnectionOptions) {
-        let identity = RemoteConnectionIdentity::from(&*options);
+        let host = options.host.to_string();
         for conn in self.ssh_connections() {
-            if RemoteConnectionIdentity::from(&conn) == identity {
+            if conn.host == host && conn.username == options.username && conn.port == options.port {
                 options.nickname = conn.nickname;
                 options.upload_binary_over_ssh = conn.upload_binary_over_ssh.unwrap_or_default();
                 options.args = Some(conn.args);
@@ -132,7 +132,7 @@ pub async fn open_remote_project(
     let existing = find_existing_workspace(
         &paths,
         &open_options,
-        &ProjectHost::Remote((&connection_options).into()),
+        &ProjectHost::Remote(&connection_options),
         cx,
     );
 
@@ -712,7 +712,7 @@ mod tests {
         let found = find_existing_workspace(
             &search_paths,
             &workspace::OpenOptions::default(),
-            &ProjectHost::Remote((&other_opts).into()),
+            &ProjectHost::Remote(&other_opts),
             &mut async_cx,
         );
 
@@ -725,7 +725,7 @@ mod tests {
         let found = find_existing_workspace(
             &search_paths,
             &workspace::OpenOptions::default(),
-            &ProjectHost::Remote((&opts).into()),
+            &ProjectHost::Remote(&opts),
             &mut async_cx,
         );
 

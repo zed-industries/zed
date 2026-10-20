@@ -1367,8 +1367,24 @@ pub enum RemoteConnectionOptions {
 }
 
 impl RemoteConnectionOptions {
-    pub fn identity(&self) -> RemoteConnectionIdentity {
+    pub fn identity(&self) -> RemoteConnectionIdentity<'_> {
         self.into()
+    }
+
+    pub fn matches_project_connection(&self, requested: &Self) -> bool {
+        if self.identity() != requested.identity() {
+            return false;
+        }
+
+        match (self, requested) {
+            (Self::Ssh(options), Self::Ssh(requested_options)) => {
+                // SSH arguments can override the host and user.
+                // Normalize the args to make None == Some("") for comparison.
+                options.args.as_deref().unwrap_or_default()
+                    == requested_options.args.as_deref().unwrap_or_default()
+            }
+            _ => true,
+        }
     }
 
     /// The connection key prefix used in created worktree registry.

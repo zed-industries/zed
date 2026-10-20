@@ -586,7 +586,6 @@ pub fn add_wsl_distro(
 
     let distro_name = connection_options.distro_name.clone();
     let user = connection_options.user.clone();
-    let identity = remote::RemoteConnectionIdentity::from(connection_options);
     SettingsStore::global(cx).update_settings_file(fs, move |setting, _| {
         let connections = setting
             .remote
@@ -595,7 +594,7 @@ pub fn add_wsl_distro(
 
         if !connections
             .iter()
-            .any(|conn| remote::RemoteConnectionIdentity::from(conn) == identity)
+            .any(|conn| conn.distro_name == distro_name && conn.user == user)
         {
             use std::collections::BTreeSet;
 
@@ -2450,7 +2449,7 @@ impl RecentProjectsDelegate {
     fn is_in_current_window_groups(&self, workspace: &RecentWorkspace) -> bool {
         self.window_project_groups
             .iter()
-            .any(|key| *key == workspace.project_group_key())
+            .any(|key| key.matches_identity(&workspace.project_group_key()))
     }
 
     fn is_open_folder(&self, workspace: &RecentWorkspace) -> bool {
