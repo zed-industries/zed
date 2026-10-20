@@ -207,6 +207,12 @@ struct ConnectionRuntime {
     _quit_subscription: Option<gpui::Subscription>,
 }
 
+struct StdioStartup {
+    child: transport::OwnedChild,
+    stderr_task: Shared<Task<()>>,
+    runtime: Rc<RefCell<Option<ConnectionRuntime>>>,
+}
+
 impl AcpV2Connection {
     pub async fn stdio(
         agent_id: AgentId,
@@ -242,10 +248,14 @@ impl AcpV2Connection {
                         .map(|channel| channel.display_name().to_owned()),
                 )
         });
+        // Keep cleanup from killing the child before startup error arbitration can
+        // distinguish a protocol rejection from a natural process exit.
+        let startup_runtime = Rc::new(RefCell::new(None));
         let initialized = {
             let mut cx = cx.clone();
             let debug_log = debug_log.clone();
             let stderr_task = stderr_task.clone();
+            let runtime = startup_runtime.clone();
             async move {
                 Self::connect(
                     agent_id,
@@ -253,15 +263,20 @@ impl AcpV2Connection {
                     Lines::new(outgoing, incoming),
                     info,
                     debug_log,
-                    Some((child, stderr_task)),
+                    Some(StdioStartup {
+                        child,
+                        stderr_task,
+                        runtime,
+                    }),
                     &mut cx,
                 )
                 .await
             }
         }
         .boxed_local();
-        let (connection, status, stderr_task) =
-            runtime::race_startup(initialized, status, stderr_task, &debug_log, cx).await?;
+        let result = runtime::race_startup(initialized, status, stderr_task, &debug_log, cx).await;
+        drop(startup_runtime);
+        let (connection, status, stderr_task) = result?;
         let drained = {
             let sdk_connection = connection.connection.clone();
             runtime::drain_transport(
@@ -293,12 +308,12 @@ impl AcpV2Connection {
         transport: impl ConnectTo<Client> + 'static,
         info: acp::Implementation,
         debug_log: AcpDebugLog,
-        process: Option<(transport::OwnedChild, Shared<Task<()>>)>,
+        startup: Option<StdioStartup>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
-        let (child, stderr_task) = match process {
-            Some((child, stderr)) => (Some(child), stderr),
-            None => (None, Task::ready(()).shared()),
+        let (runtime, child, stderr_task) = match startup {
+            Some(startup) => (startup.runtime, Some(startup.child), startup.stderr_task),
+            None => (Rc::new(RefCell::new(None)), None, Task::ready(()).shared()),
         };
         let request_elicitations = cx.new(|_| ElicitationStore::default());
         let sessions = Rc::new(RefCell::new(HashMap::default()));
@@ -310,8 +325,8 @@ impl AcpV2Connection {
             request_elicitations: request_elicitations.clone(),
             active_request_scopes: Some(RefCell::new(Default::default())),
         };
-        let (mut runtime, shutdown) = runtime::ClientRuntime::new(context, cx);
-        let dispatch_tx = runtime.sender();
+        let (mut client_runtime, shutdown) = runtime::ClientRuntime::new(context, cx);
+        let dispatch_tx = client_runtime.sender();
         let (sender, received) = futures::channel::oneshot::channel();
         let cleanup = runtime::disconnect_cleanup(dispatch_tx.clone());
         let connection_future =
@@ -328,14 +343,14 @@ impl AcpV2Connection {
                     )
                     .await
                 });
-        runtime.start_io(runtime::finish_connection(connection_future, cleanup), cx);
-        let runtime = Rc::new(RefCell::new(Some(ConnectionRuntime {
-            _client: runtime,
+        client_runtime.start_io(runtime::finish_connection(connection_future, cleanup), cx);
+        *runtime.borrow_mut() = Some(ConnectionRuntime {
+            _client: client_runtime,
             _stderr_task: stderr_task,
             _wait_task: None,
             _child: child,
             _quit_subscription: None,
-        })));
+        });
         let quit = cx.update(|cx| {
             cx.on_app_quit({
                 let runtime = Rc::downgrade(&runtime);
@@ -6845,7 +6860,11 @@ exec sleep 60
                 transport,
                 acp::Implementation::new("client", "1"),
                 AcpDebugLog::default(),
-                Some((child, Task::ready(()).shared())),
+                Some(StdioStartup {
+                    child,
+                    stderr_task: Task::ready(()).shared(),
+                    runtime: Rc::new(RefCell::new(None)),
+                }),
                 &mut cx,
             )
             .await
@@ -6861,6 +6880,97 @@ exec sleep 60
             bounded(connecting, cx).await.is_err(),
             "initialization failed on shutdown"
         );
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn v2_stdio_startup_preserves_rejections_before_cleanup(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+            release_channel::init("0.0.0".parse().expect("version"), cx);
+        });
+        cx.executor().allow_parking();
+        let directory = tempfile::tempdir().expect("working directory");
+        let project = Project::example([directory.path()], &mut cx.to_async()).await;
+        for (response, expected) in [
+            (
+                r#""error":{"code":-32022,"message":"Unsupported protocol version","data":{"requested":2,"supported":[1]}}"#,
+                Some(
+                    agent_client_protocol::Error::new(-32022, "Unsupported protocol version")
+                        .data(json!({"requested": 2, "supported": [1]})),
+                ),
+            ),
+            (
+                r#""error":{"code":-32602,"message":"Invalid initialize parameters","data":{"field":"capabilities"}}"#,
+                Some(
+                    agent_client_protocol::Error::invalid_params()
+                        .data(json!({"field": "capabilities"})),
+                ),
+            ),
+            (
+                r#""result":{"protocolVersion":1,"info":{"name":"v1-peer","version":"1"}}"#,
+                None,
+            ),
+        ] {
+            let error = bounded(
+                AcpV2Connection::stdio(
+                    AgentId::new("startup-rejection"),
+                    project.clone(),
+                    AgentServerCommand {
+                        path: "/bin/sh".into(),
+                        args: vec![
+                            "-c".into(),
+                            r#"
+while IFS= read -r request; do
+    id=${request#*\"id\":}
+    id=${id%%,*}
+    printf '{"jsonrpc":"2.0","id":%s,%s}\n' "$id" "$ACP_STARTUP_RESPONSE"
+done
+exec sleep 60
+"#
+                            .into(),
+                        ],
+                        env: Some(HashMap::from_iter([(
+                            "ACP_STARTUP_RESPONSE".into(),
+                            response.into(),
+                        )])),
+                    },
+                    WeakEntity::new_invalid(),
+                    &mut cx.to_async(),
+                ),
+                cx,
+            )
+            .await
+            .err()
+            .expect("startup rejection");
+            if let Some(expected) = expected {
+                let actual = error
+                    .downcast_ref::<agent_client_protocol::Error>()
+                    .unwrap_or_else(|| panic!("startup diagnostic was replaced: {error:?}"));
+                assert_eq!(actual.code, expected.code);
+                assert_eq!(actual.data, expected.data);
+            } else {
+                let actual = error
+                    .downcast_ref::<agent_client_protocol::Error>()
+                    .unwrap_or_else(|| panic!("version diagnostic was replaced: {error:?}"));
+                assert_eq!(
+                    actual.code,
+                    agent_client_protocol::Error::new(-32600, "Invalid request").code
+                );
+                assert!(
+                    actual
+                        .data
+                        .as_ref()
+                        .and_then(|data| data.as_str())
+                        .is_some_and(
+                            |message| message.contains("required ACP protocol version 2")
+                                && message.contains("peer negotiated 1")
+                        ),
+                    "{actual:?}"
+                );
+            }
+        }
     }
 
     #[cfg(unix)]

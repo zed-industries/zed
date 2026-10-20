@@ -101,8 +101,9 @@ pub trait AgentConnection {
         None
     }
 
-    /// Shut down connection-owned resources when their shared UI owner ends.
+    /// Initiate shutdown of connection-owned resources when their shared UI owner ends.
     /// This is independent of session close and may leave retained models alive.
+    /// It does not wait for process exit or a complete protocol drain.
     fn shutdown(&self) {}
 
     fn new_session(

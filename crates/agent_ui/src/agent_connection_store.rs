@@ -511,9 +511,10 @@ mod tests {
             assert!(started.load(Ordering::SeqCst));
             if quitting {
                 cx.update(|cx| cx.shutdown());
+            } else {
+                drop(store);
+                cx.update(|_| ());
             }
-            drop(store);
-            cx.update(|_| ());
             assert!(pending.await.is_err());
             cx.run_until_parked();
             assert!(dropped.load(Ordering::SeqCst));
