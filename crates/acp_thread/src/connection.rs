@@ -961,6 +961,7 @@ mod test_support {
         permission_requests: HashMap<acp_v2::ToolCallId, PermissionOptions>,
         next_prompt_updates: Arc<Mutex<Vec<StubPromptUpdate>>>,
         next_prompt_response: Arc<Mutex<Option<oneshot::Receiver<Result<acp_v1::PromptResponse>>>>>,
+        next_load_error: Arc<Mutex<Option<anyhow::Error>>>,
         next_receipt_response:
             Arc<Mutex<Option<oneshot::Receiver<Result<acp_v2::PromptResponse>>>>>,
         receipt_prompt: Arc<Mutex<Option<Vec<acp_v2::ContentBlock>>>>,
@@ -1005,6 +1006,7 @@ mod test_support {
             Self {
                 next_prompt_updates: Default::default(),
                 next_prompt_response: Default::default(),
+                next_load_error: Default::default(),
                 next_receipt_response: Default::default(),
                 receipt_prompt: Default::default(),
                 next_truncate: Default::default(),
@@ -1031,6 +1033,10 @@ mod test_support {
                         .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
                 ),
             }
+        }
+
+        pub fn set_next_load_error(&self, error: anyhow::Error) {
+            *self.next_load_error.lock() = Some(error);
         }
 
         pub fn set_next_prompt_updates(&self, updates: Vec<acp_v1::SessionUpdate>) {
@@ -1308,6 +1314,9 @@ mod test_support {
                 return Task::ready(Err(anyhow::Error::msg("Loading sessions is not supported")));
             }
 
+            if let Some(error) = self.next_load_error.lock().take() {
+                return Task::ready(Err(error));
+            }
             let thread = self.create_session(session_id, project, work_dirs, title, cx);
             Task::ready(Ok(thread))
         }

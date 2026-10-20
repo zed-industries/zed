@@ -3239,7 +3239,7 @@ impl EditorElement {
                 || snapshot.use_tree_sitter_for_syntax(rows.start, cx);
             let language_aware = LanguageAwareStyling {
                 tree_sitter: use_tree_sitter,
-                diagnostics: true,
+                diagnostics: snapshot.display_snapshot.diagnostics_visible(),
             };
             let chunks = snapshot.highlighted_chunks(rows.clone(), language_aware, style);
             LineWithInvisibles::from_chunks(
@@ -5742,7 +5742,7 @@ impl EditorElement {
         visible_rows: Range<DisplayRow>,
         line_layouts: &mut [LineWithInvisibles],
     ) {
-        if visible_rows.is_empty() {
+        if !snapshot.display_snapshot.diagnostics_visible() || visible_rows.is_empty() {
             return;
         }
 
@@ -10974,7 +10974,7 @@ pub fn layout_line(
         !snapshot.semantic_tokens_enabled || snapshot.use_tree_sitter_for_syntax(row, cx);
     let language_aware = LanguageAwareStyling {
         tree_sitter: use_tree_sitter,
-        diagnostics: true,
+        diagnostics: snapshot.display_snapshot.diagnostics_visible(),
     };
     let chunks = snapshot.highlighted_chunks(row..row + DisplayRow(1), language_aware, style);
     LineWithInvisibles::from_chunks(
@@ -11453,7 +11453,8 @@ mod tests {
     };
     use buffer_diff::BufferDiff;
     use gpui::{
-        Render, TestAppContext, Underline, UpdateGlobal, VisualTestContext, WindowHandle, font,
+        EntityInputHandler, Render, TestAppContext, Underline, UpdateGlobal, VisualTestContext,
+        WindowHandle, font,
     };
     use language::{
         Buffer, Capability, Diagnostic, DiagnosticEntry, DiagnosticSet, SelectionGoal,
@@ -11466,6 +11467,53 @@ mod tests {
     use std::num::NonZeroU32;
     use text::PointUtf16;
     use util::test::sample_text;
+
+    // Regression test for https://github.com/zed-industries/zed/issues/65453.
+    #[gpui::test]
+    fn test_highlight_underlines_are_only_hidden_in_minimap(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        fn has_highlight_underline(editor: &Editor, style: &EditorStyle, cx: &mut App) -> bool {
+            editor
+                .display_snapshot(cx)
+                .highlighted_chunks(
+                    DisplayRow(0)..DisplayRow(1),
+                    LanguageAwareStyling {
+                        tree_sitter: false,
+                        diagnostics: false,
+                    },
+                    style,
+                )
+                .any(|chunk| chunk.style.is_some_and(|style| style.underline.is_some()))
+        }
+
+        let single_line = cx.add_window(|window, cx| Editor::single_line(window, cx));
+        single_line
+            .update(cx, |editor, window, cx| {
+                editor.replace_and_mark_text_in_range(None, "ni", None, window, cx);
+                let style = editor.create_style(cx);
+                assert!(has_highlight_underline(editor, &style, cx));
+            })
+            .expect("checked single line editor");
+
+        let full = cx.add_window(|window, cx| {
+            let buffer = MultiBuffer::build_simple("", cx);
+            let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
+            editor.disable_diagnostics(cx);
+            editor
+        });
+        full.update(cx, |editor, window, cx| {
+            editor.replace_and_mark_text_in_range(None, "ni", None, window, cx);
+            let style = editor.create_style(cx);
+            assert!(has_highlight_underline(editor, &style, cx));
+
+            let minimap =
+                editor.initialize_new_minimap(EditorSettings::get_global(cx).minimap, window, cx);
+            let minimap_style = minimap.read(cx).create_style(cx);
+            assert!(!has_highlight_underline(editor, &minimap_style, cx));
+        })
+        .expect("checked full editor and minimap");
+    }
 
     struct MinimapGeometry {
         document_lines: f64,
