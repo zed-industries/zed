@@ -9,7 +9,15 @@ use project::{Project, agent_server_store::AgentServerCommand};
 use remote::command::RemoteCommand;
 use std::{io, pin::Pin, process::Stdio};
 use task::{Shell, ShellBuilder};
-use util::process::Child;
+use util::{ResultExt as _, process::Child};
+
+pub(super) struct OwnedChild(pub Child);
+
+impl Drop for OwnedChild {
+    fn drop(&mut self) {
+        self.0.kill().log_err();
+    }
+}
 
 pub(super) struct StdioProcess {
     pub child: Child,
