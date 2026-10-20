@@ -540,11 +540,31 @@ impl ChatCompletionEventMapper {
             }
             Some("tool_calls") => {
                 if !self.tool_call_accumulation_failed {
-                    events.extend(self.tool_calls.drain().map(
-                        |tool_call| match parse_tool_arguments(&tool_call.arguments) {
+                    for (position, tool_call) in self.tool_calls.drain().enumerate() {
+                        // The per-delta path withholds a call until its name arrives.
+                        // At finish that name will not arrive, and emitting the call
+                        // would persist a tool that cannot be executed or replayed.
+                        if tool_call.name.is_empty() {
+                            log::error!(
+                                "dropping streamed tool call with an empty name (index {index:?})",
+                                index = tool_call.index
+                            );
+                            continue;
+                        }
+
+                        // An empty id is rejected on the next request and wedges the
+                        // thread. Any stable non-empty id pairs this call with its result.
+                        let id = if tool_call.id.is_empty() {
+                            let index = tool_call.index.unwrap_or(position);
+                            format!("call_{index}")
+                        } else {
+                            tool_call.id
+                        };
+
+                        events.push(match parse_tool_arguments(&tool_call.arguments) {
                             Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
                                 LanguageModelToolUse {
-                                    id: tool_call.id.clone().into(),
+                                    id: id.into(),
                                     name: tool_call.name.as_str().into(),
                                     is_input_complete: true,
                                     input: LanguageModelToolUseInput::Json(input),
@@ -553,13 +573,13 @@ impl ChatCompletionEventMapper {
                                 },
                             )),
                             Err(error) => Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
-                                id: tool_call.id.into(),
+                                id: id.into(),
                                 tool_name: tool_call.name.into(),
                                 raw_input: tool_call.arguments.clone().into(),
                                 json_parse_error: error.to_string(),
                             }),
-                        },
-                    ));
+                        });
+                    }
                 }
 
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
@@ -1632,5 +1652,142 @@ mod tests {
         assert_eq!(tool_uses[0].raw_input, r#"{"city":"Berlin"}"#);
         assert_eq!(tool_uses[1].id.to_string(), "call_b");
         assert_eq!(tool_uses[1].raw_input, r#"{"city":"Tokyo"}"#);
+    }
+
+    #[test]
+    fn synthesizes_stable_ids_when_finished_tool_calls_omit_them() {
+        let mapped = map_completion_events(vec![
+            tool_call_chunk_event(vec![ToolCallChunk {
+                index: Some(0),
+                id: Some(String::new()),
+                function: Some(FunctionChunk {
+                    name: Some("terminal".into()),
+                    arguments: Some(r#"{"command":"ls"}"#.into()),
+                    thought_signature: None,
+                }),
+            }]),
+            tool_call_chunk_event(vec![ToolCallChunk {
+                index: Some(2),
+                id: None,
+                function: Some(FunctionChunk {
+                    name: Some("read_file".into()),
+                    arguments: Some(r#"{"path":"README.md"}"#.into()),
+                    thought_signature: None,
+                }),
+            }]),
+            finish_tool_calls_event(),
+        ]);
+
+        let tool_uses = completed_tool_calls(&mapped);
+        assert_eq!(tool_uses.len(), 2);
+        assert_eq!(tool_uses[0].id.to_string(), "call_0");
+        assert_eq!(tool_uses[0].name.as_ref(), "terminal");
+        assert_eq!(tool_uses[0].raw_input, r#"{"command":"ls"}"#);
+        assert_eq!(tool_uses[1].id.to_string(), "call_2");
+        assert_eq!(tool_uses[1].name.as_ref(), "read_file");
+        assert!(mapped.iter().all(|event| match event {
+            LanguageModelCompletionEvent::ToolUse(tool_use) => !tool_use.id.to_string().is_empty(),
+            _ => true,
+        }));
+    }
+
+    #[test]
+    fn synthesizes_id_from_stream_position_when_tool_call_index_is_absent() {
+        let mapped = map_completion_events(vec![
+            tool_call_chunk_event(vec![ToolCallChunk {
+                index: None,
+                id: Some(String::new()),
+                function: Some(FunctionChunk {
+                    name: Some("list_directory".into()),
+                    arguments: Some(r#"{"path":"src"}"#.into()),
+                    thought_signature: None,
+                }),
+            }]),
+            finish_tool_calls_event(),
+        ]);
+
+        let tool_uses = completed_tool_calls(&mapped);
+        assert_eq!(tool_uses.len(), 1);
+        assert_eq!(tool_uses[0].id.to_string(), "call_0");
+        assert_eq!(tool_uses[0].name.as_ref(), "list_directory");
+        assert_eq!(tool_uses[0].raw_input, r#"{"path":"src"}"#);
+    }
+
+    #[test]
+    fn drops_finished_tool_call_with_empty_name() {
+        let mut mapper = ChatCompletionEventMapper::new();
+        let partial_events = mapper.map_event(tool_call_chunk_event(vec![
+            ToolCallChunk {
+                index: Some(0),
+                id: Some("call_bad".into()),
+                function: Some(FunctionChunk {
+                    name: Some(String::new()),
+                    arguments: Some(r#"{"command":"ls"}"#.into()),
+                    thought_signature: None,
+                }),
+            },
+            ToolCallChunk {
+                index: Some(1),
+                id: Some("call_keep".into()),
+                function: Some(FunctionChunk {
+                    name: Some("read_file".into()),
+                    arguments: Some(r#"{"path":"README.md"}"#.into()),
+                    thought_signature: None,
+                }),
+            },
+        ]));
+        assert_eq!(partial_events.len(), 1);
+        assert!(matches!(
+            &partial_events[0],
+            Ok(LanguageModelCompletionEvent::ToolUse(tool_use))
+                if tool_use.name.as_ref() == "read_file" && !tool_use.is_input_complete
+        ));
+
+        let finish_events = mapper.map_event(finish_tool_calls_event());
+        assert!(finish_events.iter().all(|event| event.is_ok()));
+        let tool_uses = completed_tool_calls(
+            &finish_events
+                .iter()
+                .filter_map(|event| event.as_ref().ok())
+                .cloned()
+                .collect::<Vec<_>>(),
+        );
+        assert_eq!(tool_uses.len(), 1);
+        assert_eq!(tool_uses[0].id.to_string(), "call_keep");
+        assert_eq!(tool_uses[0].name.as_ref(), "read_file");
+        assert!(matches!(
+            finish_events.last(),
+            Some(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)))
+        ));
+    }
+
+    #[test]
+    fn synthesizes_id_when_finished_tool_arguments_do_not_parse() {
+        let mut mapper = ChatCompletionEventMapper::new();
+        assert!(
+            mapper
+                .map_event(tool_call_chunk_event(vec![ToolCallChunk {
+                    index: Some(3),
+                    id: Some(String::new()),
+                    function: Some(FunctionChunk {
+                        name: Some("terminal".into()),
+                        arguments: Some("{".into()),
+                        thought_signature: None,
+                    }),
+                }]))
+                .is_empty()
+        );
+
+        let events = mapper.map_event(finish_tool_calls_event());
+        match events.as_slice() {
+            [
+                Ok(LanguageModelCompletionEvent::ToolUseJsonParseError { id, tool_name, .. }),
+                Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)),
+            ] => {
+                assert_eq!(id.to_string(), "call_3");
+                assert_eq!(tool_name.as_ref(), "terminal");
+            }
+            events => panic!("expected a parse error with a synthesized id, got: {events:?}"),
+        }
     }
 }
