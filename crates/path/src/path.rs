@@ -17,7 +17,7 @@ use std::{
 #[cfg(windows)]
 use tendril::fmt::{Format, WTF8};
 
-use crate::path_component::{Component, Components, Prefix, PrefixExt, iter_after};
+use crate::path_component::{Component, Components, PathBufExt, Prefix, PrefixExt, iter_after};
 use crate::rel_path::{RelPath, StripPrefixError};
 
 pub mod abs_path;
@@ -121,63 +121,11 @@ impl PathStyle {
         *self == PathStyle::Unix
     }
 
-    pub fn join(self, left: impl AsRef<Path>, right: impl AsRef<Path>) -> Option<String> {
-        let right = right.as_ref();
-        if self.has_root(right) {
-            return None;
-        }
-        let right = right.to_str()?;
-        let left = left.as_ref().to_str()?;
-        if left.is_empty() {
-            Some(right.into())
-        } else {
-            Some(format!(
-                "{left}{}{right}",
-                if left.ends_with(self.primary_separator()) {
-                    ""
-                } else {
-                    self.primary_separator()
-                }
-            ))
-        }
-    }
+    pub fn join(self, left: impl AsRef<Path>, right: impl AsRef<Path>) -> PathBuf {
+        let mut buf = left.as_ref().to_path_buf();
+        buf.styled_push(right.as_ref(), self);
 
-    pub fn join_path(
-        self,
-        left: impl AsRef<Path>,
-        right: impl AsRef<Path>,
-    ) -> anyhow::Result<PathBuf> {
-        let left = left
-            .as_ref()
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("Path contains invalid UTF-8"))?;
-        let right = self.normalize_separators(right);
-        let right_string = right
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("Path contains invalid UTF-8"))?;
-        let joined = self
-            .join(left, right_string)
-            .ok_or_else(|| anyhow::anyhow!("Path must be relative: {right:?}"))?;
-        Ok(self.normalize_lexically(&joined))
-    }
-
-    pub fn join_path_preserving_components(
-        self,
-        left: impl AsRef<Path>,
-        right: impl AsRef<Path>,
-    ) -> anyhow::Result<PathBuf> {
-        let left = left
-            .as_ref()
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("Path contains invalid UTF-8"))?;
-        let right = right.as_ref();
-        let right_string = right
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("Path contains invalid UTF-8"))?;
-        let joined = self
-            .join(left, right_string)
-            .ok_or_else(|| anyhow::anyhow!("Path must be relative: {right:?}"))?;
-        Ok(PathBuf::from(&joined))
+        buf
     }
 
     pub fn normalize_separators(&self, path: impl AsRef<Path>) -> PathBuf {
