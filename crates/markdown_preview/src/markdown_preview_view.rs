@@ -4167,18 +4167,31 @@ mod tests {
             editor.edit([(end..end, "dirty\n")], cx);
         });
         cx.update(|cx| set_auto_preview_enabled(cx, true));
-
-        multi_workspace
+        let (target_pane, other_pane) = multi_workspace
             .update(cx, |_, window, cx| {
                 workspace.update(cx, |workspace, cx| {
-                    workspace.add_item_to_active_pane(
-                        Box::new(editor.clone()),
-                        None,
-                        true,
+                    let target_pane = workspace.active_pane().clone();
+                    let other_pane = workspace.split_pane(
+                        target_pane.clone(),
+                        workspace::SplitDirection::Right,
                         window,
                         cx,
                     );
-                });
+                    (target_pane, other_pane)
+                })
+            })
+            .unwrap();
+        multi_workspace
+            .update(cx, |_, window, cx| {
+                workspace::move_item(
+                    &target_pane,
+                    &other_pane,
+                    editor.entity_id(),
+                    1,
+                    true,
+                    window,
+                    cx,
+                );
             })
             .unwrap();
         cx.run_until_parked();
@@ -4191,6 +4204,7 @@ mod tests {
                     .iter()
                     .any(|pane| pane.read(cx).index_for_item(&editor).is_some())
             );
+            assert_eq!(workspace.items_of_type::<Editor>(cx).count(), 1);
             assert_eq!(
                 workspace.items_of_type::<MarkdownPreviewView>(cx).count(),
                 1
