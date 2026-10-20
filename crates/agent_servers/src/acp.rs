@@ -8,7 +8,7 @@ mod v2;
 
 use debug_log::AcpDebugLog;
 pub use debug_log::{AcpDebugMessage, AcpDebugMessageContent, AcpDebugMessageDirection};
-use session_updates::{InboundSessionNotification, InboundSessionUpdate};
+use session_updates::{InboundSessionNotification, InboundSessionUpdate, PendingSessionUpdates};
 pub use terminal_updates::{DecodedTerminalNotification, DecodedTerminalUpdate};
 #[cfg(any(test, feature = "test-support"))]
 pub use v1::test_support;
@@ -136,6 +136,7 @@ impl<T> FlattenAcpResult<T> for Result<Result<T, acp::Error>, anyhow::Error> {
 /// Holds state needed by foreground work dispatched from background handler closures.
 struct ClientContext {
     sessions: Rc<RefCell<HashMap<acp_v2::SessionId, AcpSession>>>,
+    pending_session_updates: Option<Rc<RefCell<PendingSessionUpdates>>>,
     session_list: Rc<RefCell<Option<Rc<AcpSessionList>>>>,
     request_elicitations: Entity<ElicitationStore>,
     // Legacy and ingress-only contexts do not track caller ownership of outgoing RPCs.
@@ -178,6 +179,9 @@ impl ForegroundWorkItem for ClientDisconnectWork {
     fn run(self: Box<Self>, cx: &mut AsyncApp, context: &ClientContext) {
         if let Some(scopes) = &context.active_request_scopes {
             scopes.borrow_mut().clear();
+        }
+        if let Some(pending) = &context.pending_session_updates {
+            pending.borrow_mut().clear();
         }
         let threads = context
             .sessions
@@ -355,16 +359,45 @@ pub struct AcpSession {
 /// Builds a v2 terminal-notification handler without selecting it for application connections.
 /// Other session updates remain unclaimed so later inbound handlers can process them.
 pub fn v2_terminal_client_builder(
-    dispatch: impl FnMut(DecodedTerminalNotification) -> Result<(), agent_client_protocol::Error>
+    mut dispatch: impl FnMut(DecodedTerminalNotification) -> Result<(), agent_client_protocol::Error>
     + Send
     + 'static,
 ) -> V2Builder<Client, impl HandleDispatchFrom<Agent>> {
-    with_v2_terminal_notifications(Client.v2(), dispatch)
+    with_v2_terminal_notifications(Client.v2(), false, move |notification, _| {
+        dispatch(notification)
+    })
+}
+
+struct NotificationByteCounter(usize);
+
+impl std::io::Write for NotificationByteCounter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0 = self.0.saturating_add(bytes.len());
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn notification_size(
+    notification: &impl serde::Serialize,
+) -> Result<usize, agent_client_protocol::Error> {
+    let mut counter = NotificationByteCounter(0);
+    serde_json::to_writer(&mut counter, notification).map_err(|_| {
+        agent_client_protocol::Error::internal_error().data("Failed to size ACP session update")
+    })?;
+    Ok(counter.0)
 }
 
 fn with_v2_terminal_notifications<Handler: HandleDispatchFrom<Agent>>(
     builder: V2Builder<Client, Handler>,
-    mut dispatch: impl FnMut(DecodedTerminalNotification) -> Result<(), agent_client_protocol::Error>
+    measure_payload: bool,
+    mut dispatch: impl FnMut(
+        DecodedTerminalNotification,
+        usize,
+    ) -> Result<(), agent_client_protocol::Error>
     + Send
     + 'static,
 ) -> V2Builder<Client, impl HandleDispatchFrom<Agent>> {
@@ -384,6 +417,11 @@ fn with_v2_terminal_notifications<Handler: HandleDispatchFrom<Agent>>(
                 });
             }
             let notification = terminal_updates::parse_terminal_notification(&message)?;
+            let encoded_bytes = if measure_payload {
+                notification_size(&notification)?
+            } else {
+                0
+            };
             let decoded = terminal_updates::decode_terminal_notification(notification)
                 .map_err(|error| {
                     agent_client_protocol::Error::invalid_params().data(format!("{error:#}"))
@@ -392,7 +430,7 @@ fn with_v2_terminal_notifications<Handler: HandleDispatchFrom<Agent>>(
                     agent_client_protocol::Error::internal_error()
                         .data("Terminal notification was not decoded")
                 })?;
-            dispatch(decoded)?;
+            dispatch(decoded, encoded_bytes)?;
             Ok(Handled::Yes)
         },
         agent_client_protocol::on_receive_notification!(),
@@ -401,13 +439,17 @@ fn with_v2_terminal_notifications<Handler: HandleDispatchFrom<Agent>>(
 
 fn with_v2_session_notifications<Handler: HandleDispatchFrom<Agent>>(
     builder: V2Builder<Client, Handler>,
-    mut dispatch: impl FnMut(InboundSessionNotification) -> Result<(), agent_client_protocol::Error>
+    mut dispatch: impl FnMut(
+        InboundSessionNotification,
+        usize,
+    ) -> Result<(), agent_client_protocol::Error>
     + Send
     + 'static,
 ) -> V2Builder<Client, impl HandleDispatchFrom<Agent>> {
     builder.on_receive_notification(
         async move |notification: acp_v2::UpdateSessionNotification,
                     connection: V2ConnectionTo<Agent>| {
+            let encoded_bytes = notification_size(&notification)?;
             let notification = match InboundSessionNotification::try_from(notification) {
                 Ok(notification) => notification,
                 Err(notification) => {
@@ -417,7 +459,7 @@ fn with_v2_session_notifications<Handler: HandleDispatchFrom<Agent>>(
                     });
                 }
             };
-            dispatch(notification)?;
+            dispatch(notification, encoded_bytes)?;
             Ok(Handled::Yes)
         },
         agent_client_protocol::on_receive_notification!(),
@@ -430,18 +472,18 @@ fn with_v2_client_ingress<Handler: HandleDispatchFrom<Agent>>(
 ) -> V2Builder<Client, impl HandleDispatchFrom<Agent>> {
     let dispatch = {
         let dispatch_sender = dispatch_sender.clone();
-        move |notification| {
+        move |notification, encoded_bytes| {
             enqueue_notification(
                 &dispatch_sender,
-                notification,
-                handle_v2_session_notification,
+                (notification, encoded_bytes),
+                route_v2_session_notification,
             );
             Ok(())
         }
     };
-    let builder = with_v2_terminal_notifications(builder, {
+    let builder = with_v2_terminal_notifications(builder, true, {
         let dispatch = dispatch.clone();
-        move |notification| dispatch(notification.into())
+        move |notification, encoded_bytes| dispatch(notification.into(), encoded_bytes)
     });
     with_v2_session_notifications(builder, dispatch)
         .on_receive_request(
@@ -556,6 +598,70 @@ fn session_thread(
         .ok_or_else(|| acp::Error::internal_error().data(format!("unknown session: {session_id}")))
 }
 
+fn route_v2_session_notification(
+    (notification, encoded_bytes): (InboundSessionNotification, usize),
+    cx: &mut AsyncApp,
+    context: &ClientContext,
+) {
+    let registered = context
+        .sessions
+        .borrow()
+        .contains_key(&notification.session_id);
+    let notification = if !registered && let Some(pending) = &context.pending_session_updates {
+        match pending.borrow_mut().stage(notification, encoded_bytes) {
+            None => return,
+            Some(notification) => notification,
+        }
+    } else {
+        notification
+    };
+    handle_v2_session_notification(notification, cx, context);
+}
+
+fn close_undelivered_session(
+    (session_id, connection): (acp_v2::SessionId, V2ConnectionTo<Agent>),
+    _cx: &mut AsyncApp,
+    context: &ClientContext,
+) {
+    if let Some(pending) = &context.pending_session_updates {
+        pending.borrow_mut().discard_session(&session_id);
+    }
+    if context.sessions.borrow().contains_key(&session_id) {
+        return;
+    }
+    connection
+        .prepare_request(acp_v2::CloseSessionRequest::new(session_id))
+        .on_receiving_result(async move |result| {
+            result.log_err();
+            Ok(())
+        })
+        .log_err();
+}
+
+fn apply_v2_session_notification(
+    notification: InboundSessionNotification,
+    thread: &WeakEntity<AcpThread>,
+    sessions: &RefCell<HashMap<acp_v2::SessionId, AcpSession>>,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    if let InboundSessionUpdate::ConfigOptions(update) = &notification.update {
+        let config_options = {
+            let mut sessions = sessions.borrow_mut();
+            let session = sessions
+                .get_mut(&notification.session_id)
+                .filter(|session| session.thread.entity_id() == thread.entity_id())
+                .context("Session was released or replaced before applying configuration")?;
+            session
+                .config_options
+                .get_or_insert_with(|| ConfigOptions::new(Rc::new(RefCell::new(Vec::new()))))
+                .clone()
+        };
+        *config_options.config_options.borrow_mut() = update.config_options.clone();
+        config_options.tx.borrow_mut().send(()).log_err();
+    }
+    thread.update(cx, |thread, cx| notification.apply(thread, cx))?
+}
+
 fn handle_v2_session_notification(
     notification: InboundSessionNotification,
     cx: &mut AsyncApp,
@@ -577,22 +683,7 @@ fn handle_v2_session_notification(
     {
         session_list.send_info_update(notification.session_id.clone(), update.clone());
     }
-    if let InboundSessionUpdate::ConfigOptions(update) = &notification.update {
-        let config_options = {
-            let mut sessions = context.sessions.borrow_mut();
-            let Some(session) = sessions.get_mut(&notification.session_id) else {
-                return;
-            };
-            session
-                .config_options
-                .get_or_insert_with(|| ConfigOptions::new(Rc::new(RefCell::new(Vec::new()))))
-                .clone()
-        };
-        *config_options.config_options.borrow_mut() = update.config_options.clone();
-        config_options.tx.borrow_mut().send(()).log_err();
-    }
-    thread
-        .update(cx, |thread, cx| notification.apply(thread, cx))
+    apply_v2_session_notification(notification, &thread.downgrade(), &context.sessions, cx)
         .log_err();
 }
 
