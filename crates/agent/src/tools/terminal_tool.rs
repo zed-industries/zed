@@ -1392,21 +1392,27 @@ fn resolve_cd_in_worktrees(
     path_style: util::paths::PathStyle,
     worktree_roots: &[(&str, PathBuf)],
 ) -> Option<PathBuf> {
-    let cd = path_style.normalize(cd);
-    let cd_path = Path::new(&cd);
-    let is_absolute = path_style.is_absolute(cd_path);
+    let cd_path = path_style.normalize_lexically(cd);
+    let is_absolute = path_style.is_absolute(&cd_path);
 
     worktree_roots.iter().find_map(|(root_name, abs_path)| {
-        let prefix = if is_absolute {
-            path_style.normalize(abs_path.to_str()?)
+        let abs_path = path_style.normalize_lexically(abs_path);
+        let prefix: &Path = if is_absolute {
+            &abs_path
         } else {
-            (*root_name).to_string()
+            Path::new(*root_name)
         };
-        let subpath = path_style.strip_prefix(cd_path, Path::new(&prefix)).ok()?;
-        if subpath.is_empty() {
-            Some(abs_path.clone())
+        let subpath = path_style.strip_prefix(&cd_path, prefix).ok()?;
+        let resolved_path = if subpath.is_empty() {
+            abs_path.clone()
         } else {
-            path_style.join_path(abs_path, subpath).ok()
+            path_style.join_path(&abs_path, subpath).ok()?
+        };
+
+        if path_style.starts_with(&resolved_path, &abs_path) {
+            Some(resolved_path)
+        } else {
+            None
         }
     })
 }
@@ -1427,6 +1433,8 @@ mod tests {
         // Worktree roots are stored with backslash separators on Windows, but
         // models frequently write paths with forward slashes; both must match.
         let windows_roots = vec![("worktree", PathBuf::from("C:\\work\\worktree"))];
+
+        let windows_verbatim_roots = vec![("worktree", PathBuf::from(r"\\?\C:\work\worktree"))];
 
         // absolute paths
         assert_eq!(
@@ -1532,6 +1540,17 @@ mod tests {
             resolve_cd_in_worktrees("C:\\work\\worktree\\..\\escape", Windows, &windows_roots),
             None,
             "a Windows-absolute path that escapes its worktree via `..` is rejected"
+        );
+
+        // Windows verbatim path
+        assert_eq!(
+            resolve_cd_in_worktrees(
+                r"\\?\C:\work\worktree\../another",
+                Windows,
+                &windows_verbatim_roots
+            ),
+            None,
+            "The Windows verbatim path should not return a path that escapes its worktree"
         );
     }
 

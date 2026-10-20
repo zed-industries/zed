@@ -1756,6 +1756,12 @@ impl ConversationView {
             };
             if let Some(connected) = this.as_connected_mut() {
                 connected.auth_state = auth_state;
+                if let Some(view) = connected.active_view() {
+                    view.update(cx, |view, cx| {
+                        view.message_queue.pause();
+                        cx.notify();
+                    });
+                }
                 cx.emit(StateChange);
                 if let Some(view) = connected.active_view()
                     && view
@@ -2412,26 +2418,9 @@ impl ConversationView {
 
                     this.update_in(cx, |this, window, cx| {
                         if let Err(err) = result {
-                            this.cancel_request_elicitations(cx);
-                            if let Some(ConnectedServerState {
-                                auth_state:
-                                    AuthState::Unauthenticated {
-                                        pending_auth_method,
-                                        ..
-                                    },
-                                ..
-                            }) = this.as_connected_mut()
-                            {
-                                pending_auth_method.take();
-                                cx.emit(StateChange);
-                            }
-                            if let Some(active) = this.root_thread_view() {
-                                active.update(cx, |active, cx| {
-                                    active.handle_thread_error(err, cx);
-                                })
-                            }
+                            this.authentication_failed(err, cx);
                         } else {
-                            this.reset(window, cx);
+                            this.authentication_succeeded(window, cx);
                         }
                         this.auth_task.take()
                     })
@@ -2462,30 +2451,64 @@ impl ConversationView {
 
                 this.update_in(cx, |this, window, cx| {
                     if let Err(err) = result {
-                        this.cancel_request_elicitations(cx);
-                        if let Some(ConnectedServerState {
-                            auth_state:
-                                AuthState::Unauthenticated {
-                                    pending_auth_method,
-                                    ..
-                                },
-                            ..
-                        }) = this.as_connected_mut()
-                        {
-                            pending_auth_method.take();
-                            cx.emit(StateChange);
-                        }
-                        if let Some(active) = this.root_thread_view() {
-                            active.update(cx, |active, cx| active.handle_thread_error(err, cx));
-                        }
+                        this.authentication_failed(err, cx);
                     } else {
-                        this.reset(window, cx);
+                        this.authentication_succeeded(window, cx);
                     }
                     this.auth_task.take()
                 })
                 .ok();
             }
         }));
+    }
+
+    fn authentication_failed(&mut self, error: anyhow::Error, cx: &mut Context<Self>) {
+        self.cancel_request_elicitations(cx);
+        let message = ProtocolErrorInfo::from_error(&error)
+            .map(|info| info.message.to_owned())
+            .unwrap_or_else(|| error.to_string());
+        if let Some(ConnectedServerState {
+            auth_state:
+                AuthState::Unauthenticated {
+                    pending_auth_method,
+                    description,
+                },
+            ..
+        }) = self.as_connected_mut()
+        {
+            pending_auth_method.take();
+            *description = Some(cx.new(|cx| {
+                Markdown::new(
+                    format!("Sign-in did not complete: {message}").into(),
+                    None,
+                    None,
+                    cx,
+                )
+            }));
+            cx.emit(StateChange);
+        }
+        if let Some(view) = self.root_thread_view() {
+            view.update(cx, |view, cx| view.handle_thread_error(error, cx));
+        }
+        cx.notify();
+    }
+
+    fn authentication_succeeded(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Rebuilding the view can drop receipt records and unsent input.
+        // Refreshing credentials must not act as a retry.
+        if let Some(view) = self
+            .root_thread_view()
+            .filter(|view| view.read(cx).thread.read(cx).uses_reported_activity())
+        {
+            if let Some(connected) = self.as_connected_mut() {
+                connected.auth_state = AuthState::Ok;
+            }
+            view.update(cx, |view, cx| view.clear_thread_error(cx));
+            cx.emit(StateChange);
+            cx.notify();
+        } else {
+            self.reset(window, cx);
+        }
     }
 
     fn load_subagent_session(
@@ -5516,54 +5539,169 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
-    async fn test_authentication_keeps_receipt_submission_recoverable(cx: &mut TestAppContext) {
+    async fn test_authentication_preserves_receipt_session_and_input(cx: &mut TestAppContext) {
         init_test(cx);
-        let connection = StubAgentConnection::new().with_receipt_submissions(true);
-        let (conversation_view, cx) =
-            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
-        add_to_workspace(conversation_view.clone(), cx);
-        let thread_view = active_thread(&conversation_view, cx);
-        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
-        let message_editor = message_editor(&conversation_view, cx);
-        let reject = connection.defer_next_receipt_response();
+        for inserted in [false, true] {
+            let method_id = acp_v2::AuthMethodId::new("login");
+            let connection = StubAgentConnection::new()
+                .with_receipt_submissions(true)
+                .with_supports_load_session(true)
+                .with_auth_methods(vec![acp_v2::AuthMethod::Agent(
+                    acp_v2::AuthMethodAgent::new(method_id.clone(), "Sign in"),
+                )]);
+            let (conversation_view, cx) =
+                setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+            add_to_workspace(conversation_view.clone(), cx);
+            let thread_view = active_thread(&conversation_view, cx);
+            let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+            let message_editor = message_editor(&conversation_view, cx);
+            let respond = connection.defer_next_receipt_response();
+            message_editor.update_in(cx, |editor, window, cx| {
+                editor.set_text("retain this prompt", window, cx);
+            });
+            thread_view.update_in(cx, |view, window, cx| view.send(window, cx));
+            cx.run_until_parked();
+            assert!(connection.take_receipt_prompt().is_some());
+            let submission_id = thread.read_with(cx, |thread, _| {
+                thread.latest_submission_id().expect("submission")
+            });
+            thread_view.update_in(cx, |view, window, cx| {
+                view.add_to_queue(vec!["queued follow-up".into()], vec![], window, cx);
+            });
+            if inserted {
+                respond
+                    .send(Ok(acp_v2::PromptResponse::new("accepted")))
+                    .expect("receipt");
+                thread.update(cx, |thread, cx| {
+                    thread
+                        .upsert_user_message(
+                            acp_v2::UserMessage::new("accepted")
+                                .content(vec!["retain this prompt".into()]),
+                            cx,
+                        )
+                        .expect("retained accepted message");
+                    thread
+                        .update_session_state(
+                            acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                            cx,
+                        )
+                        .expect("running");
+                });
+                cx.run_until_parked();
+                thread.update(cx, |thread, cx| {
+                    thread
+                        .update_session_state(
+                            acp_v2::StateUpdate::Idle(
+                                acp_v2::IdleStateUpdate::new().stop_reason(
+                                    acp_v2::StopReason::Error(
+                                        acp_v2::ErrorStopReason::new()
+                                            .error(acp_v2::Error::new(-32000, "Sign in")),
+                                    ),
+                                ),
+                            ),
+                            cx,
+                        )
+                        .expect("post-insertion authentication failure");
+                });
+            } else {
+                respond
+                    .send(Err(anyhow!(acp_v2::Error::new(-32000, "Sign in"))))
+                    .expect("rejection");
+            }
+            cx.run_until_parked();
+            thread_view.read_with(cx, |view, _| {
+                assert!(matches!(
+                    view.thread_error,
+                    Some(ThreadError::AuthenticationRequired(_))
+                ));
+            });
+            message_editor.update_in(cx, |editor, window, cx| {
+                editor.set_text("newer draft", window, cx);
+            });
+            let authenticate = cx
+                .debug_bounds("authenticate-submission")
+                .expect("authentication");
+            cx.simulate_click(authenticate.center(), gpui::Modifiers::default());
+            cx.run_until_parked();
+            assert_eq!(
+                message_editor.read_with(cx, |editor, cx| editor.text(cx)),
+                "newer draft"
+            );
 
-        message_editor.update_in(cx, |editor, window, cx| {
-            editor.set_text("retain this prompt", window, cx);
-        });
-        thread_view.update_in(cx, |view, window, cx| view.send(window, cx));
-        cx.run_until_parked();
-        let submission_id = thread.read_with(cx, |thread, _| {
-            thread.latest_submission_id().expect("submission")
-        });
-        reject
-            .send(Err(anyhow!(acp_v1::Error::auth_required())))
-            .expect("receipt response pending");
-        cx.run_until_parked();
-        thread_view.read_with(cx, |view, _| {
-            assert!(matches!(
-                view.thread_error,
-                Some(ThreadError::AuthenticationRequired(_))
-            ));
-        });
-
-        let authenticate = cx
-            .debug_bounds("authenticate-submission")
-            .expect("authentication recovery button");
-        cx.simulate_click(authenticate.center(), gpui::Modifiers::default());
-        cx.run_until_parked();
-        assert_eq!(
-            message_editor.read_with(cx, |editor, cx| editor.text(cx)),
-            "retain this prompt",
-        );
-        thread.read_with(cx, |thread, _| {
-            let original = thread.submission(submission_id).expect("retained original");
-            assert_eq!(original.content.as_ref(), &["retain this prompt".into()]);
-            assert!(matches!(
-                original.state,
-                acp_thread::SubmissionState::Failed(_)
-            ));
-            assert!(!thread.is_idle_for_retention());
-        });
+            for cancelled in [false, true] {
+                let login = connection.defer_next_authenticate_response();
+                conversation_view.update_in(cx, |view, window, cx| {
+                    view.authenticate(method_id.clone(), window, cx)
+                });
+                login
+                    .send(Err(if cancelled {
+                        anyhow!(acp_v2::Error::new(-32800, "Authentication cancelled"))
+                    } else {
+                        anyhow!("Authentication failed")
+                    }))
+                    .expect("authentication response");
+                cx.run_until_parked();
+                conversation_view.read_with(cx, |view, cx| {
+                    assert!(matches!(
+                        &view.as_connected().expect("connection").auth_state,
+                        AuthState::Unauthenticated {
+                            pending_auth_method: None,
+                            description: Some(_),
+                            ..
+                        }
+                    ));
+                    assert_eq!(view.root_thread_view().expect("same view"), thread_view);
+                    assert_eq!(thread_view.read(cx).thread, thread);
+                });
+                assert_eq!(
+                    message_editor.read_with(cx, |editor, cx| editor.text(cx)),
+                    "newer draft"
+                );
+                assert!(connection.take_receipt_prompt().is_none());
+            }
+            let login = connection.defer_next_authenticate_response();
+            conversation_view.update_in(cx, |view, window, cx| {
+                view.authenticate(method_id.clone(), window, cx)
+            });
+            login.send(Ok(())).expect("successful login");
+            cx.run_until_parked();
+            conversation_view.read_with(cx, |view, _| {
+                assert!(
+                    view.as_connected()
+                        .expect("authenticated")
+                        .auth_state
+                        .is_ok()
+                );
+                assert_eq!(
+                    view.root_thread_view().expect("same view after login"),
+                    thread_view
+                );
+            });
+            thread_view.read_with(cx, |view, cx| {
+                assert_eq!(view.thread, thread);
+                assert_eq!(view.message_editor.read(cx).text(cx), "newer draft");
+                assert_eq!(view.message_queue.len(), 1);
+                assert!(view.message_queue.auto_send_candidate(false).is_none());
+                assert!(view.thread_error.is_none());
+            });
+            thread.read_with(cx, |thread, _| {
+                let original = thread.submission(submission_id).expect("retained original");
+                assert_eq!(original.content.as_ref(), &["retain this prompt".into()]);
+                assert_eq!(
+                    matches!(original.state, acp_thread::SubmissionState::Accepted { .. }),
+                    inserted
+                );
+                assert_eq!(
+                    matches!(original.state, acp_thread::SubmissionState::Failed(_)),
+                    !inserted
+                );
+                assert_eq!(thread.foreground_activity(), ForegroundActivity::Idle);
+            });
+            assert!(
+                connection.take_receipt_prompt().is_none(),
+                "login must not resend input or drain the queue"
+            );
+        }
     }
 
     #[gpui::test]
