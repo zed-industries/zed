@@ -7,16 +7,20 @@
 #![cfg(unix)]
 
 use anyhow::Result;
+use gpui::{BackgroundExecutor, ForegroundExecutor, ThreadedDispatcher};
 use node_runtime::{NodeDiscoveryError, SystemNode};
 use semver::Version;
 use std::{
     env, fs,
     os::unix::fs::{PermissionsExt, symlink},
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 #[test]
 fn discovers_node_without_npm_and_passes_the_search_path_to_the_probe() -> Result<()> {
+    let executor = BackgroundExecutor::new(Arc::new(ThreadedDispatcher::new()));
+    let foreground = ForegroundExecutor::new(executor.dispatcher().clone());
     let directory = tempfile::tempdir()?;
     let target = fake_node(
         &directory.path().join("target"),
@@ -28,7 +32,8 @@ printf 'v22.0.0\n'
     )?;
     let node = directory.path().join("node");
     symlink(target, &node)?;
-    let discovered = smol::block_on(SystemNode::discover(
+    let discovered = foreground.block_on(SystemNode::discover(
+        executor,
         None,
         Some(directory.path().as_os_str().to_owned()),
     ))?;
@@ -40,7 +45,13 @@ printf 'v22.0.0\n'
 #[test]
 fn empty_path_entry_runs_the_node_in_the_working_directory() -> Result<()> {
     if env::var_os(CHILD).is_some() {
-        let discovered = smol::block_on(SystemNode::discover(None, Some("".into())))?;
+        let executor = BackgroundExecutor::new(Arc::new(ThreadedDispatcher::new()));
+        let foreground = ForegroundExecutor::new(executor.dispatcher().clone());
+        let discovered = foreground.block_on(SystemNode::discover(
+            executor.clone(),
+            None,
+            Some("".into()),
+        ))?;
         assert_eq!(discovered.version(), &Version::new(22, 0, 0));
         assert_eq!(discovered.path(), env::current_dir()?.join("node"));
         for search_path in [
@@ -48,7 +59,7 @@ fn empty_path_entry_runs_the_node_in_the_working_directory() -> Result<()> {
             Some(env::current_dir()?.join("missing").into_os_string()),
         ] {
             assert!(matches!(
-                smol::block_on(SystemNode::discover(None, search_path)),
+                foreground.block_on(SystemNode::discover(executor.clone(), None, search_path)),
                 Err(NodeDiscoveryError::NotFound { .. })
             ));
         }
@@ -69,6 +80,8 @@ fn empty_path_entry_runs_the_node_in_the_working_directory() -> Result<()> {
 #[test]
 fn absolute_node_paths_work_after_working_directory_is_removed() -> Result<()> {
     if env::var_os(CHILD).is_some() {
+        let executor = BackgroundExecutor::new(Arc::new(ThreadedDispatcher::new()));
+        let foreground = ForegroundExecutor::new(executor.dispatcher().clone());
         let directory = env::current_dir()?;
         let node = directory.join("node");
         let removed_directory = directory.join("removed");
@@ -79,7 +92,11 @@ fn absolute_node_paths_work_after_working_directory_is_removed() -> Result<()> {
             (Some(node.clone()), None),
             (None, Some(directory.into_os_string())),
         ] {
-            let discovered = smol::block_on(SystemNode::discover(configured_path, search_path))?;
+            let discovered = foreground.block_on(SystemNode::discover(
+                executor.clone(),
+                configured_path,
+                search_path,
+            ))?;
             assert_eq!(discovered.path(), node);
             assert_eq!(discovered.version(), &Version::new(22, 0, 0));
         }
@@ -97,6 +114,8 @@ fn absolute_node_paths_work_after_working_directory_is_removed() -> Result<()> {
 
 #[test]
 fn configured_node_takes_precedence_and_failed_overrides_do_not_fall_back() -> Result<()> {
+    let executor = BackgroundExecutor::new(Arc::new(ThreadedDispatcher::new()));
+    let foreground = ForegroundExecutor::new(executor.dispatcher().clone());
     let directory = tempfile::tempdir()?;
     let node = fake_node(&directory.path().join("path node"), "printf 'v22.0.0\\n'")?;
     let configured = fake_node(
@@ -108,7 +127,8 @@ fn configured_node_takes_precedence_and_failed_overrides_do_not_fall_back() -> R
         .expect("node directory")
         .as_os_str()
         .to_owned();
-    let discovered = smol::block_on(SystemNode::discover(
+    let discovered = foreground.block_on(SystemNode::discover(
+        executor.clone(),
         Some(configured.clone()),
         Some(search_path.clone()),
     ))?;
@@ -120,7 +140,8 @@ fn configured_node_takes_precedence_and_failed_overrides_do_not_fall_back() -> R
         "printf 'v20.0.0\\n'",
     )?;
     assert!(matches!(
-        smol::block_on(SystemNode::discover(
+        foreground.block_on(SystemNode::discover(
+            executor.clone(),
             Some(configured.clone()),
             Some(search_path.clone())
         )),
@@ -128,7 +149,11 @@ fn configured_node_takes_precedence_and_failed_overrides_do_not_fall_back() -> R
     ));
     fs::remove_file(&configured)?;
     assert!(matches!(
-        smol::block_on(SystemNode::discover(Some(configured), Some(search_path))),
+        foreground.block_on(SystemNode::discover(
+            executor,
+            Some(configured),
+            Some(search_path)
+        )),
         Err(NodeDiscoveryError::NotFound { .. })
     ));
     Ok(())
@@ -136,13 +161,19 @@ fn configured_node_takes_precedence_and_failed_overrides_do_not_fall_back() -> R
 
 #[test]
 fn path_order_is_preserved_when_the_first_node_is_too_old() -> Result<()> {
+    let executor = BackgroundExecutor::new(Arc::new(ThreadedDispatcher::new()));
+    let foreground = ForegroundExecutor::new(executor.dispatcher().clone());
     let directory = tempfile::tempdir()?;
     let first = directory.path().join("first");
     let second = directory.path().join("second");
     let old = fake_node(&first, "printf 'v21.7.3\\n'")?;
     fake_node(&second, "printf 'v24.0.0\\n'")?;
     assert!(matches!(
-        smol::block_on(SystemNode::discover(None, Some(env::join_paths([first, second])?))),
+        foreground.block_on(SystemNode::discover(
+            executor,
+            None,
+            Some(env::join_paths([first, second])?)
+        )),
         Err(NodeDiscoveryError::TooOld { path, .. }) if path == old
     ));
     Ok(())
@@ -150,13 +181,20 @@ fn path_order_is_preserved_when_the_first_node_is_too_old() -> Result<()> {
 
 #[test]
 fn reports_execution_failures_with_the_executable_path() -> Result<()> {
+    let executor = BackgroundExecutor::new(Arc::new(ThreadedDispatcher::new()));
+    let foreground = ForegroundExecutor::new(executor.dispatcher().clone());
     let directory = tempfile::tempdir()?;
     let node = fake_node(
         directory.path(),
         "printf 'v22.0.0\\n'; printf 'broken installation' >&2; exit 7",
     )?;
-    let error =
-        smol::block_on(SystemNode::discover(Some(node.clone()), None)).expect_err("nonzero exit");
+    let error = foreground
+        .block_on(SystemNode::discover(
+            executor.clone(),
+            Some(node.clone()),
+            None,
+        ))
+        .expect_err("nonzero exit");
     assert!(
         matches!(&error, NodeDiscoveryError::UnsuccessfulExit { path, output }
         if path == &node && output.status.code() == Some(7))
@@ -165,7 +203,7 @@ fn reports_execution_failures_with_the_executable_path() -> Result<()> {
 
     fs::write(&node, b"#!/nonexistent-node-interpreter\n")?;
     assert!(matches!(
-        smol::block_on(SystemNode::discover(Some(node.clone()), None)),
+        foreground.block_on(SystemNode::discover(executor, Some(node.clone()), None)),
         Err(NodeDiscoveryError::Probe { path, .. }) if path == node
     ));
     Ok(())
@@ -175,7 +213,8 @@ const CHILD: &str = "ZED_TEST_NODE_DISCOVERY_CHILD";
 
 /// Isolates cwd and inherited PATH changes from the other tests.
 fn run_child_test(test: &str, directory: &Path, inherited_path: &Path) -> Result<()> {
-    let output = smol::block_on(
+    let foreground = ForegroundExecutor::new(Arc::new(ThreadedDispatcher::new()));
+    let output = foreground.block_on(
         util::command::new_command(env::current_exe()?)
             .args(["--exact", test, "--nocapture"])
             .current_dir(directory)

@@ -515,7 +515,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     theme_extension::init(proxy.clone(), theme_registry.clone(), cx.executor());
     let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
     language_extension::init(LspAccess::Noop, proxy.clone(), language_registry.clone());
-    let node_runtime = NodeRuntime::unavailable();
+    let node_runtime = NodeRuntime::unavailable(cx.executor());
 
     let store = cx.new(|cx| {
         ExtensionStore::new(
@@ -836,7 +836,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         proxy.clone(),
         language_registry.clone(),
     );
-    let node_runtime = NodeRuntime::unavailable();
+    let node_runtime = NodeRuntime::unavailable(cx.executor());
 
     let (mut status_updates, _status_updates_subscription) =
         language_registry.language_server_binary_statuses();
@@ -1681,7 +1681,7 @@ path_suffixes = ["foo"]
             FakeHttpClient::with_200_response(),
             PathBuf::from("/extensions"),
             Arc::new(ExtensionHostProxy::new()),
-            NodeRuntime::unavailable(),
+            NodeRuntime::unavailable(cx.background_executor().clone()),
             cx,
         )
     });
@@ -1797,7 +1797,7 @@ languages = ["languages/foo"]
             FakeHttpClient::with_200_response(),
             PathBuf::from("/extensions"),
             Arc::new(ExtensionHostProxy::new()),
-            NodeRuntime::unavailable(),
+            NodeRuntime::unavailable(cx.background_executor().clone()),
             cx,
         )
     });
@@ -1872,7 +1872,7 @@ async fn test_headless_sync_extensions_reports_failed_load_as_missing_again(
             FakeHttpClient::with_200_response(),
             PathBuf::from("/extensions"),
             Arc::new(ExtensionHostProxy::new()),
-            NodeRuntime::unavailable(),
+            NodeRuntime::unavailable(cx.background_executor().clone()),
             cx,
         )
     });
@@ -1955,7 +1955,7 @@ async fn test_headless_sync_uninstall_failure_does_not_block_other_extensions(
             FakeHttpClient::with_200_response(),
             PathBuf::from("/extensions"),
             Arc::new(ExtensionHostProxy::new()),
-            NodeRuntime::unavailable(),
+            NodeRuntime::unavailable(cx.background_executor().clone()),
             cx,
         )
     });
@@ -2406,7 +2406,7 @@ languages = ["languages/foo"]
             FakeHttpClient::with_200_response(),
             PathBuf::from("/extensions"),
             proxy,
-            NodeRuntime::unavailable(),
+            NodeRuntime::unavailable(cx.background_executor().clone()),
             cx,
         )
     });
@@ -2523,7 +2523,7 @@ languages = ["languages/foo", "languages/bar"]
             FakeHttpClient::with_200_response(),
             PathBuf::from("/extensions"),
             proxy,
-            NodeRuntime::unavailable(),
+            NodeRuntime::unavailable(cx.background_executor().clone()),
             cx,
         )
     });
@@ -2624,7 +2624,7 @@ async fn test_headless_uninstall_restores_surviving_extensions_language_config(
             FakeHttpClient::with_200_response(),
             PathBuf::from("/extensions"),
             proxy,
-            NodeRuntime::unavailable(),
+            NodeRuntime::unavailable(cx.background_executor().clone()),
             cx,
         )
     });
@@ -2695,7 +2695,7 @@ languages = ["languages/foo"]
             FakeHttpClient::with_200_response(),
             PathBuf::from("/extensions"),
             proxy,
-            NodeRuntime::unavailable(),
+            NodeRuntime::unavailable(cx.background_executor().clone()),
             cx,
         )
     });
@@ -2832,7 +2832,7 @@ languages = ["languages/foo"]
             FakeHttpClient::with_200_response(),
             PathBuf::from("/extensions"),
             proxy,
-            NodeRuntime::unavailable(),
+            NodeRuntime::unavailable(cx.background_executor().clone()),
             cx,
         )
     });
@@ -2959,7 +2959,7 @@ async fn test_headless_dev_reload_replaces_registrations(cx: &mut TestAppContext
             FakeHttpClient::with_200_response(),
             PathBuf::from("/extensions"),
             proxy,
-            NodeRuntime::unavailable(),
+            NodeRuntime::unavailable(cx.background_executor().clone()),
             cx,
         )
     });
@@ -3077,7 +3077,7 @@ languages = ["languages/foo"]
             FakeHttpClient::with_200_response(),
             PathBuf::from("/extensions"),
             Arc::new(ExtensionHostProxy::new()),
-            NodeRuntime::unavailable(),
+            NodeRuntime::unavailable(cx.background_executor().clone()),
             cx,
         )
     });
@@ -3180,7 +3180,7 @@ languages = ["languages/foo"]
             FakeHttpClient::with_200_response(),
             PathBuf::from("/extensions"),
             Arc::new(ExtensionHostProxy::new()),
-            NodeRuntime::unavailable(),
+            NodeRuntime::unavailable(cx.background_executor().clone()),
             cx,
         )
     });
@@ -3263,7 +3263,7 @@ languages = ["languages/foo"]
             FakeHttpClient::with_200_response(),
             PathBuf::from("/extensions"),
             Arc::new(ExtensionHostProxy::new()),
-            NodeRuntime::unavailable(),
+            NodeRuntime::unavailable(cx.background_executor().clone()),
             cx,
         )
     });
@@ -3380,7 +3380,7 @@ async fn test_headless_failed_uninstall_is_retried_on_later_syncs(cx: &mut TestA
             FakeHttpClient::with_200_response(),
             PathBuf::from("/extensions"),
             Arc::new(ExtensionHostProxy::new()),
-            NodeRuntime::unavailable(),
+            NodeRuntime::unavailable(cx.background_executor().clone()),
             cx,
         )
     });
@@ -3652,7 +3652,7 @@ languages = ["languages/shared"]
             FakeHttpClient::with_200_response(),
             PathBuf::from("/extensions"),
             proxy,
-            NodeRuntime::unavailable(),
+            NodeRuntime::unavailable(cx.background_executor().clone()),
             cx,
         )
     });
@@ -4015,7 +4015,7 @@ fn create_extension_store_with(
     cx: &mut TestAppContext,
 ) -> Entity<ExtensionStore> {
     let http_client = FakeHttpClient::with_200_response();
-    let node_runtime = NodeRuntime::unavailable();
+    let node_runtime = NodeRuntime::unavailable(cx.executor());
 
     let store = cx.new(|cx| {
         ExtensionStore::new(

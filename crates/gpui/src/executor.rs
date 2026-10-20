@@ -5,6 +5,7 @@ use futures::prelude::*;
 use gpui_util::{TryFutureExt, TryFutureExtBacktrace};
 use scheduler::Instant;
 use scheduler::Scheduler;
+use std::fmt;
 use std::{future::Future, marker::PhantomData, rc::Rc, sync::Arc, time::Duration};
 #[cfg(not(target_family = "wasm"))]
 use std::{mem, pin::Pin};
@@ -19,6 +20,12 @@ pub use scheduler::{
 pub struct BackgroundExecutor {
     inner: scheduler::BackgroundExecutor,
     dispatcher: Arc<dyn PlatformDispatcher>,
+}
+
+impl fmt::Debug for BackgroundExecutor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BackgroundExecutor").finish_non_exhaustive()
+    }
 }
 
 /// A pointer to the executor that is currently running,

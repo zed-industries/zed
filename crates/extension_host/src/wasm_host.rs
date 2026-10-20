@@ -1077,7 +1077,7 @@ mod tests {
             WasmHost::new(
                 fs.clone(),
                 FakeHttpClient::with_200_response(),
-                NodeRuntime::unavailable(),
+                NodeRuntime::unavailable(cx.background_executor().clone()),
                 Arc::new(ExtensionHostProxy::default()),
                 PathBuf::from("/work"),
                 cx,

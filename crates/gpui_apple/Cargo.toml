@@ -54,7 +54,6 @@ objc2-quartz-core.workspace = true
 objc2-security.workspace = true
 parking_lot.workspace = true
 pathfinder_geometry = { workspace = true, optional = true }
-scheduler.workspace = true
 smallvec.workspace = true
 thiserror.workspace = true
 

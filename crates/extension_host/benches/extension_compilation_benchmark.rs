@@ -107,7 +107,7 @@ fn wasm_host(cx: &TestAppContext, extensions_dir: &TempTree) -> Arc<WasmHost> {
         WasmHost::new(
             fs,
             http_client,
-            NodeRuntime::unavailable(),
+            NodeRuntime::unavailable(cx.background_executor().clone()),
             Arc::new(ExtensionHostProxy::new()),
             work_dir,
             cx,

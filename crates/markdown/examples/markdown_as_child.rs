@@ -24,7 +24,7 @@ pub fn main() {
         cx.set_global(store);
         cx.bind_keys([KeyBinding::new("cmd-c", markdown::Copy, None)]);
 
-        let node_runtime = NodeRuntime::unavailable();
+        let node_runtime = NodeRuntime::unavailable(cx.background_executor().clone());
         let language_registry = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
         let fs = fs::FakeFs::new(cx.background_executor().clone());
         languages::init(language_registry, fs, node_runtime, cx);

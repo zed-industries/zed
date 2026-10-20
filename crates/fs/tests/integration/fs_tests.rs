@@ -492,7 +492,9 @@ async fn test_realfs_atomic_write(executor: BackgroundExecutor) {
     // drop(file);  // We still hold the file handle here
     let content = std::fs::read_to_string(&file_to_be_replaced).unwrap();
     assert_eq!(content, "Hello");
-    gpui::block_on(fs.atomic_write(file_to_be_replaced.clone(), "World".into())).unwrap();
+    fs.atomic_write(file_to_be_replaced.clone(), "World".into())
+        .await
+        .unwrap();
     let content = std::fs::read_to_string(&file_to_be_replaced).unwrap();
     assert_eq!(content, "World");
 }
@@ -502,7 +504,9 @@ async fn test_realfs_atomic_write_non_existing_file(executor: BackgroundExecutor
     let fs = RealFs::new(None, executor);
     let temp_dir = TempDir::new().unwrap();
     let file_to_be_replaced = temp_dir.path().join("file.txt");
-    gpui::block_on(fs.atomic_write(file_to_be_replaced.clone(), "Hello".into())).unwrap();
+    fs.atomic_write(file_to_be_replaced.clone(), "Hello".into())
+        .await
+        .unwrap();
     let content = std::fs::read_to_string(&file_to_be_replaced).unwrap();
     assert_eq!(content, "Hello");
 }
@@ -831,7 +835,9 @@ async fn test_realfs_executable_metadata(executor: BackgroundExecutor) {
     std::fs::set_permissions(&executable_path, permissions).unwrap();
 
     let fs = RealFs::new(None, executor);
-    gpui::block_on(fs.create_symlink(&symlink_path, PathBuf::from("executable.sh"))).unwrap();
+    fs.create_symlink(&symlink_path, PathBuf::from("executable.sh"))
+        .await
+        .unwrap();
 
     let non_executable_metadata = fs
         .metadata(&non_executable_path)
@@ -863,7 +869,9 @@ async fn test_realfs_broken_symlink_metadata(executor: BackgroundExecutor) {
     let path = tempdir.path();
     let fs = RealFs::new(None, executor);
     let symlink_path = path.join("symlink");
-    gpui::block_on(fs.create_symlink(&symlink_path, PathBuf::from("file_a.txt"))).unwrap();
+    fs.create_symlink(&symlink_path, PathBuf::from("file_a.txt"))
+        .await
+        .unwrap();
     let metadata = fs
         .metadata(&symlink_path)
         .await
@@ -883,7 +891,9 @@ async fn test_realfs_symlink_loop_metadata(executor: BackgroundExecutor) {
     let path = tempdir.path();
     let fs = RealFs::new(None, executor);
     let symlink_path = path.join("symlink");
-    gpui::block_on(fs.create_symlink(&symlink_path, PathBuf::from("symlink"))).unwrap();
+    fs.create_symlink(&symlink_path, PathBuf::from("symlink"))
+        .await
+        .unwrap();
     let metadata = fs
         .metadata(&symlink_path)
         .await

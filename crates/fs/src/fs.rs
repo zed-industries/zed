@@ -1136,7 +1136,13 @@ impl Fs for RealFs {
         let inode = metadata.ino();
 
         #[cfg(windows)]
-        let inode = self.executor.spawn_blocking(move || file_id(path)).await?;
+        let inode = self
+            .executor
+            .spawn_blocking({
+                let path = path.to_path_buf();
+                move || file_id(&path)
+            })
+            .await?;
 
         #[cfg(windows)]
         let is_fifo = false;
