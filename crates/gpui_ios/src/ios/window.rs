@@ -13,7 +13,7 @@ use super::events::*;
 use super::text_input::TextInputView;
 use super::{CallbackSlot, IosDisplay, platform::IosPlatformState};
 use gpui::{
-    AnyWindowHandle, BackEvent, BackPhase, Bounds, Capslock, Corners, DevicePixels,
+    AnyWindowHandle, BackGestureEvent, BackGesturePhase, Bounds, Capslock, Corners, DevicePixels,
     DispatchEventResult, DisplayId, Edges, GpuSpecs, Modifiers, Pixels, PlatformAtlas,
     PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton,
     PromptLevel, RequestFrameOptions, Scene, Size, TextInputConfiguration, TextInputStateChange,
@@ -565,8 +565,8 @@ impl IosWindowState {
         let claimed = self
             .input_callback
             .with(|callback| {
-                callback(PlatformInput::Back(BackEvent {
-                    phase: BackPhase::Started,
+                callback(PlatformInput::BackGesture(BackGestureEvent {
+                    phase: BackGesturePhase::Started,
                     start_position,
                     progress: 0.,
                 }))
@@ -585,11 +585,14 @@ impl IosWindowState {
         let Some(event) = back_event(recognizer, &self.view, start_position) else {
             return;
         };
-        if matches!(event.phase, BackPhase::Committed | BackPhase::Cancelled) {
+        if matches!(
+            event.phase,
+            BackGesturePhase::Committed | BackGesturePhase::Cancelled
+        ) {
             self.back_gesture_start.set(None);
         }
         self.input_callback
-            .with(|callback| callback(PlatformInput::Back(event)));
+            .with(|callback| callback(PlatformInput::BackGesture(event)));
     }
 
     fn handle_keyboard_dismiss_touch(&self, event: &TouchEvent) {

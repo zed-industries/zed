@@ -16,7 +16,7 @@
 //! constructed by combining these two systems into an all-in-one element.
 
 use crate::{
-    Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, BackEvent, Bounds, ClickEvent,
+    Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, BackGestureEvent, Bounds, ClickEvent,
     DispatchPhase, Display, Element, ElementId, Entity, EntityId, ExternalDragPayload,
     ExternalDragPayloadSource, FileDropEvent, FocusHandle, Global, GlobalElementId, Hitbox,
     HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent,
@@ -418,11 +418,14 @@ impl Interactivity {
     }
 
     /// Bind the given callback to back-navigation gestures that start over this element.
-    /// The imperative API equivalent to [`InteractiveElement::on_back`].
+    /// The imperative API equivalent to [`InteractiveElement::on_back_gesture`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
-    pub fn on_back(&mut self, listener: impl Fn(&BackEvent, &mut Window, &mut App) + 'static) {
-        self.back_listeners
+    pub fn on_back_gesture(
+        &mut self,
+        listener: impl Fn(&BackGestureEvent, &mut Window, &mut App) + 'static,
+    ) {
+        self.back_gesture_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
                     (listener)(event, window, cx);
@@ -1107,11 +1110,14 @@ pub trait InteractiveElement: Sized {
     /// Bind the given callback to back-navigation gestures that start over this
     /// element, such as the iOS swipe from the leading screen edge. The innermost
     /// element with a back listener claims the gesture and receives every phase.
-    /// The fluent API equivalent to [`Interactivity::on_back`].
+    /// The fluent API equivalent to [`Interactivity::on_back_gesture`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
-    fn on_back(mut self, listener: impl Fn(&BackEvent, &mut Window, &mut App) + 'static) -> Self {
-        self.interactivity().on_back(listener);
+    fn on_back_gesture(
+        mut self,
+        listener: impl Fn(&BackGestureEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.interactivity().on_back_gesture(listener);
         self
     }
 
@@ -1775,8 +1781,8 @@ pub(crate) type ScrollListener =
 pub(crate) type PinchListener =
     Box<dyn Fn(&PinchEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 
-pub(crate) type BackListener =
-    Box<dyn Fn(&BackEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
+pub(crate) type BackGestureListener =
+    Box<dyn Fn(&BackGestureEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 
 pub(crate) type ClickListener = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
@@ -2215,7 +2221,7 @@ pub struct Interactivity {
     pub(crate) file_drop_exit_listeners: Vec<FileDropExitListener>,
     pub(crate) scroll_listeners: Vec<ScrollListener>,
     pub(crate) pinch_listeners: Vec<PinchListener>,
-    pub(crate) back_listeners: Vec<BackListener>,
+    pub(crate) back_gesture_listeners: Vec<BackGestureListener>,
     pub(crate) key_down_listeners: Vec<KeyDownListener>,
     pub(crate) key_up_listeners: Vec<KeyUpListener>,
     pub(crate) modifiers_changed_listeners: Vec<ModifiersChangedListener>,
@@ -2469,7 +2475,7 @@ impl Interactivity {
             || !self.aux_click_listeners.is_empty()
             || !self.scroll_listeners.is_empty()
             || self.has_pinch_listeners()
-            || !self.back_listeners.is_empty()
+            || !self.back_gesture_listeners.is_empty()
             || self.drag_listener.is_some()
             || !self.drop_listeners.is_empty()
             || !self.drag_over_styles.is_empty()
@@ -2888,9 +2894,9 @@ impl Interactivity {
             })
         }
 
-        for listener in self.back_listeners.drain(..) {
+        for listener in self.back_gesture_listeners.drain(..) {
             let hitbox = hitbox.clone();
-            window.on_mouse_event(move |event: &BackEvent, phase, window, cx| {
+            window.on_mouse_event(move |event: &BackGestureEvent, phase, window, cx| {
                 listener(event, phase, &hitbox, window, cx);
             })
         }

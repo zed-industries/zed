@@ -1,6 +1,6 @@
 use crate::{
-    BackEvent, Bounds, Capslock, Context, Empty, IntoElement, Keystroke, LongPressEvent, Modifiers,
-    Pixels, Point, Render, TouchDragEvent, Window, point, seal::Sealed,
+    BackGestureEvent, Bounds, Capslock, Context, Empty, IntoElement, Keystroke, LongPressEvent,
+    Modifiers, Pixels, Point, Render, TouchDragEvent, Window, point, seal::Sealed,
 };
 use smallvec::SmallVec;
 use std::{any::Any, fmt::Debug, ops::Deref, path::PathBuf};
@@ -816,7 +816,7 @@ pub enum PlatformInput {
     /// A direct touch drag claimed by an element.
     TouchDrag(TouchDragEvent),
     /// A back-navigation gesture recognized by the platform.
-    Back(BackEvent),
+    BackGesture(BackGestureEvent),
     /// Files were dragged and dropped onto the window.
     FileDrop(FileDropEvent),
     /// A raw touch event on a touch screen.
@@ -838,7 +838,7 @@ impl PlatformInput {
             PlatformInput::Pinch(event) => Some(event),
             PlatformInput::LongPress(event) => Some(event),
             PlatformInput::TouchDrag(event) => Some(event),
-            PlatformInput::Back(event) => Some(event),
+            PlatformInput::BackGesture(event) => Some(event),
             PlatformInput::FileDrop(event) => Some(event),
             PlatformInput::Touch(_) => None,
         }
@@ -858,7 +858,7 @@ impl PlatformInput {
             PlatformInput::Pinch(_) => None,
             PlatformInput::LongPress(_) => None,
             PlatformInput::TouchDrag(_) => None,
-            PlatformInput::Back(_) => None,
+            PlatformInput::BackGesture(_) => None,
             PlatformInput::FileDrop(_) => None,
             PlatformInput::Touch(_) => None,
         }
@@ -880,7 +880,7 @@ impl PlatformInput {
             PlatformInput::Pinch(_) => "pinch",
             PlatformInput::LongPress(_) => "long_press",
             PlatformInput::TouchDrag(_) => "touch_drag",
-            PlatformInput::Back(_) => "back",
+            PlatformInput::BackGesture(_) => "back_gesture",
             PlatformInput::FileDrop(_) => "file_drop",
             PlatformInput::Touch(_) => "touch",
         }

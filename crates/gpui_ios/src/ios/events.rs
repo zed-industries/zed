@@ -1,8 +1,8 @@
 //! Conversion from UIKit events to GPUI input events.
 
 use gpui::{
-    BackEvent, BackPhase, Modifiers, Pixels, Point, ScrollDelta, ScrollEvent, ScrollSource,
-    TouchId, TouchPhase, px,
+    BackGestureEvent, BackGesturePhase, Modifiers, Pixels, Point, ScrollDelta, ScrollEvent,
+    ScrollSource, TouchId, TouchPhase, px,
 };
 use objc2_core_foundation::CGPoint;
 use objc2_ui_kit::{
@@ -24,7 +24,7 @@ pub fn back_event(
     recognizer: &UIScreenEdgePanGestureRecognizer,
     view: &UIView,
     start_position: Point<Pixels>,
-) -> Option<BackEvent> {
+) -> Option<BackGestureEvent> {
     // Gestures from the right edge move content leftward toward going back.
     let direction = if recognizer.edges() == UIRectEdge::Right {
         -1.
@@ -36,24 +36,24 @@ pub fn back_event(
     let progress = (travel / width).clamp(0., 1.);
     let phase = match recognizer.state() {
         UIGestureRecognizerState::Began | UIGestureRecognizerState::Changed => {
-            BackPhase::Progressed
+            BackGesturePhase::Progressed
         }
         UIGestureRecognizerState::Ended => {
             let velocity = recognizer.velocityInView(Some(view)).x * direction;
             if velocity > BACK_COMMIT_VELOCITY
                 || (progress > 0.5 && velocity > -BACK_COMMIT_VELOCITY)
             {
-                BackPhase::Committed
+                BackGesturePhase::Committed
             } else {
-                BackPhase::Cancelled
+                BackGesturePhase::Cancelled
             }
         }
         UIGestureRecognizerState::Cancelled | UIGestureRecognizerState::Failed => {
-            BackPhase::Cancelled
+            BackGesturePhase::Cancelled
         }
         _ => return None,
     };
-    Some(BackEvent {
+    Some(BackGestureEvent {
         phase,
         start_position,
         progress: progress as f32,

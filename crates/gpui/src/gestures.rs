@@ -401,29 +401,29 @@ impl MouseEvent for TouchDragEvent {}
 /// edge.
 ///
 /// Elements receive it through
-/// [`InteractiveElement::on_back`](crate::InteractiveElement::on_back).
+/// [`InteractiveElement::on_back_gesture`](crate::InteractiveElement::on_back_gesture).
 /// The innermost element under [`Self::start_position`] claims the whole
 /// gesture when it starts; the platform cancels the gesture if no element does.
 /// Every phase is delivered at the start position, so the claiming element
 /// should stay in place while it animates its contents.
 #[derive(Clone, Debug, Default)]
-pub struct BackEvent {
+pub struct BackGestureEvent {
     /// The phase of the gesture.
-    pub phase: BackPhase,
+    pub phase: BackGesturePhase,
     /// Where the gesture started.
     pub start_position: Point<Pixels>,
     /// How far the gesture has travelled toward going back, from 0 to 1.
     pub progress: f32,
 }
 
-/// The phase of a [`BackEvent`].
+/// The phase of a [`BackGestureEvent`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum BackPhase {
+pub enum BackGesturePhase {
     /// The gesture began. Claiming it here routes the remaining phases to the
     /// same element.
     #[default]
     Started,
-    /// The gesture moved; [`BackEvent::progress`] changed.
+    /// The gesture moved; [`BackGestureEvent::progress`] changed.
     Progressed,
     /// The gesture ended and the platform decided to go back.
     Committed,
@@ -431,14 +431,14 @@ pub enum BackPhase {
     Cancelled,
 }
 
-impl Sealed for BackEvent {}
-impl InputEvent for BackEvent {
+impl Sealed for BackGestureEvent {}
+impl InputEvent for BackGestureEvent {
     fn to_platform_input(self) -> PlatformInput {
-        PlatformInput::Back(self)
+        PlatformInput::BackGesture(self)
     }
 }
-impl GestureEvent for BackEvent {}
-impl MouseEvent for BackEvent {}
+impl GestureEvent for BackGestureEvent {}
+impl MouseEvent for BackGestureEvent {}
 
 /// A phased long-press gesture recognized from a touch.
 #[derive(Clone, Debug)]

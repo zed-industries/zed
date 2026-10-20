@@ -5761,9 +5761,9 @@ impl Window {
                 self.mouse_position = touch_drag.start_position;
                 PlatformInput::TouchDrag(touch_drag)
             }
-            PlatformInput::Back(back) => {
+            PlatformInput::BackGesture(back) => {
                 self.mouse_position = back.start_position;
-                PlatformInput::Back(back)
+                PlatformInput::BackGesture(back)
             }
             PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
         };
@@ -7923,14 +7923,14 @@ mod tests {
     };
 
     use crate::{
-        AnyWindowHandle, AppContext as _, BackEvent, BackPhase, Bounds, ContentMask, Context,
-        DispatchPhase, DragMoveEvent, Empty, ExternalDragPayload, ExternalPaths, FileDragPaths,
-        FileDropEvent, FocusHandle, InputEvent as _, InteractiveElement as _, IntoElement,
-        KeyDownEvent, Keystroke, LongPressEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
-        ParentElement, Pixels, PlatformInput, Point, Render, RequestFrameOptions, ScaledPixels,
-        StatefulInteractiveElement as _, Styled, TestAppContext, TouchDragEvent, TouchEvent,
-        TouchId, TouchPhase, Underline, UnderlineStyle, Window, WindowAppearance, WindowOptions,
-        canvas, div, hsla, point, px, size,
+        AnyWindowHandle, AppContext as _, BackGestureEvent, BackGesturePhase, Bounds, ContentMask,
+        Context, DispatchPhase, DragMoveEvent, Empty, ExternalDragPayload, ExternalPaths,
+        FileDragPaths, FileDropEvent, FocusHandle, InputEvent as _, InteractiveElement as _,
+        IntoElement, KeyDownEvent, Keystroke, LongPressEvent, MouseButton, MouseDownEvent,
+        MouseMoveEvent, ParentElement, Pixels, PlatformInput, Point, Render, RequestFrameOptions,
+        ScaledPixels, StatefulInteractiveElement as _, Styled, TestAppContext, TouchDragEvent,
+        TouchEvent, TouchId, TouchPhase, Underline, UnderlineStyle, Window, WindowAppearance,
+        WindowOptions, canvas, div, hsla, point, px, size,
     };
 
     #[gpui::test]
@@ -9262,8 +9262,8 @@ mod tests {
                 .update(cx, |_, window, cx| {
                     window
                         .dispatch_event(
-                            BackEvent {
-                                phase: BackPhase::Started,
+                            BackGestureEvent {
+                                phase: BackGesturePhase::Started,
                                 start_position: point(px(x), px(10.)),
                                 progress: 0.,
                             }
@@ -9288,7 +9288,7 @@ mod tests {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
             let claim = |name: &'static str| {
                 let claims = self.claims.clone();
-                move |_: &BackEvent, _: &mut Window, _: &mut crate::App| {
+                move |_: &BackGestureEvent, _: &mut Window, _: &mut crate::App| {
                     claims.borrow_mut().push(name)
                 }
             };
@@ -9296,8 +9296,8 @@ mod tests {
                 div()
                     .w(px(100.))
                     .h_full()
-                    .on_back(claim("outer"))
-                    .child(div().w(px(50.)).h_full().on_back(claim("inner"))),
+                    .on_back_gesture(claim("outer"))
+                    .child(div().w(px(50.)).h_full().on_back_gesture(claim("inner"))),
             )
         }
     }
