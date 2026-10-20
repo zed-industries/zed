@@ -33,9 +33,10 @@ pub use dock::Panel;
 pub use multi_workspace::{
     CloseWorkspaceSidebar, DraggedSidebar, FocusWorkspaceSidebar, MoveProjectDown,
     MoveProjectToNewWindow, MoveProjectUp, MultiWorkspace, MultiWorkspaceEvent, NewThread,
-    NextProject, NextThread, PreviousProject, PreviousThread, ProjectGroup, ProjectGroupKey,
-    RemovalIntent, SerializedProjectGroupState, Sidebar, SidebarEvent, SidebarHandle,
-    SidebarRenderState, SidebarSide, ToggleWorkspaceSidebar, sidebar_side_context_menu,
+    NextProject, NextThread, PreviousProject, PreviousThread, ProjectFolder, ProjectFolderId,
+    ProjectGroup, ProjectGroupKey, RemovalIntent, SerializedProjectGroupState, Sidebar,
+    SidebarEvent, SidebarHandle, SidebarRenderState, SidebarSide, ToggleWorkspaceSidebar,
+    sidebar_side_context_menu,
 };
 pub use path_list::{PathList, SerializedPathList};
 pub use remote::{
@@ -9822,15 +9823,28 @@ pub async fn apply_restored_multiworkspace_state(
         sidebar_open,
         project_groups,
         sidebar_state,
+        project_folders,
         ..
     } = state;
+
+    if !project_folders.is_empty() {
+        window_handle
+            .update(cx, |multi_workspace, _window, _cx| {
+                multi_workspace.restore_project_folders(project_folders.clone());
+            })
+            .ok();
+    }
 
     if !project_groups.is_empty() {
         // Resolve linked worktree paths to their main repo paths so
         // stale keys from previous sessions get normalized and deduped.
         let mut resolved_groups: Vec<SerializedProjectGroupState> = Vec::new();
         for serialized in project_groups.iter().cloned() {
-            let SerializedProjectGroupState { key, expanded } = serialized.into_restored_state();
+            let SerializedProjectGroupState {
+                key,
+                expanded,
+                folder,
+            } = serialized.into_restored_state();
             if key.path_list().paths().is_empty() {
                 continue;
             }
@@ -9852,6 +9866,7 @@ pub async fn apply_restored_multiworkspace_state(
                 resolved_groups.push(SerializedProjectGroupState {
                     key: resolved,
                     expanded,
+                    folder,
                 });
             }
         }

@@ -279,11 +279,23 @@ pub struct ProjectGroup {
 pub struct SerializedProjectGroupState {
     pub key: ProjectGroupKey,
     pub expanded: bool,
+    pub folder: Option<ProjectFolderId>,
 }
 
 #[derive(Clone)]
 pub struct ProjectGroupState {
     pub key: ProjectGroupKey,
+    pub expanded: bool,
+    pub folder: Option<ProjectFolderId>,
+}
+
+pub type ProjectFolderId = u64;
+
+/// A user-defined folder in the sidebar that holds one or more project groups.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ProjectFolder {
+    pub id: ProjectFolderId,
+    pub name: String,
     pub expanded: bool,
 }
 
@@ -307,6 +319,7 @@ pub struct MultiWorkspace {
     window_id: WindowId,
     held: Vec<HeldWorkspace>,
     project_groups: Vec<ProjectGroupState>,
+    project_folders: Vec<ProjectFolder>,
     /// Source of truth for which workspace is presented in this window, shared
     /// with each member `Workspace` so they can tell whether they own the
     /// platform window's title and edited indicator. This only exists to prevent
@@ -375,6 +388,7 @@ impl MultiWorkspace {
                 activated_at: Some(0),
             }],
             project_groups: Vec::new(),
+            project_folders: Vec::new(),
             active_workspace_id,
             sidebar: None,
             sidebar_open: false,
@@ -700,6 +714,7 @@ impl MultiWorkspace {
             ProjectGroupState {
                 key,
                 expanded: true,
+                folder: None,
             },
         );
     }
@@ -847,14 +862,24 @@ impl MultiWorkspace {
         _cx: &mut Context<Self>,
     ) {
         let mut restored: Vec<ProjectGroupState> = Vec::new();
-        for SerializedProjectGroupState { key, expanded } in groups {
+        for SerializedProjectGroupState {
+            key,
+            expanded,
+            folder,
+        } in groups
+        {
             if key.path_list().paths().is_empty() {
                 continue;
             }
             if restored.iter().any(|group| group.key == key) {
                 continue;
             }
-            restored.push(ProjectGroupState { key, expanded });
+            let folder = folder.filter(|id| self.project_folder(*id).is_some());
+            restored.push(ProjectGroupState {
+                key,
+                expanded,
+                folder,
+            });
         }
         for existing in std::mem::take(&mut self.project_groups) {
             if !restored.iter().any(|group| group.key == existing.key) {
@@ -922,10 +947,14 @@ impl MultiWorkspace {
         else {
             return false;
         };
-        if index == 0 {
+        let folder = self.project_groups[index].folder;
+        let Some(previous) = self.project_groups[..index]
+            .iter()
+            .rposition(|group| group.folder == folder)
+        else {
             return false;
-        }
-        self.project_groups.swap(index - 1, index);
+        };
+        self.project_groups.swap(previous, index);
         cx.emit(MultiWorkspaceEvent::ProjectGroupsChanged);
         self.serialize(cx);
         cx.notify();
@@ -944,14 +973,154 @@ impl MultiWorkspace {
         else {
             return false;
         };
-        if index + 1 >= self.project_groups.len() {
+        let folder = self.project_groups[index].folder;
+        let Some(next) = self.project_groups[index + 1..]
+            .iter()
+            .position(|group| group.folder == folder)
+            .map(|offset| index + 1 + offset)
+        else {
             return false;
-        }
-        self.project_groups.swap(index, index + 1);
+        };
+        self.project_groups.swap(index, next);
         cx.emit(MultiWorkspaceEvent::ProjectGroupsChanged);
         self.serialize(cx);
         cx.notify();
         true
+    }
+
+    pub fn project_folders(&self) -> &[ProjectFolder] {
+        &self.project_folders
+    }
+
+    pub fn project_folder(&self, id: ProjectFolderId) -> Option<&ProjectFolder> {
+        self.project_folders.iter().find(|folder| folder.id == id)
+    }
+
+    pub fn project_group_folder(&self, key: &ProjectGroupKey) -> Option<ProjectFolderId> {
+        self.group_state_by_key(key)?.folder
+    }
+
+    pub fn restore_project_folders(&mut self, folders: Vec<ProjectFolder>) {
+        self.project_folders = folders;
+    }
+
+    pub fn create_project_folder(
+        &mut self,
+        name: String,
+        cx: &mut Context<Self>,
+    ) -> ProjectFolderId {
+        let id = self
+            .project_folders
+            .iter()
+            .map(|folder| folder.id + 1)
+            .max()
+            .unwrap_or(0);
+        self.project_folders.push(ProjectFolder {
+            id,
+            name,
+            expanded: true,
+        });
+        self.project_groups_changed(cx);
+        id
+    }
+
+    pub fn rename_project_folder(
+        &mut self,
+        id: ProjectFolderId,
+        name: String,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(folder) = self.project_folders.iter_mut().find(|f| f.id == id) {
+            folder.name = name;
+            self.project_groups_changed(cx);
+        }
+    }
+
+    /// Removes the folder; the projects it held move back to the top level.
+    pub fn remove_project_folder(&mut self, id: ProjectFolderId, cx: &mut Context<Self>) {
+        self.project_folders.retain(|folder| folder.id != id);
+        for group in &mut self.project_groups {
+            if group.folder == Some(id) {
+                group.folder = None;
+            }
+        }
+        self.project_groups_changed(cx);
+    }
+
+    pub fn set_project_folder_expanded(
+        &mut self,
+        id: ProjectFolderId,
+        expanded: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(folder) = self.project_folders.iter_mut().find(|f| f.id == id) {
+            folder.expanded = expanded;
+            self.project_groups_changed(cx);
+        }
+    }
+
+    /// Moves a project group into `folder` (or the top level when `None`),
+    /// placing it before `before` or at the end of that folder.
+    pub fn move_project_group(
+        &mut self,
+        key: &ProjectGroupKey,
+        folder: Option<ProjectFolderId>,
+        before: Option<&ProjectGroupKey>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if before == Some(key) {
+            return false;
+        }
+        if folder.is_some_and(|id| self.project_folder(id).is_none()) {
+            return false;
+        }
+        let Some(index) = self
+            .project_groups
+            .iter()
+            .position(|group| group.key == *key)
+        else {
+            return false;
+        };
+        let mut group = self.project_groups.remove(index);
+        group.folder = folder;
+        let target = before
+            .and_then(|before| {
+                self.project_groups
+                    .iter()
+                    .position(|group| group.key == *before)
+            })
+            .unwrap_or(self.project_groups.len());
+        self.project_groups.insert(target, group);
+        self.project_groups_changed(cx);
+        true
+    }
+
+    /// Moves a folder before `before`, or to the end when `None`.
+    pub fn move_project_folder(
+        &mut self,
+        id: ProjectFolderId,
+        before: Option<ProjectFolderId>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if before == Some(id) {
+            return false;
+        }
+        let Some(index) = self.project_folders.iter().position(|f| f.id == id) else {
+            return false;
+        };
+        let folder = self.project_folders.remove(index);
+        let target = before
+            .and_then(|before| self.project_folders.iter().position(|f| f.id == before))
+            .unwrap_or(self.project_folders.len());
+        self.project_folders.insert(target, folder);
+        self.project_groups_changed(cx);
+        true
+    }
+
+    fn project_groups_changed(&mut self, cx: &mut Context<Self>) {
+        cx.emit(MultiWorkspaceEvent::ProjectGroupsChanged);
+        self.serialize(cx);
+        cx.notify();
     }
 
     pub fn workspaces_for_project_group(
@@ -1478,11 +1647,13 @@ impl MultiWorkspace {
                                 crate::persistence::model::SerializedProjectGroup::from_group(
                                     &group.key,
                                     group.expanded,
+                                    group.folder,
                                 )
                             })
                             .collect::<Vec<_>>(),
                         sidebar_open: this.sidebar_open,
                         sidebar_state: this.sidebar.as_ref().and_then(|s| s.serialized_state(cx)),
+                        project_folders: this.project_folders.clone(),
                     };
                     (this.window_id, state)
                 })
@@ -1674,6 +1845,7 @@ impl MultiWorkspace {
         self.project_groups.push(ProjectGroupState {
             key: group.key,
             expanded: group.expanded,
+            folder: None,
         });
     }
 

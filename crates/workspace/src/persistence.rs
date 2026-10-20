@@ -4657,6 +4657,7 @@ mod tests {
                 project_groups: vec![],
                 sidebar_open: true,
                 sidebar_state: None,
+                project_folders: vec![],
             },
         )
         .await;
@@ -4669,6 +4670,7 @@ mod tests {
                 project_groups: vec![],
                 sidebar_open: false,
                 sidebar_state: None,
+                project_folders: vec![],
             },
         )
         .await;
