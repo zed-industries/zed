@@ -146,7 +146,7 @@ impl MarkdownPreviewView {
                 if cx
                     .global_mut::<SuppressedAutoPreviews>()
                     .0
-                    .remove(&item.item_id())
+                    .contains(&item.item_id())
                 {
                     return;
                 }

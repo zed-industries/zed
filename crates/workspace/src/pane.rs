@@ -1239,6 +1239,8 @@ impl Pane {
             .iter()
             .any(|existing_item| existing_item.item_id() == item.item_id());
 
+        let mut replaces_existing_item_in_pane = false;
+
         if !item_already_exists {
             self.close_items_on_item_open(window, cx);
         }
@@ -1305,7 +1307,7 @@ impl Pane {
                 if existing_item_is_active && destination_index.is_none() {
                     insertion_index = existing_item_index;
                 } else {
-                    self.items.remove(existing_item_index);
+                    let removed_item = self.items.remove(existing_item_index);
                     if existing_item_index < self.active_item_index {
                         self.active_item_index -= 1;
                     }
@@ -1317,6 +1319,10 @@ impl Pane {
                         self.active_item_index = insertion_index;
                     } else if insertion_index <= self.active_item_index {
                         self.active_item_index += 1;
+                    }
+
+                    if removed_item.item_id() != item.item_id() {
+                        replaces_existing_item_in_pane = true;
                     }
                 }
 
@@ -1339,10 +1345,13 @@ impl Pane {
 
                 self.activate_item(insertion_index, activate_pane, focus_item, window, cx);
             }
+        }
 
-            // only new adds should be treated as "added". treating existing items as "added" would cause listeners
-            // like markdown auto preview to treat a pane move as a new item / fresh open.
-            cx.emit(Event::AddItem { item });
+        // only new adds should be treated as "added". treating existing items as "added" would cause listeners
+        // like markdown auto preview to treat a pane move as a new item / fresh open.
+        // if the item replaced an existing item in a pane, treat it as a new item
+        if existing_item_index.is_none() || replaces_existing_item_in_pane {
+            cx.emit(Event::AddItem { item: item.clone() });
         }
     }
 
@@ -7392,6 +7401,80 @@ mod tests {
 
         add_labeled_item(&pane, "D", false, cx);
         assert_eq!(add_item_event_count.get(), 1);
+    }
+
+    #[gpui::test]
+    async fn test_move_item_to_different_pane(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane1 = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let pane2 = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.split_pane(pane1.clone(), SplitDirection::Right, window, cx)
+        });
+
+        let item_a = pane1.update_in(cx, |pane, window, cx| {
+            let item = Box::new(cx.new(|cx| {
+                TestItem::new(cx)
+                    .with_buffer_kind(ItemBufferKind::Singleton)
+                    .with_label("a")
+                    .with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
+            }));
+            pane.add_item(item.clone(), false, false, None, window, cx);
+            item
+        });
+
+        pane2.update_in(cx, |pane, window, cx| {
+            let item = Box::new(cx.new(|cx| {
+                TestItem::new(cx)
+                    .with_buffer_kind(ItemBufferKind::Singleton)
+                    .with_label("b")
+                    .with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
+            }));
+            pane.add_item(item.clone(), false, false, None, window, cx);
+            item
+        });
+
+        assert_item_labels(&pane1, ["a*"], cx);
+        assert_item_labels(&pane2, ["b*"], cx);
+
+        let add_item_event_count = Rc::new(Cell::new(0));
+        let _subscription = cx.update(|_, cx| {
+            cx.subscribe(&pane2, {
+                let add_item_event_count = add_item_event_count.clone();
+                move |_pane, event: &Event, _cx| {
+                    if matches!(event, Event::AddItem { .. }) {
+                        add_item_event_count.set(add_item_event_count.get() + 1);
+                    }
+                }
+            })
+        });
+        workspace.update_in(cx, |_, window, cx| {
+            move_item(
+                &pane1,
+                &pane2,
+                item_a.clone().entity_id(),
+                2,
+                true,
+                window,
+                cx,
+            );
+        });
+
+        assert_item_labels(&pane1, [], cx);
+        assert_item_labels(&pane2, ["a*"], cx);
+
+        assert_eq!(add_item_event_count.get(), 1);
+
+        let pane_holding_item_a = workspace.read_with(cx, |workspace, _| {
+            let pane_id = workspace.pane_for_item_id(item_a.item_id()).unwrap();
+            pane_id
+        });
+        assert_eq!(pane_holding_item_a.entity_id(), pane2.entity_id());
     }
 
     #[gpui::test]
