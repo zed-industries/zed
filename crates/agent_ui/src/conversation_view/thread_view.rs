@@ -1525,13 +1525,30 @@ impl ThreadView {
         let open_task = if split {
             self.workspace
                 .update(cx, |workspace, cx| {
-                    workspace.split_path(project_path, window, cx)
+                    workspace.split_path_preview(
+                        project_path,
+                        PreviewTabsSettings::get_global(cx).enable_preview_from_multibuffer,
+                        None,
+                        window,
+                        cx,
+                    )
                 })
                 .log_err()
         } else {
             self.workspace
                 .update(cx, |workspace, cx| {
-                    workspace.open_path(project_path, None, true, window, cx)
+                    workspace.open_path_with_options(
+                        project_path,
+                        None,
+                        OpenOptions {
+                            allow_preview: PreviewTabsSettings::get_global(cx)
+                                .enable_preview_from_multibuffer,
+                            ..OpenOptions::for_navigation(cx)
+                        },
+                        true,
+                        window,
+                        cx,
+                    )
                 })
                 .log_err()
         };
@@ -6708,10 +6725,9 @@ impl Render for TokenUsageTooltip {
                                                                     .open_abs_path(
                                                                         paths::agents_file()
                                                                             .clone(),
-                                                                        workspace::OpenOptions {
-                                                                            focus: Some(true),
-                                                                            ..Default::default()
-                                                                        },
+                                                                        OpenOptions::for_navigation(
+                                                                            cx,
+                                                                        ),
                                                                         window,
                                                                         cx,
                                                                     )
@@ -11077,13 +11093,10 @@ impl ThreadView {
             .workspace
             .update(cx, |workspace, cx| {
                 if let Some(project_path) = project_path {
-                    let allow_preview = PreviewTabsSettings::get_global(cx)
-                        .enable_preview_file_from_code_navigation;
-                    workspace.open_path_preview(
+                    workspace.open_path_with_options(
                         project_path,
                         None,
-                        true,
-                        allow_preview,
+                        OpenOptions::for_navigation(cx),
                         true,
                         window,
                         cx,
@@ -11091,10 +11104,7 @@ impl ThreadView {
                 } else {
                     workspace.open_abs_path(
                         tool_call_location.path.clone(),
-                        OpenOptions {
-                            focus: Some(true),
-                            ..Default::default()
-                        },
+                        OpenOptions::for_navigation(cx),
                         window,
                         cx,
                     )
@@ -13751,21 +13761,8 @@ pub(crate) fn open_link(
                         return anyhow::Ok(());
                     };
                     let Some(task) = workspace
-                        .update_in(cx, |workspace, window, cx| match target {
-                            ResolvedPath::ProjectPath { project_path, .. } => {
-                                let allow_preview = PreviewTabsSettings::get_global(cx)
-                                    .enable_preview_file_from_code_navigation;
-                                workspace.open_path_preview(
-                                    project_path,
-                                    None,
-                                    true,
-                                    allow_preview,
-                                    true,
-                                    window,
-                                    cx,
-                                )
-                            }
-                            target => workspace.open_resolved_path(target, window, cx),
+                        .update_in(cx, |workspace, window, cx| {
+                            workspace.open_resolved_path(target, window, cx)
                         })
                         .ok()
                     else {
@@ -13881,15 +13878,7 @@ pub(crate) fn open_link(
                 skill_file_path, ..
             } => {
                 workspace
-                    .open_abs_path(
-                        skill_file_path,
-                        workspace::OpenOptions {
-                            focus: Some(true),
-                            ..Default::default()
-                        },
-                        window,
-                        cx,
-                    )
+                    .open_abs_path(skill_file_path, OpenOptions::for_navigation(cx), window, cx)
                     .detach_and_log_err(cx);
             }
         })
@@ -14009,6 +13998,8 @@ fn strip_leading_command(text: &str, command_name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::conversation_view::tests::{init_test, setup_conversation_view};
+    use crate::test_support::StubAgentServer;
     use gpui::UpdateGlobal;
     use project::{FakeFs, Project};
     use serde_json::json;
@@ -14211,6 +14202,73 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_open_diff_location_preview_tabs(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let (conversation, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        let (workspace, project, thread_view) = conversation.read_with(cx, |conversation, _| {
+            (
+                conversation.workspace.upgrade().unwrap(),
+                conversation.project.clone(),
+                conversation.active_thread().unwrap().clone(),
+            )
+        });
+        let fs = project.read_with(cx, |project, _| project.fs().as_fake());
+        fs.insert_tree(path!("/project"), json!({"file.rs": "first\nsecond\n"}))
+            .await;
+        project
+            .update(cx, |project, cx| {
+                project.create_worktree(path!("/project"), true, cx)
+            })
+            .await
+            .unwrap();
+
+        for (split, allow_preview, pane_count) in
+            [(false, true, 1), (true, true, 2), (true, false, 3)]
+        {
+            cx.update(|_, cx| {
+                SettingsStore::update_global(cx, |store, cx| {
+                    store.update_user_settings(cx, |settings| {
+                        let preview_tabs = settings.preview_tabs.get_or_insert_default();
+                        preview_tabs.enabled = Some(true);
+                        preview_tabs.enable_preview_from_multibuffer = Some(allow_preview);
+                        preview_tabs.enable_preview_file_from_code_navigation =
+                            Some(!allow_preview);
+                    });
+                });
+            });
+            thread_view.update_in(cx, |view, window, cx| {
+                view.open_diff_location(
+                    path!("/project/file.rs"),
+                    Point::new(1, 2),
+                    split,
+                    window,
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+            let editor = workspace.read_with(cx, |workspace, cx| {
+                assert_eq!(workspace.panes().len(), pane_count);
+                let pane = workspace.active_pane().read(cx);
+                let editor = workspace.active_item_as::<Editor>(cx).unwrap();
+                assert_eq!(pane.items_len(), 1);
+                assert_eq!(
+                    pane.preview_item_id(),
+                    allow_preview.then_some(editor.entity_id())
+                );
+                editor
+            });
+            editor.update_in(cx, |editor, window, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                assert_eq!(
+                    editor.selections.newest::<Point>(&snapshot).head(),
+                    Point::new(1, 2)
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
     async fn test_open_link_bare_path(cx: &mut gpui::TestAppContext) {
         crate::test_support::init_test(cx);
 
@@ -14279,6 +14337,7 @@ mod tests {
                     let preview_tabs = settings.preview_tabs.get_or_insert_default();
                     preview_tabs.enabled = Some(true);
                     preview_tabs.enable_preview_file_from_code_navigation = Some(true);
+                    preview_tabs.enable_keep_preview_on_code_navigation = Some(true);
                 });
             });
         });
@@ -14287,6 +14346,11 @@ mod tests {
         fs.insert_tree(
             path!("/project"),
             json!({"first.rs": "first\n", "second.rs": "first\nsecond\n"}),
+        )
+        .await;
+        fs.insert_tree(
+            path!("/outside"),
+            json!({"notes.md": "notes", "skill": {"SKILL.md": "skill"}}),
         )
         .await;
         let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
@@ -14302,9 +14366,31 @@ mod tests {
         .to_uri()
         .to_string();
 
+        let skill_url = MentionUri::Skill {
+            name: "skill".to_string(),
+            source: "global".to_string(),
+            skill_file_path: PathBuf::from(path!("/outside/skill/SKILL.md")),
+        }
+        .to_uri()
+        .to_string();
+
         for (url, expected_path, expected_point) in [
-            ("first.rs", "first.rs", Point::new(0, 0)),
-            (selection_url.as_str(), "second.rs", Point::new(1, 2)),
+            ("first.rs", path!("/project/first.rs"), Point::new(0, 0)),
+            (
+                path!("/outside/notes.md"),
+                path!("/outside/notes.md"),
+                Point::new(0, 0),
+            ),
+            (
+                skill_url.as_str(),
+                path!("/outside/skill/SKILL.md"),
+                Point::new(0, 0),
+            ),
+            (
+                selection_url.as_str(),
+                path!("/project/second.rs"),
+                Point::new(1, 2),
+            ),
         ] {
             multi_workspace.update_in(cx, |_, window, cx| {
                 open_link(
@@ -14320,13 +14406,10 @@ mod tests {
                 let active = pane.active_item().expect("file should be open");
                 assert_eq!(pane.items_len(), 1);
                 assert_eq!(pane.preview_item_id(), Some(active.item_id()));
+                let project_path = active.project_path(cx).expect("file should have a path");
                 assert_eq!(
-                    active
-                        .project_path(cx)
-                        .expect("file should have a path")
-                        .path
-                        .as_unix_str(),
-                    expected_path,
+                    project.read(cx).absolute_path(&project_path, cx).as_deref(),
+                    Some(Path::new(expected_path)),
                 );
                 active
                     .downcast::<Editor>()
@@ -14341,6 +14424,29 @@ mod tests {
                 assert!(editor.focus_handle(cx).is_focused(window));
             });
         }
+
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .preview_tabs
+                        .get_or_insert_default()
+                        .enable_keep_preview_on_code_navigation = Some(false);
+                });
+            });
+        });
+        multi_workspace.update_in(cx, |_, window, cx| {
+            open_link(SharedString::from("first.rs"), &workspace_weak, window, cx);
+        });
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            let pane = workspace.active_pane().read(cx);
+            assert_eq!(pane.items_len(), 2);
+            assert_eq!(
+                pane.preview_item_id(),
+                pane.active_item().map(|item| item.item_id())
+            );
+        });
 
         cx.update(|_, cx| {
             SettingsStore::update_global(cx, |store, cx| {
@@ -14363,7 +14469,7 @@ mod tests {
         cx.run_until_parked();
         workspace.read_with(cx, |workspace, cx| {
             let pane = workspace.active_pane().read(cx);
-            assert_eq!(pane.items_len(), 1);
+            assert_eq!(pane.items_len(), 2);
             assert_eq!(pane.preview_item_id(), None);
             assert_eq!(
                 pane.active_item()

@@ -8907,7 +8907,7 @@ pub(crate) mod tests {
         );
     }
 
-    async fn setup_conversation_view(
+    pub(super) async fn setup_conversation_view(
         agent: impl AgentServer + 'static,
         cx: &mut TestAppContext,
     ) -> (Entity<ConversationView>, &mut VisualTestContext) {

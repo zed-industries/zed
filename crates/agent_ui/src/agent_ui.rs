@@ -71,7 +71,7 @@ use util::{
     paths::SanitizedPath,
     rel_path::{RelPath, RelPathBuf},
 };
-use workspace::{Workspace, item::PreviewTabsSettings};
+use workspace::{OpenOptions, Workspace};
 
 use crate::agent_configuration::ManageProfilesModal;
 pub use crate::agent_connection_store::{ActiveAcpConnection, AgentConnectionStore};
@@ -209,13 +209,10 @@ pub(crate) fn open_abs_path_at_point(
             let task = if let Some(project_path) = project_path {
                 workspace
                     .update_in(cx, |workspace, window, cx| {
-                        let allow_preview = PreviewTabsSettings::get_global(cx)
-                            .enable_preview_file_from_code_navigation;
-                        workspace.open_path_preview(
+                        workspace.open_path_with_options(
                             project_path,
                             None,
-                            true,
-                            allow_preview,
+                            OpenOptions::for_navigation(cx),
                             true,
                             window,
                             cx,
