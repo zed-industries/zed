@@ -1,4 +1,5 @@
 use super::*;
+use workspace::OpenOptions;
 
 pub fn make_suggestion_styles(cx: &App) -> EditPredictionStyles {
     EditPredictionStyles {
@@ -1681,7 +1682,14 @@ impl Editor {
                 )));
             };
             let target = text::ToPoint::to_point(&target, snapshot);
-            let item = workspace.open_path(project_path, None, true, window, cx);
+            let item = workspace.open_path_with_options(
+                project_path,
+                None,
+                OpenOptions::for_navigation(cx),
+                true,
+                window,
+                cx,
+            );
             window.spawn(cx, async move |cx| {
                 let Some(editor) = item.await?.downcast::<Editor>() else {
                     return Ok(());
