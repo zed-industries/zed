@@ -7120,6 +7120,7 @@ impl GitPanel {
                                     workspace.clone(),
                                     None,
                                     None,
+                                    false,
                                     window,
                                     cx,
                                 );
@@ -7341,6 +7342,7 @@ impl GitPanel {
             self.workspace.clone(),
             None,
             None,
+            false,
             window,
             cx,
         );
@@ -7826,13 +7828,14 @@ impl GitPanel {
                                                 cx.stop_propagation();
                                             }
                                         })
-                                        .on_click(move |_, window, cx| {
+                                        .on_click(move |event, window, cx| {
                                             CommitView::open(
                                                 sha_for_click.clone(),
                                                 repo.clone(),
                                                 workspace.clone(),
                                                 None,
                                                 None,
+                                                event.click_count() == 1,
                                                 window,
                                                 cx,
                                             );
@@ -10931,6 +10934,90 @@ mod tests {
             !matches!(panel.commit_history, CommitHistory::Loading)
         })
         .await;
+    }
+
+    #[gpui::test]
+    async fn test_commit_history_preview_tabs(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (_, _, workspace, panel, mut cx) =
+            setup_git_panel_with_changes(cx, json!({ ".git": {} }), &[]).await;
+        let first = (
+            "1111111111111111111111111111111111111111",
+            "1111111 — initial commit",
+        );
+        let second = (
+            "2222222222222222222222222222222222222222",
+            "2222222 — initial commit",
+        );
+        let third = (
+            "3333333333333333333333333333333333333333",
+            "3333333 — initial commit",
+        );
+
+        for ((sha, title), allow_preview, enabled, expected_count, expected_preview) in [
+            (first, true, true, 1, Some(first.1)),
+            (second, true, true, 1, Some(second.1)),
+            (second, true, true, 1, Some(second.1)),
+            (second, false, true, 1, None),
+            (first, true, true, 2, Some(first.1)),
+            (second, true, true, 2, Some(first.1)),
+            (third, true, false, 3, None),
+            (third, true, false, 3, None),
+            (first, true, false, 3, None),
+        ] {
+            cx.update(|_, cx| {
+                SettingsStore::update_global(cx, |store, cx| {
+                    store.update_user_settings(cx, |settings| {
+                        settings.preview_tabs.get_or_insert_default().enabled = Some(enabled);
+                    });
+                });
+            });
+            let existing = workspace.read_with(&cx, |workspace, cx| {
+                workspace
+                    .active_pane()
+                    .read(cx)
+                    .items()
+                    .enumerate()
+                    .find_map(|(index, item)| {
+                        (item.tab_content_text(0, cx).as_ref() == title)
+                            .then_some((index, item.item_id()))
+                    })
+            });
+            panel.update_in(&mut cx, |panel, window, cx| {
+                CommitView::open(
+                    sha.to_owned(),
+                    panel
+                        .active_repository
+                        .as_ref()
+                        .expect("repository should exist")
+                        .downgrade(),
+                    panel.workspace.clone(),
+                    None,
+                    None,
+                    allow_preview,
+                    window,
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+
+            workspace.read_with(&cx, |workspace, cx| {
+                let pane = workspace.active_pane().read(cx);
+                let active_item = pane.active_item().expect("commit should be active");
+                assert_eq!(active_item.tab_content_text(0, cx).as_ref(), title);
+                assert_eq!(pane.items_len(), expected_count);
+                assert_eq!(
+                    pane.preview_item()
+                        .map(|item| item.tab_content_text(0, cx))
+                        .as_deref(),
+                    expected_preview
+                );
+                if let Some((index, item_id)) = existing {
+                    assert_eq!(pane.active_item_index(), index);
+                    assert_ne!(active_item.item_id(), item_id);
+                }
+            });
+        }
     }
 
     #[gpui::test]

@@ -252,6 +252,7 @@ impl BlameRenderer for GitBlameRenderer {
                                     workspace.clone(),
                                     None,
                                     None,
+                                    false,
                                     window,
                                     cx,
                                 )
@@ -493,6 +494,7 @@ impl BlameRenderer for GitBlameRenderer {
                                                         workspace.clone(),
                                                         None,
                                                         None,
+                                                        false,
                                                         window,
                                                         cx,
                                                     );
@@ -526,6 +528,7 @@ impl BlameRenderer for GitBlameRenderer {
             workspace,
             None,
             None,
+            false,
             window,
             cx,
         )

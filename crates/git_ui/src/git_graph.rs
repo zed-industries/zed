@@ -266,6 +266,7 @@ impl ChangedFileEntry {
             workspace.clone(),
             None,
             Some(self.repo_path.clone()),
+            false,
             window,
             cx,
         );
@@ -2576,6 +2577,7 @@ impl GitGraph {
             self.workspace.clone(),
             None,
             None,
+            false,
             window,
             cx,
         );

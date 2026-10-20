@@ -38,7 +38,7 @@ use std::{
 use theme::ActiveTheme;
 use ui::{ContextMenu, DiffStat, Disclosure, Divider, Tooltip, WithScrollbar, prelude::*};
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath, truncate_and_trailoff};
-use workspace::item::TabTooltipContent;
+use workspace::item::{PreviewTabsSettings, TabTooltipContent};
 use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace, item::ItemEvent, notifications::NotifyTaskExt, pane::SaveIntent,
@@ -186,6 +186,7 @@ impl CommitView {
         workspace: WeakEntity<Workspace>,
         stash: Option<usize>,
         file_filter: Option<RepoPath>,
+        allow_preview: bool,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -195,6 +196,7 @@ impl CommitView {
             workspace,
             stash,
             file_filter,
+            allow_preview,
             false,
             window,
             cx,
@@ -207,6 +209,7 @@ impl CommitView {
         workspace: WeakEntity<Workspace>,
         stash: Option<usize>,
         file_filter: Option<RepoPath>,
+        allow_preview: bool,
         ignore_shallow_boundary: bool,
         window: &mut Window,
         cx: &mut App,
@@ -257,30 +260,33 @@ impl CommitView {
 
                         let pane = workspace.active_pane();
                         pane.update(cx, |pane, cx| {
-                            let ix = pane.items().position(|item| {
-                                let commit_view = item.downcast::<CommitView>();
-                                commit_view
-                                    .is_some_and(|view| view.read(cx).commit.sha == commit_sha)
+                            let allow_preview =
+                                allow_preview && PreviewTabsSettings::get_global(cx).enabled;
+                            let existing = pane.items().enumerate().find_map(|(index, item)| {
+                                let view = item.downcast::<CommitView>()?;
+                                (view.read(cx).commit.sha == commit_sha)
+                                    .then_some((index, item.item_id()))
                             });
-                            if let Some(ix) = ix {
-                                let existing = pane
-                                    .items()
-                                    .filter_map(|item| item.downcast::<CommitView>())
-                                    .find(|view| view.read(cx).commit.sha == commit_sha)
-                                    .unwrap();
-
-                                pane.remove_item(existing.item_id(), false, false, window, cx);
-                                pane.add_item(
-                                    Box::new(commit_view),
-                                    true,
-                                    true,
-                                    Some(ix),
-                                    window,
-                                    cx,
-                                );
+                            let destination_index = if let Some((index, item_id)) = existing {
+                                let was_preview = pane.preview_item_id() == Some(item_id);
+                                pane.remove_item(item_id, false, false, window, cx);
+                                if allow_preview && was_preview {
+                                    pane.replace_preview_item_id(commit_view.item_id(), window, cx);
+                                }
+                                Some(index)
+                            } else if allow_preview {
+                                pane.replace_preview_item_id(commit_view.item_id(), window, cx)
                             } else {
-                                pane.add_item(Box::new(commit_view), true, true, None, window, cx);
-                            }
+                                None
+                            };
+                            pane.add_item(
+                                Box::new(commit_view),
+                                true,
+                                true,
+                                destination_index,
+                                window,
+                                cx,
+                            );
                         })
                     })
                     .log_err()
@@ -531,7 +537,8 @@ impl CommitView {
         }
     }
 
-    fn render_shallow_boundary_notice(&self, cx: &App) -> impl IntoElement {
+    fn render_shallow_boundary_notice(&self, cx: &Context<Self>) -> impl IntoElement {
+        let item_id = cx.entity_id();
         let commit_sha = self.commit.sha.to_string();
         let repository = self.repository.clone();
         let workspace = self.workspace.clone();
@@ -593,12 +600,17 @@ impl CommitView {
                                         .spawn(cx, async move |cx| {
                                             fetch.await?;
                                             cx.update(|window, cx| {
+                                                let allow_preview = workspace
+                                                    .upgrade()
+                                                    .and_then(|workspace| workspace.read(cx).pane_for_item_id(item_id))
+                                                    .is_some_and(|pane| pane.read(cx).preview_item_id() == Some(item_id));
                                                 Self::open_with_options(
                                                     commit_sha,
                                                     repository,
                                                     workspace,
                                                     stash,
                                                     file_filter,
+                                                    allow_preview,
                                                     false,
                                                     window,
                                                     cx,
@@ -625,12 +637,17 @@ impl CommitView {
                                 "Show every file at this commit as added. This can be slow in large repositories."
                             }))
                             .on_click(move |_, window, cx| {
+                                let allow_preview = workspace
+                                    .upgrade()
+                                    .and_then(|workspace| workspace.read(cx).pane_for_item_id(item_id))
+                                    .is_some_and(|pane| pane.read(cx).preview_item_id() == Some(item_id));
                                 Self::open_with_options(
                                     commit_sha.clone(),
                                     repository.downgrade(),
                                     workspace.clone(),
                                     stash,
                                     file_filter.clone(),
+                                    allow_preview,
                                     true,
                                     window,
                                     cx,
