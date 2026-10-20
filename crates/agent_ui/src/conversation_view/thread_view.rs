@@ -12545,7 +12545,9 @@ impl ThreadView {
                     let server_view = this.server_view.clone();
 
                     this.clear_thread_error(cx);
-                    if let Some(message) = this.in_flight_prompt(cx) {
+                    if !this.thread.read(cx).uses_reported_activity()
+                        && let Some(message) = this.in_flight_prompt(cx)
+                    {
                         if !message.iter().all(acp_thread::content::can_convert_to_v1)
                             || this.message_editor.read(cx).editor().read(cx).read_only(cx)
                         {
@@ -12557,8 +12559,7 @@ impl ThreadView {
                             );
                             return;
                         }
-                        if !this.thread.read(cx).uses_reported_activity()
-                            && let Some(submission_id) = this.current_submission
+                        if let Some(submission_id) = this.current_submission
                             && this.thread.read(cx).submission(submission_id).is_some_and(
                                 |record| {
                                     matches!(

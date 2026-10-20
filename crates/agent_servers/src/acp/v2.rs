@@ -8,8 +8,8 @@ use super::{
 };
 use acp_thread::{
     AcpThread, AgentConnection, AgentSessionConfigOptions, AgentSessionInfo, AgentSessionList,
-    AgentSessionListRequest, AgentSessionListResponse, ElicitationStore, ReceiptSessionSubmissions,
-    ReceiptSubmission, SubmissionDisconnected,
+    AgentSessionListRequest, AgentSessionListResponse, ElicitationStore, ProtocolErrorInfo,
+    ReceiptSessionSubmissions, ReceiptSubmission, SubmissionDisconnected,
 };
 use action_log::ActionLog;
 use agent_client_protocol::{
@@ -25,7 +25,11 @@ use futures::{
     future::{LocalBoxFuture, Shared},
 };
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
-use project::{AgentId, AgentServerStore, Project, agent_server_store::AgentServerCommand};
+use project::{
+    AgentId, AgentServerStore, Project,
+    agent_server_store::{AgentServerCommand, AllAgentServersSettings},
+};
+use settings::SettingsStore;
 use std::{any::Any, cell::RefCell, rc::Rc, sync::Arc};
 use task::SpawnInTerminal;
 use util::ResultExt as _;
@@ -94,6 +98,27 @@ fn validate_prompt_content(
         anyhow::ensure!(supported, "Prompt content is not supported by this agent");
     }
     Ok(())
+}
+
+fn config_option_supports_value(
+    option: &acp::SessionConfigOption,
+    value: &acp::SessionConfigOptionValue,
+) -> bool {
+    match (&option.kind, value) {
+        (acp::SessionConfigKind::Boolean(_), acp::SessionConfigOptionValue::Boolean { .. }) => true,
+        (acp::SessionConfigKind::Select(select), acp::SessionConfigOptionValue::Id { value }) => {
+            match &select.options {
+                acp::SessionConfigSelectOptions::Ungrouped(options) => {
+                    options.iter().any(|option| &option.value == value)
+                }
+                acp::SessionConfigSelectOptions::Grouped(groups) => groups
+                    .iter()
+                    .any(|group| group.options.iter().any(|option| &option.value == value)),
+                _ => false,
+            }
+        }
+        _ => false,
+    }
 }
 
 #[derive(Clone)]
@@ -171,10 +196,21 @@ pub struct AcpV2Connection {
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
     pending_session_updates: Rc<RefCell<PendingSessionUpdates>>,
     session_owners: Rc<RefCell<HashMap<acp::SessionId, SessionOwner>>>,
-    _runtime: runtime::ClientRuntime,
+    runtime: Rc<RefCell<Option<ConnectionRuntime>>>,
+}
+
+struct ConnectionRuntime {
+    _client: runtime::ClientRuntime,
     _stderr_task: Shared<Task<()>>,
     _wait_task: Option<Task<()>>,
     _child: Option<transport::OwnedChild>,
+    _quit_subscription: Option<gpui::Subscription>,
+}
+
+struct StdioStartup {
+    child: transport::OwnedChild,
+    stderr_task: Shared<Task<()>>,
+    runtime: Rc<RefCell<Option<ConnectionRuntime>>>,
 }
 
 impl AcpV2Connection {
@@ -193,6 +229,13 @@ impl AcpV2Connection {
             debug_log,
         } = transport::spawn_stdio(&project, command, cx)?;
         let mut child = transport::OwnedChild(child);
+        let status = child
+            .0
+            .status()
+            .map(|result| {
+                result.map_err(|error| anyhow!("failed to wait for agent server exit: {error}"))
+            })
+            .boxed_local();
         let stderr_task = cx
             .background_spawn(async move {
                 stderr.await.log_err();
@@ -205,10 +248,14 @@ impl AcpV2Connection {
                         .map(|channel| channel.display_name().to_owned()),
                 )
         });
+        // Keep cleanup from killing the child before startup error arbitration can
+        // distinguish a protocol rejection from a natural process exit.
+        let startup_runtime = Rc::new(RefCell::new(None));
         let initialized = {
             let mut cx = cx.clone();
             let debug_log = debug_log.clone();
             let stderr_task = stderr_task.clone();
+            let runtime = startup_runtime.clone();
             async move {
                 Self::connect(
                     agent_id,
@@ -216,22 +263,20 @@ impl AcpV2Connection {
                     Lines::new(outgoing, incoming),
                     info,
                     debug_log,
-                    stderr_task,
+                    Some(StdioStartup {
+                        child,
+                        stderr_task,
+                        runtime,
+                    }),
                     &mut cx,
                 )
                 .await
             }
         }
         .boxed_local();
-        let status = child
-            .0
-            .status()
-            .map(|result| {
-                result.map_err(|error| anyhow!("failed to wait for agent server exit: {error}"))
-            })
-            .boxed_local();
-        let (mut connection, status, stderr_task) =
-            runtime::race_startup(initialized, status, stderr_task, &debug_log, cx).await?;
+        let result = runtime::race_startup(initialized, status, stderr_task, &debug_log, cx).await;
+        drop(startup_runtime);
+        let (connection, status, stderr_task) = result?;
         let drained = {
             let sdk_connection = connection.connection.clone();
             runtime::drain_transport(
@@ -240,7 +285,11 @@ impl AcpV2Connection {
                 stderr_task,
             )
         };
-        connection._wait_task = Some(runtime::watch_process(
+        let mut runtime = connection.runtime.borrow_mut();
+        let owned = runtime
+            .as_mut()
+            .context("Agent connection shut down during startup")?;
+        owned._wait_task = Some(runtime::watch_process(
             status,
             drained,
             debug_log,
@@ -249,7 +298,7 @@ impl AcpV2Connection {
             },
             cx,
         ));
-        connection._child = Some(child);
+        drop(runtime);
         Ok(connection)
     }
 
@@ -259,9 +308,13 @@ impl AcpV2Connection {
         transport: impl ConnectTo<Client> + 'static,
         info: acp::Implementation,
         debug_log: AcpDebugLog,
-        stderr_task: Shared<Task<()>>,
+        startup: Option<StdioStartup>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
+        let (runtime, child, stderr_task) = match startup {
+            Some(startup) => (startup.runtime, Some(startup.child), startup.stderr_task),
+            None => (Rc::new(RefCell::new(None)), None, Task::ready(()).shared()),
+        };
         let request_elicitations = cx.new(|_| ElicitationStore::default());
         let sessions = Rc::new(RefCell::new(HashMap::default()));
         let pending_session_updates = Rc::new(RefCell::new(PendingSessionUpdates::default()));
@@ -272,8 +325,8 @@ impl AcpV2Connection {
             request_elicitations: request_elicitations.clone(),
             active_request_scopes: Some(RefCell::new(Default::default())),
         };
-        let (mut runtime, shutdown) = runtime::ClientRuntime::new(context, cx);
-        let dispatch_tx = runtime.sender();
+        let (mut client_runtime, shutdown) = runtime::ClientRuntime::new(context, cx);
+        let dispatch_tx = client_runtime.sender();
         let (sender, received) = futures::channel::oneshot::channel();
         let cleanup = runtime::disconnect_cleanup(dispatch_tx.clone());
         let connection_future =
@@ -290,7 +343,29 @@ impl AcpV2Connection {
                     )
                     .await
                 });
-        runtime.start_io(runtime::finish_connection(connection_future, cleanup), cx);
+        client_runtime.start_io(runtime::finish_connection(connection_future, cleanup), cx);
+        *runtime.borrow_mut() = Some(ConnectionRuntime {
+            _client: client_runtime,
+            _stderr_task: stderr_task,
+            _wait_task: None,
+            _child: child,
+            _quit_subscription: None,
+        });
+        let quit = cx.update(|cx| {
+            cx.on_app_quit({
+                let runtime = Rc::downgrade(&runtime);
+                move |_| {
+                    if let Some(runtime) = runtime.upgrade() {
+                        let owned = runtime.borrow_mut().take();
+                        drop(owned);
+                    }
+                    async {}
+                }
+            })
+        });
+        if let Some(runtime) = runtime.borrow_mut().as_mut() {
+            runtime._quit_subscription = Some(quit);
+        }
         let connection = received
             .await
             .context("Failed to receive ACP v2 connection handle")?;
@@ -316,6 +391,10 @@ impl AcpV2Connection {
         if initialize_response.protocol_version != ProtocolVersion::V2 {
             return Err(UnsupportedVersion.into());
         }
+        anyhow::ensure!(
+            runtime.borrow().is_some(),
+            "Agent connection shut down during startup"
+        );
         Ok(Self {
             id,
             connection,
@@ -328,10 +407,7 @@ impl AcpV2Connection {
             sessions,
             pending_session_updates,
             session_owners: Rc::new(RefCell::new(HashMap::default())),
-            _runtime: runtime,
-            _stderr_task: stderr_task,
-            _wait_task: None,
-            _child: None,
+            runtime,
         })
     }
 
@@ -701,6 +777,86 @@ impl AcpV2Connection {
         Ok(())
     }
 
+    async fn apply_new_session_defaults(
+        &self,
+        thread: &Entity<AcpThread>,
+        cx: &mut AsyncApp,
+    ) -> Result<()> {
+        let config_options = cx
+            .update(|cx| self.session_config_options(thread.read(cx).session_id(), cx))
+            .context("New session was released before applying defaults")?;
+        let mut attempted = Vec::new();
+        loop {
+            let next = cx.update(|cx| {
+                let settings = cx
+                    .try_global::<SettingsStore>()?
+                    .get::<AllAgentServersSettings>(None);
+                let defaults = settings.get(self.id.as_ref())?;
+                config_options
+                    .config_options()
+                    .into_iter()
+                    .find_map(|option| {
+                        if attempted.contains(&option.config_id) {
+                            return None;
+                        }
+                        let default =
+                            defaults.default_config_option(option.config_id.0.as_ref())?;
+                        let value = match &option.kind {
+                            acp::SessionConfigKind::Boolean(boolean) => default
+                                .as_bool()
+                                .filter(|value| *value != boolean.current_value)
+                                .map(acp::SessionConfigOptionValue::boolean),
+                            acp::SessionConfigKind::Select(select) => default
+                                .as_value_id()
+                                .filter(|value| *value != select.current_value.0.as_ref())
+                                .map(|value| acp::SessionConfigOptionValue::id(value.to_owned())),
+                            _ => None,
+                        }?;
+                        config_option_supports_value(&option, &value)
+                            .then_some((option.config_id, value))
+                    })
+            });
+            let Some((config_id, value)) = next else {
+                break;
+            };
+            // Re-read dependent offers after each reply, but never fight the agent
+            // by retrying a rejected or normalized default for the same option.
+            attempted.push(config_id.clone());
+            let result = cx
+                .update(|cx| config_options.set_config_option(config_id.clone(), value, cx))
+                .await
+                .with_context(|| format!("Failed to apply default config option {config_id}"));
+            if result.as_ref().err().is_some_and(|error| {
+                error.is::<ResponseCallbackDropped>()
+                    || self.connection.is_incoming_closed()
+                    || error
+                        .downcast_ref::<agent_client_protocol::Error>()
+                        .is_some_and(agent_client_protocol::is_incoming_transport_closed)
+            }) {
+                return result.map(|_| ());
+            }
+            if let Err(error) = result {
+                log::warn!("{error:#}");
+                let message = ProtocolErrorInfo::from_error(&error)
+                    .map(|info| info.message.to_owned())
+                    .unwrap_or_else(|| error.to_string());
+                cx.update(|cx| {
+                    thread.update(cx, |thread, cx| {
+                        thread.push_notice(
+                            acp::Notice::new(
+                                acp::NoticeSeverity::Warning,
+                                "Saved config default was not applied",
+                            )
+                            .description(format!("{config_id}: {message}")),
+                            cx,
+                        );
+                    });
+                });
+            }
+        }
+        Ok(())
+    }
+
     fn initialized_thread(
         thread: Entity<AcpThread>,
         initialization: SessionInitialization,
@@ -1037,6 +1193,11 @@ impl AcpV2Connection {
 }
 
 impl AgentConnection for AcpV2Connection {
+    fn shutdown(&self) {
+        let runtime = self.runtime.borrow_mut().take();
+        drop(runtime);
+    }
+
     fn agent_id(&self) -> AgentId {
         self.id.clone()
     }
@@ -1156,9 +1317,29 @@ impl AgentConnection for AcpV2Connection {
             let dispatch_tx = self.dispatch_tx.clone();
             move || enqueue_notification(&dispatch_tx, request_id, finish_session_creation)
         });
-        cx.foreground_executor().spawn(async move {
-            let _cleanup = cleanup;
-            response.await
+        cx.spawn(async move |cx| {
+            let thread = {
+                let _cleanup = cleanup;
+                response.await?
+            };
+            let session_id = cx.update(|cx| thread.read(cx).session_id().clone());
+            let abandoned = util::defer({
+                let this = self.clone();
+                let thread_id = thread.entity_id();
+                move || {
+                    this.remove_session(&session_id, thread_id);
+                    enqueue_notification(
+                        &this.dispatch_tx,
+                        (session_id, this.connection.clone()),
+                        close_undelivered_session,
+                    );
+                }
+            });
+            // Further requests must follow the creation acknowledgement, not await
+            // later SDK traffic inside its ordered response callback.
+            self.apply_new_session_defaults(&thread, cx).await?;
+            abandoned.abort();
+            Ok(thread)
         })
     }
 
@@ -1507,28 +1688,7 @@ impl V2SessionConfigOptions {
                 self.sessions.borrow().get(&self.session_id),
             )?;
         let valid = self.options.config_options.borrow().iter().any(|option| {
-            if &option.config_id != config_id {
-                return false;
-            }
-            match (&option.kind, value) {
-                (
-                    acp::SessionConfigKind::Boolean(_),
-                    acp::SessionConfigOptionValue::Boolean { .. },
-                ) => true,
-                (
-                    acp::SessionConfigKind::Select(select),
-                    acp::SessionConfigOptionValue::Id { value },
-                ) => match &select.options {
-                    acp::SessionConfigSelectOptions::Ungrouped(options) => {
-                        options.iter().any(|option| &option.value == value)
-                    }
-                    acp::SessionConfigSelectOptions::Grouped(groups) => groups
-                        .iter()
-                        .any(|group| group.options.iter().any(|option| &option.value == value)),
-                    _ => false,
-                },
-                _ => false,
-            }
+            &option.config_id == config_id && config_option_supports_value(option, value)
         });
         if !valid {
             return Err(anyhow!(
@@ -1919,7 +2079,7 @@ mod tests {
                     client_transport,
                     acp::Implementation::new("test", "1"),
                     AcpDebugLog::default(),
-                    Task::ready(()).shared(),
+                    None,
                     &mut cx.to_async(),
                 ),
                 cx,
@@ -2100,6 +2260,243 @@ mod tests {
                     .meta(meta("initial-command")),
             ])
             .meta(meta("delivery-not-session"))
+    }
+
+    fn set_startup_defaults(
+        defaults: HashMap<String, settings::AgentConfigOptionValue>,
+        cx: &mut TestAppContext,
+    ) {
+        use project::agent_server_store::AllAgentServersSettings;
+        use settings::Settings;
+
+        cx.update(|cx| {
+            AllAgentServersSettings::override_global(
+                AllAgentServersSettings(HashMap::from_iter([(
+                    "session-test".into(),
+                    settings::CustomAgentServerSettings::Custom {
+                        path: "test-agent".into(),
+                        args: Vec::new(),
+                        env: HashMap::default(),
+                        default_mode: Some("legacy-must-not-run".into()),
+                        default_config_options: defaults,
+                        favorite_config_option_values: HashMap::default(),
+                    }
+                    .into(),
+                )])),
+                cx,
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn v2_new_session_applies_defaults_before_delivery(cx: &mut TestAppContext) {
+        use settings::AgentConfigOptionValue::{Boolean, ValueId};
+
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        set_startup_defaults(
+            HashMap::from_iter([
+                ("enabled".into(), Boolean(true)),
+                ("model".into(), ValueId("large".into())),
+                ("already".into(), Boolean(false)),
+                ("wrong-type".into(), ValueId("invalid".into())),
+                ("future".into(), Boolean(true)),
+                ("missing".into(), Boolean(true)),
+            ]),
+            cx,
+        );
+        let mut offered = vec![
+            acp::SessionConfigOption::select(
+                "model",
+                "Model",
+                "small",
+                vec![acp::SessionConfigSelectOption::new("small", "Small")],
+            ),
+            acp::SessionConfigOption::boolean("enabled", "Enabled", false),
+            acp::SessionConfigOption::boolean("already", "Already", false),
+            acp::SessionConfigOption::boolean("wrong-type", "Wrong type", false),
+            acp::SessionConfigOption::new(
+                "future",
+                "Future",
+                acp::SessionConfigKind::Other(acp::OtherSessionConfigKind::new(
+                    "_future",
+                    Default::default(),
+                )),
+            ),
+        ];
+        let mut creation = harness.create(cx);
+        harness.new_request(&mut creation, cx).await;
+        harness
+            .new_responses
+            .try_send(Ok(initial_response().config_options(offered.clone())))
+            .expect("new response");
+        harness.drain_updates(cx).await;
+        assert!(
+            (&mut creation).now_or_never().is_none(),
+            "defaults finish before delivery"
+        );
+        let request = bounded(harness.config_requests.recv(), cx)
+            .await
+            .expect("default request");
+        assert_eq!(request.config_id, acp::SessionConfigId::new("enabled"));
+        assert_eq!(request.value, acp::SessionConfigOptionValue::boolean(true));
+        offered[0] = acp::SessionConfigOption::select(
+            "model",
+            "Model",
+            "small",
+            vec![
+                acp::SessionConfigSelectOption::new("small", "Small"),
+                acp::SessionConfigSelectOption::new("large", "Large"),
+            ],
+        );
+        harness
+            .config_responses
+            .try_send(Ok(acp::SetSessionConfigOptionResponse::new(
+                offered.clone(),
+            )))
+            .expect("normalized response exposes dependent model");
+        let request = bounded(harness.config_requests.recv(), cx)
+            .await
+            .expect("dependent default");
+        assert_eq!(request.config_id, acp::SessionConfigId::new("model"));
+        assert_eq!(request.value, acp::SessionConfigOptionValue::id("large"));
+        if let acp::SessionConfigKind::Select(model) = &mut offered[0].kind {
+            model.current_value = "large".into();
+        }
+        harness
+            .config_responses
+            .try_send(Ok(acp::SetSessionConfigOptionResponse::new(
+                offered.clone(),
+            )))
+            .expect("model response");
+        let thread = bounded(creation, cx).await.expect("initialized");
+        let options = cx
+            .read(|cx| {
+                harness
+                    .client
+                    .session_config_options(thread.read(cx).session_id(), cx)
+            })
+            .expect("config");
+        assert_eq!(options.config_options(), offered);
+        assert!(
+            harness.config_requests.is_empty(),
+            "do not retry normalized or invalid defaults"
+        );
+
+        for replay in [false, true] {
+            let loading = harness.reopen(replay, cx);
+            let (_, response) = bounded(harness.resume_requests.recv(), cx)
+                .await
+                .expect("resume");
+            harness.resume_state(acp::StateUpdate::Idle(acp::IdleStateUpdate::new()));
+            response
+                .respond(
+                    acp::ResumeSessionResponse::new()
+                        .config_options(initial_response().config_options),
+                )
+                .expect("agent's saved settings");
+            let resumed = bounded(loading, cx).await.expect("resumed");
+            let settings = cx
+                .read(|cx| {
+                    harness
+                        .client
+                        .session_config_options(resumed.read(cx).session_id(), cx)
+                })
+                .expect("saved config");
+            assert_eq!(settings.config_options(), initial_response().config_options);
+            assert!(
+                harness.config_requests.is_empty(),
+                "resume/load must not apply startup defaults"
+            );
+            drop(resumed);
+            cx.run_until_parked();
+        }
+    }
+
+    #[gpui::test]
+    async fn v2_new_session_defaults_handle_interrupted_startup(cx: &mut TestAppContext) {
+        for (abandoned, disconnected) in [(false, false), (true, false), (false, true)] {
+            let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+            *harness.hold_config.lock().expect("config mode") = abandoned || disconnected;
+            set_startup_defaults(
+                HashMap::from_iter([(
+                    "enabled".into(),
+                    settings::AgentConfigOptionValue::Boolean(true),
+                )]),
+                cx,
+            );
+            let mut creation = harness.create(cx);
+            harness.new_request(&mut creation, cx).await;
+            harness
+                .new_responses
+                .try_send(Ok(initial_response()))
+                .expect("new response");
+            bounded(harness.config_requests.recv(), cx)
+                .await
+                .expect("startup default");
+            if disconnected {
+                let _response = bounded(harness.config_replies.recv(), cx)
+                    .await
+                    .expect("held config response");
+                drop(harness._agent_task);
+                drop(harness.agent);
+                assert!(
+                    bounded(creation, cx).await.is_err(),
+                    "transport loss must not publish a usable session"
+                );
+                continue;
+            }
+            if abandoned {
+                let response = bounded(harness.config_replies.recv(), cx)
+                    .await
+                    .expect("held config response");
+                drop(creation);
+                cx.run_until_parked();
+                assert!(
+                    harness.client.sessions.borrow().is_empty(),
+                    "abandonment releases the provisional owner"
+                );
+                assert_eq!(
+                    bounded(harness.closes.recv(), cx)
+                        .await
+                        .expect("undelivered session closed"),
+                    acp::SessionId::new("session")
+                );
+                assert!(harness.client.sessions.borrow().is_empty());
+                response
+                    .respond(acp::SetSessionConfigOptionResponse::new(
+                        initial_response().config_options,
+                    ))
+                    .expect("late config reply");
+                harness.drain_updates(cx).await;
+                assert!(harness.client.sessions.borrow().is_empty());
+            } else {
+                harness
+                    .config_responses
+                    .try_send(Err(
+                        agent_client_protocol::Error::invalid_params().data("default rejected")
+                    ))
+                    .expect("rejection");
+                let thread = bounded(creation, cx)
+                    .await
+                    .expect("rejected default keeps new session usable");
+                assert!(harness.closes.is_empty());
+                assert!(
+                    harness.config_requests.is_empty(),
+                    "do not retry a rejected default"
+                );
+                thread.read_with(cx, |thread, _| {
+                    assert_eq!(
+                        thread.foreground_activity(),
+                        acp_thread::ForegroundActivity::Idle
+                    );
+                    assert_eq!(
+                        thread.notices().len(),
+                        1,
+                        "rejected default is visible to the user"
+                    );
+                });
+            }
+        }
     }
 
     #[gpui::test]
@@ -3438,7 +3835,14 @@ done
         cx: &mut TestAppContext,
     ) {
         use acp_thread::{SubmissionDisconnected, SubmissionResponse, SubmissionState};
-        for outcome in ["cancelled", "echoed", "unechoed", "dropped", "eof"] {
+        for outcome in [
+            "cancelled",
+            "echoed",
+            "unechoed",
+            "dropped",
+            "eof",
+            "shutdown",
+        ] {
             let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
             let thread = harness
                 .resumed_thread(
@@ -3501,9 +3905,14 @@ done
                 receipt
                     .respond(acp::PromptResponse::new("unobserved"))
                     .expect("unobserved receipt");
-            } else if outcome == "eof" {
-                drop(harness._agent_task);
-                drop(harness.agent);
+            } else if outcome == "eof" || outcome == "shutdown" {
+                if outcome == "shutdown" {
+                    harness.client.shutdown();
+                    harness.client.shutdown();
+                } else {
+                    drop(harness._agent_task);
+                    drop(harness.agent);
+                }
                 let error = bounded(sending, cx)
                     .await
                     .expect_err("receipt observes transport loss");
@@ -5610,7 +6019,7 @@ done
                     client_transport,
                     acp::Implementation::new("client-test", "1"),
                     AcpDebugLog::default(),
-                    Task::ready(()).shared(),
+                    None,
                     &mut cx.to_async(),
                 ),
                 cx,
@@ -6245,7 +6654,7 @@ done
                 client_transport,
                 acp::Implementation::new("client", "1"),
                 AcpDebugLog::default(),
-                Task::ready(()).shared(),
+                None,
                 &mut cx.to_async(),
             ),
             cx,
@@ -6326,7 +6735,7 @@ done
                 client_transport,
                 acp::Implementation::new("test", "1"),
                 AcpDebugLog::default(),
-                Task::ready(()).shared(),
+                None,
                 &mut cx.to_async(),
             ),
             cx,
@@ -6347,6 +6756,233 @@ done
         assert_eq!(task.args, ["--base", "auth", ""]);
         assert_eq!(task.env.get("BASE").map(String::as_str), Some("1"));
         assert_eq!(task.env.get("EXTRA").map(String::as_str), Some("2"));
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn v2_stdio_shutdown_terminates_a_retained_connection(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+            release_channel::init("0.0.0".parse().expect("version"), cx);
+        });
+        cx.executor().allow_parking();
+        let directory = tempfile::tempdir().expect("working directory");
+        let project = Project::example([directory.path()], &mut cx.to_async()).await;
+        for quitting in [false, true] {
+            let client = bounded(
+            AcpV2Connection::stdio(
+                AgentId::new("shutdown-test"),
+                project.clone(),
+                AgentServerCommand {
+                    path: "/bin/sh".into(),
+                    args: vec![
+                        "-c".into(),
+                        r#"
+while IFS= read -r request; do
+    id=${request#*\"id\":}
+    id=${id%%,*}
+    case "$request" in
+        *'"method":"initialize"'*)
+            printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":2,"info":{"name":"shutdown-agent","version":"1"}}}\n' "$id"
+            ;;
+    esac
+done
+exec sleep 60
+"#
+                        .into(),
+                    ],
+                    env: None,
+                },
+                WeakEntity::new_invalid(),
+                &mut cx.to_async(),
+            ),
+            cx,
+        )
+        .await
+        .expect("initialize stdio");
+            let status = client
+                .runtime
+                .borrow_mut()
+                .as_mut()
+                .expect("live runtime")
+                ._child
+                .as_mut()
+                .expect("owned process")
+                .0
+                .status();
+            let pending = cx.background_spawn(
+                client
+                    .connection
+                    .send_request(acp::LogoutAuthRequest::new())
+                    .block_task(),
+            );
+            cx.run_until_parked();
+            if quitting {
+                cx.update(|cx| cx.shutdown());
+            } else {
+                client.shutdown();
+            }
+            client.shutdown();
+            let status = bounded(status, cx)
+                .await
+                .expect("wait for terminated agent");
+            use std::os::unix::process::ExitStatusExt as _;
+            assert_eq!(status.signal(), Some(9));
+            assert!(
+                bounded(pending, cx).await.is_err(),
+                "shutdown settles pending RPCs"
+            );
+            assert!(client.runtime.borrow().is_none());
+        }
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn v2_shutdown_terminates_a_process_during_initialization(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let mut command = std::process::Command::new("/bin/sh");
+        command.args(["-c", "IFS= read -r request"]);
+        let child = util::process::Child::spawn(
+            command,
+            std::process::Stdio::piped(),
+            std::process::Stdio::null(),
+            std::process::Stdio::null(),
+        )
+        .expect("spawn waiting child");
+        let mut child = transport::OwnedChild(child);
+        // status() closes the child's stdin; keep it open so only shutdown ends the process.
+        let stdin = child.0.stdin.take().expect("child stdin");
+        let status = child.0.status();
+        let (transport, _peer) = agent_client_protocol::Channel::duplex();
+        let connecting = cx.spawn(async move |mut cx| {
+            AcpV2Connection::connect(
+                AgentId::new("pending-shutdown"),
+                WeakEntity::new_invalid(),
+                transport,
+                acp::Implementation::new("client", "1"),
+                AcpDebugLog::default(),
+                Some(StdioStartup {
+                    child,
+                    stderr_task: Task::ready(()).shared(),
+                    runtime: Rc::new(RefCell::new(None)),
+                }),
+                &mut cx,
+            )
+            .await
+        });
+        cx.run_until_parked();
+        cx.update(|cx| cx.shutdown());
+        let status = bounded(status, cx)
+            .await
+            .expect("process terminated during startup");
+        use std::os::unix::process::ExitStatusExt as _;
+        assert_eq!(status.signal(), Some(9));
+        drop(stdin);
+        assert!(
+            bounded(connecting, cx).await.is_err(),
+            "initialization failed on shutdown"
+        );
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn v2_stdio_startup_preserves_rejections_before_cleanup(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+            release_channel::init("0.0.0".parse().expect("version"), cx);
+        });
+        cx.executor().allow_parking();
+        let directory = tempfile::tempdir().expect("working directory");
+        let project = Project::example([directory.path()], &mut cx.to_async()).await;
+        for (response, expected) in [
+            (
+                r#""error":{"code":-32022,"message":"Unsupported protocol version","data":{"requested":2,"supported":[1]}}"#,
+                Some(
+                    agent_client_protocol::Error::new(-32022, "Unsupported protocol version")
+                        .data(json!({"requested": 2, "supported": [1]})),
+                ),
+            ),
+            (
+                r#""error":{"code":-32602,"message":"Invalid initialize parameters","data":{"field":"capabilities"}}"#,
+                Some(
+                    agent_client_protocol::Error::invalid_params()
+                        .data(json!({"field": "capabilities"})),
+                ),
+            ),
+            (
+                r#""result":{"protocolVersion":1,"info":{"name":"v1-peer","version":"1"}}"#,
+                None,
+            ),
+        ] {
+            // Linux pidfd polling needs stable task wakers, not the test root's tracing wakers.
+            let connecting = cx.spawn({
+                let project = project.clone();
+                async move |mut cx| {
+                    AcpV2Connection::stdio(
+                        AgentId::new("startup-rejection"),
+                        project,
+                        AgentServerCommand {
+                            path: "/bin/sh".into(),
+                            args: vec![
+                                "-c".into(),
+                                r#"
+while IFS= read -r request; do
+    case "$request" in
+        *'"method":"initialize"'*)
+            id=${request#*\"id\":}
+            id=${id%%,*}
+            printf '{"jsonrpc":"2.0","id":%s,%s}\n' "$id" "$ACP_STARTUP_RESPONSE"
+            ;;
+    esac
+done
+exec sleep 60
+"#
+                                .into(),
+                            ],
+                            env: Some(HashMap::from_iter([(
+                                "ACP_STARTUP_RESPONSE".into(),
+                                response.into(),
+                            )])),
+                        },
+                        WeakEntity::new_invalid(),
+                        &mut cx,
+                    )
+                    .await
+                }
+            });
+            let error = bounded(connecting, cx)
+                .await
+                .err()
+                .expect("startup rejection");
+            if let Some(expected) = expected {
+                let actual = error
+                    .downcast_ref::<agent_client_protocol::Error>()
+                    .unwrap_or_else(|| panic!("startup diagnostic was replaced: {error:?}"));
+                assert_eq!(actual.code, expected.code);
+                assert_eq!(actual.data, expected.data);
+            } else {
+                let actual = error
+                    .downcast_ref::<agent_client_protocol::Error>()
+                    .unwrap_or_else(|| panic!("version diagnostic was replaced: {error:?}"));
+                assert_eq!(
+                    actual.code,
+                    agent_client_protocol::Error::new(-32600, "Invalid request").code
+                );
+                assert!(
+                    actual
+                        .data
+                        .as_ref()
+                        .and_then(|data| data.as_str())
+                        .is_some_and(
+                            |message| message.contains("required ACP protocol version 2")
+                                && message.contains("peer negotiated 1")
+                        ),
+                    "{actual:?}"
+                );
+            }
+        }
     }
 
     #[cfg(unix)]
