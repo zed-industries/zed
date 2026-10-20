@@ -205,6 +205,7 @@ mod tests {
             session_list: Rc::new(RefCell::new(None)),
             request_elicitations: store.clone(),
             active_request_scopes: None,
+            pending_session_updates: None,
         };
         let (mut runtime, shutdown) = ClientRuntime::new(context, &mut cx.to_async());
         let (transport, peer) = agent_client_protocol::Channel::duplex();

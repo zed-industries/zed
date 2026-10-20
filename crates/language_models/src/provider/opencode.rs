@@ -979,6 +979,7 @@ fn language_model(model: &DiscoveredModel, subscription: OpenCodeSubscription) -
                         name: name.into(),
                         value: value.into(),
                         is_default: i == default_index,
+                        supports_disabling_thinking: None,
                     }
                 })
                 .collect()

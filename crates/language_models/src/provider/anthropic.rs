@@ -948,6 +948,7 @@ fn language_model(model: &anthropic::Model) -> LanguageModel {
                     name,
                     value,
                     is_default,
+                    supports_disabling_thinking: None,
                 }
             })
             .collect(),
