@@ -228,24 +228,27 @@ impl Editor {
             )
         })?;
 
+        // Cursors are right-biased, so an edit inserting text at one drags it along. Pin a
+        // left-biased copy, keyed by the current anchor so cursors the user moves are skipped.
+        let cursor_heads = self
+            .selections
+            .disjoint_anchors()
+            .iter()
+            .filter(|selection| selection.start == selection.end)
+            .map(|selection| selection.head())
+            .collect::<Vec<_>>();
+
         Some(cx.spawn_in(window, async move |editor, cx| {
-            // Autoindent for the triggering newline may still be pending. A pin captured before it
-            // lands would sit in front of the inserted indentation instead of at the cursor.
             if let Some(waiter) =
                 buffer.update(cx, |buffer, _| buffer.wait_for_autoindent_applied())
             {
                 waiter.await?;
             }
-            // Cursors are right-biased, so an edit inserting text at one drags it along. Pin a
-            // left-biased copy, keyed by the current anchor so cursors the user moves are skipped.
             let cursors_to_pin = editor.update(cx, |editor, cx| {
                 let snapshot = editor.buffer.read(cx).snapshot(cx);
-                editor
-                    .selections
-                    .disjoint_anchors()
-                    .iter()
-                    .filter(|selection| selection.start == selection.end)
-                    .map(|selection| (selection.head(), snapshot.anchor_before(selection.head())))
+                cursor_heads
+                    .into_iter()
+                    .map(|head| (head, snapshot.anchor_before(head)))
                     .collect::<HashMap<_, _>>()
             })?;
             if let Some(transaction) = on_type_formatting.await? {

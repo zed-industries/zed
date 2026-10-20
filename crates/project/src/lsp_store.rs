@@ -7125,18 +7125,8 @@ impl LspStore {
         push_to_history: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<Transaction>>> {
-        let (position, column_after_indent) = if trigger == "\n" {
-            let buffer = buffer.read(cx);
-            let position = position.to_point_utf16(buffer);
-            let line_start = PointUtf16::new(position.row, 0);
-            let indent = buffer.line_indent_for_row(position.row).raw_len();
-            (
-                buffer.anchor_before(line_start),
-                Some(position.column.saturating_sub(indent)),
-            )
-        } else {
-            (position, None)
-        };
+        let autoindent_applied =
+            buffer.update(cx, |buffer, _| buffer.wait_for_autoindent_applied());
         let options = buffer.update(cx, |buffer, cx| {
             lsp_command::lsp_formatting_options(
                 LanguageSettings::for_buffer_at(buffer, position, cx).as_ref(),
@@ -7144,22 +7134,20 @@ impl LspStore {
         });
 
         cx.spawn(async move |this, cx| {
-            if let Some(waiter) =
-                buffer.update(cx, |buffer, _| buffer.wait_for_autoindent_applied())
-            {
-                waiter.await?;
-            }
+            let autoindent_edit_id = match autoindent_applied {
+                Some(waiter) => waiter.await?,
+                None => None,
+            };
             let position = buffer.read_with(cx, |buffer, _| {
-                let position = position.to_point_utf16(buffer);
-                if let Some(column_after_indent) = column_after_indent {
-                    let indent = buffer.line_indent_for_row(position.row).raw_len();
-                    buffer.clip_point_utf16(
-                        Unclipped(PointUtf16::new(position.row, indent + column_after_indent)),
-                        Bias::Left,
-                    )
-                } else {
-                    position
-                }
+                let offset = position.to_offset(buffer);
+                let offset = autoindent_edit_id
+                    .and_then(|edit_id| {
+                        buffer
+                            .edited_ranges_for_edit_ids::<usize>([&edit_id])
+                            .find(|range| range.start == offset)
+                    })
+                    .map_or(offset, |range| range.end);
+                offset.to_point_utf16(buffer)
             });
             cx.update(|cx| {
                 this.update(cx, |this, cx| {
