@@ -90,7 +90,7 @@ use task::Shell;
 use text::{Bias, BufferId, OffsetRangeExt, Rope, ToOffset};
 use util::{
     ResultExt, debug_panic,
-    paths::{PathStyle, SanitizedPath},
+    paths::{PathStyle, SanitizedPath, normalize_path},
     post_inc,
     rel_path::RelPath,
 };
@@ -10869,7 +10869,7 @@ pub fn worktrees_directory_for_repo(
     let resolved = if path_style.is_posix() {
         joined
     } else {
-        path::normalize_path(&joined)
+        normalize_path(&joined)
     };
     let resolved = if path_style.starts_with(resolved.as_path(), repository_anchor_path) {
         resolved
@@ -11488,7 +11488,7 @@ mod tests {
     use git::repository::{RepoPath, repo_path};
     use gpui::proptest::prelude::*;
     use gpui::{TestAppContext, UpdateGlobal};
-    use rand::{SeedableRng, rngs::StdRng};
+    use rand::{Rng as _, SeedableRng, rngs::StdRng};
     use serde_json::json;
     use settings::SettingsStore;
     use std::path::{Path, PathBuf};

@@ -62,7 +62,7 @@ struct AcpTools {
 
 struct WatchedConnection {
     agent_id: AgentId,
-    connection: Rc<agent_servers::AcpConnection>,
+    connection: Rc<dyn acp_thread::AgentConnection>,
     messages: Vec<WatchedConnectionMessage>,
     list_state: ListState,
     incoming_request_methods: HashMap<RequestId, Arc<str>>,
@@ -158,7 +158,9 @@ impl AcpTools {
                 continue;
             }
 
-            let (backlog, messages_rx) = active_connection.connection.subscribe_debug_messages();
+            let Some((backlog, messages_rx)) = active_connection.subscribe_debug_messages() else {
+                continue;
+            };
             let agent_id = active_connection.agent_id.clone();
             let task = cx.spawn({
                 let agent_id = agent_id.clone();
