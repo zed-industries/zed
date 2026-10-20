@@ -232,6 +232,162 @@ impl Extension {
         }
     }
 
+    pub async fn call_panel_action(
+        &self,
+        store: &mut Store<WasmState>,
+        panel_id: &str,
+        action: &str,
+        payload: &str,
+    ) -> wasmtime::Result<Result<(), String>> {
+        match self {
+            Extension::V0_8_0(ext) => {
+                ext.call_panel_action(store, panel_id, action, payload)
+                    .await
+            }
+            Extension::V0_6_0(_)
+            | Extension::V0_5_0(_)
+            | Extension::V0_4_0(_)
+            | Extension::V0_3_0(_)
+            | Extension::V0_2_0(_)
+            | Extension::V0_1_0(_)
+            | Extension::V0_0_6(_)
+            | Extension::V0_0_4(_)
+            | Extension::V0_0_1(_) => Ok(Err(
+                "extension panel actions require extension API 0.8.0".into(),
+            )),
+        }
+    }
+
+    pub async fn call_run_command(
+        &self,
+        store: &mut Store<WasmState>,
+        command_id: &str,
+        context: extension::ExtensionCommandContext,
+    ) -> wasmtime::Result<Result<(), String>> {
+        match self {
+            Extension::V0_8_0(ext) => {
+                let wit_context = since_v0_8_0::CommandContext {
+                    editor: context.editor.map(|e| since_v0_8_0::editor::EditorState {
+                        path: e.path,
+                        language: e.language,
+                        text: e.text,
+                        selections: e
+                            .selections
+                            .into_iter()
+                            .map(|r| since_v0_8_0::Range {
+                                start: r.start,
+                                end: r.end,
+                            })
+                            .collect(),
+                        version: e.version,
+                    }),
+                };
+                ext.call_run_command(store, command_id, &wit_context).await
+            }
+            _ => Ok(Err("extension commands require extension API 0.8.0".into())),
+        }
+    }
+
+    pub async fn call_ui_response(
+        &self,
+        store: &mut Store<WasmState>,
+        request_id: u64,
+        selected: Option<&str>,
+    ) -> wasmtime::Result<Result<(), String>> {
+        match self {
+            Extension::V0_8_0(ext) => ext.call_ui_response(store, request_id, selected).await,
+            _ => Ok(Err(
+                "extension UI response requires extension API 0.8.0".into()
+            )),
+        }
+    }
+
+    pub async fn call_console_input(
+        &self,
+        store: &mut Store<WasmState>,
+        id: &str,
+        text: &str,
+    ) -> wasmtime::Result<Result<(), String>> {
+        match self {
+            Extension::V0_8_0(ext) => ext.call_console_input(store, id, text).await,
+            _ => Ok(Err(
+                "extension console input requires extension API 0.8.0".into()
+            )),
+        }
+    }
+
+    pub async fn call_process_output(
+        &self,
+        store: &mut Store<WasmState>,
+        handle: u64,
+        is_stderr: bool,
+        text: &str,
+    ) -> wasmtime::Result<Result<(), String>> {
+        match self {
+            Extension::V0_8_0(ext) => {
+                ext.call_process_output(store, handle, is_stderr, text)
+                    .await
+            }
+            _ => Ok(Err(
+                "extension process output requires extension API 0.8.0".into()
+            )),
+        }
+    }
+
+    pub async fn call_process_exit(
+        &self,
+        store: &mut Store<WasmState>,
+        handle: u64,
+        code: Option<i32>,
+    ) -> wasmtime::Result<Result<(), String>> {
+        match self {
+            Extension::V0_8_0(ext) => ext.call_process_exit(store, handle, code).await,
+            _ => Ok(Err(
+                "extension process exit requires extension API 0.8.0".into()
+            )),
+        }
+    }
+
+    pub async fn call_tcp_data(
+        &self,
+        store: &mut Store<WasmState>,
+        stream_id: u64,
+        data: &[u8],
+    ) -> wasmtime::Result<Result<(), String>> {
+        match self {
+            Extension::V0_8_0(ext) => ext.call_tcp_data(store, stream_id, data).await,
+            _ => Ok(Err(
+                "extension TCP stream subscription requires extension API 0.8.0".into(),
+            )),
+        }
+    }
+
+    pub async fn call_tcp_closed(
+        &self,
+        store: &mut Store<WasmState>,
+        stream_id: u64,
+        error: Option<&str>,
+    ) -> wasmtime::Result<Result<(), String>> {
+        match self {
+            Extension::V0_8_0(ext) => ext.call_tcp_closed(store, stream_id, error).await,
+            _ => Ok(Err(
+                "extension TCP stream subscription requires extension API 0.8.0".into(),
+            )),
+        }
+    }
+
+    pub async fn call_on_event(
+        &self,
+        store: &mut Store<WasmState>,
+        kind: &str,
+        payload_json: &str,
+    ) -> wasmtime::Result<Result<(), String>> {
+        match self {
+            Extension::V0_8_0(ext) => ext.call_on_event(store, kind, payload_json).await,
+            _ => Ok(Ok(())),
+        }
+    }
+
     pub async fn call_language_server_command(
         &self,
         store: &mut Store<WasmState>,

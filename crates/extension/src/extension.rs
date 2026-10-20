@@ -3,6 +3,7 @@ pub mod extension_builder;
 mod extension_events;
 mod extension_host_proxy;
 mod extension_manifest;
+mod extension_panel;
 mod types;
 
 use std::path::{Path, PathBuf};
@@ -21,6 +22,7 @@ pub use crate::capabilities::*;
 pub use crate::extension_events::*;
 pub use crate::extension_host_proxy::*;
 pub use crate::extension_manifest::*;
+pub use crate::extension_panel::*;
 pub use crate::types::*;
 
 /// Initializes the `extension` crate.

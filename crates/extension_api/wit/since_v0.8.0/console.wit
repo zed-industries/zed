@@ -1,0 +1,15 @@
+package zed:extension;
+
+interface console {
+    enum console-output-kind {
+        output,
+        error,
+        %result,
+        input,
+    }
+
+    open-console: func(id: string, title: string) -> result<_, string>;
+    append: func(id: string, text: string, kind: console-output-kind) -> result<_, string>;
+    clear: func(id: string) -> result<_, string>;
+    set-prompt: func(id: string, text: string) -> result<_, string>;
+}

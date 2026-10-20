@@ -35,6 +35,15 @@ pub struct ChangeKeybinding {
     pub action: String,
 }
 
+/// Runs a command provided by an extension.
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = zed)]
+#[serde(deny_unknown_fields)]
+pub struct RunExtensionCommand {
+    pub extension: String,
+    pub command: String,
+}
+
 actions!(
     zed,
     [
@@ -995,6 +1004,18 @@ pub mod git_panel {
         [
             /// Toggles focus on the git panel.
             ToggleFocus,
+        ]
+    );
+}
+
+pub mod extensions {
+    use gpui::actions;
+
+    actions!(
+        extensions,
+        [
+            /// Runs an extension command from a picker.
+            RunCommand,
         ]
     );
 }

@@ -10,6 +10,7 @@ Clojure support is available through the [Clojure extension](https://github.com/
 - Tree-sitter: [prcastro/tree-sitter-clojure](https://github.com/prcastro/tree-sitter-clojure)
 - Language Server: [clojure-lsp/clojure-lsp](https://github.com/clojure-lsp/clojure-lsp)
 
-<!--
-TBD: Add some Clojure Docs
--->
+## REPL
+
+Zed can evaluate Clojure code with its built-in REPL by connecting to an nREPL server (see [REPL](../repl.md)).
+For jack-in, structural editing, and test integration, install the Perry extension.

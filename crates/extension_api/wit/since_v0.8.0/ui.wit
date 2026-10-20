@@ -1,0 +1,21 @@
+package zed:extension;
+
+interface ui {
+    enum notification-level {
+        info,
+        warning,
+        error,
+    }
+
+    record quick-pick-item {
+        label: string,
+        detail: option<string>,
+    }
+
+    notify: func(level: notification-level, message: string);
+    quick-pick: func(request-id: u64, items: list<quick-pick-item>, placeholder: option<string>) -> result<_, string>;
+    input-box: func(request-id: u64, prompt: string, default-value: option<string>) -> result<_, string>;
+    set-status: func(id: string, text: option<string>) -> result<_, string>;
+    write-clipboard: func(text: string) -> result<_, string>;
+    open-path: func(path: string, row: option<u32>, column: option<u32>) -> result<_, string>;
+}

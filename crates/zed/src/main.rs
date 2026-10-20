@@ -562,6 +562,19 @@ fn main() {
         languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
+        extension_host_proxy.register_panel_ui_proxy(
+            workspace::extension_panel::ExtensionPanelsProxy::new(workspace_store.clone()),
+        );
+        extension_host_proxy.register_editor_proxy(
+            zed::extension_editor_api::ZedExtensionEditorProxy::new(workspace_store.clone()),
+        );
+        extension_host_proxy.register_ui_proxy(
+            zed::extension_editor_api::ZedExtensionUiProxy::new(workspace_store.clone(), cx),
+        );
+        extension_host_proxy.register_console_proxy(
+            zed::extension_editor_api::ZedExtensionConsoleProxy::new(workspace_store.clone()),
+        );
+        zed::extension_editor_api::init_extension_events(workspace_store.clone(), cx);
 
         language_extension::init(
             language_extension::LspAccess::ViaWorkspaces({

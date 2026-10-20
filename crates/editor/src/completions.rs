@@ -5,6 +5,10 @@ impl Editor {
         self.completion_provider = provider;
     }
 
+    pub fn completion_provider(&self) -> Option<Rc<dyn CompletionProvider>> {
+        self.completion_provider.clone()
+    }
+
     pub fn set_show_completions_on_input(&mut self, show_completions_on_input: Option<bool>) {
         self.show_completions_on_input_override = show_completions_on_input;
     }
@@ -1120,10 +1124,6 @@ impl Editor {
 
 #[cfg(any(test, feature = "test-support"))]
 impl Editor {
-    pub fn completion_provider(&self) -> Option<Rc<dyn CompletionProvider>> {
-        self.completion_provider.clone()
-    }
-
     pub fn current_completions(&self) -> Option<Vec<project::Completion>> {
         let menu = self.context_menu.borrow();
         if let CodeContextMenu::Completions(menu) = menu.as_ref()? {

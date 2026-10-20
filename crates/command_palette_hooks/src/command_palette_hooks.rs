@@ -151,3 +151,23 @@ impl GlobalCommandPaletteInterceptor {
         Some(handler(query, workspace, cx))
     }
 }
+
+/// Provides extra commands, each with its own title, to list in the command palette.
+#[derive(Clone)]
+pub struct GlobalCommandPaletteExtraCommands(Rc<dyn Fn(&App) -> Vec<(String, Box<dyn Action>)>>);
+
+impl Global for GlobalCommandPaletteExtraCommands {}
+
+impl GlobalCommandPaletteExtraCommands {
+    /// Sets the global provider of extra commands.
+    pub fn set(cx: &mut App, provider: impl Fn(&App) -> Vec<(String, Box<dyn Action>)> + 'static) {
+        cx.set_global(Self(Rc::new(provider)));
+    }
+
+    /// Returns the extra commands, if a provider is set.
+    pub fn commands(cx: &App) -> Vec<(String, Box<dyn Action>)> {
+        cx.try_global::<Self>()
+            .map(|provider| (provider.0)(cx))
+            .unwrap_or_default()
+    }
+}

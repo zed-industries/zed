@@ -7,6 +7,7 @@ use settings::{RegisterSetting, Settings};
 #[derive(Debug, Default, RegisterSetting)]
 pub struct JupyterSettings {
     pub kernel_selections: HashMap<String, String>,
+    pub nrepl_servers: Vec<settings::NreplServerContent>,
 }
 
 impl JupyterSettings {
@@ -23,6 +24,7 @@ impl Settings for JupyterSettings {
         let jupyter = content.editor.jupyter.clone().unwrap();
         Self {
             kernel_selections: jupyter.kernel_selections.unwrap_or_default(),
+            nrepl_servers: jupyter.nrepl_servers.unwrap_or_default(),
         }
     }
 }

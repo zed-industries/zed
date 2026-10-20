@@ -26,4 +26,10 @@ interface process {
     /// Executes the given command as a child process, waiting for it to finish
     /// and collecting all of its output.
     run-command: func(command: command) -> result<output, string>;
+
+    /// Spawns a command as a child process in the background.
+    spawn: func(command: string, args: list<string>, env: env-vars, cwd: option<string>) -> result<u64, string>;
+
+    /// Kills a spawned background process.
+    kill: func(handle: u64) -> result<_, string>;
 }

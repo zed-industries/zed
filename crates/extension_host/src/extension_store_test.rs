@@ -8,6 +8,7 @@ use crate::{
         hash_directory_contents, remove_stale_uploads,
     },
     load_plugin_queries, remote_sync_retry_delay,
+    ExtensionProcessStoreDispatcher, ExtensionTcpStoreDispatcher,
 };
 use async_compression::futures::bufread::GzipEncoder;
 use async_trait::async_trait;
@@ -16,9 +17,9 @@ use collections::{BTreeMap, HashMap, HashSet};
 use extension::{
     BuildTaskTemplate, CodeLabel, Command, Completion, ContextServerConfiguration,
     DebugAdapterBinary, DebugRequest, DebugScenario, DebugTaskDefinition, Extension,
-    ExtensionHostProxy, KeyValueStoreDelegate, LibManifestEntry, ProjectDelegate, SlashCommand,
-    SlashCommandArgumentCompletion, SlashCommandOutput, StartDebuggingRequestArgumentsRequest,
-    Symbol, WorktreeDelegate,
+    ExtensionHostProxy, ExtensionProcessDispatcher, ExtensionTcpDispatcher, KeyValueStoreDelegate,
+    LibManifestEntry, ProjectDelegate, SlashCommand, SlashCommandArgumentCompletion,
+    SlashCommandOutput, StartDebuggingRequestArgumentsRequest, Symbol, WorktreeDelegate,
 };
 use fs::{FakeFs, Fs, RealFs, RemoveOptions};
 use futures::{AsyncReadExt, FutureExt, StreamExt, io::BufReader};
@@ -401,7 +402,10 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         debug_adapters: Default::default(),
                         debug_locators: Default::default(),
                         language_model_providers: BTreeMap::default(),
+                        commands: BTreeMap::default(),
+                        events: vec![],
                     }),
+
                     dev: false,
                 },
             ),
@@ -432,7 +436,10 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         debug_adapters: Default::default(),
                         debug_locators: Default::default(),
                         language_model_providers: BTreeMap::default(),
+                        commands: BTreeMap::default(),
+                        events: vec![],
                     }),
+
                     dev: false,
                 },
             ),
@@ -618,7 +625,10 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 debug_adapters: Default::default(),
                 debug_locators: Default::default(),
                 language_model_providers: BTreeMap::default(),
+                commands: BTreeMap::default(),
+                events: vec![],
             }),
+
             dev: false,
         },
     );
@@ -3736,6 +3746,38 @@ async fn test_hash_directory_contents_hashes_symlinks_by_target(cx: &mut TestApp
     );
 }
 
+#[gpui::test]
+async fn test_process_and_tcp_dispatchers_registered(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    let proxy = Arc::new(ExtensionHostProxy::default());
+    let store = create_extension_store_with(fs, proxy.clone(), cx);
+    proxy.register_process_dispatcher(ExtensionProcessStoreDispatcher {
+        store: store.downgrade(),
+    });
+    proxy.register_tcp_dispatcher(ExtensionTcpStoreDispatcher {
+        store: store.downgrade(),
+    });
+
+    let result = cx
+        .update(|cx| proxy.process_output(Arc::from("test-ext"), 1, false, "out".into(), cx))
+        .await;
+    assert!(result.is_err());
+    assert_eq!(
+        result.err().as_ref().map(|err| err.to_string()).as_deref(),
+        Some("extension test-ext is not loaded")
+    );
+
+    let result = cx
+        .update(|cx| proxy.tcp_data(Arc::from("test-ext"), 1, vec![1, 2, 3], cx))
+        .await;
+    assert!(result.is_err());
+    assert_eq!(
+        result.err().as_ref().map(|err| err.to_string()).as_deref(),
+        Some("extension test-ext is not loaded")
+    );
+}
+
 struct SyncRequestCounter {
     sync_count: Arc<AtomicUsize>,
     failures_remaining: usize,
@@ -4094,6 +4136,8 @@ impl Extension for FakeExtension {
             debug_adapters: BTreeMap::default(),
             debug_locators: BTreeMap::default(),
             language_model_providers: BTreeMap::default(),
+            commands: BTreeMap::default(),
+            events: vec![],
         })
     }
 
