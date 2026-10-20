@@ -5143,9 +5143,8 @@ impl Project {
                 path
             };
             let Ok(candidate) = project.update(cx, |project, cx| {
-                let lexical_path = project.path_style(cx).normalize(&path);
-                let project_path =
-                    project.project_path_for_absolute_path(Path::new(&lexical_path), cx)?;
+                let lexical_path = project.path_style(cx).normalize_lexically(&path);
+                let project_path = project.project_path_for_absolute_path(&lexical_path, cx)?;
                 let abs_path = project.absolute_path(&project_path, cx)?;
                 let task = project.resolve_abs_file_path_canonical(abs_path.to_str()?, cx);
                 Some((project_path, abs_path, task))
