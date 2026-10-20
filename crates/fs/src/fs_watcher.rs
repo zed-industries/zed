@@ -38,7 +38,7 @@ impl OsWatcherKind {
 /// FSEvents and Windows watches follow the path, and a kqueue directory
 /// watch does not report writes to the files inside it, so only inotify gets
 /// the parent-directory registration for a file.
-pub(crate) fn native_file_watch_is_inode_bound() -> bool {
+pub fn native_file_watch_is_inode_bound() -> bool {
     cfg!(target_os = "linux")
 }
 
@@ -51,9 +51,11 @@ pub(crate) fn native_file_watch_is_inode_bound() -> bool {
 /// `None` keeps the plain watch: for a directory, a poll watch, a backend
 /// whose file watches follow the path, a path whose metadata cannot be read
 /// (registering it fails or succeeds as before), a symlink, and a parent
-/// reached through a symlink. inotify follows a symlink to its target, so
-/// the plain watch reports under the link's path, and `watch` covers the
-/// target's directory separately. inotify also hands out one descriptor per
+/// reached through a symlink. inotify follows a symlink to its target, and
+/// `watch` registers the target and its directory alongside the link, so a
+/// symlink keeps the registrations it had; notify labels the descriptor the
+/// link and its target share with the path registered last, the target, and
+/// the subscriber holds both. inotify also hands out one descriptor per
 /// inode and notify keeps one path per descriptor, so registering an
 /// aliased parent would relabel the events of whoever watches the real
 /// directory.
@@ -1749,6 +1751,71 @@ mod tests {
         assert_eq!(
             fs.watch_calls(),
             [PathBuf::from("/root/dir"), PathBuf::from("/root/dir")]
+        );
+
+        while events.next().now_or_never().flatten().is_some() {}
+        fs.atomic_write(config_path.clone(), "C".to_owned())
+            .await
+            .expect("atomic write");
+        cx.run_until_parked();
+        let batch = events
+            .next()
+            .now_or_never()
+            .flatten()
+            .expect("replacement batch after the repair");
+        assert!(batch.iter().all(|event| event.path == config_path));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[gpui::test]
+    async fn removing_an_ancestor_of_the_watched_directory_marks_it_stale(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs = crate::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            serde_json::json!({ "dir": { "sub": { "config.json": "A" } } }),
+        )
+        .await;
+        let config_path = PathBuf::from("/root/dir/sub/config.json");
+
+        let (mut events, watcher) = fs.watch(&config_path, Duration::ZERO).await;
+        cx.run_until_parked();
+        assert_eq!(fs.watch_calls(), [PathBuf::from("/root/dir/sub")]);
+
+        // The kernel reports the deletion to the watch on `sub` (its child,
+        // then itself) before dropping it, so the registration goes stale even
+        // though the removed path is an ancestor of the watched directory.
+        fs.remove_dir(
+            Path::new("/root/dir"),
+            crate::RemoveOptions {
+                recursive: true,
+                ignore_if_not_exists: false,
+            },
+        )
+        .await
+        .expect("remove dir");
+        cx.run_until_parked();
+        let removed = events
+            .next()
+            .now_or_never()
+            .flatten()
+            .expect("removal batch");
+        assert!(removed.iter().any(|event| event.path == config_path));
+
+        fs.insert_tree(
+            "/root",
+            serde_json::json!({ "dir": { "sub": { "config.json": "B" } } }),
+        )
+        .await;
+        cx.run_until_parked();
+        watcher.add(&config_path).expect("re-add file");
+        assert_eq!(
+            fs.watch_calls(),
+            [
+                PathBuf::from("/root/dir/sub"),
+                PathBuf::from("/root/dir/sub")
+            ]
         );
 
         while events.next().now_or_never().flatten().is_some() {}

@@ -1738,6 +1738,39 @@ impl FakeFsState {
             .retain(|registered_path| *registered_path != path);
     }
 
+    /// What the kernel reports when a watched directory tree is removed:
+    /// every inode-bound watch registered on the directory or below it sees
+    /// the deletion of its direct children and then of itself, as inotify
+    /// does (`IN_DELETE` on the watch, then `IN_DELETE_SELF`). The events
+    /// must be emitted before `drop_inode_bound_watches_under`, because the
+    /// fake delivers only under a registered path. Watches are matched by
+    /// path, so one registered through a symlink alias of the removed tree
+    /// is neither reported nor dropped.
+    fn inode_bound_watch_removal_events(
+        &self,
+        path: &Path,
+        removed: &FakeFsEntry,
+    ) -> Vec<(PathBuf, Option<PathEventKind>)> {
+        let mut events = Vec::new();
+        if !self.watches.inode_bound {
+            return events;
+        }
+        for watched_path in &self.watches.registered_paths {
+            let Ok(relative_path) = watched_path.strip_prefix(path) else {
+                continue;
+            };
+            if let Some(FakeFsEntry::Dir { entries, .. }) = removed.descendant(relative_path) {
+                events.extend(
+                    entries
+                        .keys()
+                        .map(|name| (watched_path.join(name), Some(PathEventKind::Removed))),
+                );
+            }
+            events.push((watched_path.clone(), Some(PathEventKind::Removed)));
+        }
+        events
+    }
+
     /// The kernel side of removing a watched directory tree: every
     /// inode-bound watch registered on the directory or below it is gone.
     fn drop_inode_bound_watches_under(&mut self, path: &Path) {
@@ -2920,7 +2953,12 @@ impl FakeFs {
             }
         };
 
-        state.emit_event([(path.clone(), Some(PathEventKind::Removed))]);
+        let mut events = match &removed {
+            Some(removed) => state.inode_bound_watch_removal_events(&path, removed),
+            None => Vec::new(),
+        };
+        events.push((path.clone(), Some(PathEventKind::Removed)));
+        state.emit_event(events);
         if removed.is_some() {
             state.drop_inode_bound_watches_under(&path);
         }
@@ -3007,6 +3045,17 @@ impl FakeFsEntry {
         } else {
             anyhow::bail!("not a directory: {path:?}");
         }
+    }
+
+    /// The entry at `relative_path` below this one, without following
+    /// symlinks; the entry itself for an empty path.
+    fn descendant(&self, relative_path: &Path) -> Option<&FakeFsEntry> {
+        relative_path
+            .components()
+            .try_fold(self, |entry, component| match entry {
+                Self::Dir { entries, .. } => entries.get(component.as_os_str().to_str()?),
+                Self::File { .. } | Self::Symlink { .. } => None,
+            })
     }
 }
 

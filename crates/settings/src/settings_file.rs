@@ -142,6 +142,39 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_canonical_config_path_for_a_missing_file(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            Path::new("/root"),
+            json!({
+                ".config": {},
+                "dotfiles": {
+                    "zed": {}
+                }
+            }),
+        )
+        .await;
+        fs.create_symlink(
+            Path::new("/root/.config/zed"),
+            PathBuf::from("/root/dotfiles/zed"),
+        )
+        .await
+        .unwrap();
+        let path = PathBuf::from("/root/.config/zed/settings.json");
+
+        let resolved = canonical_config_path(fs.as_ref(), path.clone()).await;
+
+        if fs::fs_watcher::native_file_watch_is_inode_bound() {
+            assert_eq!(resolved, PathBuf::from("/root/dotfiles/zed/settings.json"));
+        } else {
+            assert_eq!(
+                resolved, path,
+                "a backend whose watches follow the path keeps the raw path, as before"
+            );
+        }
+    }
+
+    #[gpui::test]
     async fn test_watch_config_file_reloads_when_parent_dir_is_symlink(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
         let fs = FakeFs::new(cx.background_executor.clone());
@@ -333,15 +366,17 @@ pub fn watch_config_file(
     (rx, task)
 }
 
-/// A missing file cannot be canonicalized, but its directory can. The watch
-/// is registered on the real directory so that it survives the file's
-/// creation and later replacements, which on Linux a watch registered
-/// through a symlinked directory does not.
+/// A missing file cannot be canonicalized, but its directory can. On inotify
+/// the watch is registered on the real directory so that it survives the
+/// file's creation and later replacements, which a watch registered through
+/// a symlinked directory does not. Backends whose watches follow the path
+/// keep the raw path, as before.
 async fn canonical_config_path(fs: &dyn Fs, path: PathBuf) -> PathBuf {
     if let Ok(canonical_path) = fs.canonicalize(&path).await {
         return canonical_path;
     }
-    if let (Some(parent), Some(file_name)) = (path.parent(), path.file_name())
+    if fs::fs_watcher::native_file_watch_is_inode_bound()
+        && let (Some(parent), Some(file_name)) = (path.parent(), path.file_name())
         && let Ok(canonical_parent) = fs.canonicalize(parent).await
     {
         return canonical_parent.join(file_name);
