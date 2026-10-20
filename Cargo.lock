@@ -136,6 +136,7 @@ dependencies = [
 name = "acp_tools"
 version = "0.1.0"
 dependencies = [
+ "acp_thread",
  "agent-client-protocol",
  "agent_servers",
  "agent_ui",
@@ -382,6 +383,7 @@ dependencies = [
  "client",
  "collections",
  "env_logger 0.11.8",
+ "feature_flags",
  "fs",
  "futures 0.3.34",
  "gpui",
