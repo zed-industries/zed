@@ -1,5 +1,7 @@
 use dispatch2::{DispatchQueue, DispatchQueueGlobalPriority, DispatchTime, GlobalQueueIdentifier};
-use gpui::{ActivityGuard, PlatformDispatcher, Priority, RunnableMeta, RunnableVariant};
+use gpui::{
+    ActivityGuard, PlatformDispatcher, Priority, RunnableMeta, RunnableVariant, ThreadPriority,
+};
 use gpui_util::ResultExt;
 use mach2::{
     kern_return::KERN_SUCCESS,
@@ -42,9 +44,6 @@ impl PlatformDispatcher for AppleDispatcher {
         let context = runnable.into_raw().as_ptr() as *mut c_void;
 
         let queue_priority = match priority {
-            Priority::RealtimeAudio => {
-                panic!("RealtimeAudio priority should use spawn_realtime, not dispatch")
-            }
             Priority::High => DispatchQueueGlobalPriority::High,
             Priority::Medium => DispatchQueueGlobalPriority::Default,
             Priority::Low => DispatchQueueGlobalPriority::Low,
@@ -78,11 +77,22 @@ impl PlatformDispatcher for AppleDispatcher {
         }
     }
 
-    fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>) {
-        std::thread::spawn(move || {
-            set_audio_thread_priority().log_err();
-            f();
-        });
+    fn spawn_dedicated_thread(
+        &self,
+        name: String,
+        priority: ThreadPriority,
+        body: Box<dyn FnOnce() + Send>,
+    ) -> anyhow::Result<()> {
+        std::thread::Builder::new().name(name).spawn(move || {
+            match priority {
+                ThreadPriority::Normal => {}
+                ThreadPriority::High => {
+                    set_audio_thread_priority().log_err();
+                }
+            }
+            body();
+        })?;
+        Ok(())
     }
 
     fn prevent_app_nap(&self, reason: &str) -> ActivityGuard {

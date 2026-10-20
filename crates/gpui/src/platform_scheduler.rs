@@ -2,10 +2,11 @@ use crate::{PlatformDispatcher, RunnableMeta};
 use async_task::Runnable;
 use chrono::{DateTime, Utc};
 use futures::channel::oneshot;
+
 use scheduler::Instant;
 use scheduler::{
-    Clock, LocalExecutor, Priority, Scheduler, SessionId, Task, TestScheduler, Timer,
-    spawn_dedicated_thread,
+    Clock, LocalExecutor, Priority, Scheduler, SessionId, Task, TestScheduler, ThreadPriority,
+    Timer, spawn_dedicated_thread,
 };
 #[cfg(not(target_family = "wasm"))]
 use std::task::{Context, Poll};
@@ -125,10 +126,6 @@ impl Scheduler for PlatformScheduler {
         self.dispatcher.dispatch_blocking(runnable);
     }
 
-    fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>) {
-        self.dispatcher.spawn_realtime(f);
-    }
-
     #[track_caller]
     fn timer(&self, duration: Duration) -> Timer {
         let (tx, rx) = oneshot::channel();
@@ -161,6 +158,7 @@ impl Scheduler for PlatformScheduler {
 
     fn spawn_dedicated(
         self: Arc<Self>,
+        priority: ThreadPriority,
         f: Box<
             dyn FnOnce(
                     LocalExecutor,
@@ -171,7 +169,17 @@ impl Scheduler for PlatformScheduler {
         >,
     ) -> Task<Box<dyn Any + Send + Sync>> {
         let session_id = self.next_session_id();
-        spawn_dedicated_thread(session_id, self, move |executor| f(executor))
+        let dispatcher = self.dispatcher.clone();
+        spawn_dedicated_thread(
+            session_id,
+            self,
+            |name, body| {
+                dispatcher
+                    .spawn_dedicated_thread(name, priority, body)
+                    .expect("failed to spawn dedicated thread");
+            },
+            f,
+        )
     }
 
     fn as_test(&self) -> Option<&TestScheduler> {
@@ -221,8 +229,13 @@ mod tests {
         fn dispatch_after(&self, _duration: Duration, _runnable: RunnableVariant) {
             panic!("SmokeDispatcher does not implement timers");
         }
-        fn spawn_realtime(&self, _f: Box<dyn FnOnce() + Send>) {
-            panic!("SmokeDispatcher does not implement realtime");
+        fn spawn_dedicated_thread(
+            &self,
+            _: String,
+            _: ThreadPriority,
+            _: Box<dyn FnOnce() + Send>,
+        ) -> anyhow::Result<()> {
+            panic!("SmokeDispatcher does not implement spawn_dedicated_thread");
         }
     }
 

@@ -12,6 +12,7 @@ use std::{mem, pin::Pin};
 
 pub use scheduler::{
     DedicatedExecutor, FallibleTask, LocalExecutor as SchedulerLocalExecutor, Priority, Task,
+    ThreadPriority,
 };
 
 /// A pointer to the executor that is currently running,
@@ -126,9 +127,6 @@ impl BackgroundExecutor {
     }
 
     /// Enqueues the given future to be run to completion on a background thread with the given priority.
-    ///
-    /// When `Priority::RealtimeAudio` is used, the task runs on a dedicated thread with
-    /// realtime scheduling priority, suitable for audio processing.
     #[track_caller]
     pub fn spawn_with_priority<R>(
         &self,
@@ -138,11 +136,27 @@ impl BackgroundExecutor {
     where
         R: Send + 'static,
     {
-        if priority == Priority::RealtimeAudio {
-            self.inner.spawn_realtime(future)
-        } else {
-            self.inner.spawn_with_priority(priority, future)
-        }
+        self.inner.spawn_with_priority(priority, future)
+    }
+
+    /// Runs the future returned by `f` on a new thread of its own, scheduled
+    /// with the given OS `priority`. The future may be `!Send`, and can spawn
+    /// more work onto the same thread through the provided executor.
+    ///
+    /// In tests the work runs deterministically on the test scheduler instead,
+    /// so it must not block indefinitely.
+    #[track_caller]
+    pub fn spawn_dedicated_with_priority<F, Fut>(
+        &self,
+        priority: ThreadPriority,
+        f: F,
+    ) -> Task<Fut::Output>
+    where
+        F: FnOnce(SchedulerLocalExecutor) -> Fut + Send + 'static,
+        Fut: Future + 'static,
+        Fut::Output: Send + Sync + 'static,
+    {
+        self.inner.spawn_dedicated_with_priority(priority, f)
     }
 
     /// Runs background tasks that may borrow from their environment and waits for all of them to complete.

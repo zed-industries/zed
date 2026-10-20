@@ -42,10 +42,6 @@ use std::{
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum Priority {
-    /// Realtime priority
-    ///
-    /// Spawning a task with this priority will spin it off on a separate thread dedicated just to that task. Only use for audio.
-    RealtimeAudio,
     /// High priority - use for tasks critical to user experience/responsiveness.
     High,
     /// Medium priority - suitable for most use cases.
@@ -63,10 +59,20 @@ impl Priority {
             Priority::High => 60,
             Priority::Medium => 30,
             Priority::Low => 10,
-            // realtime priorities are not considered for probability scheduling
-            Priority::RealtimeAudio => 0,
         }
     }
+}
+
+/// OS scheduling priority for the thread backing a dedicated session.
+///
+/// See [`BackgroundExecutor::spawn_dedicated_with_priority`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ThreadPriority {
+    /// The platform's default priority for new threads.
+    #[default]
+    Normal,
+    /// High scheduling priority
+    High,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -133,9 +139,6 @@ pub trait Scheduler: Send + Sync {
     /// Schedules synchronous work on the blocking pool.
     fn schedule_blocking(&self, runnable: Runnable<RunnableMeta>);
 
-    /// Spawn a closure on a dedicated realtime thread for audio processing.
-    fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>);
-
     /// Schedule a background task with default (medium) priority.
     fn schedule_background(&self, runnable: Runnable<RunnableMeta>) {
         self.schedule_background_with_priority(runnable, Priority::default());
@@ -147,10 +150,11 @@ pub trait Scheduler: Send + Sync {
 
     /// Spawn a closure on a fresh session pinned to its own [`LocalExecutor`].
     ///
-    /// `PlatformScheduler` runs the closure on a new OS thread (see
-    /// [`spawn_dedicated_thread`]). `TestScheduler` runs it on the test
-    /// scheduler's loop alongside everything else so determinism under
-    /// `TestScheduler::many` is preserved.
+    /// `PlatformScheduler` runs the closure on a new thread created by the
+    /// platform (see [`spawn_dedicated_thread`]) with the requested `priority`.
+    /// `TestScheduler` runs it on the test scheduler's loop alongside
+    /// everything else so determinism under `TestScheduler::many` is
+    /// preserved, and ignores `priority`.
     ///
     /// This is the dyn-safe entry point: the closure's output is type-erased
     /// as `Box<dyn Any + Send + Sync>` so the trait stays object-safe.
@@ -160,6 +164,7 @@ pub trait Scheduler: Send + Sync {
     /// with [`Task::downcast`] to recover the closure's concrete return type.
     fn spawn_dedicated(
         self: Arc<Self>,
+        priority: ThreadPriority,
         f: Box<
             dyn FnOnce(
                     LocalExecutor,
@@ -175,9 +180,15 @@ pub trait Scheduler: Send + Sync {
     }
 }
 
-/// Spawn work on a fresh OS thread that's exclusive to the returned task and
+/// Spawn work on a fresh thread that's exclusive to the returned task and
 /// anything spawned on the executor it provides. Blocking syscalls inside that
 /// work don't disturb any other executor in the process.
+///
+/// `spawn_thread` creates the thread: it's called once with a thread name and
+/// the body to run, and must run that body on a new thread. Owning thread
+/// creation lets the platform pick the threading primitive (an OS thread
+/// natively, a web worker on wasm) and configure the thread, for example its
+/// scheduling priority, before the body starts.
 ///
 /// `f` is called on the dedicated thread with a [`LocalExecutor`] pinned
 /// to it. The future `f` returns may freely be `!Send`. The returned `Task`
@@ -189,12 +200,10 @@ pub trait Scheduler: Send + Sync {
 /// rendezvous that resolves to the root task's handle once the dedicated
 /// thread has spawned it, and behaves like that handle from then on. That
 /// makes it safe to call from threads that must not block, such as the web
-/// main thread. On wasm targets the thread is a web worker and requires the
-/// `wasm-threads` cargo feature (and a shared-memory build); without it this
-/// panics. Spawning a worker is far more expensive than an OS thread —
-/// module instantiation plus a fresh function table — so on the web treat a
-/// dedicated session as a long-lived place to send work, not a per-job
-/// convenience.
+/// main thread, provided `spawn_thread` doesn't block either. On the web,
+/// spawning a worker is far more expensive than an OS thread — module
+/// instantiation plus a fresh function table — so treat a dedicated session
+/// as a long-lived place to send work, not a per-job convenience.
 ///
 /// The caller is responsible for supplying a `session_id` that's distinct from
 /// every other live session on `scheduler`. Concrete schedulers typically wrap
@@ -202,6 +211,7 @@ pub trait Scheduler: Send + Sync {
 pub fn spawn_dedicated_thread<F, Fut>(
     session_id: SessionId,
     scheduler: Arc<dyn Scheduler>,
+    spawn_thread: impl FnOnce(String, Box<dyn FnOnce() + Send>),
     f: F,
 ) -> Task<Fut::Output>
 where
@@ -229,27 +239,11 @@ where
             runnable.run();
         }
     };
-    spawn_dedicated_os_thread(session_id, thread_body);
+    spawn_thread(
+        format!("spawn_dedicated session {session_id:?}"),
+        Box::new(thread_body),
+    );
     task
-}
-
-fn spawn_dedicated_os_thread(session_id: SessionId, thread_body: impl FnOnce() + Send + 'static) {
-    let thread_name = format!("spawn_dedicated session {:?}", session_id);
-    #[cfg(not(target_family = "wasm"))]
-    std::thread::Builder::new()
-        .name(thread_name)
-        .spawn(thread_body)
-        .expect("failed to spawn dedicated thread");
-    #[cfg(all(target_family = "wasm", feature = "wasm-threads"))]
-    wasm_thread::Builder::new()
-        .name(thread_name)
-        .spawn(thread_body)
-        .expect("failed to spawn dedicated thread");
-    #[cfg(all(target_family = "wasm", not(feature = "wasm-threads")))]
-    {
-        let _ = (thread_name, thread_body);
-        panic!("spawn_dedicated on wasm requires the scheduler crate's `wasm-threads` feature");
-    }
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]

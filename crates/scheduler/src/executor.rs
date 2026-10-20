@@ -1,4 +1,6 @@
-use crate::{Instant, Priority, RunnableMeta, Scheduler, SessionId, TaskKind, Timer};
+use crate::{
+    Instant, Priority, RunnableMeta, Scheduler, SessionId, TaskKind, ThreadPriority, Timer,
+};
 use async_task::Runnable;
 use std::{
     any::Any,
@@ -185,7 +187,7 @@ impl LocalExecutor {
     {
         self.scheduler
             .clone()
-            .spawn_dedicated(box_dedicated(f))
+            .spawn_dedicated(ThreadPriority::Normal, box_dedicated(f))
             .downcast::<Fut::Output>()
     }
 
@@ -288,38 +290,6 @@ impl BackgroundExecutor {
         Task(TaskState::Spawned(task))
     }
 
-    /// Spawns a future on a dedicated realtime thread for audio processing.
-    #[track_caller]
-    pub fn spawn_realtime<F>(&self, future: F) -> Task<F::Output>
-    where
-        F: Future + Send + 'static,
-        F::Output: Send + 'static,
-    {
-        let location = Location::caller();
-        let (tx, rx) = flume::bounded::<async_task::Runnable<RunnableMeta>>(1);
-
-        self.scheduler.spawn_realtime(Box::new(move || {
-            while let Ok(runnable) = rx.recv() {
-                runnable.run();
-            }
-        }));
-
-        let (runnable, task) = async_task::Builder::new()
-            .metadata(RunnableMeta {
-                location,
-                spawned: crate::SpawnTime(Instant::now()),
-                kind: TaskKind::Cooperative,
-            })
-            .spawn(
-                move |_| future,
-                move |runnable| {
-                    let _ = tx.send(runnable);
-                },
-            );
-        runnable.schedule();
-        Task(TaskState::Spawned(task))
-    }
-
     #[track_caller]
     pub fn timer(&self, duration: Duration) -> Timer {
         self.scheduler.timer(duration)
@@ -353,9 +323,26 @@ impl BackgroundExecutor {
         Fut: Future + 'static,
         Fut::Output: Send + Sync + 'static,
     {
+        self.spawn_dedicated_with_priority(ThreadPriority::Normal, f)
+    }
+
+    /// Like [`Self::spawn_dedicated`], but runs the dedicated thread with the
+    /// given OS scheduling `priority`. Under `TestScheduler` there is no
+    /// dedicated thread, so `priority` has no effect.
+    #[track_caller]
+    pub fn spawn_dedicated_with_priority<F, Fut>(
+        &self,
+        priority: ThreadPriority,
+        f: F,
+    ) -> Task<Fut::Output>
+    where
+        F: FnOnce(LocalExecutor) -> Fut + Send + 'static,
+        Fut: Future + 'static,
+        Fut::Output: Send + Sync + 'static,
+    {
         self.scheduler
             .clone()
-            .spawn_dedicated(box_dedicated(f))
+            .spawn_dedicated(priority, box_dedicated(f))
             .downcast::<Fut::Output>()
     }
 }

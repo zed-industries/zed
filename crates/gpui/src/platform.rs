@@ -46,8 +46,8 @@ use crate::{
     FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap,
     LineLayout, MissingGlyphSink, Pixels, PlatformGestures, PlatformInput, Point, Priority,
     RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene, ShapedGlyph,
-    ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, Window, WindowControlArea,
-    hash, point, px, size,
+    ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, ThreadPriority, Window,
+    WindowControlArea, hash, point, px, size,
 };
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use anyhow::bail;
@@ -1481,7 +1481,21 @@ pub trait PlatformDispatcher: Send + Sync {
         None
     }
 
-    fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>);
+    /// Runs `body` on a new thread named `name`, scheduled with `priority`.
+    /// Backs `spawn_dedicated`, so it must not block the calling thread.
+    ///
+    /// The default spawns a `std` thread and ignores `priority`. Platforms
+    /// that can raise thread priority, or that need a different threading
+    /// primitive, override it.
+    fn spawn_dedicated_thread(
+        &self,
+        name: String,
+        _priority: ThreadPriority,
+        body: Box<dyn FnOnce() + Send>,
+    ) -> Result<()> {
+        std::thread::Builder::new().name(name).spawn(body)?;
+        Ok(())
+    }
 
     fn now(&self) -> Instant {
         Instant::now()

@@ -15868,7 +15868,6 @@ dependencies = [
  "futures 0.3.34",
  "parking_lot",
  "rand 0.9.4",
- "wasm_thread",
  "web-time",
 ]
 

@@ -482,15 +482,6 @@ impl PlatformDispatcher for ThreadedDispatcher {
         self.timers.condvar.notify_one();
     }
 
-    fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>) {
-        // This dispatcher does not need realtime scheduling priority; a plain
-        // thread keeps it portable.
-        thread::Builder::new()
-            .name("ThreadedDispatcherRealtime".to_owned())
-            .spawn(f)
-            .expect("failed to spawn threaded dispatcher realtime thread");
-    }
-
     fn as_threaded(&self) -> Option<&ThreadedDispatcher> {
         Some(self)
     }

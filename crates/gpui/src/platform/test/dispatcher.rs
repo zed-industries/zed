@@ -143,10 +143,4 @@ impl PlatformDispatcher for TestDispatcher {
     fn as_test(&self) -> Option<&TestDispatcher> {
         Some(self)
     }
-
-    fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>) {
-        std::thread::spawn(move || {
-            f();
-        });
-    }
 }
