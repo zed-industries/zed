@@ -2,8 +2,8 @@ mod encrypted_password;
 
 pub use encrypted_password::{EncryptedPassword, IKnowWhatIAmDoingAndIHaveReadTheDocs};
 
+use async_lock::Mutex;
 use net::async_net::UnixListener;
-use smol::lock::Mutex;
 #[cfg(not(target_os = "windows"))]
 use util::fs::make_file_executable;
 
@@ -14,14 +14,14 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
+#[cfg(not(target_os = "windows"))]
+use async_fs::fs;
 use futures::channel::{mpsc, oneshot};
 use futures::{
     AsyncBufReadExt as _, AsyncWriteExt as _, FutureExt as _, SinkExt, StreamExt, io::BufReader,
     select_biased,
 };
 use gpui::{AsyncApp, BackgroundExecutor, Task};
-#[cfg(not(target_os = "windows"))]
-use smol::fs;
 use util::{ResultExt as _, debug_panic, maybe};
 
 #[cfg(not(target_os = "windows"))]

@@ -13,8 +13,10 @@ use futures::{FutureExt, StreamExt};
 
 use fs::*;
 use gpui::{BackgroundExecutor, TestAppContext};
+use rope::Rope;
 use serde_json::json;
 use tempfile::TempDir;
+use text::LineEnding;
 use util::path;
 
 #[gpui::test]
@@ -478,6 +480,29 @@ async fn test_copy_recursive_with_ignoring(executor: BackgroundExecutor) {
             .unwrap(),
         "B"
     );
+}
+
+#[gpui::test]
+async fn test_realfs_save(executor: BackgroundExecutor) {
+    let fs = RealFs::new(None, executor);
+    let directory = TempDir::new().unwrap();
+    let path = directory.path().join("nested").join("file.txt");
+    let content = "first\nsecond\n".repeat(2048);
+    let text = Rope::from(content.as_str());
+
+    for line_ending in [LineEnding::Unix, LineEnding::Windows] {
+        fs.save(&path, &text, line_ending).await.unwrap();
+        let expected = match line_ending {
+            LineEnding::Unix => content.clone(),
+            LineEnding::Windows => content.replace('\n', "\r\n"),
+        };
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
+    }
+
+    fs.save(&path, &Rope::new(), LineEnding::Unix)
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), b"");
 }
 
 #[gpui::test]

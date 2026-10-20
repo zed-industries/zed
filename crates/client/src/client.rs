@@ -1228,7 +1228,7 @@ impl Client {
                 while let Some(message) = incoming.next().await {
                     this.handle_message(message, cx);
                     // Don't starve the main thread when receiving lots of messages at once.
-                    smol::future::yield_now().await;
+                    futures_lite::future::yield_now().await;
                 }
             }
         })

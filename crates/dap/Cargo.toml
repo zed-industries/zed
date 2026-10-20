@@ -23,7 +23,9 @@ test-support = [
 
 [dependencies]
 anyhow.workspace = true
+async-channel.workspace = true
 async-compression.workspace = true
+async-lock.workspace = true
 async-pipe = { workspace = true, optional = true }
 async-tar.workspace = true
 async-trait.workspace = true

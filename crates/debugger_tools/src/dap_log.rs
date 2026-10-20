@@ -159,7 +159,7 @@ impl LogStore {
                     });
                 }
 
-                smol::future::yield_now().await;
+                futures_lite::future::yield_now().await;
             }
             anyhow::Ok(())
         })
@@ -174,7 +174,7 @@ impl LogStore {
                     });
                 }
 
-                smol::future::yield_now().await;
+                futures_lite::future::yield_now().await;
             }
             anyhow::Ok(())
         })

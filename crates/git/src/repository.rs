@@ -160,7 +160,7 @@ impl CommitDataReader {
         executor: BackgroundExecutor,
         resolve: impl 'static + Send + Sync + Fn(Oid) -> Result<CommitData>,
     ) -> Self {
-        let (request_tx, request_rx) = smol::channel::bounded::<CommitDataRequest>(64);
+        let (request_tx, request_rx) = async_channel::bounded::<CommitDataRequest>(64);
         let resolve = Arc::new(resolve);
         let delay_executor = executor.clone();
         let task = executor.spawn(async move {
@@ -6751,7 +6751,7 @@ mod tests {
         let git = repo.git_binary();
 
         let graph_commits = async || {
-            let (tx, rx) = smol::channel::unbounded();
+            let (tx, rx) = async_channel::unbounded();
             repo.initial_graph_data(LogSource::All, LogOrder::DateOrder, tx)
                 .await
                 .unwrap();

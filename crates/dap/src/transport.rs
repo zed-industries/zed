@@ -1,4 +1,5 @@
 use anyhow::{Context as _, Result, anyhow, bail};
+use async_channel::{Receiver, Sender, unbounded};
 #[cfg(any(test, feature = "test-support"))]
 use async_pipe::{PipeReader, PipeWriter};
 use dap_types::{
@@ -12,7 +13,6 @@ use proto::ErrorExt;
 use settings::Settings as _;
 use smallvec::SmallVec;
 use smol::{
-    channel::{Receiver, Sender, unbounded},
     io::{AsyncBufReadExt as _, AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
 };
@@ -152,7 +152,7 @@ pub(crate) struct TransportDelegate {
     log_handlers: LogHandlers,
     pub(crate) pending_requests: Arc<Mutex<PendingRequests>>,
     pub(crate) transport: Mutex<Box<dyn Transport>>,
-    pub(crate) server_tx: smol::lock::Mutex<Option<Sender<Message>>>,
+    pub(crate) server_tx: async_lock::Mutex<Option<Sender<Message>>>,
     tasks: Mutex<Vec<Task<()>>>,
 }
 
@@ -877,7 +877,7 @@ impl FakeTransport {
         use serde_json::json;
 
         let mut reader = BufReader::new(stdin_reader);
-        let stdout_writer = Arc::new(smol::lock::Mutex::new(stdout_writer));
+        let stdout_writer = Arc::new(async_lock::Mutex::new(stdout_writer));
         let mut buffer = String::new();
 
         loop {

@@ -7800,12 +7800,12 @@ impl Repository {
 
     async fn local_commit_data_reader(
         backend: Arc<dyn GitRepository>,
-        request_rx: smol::channel::Receiver<Oid>,
-        result_tx: smol::channel::Sender<(Oid, CommitData)>,
+        request_rx: async_channel::Receiver<Oid>,
+        result_tx: async_channel::Sender<(Oid, CommitData)>,
         background_executor: BackgroundExecutor,
     ) {
         async fn receive_commit_data_request(
-            request_rx: &smol::channel::Receiver<Oid>,
+            request_rx: &async_channel::Receiver<Oid>,
         ) -> Option<Oid> {
             if request_rx.is_closed() && request_rx.is_empty() {
                 future::pending().await
@@ -7876,8 +7876,8 @@ impl Repository {
         project_id: ProjectId,
         client: AnyProtoClient,
         repository_id: RepositoryId,
-        request_rx: smol::channel::Receiver<Oid>,
-        result_tx: smol::channel::Sender<(Oid, CommitData)>,
+        request_rx: async_channel::Receiver<Oid>,
+        result_tx: async_channel::Sender<(Oid, CommitData)>,
         background_executor: BackgroundExecutor,
     ) {
         let mut response_futures =
@@ -7974,7 +7974,7 @@ impl Repository {
         project_id: ProjectId,
         client: AnyProtoClient,
         repository_id: RepositoryId,
-        request_rx: &smol::channel::Receiver<Oid>,
+        request_rx: &async_channel::Receiver<Oid>,
         background_executor: &BackgroundExecutor,
     ) -> NextCommitDataRequest {
         let mut queued_shas = Vec::with_capacity(64);

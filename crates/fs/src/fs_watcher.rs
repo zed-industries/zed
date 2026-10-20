@@ -681,7 +681,7 @@ async fn poll_path_until_created(
 }
 
 fn enqueue_path_events(
-    tx: &smol::channel::Sender<()>,
+    tx: &async_channel::Sender<()>,
     pending_path_events: &Arc<Mutex<Vec<PathEvent>>>,
     mut path_events: Vec<PathEvent>,
 ) {
@@ -701,7 +701,7 @@ fn enqueue_path_events(
 }
 
 fn push_notify_event(
-    tx: &smol::channel::Sender<()>,
+    tx: &async_channel::Sender<()>,
     pending_path_events: &Arc<Mutex<Vec<PathEvent>>>,
     root_path: &SanitizedPath,
     case_insensitive: bool,
@@ -1559,10 +1559,6 @@ mod tests {
 
         std::fs::write(&path, b"contents").expect("create path");
 
-        // poll_path_until_created stats the path on smol's blocking pool, which
-        // the deterministic executor cannot drive; park until the poll task
-        // signals the event channel.
-        cx.executor().allow_parking();
         cx.executor().advance_clock(poll_interval());
         rx.recv().await.expect("receive watcher event");
 

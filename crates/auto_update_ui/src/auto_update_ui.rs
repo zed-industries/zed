@@ -1,6 +1,7 @@
 use auto_update::{AutoUpdater, release_notes_url};
 use db::kvp::Dismissable;
 use editor::{Editor, MultiBuffer};
+use futures_lite::io::AsyncReadExt;
 use gpui::{
     App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, TaskExt, Window, actions,
     prelude::*,
@@ -11,7 +12,6 @@ use release_channel::{AppVersion, ReleaseChannel};
 use semver::Version;
 use serde::Deserialize;
 use settings::Settings as _;
-use smol::io::AsyncReadExt;
 use ui::{AnnouncementToast, DeltaIllustration, ListBulletItem, prelude::*};
 use util::{ResultExt as _, maybe};
 use workspace::{

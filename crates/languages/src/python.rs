@@ -1,5 +1,6 @@
 use anyhow::Result;
 use anyhow::{Context as _, ensure};
+use async_lock::OnceCell;
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::future::BoxFuture;
@@ -29,7 +30,6 @@ use serde_json::{Value, json};
 use settings::{SemanticTokenRules, Settings};
 use terminal::terminal_settings::TerminalSettings;
 
-use smol::lock::OnceCell;
 use std::cmp::{Ordering, Reverse};
 use std::env::consts;
 use util::command::Stdio;

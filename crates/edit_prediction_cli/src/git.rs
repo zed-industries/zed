@@ -27,7 +27,7 @@ pub async fn lock_repo(path: impl AsRef<Path>) -> OwnedMutexGuard<()> {
 }
 
 pub async fn run_git(repo_path: &Path, args: &[&str]) -> Result<String> {
-    let output = smol::process::Command::new("git")
+    let output = async_process::Command::new("git")
         .current_dir(repo_path)
         .args(args)
         .output()
