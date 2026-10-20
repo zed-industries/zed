@@ -5233,7 +5233,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 
 ## Terminal: Tab Bar
 
-- Description: Whether or not to show the tab bar in the terminal panel.
+- Description: Whether or not to show the tab bar in the terminal panel. The `terminal_panel::ToggleTabBar` action toggles this setting.
 - Setting: `tab_bar`
 - Default:
 
