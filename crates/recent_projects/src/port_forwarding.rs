@@ -567,19 +567,6 @@ impl Render for PortForwardingPopover {
                     )
                 },
             )
-            .when(
-                !self.preview_only
-                    && self.editor.is_none()
-                    && !self.is_saving
-                    && self.message.is_none()
-                    && self.forwards != self.active_forwards,
-                |this| {
-                    this.child(
-                        Button::new("restart-for-port-forwarding", "Restart Zed…")
-                            .on_click(|_, _, cx| workspace::reload(cx)),
-                    )
-                },
-            )
             .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
                 if this.editor.is_some() {
                     this.cancel_edit(cx);
