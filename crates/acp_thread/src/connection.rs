@@ -101,6 +101,11 @@ pub trait AgentConnection {
         None
     }
 
+    /// Initiate shutdown of connection-owned resources when their shared UI owner ends.
+    /// This is independent of session close and may leave retained models alive.
+    /// It does not wait for process exit or a complete protocol drain.
+    fn shutdown(&self) {}
+
     fn new_session(
         self: Rc<Self>,
         project: Entity<Project>,
@@ -972,6 +977,7 @@ mod test_support {
         next_close_responses: Arc<Mutex<VecDeque<oneshot::Receiver<Result<()>>>>>,
         set_title_calls: Arc<Mutex<Vec<(acp_v2::SessionId, SharedString)>>>,
         cancel_calls: Arc<Mutex<Vec<acp_v2::SessionId>>>,
+        shutdown_calls: Arc<AtomicUsize>,
         next_cancel_error: Arc<Mutex<Option<anyhow::Error>>>,
         supports_receipt_submissions: bool,
         supports_retry: bool,
@@ -1018,6 +1024,7 @@ mod test_support {
                 next_close_responses: Default::default(),
                 set_title_calls: Default::default(),
                 cancel_calls: Default::default(),
+                shutdown_calls: Default::default(),
                 next_cancel_error: Default::default(),
                 permission_requests: HashMap::default(),
                 sessions: Arc::default(),
@@ -1041,6 +1048,10 @@ mod test_support {
 
         pub fn set_next_load_error(&self, error: anyhow::Error) {
             *self.next_load_error.lock() = Some(error);
+        }
+
+        pub fn shutdown_calls(&self) -> usize {
+            self.shutdown_calls.load(Ordering::SeqCst)
         }
 
         pub fn set_next_prompt_updates(&self, updates: Vec<acp_v1::SessionUpdate>) {
@@ -1261,6 +1272,10 @@ mod test_support {
     }
 
     impl AgentConnection for StubAgentConnection {
+        fn shutdown(&self) {
+            self.shutdown_calls.fetch_add(1, Ordering::SeqCst);
+        }
+
         fn agent_id(&self) -> AgentId {
             self.agent_id.clone()
         }
