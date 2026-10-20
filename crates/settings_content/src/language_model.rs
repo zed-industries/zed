@@ -434,6 +434,8 @@ pub struct OpenAiModelCapabilities {
     pub chat_completions: bool,
     #[serde(default = "default_true")]
     pub images: bool,
+    #[serde(default)]
+    pub pro_reasoning: bool,
 }
 
 impl Default for OpenAiModelCapabilities {
@@ -441,6 +443,7 @@ impl Default for OpenAiModelCapabilities {
         Self {
             chat_completions: default_true(),
             images: default_true(),
+            pro_reasoning: false,
         }
     }
 }
@@ -653,5 +656,35 @@ pub use language_model_core::ModelMode;
 impl MergeFrom for ModelMode {
     fn merge_from(&mut self, other: &Self) {
         *self = *other;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn open_ai_pro_reasoning_defaults_to_disabled() -> serde_json::Result<()> {
+        assert!(!OpenAiModelCapabilities::default().pro_reasoning);
+        for model in [
+            json!({ "name": "gpt-6-sol", "max_tokens": 128_000 }),
+            json!({
+                "name": "gpt-6-sol",
+                "max_tokens": 128_000,
+                "capabilities": { "chat_completions": false },
+            }),
+        ] {
+            let model: OpenAiAvailableModel = serde_json::from_value(model)?;
+            assert!(!model.capabilities.pro_reasoning);
+        }
+        let model: OpenAiAvailableModel = serde_json::from_value(json!({
+            "name": "custom-model",
+            "max_tokens": 128_000,
+            "capabilities": { "chat_completions": false, "pro_reasoning": true },
+        }))?;
+        assert!(model.capabilities.pro_reasoning);
+        assert!(!model.capabilities.chat_completions);
+        Ok(())
     }
 }

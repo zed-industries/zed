@@ -11,7 +11,8 @@ use language_model::{
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelToolChoiceSupport, ModelRateLimiters, OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME,
-    ProviderSettingsView, RateLimiter, env_var, stream_in_background, unavailable_error,
+    ProviderSettingsView, RateLimiter, ReasoningMode, env_var, stream_in_background,
+    unavailable_error,
 };
 use open_ai::{
     ResponseStreamEvent,
@@ -139,6 +140,7 @@ impl OpenAiLanguageModelProvider {
                     max_output_tokens: model.max_output_tokens,
                     max_completion_tokens: model.max_completion_tokens,
                     reasoning_effort: model.reasoning_effort,
+                    supports_pro_reasoning: model.capabilities.pro_reasoning,
                     supports_chat_completions: model.capabilities.chat_completions,
                     supports_images: model.capabilities.images,
                 },
@@ -381,19 +383,7 @@ impl LanguageModelClient for OpenAiLanguageModelProvider {
             request.speed = None;
         }
         if config.uses_responses_api() {
-            normalize_open_ai_response_thinking_effort(&mut request, &config);
-            let request = match into_open_ai_response(
-                request,
-                config.id(),
-                config.supports_parallel_tool_calls(),
-                config.supports_prompt_cache_key(),
-                config.max_output_tokens(),
-                default_thinking_reasoning_effort(&config),
-                config
-                    .supported_reasoning_efforts()
-                    .contains(&open_ai::ReasoningEffort::None),
-                &OPEN_AI_PROVIDER_ID,
-            ) {
+            let request = match into_native_open_ai_response(request, &config) {
                 Ok(request) => request,
                 Err(error) => return async move { Err(error.into()) }.boxed(),
             };
@@ -540,6 +530,43 @@ impl LanguageModelClient for OpenAiLanguageModelProvider {
     }
 }
 
+fn into_native_open_ai_response(
+    mut request: LanguageModelRequest,
+    model: &open_ai::Model,
+) -> Result<ResponseRequest> {
+    normalize_open_ai_response_thinking_effort(&mut request, model);
+    // Like effort, Pro only applies while thinking is on. Models without a thinking toggle can't
+    // turn it off, so their `thinking_allowed` doesn't reflect a user choice.
+    let thinking_turned_off =
+        !request.thinking_allowed && supports_selectable_thinking_effort(model);
+    let pro_reasoning = request.reasoning_mode == ReasoningMode::Pro
+        && model.supports_pro_reasoning()
+        && !thinking_turned_off;
+    let mut request = into_open_ai_response(
+        request,
+        model.id(),
+        model.supports_parallel_tool_calls(),
+        model.supports_prompt_cache_key(),
+        model.max_output_tokens(),
+        default_thinking_reasoning_effort(model),
+        model
+            .supported_reasoning_efforts()
+            .contains(&open_ai::ReasoningEffort::None),
+        &OPEN_AI_PROVIDER_ID,
+    )?;
+    if pro_reasoning {
+        let reasoning = request
+            .reasoning
+            .get_or_insert(open_ai::responses::ReasoningConfig {
+                effort: None,
+                summary: None,
+                mode: None,
+            });
+        reasoning.mode = Some(ReasoningMode::Pro);
+    }
+    Ok(request)
+}
+
 fn default_thinking_reasoning_effort(model: &open_ai::Model) -> Option<open_ai::ReasoningEffort> {
     use open_ai::ReasoningEffort;
 
@@ -617,6 +644,218 @@ fn supported_thinking_effort_levels(model: &open_ai::Model) -> Vec<LanguageModel
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn native_standard_reasoning_preserves_payload() -> Result<()> {
+        let standard = into_native_open_ai_response(
+            LanguageModelRequest {
+                thinking_allowed: true,
+                thinking_effort: Some("high".into()),
+                reasoning_mode: ReasoningMode::Standard,
+                ..Default::default()
+            },
+            &open_ai::Model::SixSol,
+        )?;
+        assert_eq!(
+            serde_json::to_value(standard)?.get("reasoning"),
+            Some(&json!({ "effort": "high", "summary": "auto" })),
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn native_pro_reasoning_preserves_effort_summary_and_include() -> Result<()> {
+        assert!(language_model(&open_ai::Model::SixSol).supports_pro_reasoning);
+        for effort in ["low", "high", "max"] {
+            let response = into_native_open_ai_response(
+                LanguageModelRequest {
+                    thinking_allowed: true,
+                    thinking_effort: Some(effort.into()),
+                    reasoning_mode: ReasoningMode::Pro,
+                    ..Default::default()
+                },
+                &open_ai::Model::SixSol,
+            )?;
+            let serialized = serde_json::to_value(response)?;
+            assert_eq!(
+                serialized.get("reasoning"),
+                Some(&json!({ "effort": effort, "summary": "auto", "mode": "pro" })),
+            );
+            assert_eq!(
+                serialized.get("include"),
+                Some(&json!(["reasoning.encrypted_content"])),
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn native_pro_reasoning_is_dropped_while_thinking_is_off() -> Result<()> {
+        for (model, reasoning) in [
+            (open_ai::Model::SixSol, Some(json!({ "effort": "none" }))),
+            (open_ai::Model::SixPointOneSol, None),
+        ] {
+            let response = into_native_open_ai_response(
+                LanguageModelRequest {
+                    thinking_allowed: false,
+                    thinking_effort: Some("high".into()),
+                    reasoning_mode: ReasoningMode::Pro,
+                    ..Default::default()
+                },
+                &model,
+            )?;
+            assert_eq!(
+                serde_json::to_value(response)?.get("reasoning"),
+                reasoning.as_ref(),
+                "{}",
+                model.id(),
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn native_unsupported_models_ignore_stale_pro_reasoning() -> Result<()> {
+        for model in [
+            open_ai::Model::Four,
+            open_ai::Model::FivePointFourPro,
+            open_ai::Model::FivePointFivePro,
+        ] {
+            let request = LanguageModelRequest {
+                thinking_allowed: true,
+                thinking_effort: Some("high".into()),
+                ..Default::default()
+            };
+            let baseline = into_native_open_ai_response(request.clone(), &model)?;
+            let response = into_native_open_ai_response(
+                LanguageModelRequest {
+                    reasoning_mode: ReasoningMode::Pro,
+                    ..request
+                },
+                &model,
+            )?;
+            assert_eq!(
+                serde_json::to_value(response)?,
+                serde_json::to_value(baseline)?
+            );
+            assert!(!language_model(&model).supports_pro_reasoning);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn native_custom_pro_reasoning_requires_opt_in_and_responses() -> Result<()> {
+        for supports_pro_reasoning in [false, true] {
+            for supports_chat_completions in [false, true] {
+                let model = open_ai::Model::Custom {
+                    name: "gpt-6-sol".into(),
+                    display_name: None,
+                    max_tokens: 128_000,
+                    max_output_tokens: None,
+                    max_completion_tokens: None,
+                    reasoning_effort: None,
+                    supports_pro_reasoning,
+                    supports_chat_completions,
+                    supports_images: true,
+                };
+                let supported = supports_pro_reasoning && !supports_chat_completions;
+                assert_eq!(language_model(&model).supports_pro_reasoning, supported);
+                assert!(!language_model(&model).supports_thinking);
+                // Without a thinking toggle, the stored thinking state must not suppress Pro.
+                for thinking_allowed in [false, true] {
+                    let response = into_native_open_ai_response(
+                        LanguageModelRequest {
+                            thinking_allowed,
+                            reasoning_mode: ReasoningMode::Pro,
+                            ..Default::default()
+                        },
+                        &model,
+                    )?;
+                    let serialized = serde_json::to_value(response)?;
+                    assert_eq!(
+                        serialized.get("reasoning"),
+                        supported.then(|| json!({ "mode": "pro" })).as_ref(),
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Run with `OPENAI_API_KEY=... cargo test -p language_models live_gpt_6_1_sol -- --ignored`.
+    #[test]
+    #[ignore = "sends paid requests to the OpenAI API"]
+    fn live_gpt_6_1_sol_runs_in_requested_reasoning_mode() -> Result<()> {
+        use anyhow::Context as _;
+        use futures::AsyncReadExt as _;
+        use http_client::{AsyncBody, HttpRequestExt as _, Method, Request as HttpRequest};
+        use language_model::{LanguageModelCompletionEvent, LanguageModelRequestMessage, Role};
+        use std::time::Duration;
+
+        let api_key = std::env::var(API_KEY_ENV_VAR_NAME).context("OPENAI_API_KEY is not set")?;
+        let client = reqwest_client::ReqwestClient::user_agent("Zed reasoning mode test")?;
+        for (thinking_allowed, expected_mode) in [(true, "pro"), (false, "standard")] {
+            let request = into_native_open_ai_response(
+                LanguageModelRequest {
+                    messages: vec![LanguageModelRequestMessage {
+                        role: Role::User,
+                        content: vec!["Reply with the single word OK.".into()],
+                        cache: false,
+                        reasoning_details: None,
+                    }],
+                    thinking_allowed,
+                    thinking_effort: Some("low".into()),
+                    reasoning_mode: ReasoningMode::Pro,
+                    ..Default::default()
+                },
+                &open_ai::Model::SixPointOneSol,
+            )?;
+            let http_request = HttpRequest::builder()
+                .method(Method::POST)
+                .uri(format!("{}/responses", open_ai::OPEN_AI_API_URL))
+                .header("Content-Type", "application/json")
+                .header("Authorization", format!("Bearer {}", api_key.trim()))
+                .timeout(Duration::from_secs(300))
+                .body(AsyncBody::from(serde_json::to_string(&request)?))?;
+            let (status, body) = futures::executor::block_on(async {
+                let mut response = client.send(http_request).await?;
+                let mut body = String::new();
+                response.body_mut().read_to_string(&mut body).await?;
+                anyhow::Ok((response.status(), body))
+            })?;
+            anyhow::ensure!(status.is_success(), "{status}: {body}");
+
+            // Zed's own mapper must accept every event a Pro stream emits.
+            let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
+            let mut completed_response = None;
+            let mut text = String::new();
+            for data in body
+                .lines()
+                .filter_map(|line| line.strip_prefix("data: "))
+                .filter(|data| *data != "[DONE]")
+            {
+                let event: serde_json::Value = serde_json::from_str(data)?;
+                if event["type"] == "response.completed" {
+                    completed_response = Some(event["response"].clone());
+                }
+                for mapped in mapper.map_event(serde_json::from_value(event)?) {
+                    if let LanguageModelCompletionEvent::Text(chunk) = mapped? {
+                        text.push_str(&chunk);
+                    }
+                }
+            }
+            let completed_response =
+                completed_response.context("stream ended without response.completed")?;
+            assert_eq!(
+                completed_response["reasoning"]["mode"], expected_mode,
+                "thinking_allowed: {thinking_allowed}, reasoning: {}",
+                completed_response["reasoning"],
+            );
+            assert!(!text.trim().is_empty(), "no text in the mapped stream");
+        }
+        Ok(())
+    }
 
     #[test]
     fn supported_thinking_effort_levels_hide_none() {
@@ -645,6 +884,7 @@ mod tests {
             max_output_tokens: None,
             max_completion_tokens: None,
             reasoning_effort: Some(open_ai::ReasoningEffort::None),
+            supports_pro_reasoning: false,
             supports_chat_completions: false,
             supports_images: true,
         };
@@ -695,6 +935,7 @@ fn language_model(model: &open_ai::Model) -> LanguageModel {
         supports_streaming_tools: true,
         supports_thinking: supports_selectable_thinking_effort(model),
         supports_fast_mode: model.supports_priority(),
+        supports_pro_reasoning: model.supports_pro_reasoning(),
         supports_server_side_compaction: model.supports_compaction(),
         supports_explicit_compaction: model.supports_compaction(),
         supported_effort_levels: supported_thinking_effort_levels(model).into(),

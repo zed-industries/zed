@@ -126,6 +126,7 @@ pub struct LanguageModel {
     /// request. Only meaningful when `supports_thinking` is `true`.
     pub supports_disabling_thinking: bool,
     pub supports_fast_mode: bool,
+    pub supports_pro_reasoning: bool,
     /// The effort levels that can be used when thinking.
     pub supported_effort_levels: Arc<[LanguageModelEffortLevel]>,
     /// Whether this model supports provider-side automatic context
@@ -204,6 +205,7 @@ impl LanguageModel {
             supports_thinking: false,
             supports_disabling_thinking: true,
             supports_fast_mode: false,
+            supports_pro_reasoning: false,
             supported_effort_levels: Arc::default(),
             supports_server_side_compaction: false,
             supports_explicit_compaction: false,

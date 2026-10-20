@@ -8,7 +8,7 @@ use collections::{HashMap, IndexMap};
 use futures::{FutureExt, future::Shared};
 use gpui::{BackgroundExecutor, Global, Task};
 use indoc::indoc;
-use language_model::Speed;
+use language_model::{ReasoningMode, Speed};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use sqlez::{
@@ -75,6 +75,8 @@ pub struct DbThread {
     pub thinking_enabled: bool,
     #[serde(default)]
     pub thinking_effort: Option<String>,
+    #[serde(default)]
+    pub reasoning_mode: ReasoningMode,
     #[serde(default)]
     pub draft_prompt: Option<Vec<acp_v2::ContentBlock>>,
     #[serde(default)]
@@ -165,6 +167,7 @@ impl SharedThread {
             speed: None,
             thinking_enabled: false,
             thinking_effort: None,
+            reasoning_mode: ReasoningMode::Standard,
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
@@ -351,6 +354,7 @@ impl DbThread {
             speed: None,
             thinking_enabled: false,
             thinking_effort: None,
+            reasoning_mode: ReasoningMode::Standard,
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
@@ -938,11 +942,28 @@ mod tests {
             speed: None,
             thinking_enabled: false,
             thinking_effort: None,
+            reasoning_mode: ReasoningMode::Standard,
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: DbSandboxGrants::default(),
         }
+    }
+
+    #[test]
+    fn test_reasoning_mode_defaults_for_older_threads_and_roundtrips() -> Result<()> {
+        let thread = make_thread("Reasoning mode", Utc::now());
+        let serde_json::Value::Object(mut serialized) = serde_json::to_value(thread)? else {
+            anyhow::bail!("expected a serialized thread object");
+        };
+        serialized.remove("reasoning_mode");
+        let mut restored: DbThread = serde_json::from_value(serde_json::Value::Object(serialized))?;
+        assert_eq!(restored.reasoning_mode, ReasoningMode::Standard);
+
+        restored.reasoning_mode = ReasoningMode::Pro;
+        let restored: DbThread = serde_json::from_slice(&serde_json::to_vec(&restored)?)?;
+        assert_eq!(restored.reasoning_mode, ReasoningMode::Pro);
+        Ok(())
     }
 
     #[gpui::test]

@@ -750,6 +750,7 @@ fn add_message_content_part(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use language_model::ReasoningMode;
 
     #[gpui::test]
     async fn test_session_id_is_stable_without_exposing_thread_id() {
@@ -849,6 +850,7 @@ mod tests {
             tool_choice: None,
             thinking_allowed: false,
             thinking_effort: None,
+            reasoning_mode: ReasoningMode::Standard,
             speed: None,
             thread_id: None,
             prompt_cache_key: None,
@@ -993,6 +995,7 @@ mod tests {
             tool_choice: None,
             thinking_allowed: false,
             thinking_effort: None,
+            reasoning_mode: ReasoningMode::Standard,
             speed: None,
             thread_id: None,
             prompt_cache_key: None,
@@ -1061,6 +1064,7 @@ mod tests {
             tool_choice: None,
             thinking_allowed: false,
             thinking_effort: None,
+            reasoning_mode: ReasoningMode::Standard,
             speed: None,
             thread_id: None,
             prompt_cache_key: None,

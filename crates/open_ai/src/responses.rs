@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use crate::{ReasoningEffort, RequestError, Role, ServiceTier, ToolChoice};
 use language_model_core::{
-    CompactedContext, LanguageModelProviderId, ProviderCompactionState, SharedString,
+    CompactedContext, LanguageModelProviderId, ProviderCompactionState, ReasoningMode, SharedString,
 };
 
 pub const COMPACTION_STATE_FORMAT: &str = "openai.responses.input-items.v1";
@@ -367,9 +367,12 @@ pub enum ResponseInputContent {
 
 #[derive(Serialize, Debug)]
 pub struct ReasoningConfig {
-    pub effort: ReasoningEffort,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<ReasoningEffort>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<ReasoningSummaryMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<ReasoningMode>,
 }
 
 #[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq)]
