@@ -414,6 +414,9 @@ impl LineWrapper {
 
         let mut break_indices = Self::break_indices(&text).peekable();
         for (ix, c) in text.char_indices() {
+            // Consume boundaries on newlines too, so skipping an empty line does not
+            // leave the iterator stuck before subsequent text.
+            let is_break = break_indices.next_if_eq(&ix).is_some();
             if c == '\n' {
                 if line >= max_lines - 1 && !text[ix + 1..].trim().is_empty() {
                     // Newline on the last allowed line with real content
@@ -445,7 +448,7 @@ impl LineWrapper {
 
             let char_width = self.width_for_char(c);
 
-            if break_indices.next_if_eq(&ix).is_some() && first_non_whitespace_ix.is_some() {
+            if is_break && first_non_whitespace_ix.is_some() {
                 last_candidate_ix = ix;
                 last_candidate_width = width;
             }
@@ -1378,6 +1381,29 @@ mod tests {
             "Truncated text '{}' should end with ellipsis",
             truncated
         );
+    }
+
+    #[test]
+    fn test_multiline_truncation_preserves_breaks_after_empty_lines() {
+        let mut wrapper = build_wrapper();
+        for prefix in ["", "\n", "\n\n", "hello\n\n"] {
+            let text = format!("{prefix}aaa required! more words follow");
+            let runs = generate_test_runs(&[text.len()]);
+            let max_lines = prefix.bytes().filter(|byte| *byte == b'\n').count() + 2;
+            let (truncated, _) = wrapper.truncate_wrapped_line(
+                text.into(),
+                px(72.),
+                max_lines,
+                "…",
+                &runs,
+                TruncateFrom::End,
+            );
+            assert_eq!(
+                truncated.as_ref(),
+                format!("{prefix}aaa {}…", &"required!"[..6]),
+                "prefix: {prefix:?}",
+            );
+        }
     }
 
     #[test]
