@@ -1030,6 +1030,11 @@ impl SystemNodeRuntime {
         let node = SystemNode::discover(Some(node), env::var_os("PATH"))
             .await?
             .path;
+        let npm = smol::unblock({
+            let search_path = path_with_node_binary_prepended(&node);
+            move || find_npm_path(&npm, search_path.as_deref(), Path::new("."))
+        })
+        .await?;
         let scratch_dir = paths::data_dir().join("node");
         fs::create_dir(&scratch_dir).await.ok();
         _ = fs::remove_dir_all(scratch_dir.join("cache")).await;
@@ -1047,6 +1052,14 @@ impl SystemNodeRuntime {
         let npm = which::which("npm").map_err(DetectError::NotInPath)?;
         Self::new(node, npm).await.map_err(DetectError::Other)
     }
+}
+
+fn find_npm_path(npm: &Path, search_path: Option<&OsStr>, directory: &Path) -> Result<PathBuf> {
+    let path = which::which_in(npm, search_path, directory)
+        .with_context(|| format!("finding npm executable {}", npm.display()))?;
+    // npm runs in a different working directory, so relative executable and PATH entries
+    // must be resolved before launch. Keep symlinks intact for executable shims.
+    std::path::absolute(directory.join(path)).context("resolving npm executable path")
 }
 
 enum DetectError {
@@ -1280,7 +1293,7 @@ async fn npm_command_directory(
 
     // npm checks the local prefix's devEngines even for package queries in some versions.
     // Pin both the prefix and cwd so Zed's tooling does not inherit a project's requirements.
-    let directory = runtime_directory.join("npm");
+    let directory = runtime_directory.join("npm-work");
     fs::create_dir_all(&directory)
         .await
         .with_context(|| format!("creating npm working directory {}", directory.display()))?;
@@ -1368,8 +1381,8 @@ mod tests {
     use super::{
         ManagedNodeRuntime, NodeDiscoveryError, NodeRuntimeTrait, NpmInfo, SystemNodeRuntime,
         VersionStrategy, build_npm_command_args, check_node_version,
-        deserialize_npm_info_from_response, find_node_path, npm_command_directory, proxy_argument,
-        select_npm_package_version, should_install_npm_package_version,
+        deserialize_npm_info_from_response, find_node_path, find_npm_path, npm_command_directory,
+        proxy_argument, select_npm_package_version, should_install_npm_package_version,
     };
 
     #[test]
@@ -1389,13 +1402,15 @@ mod tests {
                     fs::set_permissions(path, fs::Permissions::from_mode(0o755))?;
                 }
             }
+            // Windows archives include this root-level file; model it on every platform.
+            fs::write(installation_path.join("npm"), "Windows npm shim")?;
             let scratch_dir = directory.path().join("system");
             let runtimes: [(Box<dyn NodeRuntimeTrait>, PathBuf); 2] = [
                 (
                     Box::new(ManagedNodeRuntime {
                         installation_path: installation_path.clone(),
                     }),
-                    installation_path.join("npm"),
+                    installation_path.join("npm-work"),
                 ),
                 (
                     Box::new(SystemNodeRuntime {
@@ -1403,7 +1418,7 @@ mod tests {
                         npm: npm_file,
                         scratch_dir: scratch_dir.clone(),
                     }),
-                    scratch_dir.join("npm"),
+                    scratch_dir.join("npm-work"),
                 ),
             ];
             let explicit_directory = directory.path().join("language-server");
@@ -1450,6 +1465,52 @@ mod tests {
         let error = smol::block_on(npm_command_directory(None, &runtime_directory))
             .expect_err("creating the npm directory must fail");
         assert!(error.to_string().contains("creating npm working directory"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_npm_lookup_anchors_paths_before_changing_working_directory() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let binary_directory = directory.path().join("bin");
+        fs::create_dir(&binary_directory)?;
+        let filename = format!("npm{}", env::consts::EXE_SUFFIX);
+        let npm = binary_directory.join(&filename);
+        fs::write(&npm, "#!/bin/sh\npwd -P\n")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&npm, fs::Permissions::from_mode(0o755))?;
+        }
+
+        for (configured_path, search_path) in [
+            (PathBuf::from(&filename), Some(binary_directory.as_os_str())),
+            (Path::new("bin").join(&filename), None),
+            (npm.clone(), None),
+        ] {
+            let resolved_npm = find_npm_path(&configured_path, search_path, directory.path())?;
+            assert_eq!(resolved_npm, npm);
+            #[cfg(unix)]
+            {
+                let runtime = SystemNodeRuntime {
+                    node: binary_directory.join("node"),
+                    npm: resolved_npm,
+                    scratch_dir: directory.path().join("runtime"),
+                };
+                let output = smol::block_on(runtime.run_npm_subcommand(None, None, "info", &[]))?;
+                assert_eq!(
+                    String::from_utf8(output.stdout)?.trim(),
+                    fs::canonicalize(runtime.scratch_dir.join("npm-work"))?.to_string_lossy(),
+                );
+            }
+        }
+        assert!(
+            find_npm_path(
+                &Path::new("missing").join(&filename),
+                Some(binary_directory.as_os_str()),
+                directory.path(),
+            )
+            .is_err()
+        );
         Ok(())
     }
 
