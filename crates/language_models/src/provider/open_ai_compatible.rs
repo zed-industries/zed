@@ -410,9 +410,11 @@ fn chat_completion_reasoning_effort(
     if request.thinking_allowed {
         selected_thinking_reasoning_effort(request)
             .or_else(|| default_thinking_reasoning_effort(model))
-    } else if supports_none_reasoning_effort(model) {
-        Some(open_ai::ReasoningEffort::None)
     } else {
+        // Omit the field instead of sending `"none"`: many OpenAI-compatible
+        // servers only accept `low`/`medium`/`high` or an absent field, and
+        // previously background requests like thread title generation failed
+        // validation otherwise.
         None
     }
 }
@@ -529,10 +531,7 @@ mod tests {
         );
 
         request.thinking_allowed = false;
-        assert_eq!(
-            chat_completion_reasoning_effort(&request, &model),
-            Some(open_ai::ReasoningEffort::None)
-        );
+        assert_eq!(chat_completion_reasoning_effort(&request, &model), None);
     }
 
     #[test]
