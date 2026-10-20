@@ -54,19 +54,35 @@ impl fmt::Debug for Rgba {
 }
 
 impl Rgba {
-    /// Create a new [`Rgba`] color by blending this and another color together
+    /// Blend another [`Rgba`] color over me.
     pub fn blend(&self, other: Rgba) -> Self {
+        // Check the most common cases first to minimize branching overhead.
+        // No legal alpha values should extend beyond `[0.0, 1.0]`.
         if other.a >= 1.0 {
             other
-        } else if other.a <= 0.0 {
-            *self
-        } else {
-            Rgba {
-                r: (self.r * (1.0 - other.a)) + (other.r * other.a),
-                g: (self.g * (1.0 - other.a)) + (other.g * other.a),
-                b: (self.b * (1.0 - other.a)) + (other.b * other.a),
-                a: self.a,
+        } else if other.a > 0.0 {
+            if self.a >= 1.0 {
+                let background_weight = 1.0 - other.a;
+                Rgba {
+                    r: self.r * background_weight + other.r * other.a,
+                    b: self.b * background_weight + other.b * other.a,
+                    g: self.g * background_weight + other.g * other.a,
+                    a: 1.0,
+                }
+            } else if self.a > 0.0 {
+                let background_weight = self.a * (1.0 - other.a);
+                let alpha = other.a + background_weight;
+                Rgba {
+                    r: (self.r * background_weight + other.r * other.a) / alpha,
+                    g: (self.g * background_weight + other.g * other.a) / alpha,
+                    b: (self.b * background_weight + other.b * other.a) / alpha,
+                    a: alpha,
+                }
+            } else {
+                other
             }
+        } else {
+            *self
         }
     }
 
