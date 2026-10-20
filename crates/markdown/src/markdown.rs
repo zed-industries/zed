@@ -5471,7 +5471,7 @@ mod tests {
     use gpui::{
         Background, DevicePixels, Font, FontId, FontMetrics, FontRun, GlyphId, LineLayout,
         Modifiers, NoopTextSystem, PlatformTextSystem, RenderGlyphParams, RenderImage, ScrollDelta,
-        ScrollWheelEvent, Size, TestAppContext, TestDispatcher, TextRenderingMode, TouchPhase,
+        ScrollEvent, Size, TestAppContext, TestDispatcher, TextRenderingMode, TouchPhase,
         UpdateGlobal, VisualTestContext, size,
     };
     use language::{Language, LanguageConfig, LanguageMatcher};
@@ -5715,11 +5715,12 @@ mod tests {
             Some(visible_character_index),
         );
 
-        cx.simulate_event(ScrollWheelEvent {
+        cx.simulate_event(ScrollEvent {
             position: visible_position,
             delta: ScrollDelta::Pixels(point(px(-400.), px(0.))),
             modifiers: Modifiers::default(),
             touch_phase: TouchPhase::Moved,
+            source: gpui::ScrollSource::Pointer,
         });
         cx.run_until_parked();
         let rendered = rendered_text
@@ -8150,11 +8151,12 @@ mod tests {
             (event_position, right_cell_bounds)
         };
 
-        cx.simulate_event(ScrollWheelEvent {
+        cx.simulate_event(ScrollEvent {
             position: event_position,
             delta: ScrollDelta::Pixels(point(px(-100.), px(0.))),
             modifiers: Modifiers::default(),
             touch_phase: TouchPhase::Moved,
+            source: gpui::ScrollSource::Pointer,
         });
         cx.run_until_parked();
 
@@ -8246,11 +8248,12 @@ mod tests {
         assert_eq!(visible_bounds.left(), quad_bounds.left());
         let event_position = visible_bounds.center();
 
-        cx.simulate_event(ScrollWheelEvent {
+        cx.simulate_event(ScrollEvent {
             position: event_position,
             delta: ScrollDelta::Pixels(point(px(-100.), px(0.))),
             modifiers: Modifiers::default(),
             touch_phase: TouchPhase::Moved,
+            source: gpui::ScrollSource::Pointer,
         });
         cx.run_until_parked();
 

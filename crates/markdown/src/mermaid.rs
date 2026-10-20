@@ -1,8 +1,8 @@
 use collections::HashMap;
 use gpui::{
     Animation, AnimationExt, AnyElement, App, ClipboardItem, Context, Entity, ImageSource,
-    ParsedSvg, RenderImage, SMOOTH_SVG_SCALE_FACTOR, ScrollDelta, ScrollHandle, ScrollWheelEvent,
-    Size, Stateful, StyledText, Task, Window, img, pulsating_between, size,
+    ParsedSvg, RenderImage, SMOOTH_SVG_SCALE_FACTOR, ScrollDelta, ScrollEvent, ScrollHandle, Size,
+    Stateful, StyledText, Task, Window, img, pulsating_between, size,
 };
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -544,7 +544,7 @@ fn on_mermaid_zoom_scroll(
     markdown: Entity<Markdown>,
     source_offset: usize,
     on_zoom: Option<MermaidZoomCallback>,
-) -> impl Fn(&ScrollWheelEvent, &mut Window, &mut App) + 'static {
+) -> impl Fn(&ScrollEvent, &mut Window, &mut App) + 'static {
     move |event, window, cx| {
         if !(event.modifiers.control || event.modifiers.platform) {
             return;
@@ -760,7 +760,7 @@ fn mermaid_scroll_container(
         .w_full()
         .overflow_x_scroll()
         .track_scroll(scroll_handle)
-        .on_scroll_wheel(on_mermaid_zoom_scroll(markdown, source_offset, on_zoom));
+        .on_scroll(on_mermaid_zoom_scroll(markdown, source_offset, on_zoom));
     // Without this, gpui maps vertical wheel deltas onto the x axis for
     // x-only scroll containers (see `paint_scroll_listener` in gpui's div),
     // hijacking plain vertical scrolls. Restricting to the actual axis lets
