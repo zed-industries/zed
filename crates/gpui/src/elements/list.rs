@@ -423,33 +423,9 @@ impl ListState {
                         item_ix: scroll_top.item_ix,
                         offset: scroll_top.offset_in_item,
                     }),
-                    ScrollAnchor::Proportional => {
-                        // If the scroll-top item falls within the remeasured range,
-                        // store a fractional offset so the layout can restore the
-                        // proportional scroll position after the item is re-rendered
-                        // at its new height.
-                        let mut cursor = state.items.cursor::<Count>(());
-                        cursor.seek(&Count(scroll_top.item_ix), Bias::Right);
-
-                        cursor
-                            .item()
-                            .and_then(|item| {
-                                item.size().map(|size| {
-                                    let fraction = if size.height.0 > 0.0 {
-                                        (scroll_top.offset_in_item.0 / size.height.0)
-                                            .clamp(0.0, 1.0)
-                                    } else {
-                                        0.0
-                                    };
-
-                                    PendingScroll::Proportional(PendingScrollFraction {
-                                        item_ix: scroll_top.item_ix,
-                                        fraction,
-                                    })
-                                })
-                            })
-                            .or_else(|| state.pending_scroll.clone())
-                    }
+                    ScrollAnchor::Proportional => state
+                        .proportional_pending_scroll(scroll_top)
+                        .or_else(|| state.pending_scroll.clone()),
                 };
             }
         }
@@ -842,6 +818,29 @@ impl ListState {
 }
 
 impl StateInner {
+    /// A fractional offset into the scroll-top item, so the layout can restore
+    /// the proportional scroll position after the item is re-rendered at its
+    /// new height. `None` if the item has not been measured.
+    fn proportional_pending_scroll(&self, scroll_top: ListOffset) -> Option<PendingScroll> {
+        let mut cursor = self.items.cursor::<Count>(());
+        cursor.seek(&Count(scroll_top.item_ix), Bias::Right);
+
+        cursor.item().and_then(|item| {
+            item.size().map(|size| {
+                let fraction = if size.height.0 > 0.0 {
+                    (scroll_top.offset_in_item.0 / size.height.0).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+
+                PendingScroll::Proportional(PendingScrollFraction {
+                    item_ix: scroll_top.item_ix,
+                    fraction,
+                })
+            })
+        })
+    }
+
     /// Re-anchor a pending scroll adjustment from a remeasure onto a newly set
     /// scroll position, so it clamps to the remeasured item's new height on
     /// the next layout instead of reverting the scroll.
@@ -1545,6 +1544,15 @@ impl Element for List {
             .last_layout_bounds
             .is_none_or(|last_bounds| last_bounds.size.width != bounds.size.width)
         {
+            // Item heights may change with the width (e.g. wrapped text), so keep
+            // the same fractional position within the scroll-top item, as
+            // `ListState::remeasure` does.
+            if let Some(scroll_top) = state.logical_scroll_top {
+                state.pending_scroll = state
+                    .proportional_pending_scroll(scroll_top)
+                    .or_else(|| state.pending_scroll.take());
+            }
+
             let new_items = SumTree::from_iter(
                 state.items.iter().map(|item| ListItem::Unmeasured {
                     size_hint: None,
@@ -2162,6 +2170,49 @@ mod test {
         let offset = state.logical_scroll_top();
         assert_eq!(offset.item_ix, 2);
         assert_eq!(offset.offset_in_item, px(20.));
+    }
+
+    // Items whose height depends on the list width (as wrapped text does):
+    // a square item is as tall as the list is wide.
+    #[gpui::test]
+    fn test_scroll_position_preserved_after_width_change(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        let state = ListState::new(10, crate::ListAlignment::Top, px(10.));
+
+        struct TestView(ListState);
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                list(self.0.clone(), |_, _, _| {
+                    div().w_full().aspect_ratio(1.).into_any()
+                })
+                .w_full()
+                .h_full()
+            }
+        }
+
+        let view = cx.update(|_, cx| cx.new(|_| TestView(state.clone())));
+
+        // At 100px wide every item is 100px tall; scroll 40% into item 2.
+        state.scroll_to(gpui::ListOffset {
+            item_ix: 2,
+            offset_in_item: px(40.),
+        });
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+            view.clone().into_any_element()
+        });
+        let offset = state.logical_scroll_top();
+        assert_eq!(offset.item_ix, 2);
+        assert_eq!(offset.offset_in_item, px(40.));
+
+        // At 200px wide every item is 200px tall. The same content stays at
+        // the top of the viewport only if the offset scales to 40% of 200px.
+        cx.draw(point(px(0.), px(0.)), size(px(200.), px(200.)), |_, _| {
+            view.into_any_element()
+        });
+        let offset = state.logical_scroll_top();
+        assert_eq!(offset.item_ix, 2);
+        assert_eq!(offset.offset_in_item, px(80.));
     }
 
     #[gpui::test]
