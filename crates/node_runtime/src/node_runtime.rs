@@ -1030,11 +1030,6 @@ impl SystemNodeRuntime {
         let node = SystemNode::discover(Some(node), env::var_os("PATH"))
             .await?
             .path;
-        let npm = smol::unblock({
-            let search_path = path_with_node_binary_prepended(&node);
-            move || find_npm_path(&npm, search_path.as_deref(), Path::new("."))
-        })
-        .await?;
         let scratch_dir = paths::data_dir().join("node");
         fs::create_dir(&scratch_dir).await.ok();
         _ = fs::remove_dir_all(scratch_dir.join("cache")).await;
@@ -1119,6 +1114,12 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
         subcommand: &str,
         args: &[&str],
     ) -> Result<NpmCommand> {
+        let npm = smol::unblock({
+            let npm = self.npm.clone();
+            let search_path = path_with_node_binary_prepended(&self.node);
+            move || find_npm_path(&npm, search_path.as_deref(), Path::new("."))
+        })
+        .await?;
         let directory = npm_command_directory(prefix_dir, &self.scratch_dir).await?;
         let command_args = build_npm_command_args(
             None,
@@ -1133,7 +1134,7 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
         let command_env = npm_command_env(&self.node);
 
         Ok(NpmCommand {
-            path: self.npm.clone(),
+            path: npm,
             args: command_args,
             env: command_env,
             current_dir: directory,
