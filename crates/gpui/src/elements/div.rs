@@ -23,8 +23,8 @@ use crate::{
     KeyboardClickEvent, LayoutId, LongPressEvent, ModifiersChangedEvent, MouseButton,
     MouseClickEvent, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MousePressureEvent,
     MouseUpEvent, OngoingScroll, Overflow, ParentElement, PinchEvent, Pixels, Point, Render,
-    ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task, TooltipId,
-    TouchPhase, Visibility, Window, WindowControlArea, point, px, size,
+    ScrollEvent, SharedString, Size, Style, StyleRefinement, Styled, Task, TooltipId, TouchPhase,
+    Visibility, Window, WindowControlArea, point, px, size,
 };
 use collections::HashMap;
 use gpui_util::ResultExt;
@@ -383,20 +383,26 @@ impl Interactivity {
             }));
     }
 
-    /// Bind the given callback to scroll wheel events during the bubble phase.
-    /// The imperative API equivalent to [`InteractiveElement::on_scroll_wheel`].
+    /// Bind the given callback to scroll events during the bubble phase.
+    /// The imperative API equivalent to [`InteractiveElement::on_scroll`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
-    pub fn on_scroll_wheel(
-        &mut self,
-        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) + 'static,
-    ) {
-        self.scroll_wheel_listeners
+    pub fn on_scroll(&mut self, listener: impl Fn(&ScrollEvent, &mut Window, &mut App) + 'static) {
+        self.scroll_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
                     (listener)(event, window, cx);
                 }
             }));
+    }
+
+    /// The former name of [`Interactivity::on_scroll`].
+    #[deprecated(note = "renamed to `on_scroll`")]
+    pub fn on_scroll_wheel(
+        &mut self,
+        listener: impl Fn(&ScrollEvent, &mut Window, &mut App) + 'static,
+    ) {
+        self.on_scroll(listener);
     }
 
     /// Bind the given callback to pinch gesture events during the bubble phase.
@@ -1053,16 +1059,25 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Bind the given callback to scroll wheel events during the bubble phase.
-    /// The fluent API equivalent to [`Interactivity::on_scroll_wheel`].
+    /// Bind the given callback to scroll events during the bubble phase.
+    /// The fluent API equivalent to [`Interactivity::on_scroll`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
-    fn on_scroll_wheel(
+    fn on_scroll(
         mut self,
-        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) + 'static,
+        listener: impl Fn(&ScrollEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
-        self.interactivity().on_scroll_wheel(listener);
+        self.interactivity().on_scroll(listener);
         self
+    }
+
+    /// The former name of [`InteractiveElement::on_scroll`].
+    #[deprecated(note = "renamed to `on_scroll`")]
+    fn on_scroll_wheel(
+        self,
+        listener: impl Fn(&ScrollEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_scroll(listener)
     }
 
     /// Bind the given callback to pinch gesture events during the bubble phase.
@@ -1728,8 +1743,8 @@ pub(crate) type MouseExitListener =
 pub(crate) type FileDropExitListener =
     Box<dyn Fn(&FileDropEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 
-pub(crate) type ScrollWheelListener =
-    Box<dyn Fn(&ScrollWheelEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
+pub(crate) type ScrollListener =
+    Box<dyn Fn(&ScrollEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 
 pub(crate) type PinchListener =
     Box<dyn Fn(&PinchEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
@@ -2169,7 +2184,7 @@ pub struct Interactivity {
     pub(crate) mouse_move_listeners: Vec<MouseMoveListener>,
     pub(crate) mouse_exit_listeners: Vec<MouseExitListener>,
     pub(crate) file_drop_exit_listeners: Vec<FileDropExitListener>,
-    pub(crate) scroll_wheel_listeners: Vec<ScrollWheelListener>,
+    pub(crate) scroll_listeners: Vec<ScrollListener>,
     pub(crate) pinch_listeners: Vec<PinchListener>,
     pub(crate) key_down_listeners: Vec<KeyDownListener>,
     pub(crate) key_up_listeners: Vec<KeyUpListener>,
@@ -2422,7 +2437,7 @@ impl Interactivity {
             || !self.file_drop_exit_listeners.is_empty()
             || !self.click_listeners.is_empty()
             || !self.aux_click_listeners.is_empty()
-            || !self.scroll_wheel_listeners.is_empty()
+            || !self.scroll_listeners.is_empty()
             || self.has_pinch_listeners()
             || self.drag_listener.is_some()
             || !self.drop_listeners.is_empty()
@@ -2828,9 +2843,9 @@ impl Interactivity {
             })
         }
 
-        for listener in self.scroll_wheel_listeners.drain(..) {
+        for listener in self.scroll_listeners.drain(..) {
             let hitbox = hitbox.clone();
-            window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
+            window.on_mouse_event(move |event: &ScrollEvent, phase, window, cx| {
                 listener(event, phase, &hitbox, window, cx);
             })
         }
@@ -3336,7 +3351,7 @@ impl Interactivity {
             let line_height = window.line_height();
             let hitbox = hitbox.clone();
             let current_view = window.current_view();
-            window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
+            window.on_mouse_event(move |event: &ScrollEvent, phase, window, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
                     let mut scroll_offset = scroll_offset.borrow_mut();
                     let old_scroll_offset = *scroll_offset;
@@ -3792,7 +3807,7 @@ pub(crate) fn register_tooltip_mouse_handlers(
 
     window.on_mouse_event({
         let active_tooltip = active_tooltip.clone();
-        move |_: &ScrollWheelEvent, _phase, window: &mut Window, _cx| {
+        move |_: &ScrollEvent, _phase, window: &mut Window, _cx| {
             if !tooltip_id.is_some_and(|tooltip_id| tooltip_id.is_hovered(window)) {
                 clear_active_tooltip_if_not_hoverable(&active_tooltip, window);
             }
