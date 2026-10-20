@@ -961,6 +961,8 @@ mod test_support {
         permission_requests: HashMap<acp_v2::ToolCallId, PermissionOptions>,
         next_prompt_updates: Arc<Mutex<Vec<StubPromptUpdate>>>,
         next_prompt_response: Arc<Mutex<Option<oneshot::Receiver<Result<acp_v1::PromptResponse>>>>>,
+        auth_methods: Vec<acp_v2::AuthMethod>,
+        next_authenticate_response: Arc<Mutex<Option<oneshot::Receiver<Result<()>>>>>,
         next_load_error: Arc<Mutex<Option<anyhow::Error>>>,
         next_receipt_response:
             Arc<Mutex<Option<oneshot::Receiver<Result<acp_v2::PromptResponse>>>>>,
@@ -1006,6 +1008,8 @@ mod test_support {
             Self {
                 next_prompt_updates: Default::default(),
                 next_prompt_response: Default::default(),
+                auth_methods: Vec::new(),
+                next_authenticate_response: Default::default(),
                 next_load_error: Default::default(),
                 next_receipt_response: Default::default(),
                 receipt_prompt: Default::default(),
@@ -1061,6 +1065,22 @@ mod test_support {
         ) -> oneshot::Sender<Result<acp_v1::PromptResponse>> {
             let (sender, receiver) = oneshot::channel();
             assert!(self.next_prompt_response.lock().replace(receiver).is_none());
+            sender
+        }
+
+        pub fn with_auth_methods(mut self, methods: Vec<acp_v2::AuthMethod>) -> Self {
+            self.auth_methods = methods;
+            self
+        }
+
+        pub fn defer_next_authenticate_response(&self) -> oneshot::Sender<Result<()>> {
+            let (sender, receiver) = oneshot::channel();
+            assert!(
+                self.next_authenticate_response
+                    .lock()
+                    .replace(receiver)
+                    .is_none()
+            );
             sender
         }
 
@@ -1250,7 +1270,7 @@ mod test_support {
         }
 
         fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
-            &[]
+            &self.auth_methods
         }
 
         fn model_selector(
@@ -1324,9 +1344,14 @@ mod test_support {
         fn authenticate(
             &self,
             _method_id: acp_v2::AuthMethodId,
-            _cx: &mut App,
+            cx: &mut App,
         ) -> Task<gpui::Result<()>> {
-            unimplemented!()
+            match self.next_authenticate_response.lock().take() {
+                Some(response) => cx.spawn(async move |_| response.await?),
+                None => Task::ready(Err(anyhow::Error::msg(
+                    "No deferred authentication response",
+                ))),
+            }
         }
 
         fn validate_prompt_content(&self, content: &[acp_v2::ContentBlock]) -> Result<()> {
