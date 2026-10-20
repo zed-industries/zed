@@ -7109,20 +7109,33 @@ impl LspStore {
             return None;
         }
 
-        let (position, column_after_indent) = {
+        let position = {
             let buffer = buffer.read(cx);
             let position = position.to_point_utf16(buffer);
+            buffer.anchor_before(position)
+        };
+        Some(self.on_type_format_impl(buffer, position, trigger, push_to_history, cx))
+    }
 
-            if trigger == "\n" {
-                let line_start = PointUtf16::new(position.row, 0);
-                let indent = buffer.line_indent_for_row(position.row).raw_len();
-                (
-                    buffer.anchor_before(line_start),
-                    Some(position.column.saturating_sub(indent)),
-                )
-            } else {
-                (buffer.anchor_before(position), None)
-            }
+    fn on_type_format_impl(
+        &mut self,
+        buffer: Entity<Buffer>,
+        position: Anchor,
+        trigger: String,
+        push_to_history: bool,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<Transaction>>> {
+        let (position, column_after_indent) = if trigger == "\n" {
+            let buffer = buffer.read(cx);
+            let position = position.to_point_utf16(buffer);
+            let line_start = PointUtf16::new(position.row, 0);
+            let indent = buffer.line_indent_for_row(position.row).raw_len();
+            (
+                buffer.anchor_before(line_start),
+                Some(position.column.saturating_sub(indent)),
+            )
+        } else {
+            (position, None)
         };
         let options = buffer.update(cx, |buffer, cx| {
             lsp_command::lsp_formatting_options(
@@ -7130,7 +7143,7 @@ impl LspStore {
             )
         });
 
-        Some(cx.spawn(async move |this, cx| {
+        cx.spawn(async move |this, cx| {
             if let Some(waiter) =
                 buffer.update(cx, |buffer, _| buffer.wait_for_autoindent_applied())
             {
@@ -7164,7 +7177,7 @@ impl LspStore {
                 })
             })?
             .await
-        }))
+        })
     }
 
     pub fn definitions(
