@@ -3648,6 +3648,7 @@ pub enum AcpThreadEvent {
         stop_reason: Option<acp_v2::StopReason>,
     },
     Error,
+    ConnectionLost,
     LoadError(LoadError),
     PromptCapabilitiesUpdated,
     Refusal,
@@ -3792,6 +3793,7 @@ impl AcpThread {
                 | AcpThreadEvent::SubagentSpawned(_)
                 | AcpThreadEvent::Stopped { .. }
                 | AcpThreadEvent::Error
+                | AcpThreadEvent::ConnectionLost
                 | AcpThreadEvent::LoadError(_)
                 | AcpThreadEvent::PromptCapabilitiesUpdated
                 | AcpThreadEvent::Refusal
@@ -4206,6 +4208,10 @@ impl AcpThread {
         self.submissions.recoverable()
     }
 
+    pub fn is_observation_closed(&self) -> bool {
+        self.activity.observation_closed()
+    }
+
     pub fn is_idle_for_retention(&self) -> bool {
         self.status() == ThreadStatus::Idle
             && !self.has_unsettled_submissions()
@@ -4232,12 +4238,17 @@ impl AcpThread {
 
     /// Ends receipt and cancellation observations without declaring remote execution stopped.
     pub fn handle_connection_lost(&mut self, cx: &mut Context<Self>) {
+        let was_observable = self.activity.ensure_observable().is_ok();
         self.activity.close_observation();
         let changed = self.submissions.disconnect();
         if !changed.is_empty() {
             for id in changed {
                 cx.emit(AcpThreadEvent::SubmissionUpdated(id));
             }
+            cx.notify();
+        }
+        if was_observable {
+            cx.emit(AcpThreadEvent::ConnectionLost);
             cx.notify();
         }
     }

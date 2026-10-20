@@ -2328,11 +2328,12 @@ mod tests {
             assert!(max_offset.y > px(20.));
             let other_offset = handles[1 - index].offset();
             let before = handle.offset();
-            editor_cx.simulate_event(gpui::ScrollWheelEvent {
+            editor_cx.simulate_event(gpui::ScrollEvent {
                 position: viewport.center(),
                 delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(-20.))),
                 modifiers: Modifiers::none(),
                 touch_phase: gpui::TouchPhase::Moved,
+                source: gpui::ScrollSource::Pointer,
             });
             editor_cx.run_until_parked();
             assert_eq!(handle.offset(), before + gpui::point(px(0.), px(-20.)));
