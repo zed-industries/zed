@@ -10,12 +10,16 @@ workspace = true
 
 [lib]
 path = "src/json_schema_store.rs"
+doctest = false
 
 [features]
 default = []
 
 [dev-dependencies]
+fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 
 [dependencies]

@@ -444,6 +444,27 @@ impl AgentRegistryPage {
             })
         });
 
+        let license_button = agent.license_url().map(|license_url| {
+            let license_url = license_url.clone();
+            let license_url_for_click = license_url.clone();
+            IconButton::new(
+                SharedString::from(format!("agent-license-{}", agent.id())),
+                IconName::FileTextOutlined,
+            )
+            .icon_size(IconSize::Small)
+            .tooltip(move |_, cx| {
+                Tooltip::with_meta(
+                    "View Agent License or Terms of Service",
+                    None,
+                    license_url.clone(),
+                    cx,
+                )
+            })
+            .on_click(move |_, _, cx| {
+                cx.open_url(&license_url_for_click);
+            })
+        });
+
         AgentRegistryCard::new()
             .child(
                 h_flex()
@@ -483,7 +504,8 @@ impl AgentRegistryPage {
                                     .truncate(),
                             )
                             .when_some(repository_button, |this, button| this.child(button))
-                            .when_some(website_button, |this, button| this.child(button)),
+                            .when_some(website_button, |this, button| this.child(button))
+                            .when_some(license_button, |this, button| this.child(button)),
                     ),
             )
     }

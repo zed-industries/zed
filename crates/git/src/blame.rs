@@ -214,6 +214,9 @@ pub struct BlameEntry {
 
     pub previous: Option<String>,
     pub filename: String,
+
+    #[serde(default)]
+    pub boundary: bool,
 }
 
 impl BlameEntry {
@@ -262,6 +265,7 @@ impl BlameEntry {
             summary: None,
             previous: None,
             filename: String::new(),
+            boundary: false,
         })
     }
 
@@ -376,11 +380,16 @@ impl GitBlameParser {
                         .committer_tz
                         .clone_from(&existing_entry.committer_tz);
                     new_entry.summary.clone_from(&existing_entry.summary);
+                    new_entry.boundary = existing_entry.boundary;
                 }
 
                 self.current_entry.replace(new_entry);
             }
             Some(entry) => {
+                if line == "boundary" {
+                    entry.boundary = true;
+                    return Ok(());
+                }
                 let Some((key, value)) = line.split_once(' ') else {
                     return Ok(());
                 };
@@ -556,6 +565,41 @@ mod tests {
         let output = read_test_data("blame_incremental_complex");
         let entries = parse_git_blame(&output).unwrap();
         assert_eq_golden(&entries, "blame_incremental_complex");
+    }
+
+    #[test]
+    fn test_parse_git_blame_boundary() {
+        let output = read_test_data("blame_incremental_not_committed");
+        let entries = parse_git_blame(&output).unwrap();
+        let boundary_flags = entries
+            .iter()
+            .map(|entry| (entry.sha.to_string(), entry.boundary))
+            .collect::<Vec<_>>();
+        let boundary_sha = "e6d34e8fb494fe2b576d16037c61ba9d10722ba3".to_string();
+        assert_eq!(
+            boundary_flags,
+            vec![
+                (
+                    "4aaba34cb86b12f3a749dd6ddbf185de88de6527".to_string(),
+                    false
+                ),
+                (
+                    "4aaba34cb86b12f3a749dd6ddbf185de88de6527".to_string(),
+                    false
+                ),
+                (
+                    "b2f6b0d982a9e7654bbb6d979c9ccb00b1d2e913".to_string(),
+                    false
+                ),
+                (
+                    "b2f6b0d982a9e7654bbb6d979c9ccb00b1d2e913".to_string(),
+                    false
+                ),
+                (boundary_sha.clone(), true),
+                (boundary_sha.clone(), true),
+                (boundary_sha, true),
+            ]
+        );
     }
 
     #[test]

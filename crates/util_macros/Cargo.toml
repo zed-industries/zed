@@ -12,11 +12,11 @@ workspace = true
 [lib]
 path = "src/util_macros.rs"
 proc-macro = true
-doctest = false
+test = false
 
 [dependencies]
 quote.workspace = true
-syn.workspace = true
+syn = { workspace = true, features = ["full", "extra-traits", "clone-impls", "parsing", "printing"] }
 perf.workspace = true
 
 [features]

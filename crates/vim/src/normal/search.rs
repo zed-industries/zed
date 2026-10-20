@@ -265,7 +265,7 @@ impl Vim {
         let subscription = cx.subscribe_in(&search_bar, window, |vim, _, event, window, cx| {
             if let buffer_search::Event::Dismissed = event {
                 if !vim.search.prior_selections.is_empty() {
-                    let prior_selections: Vec<_> = vim.search.prior_selections.drain(..).collect();
+                    let prior_selections = std::mem::take(&mut vim.search.prior_selections);
                     vim.update_editor(cx, |_, editor, cx| {
                         editor.change_selections(Default::default(), window, cx, |s| {
                             s.select_ranges(prior_selections);
@@ -335,7 +335,7 @@ impl Vim {
                 search_bar.select_match(direction, count, window, cx);
                 search_bar.focus_editor(&Default::default(), window, cx);
 
-                let prior_selections: Vec<_> = self.search.prior_selections.drain(..).collect();
+                let prior_selections = std::mem::take(&mut self.search.prior_selections);
                 let prior_mode = self.search.prior_mode;
                 let prior_operator = self.search.prior_operator.take();
 

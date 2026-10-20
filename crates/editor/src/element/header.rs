@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::path::Path;
 use std::rc::Rc;
 
@@ -54,7 +55,7 @@ pub(super) struct StickyHeaders {
 pub(super) struct StickyHeaderLine {
     row: DisplayRow,
     pub(super) offset: Pixels,
-    line: Rc<LineWithInvisibles>,
+    pub(super) line: Rc<LineWithInvisibles>,
     line_number: Option<ShapedLine>,
     elements: SmallVec<[AnyElement; 1]>,
     available_text_width: Pixels,
@@ -255,7 +256,7 @@ impl EditorElement {
             offset,
         } in rows.into_iter().rev()
         {
-            let line = layout_line(
+            let mut line = layout_line(
                 sticky_row,
                 snapshot,
                 &self.style,
@@ -284,12 +285,19 @@ impl EditorElement {
                 self.shape_line_number(SharedString::from(number.to_string()), color, window)
             });
 
+            self.populate_point_diagnostics(
+                snapshot,
+                sticky_row..sticky_row.next_row(),
+                std::slice::from_mut(&mut line),
+            );
+
             lines.push(StickyHeaderLine::new(
                 sticky_row,
                 line_height * offset as f32,
                 line,
                 line_number,
                 line_height,
+                self.style.text.text_align,
                 scroll_pixel_position,
                 content_origin,
                 gutter_hitbox,
@@ -473,6 +481,7 @@ impl StickyHeaderLine {
         mut line: LineWithInvisibles,
         line_number: Option<ShapedLine>,
         line_height: Pixels,
+        text_align: TextAlign,
         scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
         content_origin: gpui::Point<Pixels>,
         gutter_hitbox: &Hitbox,
@@ -486,6 +495,8 @@ impl StickyHeaderLine {
             scroll_pixel_position,
             content_origin,
             offset,
+            text_align,
+            text_hitbox.size.width,
             &mut elements,
             window,
             cx,
@@ -673,15 +684,23 @@ pub(crate) fn render_buffer_header(
     let can_open_excerpts = file.is_none_or(|file| file.can_open());
     let path_style = file.map(|file| file.path_style(cx));
     let relative_path = buffer.resolve_file_path(include_root, cx);
-    let (parent_path, filename) = if let Some(path) = &relative_path {
-        if let Some(path_style) = path_style {
-            let (dir, file_name) = path_style.split(path);
-            (dir.map(|dir| dir.to_owned()), Some(file_name.to_owned()))
-        } else {
-            (None, Some(path.clone()))
+    let (parent_path, filename) = match (&relative_path, path_style) {
+        (Some(path), Some(path_style)) => {
+            match path_style
+                .file_name(Path::new(path))
+                .and_then(OsStr::to_str)
+            {
+                Some(file_name) => (
+                    path.strip_suffix(file_name)
+                        .filter(|parent| !parent.is_empty())
+                        .map(ToOwned::to_owned),
+                    Some(file_name.to_owned()),
+                ),
+                None => (None, Some(path.clone())),
+            }
         }
-    } else {
-        (None, None)
+        (Some(path), None) => (None, Some(path.clone())),
+        (None, _) => (None, None),
     };
     let focus_handle = editor_read.focus_handle(cx);
     let colors = cx.theme().colors();

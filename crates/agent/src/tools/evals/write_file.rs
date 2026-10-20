@@ -67,7 +67,7 @@ impl Display for WriteEvalOutput {
 struct WriteToolTest {
     fs: Arc<FakeFs>,
     project: Entity<Project>,
-    model: Arc<dyn LanguageModel>,
+    model: LanguageModel,
     model_thinking_effort: Option<String>,
 }
 
@@ -77,6 +77,7 @@ impl WriteToolTest {
 
         let fs = FakeFs::new(cx.executor());
         cx.update(|cx| {
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             SettingsStore::update_global(cx, |store: &mut SettingsStore, cx| {
@@ -142,7 +143,7 @@ impl WriteToolTest {
     async fn load_model(
         selected_model: &SelectedModel,
         cx: &mut AsyncApp,
-    ) -> Result<Arc<dyn LanguageModel>> {
+    ) -> Result<LanguageModel> {
         cx.update(|cx| {
             let registry = LanguageModelRegistry::read_global(cx);
             let provider = registry
@@ -152,13 +153,14 @@ impl WriteToolTest {
         })
         .await?;
         Ok(cx.update(|cx| {
-            let models = LanguageModelRegistry::read_global(cx);
-            models
-                .available_models(cx)
-                .find(|model| {
-                    model.provider_id() == selected_model.provider
-                        && model.id() == selected_model.model
-                })
+            let registry = LanguageModelRegistry::read_global(cx);
+            let provider = registry
+                .provider(&selected_model.provider)
+                .expect("Provider not found");
+            provider
+                .provided_models(cx)
+                .into_iter()
+                .find(|model| model.id() == selected_model.model)
                 .unwrap_or_else(|| panic!("Model {} not found", selected_model.model.0))
         }))
     }
@@ -301,9 +303,13 @@ impl WriteToolTest {
         let model = self.model.clone();
         let events = cx
             .update(|cx| {
+                let provider = LanguageModelRegistry::read_global(cx).provider_for_model(&model);
                 let async_cx = cx.to_async();
-                cx.foreground_executor()
-                    .spawn(async move { model.stream_completion(request, &async_cx).await })
+                cx.foreground_executor().spawn(async move {
+                    provider?
+                        .stream_completion(&model, request, &async_cx)
+                        .await
+                })
             })
             .await
             .map_err(|err| anyhow::anyhow!("completion error: {}", err))?;

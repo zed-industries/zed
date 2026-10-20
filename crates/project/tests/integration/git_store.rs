@@ -99,6 +99,44 @@ mod conflict_set_tests {
     }
 
     #[test]
+    fn test_parse_conflicts_with_empty_sides() {
+        let test_content = r#"
+            <<<<<<< HEAD
+            =======
+            their version
+            >>>>>>> branch
+            <<<<<<< HEAD
+            our version
+            =======
+            >>>>>>> branch
+        "#
+        .unindent();
+
+        let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), test_content);
+        let conflict_snapshot = ConflictSet::parse(&buffer.snapshot());
+        assert_eq!(conflict_snapshot.conflicts.len(), 2);
+
+        for conflict in conflict_snapshot.conflicts.iter() {
+            for side in [&conflict.ours, &conflict.theirs] {
+                assert!(side.start.cmp(&side.end, &buffer).is_le(), "{side:?}");
+            }
+        }
+        assert_eq!(
+            conflict_snapshot.conflicts[0].ours.to_point(&buffer),
+            Point::new(1, 0)..Point::new(1, 0)
+        );
+        assert_eq!(
+            conflict_snapshot.conflicts[1].theirs.to_point(&buffer),
+            Point::new(7, 0)..Point::new(7, 0)
+        );
+
+        // Text typed into an empty side becomes part of that side.
+        let ours = conflict_snapshot.conflicts[0].ours.clone();
+        buffer.edit([(Point::new(1, 0)..Point::new(1, 0), "resolution\n")]);
+        assert_eq!(ours.to_point(&buffer), Point::new(1, 0)..Point::new(2, 0));
+    }
+
+    #[test]
     fn test_nested_conflict_markers() {
         // Create a buffer with nested conflict markers
         let test_content = r#"
@@ -1252,14 +1290,75 @@ mod git_worktrees {
 
     #[test]
     fn test_worktree_directory_uses_remote_path_style() {
-        let work_dir = Path::new("/home/user/dev/lsp-tests");
-
-        let directory =
-            worktrees_directory_for_repo(work_dir, "../worktrees", PathStyle::Unix).unwrap();
+        // Unix remote
+        let anchor = Path::new("/home/user/dev/lsp-tests");
 
         assert_eq!(
-            directory,
+            worktrees_directory_for_repo(anchor, "../worktrees", PathStyle::Unix).unwrap(),
             PathBuf::from("/home/user/dev/worktrees/lsp-tests")
+        );
+
+        // Windows remote: the anchor intentionally mixes `/` and `\` separators.
+        let anchor = Path::new(r"C:\Users/user/dev\lsp-tests");
+
+        assert_eq!(
+            worktrees_directory_for_repo(anchor, "../worktrees", PathStyle::Windows).unwrap(),
+            PathBuf::from(r"C:\Users\user\dev\worktrees\lsp-tests")
+        );
+
+        assert_eq!(
+            worktrees_directory_for_repo(anchor, ".git\\zed-worktrees", PathStyle::Windows)
+                .unwrap(),
+            PathBuf::from(r"C:\Users\user\dev\lsp-tests\.git\zed-worktrees")
+        );
+    }
+
+    #[gpui::test]
+    async fn test_new_worktree_paths_use_bare_repository_identity(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/zed"),
+            json!({
+                ".bare": {
+                    "worktrees": {
+                        "main": {
+                            "commondir": "../..",
+                        },
+                    },
+                },
+                "main": {
+                    ".git": "gitdir: /zed/.bare/worktrees/main",
+                    "file.txt": "content",
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/zed/main").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project.repositories(cx).values().next().unwrap().clone()
+        });
+        let default_path = repository.read_with(cx, |repository, _| {
+            repository
+                .path_for_new_linked_worktree("plum-warbler", "../worktrees")
+                .unwrap()
+        });
+        let repository_relative_path = repository.read_with(cx, |repository, _| {
+            repository
+                .path_for_new_linked_worktree("plum-warbler", "worktrees")
+                .unwrap()
+        });
+
+        assert_eq!(
+            default_path,
+            PathBuf::from(path!("/worktrees/zed/plum-warbler/zed"))
+        );
+        assert_eq!(
+            repository_relative_path,
+            PathBuf::from(path!("/zed/worktrees/plum-warbler/zed"))
         );
     }
 
@@ -1388,6 +1487,87 @@ mod git_worktrees {
         let worktree_parent = PathBuf::from(path!("/worktrees/root/feature/nested"));
         let worktree_intermediate_parent = PathBuf::from(path!("/worktrees/root/feature"));
         let worktree_base = PathBuf::from(path!("/worktrees/root"));
+
+        cx.update(|cx| {
+            repository.update(cx, |repository, _| {
+                repository.create_worktree(
+                    git::repository::CreateWorktreeTarget::NewBranch {
+                        branch_name: "feature/nested".to_string(),
+                        base_sha: Some("abc123".to_string()),
+                    },
+                    worktree_path.clone(),
+                )
+            })
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+        assert!(Fs::is_dir(fs.as_ref(), &worktree_path).await);
+        assert!(Fs::is_dir(fs.as_ref(), &worktree_parent).await);
+        assert!(Fs::is_dir(fs.as_ref(), &worktree_intermediate_parent).await);
+        assert!(Fs::is_dir(fs.as_ref(), &worktree_base).await);
+
+        cx.update(|cx| {
+            repository.update(cx, |repository, _| {
+                repository.remove_worktree(worktree_path.clone(), false)
+            })
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+        cx.executor().run_until_parked();
+
+        assert!(!Fs::is_dir(fs.as_ref(), &worktree_path).await);
+        assert!(!Fs::is_dir(fs.as_ref(), &worktree_parent).await);
+        assert!(!Fs::is_dir(fs.as_ref(), &worktree_intermediate_parent).await);
+        assert!(Fs::is_dir(fs.as_ref(), &worktree_base).await);
+    }
+
+    #[gpui::test]
+    async fn test_remove_worktree_uses_bare_repository_identity_for_managed_parent_directories(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/zed"),
+            json!({
+                ".bare": {
+                    "worktrees": {
+                        "main": {
+                            "commondir": "../..",
+                        },
+                    },
+                },
+                "main": {
+                    ".git": "gitdir: /zed/.bare/worktrees/main",
+                    "file.txt": "content",
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/zed/main").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project.repositories(cx).values().next().unwrap().clone()
+        });
+        let worktree_path = repository.read_with(cx, |repository, _| {
+            repository
+                .path_for_new_linked_worktree("feature/nested", "../worktrees")
+                .unwrap()
+        });
+        let worktree_parent = PathBuf::from(path!("/worktrees/zed/feature/nested"));
+        let worktree_intermediate_parent = PathBuf::from(path!("/worktrees/zed/feature"));
+        let worktree_base = PathBuf::from(path!("/worktrees/zed"));
+
+        assert_eq!(
+            worktree_path,
+            PathBuf::from(path!("/worktrees/zed/feature/nested/zed"))
+        );
 
         cx.update(|cx| {
             repository.update(cx, |repository, _| {
@@ -1792,20 +1972,40 @@ mod resolve_worktree_tests {
             (
                 "/home/bob/zed",
                 "/home/bob/worktrees/olivetti/zed",
+                PathStyle::Unix,
                 Some("olivetti".into()),
             ),
-            ("/home/bob/zed", "/home/bob/zed2", Some("zed2".into())),
+            (
+                "/home/bob/zed",
+                "/home/bob/zed2",
+                PathStyle::Unix,
+                Some("zed2".into()),
+            ),
             (
                 "/home/bob/zed",
                 "/home/bob/worktrees/zed/selectric",
+                PathStyle::Unix,
                 Some("selectric".into()),
             ),
-            ("/home/bob/zed", "/home/bob/zed", None),
+            ("/home/bob/zed", "/home/bob/zed", PathStyle::Unix, None),
+            (
+                r"C:\Users\bob\dev\zed",
+                r"C:\Users\bob\dev\worktrees\zed\olivetti\zed",
+                PathStyle::Windows,
+                Some("olivetti".into()),
+            ),
+            (
+                r"C:\Users\bob\dev\zed",
+                r"C:\Users\bob\dev\zed2",
+                PathStyle::Windows,
+                Some("zed2".into()),
+            ),
         ];
-        for (main_worktree_path, linked_worktree_path, expected) in examples {
+        for (main_worktree_path, linked_worktree_path, path_style, expected) in examples {
             let short_name = linked_worktree_short_name(
                 Path::new(main_worktree_path),
                 Path::new(linked_worktree_path),
+                path_style,
             );
             assert_eq!(
                 short_name, expected,
