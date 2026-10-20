@@ -108,7 +108,7 @@ impl Future for Submission {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
 pub enum SubmissionState {
     Pending,
     Accepted {
@@ -191,6 +191,12 @@ impl SessionSubmissions {
 
     pub(crate) fn has_unsettled(&self) -> bool {
         self.records.values().any(SubmissionRecord::is_unsettled)
+    }
+
+    pub(crate) fn pending_receipt_ids(&self) -> impl Iterator<Item = SubmissionId> {
+        self.records.iter().filter_map(|(id, record)| {
+            matches!(record.state, SubmissionState::Pending).then_some(*id)
+        })
     }
 
     pub(crate) fn recoverable(&self) -> impl Iterator<Item = (SubmissionId, &SubmissionRecord)> {
@@ -323,13 +329,20 @@ impl SessionSubmissions {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ForegroundActivity {
+    Unconfirmed,
     Idle,
     Running,
     RequiresAction,
 }
 
+impl ForegroundActivity {
+    pub fn is_active(self) -> bool {
+        matches!(self, Self::Running | Self::RequiresAction)
+    }
+}
+
 pub(crate) struct SessionActivity {
-    state: acp_v2::StateUpdate,
+    state: Option<acp_v2::StateUpdate>,
     generation: u64,
     started_at: Option<Instant>,
     duration: Option<Duration>,
@@ -341,7 +354,7 @@ pub(crate) struct SessionActivity {
 impl Default for SessionActivity {
     fn default() -> Self {
         Self {
-            state: acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new()),
+            state: Some(acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new())),
             generation: 0,
             started_at: None,
             duration: None,
@@ -353,15 +366,20 @@ impl Default for SessionActivity {
 }
 
 impl SessionActivity {
-    pub(crate) fn state(&self) -> &acp_v2::StateUpdate {
-        &self.state
+    pub(crate) fn state(&self) -> Option<&acp_v2::StateUpdate> {
+        self.state.as_ref()
+    }
+
+    pub(crate) fn mark_unconfirmed(&mut self) {
+        self.state = None;
     }
 
     pub(crate) fn phase(&self) -> ForegroundActivity {
         match self.state {
-            acp_v2::StateUpdate::Idle(_) => ForegroundActivity::Idle,
-            acp_v2::StateUpdate::RequiresAction(_) => ForegroundActivity::RequiresAction,
-            _ => ForegroundActivity::Running,
+            None => ForegroundActivity::Unconfirmed,
+            Some(acp_v2::StateUpdate::Idle(_)) => ForegroundActivity::Idle,
+            Some(acp_v2::StateUpdate::RequiresAction(_)) => ForegroundActivity::RequiresAction,
+            Some(_) => ForegroundActivity::Running,
         }
     }
 
@@ -387,29 +405,44 @@ impl SessionActivity {
 
     pub(crate) fn update(&mut self, state: acp_v2::StateUpdate, first_entry_index: usize) {
         let previous = self.phase();
-        self.state = state;
+        self.state = Some(state);
         let current = self.phase();
-        if previous == ForegroundActivity::Idle && current != ForegroundActivity::Idle {
+        if !previous.is_active() && current.is_active() {
             self.generation += 1;
             self.started_at = Some(Instant::now());
             self.duration = None;
             self.first_entry_index = first_entry_index;
-        } else if previous != ForegroundActivity::Idle && current == ForegroundActivity::Idle {
+        } else if previous.is_active() && current == ForegroundActivity::Idle {
             self.duration = self.started_at.map(|started| started.elapsed());
-            for waiter in self.cancel_waiters.drain(..) {
-                if waiter.send(()).is_err() {
-                    log::debug!("Foreground cancellation observer was dropped");
-                }
+        }
+        if current == ForegroundActivity::Idle {
+            self.complete_cancel_waiters();
+        }
+    }
+
+    fn complete_cancel_waiters(&mut self) {
+        for waiter in self.cancel_waiters.drain(..) {
+            if waiter.send(()).is_err() {
+                log::debug!("Foreground cancellation observer was dropped");
             }
         }
+    }
+
+    pub(crate) fn finish_close(&mut self) {
+        self.observation_closed = true;
+        self.complete_cancel_waiters();
     }
 
     pub(crate) fn ensure_observable(&self) -> anyhow::Result<()> {
         anyhow::ensure!(
             !self.observation_closed,
-            "Agent connection lost before cancellation was confirmed"
+            "Session closed or agent connection lost before cancellation was confirmed"
         );
         Ok(())
+    }
+
+    pub(crate) fn observation_closed(&self) -> bool {
+        self.observation_closed
     }
 
     pub(crate) fn close_observation(&mut self) {
