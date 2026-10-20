@@ -103,6 +103,22 @@ async fn exited_load_error_after_drain(
 #[error("Unsupported version")]
 pub struct UnsupportedVersion;
 
+#[derive(Debug, Error)]
+#[error("ACP v1 fallback failed: {failure}; v2 negotiation: {negotiation:#}")]
+struct V1FallbackFailure {
+    failure: String,
+    negotiation: anyhow::Error,
+}
+
+fn fallback_failure(failure: anyhow::Error, negotiation: anyhow::Error) -> anyhow::Error {
+    let context = V1FallbackFailure {
+        failure: format!("{failure:#}"),
+        negotiation,
+    };
+    // The final attempt's typed error must remain authoritative for UI error classification.
+    failure.context(context)
+}
+
 pub async fn connect(
     agent_id: AgentId,
     project: Entity<Project>,
@@ -140,7 +156,7 @@ pub async fn connect(
     )
     .await
     .map_err(|error| match negotiation_error {
-        Some(negotiation) => negotiation.context(error),
+        Some(negotiation) => fallback_failure(error, negotiation),
         None => error,
     })
 }
@@ -1059,6 +1075,13 @@ mod selection_tests {
             ),
             (
                 true,
+                r#""result":{"protocolVersion":1},"error":{"code":-32022,"message":"Invalid envelope","data":{"requested":2,"supported":[1]}}"#,
+                true,
+                None,
+                "2",
+            ),
+            (
+                true,
                 r#""result":{"info":{"name":"malformed","version":"1"}}"#,
                 false,
                 None,
@@ -1149,7 +1172,7 @@ done
                 let error = result
                     .err()
                     .unwrap_or_else(|| panic!("unexpected successful selection for {response}"));
-                if response.contains("-32022") {
+                if response.starts_with(r#""error":{"code":-32022"#) {
                     let protocol_error = error
                         .downcast_ref::<agent_client_protocol::Error>()
                         .expect("structured mismatch retained");
@@ -1195,6 +1218,35 @@ done
             &agent_client_protocol::Error::invalid_params()
                 .data(json!({"requested": 2, "supported": [1]}))
         ));
+    }
+
+    #[test]
+    fn fallback_failure_keeps_the_final_error_authoritative() {
+        let negotiation_data = json!({"requested": 2, "supported": [1]});
+        let final_data = json!({"attempt": "v1"});
+        let error = fallback_failure(
+            anyhow!(agent_client_protocol::Error::invalid_params().data(final_data.clone())),
+            anyhow!(
+                agent_client_protocol::Error::new(-32022, "Unsupported")
+                    .data(negotiation_data.clone())
+            )
+            .context(UnsupportedVersion),
+        );
+        let info = acp_thread::ProtocolErrorInfo::from_error(&error).expect("final protocol error");
+        assert_eq!(info.code, -32602);
+        assert_eq!(info.data, Some(&final_data));
+        assert!(!error.is::<UnsupportedVersion>());
+        let context = error
+            .downcast_ref::<V1FallbackFailure>()
+            .expect("negotiation context");
+        assert_eq!(
+            context
+                .negotiation
+                .downcast_ref::<agent_client_protocol::Error>()
+                .expect("original negotiation")
+                .data,
+            Some(negotiation_data)
+        );
     }
 
     #[gpui::test]
