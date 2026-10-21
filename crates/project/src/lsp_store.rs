@@ -15334,9 +15334,9 @@ fn document_filter_pattern_matches(
     // Case-equivalent components can have different UTF-8 lengths (e.g. K and k), so
     // consume the candidate's components rather than slicing at the base's byte length.
     for base_component in base_path.trim_end_matches('/').split('/') {
-        let Some((component, remainder)) = relative_path.split_once('/') else {
-            return false;
-        };
+        // The base may be the document itself, leaving an empty path for the pattern, which
+        // `**` matches. A path running out before the base does fails to match its components.
+        let (component, remainder) = relative_path.split_once('/').unwrap_or((relative_path, ""));
         let matches = match path_style {
             PathStyle::Windows => {
                 component == base_component
@@ -18037,6 +18037,63 @@ mod tests {
             selector.as_ref(),
             &context(util::path!("/root/Project.toml")),
         ));
+    }
+
+    #[test]
+    fn document_selector_relative_pattern_matches_base_document() -> Result<()> {
+        for (base_uri, pattern, path, path_style, expected) in [
+            (
+                "file:///root/a.rs",
+                "**",
+                "/root/a.rs",
+                PathStyle::Unix,
+                true,
+            ),
+            (
+                "file:///root/a.rs",
+                "**",
+                "/root/a.rsx",
+                PathStyle::Unix,
+                false,
+            ),
+            ("file:///root/a.rs", "**", "/root", PathStyle::Unix, false),
+            (
+                "file:///root/a.rs",
+                "*.rs",
+                "/root/a.rs",
+                PathStyle::Unix,
+                false,
+            ),
+            (
+                "file:///C:/repo/a.rs",
+                "**",
+                r"c:\repo\A.rs",
+                PathStyle::Windows,
+                true,
+            ),
+            (
+                "file:///C:/repo/a.rs",
+                "**",
+                r"C:\repo\a.rsx",
+                PathStyle::Windows,
+                false,
+            ),
+        ] {
+            let selector = pattern_selector(
+                None,
+                lsp::GlobPattern::Relative(lsp::RelativePattern {
+                    base_uri: OneOf::Right(base_uri.parse()?),
+                    pattern: pattern.to_string(),
+                }),
+            );
+            let context = toml_file_context(DocumentSelectorPath::present(path, path_style));
+            assert_eq!(
+                document_selector_matches(selector.as_ref(), &context),
+                expected,
+                "base {base_uri:?}, pattern {pattern:?}, path {path:?}",
+            );
+        }
+        Ok(())
     }
 
     #[cfg(unix)]
