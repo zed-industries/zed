@@ -146,9 +146,17 @@ fn agent_image_lookup(
         .collect();
 
     // Only the first candidate may skip the disk walk: an indexed later candidate must not
-    // win over an earlier one that exists on disk but isn't indexed (e.g. gitignored).
+    // win over an earlier one that exists on disk but isn't indexed (e.g. gitignored). It also
+    // needs a file entry, since an open buffer outlives its deleted file.
     let first_path = paths.first()?;
-    let Some(project_path) = project.project_path_for_file_link(Path::new(first_path), cx) else {
+    let Some(project_path) = project
+        .project_path_for_file_link(Path::new(first_path), cx)
+        .filter(|project_path| {
+            project
+                .entry_for_path(project_path, cx)
+                .is_some_and(|entry| entry.is_file())
+        })
+    else {
         return Some(AgentImageLookup::Disk(paths));
     };
     let worktree = project.worktree_for_id(project_path.worktree_id, cx)?;
@@ -1144,6 +1152,41 @@ mod tests {
             Some(vec![
                 PathBuf::from(path!("/project/e f.png")),
                 PathBuf::from(path!("/project/e%20f.png")),
+            ])
+        );
+    }
+
+    #[gpui::test]
+    async fn test_agent_image_lookup_ignores_open_buffer_of_deleted_file(cx: &mut TestAppContext) {
+        crate::test_support::init_test(cx);
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/one"), json!({"shot.svg": "<svg/>"}))
+            .await;
+        fs.insert_tree(path!("/two"), json!({"shot.svg": "<svg/>"}))
+            .await;
+        let project = Project::test(
+            fs.clone(),
+            [path!("/one").as_ref(), path!("/two").as_ref()],
+            cx,
+        )
+        .await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/one/shot.svg"), cx)
+            })
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "unsaved")], None, cx));
+        fs.remove_file(Path::new(path!("/one/shot.svg")), Default::default())
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        assert_eq!(
+            disk_paths(lookup("shot.svg", &project, cx)),
+            Some(vec![
+                PathBuf::from(path!("/one/shot.svg")),
+                PathBuf::from(path!("/two/shot.svg")),
             ])
         );
     }
