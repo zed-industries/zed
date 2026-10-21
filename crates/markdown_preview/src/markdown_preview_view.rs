@@ -1655,14 +1655,19 @@ fn preview_image_path_with_parent_components(
 ) -> Option<String> {
     let worktree = worktree.read(cx);
     let path_style = worktree.path_style();
-    let path = if let Some(workspace_relative_path) = workspace_relative_path {
-        path_style.join(worktree.abs_path(), workspace_relative_path)?
-    } else if path_style.is_absolute(Path::new(decoded_path)) {
-        decoded_path.to_owned()
-    } else {
-        let source_directory = worktree.absolutize(source_project_path?.path.parent()?);
-        path_style.join(source_directory, decoded_path)?
-    };
+    let path =
+        if workspace_relative_path.is_none() && path_style.is_absolute(Path::new(decoded_path)) {
+            decoded_path.to_owned()
+        } else {
+            // Same precondition as `resolve_project_path_for_preview_image`: a single-file worktree
+            // has no source directory, which leaves these paths to the workspace-directory fallback.
+            let source_directory = source_project_path?.path.parent()?;
+            if let Some(workspace_relative_path) = workspace_relative_path {
+                path_style.join(worktree.abs_path(), workspace_relative_path)?
+            } else {
+                path_style.join(worktree.absolutize(source_directory), decoded_path)?
+            }
+        };
     path.split(path_style.separators_ch())
         .any(|component| component == "..")
         .then_some(path)
@@ -3008,6 +3013,54 @@ mod tests {
             });
             assert_resolved_preview_image_path(resolved, &root.join("real/shot.ppm"));
         }
+    }
+
+    #[cfg(not(windows))]
+    #[gpui::test]
+    async fn resolves_root_relative_parent_components_from_single_file_worktree(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        let tree = TempTree::new(json!({
+            "project": {"assets": {"icons": {}, "shot.svg": "<svg/>"}},
+            "outside": {"readme.md": ""},
+        }));
+        let workspace_directory = tree.path().join("project");
+        let readme = tree.path().join("outside/readme.md");
+        let project = Project::test(
+            fs::RealFs::new(None, cx.executor()),
+            [workspace_directory.as_path(), readme.as_path()],
+            cx,
+        )
+        .await;
+        let source_project_path = project.read_with(cx, |project, cx| {
+            let worktree = project
+                .worktrees(cx)
+                .find(|worktree| worktree.read(cx).is_single_file())
+                .unwrap();
+            ProjectPath {
+                worktree_id: worktree.read(cx).id(),
+                path: RelPath::empty().into(),
+            }
+        });
+
+        let resolved = resolve_preview_image_in_view(cx, {
+            let workspace_directory = workspace_directory.clone();
+            move |window, cx| {
+                resolve_preview_image(
+                    "/assets/icons/../shot.svg",
+                    None,
+                    Some(&workspace_directory),
+                    Some(&project),
+                    Some(&source_project_path),
+                    PathStyle::local(),
+                    window,
+                    cx,
+                )
+            }
+        });
+        assert_resolved_preview_image_path(resolved, &workspace_directory.join("assets/shot.svg"));
     }
 
     #[gpui::test]
