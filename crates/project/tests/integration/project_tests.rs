@@ -495,6 +495,8 @@ async fn test_abs_paths_for_file_link(cx: &mut gpui::TestAppContext) {
                 vec![path!("/one/../x.png"), path!("/two/../x.png")],
             ),
             (path!("/abs/x.png"), vec![path!("/abs/x.png")]),
+            // Absolute on Unix; on Windows it has no drive and takes the worktrees' drive.
+            ("/abs/x.png", vec![path!("/abs/x.png")]),
             ("~/x.png", vec!["~/x.png"]),
         ] {
             assert_eq!(

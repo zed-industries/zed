@@ -180,6 +180,20 @@ impl PathStyle {
         Ok(PathBuf::from(&joined))
     }
 
+    /// Joins a `path` that has a root but no prefix (`\foo` on Windows) onto `base`'s drive or
+    /// share, like `Path::join`. Returns `None` for any other `path`.
+    pub fn join_rooted(self, base: impl AsRef<Path>, path: impl AsRef<Path>) -> Option<PathBuf> {
+        let path = path.as_ref();
+        if !self.has_root(path) || self.is_absolute(path) {
+            return None;
+        }
+        let base = base.as_ref();
+        let prefix_len = self.components(base).prefix()?.len();
+        let prefix = base.to_str()?.get(..prefix_len)?;
+        let path = self.normalize_separators(path);
+        Some(PathBuf::from(format!("{prefix}{}", path.to_str()?)))
+    }
+
     pub fn normalize_separators(&self, path: impl AsRef<Path>) -> PathBuf {
         self.collect_components(self.components(path.as_ref()))
     }
@@ -334,6 +348,30 @@ impl PathStyle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_join_rooted_keeps_base_prefix() {
+        assert_eq!(
+            PathStyle::Windows.join_rooted(r"D:\project", "/shots/shot.png"),
+            Some(PathBuf::from(r"D:\shots\shot.png"))
+        );
+        assert_eq!(
+            PathStyle::Windows.join_rooted(r"\\server\share\project", r"\shots\shot.png"),
+            Some(PathBuf::from(r"\\server\share\shots\shot.png"))
+        );
+        assert_eq!(
+            PathStyle::Windows.join_rooted(r"D:\project", r"C:\shots\shot.png"),
+            None
+        );
+        assert_eq!(
+            PathStyle::Windows.join_rooted(r"D:\project", "shots/shot.png"),
+            None
+        );
+        assert_eq!(
+            PathStyle::Unix.join_rooted("/project", "/shots/shot.png"),
+            None
+        );
+    }
 
     #[test]
     fn test_join_path_uses_path_style_separator() {
