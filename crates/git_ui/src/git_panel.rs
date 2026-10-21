@@ -15713,6 +15713,25 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_discard_untracked_file_in_unstaged_section_trashes_it(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (fs, panel, mut cx) = setup_git_panel_with_index_contents(
+            cx,
+            &[],
+            &[],
+            json!({
+                ".git": {},
+                "untracked.txt": "untracked\n",
+            }),
+        )
+        .await;
+
+        discard_row(&panel, "untracked.txt", Section::Unstaged, &mut cx);
+
+        assert!(!fs.is_file(path!("/project/untracked.txt").as_ref()).await);
+    }
+
+    #[gpui::test]
     async fn test_discard_marked_rows_scope_follows_section(cx: &mut TestAppContext) {
         init_test(cx);
         let (fs, panel, mut cx) = setup_git_panel_with_index_contents(
