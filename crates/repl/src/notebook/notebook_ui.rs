@@ -102,6 +102,11 @@ pub struct NotebookEditor {
     selected_cell_index: usize,
     cell_order: Vec<CellId>,
     original_cell_order: Vec<CellId>,
+    /// The notebook metadata changed through a user action (picking a kernel)
+    /// since the last load or save. The kernel launched automatically when the
+    /// notebook opens also lands in the metadata, but that is not a change the
+    /// user made, so it does not count.
+    metadata_dirty: bool,
     cell_map: HashMap<CellId, Cell>,
     kernel: Kernel,
     kernel_specification: Option<KernelSpecification>,
@@ -222,6 +227,7 @@ impl NotebookEditor {
             selected_cell_index: 0,
             cell_order: cell_order.clone(),
             original_cell_order: cell_order.clone(),
+            metadata_dirty: false,
             cell_map: cell_map.clone(),
             kernel: Kernel::Shutdown,
             kernel_specification: None,
@@ -303,6 +309,7 @@ impl NotebookEditor {
 
     pub fn mark_as_saved(&mut self, cx: &mut Context<Self>) {
         self.original_cell_order = self.cell_order.clone();
+        self.metadata_dirty = false;
 
         for cell in self.cell_map.values() {
             match cell {
@@ -510,6 +517,10 @@ impl NotebookEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.kernel_specification.as_ref() != Some(&spec) {
+            self.metadata_dirty = true;
+        }
+
         if let Kernel::RunningKernel(kernel) = &mut self.kernel {
             kernel.force_shutdown(window, cx).detach();
         }
@@ -1956,6 +1967,7 @@ impl Item for NotebookEditor {
 
                 this.cell_order = cell_order.clone();
                 this.original_cell_order = cell_order;
+                this.metadata_dirty = false;
                 this.cell_map = cell_map;
                 this.cell_list =
                     ListState::new(this.cell_order.len(), gpui::ListAlignment::Top, px(1000.));
@@ -1967,7 +1979,7 @@ impl Item for NotebookEditor {
     }
 
     fn is_dirty(&self, cx: &App) -> bool {
-        self.has_structural_changes() || self.has_content_changes(cx)
+        self.has_structural_changes() || self.metadata_dirty || self.has_content_changes(cx)
     }
 }
 
@@ -2530,6 +2542,118 @@ mod tests {
             assert!(
                 !notebook_editor.is_dirty(cx),
                 "clearing already-empty outputs should not mark the notebook dirty"
+            );
+        });
+    }
+
+    /// Picking a kernel rewrites the notebook's kernelspec metadata, which is
+    /// saved with the file, so it is an unsaved change. The kernel launched
+    /// automatically when the notebook opens is not.
+    #[gpui::test]
+    async fn test_changing_the_kernel_makes_the_notebook_dirty(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/notebooks"),
+            json!({ "test.ipynb": NOTEBOOK_WITH_ONE_CODE_CELL }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/notebooks").as_ref()], cx).await;
+        cx.update(|cx| ReplStore::init(fs.clone(), cx));
+
+        let project_path = project.read_with(cx, |project, cx| ProjectPath {
+            worktree_id: project.worktrees(cx).next().unwrap().read(cx).id(),
+            path: rel_path("test.ipynb").into(),
+        });
+
+        let notebook_item = cx
+            .update(|cx| {
+                NotebookItem::try_open(&project, &project_path, cx)
+                    .expect("ipynb files should be openable as notebooks")
+            })
+            .await
+            .expect("notebook should parse");
+
+        // See `test_save_goes_through_the_project` for why the notebook is not rendered.
+        let cx = cx.add_empty_window();
+        let notebook_editor = cx.update(|window, cx| {
+            cx.new(|cx| NotebookEditor::new(project.clone(), notebook_item, window, cx))
+        });
+
+        notebook_editor.read_with(cx, |notebook_editor, cx| {
+            assert!(
+                !notebook_editor.is_dirty(cx),
+                "the kernel launched on open is not an unsaved change"
+            );
+        });
+
+        let missing_interpreter = path!("/nonexistent/python3");
+        let other_kernel = KernelSpecification::Jupyter(LocalKernelSpecification {
+            name: "other-kernel".to_string(),
+            path: PathBuf::from(missing_interpreter),
+            kernelspec: JupyterKernelspec {
+                argv: vec![
+                    missing_interpreter.to_string(),
+                    "-m".to_string(),
+                    "ipykernel_launcher".to_string(),
+                    "-f".to_string(),
+                    "{connection_file}".to_string(),
+                ],
+                display_name: "Other Kernel".to_string(),
+                language: "python".to_string(),
+                interrupt_mode: None,
+                metadata: None,
+                env: None,
+            },
+        });
+        notebook_editor.update_in(cx, |notebook_editor, window, cx| {
+            notebook_editor.change_kernel(other_kernel.clone(), window, cx);
+        });
+        notebook_editor.read_with(cx, |notebook_editor, cx| {
+            assert!(
+                notebook_editor.is_dirty(cx),
+                "picking a different kernel should mark the notebook as having unsaved changes"
+            );
+        });
+
+        notebook_editor
+            .update_in(cx, |notebook_editor, window, cx| {
+                notebook_editor.save(SaveOptions::default(), project.clone(), window, cx)
+            })
+            .await
+            .expect("saving the notebook should succeed");
+
+        let saved = String::from_utf8(
+            fs.read_file_sync(path!("/notebooks/test.ipynb"))
+                .expect("notebook should still exist"),
+        )
+        .expect("notebook should be valid UTF-8");
+        assert!(
+            saved.contains("\"name\": \"other-kernel\""),
+            "the picked kernel should be written to the notebook, got: {saved}"
+        );
+        notebook_editor.read_with(cx, |notebook_editor, cx| {
+            assert!(
+                !notebook_editor.is_dirty(cx),
+                "saving should leave the notebook clean"
+            );
+        });
+
+        // Picking the kernel that is already running changes nothing.
+        notebook_editor.update_in(cx, |notebook_editor, window, cx| {
+            notebook_editor.change_kernel(other_kernel, window, cx);
+        });
+        notebook_editor.read_with(cx, |notebook_editor, cx| {
+            assert!(
+                !notebook_editor.is_dirty(cx),
+                "picking the running kernel again should not mark the notebook dirty"
             );
         });
     }
