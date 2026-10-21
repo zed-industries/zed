@@ -32,7 +32,7 @@ impl<T: Item + fmt::Debug, D: fmt::Debug> fmt::Debug for StackEntry<'_, T, D> {
 pub struct Cursor<'a, 'b, T: Item, D> {
     tree: &'a SumTree<T>,
     stack: ArrayVec<StackEntry<'a, T, D>, 16, u8>,
-    pub position: D,
+    position: D,
     did_seek: bool,
     at_end: bool,
     cx: <T::Summary as Summary>::Context<'b>,
