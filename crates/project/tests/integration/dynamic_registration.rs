@@ -3108,6 +3108,68 @@ async fn test_registration_pattern_scopes_capability_to_matching_documents(
     );
 }
 
+#[gpui::test]
+async fn test_registration_patterns_respect_globstar_and_character_class_separators(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let (project, fake_server) =
+        setup_dynamic_registration_test(cx, lsp::ServerCapabilities::default()).await;
+    let fs = project.read_with(cx, |project, _| project.fs().as_fake());
+    fs.insert_tree(
+        path!("/the-root"),
+        json!({ "a0b.rs": "", "a": { "b.rs": "" } }),
+    )
+    .await;
+
+    let (flat_buffer, _flat_lsp_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a0b.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let (nested_buffer, _nested_lsp_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a/b.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_triggers = |buffer: &Entity<Buffer>, cx: &mut gpui::TestAppContext| {
+        buffer.read_with(cx, |buffer, _| buffer.completion_triggers().clone())
+    };
+
+    let mut expected_flat_triggers = BTreeSet::new();
+    for (id, pattern, trigger) in [
+        ("completion-globstars", "**/the-root/**/**", "."),
+        ("completion-negated-class", "**/a[!x]b.rs", ":"),
+        ("completion-range-class", "**/a[.-0]b.rs", "!"),
+    ] {
+        register_capability(
+            &fake_server,
+            "textDocument/completion",
+            id,
+            Some(json!({
+                "documentSelector": [{ "language": "rust", "pattern": pattern }],
+                "triggerCharacters": [trigger],
+            })),
+        )
+        .await;
+        cx.executor().run_until_parked();
+
+        expected_flat_triggers.insert(trigger.to_string());
+        assert_eq!(
+            buffer_triggers(&flat_buffer, cx),
+            expected_flat_triggers,
+            "expected {pattern} to enable its trigger for the flat filename",
+        );
+        assert_eq!(
+            buffer_triggers(&nested_buffer, cx),
+            BTreeSet::from([".".to_string()]),
+            "expected only the globstar trigger for the nested path after registering {pattern}",
+        );
+    }
+}
+
 async fn setup_dynamic_registration_test(
     cx: &mut gpui::TestAppContext,
     capabilities: lsp::ServerCapabilities,

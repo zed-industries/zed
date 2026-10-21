@@ -15091,17 +15091,21 @@ fn document_filter_glob(pattern: &lsp::GlobPattern) -> (Option<&lsp::Uri>, &str)
 
 /// Compiles an LSP glob pattern into a regular expression matching paths with `/` separators.
 ///
-/// Follows the glob semantics of VS Code, which language servers are written against: `*` and `?`
-/// match characters (not bytes) within a path segment, a `**` segment matches any number of
-/// segments, `{a,b}` matches either sub-pattern, and `[a-z]` or `[!a-z]` matches a character in
-/// or out of a range.
+/// Uses LSP glob semantics: `*` and `?` match characters (not bytes) within a path segment,
+/// a `**` segment matches any number of segments, `{a,b}` matches either sub-pattern, and
+/// `[a-z]` or `[!a-z]` matches a character in or out of a range within a path segment.
+/// Unlike VS Code's parser, consecutive `**` segments are equivalent to one, and character
+/// classes cannot consume `/`, even when a negation or range would otherwise include it.
 fn document_filter_glob_matcher(glob: &str) -> Result<regex::Regex> {
     Ok(regex::Regex::new(&format!("^{}$", glob_regex(glob)?))?)
 }
 
 fn glob_regex(glob: &str) -> Result<String> {
     const GLOBSTAR: &str = "**";
-    let segments = split_glob(glob, '/');
+    let mut segments = split_glob(glob, '/');
+    segments.dedup_by(|segment, previous| {
+        segment.as_str() == GLOBSTAR && previous.as_str() == GLOBSTAR
+    });
     if segments.is_empty() {
         return Ok(String::new());
     }
@@ -15110,23 +15114,18 @@ fn glob_regex(glob: &str) -> Result<String> {
     }
 
     let mut regex = String::new();
-    let mut previous_segment_was_globstar = false;
     for (index, segment) in segments.iter().enumerate() {
         let is_last_segment = index + 1 == segments.len();
         if segment == GLOBSTAR {
-            if !previous_segment_was_globstar {
-                // Any number of segments, including the separators around them, and a last
-                // segment when nothing follows.
-                regex.push_str(if is_last_segment {
-                    "(?:/|[^/]+/|/[^/]+)*?"
-                } else {
-                    "(?:/|[^/]+/)*?"
-                });
-            }
-            previous_segment_was_globstar = true;
+            // Any number of segments, including the separators around them, and a last
+            // segment when nothing follows.
+            regex.push_str(if is_last_segment {
+                "(?:/|[^/]+/|/[^/]+)*?"
+            } else {
+                "(?:/|[^/]+/)*?"
+            });
             continue;
         }
-        previous_segment_was_globstar = false;
 
         let mut chars = segment.chars();
         while let Some(char) = chars.next() {
@@ -15154,15 +15153,13 @@ fn glob_regex(glob: &str) -> Result<String> {
                             Some(']') if !class.is_empty() => break,
                             Some('-') => class.push('-'),
                             Some('!' | '^') if class.is_empty() => class.push('^'),
-                            // Classes never match path separators.
-                            Some('/') => {}
                             Some(char) => {
                                 class.push_str(&regex::escape(char.encode_utf8(&mut [0; 4])))
                             }
                             None => anyhow::bail!("unclosed `[` in glob pattern {glob:?}"),
                         }
                     }
-                    regex.push_str(&format!("[{class}]"));
+                    regex.push_str(&format!("[[{class}]&&[^/]]"));
                 }
                 '?' => regex.push_str("[^/]"),
                 '*' => regex.push_str("[^/]*?"),
@@ -18123,6 +18120,74 @@ mod tests {
                 document_selector_matches(selector.as_ref(), &context),
                 expected,
                 "base {base_uri:?}, path {path:?}",
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn document_filter_globstar_runs_match_path_segments() -> Result<()> {
+        for (pattern, path, expected) in [
+            ("/root/**/**", "/root/a.rs", true),
+            ("/root/**/**", "/root/sub/a.rs", true),
+            ("/root/**/**", "/root", true),
+            ("/root/**/**", "/root/", true),
+            ("/root/**/**", "/rooted/a.rs", false),
+            ("/root/**/**/**", "/root/a.rs", true),
+            ("/root/**/**/a.rs", "/root/a.rs", true),
+            ("/root/**/**/a.rs", "/root/sub/a.rs", true),
+            ("/root/**/**/a.rs", "/root/sub/b.rs", false),
+            ("**/**/a.rs", "a.rs", true),
+            ("**/**/a.rs", "/root/sub/a.rs", true),
+            ("**/**", "", true),
+            ("**/**", "a.rs", true),
+            ("**/**", "/root/a.rs", true),
+            ("/root/root/**/**", "/root/a.rs", false),
+            ("/root/root/**/**", "/root/root/a.rs", true),
+            ("/root/**/**/{a.rs,b.rs}", "/root/b.rs", true),
+        ] {
+            let matcher = document_filter_glob_matcher(pattern)?;
+            assert_eq!(
+                matcher.is_match(path),
+                expected,
+                "pattern {pattern:?}, path {path:?}",
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn document_filter_character_classes_do_not_match_separators() -> Result<()> {
+        for (pattern, path, expected) in [
+            ("**/a[!x]b.rs", "/root/a/b.rs", false),
+            ("**/a[!x]b.rs", "/root/axb.rs", false),
+            ("**/a[!x]b.rs", "/root/a0b.rs", true),
+            ("**/a[!x]b.rs", "/root/aéb.rs", true),
+            ("**/a[.-0]b.rs", "/root/a/b.rs", false),
+            ("**/a[.-0]b.rs", "/root/a.b.rs", true),
+            ("**/a[.-0]b.rs", "/root/a0b.rs", true),
+            ("**/a[.-0]b.rs", "/root/a-b.rs", false),
+            ("**/a[/]b.rs", "/root/a/b.rs", false),
+            ("**/a[!/]b.rs", "/root/a/b.rs", false),
+            ("**/a[!/]b.rs", "/root/aéb.rs", true),
+            ("**/a[.-/]b.rs", "/root/a/b.rs", false),
+            ("**/a[.-/]b.rs", "/root/a.b.rs", true),
+            ("**/a[.-/]b.rs", "/root/a-b.rs", false),
+            ("**/a[/-0]b.rs", "/root/a/b.rs", false),
+            ("**/a[/-0]b.rs", "/root/a0b.rs", true),
+            ("**/a[/-0]b.rs", "/root/a-b.rs", false),
+            ("**/a[é]b.rs", "/root/aéb.rs", true),
+            ("**/a[!é]b.rs", "/root/aéb.rs", false),
+            ("**/a[!é]b.rs", "/root/a/b.rs", false),
+            ("**/a[[]b.rs", "/root/a[b.rs", true),
+            ("**/a[]]b.rs", "/root/a]b.rs", true),
+            ("**/a[x-]b.rs", "/root/a-b.rs", true),
+        ] {
+            let matcher = document_filter_glob_matcher(pattern)?;
+            assert_eq!(
+                matcher.is_match(path),
+                expected,
+                "pattern {pattern:?}, path {path:?}",
             );
         }
         Ok(())
