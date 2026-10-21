@@ -6024,6 +6024,16 @@ Available variables:
 }
 ```
 
+5. Files are grouped by their last extension (case-insensitive) in ascending order, with extensionless files, including dotfiles such as `.gitignore`, first. Dotfiles with a further suffix, such as `.config.json`, keep that extension. Files with the same extension are sorted by name using natural sort, and directories are placed according to `sort_mode`.
+
+```json [settings]
+{
+  "project_panel": {
+    "sort_order": "extension"
+  }
+}
+```
+
 ### Auto Open
 
 - Description: Control whether files are opened automatically after different creation flows in the project panel.
