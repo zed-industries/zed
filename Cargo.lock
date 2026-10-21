@@ -136,6 +136,7 @@ dependencies = [
 name = "acp_tools"
 version = "0.1.0"
 dependencies = [
+ "acp_thread",
  "agent-client-protocol",
  "agent_servers",
  "agent_ui",
@@ -382,6 +383,7 @@ dependencies = [
  "client",
  "collections",
  "env_logger 0.11.8",
+ "feature_flags",
  "fs",
  "futures 0.3.34",
  "gpui",
@@ -484,6 +486,7 @@ dependencies = [
  "fs",
  "futures 0.3.34",
  "fuzzy",
+ "fuzzy_nucleo",
  "git",
  "git_ui_core",
  "gpui",
@@ -551,6 +554,19 @@ dependencies = [
  "watch",
  "workspace",
  "zed_actions",
+]
+
+[[package]]
+name = "agent_ui_benchmarks"
+version = "0.1.0"
+dependencies = [
+ "collections",
+ "criterion",
+ "futures 0.3.34",
+ "fuzzy_nucleo",
+ "gpui",
+ "gpui_platform",
+ "ordered-float 5.5.0",
 ]
 
 [[package]]
@@ -6408,6 +6424,9 @@ dependencies = [
  "picker_preview",
  "pretty_assertions",
  "project",
+ "release_channel",
+ "remote",
+ "remote_server",
  "serde_json",
  "settings",
  "theme",
@@ -12370,11 +12389,14 @@ dependencies = [
 name = "opencode"
 version = "0.1.0"
 dependencies = [
+ "anthropic",
  "anyhow",
  "futures 0.3.34",
  "google_ai",
  "http_client",
  "language_model_core",
+ "log",
+ "open_ai",
  "schemars 1.0.4",
  "serde",
  "serde_json",
@@ -22562,7 +22584,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.26.0"
+version = "1.27.0"
 dependencies = [
  "acp_thread",
  "acp_tools",

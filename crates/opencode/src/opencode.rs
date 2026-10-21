@@ -11,6 +11,9 @@ use http_client::{
 use language_model_core::ReasoningEffort;
 use serde::{Deserialize, Serialize};
 
+pub mod catalog;
+pub mod completion;
+
 pub const OPENCODE_API_URL: &str = "https://opencode.ai/zen";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

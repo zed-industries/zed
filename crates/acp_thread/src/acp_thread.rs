@@ -983,6 +983,36 @@ impl AgentThreadEntry {
         }
     }
 
+    pub fn has_pending_markdown_render(&self, cx: &App) -> bool {
+        let has_pending_render =
+            |markdown: &Entity<Markdown>| markdown.read(cx).has_pending_render();
+        match self {
+            Self::UserMessage(message) => message.content.markdowns().any(has_pending_render),
+            Self::AssistantMessage(message) => message.chunks.iter().any(|chunk| {
+                let (AssistantMessageChunk::Message { block, .. }
+                | AssistantMessageChunk::Thought { block, .. }) = chunk;
+                block.markdowns().any(has_pending_render)
+            }),
+            Self::ToolCall(call) => {
+                has_pending_render(&call.label)
+                    || call
+                        .raw_input_markdown
+                        .as_ref()
+                        .is_some_and(has_pending_render)
+                    || call
+                        .content()
+                        .iter()
+                        .filter_map(ToolCallContent::markdown)
+                        .any(has_pending_render)
+            }
+            Self::ContextCompaction(compaction) => {
+                compaction.error.as_ref().is_some_and(has_pending_render)
+                    || compaction.summary.markdowns().any(has_pending_render)
+            }
+            Self::Elicitation(_) => false,
+        }
+    }
+
     pub fn to_markdown(&self, cx: &App) -> String {
         match self {
             Self::UserMessage(message) => message.to_markdown(cx),
@@ -1644,7 +1674,7 @@ impl ToolCall {
                     (Some(markdown), Some(text)) => update_markdown_in_place(markdown, &text, cx),
                     (_, Some(text)) => {
                         self.raw_input_markdown = Some(cx.new(|cx| {
-                            Markdown::new(text.into(), Some(language_registry.clone()), None, cx)
+                            Markdown::new_deferred(text, Some(language_registry.clone()), cx)
                         }));
                     }
                     (_, None) => self.raw_input_markdown = None,
@@ -1697,7 +1727,7 @@ impl ToolCall {
             update_markdown_in_place(markdown, &text, cx);
         } else {
             let markdown =
-                cx.new(|cx| Markdown::new(text.into(), Some(language_registry.clone()), None, cx));
+                cx.new(|cx| Markdown::new_deferred(text, Some(language_registry.clone()), cx));
             self.raw_output_content = Some(Box::new(ToolCallContent::ContentBlock {
                 block: ContentBlock::from_markdown(markdown),
                 meta: None,
@@ -2689,6 +2719,7 @@ impl ContentBlock {
                 MarkdownOptions {
                     render_mermaid_diagrams: true,
                     render_metadata_blocks: true,
+                    defer_parsing: true,
                     ..Default::default()
                 },
                 cx,
@@ -3095,13 +3126,12 @@ impl ToolCallContent {
                 meta: content.meta,
             },
             PreparedToolCallContent::LegacyDiff(source) => {
-                let diff = cx.new(|cx| {
+                let diff = cx.new(|_| {
                     Diff::finalized(
                         source.path.to_string_lossy().into_owned(),
                         source.old_text.clone(),
                         source.new_text.clone(),
                         language_registry.clone(),
-                        cx,
                     )
                 });
                 Self::LegacyDiff { source, diff }
@@ -3179,7 +3209,7 @@ impl ToolCallContent {
 
     pub fn to_markdown(&self, cx: &App) -> String {
         match self {
-            Self::ContentBlock { block, .. } => block.to_markdown(cx).to_string(),
+            Self::ContentBlock { block, .. } => block.to_markdown(cx).to_owned(),
             Self::Diff(diff) | Self::LegacyDiff { diff, .. } => diff.read(cx).to_markdown(cx),
             Self::Terminal { terminal, .. } => terminal.read(cx).to_markdown(cx),
             Self::DiffPatch { source, .. } => format!(
@@ -3459,6 +3489,8 @@ fn stop_reason_from_v1(reason: &acp_v1::StopReason) -> Option<acp_v2::StopReason
 pub struct AcpThread {
     session_info: AgentSessionInfo,
     parent_session_id: Option<acp_v2::SessionId>,
+    /// Child sessions this session owns, such as subagents, in registration order.
+    subagents: IndexMap<acp_v2::SessionId, Entity<AcpThread>>,
     provisional_title: Option<SharedString>,
     entries: Vec<AgentThreadEntry>,
     // Notices stay with the live session, but never enter conversation history or exports.
@@ -3623,7 +3655,8 @@ pub enum OutputTokensUpdate {
 #[derive(Debug)]
 pub enum AcpThreadEvent {
     StatusChanged,
-    /// Initial Idle confirmation is not a foreground completion.
+    /// Idle confirmed after unconfirmed or unknown activity, without completing
+    /// foreground work.
     ActivityConfirmedIdle,
     SubmissionUpdated(SubmissionId),
     PromptUpdated,
@@ -3639,6 +3672,7 @@ pub enum AcpThreadEvent {
     /// The request left `Pending`; this does not imply delivery to its response waiter.
     ElicitationResponded(ElicitationEntryId),
     Retry(RetryStatus),
+    /// A child session was registered; read it with [`AcpThread::subagent`].
     SubagentSpawned(acp_v2::SessionId),
     Stopped {
         activity_generation: u64,
@@ -3836,13 +3870,18 @@ impl AcpThread {
             next_notice_id: 0,
             elicitations: ElicitationStore::default(),
             permission_requests: IndexMap::default(),
+            subagents: IndexMap::default(),
             plans: HashMap::default(),
             visible_plan: None,
             provisional_title: None,
             project,
             running_turn: None,
             turn_id: 0,
-            submissions: SessionSubmissions::new(receipt_submissions),
+            submissions: SessionSubmissions::new(
+                receipt_submissions.map_or(SubmissionTransport::Completion, |transport| {
+                    SubmissionTransport::Receipt(transport)
+                }),
+            ),
             activity: SessionActivity::default(),
             received_session_state: false,
             reported_usage: None,
@@ -3867,6 +3906,15 @@ impl AcpThread {
             streaming_text_buffer: None,
             idle_sleep_prevention: IdleSleepPrevention::Inactive,
         }
+    }
+
+    /// Marks a session whose work the agent owns, such as an ACP subagent. Zed cannot
+    /// submit prompts to it, and its foreground state is unconfirmed until the agent
+    /// reports one.
+    pub fn agent_owned(mut self) -> Self {
+        self.submissions = SessionSubmissions::new(SubmissionTransport::AgentOwned);
+        self.activity.mark_unconfirmed();
+        self
     }
 
     pub fn parent_session_id(&self) -> Option<&acp_v2::SessionId> {
@@ -4050,14 +4098,23 @@ impl AcpThread {
 
     pub fn status(&self) -> ThreadStatus {
         match self.foreground_activity() {
-            ForegroundActivity::Unconfirmed => ThreadStatus::Unconfirmed,
+            ForegroundActivity::Unconfirmed | ForegroundActivity::Unknown => {
+                ThreadStatus::Unconfirmed
+            }
             ForegroundActivity::Idle => ThreadStatus::Idle,
-            _ => ThreadStatus::Generating,
+            ForegroundActivity::Running | ForegroundActivity::RequiresAction => {
+                ThreadStatus::Generating
+            }
         }
     }
 
+    /// Whether the agent reports this session's foreground state, rather than Zed
+    /// deriving it from its own prompt turns.
     pub fn uses_reported_activity(&self) -> bool {
-        self.submissions.receipt_transport().is_some()
+        !matches!(
+            self.submissions.transport(),
+            SubmissionTransport::Completion
+        )
     }
 
     pub fn foreground_state(&self) -> Option<&acp_v2::StateUpdate> {
@@ -4319,7 +4376,9 @@ impl AcpThread {
     ) -> Submission {
         let (sender, receiver) = oneshot::channel();
         let (disconnect_sender, disconnect_receiver) = self
-            .uses_reported_activity()
+            .submissions
+            .receipt_transport()
+            .is_some()
             .then(oneshot::channel::<()>)
             .unzip();
         let task = cx.spawn(async move |this, cx| {
@@ -4340,7 +4399,7 @@ impl AcpThread {
                 response => response,
             };
             let update = this.update(cx, |this, cx| {
-                if this.uses_reported_activity()
+                if this.submissions.receipt_transport().is_some()
                     && response.as_ref().err().is_some_and(|error| {
                         error.is::<SubmissionDisconnected>()
                             || error
@@ -4394,11 +4453,10 @@ impl AcpThread {
     }
 
     fn set_foreground_state(&mut self, state: acp_v2::StateUpdate, cx: &mut Context<Self>) {
-        let previous = self.foreground_activity();
+        let previous_generation = self.activity.generation();
         self.activity
             .update(state, self.entries.len().saturating_sub(1));
-        let current = self.foreground_activity();
-        if !previous.is_active() && current.is_active() {
+        if self.activity.generation() != previous_generation {
             self.had_error = false;
             self.local_execution_error = None;
         }
@@ -4437,7 +4495,7 @@ impl AcpThread {
             "Session does not report foreground state"
         );
         let previous = self.foreground_activity();
-        let was_active = previous.is_active();
+        let was_in_progress = self.activity.in_progress();
         self.received_session_state = true;
         self.set_foreground_state(state, cx);
         if let Some(acp_v2::StateUpdate::Idle(idle)) = self.activity.state() {
@@ -4462,7 +4520,7 @@ impl AcpThread {
                     ));
                 }
             }
-            if was_active {
+            if was_in_progress {
                 self.flush_streaming_text(cx);
                 self.shrink_message_source_capacity(self.activity.first_entry_index());
                 if self.parent_session_id.is_none() {
@@ -4488,7 +4546,11 @@ impl AcpThread {
         if previous != self.foreground_activity() {
             cx.emit(AcpThreadEvent::StatusChanged);
         }
-        if previous == ForegroundActivity::Unconfirmed
+        if !was_in_progress
+            && matches!(
+                previous,
+                ForegroundActivity::Unconfirmed | ForegroundActivity::Unknown
+            )
             && self.foreground_activity() == ForegroundActivity::Idle
         {
             cx.emit(AcpThreadEvent::ActivityConfirmedIdle);
@@ -4931,7 +4993,7 @@ impl AcpThread {
         previous_entry_count: usize,
         cx: &mut Context<Self>,
     ) {
-        if self.uses_reported_activity()
+        if self.submissions.receipt_transport().is_some()
             && let Some(AgentThreadEntry::UserMessage(message)) =
                 self.entries.get(location.entry_index())
             && let MessageIdentity::Keyed(id) = &message.identity
@@ -5514,8 +5576,24 @@ impl AcpThread {
         cx.emit(AcpThreadEvent::TitleUpdated);
     }
 
-    pub fn subagent_spawned(&mut self, session_id: acp_v2::SessionId, cx: &mut Context<Self>) {
+    /// Takes ownership of a child session. A session ID that is already registered
+    /// keeps its existing thread. Callers must not register this session or one of its
+    /// ancestors, since the registry holds children strongly.
+    pub fn register_subagent(&mut self, subagent: Entity<AcpThread>, cx: &mut Context<Self>) {
+        let session_id = subagent.read(cx).session_id().clone();
+        if self.subagents.contains_key(&session_id) {
+            return;
+        }
+        self.subagents.insert(session_id.clone(), subagent);
         cx.emit(AcpThreadEvent::SubagentSpawned(session_id));
+    }
+
+    pub fn subagent(&self, session_id: &acp_v2::SessionId) -> Option<&Entity<AcpThread>> {
+        self.subagents.get(session_id)
+    }
+
+    pub fn subagents(&self) -> impl Iterator<Item = &Entity<AcpThread>> {
+        self.subagents.values()
     }
 
     pub fn update_token_usage(&mut self, usage: Option<TokenUsage>, cx: &mut Context<Self>) {
@@ -6583,14 +6661,27 @@ impl AcpThread {
         push_user_message: bool,
         cx: &mut Context<Self>,
     ) -> Submission {
-        if let Some(submissions) = self.submissions.receipt_transport().cloned() {
-            let id = self.register_submission(message.clone().into(), cx);
-            let request = submissions.submit(message, cx);
-            self.track_receipt_submission(id, request, cx)
-        } else {
-            let id = self.register_submission(message.clone().into(), cx);
-            self.send_inner(id, message, push_user_message, cx)
+        let id = self.register_submission(message.clone().into(), cx);
+        match self.submissions.transport().clone() {
+            SubmissionTransport::Receipt(submissions) => {
+                let request = submissions.submit(message, cx);
+                self.track_receipt_submission(id, request, cx)
+            }
+            SubmissionTransport::Completion => self.send_inner(id, message, push_user_message, cx),
+            SubmissionTransport::AgentOwned => self.reject_agent_owned_submission(id, cx),
         }
+    }
+
+    fn reject_agent_owned_submission(
+        &mut self,
+        id: SubmissionId,
+        cx: &mut Context<Self>,
+    ) -> Submission {
+        self.track_submission(id, None, cx, async move |_, _| {
+            Err(anyhow!(
+                "The agent owns this session, so it does not accept prompts"
+            ))
+        })
     }
 
     pub fn submit_receipt(
@@ -6774,14 +6865,19 @@ impl AcpThread {
     }
 
     pub fn can_retry(&self, cx: &App) -> bool {
-        self.submissions.receipt_transport().map_or_else(
-            || self.connection.retry(self.session_id(), cx).is_some(),
-            |submissions| submissions.supports_retry(),
-        ) && self
-            .submissions
-            .latest_id()
-            .and_then(|id| self.submissions.get(id))
-            .is_none_or(|submission| self.validate_prompt_content(&submission.content).is_ok())
+        let supports_retry = match self.submissions.transport() {
+            SubmissionTransport::Receipt(submissions) => submissions.supports_retry(),
+            SubmissionTransport::Completion => {
+                self.connection.retry(self.session_id(), cx).is_some()
+            }
+            SubmissionTransport::AgentOwned => false,
+        };
+        supports_retry
+            && self
+                .submissions
+                .latest_id()
+                .and_then(|id| self.submissions.get(id))
+                .is_none_or(|submission| self.validate_prompt_content(&submission.content).is_ok())
     }
 
     pub fn retry(&mut self, cx: &mut Context<Self>) -> Submission {
@@ -6795,9 +6891,15 @@ impl AcpThread {
         if let Err(error) = self.validate_prompt_content(&content) {
             return self.track_submission(id, None, cx, async move |_, _| Err(error));
         }
-        if let Some(submissions) = self.submissions.receipt_transport() {
-            let request = submissions.retry(cx);
-            return self.track_receipt_submission(id, request, cx);
+        match self.submissions.transport() {
+            SubmissionTransport::Receipt(submissions) => {
+                let request = submissions.retry(cx);
+                return self.track_receipt_submission(id, request, cx);
+            }
+            SubmissionTransport::AgentOwned => {
+                return self.reject_agent_owned_submission(id, cx);
+            }
+            SubmissionTransport::Completion => {}
         }
         self.run_turn(id, cx, async move |this, cx| {
             this.update(cx, |this, cx| {
@@ -8027,7 +8129,7 @@ fn markdown_for_raw_output(
     cx: &mut App,
 ) -> Option<Entity<Markdown>> {
     let text = raw_output_text(raw_output)?;
-    Some(cx.new(|cx| Markdown::new(text.into(), Some(language_registry.clone()), None, cx)))
+    Some(cx.new(|cx| Markdown::new_deferred(text, Some(language_registry.clone()), cx)))
 }
 
 fn raw_output_text(raw_output: &serde_json::Value) -> Option<String> {
@@ -9677,13 +9779,12 @@ mod tests {
             };
             assert_eq!(source.path, PathBuf::from("second.rs"));
             assert_ne!(diff, &previous);
-            let native_diff = cx.new(|cx| {
+            let native_diff = cx.new(|_| {
                 Diff::finalized(
                     "native.rs".into(),
                     Some("before".into()),
                     "after".into(),
                     languages.clone(),
-                    cx,
                 )
             });
             let mut native = ToolCallContent::Diff(native_diff.clone());
@@ -11295,6 +11396,160 @@ mod tests {
             .await
             .expect("receipt session should be created");
         (thread, connection)
+    }
+
+    async fn new_agent_owned_test_thread(cx: &mut TestAppContext) -> Entity<AcpThread> {
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let connection = Rc::new(StubAgentConnection::new());
+        cx.update(|cx| {
+            let action_log = cx.new(|_| ActionLog::new(project.clone()));
+            cx.new(|cx| {
+                AcpThread::new(
+                    Some(acp_v2::SessionId::new("parent")),
+                    None,
+                    None,
+                    connection,
+                    project,
+                    action_log,
+                    acp_v2::SessionId::new("child"),
+                    watch::Receiver::constant(acp_v2::PromptCapabilities::new()),
+                    cx,
+                )
+                .agent_owned()
+            })
+        })
+    }
+
+    #[gpui::test]
+    async fn test_agent_owned_sessions_report_activity_without_accepting_prompts(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let thread = new_agent_owned_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            assert!(thread.uses_reported_activity());
+            assert_eq!(
+                thread.foreground_activity(),
+                ForegroundActivity::Unconfirmed
+            );
+            assert!(!thread.can_retry(cx));
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                    cx,
+                )
+                .expect("agent-owned sessions accept reported state");
+            assert_eq!(thread.status(), ThreadStatus::Generating);
+        });
+
+        let submission = thread.update(cx, |thread, cx| thread.send(vec!["prompt".into()], cx));
+        let submission_id = submission.id;
+        cx.run_until_parked();
+        assert!(submission.await.is_err());
+        thread.read_with(cx, |thread, _| {
+            assert!(matches!(
+                thread
+                    .submission(submission_id)
+                    .expect("rejected prompt")
+                    .state,
+                SubmissionState::Failed(_)
+            ));
+        });
+
+        let retry = thread.update(cx, |thread, cx| thread.retry(cx));
+        cx.run_until_parked();
+        assert!(retry.await.is_err());
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.entries().is_empty());
+            assert!(thread.running_turn.is_none());
+            assert_eq!(thread.foreground_activity(), ForegroundActivity::Running);
+            assert_eq!(thread.activity_generation(), 1);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_unknown_activity_is_unconfirmed_without_ending_work(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (thread, _) = new_receipt_test_thread(cx).await;
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&thread, {
+                let events = events.clone();
+                move |_, event, _| match event {
+                    AcpThreadEvent::Stopped {
+                        activity_generation,
+                        stop_reason,
+                        ..
+                    } => events.borrow_mut().push(format!(
+                        "stopped {activity_generation} {}",
+                        matches!(stop_reason, Some(acp_v2::StopReason::Error(_)))
+                    )),
+                    AcpThreadEvent::ActivityConfirmedIdle => {
+                        events.borrow_mut().push("confirmed idle".to_string())
+                    }
+                    _ => {}
+                }
+            })
+        });
+        let running = || acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new());
+        let unknown = || acp_v2::StateUpdate::Unknown(acp_v2::UnknownStateUpdate::new());
+
+        thread.update(cx, |thread, cx| {
+            thread.update_session_state(running(), cx).expect("running");
+        });
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+
+        thread.update(cx, |thread, cx| {
+            thread.update_session_state(unknown(), cx).expect("unknown");
+            assert_eq!(thread.foreground_activity(), ForegroundActivity::Unknown);
+            assert_eq!(thread.status(), ThreadStatus::Unconfirmed);
+            assert!(!thread.is_waiting_for_confirmation());
+        });
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(running(), cx)
+                .expect("running again");
+            assert_eq!(
+                thread.activity_generation(),
+                1,
+                "unknown must not end the work that was in progress"
+            );
+            thread
+                .update_session_state(unknown(), cx)
+                .expect("unknown again");
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Idle(
+                        acp_v2::IdleStateUpdate::new()
+                            .stop_reason(acp_v2::StopReason::Error(acp_v2::ErrorStopReason::new())),
+                    ),
+                    cx,
+                )
+                .expect("failed idle");
+            assert!(thread.had_error());
+        });
+        cx.run_until_parked();
+        assert_eq!(*events.borrow(), ["stopped 1 true"]);
+
+        events.borrow_mut().clear();
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(unknown(), cx)
+                .expect("unknown while idle");
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new()),
+                    cx,
+                )
+                .expect("idle");
+            assert_eq!(thread.activity_generation(), 1);
+        });
+        cx.run_until_parked();
+        assert_eq!(*events.borrow(), ["confirmed idle"]);
     }
 
     #[gpui::test]
@@ -14847,6 +15102,12 @@ mod tests {
                     thread.to_markdown(cx),
                     format!("## Context Compaction (Completed)\n\n{summary}\n\n")
                 );
+                let entry = thread.entries.last().expect("compaction entry must exist");
+                assert!(!entry.has_pending_markdown_render(cx));
+                for markdown in compaction.summary.markdowns() {
+                    markdown.update(cx, |markdown, cx| markdown.ensure_parsed(cx));
+                }
+                assert!(entry.has_pending_markdown_render(cx));
             }
 
             thread
@@ -14878,6 +15139,13 @@ mod tests {
             assert_eq!(
                 thread.to_markdown(cx),
                 "## Context Compaction (Failed)\n\n**Error:** model unavailable\n\n"
+            );
+            assert!(
+                thread
+                    .entries
+                    .last()
+                    .expect("compaction entry must exist")
+                    .has_pending_markdown_render(cx)
             );
 
             for error in [
@@ -22427,6 +22695,65 @@ mod tests {
                 assert_eq!(cx.active_idle_sleep_preventions(), 0);
             }
         }
+    }
+
+    #[gpui::test]
+    async fn test_register_subagent_keeps_the_first_thread_for_a_session(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (parent, connection) = new_receipt_test_thread(cx).await;
+        let parent_session_id = parent.read_with(cx, |thread, _| thread.session_id().clone());
+        let new_child = |session_id: &str, cx: &mut TestAppContext| {
+            let connection = connection.clone();
+            let parent_session_id = parent_session_id.clone();
+            let project = parent.read_with(cx, |thread, _| thread.project().clone());
+            let session_id = acp_v2::SessionId::new(session_id);
+            cx.update(|cx| {
+                let action_log = cx.new(|_| ActionLog::new(project.clone()));
+                cx.new(|cx| {
+                    AcpThread::new(
+                        Some(parent_session_id),
+                        None,
+                        None,
+                        connection,
+                        project,
+                        action_log,
+                        session_id,
+                        watch::Receiver::constant(acp_v2::PromptCapabilities::new()),
+                        cx,
+                    )
+                })
+            })
+        };
+        let first = new_child("child", cx);
+        let duplicate = new_child("child", cx);
+        let other = new_child("other", cx);
+        let spawned = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&parent, {
+                let spawned = spawned.clone();
+                move |_, event, _| {
+                    if let AcpThreadEvent::SubagentSpawned(session_id) = event {
+                        spawned.borrow_mut().push(session_id.to_string());
+                    }
+                }
+            })
+        });
+
+        parent.update(cx, |parent, cx| {
+            parent.register_subagent(first.clone(), cx);
+            parent.register_subagent(duplicate.clone(), cx);
+            parent.register_subagent(other.clone(), cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(*spawned.borrow(), ["child", "other"]);
+        parent.read_with(cx, |parent, _| {
+            assert_eq!(
+                parent.subagent(&acp_v2::SessionId::new("child")),
+                Some(&first)
+            );
+            assert_eq!(parent.subagents().collect::<Vec<_>>(), [&first, &other]);
+        });
     }
 
     #[gpui::test]
