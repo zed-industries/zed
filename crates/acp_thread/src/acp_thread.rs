@@ -3459,6 +3459,8 @@ fn stop_reason_from_v1(reason: &acp_v1::StopReason) -> Option<acp_v2::StopReason
 pub struct AcpThread {
     session_info: AgentSessionInfo,
     parent_session_id: Option<acp_v2::SessionId>,
+    /// Child sessions this session owns, such as subagents, in registration order.
+    subagents: IndexMap<acp_v2::SessionId, Entity<AcpThread>>,
     provisional_title: Option<SharedString>,
     entries: Vec<AgentThreadEntry>,
     // Notices stay with the live session, but never enter conversation history or exports.
@@ -3639,6 +3641,7 @@ pub enum AcpThreadEvent {
     /// The request left `Pending`; this does not imply delivery to its response waiter.
     ElicitationResponded(ElicitationEntryId),
     Retry(RetryStatus),
+    /// A child session was registered; read it with [`AcpThread::subagent`].
     SubagentSpawned(acp_v2::SessionId),
     Stopped {
         activity_generation: u64,
@@ -3836,6 +3839,7 @@ impl AcpThread {
             next_notice_id: 0,
             elicitations: ElicitationStore::default(),
             permission_requests: IndexMap::default(),
+            subagents: IndexMap::default(),
             plans: HashMap::default(),
             visible_plan: None,
             provisional_title: None,
@@ -5514,8 +5518,24 @@ impl AcpThread {
         cx.emit(AcpThreadEvent::TitleUpdated);
     }
 
-    pub fn subagent_spawned(&mut self, session_id: acp_v2::SessionId, cx: &mut Context<Self>) {
+    /// Takes ownership of a child session. A session ID that is already registered
+    /// keeps its existing thread. Callers must not register this session or one of its
+    /// ancestors, since the registry holds children strongly.
+    pub fn register_subagent(&mut self, subagent: Entity<AcpThread>, cx: &mut Context<Self>) {
+        let session_id = subagent.read(cx).session_id().clone();
+        if self.subagents.contains_key(&session_id) {
+            return;
+        }
+        self.subagents.insert(session_id.clone(), subagent);
         cx.emit(AcpThreadEvent::SubagentSpawned(session_id));
+    }
+
+    pub fn subagent(&self, session_id: &acp_v2::SessionId) -> Option<&Entity<AcpThread>> {
+        self.subagents.get(session_id)
+    }
+
+    pub fn subagents(&self) -> impl Iterator<Item = &Entity<AcpThread>> {
+        self.subagents.values()
     }
 
     pub fn update_token_usage(&mut self, usage: Option<TokenUsage>, cx: &mut Context<Self>) {
@@ -22427,6 +22447,65 @@ mod tests {
                 assert_eq!(cx.active_idle_sleep_preventions(), 0);
             }
         }
+    }
+
+    #[gpui::test]
+    async fn test_register_subagent_keeps_the_first_thread_for_a_session(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (parent, connection) = new_receipt_test_thread(cx).await;
+        let parent_session_id = parent.read_with(cx, |thread, _| thread.session_id().clone());
+        let new_child = |session_id: &str, cx: &mut TestAppContext| {
+            let connection = connection.clone();
+            let parent_session_id = parent_session_id.clone();
+            let project = parent.read_with(cx, |thread, _| thread.project().clone());
+            let session_id = acp_v2::SessionId::new(session_id);
+            cx.update(|cx| {
+                let action_log = cx.new(|_| ActionLog::new(project.clone()));
+                cx.new(|cx| {
+                    AcpThread::new(
+                        Some(parent_session_id),
+                        None,
+                        None,
+                        connection,
+                        project,
+                        action_log,
+                        session_id,
+                        watch::Receiver::constant(acp_v2::PromptCapabilities::new()),
+                        cx,
+                    )
+                })
+            })
+        };
+        let first = new_child("child", cx);
+        let duplicate = new_child("child", cx);
+        let other = new_child("other", cx);
+        let spawned = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&parent, {
+                let spawned = spawned.clone();
+                move |_, event, _| {
+                    if let AcpThreadEvent::SubagentSpawned(session_id) = event {
+                        spawned.borrow_mut().push(session_id.to_string());
+                    }
+                }
+            })
+        });
+
+        parent.update(cx, |parent, cx| {
+            parent.register_subagent(first.clone(), cx);
+            parent.register_subagent(duplicate.clone(), cx);
+            parent.register_subagent(other.clone(), cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(*spawned.borrow(), ["child", "other"]);
+        parent.read_with(cx, |parent, _| {
+            assert_eq!(
+                parent.subagent(&acp_v2::SessionId::new("child")),
+                Some(&first)
+            );
+            assert_eq!(parent.subagents().collect::<Vec<_>>(), [&first, &other]);
+        });
     }
 
     #[gpui::test]
