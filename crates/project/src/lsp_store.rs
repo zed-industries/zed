@@ -15240,15 +15240,7 @@ fn glob_regex(glob: &str) -> Result<String> {
             match char {
                 '[' => {
                     let end = glob_character_class_end(segment, &mut chars)?;
-                    let mut class = String::new();
-                    for char in segment[index + 1..end - 1].chars() {
-                        match char {
-                            '-' => class.push('-'),
-                            '!' | '^' if class.is_empty() => class.push('^'),
-                            char => class.push_str(&regex::escape(char.encode_utf8(&mut [0; 4]))),
-                        }
-                    }
-                    regex.push_str(&format!("[[{class}]&&[^/]]"));
+                    regex.push_str(&glob_character_class_regex(&segment[index + 1..end - 1]));
                 }
                 '?' => regex.push_str("[^/]"),
                 '*' => regex.push_str("[^/]*?"),
@@ -15266,6 +15258,35 @@ fn glob_regex(glob: &str) -> Result<String> {
         }
     }
     Ok(regex)
+}
+
+/// Members are escaped and only a `-` between two members forms a range, as in the JavaScript
+/// regular expressions VS Code compiles classes into, so a `-` endpoint (e.g. `[--0]`) keeps
+/// its meaning instead of being reinterpreted by the regex parser.
+fn glob_character_class_regex(members: &str) -> String {
+    let push_member = |class: &mut String, member: char| {
+        class.push_str(&regex::escape(member.encode_utf8(&mut [0; 4])));
+    };
+    let mut class = String::new();
+    let mut members = match members.strip_prefix(['!', '^']) {
+        Some(members) => {
+            class.push('^');
+            members.chars()
+        }
+        None => members.chars(),
+    };
+    while let Some(member) = members.next() {
+        push_member(&mut class, member);
+        let mut lookahead = members.clone();
+        if lookahead.next() == Some('-')
+            && let Some(range_end) = lookahead.next()
+        {
+            class.push('-');
+            push_member(&mut class, range_end);
+            members = lookahead;
+        }
+    }
+    format!("[[{class}]&&[^/]]")
 }
 
 /// Splits a brace-expanded glob without interpreting separators inside character classes.
@@ -18552,13 +18573,32 @@ mod tests {
         assert!(matches("**/[a-c].rs", "/root/b.rs"));
         assert!(!matches("**/[a-c].rs", "/root/d.rs"));
 
+        // A `-` is a range operator only between two members; elsewhere it is literal.
+        assert!(matches("**/[--0].rs", "/root/..rs"));
+        assert!(!matches("**/[!--0].rs", "/root/..rs"));
+        assert!(matches("**/[!--0].rs", "/root/a.rs"));
+        assert!(matches("**/[-a].rs", "/root/-.rs"));
+        assert!(!matches("**/[-a].rs", "/root/b.rs"));
+        assert!(matches("**/[a-].rs", "/root/-.rs"));
+        assert!(matches("**/[!-a].rs", "/root/b.rs"));
+        assert!(!matches("**/[!-a].rs", "/root/-.rs"));
+        assert!(matches("**/[a-c-e].rs", "/root/-.rs"));
+        assert!(matches("**/[a-c-e].rs", "/root/e.rs"));
+        assert!(!matches("**/[a-c-e].rs", "/root/d.rs"));
+
         assert!(matches("/root/**", "/root/sub/a.rs"));
         assert!(matches("/root/**/a.rs", "/root/a.rs"));
         assert!(matches("/root/**/a.rs", "/root/sub/a.rs"));
         assert!(!matches("/root/**/a.rs", "/rooted/a.rs"));
         assert!(!matches("/root/*.rs", "/root/sub/a.rs"));
 
-        for invalid_pattern in ["**/[a.rs", "**/{a,b.rs", "**/{[}],a.rs", "**/{a,{b,c}"] {
+        for invalid_pattern in [
+            "**/[a.rs",
+            "**/{a,b.rs",
+            "**/{[}],a.rs",
+            "**/{a,{b,c}",
+            "**/[0--].rs",
+        ] {
             assert!(
                 validate_document_filter_pattern(&lsp::GlobPattern::String(
                     invalid_pattern.to_string()
