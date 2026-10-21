@@ -493,7 +493,7 @@ impl LspStore {
         let server = self
             .language_server_for_id(server_id)
             .with_context(|| format!("no server {server_id} found"))?;
-        for reg in params.registrations {
+        let mut register_capability = |reg: lsp::Registration| -> Result<()> {
             match reg.method.as_str() {
                 "workspace/didChangeWatchedFiles" => {
                     if let Some(options) = reg.register_options {
@@ -1037,6 +1037,26 @@ impl LspStore {
                 }
                 _ => log::warn!("unhandled capability registration: {reg:?}"),
             }
+            Ok(())
+        };
+
+        // Keep valid siblings even when a batch is partially invalid, but report its failures
+        // to the server rather than acknowledging the whole batch as successful.
+        let mut registration_errors = Vec::new();
+        for registration in params.registrations {
+            let method = registration.method.clone();
+            let registration_id = registration.id.clone();
+            if let Err(error) = register_capability(registration) {
+                registration_errors.push(format!(
+                    "server {server_id}, method {method}, registration {registration_id:?}: {error:#}"
+                ));
+            }
+        }
+        if !registration_errors.is_empty() {
+            anyhow::bail!(
+                "Failed to register server capabilities:\n{}",
+                registration_errors.join("\n")
+            );
         }
 
         Ok(())

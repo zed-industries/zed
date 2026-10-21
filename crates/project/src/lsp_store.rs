@@ -1122,23 +1122,15 @@ impl LocalLspStore {
                     let lsp_store = lsp_store.clone();
                     let mut cx = cx.clone();
                     async move {
-                        lsp_store
-                            .update(&mut cx, |lsp_store, cx| {
-                                if lsp_store.as_local().is_some() {
-                                    match lsp_store
-                                        .register_server_capabilities(server_id, params, cx)
-                                    {
-                                        Ok(()) => {}
-                                        Err(e) => {
-                                            log::error!(
-                                                "Failed to register server capabilities: {e:#}"
-                                            );
-                                        }
-                                    };
-                                }
-                            })
-                            .ok();
-                        Ok(())
+                        lsp_store.update(&mut cx, |lsp_store, cx| {
+                            if lsp_store.as_local().is_some() {
+                                lsp_store
+                                    .register_server_capabilities(server_id, params, cx)
+                                    .inspect_err(|error| log::error!("{error:#}"))
+                            } else {
+                                Ok(())
+                            }
+                        })?
                     }
                 }
             })

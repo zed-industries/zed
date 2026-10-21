@@ -3068,16 +3068,24 @@ async fn test_registration_pattern_scopes_capability_to_matching_documents(
         buffer.read_with(cx, |buffer, _| buffer.completion_triggers().clone())
     };
 
-    register_capability(
+    let error = register_capabilities(
         &fake_server,
-        method,
-        "completion-invalid-pattern",
-        Some(json!({
-            "documentSelector": [{ "language": "rust", "pattern": "**/[a.rs" }],
-            "triggerCharacters": [":"],
-        })),
+        vec![lsp::Registration {
+            id: "completion-invalid-pattern".to_string(),
+            method: method.to_string(),
+            register_options: Some(json!({
+                "documentSelector": [{ "language": "rust", "pattern": "**/[a.rs" }],
+                "triggerCharacters": [":"],
+            })),
+        }],
     )
-    .await;
+    .await
+    .expect_err("an invalid selector pattern should produce an error response");
+    assert!(
+        error
+            .to_string()
+            .contains("invalid document filter pattern")
+    );
     cx.executor().run_until_parked();
     assert_eq!(
         server_capabilities(&project, fake_server.server.server_id(), cx).completion_provider,
@@ -3106,6 +3114,207 @@ async fn test_registration_pattern_scopes_capability_to_matching_documents(
         BTreeSet::new(),
         "expected the registration not to apply to a document outside its pattern",
     );
+}
+
+#[gpui::test]
+async fn test_registration_batch_applies_valid_siblings_and_reports_errors(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let (project, fake_server) =
+        setup_dynamic_registration_test(cx, lsp::ServerCapabilities::default()).await;
+    let server_id = fake_server.server.server_id();
+    let (buffer, _lsp_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let (events, _subscription) = observe_refresh_events(&project, cx);
+    let mut registrations = vec![
+        lsp::Registration {
+            id: "hover-valid".to_string(),
+            method: "textDocument/hover".to_string(),
+            register_options: None,
+        },
+        lsp::Registration {
+            id: "completion-invalid".to_string(),
+            method: "textDocument/completion".to_string(),
+            register_options: Some(json!({
+                "documentSelector": [{ "language": "rust", "pattern": "**/[a.rs" }],
+                "triggerCharacters": ["."],
+            })),
+        },
+        lsp::Registration {
+            id: "formatting-valid".to_string(),
+            method: "textDocument/formatting".to_string(),
+            register_options: None,
+        },
+        lsp::Registration {
+            id: "code-lens-invalid".to_string(),
+            method: "textDocument/codeLens".to_string(),
+            register_options: Some(json!({
+                "documentSelector": [{ "language": "rust", "pattern": "**/[b.rs" }],
+                "resolveProvider": true,
+            })),
+        },
+    ];
+
+    let error = register_capabilities(&fake_server, registrations.clone())
+        .await
+        .expect_err("a mixed registration batch should produce an error response")
+        .to_string();
+    for (method, registration_id, pattern) in [
+        ("textDocument/completion", "completion-invalid", "**/[a.rs"),
+        ("textDocument/codeLens", "code-lens-invalid", "**/[b.rs"),
+    ] {
+        assert!(
+            error.contains(&format!(
+                "server {server_id}, method {method}, registration {registration_id:?}"
+            )),
+            "expected the failed registration's context in {error}",
+        );
+        assert!(
+            error.contains(pattern),
+            "expected the failed registration's pattern in {error}",
+        );
+    }
+    cx.executor().run_until_parked();
+
+    let capabilities = server_capabilities(&project, server_id, cx);
+    assert_eq!(
+        capabilities.hover_provider,
+        Some(lsp::HoverProviderCapability::Simple(true)),
+    );
+    assert_eq!(capabilities.completion_provider, None);
+    assert_eq!(
+        capabilities.document_formatting_provider,
+        Some(lsp::OneOf::Left(true)),
+    );
+    assert_eq!(capabilities.code_lens_provider, None);
+    buffer.read_with(cx, |buffer, _| {
+        assert!(buffer.completion_triggers().is_empty());
+    });
+    assert!(
+        events.lock().is_empty(),
+        "a failed registration must not trigger its refresh followup",
+    );
+
+    for registration in &mut registrations {
+        if let Some(options) = registration.register_options.as_mut() {
+            options["documentSelector"] = json!([{ "language": "rust", "pattern": "**/a.rs" }]);
+        }
+    }
+    register_capabilities(&fake_server, registrations)
+        .await
+        .expect("an all-valid registration batch should produce a success response");
+    cx.executor().run_until_parked();
+
+    let capabilities = server_capabilities(&project, server_id, cx);
+    assert_eq!(
+        capabilities.completion_provider,
+        Some(lsp::CompletionOptions {
+            trigger_characters: Some(vec![".".to_string()]),
+            ..lsp::CompletionOptions::default()
+        }),
+    );
+    assert_eq!(
+        capabilities.code_lens_provider,
+        Some(lsp::CodeLensOptions {
+            resolve_provider: Some(true),
+        }),
+    );
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(
+            buffer.completion_triggers(),
+            &BTreeSet::from([".".to_string()]),
+        );
+    });
+    assert_eq!(*events.lock(), vec![format!("code_lens({server_id})")]);
+}
+
+#[gpui::test]
+async fn test_invalid_registration_pattern_preserves_previous_registration(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let (project, fake_server) =
+        setup_dynamic_registration_test(cx, lsp::ServerCapabilities::default()).await;
+    let server_id = fake_server.server.server_id();
+    let (buffer, _lsp_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let method = "textDocument/completion";
+    let registration_id = "completion-a";
+    register_capability(
+        &fake_server,
+        method,
+        registration_id,
+        Some(json!({
+            "documentSelector": [{ "language": "rust", "pattern": "**/a.rs" }],
+            "triggerCharacters": ["."],
+        })),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    let previous_capabilities = server_capabilities(&project, server_id, cx);
+
+    let error = register_capabilities(
+        &fake_server,
+        vec![lsp::Registration {
+            id: registration_id.to_string(),
+            method: method.to_string(),
+            register_options: Some(json!({
+                "documentSelector": [{ "language": "rust", "pattern": "**/[a.rs" }],
+                "triggerCharacters": [":"],
+            })),
+        }],
+    )
+    .await
+    .expect_err("an invalid replacement should produce an error response");
+    assert!(
+        error
+            .to_string()
+            .contains("invalid document filter pattern")
+    );
+    cx.executor().run_until_parked();
+    assert_eq!(
+        server_capabilities(&project, server_id, cx),
+        previous_capabilities,
+    );
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(
+            buffer.completion_triggers(),
+            &BTreeSet::from([".".to_string()]),
+        );
+    });
+
+    let fs = project.read_with(cx, |project, _| project.fs().as_fake());
+    fs.insert_tree(
+        path!("/the-root"),
+        json!({ "nested": { "a.rs": "", "b.rs": "" } }),
+    )
+    .await;
+    for (path, expected_triggers) in [
+        (
+            path!("/the-root/nested/a.rs"),
+            BTreeSet::from([".".to_string()]),
+        ),
+        (path!("/the-root/nested/b.rs"), BTreeSet::new()),
+    ] {
+        let (new_buffer, _lsp_handle) = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer_with_lsp(path, cx)
+            })
+            .await
+            .unwrap();
+        new_buffer.read_with(cx, |buffer, _| {
+            assert_eq!(buffer.completion_triggers(), &expected_triggers);
+        });
+    }
 }
 
 #[gpui::test]
@@ -3210,20 +3419,29 @@ async fn register_capability(
     id: &str,
     register_options: Option<serde_json::Value>,
 ) {
+    register_capabilities(
+        fake_server,
+        vec![lsp::Registration {
+            id: id.to_string(),
+            method: method.to_string(),
+            register_options,
+        }],
+    )
+    .await
+    .unwrap();
+}
+
+async fn register_capabilities(
+    fake_server: &lsp::FakeLanguageServer,
+    registrations: Vec<lsp::Registration>,
+) -> anyhow::Result<()> {
     fake_server
         .request::<lsp::request::RegisterCapability>(
-            lsp::RegistrationParams {
-                registrations: vec![lsp::Registration {
-                    id: id.to_string(),
-                    method: method.to_string(),
-                    register_options,
-                }],
-            },
+            lsp::RegistrationParams { registrations },
             DEFAULT_LSP_REQUEST_TIMEOUT,
         )
         .await
         .into_response()
-        .unwrap();
 }
 
 async fn unregister_capabilities(
