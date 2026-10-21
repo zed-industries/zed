@@ -18039,6 +18039,87 @@ mod tests {
         ));
     }
 
+    #[cfg(unix)]
+    #[gpui::test]
+    fn document_selector_pattern_matches_windows_remote_worktree(cx: &mut TestAppContext) {
+        assert_eq!(PathStyle::local(), PathStyle::Unix);
+        let worktree = cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            Worktree::remote(
+                1,
+                clock::ReplicaId::new(1),
+                proto::WorktreeMetadata {
+                    id: 1,
+                    root_name: "repo".to_string(),
+                    visible: true,
+                    abs_path: r"C:\repo".to_string(),
+                    ..Default::default()
+                },
+                AnyProtoClient::new(rpc::NoopProtoClient::new()),
+                PathStyle::Windows,
+                cx,
+            )
+        });
+        cx.read(|cx| {
+            let file = File::from_proto(
+                proto::File {
+                    worktree_id: 1,
+                    path: "sub/Project.toml".to_string(),
+                    ..Default::default()
+                },
+                worktree.clone(),
+                cx,
+            )
+            .expect("valid remote file");
+            assert!(worktree.read(cx).as_remote().is_some());
+            assert!(!file.is_local);
+            assert_eq!(
+                file.abs_path(cx),
+                PathBuf::from(r"C:\repo\sub\Project.toml")
+            );
+            let context = toml_file_context(DocumentSelectorPath::for_file(&file, cx));
+            match &context.path {
+                DocumentSelectorPath::Present { path, path_style } => {
+                    assert_eq!(path, "C:/repo/sub/Project.toml");
+                    assert_eq!(*path_style, PathStyle::Windows);
+                }
+                path => panic!("expected the remote file's absolute path, got {path:?}"),
+            }
+            for (pattern, expected) in [
+                ("c:/repo/**/Project.toml", true),
+                ("c:/repo/**/Manifest.toml", false),
+                ("d:/repo/**/Project.toml", false),
+            ] {
+                let selector =
+                    pattern_selector(Some("toml"), lsp::GlobPattern::String(pattern.to_string()));
+                assert_eq!(
+                    document_selector_matches(selector.as_ref(), &context),
+                    expected,
+                    "string pattern {pattern:?}",
+                );
+            }
+            for (base_uri, expected) in [
+                ("file:///c%3A/repo", true),
+                ("file:///d%3A/repo", false),
+                ("file:///c%3A/rep", false),
+            ] {
+                let selector = pattern_selector(
+                    Some("toml"),
+                    lsp::GlobPattern::Relative(lsp::RelativePattern {
+                        base_uri: OneOf::Right(base_uri.parse().expect("valid Windows file URI")),
+                        pattern: "sub/*.toml".to_string(),
+                    }),
+                );
+                assert_eq!(
+                    document_selector_matches(selector.as_ref(), &context),
+                    expected,
+                    "relative pattern base {base_uri:?}",
+                );
+            }
+        });
+    }
+
     #[test]
     fn document_selector_pattern_matches_paths_in_the_host_path_style() {
         // Remote clients match the paths of hosts with another path style than their own.
