@@ -15093,10 +15093,21 @@ const DOCUMENT_FILTER_GLOB_MAX_BYTES: usize = 1024 * 1024;
 /// Unlike VS Code's parser, consecutive `**` segments are equivalent to one, and character
 /// classes cannot consume `/`, even when a negation or range would otherwise include it.
 fn document_filter_glob_matcher(glob: &str) -> Result<regex::Regex> {
+    compile_document_filter_glob(glob, false)
+}
+
+/// With `normalize_drive_letters`, the drive letters of absolute Windows paths are lowercased
+/// in each alternative after brace expansion, as braces can enclose or even produce them.
+fn compile_document_filter_glob(glob: &str, normalize_drive_letters: bool) -> Result<regex::Regex> {
     let mut regex = String::from("^(?:");
     // Expand complete paths so `**` inside an alternative can absorb adjacent separators.
     for (index, alternative) in expand_glob_braces(glob)?.iter().enumerate() {
-        let branch = glob_regex(alternative)?;
+        let alternative = if normalize_drive_letters {
+            normalize_document_filter_drive_letter(alternative)
+        } else {
+            Cow::Borrowed(alternative.as_str())
+        };
+        let branch = glob_regex(&alternative)?;
         anyhow::ensure!(
             regex.len() + branch.len() + 3 <= DOCUMENT_FILTER_GLOB_MAX_BYTES,
             "document filter glob exceeds the compiled pattern size limit"
@@ -15311,14 +15322,14 @@ fn document_filter_pattern_matches(
     let (base_uri, glob) = document_filter_glob(pattern);
     // VS Code's fsPath lowercases the drive letter. Canonicalize literal drive prefixes on
     // both sides without making the rest of the glob case-insensitive.
-    let (glob, path) = match (base_uri, path_style) {
-        (None, PathStyle::Windows) => (
-            normalize_document_filter_drive_letter(glob),
-            normalize_document_filter_drive_letter(path),
-        ),
-        _ => (Cow::Borrowed(glob), Cow::Borrowed(path)),
+    let normalize_drive_letters = base_uri.is_none() && path_style == PathStyle::Windows;
+    let path = if normalize_drive_letters {
+        normalize_document_filter_drive_letter(path)
+    } else {
+        Cow::Borrowed(path)
     };
-    let Some(matcher) = document_filter_glob_matcher(&glob).log_err() else {
+    let Some(matcher) = compile_document_filter_glob(glob, normalize_drive_letters).log_err()
+    else {
         return false;
     };
     let Some(base_uri) = base_uri else {
@@ -18236,6 +18247,12 @@ mod tests {
             ("C:/repo/a.rs", r"C:\repo\a.rs", true),
             ("c:/repo/a.rs", r"c:\repo\a.rs", true),
             ("c:/repo/**/a.rs", r"C:\repo\sub\a.rs", true),
+            // Braces can enclose or produce drive prefixes.
+            ("{C:/repo,D:/repo}/a.rs", r"C:\repo\a.rs", true),
+            ("{c:/repo,d:/repo}/a.rs", r"C:\repo\a.rs", true),
+            ("{C,D}:/repo/a.rs", r"c:\repo\a.rs", true),
+            ("{D:/repo,E:/repo}/a.rs", r"C:\repo\a.rs", false),
+            ("{C:/Repo,D:/repo}/a.rs", r"C:\repo\a.rs", false),
             ("c:/repo/a.rs", r"D:\repo\a.rs", false),
             ("c:/Repo/a.rs", r"C:\repo\a.rs", false),
             ("c:/repo/A.rs", r"C:\repo\a.rs", false),
