@@ -5255,6 +5255,66 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_unknown_activity_hides_generating_without_ending_the_turn(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let connection = StubAgentConnection::new().with_receipt_submissions(true);
+        let (conversation, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(conversation.clone(), cx);
+        let view = active_thread(&conversation, cx);
+        let thread = view.read_with(cx, |view, _| view.thread.clone());
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                    cx,
+                )
+                .expect("running");
+        });
+        cx.run_until_parked();
+        let turn_started_at = view.read_with(cx, |view, _| {
+            assert!(view.generating_indicator_in_list);
+            view.turn_fields
+                .turn_started_at
+                .expect("reported activity starts a turn")
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Unknown(acp_v2::UnknownStateUpdate::new()),
+                    cx,
+                )
+                .expect("unknown");
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("activity-unknown").is_some());
+        view.read_with(cx, |view, _| {
+            assert!(!view.generating_indicator_in_list);
+            assert_eq!(view.turn_fields.turn_started_at, Some(turn_started_at));
+            assert!(view.turn_fields.last_turn_duration.is_none());
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                    cx,
+                )
+                .expect("running again");
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("activity-unknown").is_none());
+        view.read_with(cx, |view, _| {
+            assert!(view.generating_indicator_in_list);
+            assert_eq!(view.turn_fields.turn_started_at, Some(turn_started_at));
+        });
+    }
+
+    #[gpui::test]
     async fn test_unconfirmed_stop_and_send_waits_for_confirmed_idle(cx: &mut TestAppContext) {
         init_test(cx);
         let connection = StubAgentConnection::new().with_receipt_submissions(true);

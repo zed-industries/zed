@@ -3623,7 +3623,8 @@ pub enum OutputTokensUpdate {
 #[derive(Debug)]
 pub enum AcpThreadEvent {
     StatusChanged,
-    /// Initial Idle confirmation is not a foreground completion.
+    /// Idle confirmed after unconfirmed or unknown activity, without completing
+    /// foreground work.
     ActivityConfirmedIdle,
     SubmissionUpdated(SubmissionId),
     PromptUpdated,
@@ -3842,7 +3843,11 @@ impl AcpThread {
             project,
             running_turn: None,
             turn_id: 0,
-            submissions: SessionSubmissions::new(receipt_submissions),
+            submissions: SessionSubmissions::new(
+                receipt_submissions.map_or(SubmissionTransport::Completion, |transport| {
+                    SubmissionTransport::Receipt(transport)
+                }),
+            ),
             activity: SessionActivity::default(),
             received_session_state: false,
             reported_usage: None,
@@ -3867,6 +3872,15 @@ impl AcpThread {
             streaming_text_buffer: None,
             idle_sleep_prevention: IdleSleepPrevention::Inactive,
         }
+    }
+
+    /// Marks a session whose work the agent owns, such as an ACP subagent. Zed cannot
+    /// submit prompts to it, and its foreground state is unconfirmed until the agent
+    /// reports one.
+    pub fn agent_owned(mut self) -> Self {
+        self.submissions = SessionSubmissions::new(SubmissionTransport::AgentOwned);
+        self.activity.mark_unconfirmed();
+        self
     }
 
     pub fn parent_session_id(&self) -> Option<&acp_v2::SessionId> {
@@ -4050,14 +4064,23 @@ impl AcpThread {
 
     pub fn status(&self) -> ThreadStatus {
         match self.foreground_activity() {
-            ForegroundActivity::Unconfirmed => ThreadStatus::Unconfirmed,
+            ForegroundActivity::Unconfirmed | ForegroundActivity::Unknown => {
+                ThreadStatus::Unconfirmed
+            }
             ForegroundActivity::Idle => ThreadStatus::Idle,
-            _ => ThreadStatus::Generating,
+            ForegroundActivity::Running | ForegroundActivity::RequiresAction => {
+                ThreadStatus::Generating
+            }
         }
     }
 
+    /// Whether the agent reports this session's foreground state, rather than Zed
+    /// deriving it from its own prompt turns.
     pub fn uses_reported_activity(&self) -> bool {
-        self.submissions.receipt_transport().is_some()
+        !matches!(
+            self.submissions.transport(),
+            SubmissionTransport::Completion
+        )
     }
 
     pub fn foreground_state(&self) -> Option<&acp_v2::StateUpdate> {
@@ -4319,7 +4342,9 @@ impl AcpThread {
     ) -> Submission {
         let (sender, receiver) = oneshot::channel();
         let (disconnect_sender, disconnect_receiver) = self
-            .uses_reported_activity()
+            .submissions
+            .receipt_transport()
+            .is_some()
             .then(oneshot::channel::<()>)
             .unzip();
         let task = cx.spawn(async move |this, cx| {
@@ -4340,7 +4365,7 @@ impl AcpThread {
                 response => response,
             };
             let update = this.update(cx, |this, cx| {
-                if this.uses_reported_activity()
+                if this.submissions.receipt_transport().is_some()
                     && response.as_ref().err().is_some_and(|error| {
                         error.is::<SubmissionDisconnected>()
                             || error
@@ -4394,11 +4419,10 @@ impl AcpThread {
     }
 
     fn set_foreground_state(&mut self, state: acp_v2::StateUpdate, cx: &mut Context<Self>) {
-        let previous = self.foreground_activity();
+        let previous_generation = self.activity.generation();
         self.activity
             .update(state, self.entries.len().saturating_sub(1));
-        let current = self.foreground_activity();
-        if !previous.is_active() && current.is_active() {
+        if self.activity.generation() != previous_generation {
             self.had_error = false;
             self.local_execution_error = None;
         }
@@ -4437,7 +4461,7 @@ impl AcpThread {
             "Session does not report foreground state"
         );
         let previous = self.foreground_activity();
-        let was_active = previous.is_active();
+        let was_in_progress = self.activity.in_progress();
         self.received_session_state = true;
         self.set_foreground_state(state, cx);
         if let Some(acp_v2::StateUpdate::Idle(idle)) = self.activity.state() {
@@ -4462,7 +4486,7 @@ impl AcpThread {
                     ));
                 }
             }
-            if was_active {
+            if was_in_progress {
                 self.flush_streaming_text(cx);
                 self.shrink_message_source_capacity(self.activity.first_entry_index());
                 if self.parent_session_id.is_none() {
@@ -4488,7 +4512,11 @@ impl AcpThread {
         if previous != self.foreground_activity() {
             cx.emit(AcpThreadEvent::StatusChanged);
         }
-        if previous == ForegroundActivity::Unconfirmed
+        if !was_in_progress
+            && matches!(
+                previous,
+                ForegroundActivity::Unconfirmed | ForegroundActivity::Unknown
+            )
             && self.foreground_activity() == ForegroundActivity::Idle
         {
             cx.emit(AcpThreadEvent::ActivityConfirmedIdle);
@@ -4931,7 +4959,7 @@ impl AcpThread {
         previous_entry_count: usize,
         cx: &mut Context<Self>,
     ) {
-        if self.uses_reported_activity()
+        if self.submissions.receipt_transport().is_some()
             && let Some(AgentThreadEntry::UserMessage(message)) =
                 self.entries.get(location.entry_index())
             && let MessageIdentity::Keyed(id) = &message.identity
@@ -6583,14 +6611,27 @@ impl AcpThread {
         push_user_message: bool,
         cx: &mut Context<Self>,
     ) -> Submission {
-        if let Some(submissions) = self.submissions.receipt_transport().cloned() {
-            let id = self.register_submission(message.clone().into(), cx);
-            let request = submissions.submit(message, cx);
-            self.track_receipt_submission(id, request, cx)
-        } else {
-            let id = self.register_submission(message.clone().into(), cx);
-            self.send_inner(id, message, push_user_message, cx)
+        let id = self.register_submission(message.clone().into(), cx);
+        match self.submissions.transport().clone() {
+            SubmissionTransport::Receipt(submissions) => {
+                let request = submissions.submit(message, cx);
+                self.track_receipt_submission(id, request, cx)
+            }
+            SubmissionTransport::Completion => self.send_inner(id, message, push_user_message, cx),
+            SubmissionTransport::AgentOwned => self.reject_agent_owned_submission(id, cx),
         }
+    }
+
+    fn reject_agent_owned_submission(
+        &mut self,
+        id: SubmissionId,
+        cx: &mut Context<Self>,
+    ) -> Submission {
+        self.track_submission(id, None, cx, async move |_, _| {
+            Err(anyhow!(
+                "The agent owns this session, so it does not accept prompts"
+            ))
+        })
     }
 
     pub fn submit_receipt(
@@ -6774,14 +6815,19 @@ impl AcpThread {
     }
 
     pub fn can_retry(&self, cx: &App) -> bool {
-        self.submissions.receipt_transport().map_or_else(
-            || self.connection.retry(self.session_id(), cx).is_some(),
-            |submissions| submissions.supports_retry(),
-        ) && self
-            .submissions
-            .latest_id()
-            .and_then(|id| self.submissions.get(id))
-            .is_none_or(|submission| self.validate_prompt_content(&submission.content).is_ok())
+        let supports_retry = match self.submissions.transport() {
+            SubmissionTransport::Receipt(submissions) => submissions.supports_retry(),
+            SubmissionTransport::Completion => {
+                self.connection.retry(self.session_id(), cx).is_some()
+            }
+            SubmissionTransport::AgentOwned => false,
+        };
+        supports_retry
+            && self
+                .submissions
+                .latest_id()
+                .and_then(|id| self.submissions.get(id))
+                .is_none_or(|submission| self.validate_prompt_content(&submission.content).is_ok())
     }
 
     pub fn retry(&mut self, cx: &mut Context<Self>) -> Submission {
@@ -6795,9 +6841,15 @@ impl AcpThread {
         if let Err(error) = self.validate_prompt_content(&content) {
             return self.track_submission(id, None, cx, async move |_, _| Err(error));
         }
-        if let Some(submissions) = self.submissions.receipt_transport() {
-            let request = submissions.retry(cx);
-            return self.track_receipt_submission(id, request, cx);
+        match self.submissions.transport() {
+            SubmissionTransport::Receipt(submissions) => {
+                let request = submissions.retry(cx);
+                return self.track_receipt_submission(id, request, cx);
+            }
+            SubmissionTransport::AgentOwned => {
+                return self.reject_agent_owned_submission(id, cx);
+            }
+            SubmissionTransport::Completion => {}
         }
         self.run_turn(id, cx, async move |this, cx| {
             this.update(cx, |this, cx| {
@@ -11295,6 +11347,160 @@ mod tests {
             .await
             .expect("receipt session should be created");
         (thread, connection)
+    }
+
+    async fn new_agent_owned_test_thread(cx: &mut TestAppContext) -> Entity<AcpThread> {
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let connection = Rc::new(StubAgentConnection::new());
+        cx.update(|cx| {
+            let action_log = cx.new(|_| ActionLog::new(project.clone()));
+            cx.new(|cx| {
+                AcpThread::new(
+                    Some(acp_v2::SessionId::new("parent")),
+                    None,
+                    None,
+                    connection,
+                    project,
+                    action_log,
+                    acp_v2::SessionId::new("child"),
+                    watch::Receiver::constant(acp_v2::PromptCapabilities::new()),
+                    cx,
+                )
+                .agent_owned()
+            })
+        })
+    }
+
+    #[gpui::test]
+    async fn test_agent_owned_sessions_report_activity_without_accepting_prompts(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let thread = new_agent_owned_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            assert!(thread.uses_reported_activity());
+            assert_eq!(
+                thread.foreground_activity(),
+                ForegroundActivity::Unconfirmed
+            );
+            assert!(!thread.can_retry(cx));
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                    cx,
+                )
+                .expect("agent-owned sessions accept reported state");
+            assert_eq!(thread.status(), ThreadStatus::Generating);
+        });
+
+        let submission = thread.update(cx, |thread, cx| thread.send(vec!["prompt".into()], cx));
+        let submission_id = submission.id;
+        cx.run_until_parked();
+        assert!(submission.await.is_err());
+        thread.read_with(cx, |thread, _| {
+            assert!(matches!(
+                thread
+                    .submission(submission_id)
+                    .expect("rejected prompt")
+                    .state,
+                SubmissionState::Failed(_)
+            ));
+        });
+
+        let retry = thread.update(cx, |thread, cx| thread.retry(cx));
+        cx.run_until_parked();
+        assert!(retry.await.is_err());
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.entries().is_empty());
+            assert!(thread.running_turn.is_none());
+            assert_eq!(thread.foreground_activity(), ForegroundActivity::Running);
+            assert_eq!(thread.activity_generation(), 1);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_unknown_activity_is_unconfirmed_without_ending_work(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (thread, _) = new_receipt_test_thread(cx).await;
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&thread, {
+                let events = events.clone();
+                move |_, event, _| match event {
+                    AcpThreadEvent::Stopped {
+                        activity_generation,
+                        stop_reason,
+                        ..
+                    } => events.borrow_mut().push(format!(
+                        "stopped {activity_generation} {}",
+                        matches!(stop_reason, Some(acp_v2::StopReason::Error(_)))
+                    )),
+                    AcpThreadEvent::ActivityConfirmedIdle => {
+                        events.borrow_mut().push("confirmed idle".to_string())
+                    }
+                    _ => {}
+                }
+            })
+        });
+        let running = || acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new());
+        let unknown = || acp_v2::StateUpdate::Unknown(acp_v2::UnknownStateUpdate::new());
+
+        thread.update(cx, |thread, cx| {
+            thread.update_session_state(running(), cx).expect("running");
+        });
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+
+        thread.update(cx, |thread, cx| {
+            thread.update_session_state(unknown(), cx).expect("unknown");
+            assert_eq!(thread.foreground_activity(), ForegroundActivity::Unknown);
+            assert_eq!(thread.status(), ThreadStatus::Unconfirmed);
+            assert!(!thread.is_waiting_for_confirmation());
+        });
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(running(), cx)
+                .expect("running again");
+            assert_eq!(
+                thread.activity_generation(),
+                1,
+                "unknown must not end the work that was in progress"
+            );
+            thread
+                .update_session_state(unknown(), cx)
+                .expect("unknown again");
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Idle(
+                        acp_v2::IdleStateUpdate::new()
+                            .stop_reason(acp_v2::StopReason::Error(acp_v2::ErrorStopReason::new())),
+                    ),
+                    cx,
+                )
+                .expect("failed idle");
+            assert!(thread.had_error());
+        });
+        cx.run_until_parked();
+        assert_eq!(*events.borrow(), ["stopped 1 true"]);
+
+        events.borrow_mut().clear();
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(unknown(), cx)
+                .expect("unknown while idle");
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new()),
+                    cx,
+                )
+                .expect("idle");
+            assert_eq!(thread.activity_generation(), 1);
+        });
+        cx.run_until_parked();
+        assert_eq!(*events.borrow(), ["confirmed idle"]);
     }
 
     #[gpui::test]

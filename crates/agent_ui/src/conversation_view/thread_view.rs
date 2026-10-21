@@ -1611,25 +1611,31 @@ impl ThreadView {
         let duration = thread.activity_duration();
         let output_tokens = thread.reported_activity_output_tokens();
 
-        if activity == ForegroundActivity::Unconfirmed {
-            self.turn_fields.reported_activity_generation = None;
-        } else if activity.is_active() {
-            if self.turn_fields.reported_activity_generation != Some(activity_generation) {
-                self.initialize_turn(cx);
-                self.turn_fields.turn_started_at = started_at;
+        match activity {
+            ForegroundActivity::Unconfirmed => {
+                self.turn_fields.reported_activity_generation = None;
+            }
+            // Unknown activity neither ends the current turn nor starts a new one.
+            ForegroundActivity::Unknown => {}
+            ForegroundActivity::Running | ForegroundActivity::RequiresAction => {
+                if self.turn_fields.reported_activity_generation != Some(activity_generation) {
+                    self.initialize_turn(cx);
+                    self.turn_fields.turn_started_at = started_at;
+                    self.turn_fields.reported_activity_generation = Some(activity_generation);
+                }
+            }
+            ForegroundActivity::Idle => {
+                if self.turn_fields.turn_started_at.is_some() {
+                    self.stop_turn(self.turn_fields.turn_generation, cx);
+                }
+                if self.turn_fields.reported_activity_generation != Some(activity_generation) {
+                    self.turn_fields.last_turn_tokens = None;
+                }
                 self.turn_fields.reported_activity_generation = Some(activity_generation);
-            }
-        } else {
-            if self.turn_fields.turn_started_at.is_some() {
-                self.stop_turn(self.turn_fields.turn_generation, cx);
-            }
-            if self.turn_fields.reported_activity_generation != Some(activity_generation) {
-                self.turn_fields.last_turn_tokens = None;
-            }
-            self.turn_fields.reported_activity_generation = Some(activity_generation);
-            self.turn_fields.last_turn_duration = duration;
-            if let Some(output_tokens) = output_tokens {
-                self.turn_fields.last_turn_tokens = Some(output_tokens);
+                self.turn_fields.last_turn_duration = duration;
+                if let Some(output_tokens) = output_tokens {
+                    self.turn_fields.last_turn_tokens = Some(output_tokens);
+                }
             }
         }
         cx.notify();
@@ -5255,25 +5261,7 @@ impl ThreadView {
                                     .min_w_0()
                                     .flex_wrap()
                                     .gap_1()
-                                    .when(
-                                        self.thread.read(cx).foreground_activity()
-                                            == ForegroundActivity::Unconfirmed,
-                                        |row| {
-                                            row.child(
-                                                div()
-                                                    .id("activity-unconfirmed")
-                                                    .debug_selector(|| "activity-unconfirmed".into())
-                                                    .child(
-                                                        Label::new("Activity unconfirmed")
-                                                            .size(LabelSize::Small)
-                                                            .color(Color::Muted),
-                                                    )
-                                                    .tooltip(Tooltip::text(
-                                                        "The session is attached, but the agent has not reported its activity. You can send manually; automatic sends wait for confirmed Idle.",
-                                                    )),
-                                            )
-                                        },
-                                    )
+                                    .children(self.render_activity_status_label(cx))
                                     .children(discard_draft_button)
                                     .children(self.render_token_usage(cx))
                                     .children(self.profile_selector.clone())
@@ -5288,6 +5276,31 @@ impl ThreadView {
                     ),
             )
             .into_any()
+    }
+
+    fn render_activity_status_label(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
+        let (id, label, tooltip) = match self.thread.read(cx).foreground_activity() {
+            ForegroundActivity::Unconfirmed => (
+                "activity-unconfirmed",
+                "Activity unconfirmed",
+                "The session is attached, but the agent has not reported its activity. You can send manually; automatic sends wait for confirmed Idle.",
+            ),
+            ForegroundActivity::Unknown => (
+                "activity-unknown",
+                "Activity unknown",
+                "The agent can't currently tell whether it is working. You can send manually; automatic sends wait for confirmed Idle.",
+            ),
+            ForegroundActivity::Idle
+            | ForegroundActivity::Running
+            | ForegroundActivity::RequiresAction => return None,
+        };
+        Some(
+            div()
+                .id(id)
+                .debug_selector(move || id.into())
+                .child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
+                .tooltip(Tooltip::text(tooltip)),
+        )
     }
 
     fn render_queue_steer_button(
