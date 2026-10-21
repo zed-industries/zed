@@ -4237,7 +4237,9 @@ name = "credentials_provider"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "futures 0.3.34",
  "gpui",
+ "parking_lot",
 ]
 
 [[package]]
@@ -5472,6 +5474,7 @@ dependencies = [
  "command_palette_hooks",
  "copilot",
  "copilot_ui",
+ "credentials_provider",
  "edit_prediction",
  "edit_prediction_types",
  "editor",
@@ -5481,6 +5484,7 @@ dependencies = [
  "gpui",
  "indoc",
  "language",
+ "language_model",
  "markdown",
  "menu",
  "multi_buffer",
@@ -5494,6 +5498,7 @@ dependencies = [
  "util",
  "workspace",
  "zed_actions",
+ "zed_credentials_provider",
  "zeta_prompt",
 ]
 
@@ -16544,6 +16549,7 @@ dependencies = [
  "copilot",
  "copilot_ui",
  "cpal",
+ "credentials_provider",
  "edit_prediction",
  "edit_prediction_ui",
  "editor",
