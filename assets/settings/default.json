@@ -967,7 +967,7 @@
     //    "files_first"
     "sort_mode": "directories_first",
     // Whether to sort file and folder names case-sensitively in the project panel.
-    // This setting can take four values:
+    // This setting can take five values:
     //
     // 1. Case-insensitive natural sort with lowercase preferred in ties (default):
     //    "default"
