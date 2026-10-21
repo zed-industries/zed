@@ -1,10 +1,8 @@
 use std::{cell::RefCell, collections::HashMap, mem, ops::Range};
 
 use gpui::{DefiniteLength, FontWeight, SharedString, TextAlign, px, relative};
-use html5ever::{
-    Attribute, LocalName, ParseOpts, local_name, parse_document, tendril::TendrilSink,
-};
-use markup5ever_rcdom::{Node, NodeData, RcDom};
+use html5ever::{Attribute, LocalName, local_name};
+use markup5ever_rcdom::{Node, NodeData};
 use pulldown_cmark::{Alignment, HeadingLevel};
 use stacksafe::stacksafe;
 
@@ -195,10 +193,7 @@ pub(crate) fn parse_html_block(
 ) -> Option<ParsedHtmlBlock> {
     let bytes = cleanup_html(source);
     let mut cursor = std::io::Cursor::new(bytes);
-    let dom = parse_document(RcDom::default(), ParseOpts::default())
-        .from_utf8()
-        .read_from(&mut cursor)
-        .ok()?;
+    let dom = super::parse_html(&mut cursor).ok()?;
 
     let mut children = Vec::new();
     parse_html_node(

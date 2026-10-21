@@ -10,7 +10,7 @@ use std::{
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
     Action, Along, AppContext, Axis, DismissEvent, DragMoveEvent, Empty, Entity, FocusHandle,
-    Focusable, ListHorizontalSizingBehavior, MouseButton, Point, ScrollStrategy, ScrollWheelEvent,
+    Focusable, ListHorizontalSizingBehavior, MouseButton, Point, ScrollEvent, ScrollStrategy,
     Subscription, Task, TextStyle, UniformList, UniformListScrollHandle, WeakEntity, actions,
     anchored, deferred, uniform_list,
 };
@@ -19,8 +19,8 @@ use project::debugger::{MemoryCell, dap_command::DataBreakpointContext, session:
 use settings::Settings;
 use theme_settings::ThemeSettings;
 use ui::{
-    ContextMenu, Divider, DropdownMenu, FluentBuilder, IntoElement, PopoverMenuHandle, Render,
-    ScrollableHandle, StatefulInteractiveElement, Tooltip, WithScrollbar, prelude::*,
+    ContextMenu, Divider, DropdownMenu, PopoverMenuHandle, ScrollableHandle,
+    StatefulInteractiveElement, Tooltip, WithScrollbar, prelude::*,
 };
 use workspace::Workspace;
 
@@ -231,7 +231,7 @@ impl MemoryView {
         )
         .track_scroll(&view_state.scroll_handle)
         .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
-        .on_scroll_wheel(cx.listener(|this, evt: &ScrollWheelEvent, window, _| {
+        .on_scroll(cx.listener(|this, evt: &ScrollEvent, window, _| {
             let mut view_state = this.view_state();
             let delta = evt.delta.pixel_delta(window.line_height());
             let current_offset = view_state.scroll_handle.offset();
@@ -368,7 +368,9 @@ impl MemoryView {
                 this
             }),
         )
+        .style(ui::DropdownStyle::Outlined)
         .handle(self.width_picker_handle.clone())
+        .attach(gpui::Anchor::BottomLeft)
     }
 
     fn page_down(&mut self, _: &menu::SelectLast, _: &mut Window, cx: &mut Context<Self>) {
@@ -846,19 +848,16 @@ fn render_single_memory_view_line(
 }
 
 impl Render for MemoryView {
-    fn render(
-        &mut self,
-        window: &mut ui::Window,
-        cx: &mut ui::Context<Self>,
-    ) -> impl ui::IntoElement {
+    fn render(&mut self, window: &mut ui::Window, cx: &mut ui::Context<Self>) -> impl IntoElement {
         let (icon, tooltip_text) = if self.is_writing_memory {
-            (IconName::Pencil, "Edit memory at a selected address")
+            (IconName::Pencil, "Edit Memory at a Selected Address")
         } else {
             (
                 IconName::LocationEdit,
-                "Change address of currently viewed memory",
+                "Change Address of Currently Viewed Memory",
             )
         };
+
         v_flex()
             .id("Memory-view")
             .on_action(cx.listener(Self::cancel))
@@ -873,31 +872,31 @@ impl Render for MemoryView {
             .child(
                 h_flex()
                     .w_full()
-                    .mb_0p5()
+                    .mb_1()
                     .gap_1()
                     .child(
                         h_flex()
+                            .px_1()
+                            .h_6()
                             .w_full()
-                            .rounded_md()
+                            .rounded_sm()
+                            .gap_1()
                             .border_1()
-                            .gap_x_2()
-                            .px_2()
-                            .py_0p5()
-                            .mb_0p5()
-                            .bg(cx.theme().colors().editor_background)
                             .when_else(
                                 self.query_editor
                                     .focus_handle(cx)
                                     .contains_focused(window, cx),
                                 |this| this.border_color(cx.theme().colors().border_focused),
-                                |this| this.border_color(cx.theme().colors().border_transparent),
+                                |this| this.border_color(cx.theme().colors().border_variant),
                             )
+                            .bg(cx.theme().colors().editor_background)
                             .child(
                                 div()
                                     .id("memory-view-editor-icon")
                                     .child(Icon::new(icon).size(ui::IconSize::XSmall))
                                     .tooltip(Tooltip::text(tooltip_text)),
                             )
+                            .child(Divider::vertical())
                             .child(self.render_query_bar(cx)),
                     )
                     .child(self.render_width_picker(window, cx)),

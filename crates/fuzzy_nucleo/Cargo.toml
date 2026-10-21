@@ -15,13 +15,17 @@ doctest = false
 [dependencies]
 fuzzy.workspace = true
 nucleo.workspace = true
+parking_lot = { workspace = true, features = ["arc_lock", "send_guard"] }
 gpui.workspace = true
-util.workspace = true
+gpui_util.workspace = true
+path.workspace = true
+
+[package.metadata.cargo-shear]
+ignored = ["parking_lot"]
 
 [dev-dependencies]
 criterion.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
-util = { workspace = true, features = ["test-support"] }
 
 [[bench]]
 name = "match_benchmark"

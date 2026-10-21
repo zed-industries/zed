@@ -1,24 +1,6 @@
-use gpui::{Hsla, IntoElement, PathBuilder, canvas, point};
+use gpui::{Hsla, IntoElement, PathBuilder, Refineable as _, StyleRefinement, canvas, point};
 
 use crate::prelude::*;
-
-pub fn divider() -> Divider {
-    Divider {
-        style: DividerStyle::Solid,
-        direction: DividerDirection::Horizontal,
-        color: DividerColor::default(),
-        inset: false,
-    }
-}
-
-pub fn vertical_divider() -> Divider {
-    Divider {
-        style: DividerStyle::Solid,
-        direction: DividerDirection::Vertical,
-        color: DividerColor::default(),
-        inset: false,
-    }
-}
 
 #[derive(Clone, Copy, PartialEq)]
 enum DividerStyle {
@@ -53,45 +35,50 @@ impl DividerColor {
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct Divider {
-    style: DividerStyle,
+    line_style: DividerStyle,
     direction: DividerDirection,
     color: DividerColor,
+    style: StyleRefinement,
     inset: bool,
 }
 
 impl Divider {
     pub fn horizontal() -> Self {
         Self {
-            style: DividerStyle::Solid,
+            line_style: DividerStyle::Solid,
             direction: DividerDirection::Horizontal,
             color: DividerColor::default(),
+            style: StyleRefinement::default(),
             inset: false,
         }
     }
 
     pub fn vertical() -> Self {
         Self {
-            style: DividerStyle::Solid,
+            line_style: DividerStyle::Solid,
             direction: DividerDirection::Vertical,
             color: DividerColor::default(),
+            style: StyleRefinement::default(),
             inset: false,
         }
     }
 
     pub fn horizontal_dashed() -> Self {
         Self {
-            style: DividerStyle::Dashed,
+            line_style: DividerStyle::Dashed,
             direction: DividerDirection::Horizontal,
             color: DividerColor::default(),
+            style: StyleRefinement::default(),
             inset: false,
         }
     }
 
     pub fn vertical_dashed() -> Self {
         Self {
-            style: DividerStyle::Dashed,
+            line_style: DividerStyle::Dashed,
             direction: DividerDirection::Vertical,
             color: DividerColor::default(),
+            style: StyleRefinement::default(),
             inset: false,
         }
     }
@@ -141,22 +128,31 @@ impl Divider {
     }
 }
 
+impl Styled for Divider {
+    fn style(&mut self) -> &mut StyleRefinement {
+        &mut self.style
+    }
+}
+
 impl RenderOnce for Divider {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let base = match self.direction {
+        let mut base = match self.direction {
             DividerDirection::Horizontal => div()
                 .min_w_0()
                 .h_px()
+                .max_h_px()
                 .w_full()
                 .when(self.inset, |this| this.mx_1p5()),
             DividerDirection::Vertical => div()
                 .min_w_0()
                 .w_px()
-                .h_full()
+                .h_4()
                 .when(self.inset, |this| this.my_1p5()),
         };
 
-        match self.style {
+        base.style().refine(&self.style);
+
+        match self.line_style {
             DividerStyle::Solid => self.render_solid(base, cx).into_any_element(),
             DividerStyle::Dashed => self.render_dashed(base).into_any_element(),
         }
@@ -168,85 +164,76 @@ impl Component for Divider {
         ComponentScope::Layout
     }
 
-    fn description() -> Option<&'static str> {
-        Some(
-            "Visual separator used to create divisions between groups of content or sections in a layout.",
-        )
+    fn description() -> &'static str {
+        "Visual separator used to create divisions between groups of content \
+        or sections in a layout."
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
-                .gap_6()
-                .children(vec![
-                    example_group_with_title(
-                        "Horizontal Dividers",
-                        vec![
-                            single_example("Default", Divider::horizontal().into_any_element()),
-                            single_example(
-                                "Border Color",
-                                Divider::horizontal()
-                                    .color(DividerColor::Border)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Inset",
-                                Divider::horizontal().inset().into_any_element(),
-                            ),
-                            single_example(
-                                "Dashed",
-                                Divider::horizontal_dashed().into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Vertical Dividers",
-                        vec![
-                            single_example(
-                                "Default",
-                                div().h_16().child(Divider::vertical()).into_any_element(),
-                            ),
-                            single_example(
-                                "Border Color",
-                                div()
-                                    .h_16()
-                                    .child(Divider::vertical().color(DividerColor::Border))
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Inset",
-                                div()
-                                    .h_16()
-                                    .child(Divider::vertical().inset())
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Dashed",
-                                div()
-                                    .h_16()
-                                    .child(Divider::vertical_dashed())
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Example Usage",
-                        vec![single_example(
-                            "Between Content",
-                            v_flex()
-                                .w_full()
-                                .gap_4()
-                                .px_4()
-                                .child(Label::new("Section One"))
-                                .child(Divider::horizontal())
-                                .child(Label::new("Section Two"))
-                                .child(Divider::horizontal_dashed())
-                                .child(Label::new("Section Three"))
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+        v_flex()
+            .gap_6()
+            .children(vec![
+                example_group_with_title(
+                    "Horizontal Dividers",
+                    vec![
+                        single_example("Default", Divider::horizontal().into_any_element()),
+                        single_example(
+                            "Border Color",
+                            Divider::horizontal()
+                                .color(DividerColor::Border)
                                 .into_any_element(),
-                        )],
-                    ),
-                ])
-                .into_any_element(),
-        )
+                        ),
+                        single_example("Inset", Divider::horizontal().inset().into_any_element()),
+                        single_example("Dashed", Divider::horizontal_dashed().into_any_element()),
+                    ],
+                ),
+                example_group_with_title(
+                    "Vertical Dividers",
+                    vec![
+                        single_example(
+                            "Default",
+                            div().h_16().child(Divider::vertical()).into_any_element(),
+                        ),
+                        single_example(
+                            "Border Color",
+                            div()
+                                .h_16()
+                                .child(Divider::vertical().color(DividerColor::Border))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Inset",
+                            div()
+                                .h_16()
+                                .child(Divider::vertical().inset())
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Dashed",
+                            div()
+                                .h_16()
+                                .child(Divider::vertical_dashed())
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Example Usage",
+                    vec![single_example(
+                        "Between Content",
+                        v_flex()
+                            .w_full()
+                            .gap_4()
+                            .px_4()
+                            .child(Label::new("Section One"))
+                            .child(Divider::horizontal())
+                            .child(Label::new("Section Two"))
+                            .child(Divider::horizontal_dashed())
+                            .child(Label::new("Section Three"))
+                            .into_any_element(),
+                    )],
+                ),
+            ])
+            .into_any_element()
     }
 }

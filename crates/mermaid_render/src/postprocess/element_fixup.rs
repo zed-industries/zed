@@ -22,6 +22,7 @@ use std::borrow::Cow;
 use std::fmt::Write as _;
 
 use anyhow::Result;
+use quick_xml::XmlVersion;
 use quick_xml::events::{BytesStart, Event};
 
 use crate::MermaidTheme;
@@ -68,7 +69,7 @@ fn is_bad_rect(e: &BytesStart) -> Result<bool> {
         match e.try_get_attribute(attr_name)? {
             None => return Ok(true),
             Some(attr) => {
-                let val = attr.unescape_value()?;
+                let val = attr.normalized_value(XmlVersion::Implicit1_0)?;
                 let trimmed = val.trim();
                 if trimmed.is_empty() {
                     return Ok(true);
@@ -102,22 +103,34 @@ fn font_style(font_family: &str) -> String {
 }
 
 fn rewrite_background_style<'a>(style: &'a str, background_css: &str) -> Cow<'a, str> {
-    const WHITE_BACKGROUND_STYLE: &str = "background-color: white";
+    const PROPERTY: &str = "background-color:";
 
-    let Some(background_start) = style.find(WHITE_BACKGROUND_STYLE) else {
+    let Some(property_start) = style.find(PROPERTY) else {
         return Cow::Borrowed(style);
     };
+    let value_start = property_start + PROPERTY.len();
+    let value_end = style[value_start..]
+        .find(';')
+        .map_or(style.len(), |offset| value_start + offset);
+    let value = style[value_start..value_end].trim();
 
+    let is_white = value.eq_ignore_ascii_case("white")
+        || value.eq_ignore_ascii_case("#fff")
+        || value.eq_ignore_ascii_case("#ffffff");
+    if !is_white {
+        return Cow::Borrowed(style);
+    }
+
+    let value_len = value_end.saturating_sub(value_start);
     let mut rewritten = String::with_capacity(
         style
             .len()
-            .saturating_sub(WHITE_BACKGROUND_STYLE.len())
-            .saturating_add("background-color: ".len())
+            .saturating_sub(value_len)
             .saturating_add(background_css.len()),
     );
-    rewritten.push_str(&style[..background_start]);
-    write!(rewritten, "background-color: {background_css}").expect("write to String cannot fail");
-    rewritten.push_str(&style[background_start + WHITE_BACKGROUND_STYLE.len()..]);
+    rewritten.push_str(&style[..value_start]);
+    rewritten.push_str(background_css);
+    rewritten.push_str(&style[value_end..]);
     Cow::Owned(rewritten)
 }
 
@@ -171,7 +184,7 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> ElementFixup<I> {
     fn rewrite_svg_style(&self, e: &BytesStart<'_>) -> Result<Option<BytesStart<'a>>> {
         let Some(style) = e
             .try_get_attribute("style")?
-            .map(|a| a.unescape_value())
+            .map(|a| a.normalized_value(XmlVersion::Implicit1_0))
             .transpose()?
         else {
             return Ok(None);
@@ -195,7 +208,7 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> ElementFixup<I> {
             let attr = attr?;
             match attr.key.local_name().as_ref() {
                 b"fill" if fix_fill => {
-                    let val = attr.unescape_value()?;
+                    let val = attr.normalized_value(XmlVersion::Implicit1_0)?;
                     if is_hardcoded_text_fill(&val) {
                         new_elem.push_attribute(("fill", self.text_color_css.as_str()));
                     } else {
@@ -208,7 +221,7 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> ElementFixup<I> {
                 }
                 b"style" => {
                     has_style = true;
-                    let style = attr.unescape_value()?;
+                    let style = attr.normalized_value(XmlVersion::Implicit1_0)?;
                     let style = rewrite_font_style(&style, &self.font_family_css);
                     new_elem.push_attribute(("style", style.as_ref()));
                 }

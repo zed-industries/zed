@@ -67,6 +67,7 @@ The body of the SKILL.md (after the frontmatter) contains the instructions the a
 3. **Include when-to-use guidance**: Help the agent understand the right context for this skill.
 4. **Reference supporting files**: Skills can include additional files in their directory. Reference them with relative paths (e.g., `templates/component.tsx`). The agent can read these files when the skill is activated.
 5. **Keep descriptions actionable**: The `description` field is the agent's primary signal for whether to load this skill. "Helps with code" is too vague. "Generate React components following the project's design system patterns" is specific.
+6. **Keep instructions focused**: Limit instructions to those relevant to the skill itself. Avoid duplicating instructions from AGENTS.md and other skills in the current conversation if they are not relevant to the skill being created
 
 ## Supporting Files
 

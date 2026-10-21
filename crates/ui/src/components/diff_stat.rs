@@ -1,6 +1,6 @@
 use crate::Tooltip;
 use crate::prelude::*;
-use num_format::{Locale, ToFormattedString};
+use crate::utils::format_number_with_commas;
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct DiffStat {
@@ -36,20 +36,20 @@ impl DiffStat {
 impl RenderOnce for DiffStat {
     fn render(self, _: &mut Window, _cx: &mut App) -> impl IntoElement {
         let tooltip = self.tooltip;
-        let added = self.added.to_formatted_string(&Locale::en);
-        let removed = self.removed.to_formatted_string(&Locale::en);
+        let added = format_number_with_commas(self.added as u128);
+        let removed = format_number_with_commas(self.removed as u128);
 
         h_flex()
             .id(self.id)
             .gap_1()
             .child(
                 Label::new(format!("+\u{2009}{added}"))
-                    .color(Color::Success)
+                    .color(Color::VersionControlAdded)
                     .size(self.label_size),
             )
             .child(
                 Label::new(format!("\u{2012}\u{2009}{removed}"))
-                    .color(Color::Error)
+                    .color(Color::VersionControlDeleted)
                     .size(self.label_size),
             )
             .when_some(tooltip, |this, tooltip| {
@@ -63,7 +63,12 @@ impl Component for DiffStat {
         ComponentScope::VersionControl
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn description() -> &'static str {
+        "A compact summary of additions and deletions for a diff, \
+        displayed as colored insertion and deletion counts."
+    }
+
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
         let container = || {
             h_flex()
                 .py_4()
@@ -81,10 +86,8 @@ impl Component for DiffStat {
                 .into_any_element(),
         )];
 
-        Some(
-            example_group(diff_stat_example)
-                .vertical()
-                .into_any_element(),
-        )
+        example_group(diff_stat_example)
+            .vertical()
+            .into_any_element()
     }
 }

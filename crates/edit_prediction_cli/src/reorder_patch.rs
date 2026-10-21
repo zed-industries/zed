@@ -182,7 +182,7 @@ impl Patch {
             }
 
             if in_header {
-                patch.header.push_str(format!("{}\n", &line).as_ref());
+                patch.header.push_str(format!("{line}\n").as_ref());
                 continue;
             }
 
@@ -338,7 +338,7 @@ impl ToString for Hunk {
             .iter()
             .map(|line| line.to_string() + "\n")
             .collect::<Vec<String>>()
-            .join("");
+            .concat();
         format!("{header}\n{lines}")
     }
 }
@@ -962,7 +962,7 @@ mod tests {
             remove_edits(&mut patch, vec![0]);
 
             // The line numbers should be adjusted in the subsequent hunks
-            println!("{}", &patch.to_string());
+            println!("{}", patch.to_string());
             assert_eq!(patch.hunks[0].header_string(), "@@ -2,6 +2,7 @@");
             assert_eq!(patch.hunks[1].header_string(), "@@ -9,6 +10,7 @@ gray");
             assert_eq!(patch.hunks[2].header_string(), "@@ -16,4 +18,3 @@ red");
@@ -1155,7 +1155,7 @@ mod tests {
             apply_edits(&mut patch, vec![1]);
 
             // The line numbers should be adjusted in the subsequent hunks
-            println!("{}", &patch.to_string());
+            println!("{}", patch.to_string());
             assert_eq!(patch.hunks[0].header_string(), "@@ -1,7 +1,6 @@");
             assert_eq!(patch.hunks[1].header_string(), "@@ -10,6 +9,7 @@ gray");
             assert_eq!(patch.hunks[2].header_string(), "@@ -17,4 +17,3 @@ red");

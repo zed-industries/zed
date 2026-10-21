@@ -21,9 +21,9 @@ impl AiSettingItemStatus {
             Self::Starting => "Server is starting.",
             Self::Running => "Server is active.",
             Self::Error => "Server has an error.",
-            Self::AuthRequired => "Authentication required.",
-            Self::ClientSecretRequired => "Client secret required.",
-            Self::Authenticating => "Waiting for authorization…",
+            Self::AuthRequired => "Authentication Required.",
+            Self::ClientSecretRequired => "Client Secret Required.",
+            Self::Authenticating => "Waiting for Authorization…",
         }
     }
 
@@ -198,6 +198,7 @@ impl RenderOnce for AiSettingItem {
         v_flex()
             .id(id)
             .min_w_0()
+            .py_2()
             .child(
                 h_flex()
                     .min_w_0()
@@ -244,7 +245,12 @@ impl Component for AiSettingItem {
         ComponentScope::Agent
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn description() -> &'static str {
+        "A reusable row used in AI-related configuration lists to display a \
+        server or provider's name, source, current status, and associated actions."
+    }
+
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
         let container = || {
             v_flex()
                 .w_80()
@@ -403,6 +409,6 @@ impl Component for AiSettingItem {
             ),
         ];
 
-        Some(example_group(examples).vertical().into_any_element())
+        example_group(examples).vertical().into_any_element()
     }
 }

@@ -21,12 +21,13 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
 
 jobs:
   check-hotfix-reviews:
     if: github.repository_owner == 'zed-industries'
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
     timeout-minutes: 5
     env:
       REPO: ${{ github.repository }}

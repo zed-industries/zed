@@ -713,7 +713,7 @@ impl Room {
         log::trace!(
             "client {:?}. room update: {:?}",
             self.client.user_id(),
-            &room
+            room
         );
 
         self.pending_room_update = Some(self.start_room_connection(room, cx));
@@ -895,7 +895,8 @@ impl Room {
                             if this.created.elapsed() > Duration::from_millis(100) {
                                 if let proto::ChannelRole::Guest = role {
                                     Audio::play_sound(Sound::GuestJoined, cx);
-                                } else {
+                                // Do not play join sound in large meetings
+                                } else if this.remote_participants().len() < 10 {
                                     Audio::play_sound(Sound::Joined, cx);
                                 }
                             }
@@ -1000,7 +1001,7 @@ impl Room {
         log::trace!(
             "client {:?}. livekit event: {:?}",
             self.client.user_id(),
-            &event
+            event
         );
 
         match event {

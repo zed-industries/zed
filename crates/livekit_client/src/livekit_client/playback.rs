@@ -22,9 +22,6 @@ use livekit::webrtc::{
 };
 use log::info;
 use parking_lot::Mutex;
-use rodio::Source;
-use rodio::conversions::SampleTypeConverter;
-use rodio::source::{AutomaticGainControlSettings, LimitSettings};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::cell::RefCell;
@@ -33,6 +30,8 @@ use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use std::{borrow::Cow, collections::VecDeque, sync::Arc};
 use util::{ResultExt as _, maybe};
+
+use crate::RemoteAudioPlaybackStats;
 
 struct TimestampedFrame {
     frame: AudioFrame<'static>,
@@ -49,8 +48,27 @@ pub(crate) struct AudioStack {
 
 impl AudioStack {
     pub(crate) fn new(executor: BackgroundExecutor) -> Self {
+        // AGC2's `adaptive_digital` is what actually levels speech toward a target;
+        // the `gain_controller2.enabled` master switch alone leaves it off, which
+        // historically meant capture was effectively unleveled. Defaults match
+        // what Chrome/Meet ship with -- in particular `max_gain_db = 50` paired
+        // with `max_output_noise_level_dbfs = -50`, which lets the AGC reach
+        // very quiet talkers while the noise-level estimator backs off before
+        // boosting amplifies the noise floor.
         let apm = Arc::new(Mutex::new(apm::AudioProcessingModule::new(
-            true, true, true, true,
+            apm::AudioProcessingConfig {
+                echo_canceller_enabled: true,
+                gain_controller2: apm::GainController2Config {
+                    enabled: true,
+                    adaptive_digital: apm::AdaptiveDigitalConfig {
+                        enabled: true,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                high_pass_filter_enabled: true,
+                noise_suppression_enabled: true,
+            },
         )));
         let mixer = Arc::new(Mutex::new(audio_mixer::AudioMixer::new()));
         Self {
@@ -75,6 +93,7 @@ impl AudioStack {
             sample_rate: SAMPLE_RATE.get(),
             num_channels: CHANNEL_COUNT.get() as u32,
             buffer: Arc::default(),
+            diagnostics: Arc::default(),
         };
         self.mixer.lock().add_source(source.clone());
 
@@ -93,6 +112,7 @@ impl AudioStack {
             }
         });
 
+        let diagnostics = source.diagnostics.clone();
         let mixer = self.mixer.clone();
         let on_drop = util::defer(move || {
             mixer.lock().remove_source(source.ssrc);
@@ -100,8 +120,9 @@ impl AudioStack {
             drop(output_task);
         });
 
-        AudioStream::Output {
+        AudioStream {
             _drop: Box::new(on_drop),
+            remote_playback_diagnostics: Some(diagnostics),
         }
     }
 
@@ -195,8 +216,9 @@ impl AudioStack {
         });
         Ok((
             super::LocalAudioTrack(track),
-            AudioStream::Output {
+            AudioStream {
                 _drop: Box::new(on_drop),
+                remote_playback_diagnostics: None,
             },
             input_lag_us,
         ))
@@ -210,10 +232,7 @@ impl AudioStack {
         _num_channels: u32,
         output_audio_device: Option<DeviceId>,
     ) -> Result<()> {
-        // Prevent App Nap from throttling audio playback on macOS.
-        // This guard is held for the entire duration of audio output.
-        #[cfg(target_os = "macos")]
-        let _prevent_app_nap = PreventAppNapGuard::new();
+        let _app_nap_guard = executor.prevent_app_nap("Audio playback in progress");
 
         loop {
             let mut device_change_listener = DeviceChangeListener::new(false)?;
@@ -229,7 +248,7 @@ impl AudioStack {
             executor
                 .spawn_with_priority(Priority::RealtimeAudio, async move {
                     let output_stream = output_device.build_output_stream(
-                        &output_config.config(),
+                        output_config.config(),
                         {
                             move |mut data, _info| {
                                 while data.len() > 0 {
@@ -318,18 +337,10 @@ impl AudioStack {
                         let ten_ms_buffer_size =
                             (config.channels() as u32 * config.sample_rate() / 100) as usize;
                         let mut buf: Vec<i16> = Vec::with_capacity(ten_ms_buffer_size);
-                        let mut rodio_effects = RodioEffectsAdaptor::new(buf.len())
-                            .automatic_gain_control(AutomaticGainControlSettings {
-                                target_level: 0.50,
-                                attack_time: Duration::from_secs(1),
-                                release_time: Duration::from_secs(0),
-                                absolute_max_gain: 5.0,
-                            })
-                            .limit(LimitSettings::live_performance());
 
                         let stream = device
                             .build_input_stream_raw(
-                                &config.config(),
+                                config.config(),
                                 config.sample_format(),
                                 move |data, _: &_| {
                                     let captured_at = Instant::now();
@@ -357,20 +368,6 @@ impl AudioStack {
                                                     sample_rate,
                                                 )
                                                 .to_owned();
-
-                                            if audio::LIVE_SETTINGS
-                                                .auto_microphone_volume
-                                                .load(Ordering::Relaxed)
-                                            {
-                                                rodio_effects
-                                                    .inner_mut()
-                                                    .inner_mut()
-                                                    .fill_buffer_with(&sampled);
-                                                sampled.clear();
-                                                sampled.extend(SampleTypeConverter::<_, i16>::new(
-                                                    rodio_effects.by_ref(),
-                                                ));
-                                            }
 
                                             apm.lock()
                                                 .process_stream(
@@ -415,69 +412,6 @@ impl AudioStack {
     }
 }
 
-/// This allows using of Rodio's effects library within our home brewn audio
-/// pipeline. The alternative would be inlining Rodio's effects which is
-/// problematic from a legal stance. We would then have to make clear that code
-/// is not owned by zed-industries while the code would be surrounded by
-/// zed-industries owned code.
-///
-/// This adaptor does incur a slight performance penalty (copying into a
-/// pre-allocated vec and back) however the impact will be immeasurably low.
-///
-/// There is no latency impact.
-pub struct RodioEffectsAdaptor {
-    input: Vec<rodio::Sample>,
-    pos: usize,
-}
-
-impl RodioEffectsAdaptor {
-    // This implementation incorrect terminology confusing everyone. A normal
-    // audio frame consists of all samples for one moment in time (one for mono,
-    // two for stereo). Here a frame of audio refers to a 10ms buffer of samples.
-    fn new(samples_per_frame: usize) -> Self {
-        Self {
-            input: Vec::with_capacity(samples_per_frame),
-            pos: 0,
-        }
-    }
-
-    fn fill_buffer_with(&mut self, integer_samples: &[i16]) {
-        self.input.clear();
-        self.input.extend(SampleTypeConverter::<_, f32>::new(
-            integer_samples.iter().copied(),
-        ));
-        self.pos = 0;
-    }
-}
-
-impl Iterator for RodioEffectsAdaptor {
-    type Item = rodio::Sample;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let sample = self.input.get(self.pos)?;
-        self.pos += 1;
-        Some(*sample)
-    }
-}
-
-impl rodio::Source for RodioEffectsAdaptor {
-    fn current_span_len(&self) -> Option<usize> {
-        None
-    }
-
-    fn channels(&self) -> rodio::ChannelCount {
-        rodio::nz!(2)
-    }
-
-    fn sample_rate(&self) -> rodio::SampleRate {
-        rodio::nz!(48000)
-    }
-
-    fn total_duration(&self) -> Option<Duration> {
-        None
-    }
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Speaker {
     pub name: String,
@@ -486,9 +420,17 @@ pub struct Speaker {
 
 use super::LocalVideoTrack;
 
-pub enum AudioStream {
-    Input { _task: Task<()> },
-    Output { _drop: Box<dyn std::any::Any> },
+pub struct AudioStream {
+    _drop: Box<dyn std::any::Any>,
+    remote_playback_diagnostics: Option<Arc<RemoteAudioPlaybackCounters>>,
+}
+
+impl AudioStream {
+    pub fn remote_playback_stats(&self) -> Option<RemoteAudioPlaybackStats> {
+        self.remote_playback_diagnostics
+            .as_ref()
+            .map(|diagnostics| diagnostics.snapshot())
+    }
 }
 
 pub(crate) async fn capture_local_video_track(
@@ -537,6 +479,28 @@ struct AudioMixerSource {
     sample_rate: u32,
     num_channels: u32,
     buffer: Arc<Mutex<VecDeque<Vec<i16>>>>,
+    diagnostics: Arc<RemoteAudioPlaybackCounters>,
+}
+
+#[derive(Default)]
+struct RemoteAudioPlaybackCounters {
+    frames_received: AtomicU64,
+    frames_dropped: AtomicU64,
+    queue_underflows: AtomicU64,
+    current_queue_depth: AtomicU64,
+    maximum_queue_depth: AtomicU64,
+}
+
+impl RemoteAudioPlaybackCounters {
+    fn snapshot(&self) -> RemoteAudioPlaybackStats {
+        RemoteAudioPlaybackStats {
+            frames_received: self.frames_received.load(Ordering::Relaxed),
+            frames_dropped: self.frames_dropped.load(Ordering::Relaxed),
+            queue_underflows: self.queue_underflows.load(Ordering::Relaxed),
+            current_queue_depth: self.current_queue_depth.load(Ordering::Relaxed),
+            maximum_queue_depth: self.maximum_queue_depth.load(Ordering::Relaxed),
+        }
+    }
 }
 
 impl AudioMixerSource {
@@ -548,8 +512,23 @@ impl AudioMixerSource {
 
         let mut buffer = self.buffer.lock();
         buffer.push_back(frame.data.to_vec());
+        self.diagnostics
+            .frames_received
+            .fetch_add(1, Ordering::Relaxed);
         while buffer.len() > 10 {
             buffer.pop_front();
+            self.diagnostics
+                .frames_dropped
+                .fetch_add(1, Ordering::Relaxed);
+        }
+        let queue_depth = buffer.len() as u64;
+        self.diagnostics
+            .current_queue_depth
+            .store(queue_depth, Ordering::Relaxed);
+        if queue_depth > self.diagnostics.maximum_queue_depth.load(Ordering::Relaxed) {
+            self.diagnostics
+                .maximum_queue_depth
+                .fetch_max(queue_depth, Ordering::Relaxed);
         }
     }
 }
@@ -565,7 +544,16 @@ impl libwebrtc::native::audio_mixer::AudioMixerSource for AudioMixerSource {
 
     fn get_audio_frame_with_info<'a>(&self, target_sample_rate: u32) -> Option<AudioFrame<'_>> {
         assert_eq!(self.sample_rate, target_sample_rate);
-        let buf = self.buffer.lock().pop_front()?;
+        let mut buffer = self.buffer.lock();
+        let Some(buf) = buffer.pop_front() else {
+            self.diagnostics
+                .queue_underflows
+                .fetch_add(1, Ordering::Relaxed);
+            return None;
+        };
+        self.diagnostics
+            .current_queue_depth
+            .store(buffer.len() as u64, Ordering::Relaxed);
         Some(AudioFrame {
             data: Cow::Owned(buf),
             sample_rate: self.sample_rate,
@@ -616,78 +604,97 @@ pub fn play_remote_video_track(
 fn create_buffer_pool(
     width: u32,
     height: u32,
-) -> Result<core_video::pixel_buffer_pool::CVPixelBufferPool> {
-    use core_foundation::{base::TCFType, number::CFNumber, string::CFString};
-    use core_video::pixel_buffer;
-    use core_video::{
-        pixel_buffer::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
-        pixel_buffer_io_surface::kCVPixelBufferIOSurfaceCoreAnimationCompatibilityKey,
-        pixel_buffer_pool::{self},
+) -> Result<objc2_core_foundation::CFRetained<objc2_core_video::CVPixelBufferPool>> {
+    use objc2_core_foundation::{CFDictionary, CFNumber, CFRetained};
+    use objc2_core_video::{
+        CVPixelBufferPool, kCVPixelBufferHeightKey,
+        kCVPixelBufferIOSurfaceCoreAnimationCompatibilityKey, kCVPixelBufferPixelFormatTypeKey,
+        kCVPixelBufferWidthKey, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, kCVReturnSuccess,
     };
+    use std::ptr::{self, NonNull};
 
-    let width_key: CFString =
-        unsafe { CFString::wrap_under_get_rule(pixel_buffer::kCVPixelBufferWidthKey) };
-    let height_key: CFString =
-        unsafe { CFString::wrap_under_get_rule(pixel_buffer::kCVPixelBufferHeightKey) };
-    let animation_key: CFString = unsafe {
-        CFString::wrap_under_get_rule(kCVPixelBufferIOSurfaceCoreAnimationCompatibilityKey)
+    let buffer_attributes = CFDictionary::from_slices(
+        &unsafe {
+            [
+                kCVPixelBufferWidthKey,
+                kCVPixelBufferHeightKey,
+                kCVPixelBufferIOSurfaceCoreAnimationCompatibilityKey,
+                kCVPixelBufferPixelFormatTypeKey,
+            ]
+        },
+        &[
+            &*CFNumber::new_i32(width as i32),
+            &*CFNumber::new_i32(height as i32),
+            &*CFNumber::new_i32(1),
+            &*CFNumber::new_i64(kCVPixelFormatType_420YpCbCr8BiPlanarFullRange as i64),
+        ],
+    );
+    let mut pool = ptr::null_mut();
+    let status = unsafe {
+        CVPixelBufferPool::create(
+            None,
+            None,
+            Some(buffer_attributes.as_opaque()),
+            NonNull::from(&mut pool),
+        )
     };
-    let format_key: CFString =
-        unsafe { CFString::wrap_under_get_rule(pixel_buffer::kCVPixelBufferPixelFormatTypeKey) };
-
-    let yes: CFNumber = 1.into();
-    let width: CFNumber = (width as i32).into();
-    let height: CFNumber = (height as i32).into();
-    let format: CFNumber = (kCVPixelFormatType_420YpCbCr8BiPlanarFullRange as i64).into();
-
-    let buffer_attributes = core_foundation::dictionary::CFDictionary::from_CFType_pairs(&[
-        (width_key, width.into_CFType()),
-        (height_key, height.into_CFType()),
-        (animation_key, yes.into_CFType()),
-        (format_key, format.into_CFType()),
-    ]);
-
-    pixel_buffer_pool::CVPixelBufferPool::new(None, Some(&buffer_attributes)).map_err(|cv_return| {
-        anyhow::anyhow!("failed to create pixel buffer pool: CVReturn({cv_return})",)
-    })
+    anyhow::ensure!(
+        status == kCVReturnSuccess,
+        "failed to create pixel buffer pool: CVReturn({status})"
+    );
+    let pool = NonNull::new(pool).context("CoreVideo returned a null pixel buffer pool")?;
+    Ok(unsafe { CFRetained::from_raw(pool) })
 }
 
 #[cfg(target_os = "macos")]
-pub type RemoteVideoFrame = core_video::pixel_buffer::CVPixelBuffer;
+pub type RemoteVideoFrame = objc2_core_foundation::CFRetained<objc2_core_video::CVPixelBuffer>;
 
 #[cfg(target_os = "macos")]
 fn video_frame_buffer_from_webrtc(
-    pool: core_video::pixel_buffer_pool::CVPixelBufferPool,
+    pool: objc2_core_foundation::CFRetained<objc2_core_video::CVPixelBufferPool>,
     buffer: Box<dyn VideoBuffer>,
 ) -> Option<RemoteVideoFrame> {
-    use core_foundation::base::TCFType;
-    use core_video::{pixel_buffer::CVPixelBuffer, r#return::kCVReturnSuccess};
     use livekit::webrtc::native::yuv_helper::i420_to_nv12;
+    use objc2_core_foundation::CFRetained;
+    use objc2_core_video::{
+        CVPixelBufferGetBaseAddressOfPlane, CVPixelBufferGetBytesPerRowOfPlane,
+        CVPixelBufferGetHeight, CVPixelBufferGetHeightOfPlane, CVPixelBufferGetWidth,
+        CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags, CVPixelBufferPool,
+        CVPixelBufferUnlockBaseAddress, kCVReturnSuccess,
+    };
+    use std::ptr::{self, NonNull};
 
     if let Some(native) = buffer.as_native() {
-        let pixel_buffer = native.get_cv_pixel_buffer();
-        if pixel_buffer.is_null() {
-            return None;
-        }
-        return unsafe { Some(CVPixelBuffer::wrap_under_get_rule(pixel_buffer as _)) };
+        let pixel_buffer = NonNull::new(native.get_cv_pixel_buffer().cast())?;
+        return unsafe { Some(CFRetained::retain(pixel_buffer)) };
     }
 
     let i420_buffer = buffer.as_i420()?;
-    let pixel_buffer = pool.create_pixel_buffer().log_err()?;
+    let mut pixel_buffer = ptr::null_mut();
+    let status = unsafe {
+        CVPixelBufferPool::create_pixel_buffer(None, &pool, NonNull::from(&mut pixel_buffer))
+    };
+    if status != kCVReturnSuccess {
+        log::error!("failed to create pixel buffer: CVReturn({status})");
+        return None;
+    }
+    let pixel_buffer = unsafe { CFRetained::from_raw(NonNull::new(pixel_buffer)?) };
 
     let image_buffer = unsafe {
-        if pixel_buffer.lock_base_address(0) != kCVReturnSuccess {
+        if CVPixelBufferLockBaseAddress(&pixel_buffer, CVPixelBufferLockFlags::empty())
+            != kCVReturnSuccess
+        {
             return None;
         }
 
-        let dst_y = pixel_buffer.get_base_address_of_plane(0);
-        let dst_y_stride = pixel_buffer.get_bytes_per_row_of_plane(0);
-        let dst_y_len = pixel_buffer.get_height_of_plane(0) * dst_y_stride;
-        let dst_uv = pixel_buffer.get_base_address_of_plane(1);
-        let dst_uv_stride = pixel_buffer.get_bytes_per_row_of_plane(1);
-        let dst_uv_len = pixel_buffer.get_height_of_plane(1) * dst_uv_stride;
-        let width = pixel_buffer.get_width();
-        let height = pixel_buffer.get_height();
+        let dst_y = CVPixelBufferGetBaseAddressOfPlane(&pixel_buffer, 0);
+        let dst_y_stride = CVPixelBufferGetBytesPerRowOfPlane(&pixel_buffer, 0);
+        let dst_y_len = CVPixelBufferGetHeightOfPlane(&pixel_buffer, 0) * dst_y_stride;
+        let dst_uv = CVPixelBufferGetBaseAddressOfPlane(&pixel_buffer, 1);
+        let dst_uv_stride = CVPixelBufferGetBytesPerRowOfPlane(&pixel_buffer, 1);
+        let dst_uv_len = CVPixelBufferGetHeightOfPlane(&pixel_buffer, 1) * dst_uv_stride;
+        let width = CVPixelBufferGetWidth(&pixel_buffer);
+        let height = CVPixelBufferGetHeight(&pixel_buffer);
         let dst_y_buffer = std::slice::from_raw_parts_mut(dst_y as *mut u8, dst_y_len);
         let dst_uv_buffer = std::slice::from_raw_parts_mut(dst_uv as *mut u8, dst_uv_len);
 
@@ -708,7 +715,9 @@ fn video_frame_buffer_from_webrtc(
             height as i32,
         );
 
-        if pixel_buffer.unlock_base_address(0) != kCVReturnSuccess {
+        if CVPixelBufferUnlockBaseAddress(&pixel_buffer, CVPixelBufferLockFlags::empty())
+            != kCVReturnSuccess
+        {
             return None;
         }
 
@@ -765,11 +774,15 @@ fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<Remote
 #[cfg(target_os = "macos")]
 fn video_frame_buffer_to_webrtc(frame: ScreenCaptureFrame) -> Option<impl AsRef<dyn VideoBuffer>> {
     use livekit::webrtc;
+    use objc2_core_foundation::CFRetained;
 
-    let pixel_buffer = frame.0.as_concrete_TypeRef();
-    std::mem::forget(frame.0);
+    let pixel_buffer = CFRetained::into_raw(frame.0);
     unsafe {
-        Some(webrtc::video_frame::native::NativeBuffer::from_cv_pixel_buffer(pixel_buffer as _))
+        Some(
+            webrtc::video_frame::native::NativeBuffer::from_cv_pixel_buffer(
+                pixel_buffer.as_ptr().cast(),
+            ),
+        )
     }
 }
 
@@ -837,10 +850,6 @@ trait DeviceChangeListenerApi: Stream<Item = ()> + Sized {
 
 #[cfg(target_os = "macos")]
 mod macos {
-    use cocoa::{
-        base::{id, nil},
-        foundation::{NSProcessInfo, NSString},
-    };
     use coreaudio::sys::{
         AudioObjectAddPropertyListener, AudioObjectID, AudioObjectPropertyAddress,
         AudioObjectRemovePropertyListener, OSStatus, kAudioHardwarePropertyDefaultInputDevice,
@@ -848,52 +857,6 @@ mod macos {
         kAudioObjectPropertyScopeGlobal, kAudioObjectSystemObject,
     };
     use futures::{StreamExt, channel::mpsc::UnboundedReceiver};
-    use objc::{msg_send, sel, sel_impl};
-
-    /// A guard that prevents App Nap while held.
-    ///
-    /// On macOS, App Nap can throttle background apps to save power. This can cause
-    /// audio artifacts when the app is not in the foreground. This guard tells macOS
-    /// that we're doing latency-sensitive work and should not be throttled.
-    ///
-    /// See Apple's documentation on prioritizing work at the app level:
-    /// https://developer.apple.com/library/archive/documentation/Performance/Conceptual/power_efficiency_guidelines_osx/PrioritizeWorkAtTheAppLevel.html
-    pub struct PreventAppNapGuard {
-        activity: id,
-    }
-
-    // The activity token returned by NSProcessInfo is thread-safe
-    unsafe impl Send for PreventAppNapGuard {}
-
-    // From NSProcessInfo.h
-    const NS_ACTIVITY_IDLE_SYSTEM_SLEEP_DISABLED: u64 = 1 << 20;
-    const NS_ACTIVITY_USER_INITIATED: u64 = 0x00FFFFFF | NS_ACTIVITY_IDLE_SYSTEM_SLEEP_DISABLED;
-    const NS_ACTIVITY_USER_INITIATED_ALLOWING_IDLE_SYSTEM_SLEEP: u64 =
-        NS_ACTIVITY_USER_INITIATED & !NS_ACTIVITY_IDLE_SYSTEM_SLEEP_DISABLED;
-
-    impl PreventAppNapGuard {
-        pub fn new() -> Self {
-            unsafe {
-                let process_info = NSProcessInfo::processInfo(nil);
-                #[allow(clippy::disallowed_methods)]
-                let reason = NSString::alloc(nil).init_str("Audio playback in progress");
-                let activity: id = msg_send![process_info, beginActivityWithOptions:NS_ACTIVITY_USER_INITIATED_ALLOWING_IDLE_SYSTEM_SLEEP reason:reason];
-                let _: () = msg_send![reason, release];
-                let _: () = msg_send![activity, retain];
-                Self { activity }
-            }
-        }
-    }
-
-    impl Drop for PreventAppNapGuard {
-        fn drop(&mut self) {
-            unsafe {
-                let process_info = NSProcessInfo::processInfo(nil);
-                let _: () = msg_send![process_info, endActivity:self.activity];
-                let _: () = msg_send![self.activity, release];
-            }
-        }
-    }
 
     /// Implementation from: https://github.com/zed-industries/cpal/blob/fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50/src/host/coreaudio/macos/property_listener.rs#L15
     pub struct CoreAudioDefaultDeviceChangeListener {
@@ -1074,8 +1037,6 @@ mod macos {
 
 #[cfg(target_os = "macos")]
 type DeviceChangeListener = macos::CoreAudioDefaultDeviceChangeListener;
-#[cfg(target_os = "macos")]
-use macos::PreventAppNapGuard;
 
 #[cfg(not(target_os = "macos"))]
 mod noop_change_listener {

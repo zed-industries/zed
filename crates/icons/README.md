@@ -26,4 +26,4 @@ To introduce a new icon, add the `.svg` file to the `assets/icon` directory and 
 - SVG files in the assets folder follow a snake_case name format.
 - Icons in the `icons.rs` file follow the PascalCase name format.
 
-Make sure to tag a member of Zed's design team so we can review and adjust any newly introduced icon.
+Make sure to tag a member of Zed's design team (@zed-industries/design) so we can review and adjust any newly introduced icon.

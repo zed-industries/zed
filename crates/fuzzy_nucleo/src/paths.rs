@@ -1,4 +1,5 @@
 use gpui::BackgroundExecutor;
+use path::{PathStyle, rel_path::RelPath};
 use std::{
     cmp::Ordering,
     sync::{
@@ -6,7 +7,6 @@ use std::{
         atomic::{self, AtomicBool},
     },
 };
-use util::{paths::PathStyle, rel_path::RelPath};
 
 use nucleo::Utf32Str;
 use nucleo::pattern::Pattern;
@@ -207,7 +207,7 @@ fn path_match_helper<'a>(
                 candidate.path.into()
             },
             path_prefix: if root_is_file {
-                RelPath::empty().into()
+                RelPath::empty_arc()
             } else {
                 Arc::clone(path_prefix)
             },
@@ -239,7 +239,7 @@ pub fn match_fixed_path_set(
 
     let root_is_file = worktree_root_name.is_some() && candidates.iter().all(|c| c.path.is_empty());
 
-    let path_prefix = worktree_root_name.unwrap_or_else(|| RelPath::empty().into());
+    let path_prefix = worktree_root_name.unwrap_or_else(|| RelPath::empty_arc());
 
     let mut results = Vec::new();
 
@@ -256,7 +256,7 @@ pub fn match_fixed_path_set(
         &AtomicBool::new(false),
     )
     .ok();
-    util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
+    gpui_util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
     matcher::return_matcher(matcher);
     results
 }
@@ -351,6 +351,6 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
     }
 
     let mut results = segment_results.concat();
-    util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
+    gpui_util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
     results
 }

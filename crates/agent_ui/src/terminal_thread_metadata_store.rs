@@ -63,6 +63,95 @@ impl TerminalThreadMetadata {
     pub fn main_worktree_paths(&self) -> &PathList {
         self.worktree_paths.main_worktree_path_list()
     }
+
+    pub fn display_title(&self) -> SharedString {
+        compose_terminal_thread_title(
+            self.title.as_ref(),
+            self.custom_title.as_ref().map(|title| title.as_ref()),
+        )
+    }
+
+    pub fn editable_title(&self) -> SharedString {
+        self.custom_title.clone().unwrap_or_else(|| {
+            SharedString::from(terminal_title_without_prefix(self.title.as_ref()).to_string())
+        })
+    }
+}
+
+pub(crate) fn compose_terminal_thread_title(
+    terminal_title: &str,
+    custom_title: Option<&str>,
+) -> SharedString {
+    let Some(custom_title) = custom_title.filter(|title| !title.trim().is_empty()) else {
+        return SharedString::from(terminal_title.to_string());
+    };
+
+    if let Some(prefix) = terminal_title_prefix(terminal_title) {
+        SharedString::from(format!("{prefix}{custom_title}"))
+    } else {
+        SharedString::from(custom_title.to_string())
+    }
+}
+
+pub(crate) fn terminal_title_without_prefix(title: &str) -> &str {
+    terminal_title_prefix(title)
+        .map(|prefix| &title[prefix.len()..])
+        .unwrap_or(title)
+}
+
+pub(crate) fn normalize_terminal_custom_title(
+    terminal_title: &str,
+    edited_title: SharedString,
+) -> Option<SharedString> {
+    if edited_title.trim().is_empty()
+        || edited_title == terminal_title_without_prefix(terminal_title)
+    {
+        None
+    } else {
+        Some(edited_title)
+    }
+}
+
+pub fn terminal_title_prefix(title: &str) -> Option<&str> {
+    let mut prefix_byte_len = 0;
+    let mut saw_prefix_character = false;
+    let mut saw_whitespace_after_prefix = false;
+
+    let mut chars = title.chars().peekable();
+    while let Some(character) = chars.next() {
+        if character.is_alphanumeric() {
+            return None;
+        }
+
+        if character.is_whitespace() {
+            if !saw_prefix_character {
+                return None;
+            }
+
+            prefix_byte_len += character.len_utf8();
+            saw_whitespace_after_prefix = true;
+
+            while let Some(character) = chars.peek() {
+                if !character.is_whitespace() {
+                    break;
+                }
+
+                prefix_byte_len += character.len_utf8();
+                chars.next();
+            }
+
+            break;
+        }
+
+        saw_prefix_character = true;
+        prefix_byte_len += character.len_utf8();
+    }
+
+    if saw_whitespace_after_prefix {
+        Some(&title[..prefix_byte_len])
+    } else {
+        None
+    }
 }
 
 pub struct TerminalThreadMetadataStore {
@@ -190,6 +279,25 @@ impl TerminalThreadMetadataStore {
     }
 
     pub fn save(&mut self, metadata: TerminalThreadMetadata, cx: &mut Context<Self>) {
+        self.save_internal(metadata);
+        cx.notify();
+    }
+
+    pub fn rename_terminal(
+        &mut self,
+        terminal_id: TerminalId,
+        title: SharedString,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(mut metadata) = self.entry(terminal_id).cloned() else {
+            return;
+        };
+        let custom_title = normalize_terminal_custom_title(metadata.title.as_ref(), title);
+        if metadata.custom_title == custom_title {
+            return;
+        }
+
+        metadata.custom_title = custom_title;
         self.save_internal(metadata);
         cx.notify();
     }
@@ -561,6 +669,73 @@ mod tests {
             remote_connection: None,
             working_directory: None,
         }
+    }
+
+    #[test]
+    fn test_terminal_title_prefix_preserves_non_alphanumeric_prefixes() {
+        assert_eq!(terminal_title_prefix("✳ Thinking"), Some("✳ "));
+        assert_eq!(terminal_title_prefix(">>>   Thinking"), Some(">>>   "));
+        assert_eq!(terminal_title_prefix("⠋ Running"), Some("⠋ "));
+        assert_eq!(terminal_title_prefix("* Claude"), Some("* "));
+        assert_eq!(terminal_title_prefix("✳Thinking"), None);
+        assert_eq!(terminal_title_prefix("Thinking"), None);
+        assert_eq!(terminal_title_prefix(" Thinking"), None);
+        assert_eq!(terminal_title_prefix("✳"), None);
+        assert_eq!(terminal_title_prefix("v1 Running"), None);
+    }
+
+    #[test]
+    fn test_terminal_thread_display_title_combines_raw_and_custom_titles() {
+        let mut metadata = metadata(
+            "⠋ Thinking",
+            WorktreePaths::from_folder_paths(&PathList::default()),
+        );
+        metadata.custom_title = Some("Fix bug".into());
+        assert_eq!(metadata.display_title().as_ref(), "⠋ Fix bug");
+
+        metadata.title = "Thinking".into();
+        assert_eq!(metadata.display_title().as_ref(), "Fix bug");
+    }
+
+    #[gpui::test]
+    async fn test_rename_terminal_updates_stored_custom_title(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let metadata = metadata(
+            "⠋ Dev Server",
+            WorktreePaths::from_folder_paths(&PathList::default()),
+        );
+        let terminal_id = metadata.terminal_id;
+
+        cx.update(|cx| {
+            TerminalThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.save(metadata, cx);
+                store.rename_terminal(terminal_id, "Renamed Terminal".into(), cx);
+            });
+        });
+
+        cx.update(|cx| {
+            let store = TerminalThreadMetadataStore::global(cx);
+            let metadata = store
+                .read(cx)
+                .entry(terminal_id)
+                .expect("renamed terminal metadata should exist");
+            assert_eq!(metadata.custom_title.as_deref(), Some("Renamed Terminal"));
+            assert_eq!(metadata.display_title().as_ref(), "⠋ Renamed Terminal");
+        });
+
+        cx.update(|cx| {
+            TerminalThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.rename_terminal(terminal_id, "Dev Server".into(), cx);
+            });
+            let store = TerminalThreadMetadataStore::global(cx);
+            let metadata = store
+                .read(cx)
+                .entry(terminal_id)
+                .expect("renamed terminal metadata should exist");
+            assert_eq!(metadata.custom_title, None);
+            assert_eq!(metadata.display_title().as_ref(), "⠋ Dev Server");
+        });
     }
 
     #[gpui::test]

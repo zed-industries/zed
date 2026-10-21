@@ -57,8 +57,21 @@ impl Component for AgentSetupButton {
         ComponentScope::Agent
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        None
+    fn description() -> &'static str {
+        "A large, two-section button used in agent onboarding flows \
+        to launch the setup of a provider or tool, showing an icon, name, \
+        and current setup state."
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+        single_example(
+            "Default",
+            AgentSetupButton::new("preview")
+                .icon(Icon::new(IconName::ZedAgent))
+                .name("Zed Agent")
+                .into_any_element(),
+        )
+        .into_any_element()
     }
 }
 
