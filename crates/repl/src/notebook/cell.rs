@@ -143,6 +143,34 @@ fn convert_outputs(
         .collect()
 }
 
+/// What a save writes for one cell, kept until the write succeeds so that
+/// exactly that, and not edits made while the write was in flight, is marked
+/// as saved.
+pub struct CellSaveState {
+    text_version: clock::Global,
+    outputs_version: usize,
+}
+
+fn text_version(editor: &Entity<Editor>, cx: &App) -> clock::Global {
+    editor
+        .read(cx)
+        .buffer()
+        .read(cx)
+        .as_singleton()
+        .map(|buffer| buffer.read(cx).version())
+        .unwrap_or_default()
+}
+
+fn mark_text_saved(editor: &Entity<Editor>, version: clock::Global, cx: &mut App) {
+    editor.update(cx, |editor, cx| {
+        editor.buffer().update(cx, |buffer, cx| {
+            if let Some(buffer) = buffer.as_singleton() {
+                buffer.update(cx, |buffer, cx| buffer.did_save(version, None, cx));
+            }
+        });
+    });
+}
+
 impl Cell {
     pub fn id(&self, cx: &App) -> CellId {
         match self {
@@ -173,6 +201,25 @@ impl Cell {
             Cell::Code(code_cell) => code_cell.read(cx).is_dirty(cx),
             Cell::Markdown(markdown_cell) => markdown_cell.read(cx).is_dirty(cx),
             Cell::Raw(_) => false,
+        }
+    }
+
+    /// What a save is about to write for this cell. Raw cells cannot change.
+    pub fn save_state(&self, cx: &App) -> Option<CellSaveState> {
+        match self {
+            Cell::Code(code_cell) => Some(code_cell.read(cx).save_state(cx)),
+            Cell::Markdown(markdown_cell) => Some(markdown_cell.read(cx).save_state(cx)),
+            Cell::Raw(_) => None,
+        }
+    }
+
+    pub fn mark_saved(&self, saved: CellSaveState, cx: &mut App) {
+        match self {
+            Cell::Code(code_cell) => code_cell.update(cx, |cell, cx| cell.mark_saved(saved, cx)),
+            Cell::Markdown(markdown_cell) => {
+                markdown_cell.update(cx, |cell, cx| cell.mark_saved(saved, cx))
+            }
+            Cell::Raw(_) => {}
         }
     }
 
@@ -522,17 +569,15 @@ impl MarkdownCell {
         self.editor.read(cx).buffer().read(cx).is_dirty(cx)
     }
 
-    pub fn mark_saved(&mut self, cx: &mut Context<Self>) {
-        self.editor.update(cx, |editor, cx| {
-            editor.buffer().update(cx, |buffer, cx| {
-                if let Some(buffer) = buffer.as_singleton() {
-                    buffer.update(cx, |buffer, cx| {
-                        let version = buffer.version();
-                        buffer.did_save(version, None, cx);
-                    });
-                }
-            });
-        });
+    pub fn save_state(&self, cx: &App) -> CellSaveState {
+        CellSaveState {
+            text_version: text_version(&self.editor, cx),
+            outputs_version: 0,
+        }
+    }
+
+    pub fn mark_saved(&mut self, saved: CellSaveState, cx: &mut Context<Self>) {
+        mark_text_saved(&self.editor, saved.text_version, cx);
     }
 
     pub fn to_nbformat_cell(&self, cx: &App) -> nbformat::v4::Cell {
@@ -702,9 +747,11 @@ pub struct CodeCell {
     source: String,
     editor: Entity<editor::Editor>,
     outputs: Vec<Output>,
-    /// Outputs or the execution count changed since the notebook was loaded or
-    /// last saved. Tracked separately because those live outside the buffer.
-    outputs_dirty: bool,
+    /// Bumped whenever the outputs or the execution count change. They live
+    /// outside the buffer, so the buffer's own version does not cover them.
+    outputs_version: usize,
+    /// `outputs_version` as of the last save.
+    saved_outputs_version: usize,
     selected: bool,
     cell_position: Option<CellPosition>,
     _language_task: Task<()>,
@@ -788,7 +835,8 @@ impl CodeCell {
             source,
             editor,
             outputs,
-            outputs_dirty: false,
+            outputs_version: 0,
+            saved_outputs_version: 0,
             selected: false,
             cell_position: None,
             execution_start_time: None,
@@ -825,21 +873,20 @@ impl CodeCell {
     }
 
     pub fn is_dirty(&self, cx: &App) -> bool {
-        self.outputs_dirty || self.editor.read(cx).buffer().read(cx).is_dirty(cx)
+        self.outputs_version != self.saved_outputs_version
+            || self.editor.read(cx).buffer().read(cx).is_dirty(cx)
     }
 
-    pub fn mark_saved(&mut self, cx: &mut Context<Self>) {
-        self.outputs_dirty = false;
-        self.editor.update(cx, |editor, cx| {
-            editor.buffer().update(cx, |buffer, cx| {
-                if let Some(buffer) = buffer.as_singleton() {
-                    buffer.update(cx, |buffer, cx| {
-                        let version = buffer.version();
-                        buffer.did_save(version, None, cx);
-                    });
-                }
-            });
-        });
+    pub fn save_state(&self, cx: &App) -> CellSaveState {
+        CellSaveState {
+            text_version: text_version(&self.editor, cx),
+            outputs_version: self.outputs_version,
+        }
+    }
+
+    pub fn mark_saved(&mut self, saved: CellSaveState, cx: &mut Context<Self>) {
+        self.saved_outputs_version = saved.outputs_version;
+        mark_text_saved(&self.editor, saved.text_version, cx);
     }
 
     pub fn to_nbformat_cell(&self, cx: &App) -> nbformat::v4::Cell {
@@ -870,7 +917,7 @@ impl CodeCell {
 
     pub fn clear_outputs(&mut self) {
         if !self.outputs.is_empty() {
-            self.outputs_dirty = true;
+            self.outputs_version += 1;
         }
         self.outputs.clear();
         self.execution_duration = None;
@@ -907,7 +954,7 @@ impl CodeCell {
             evalue: "cell could not be executed".to_string(),
             traceback: cx.new(|cx| TerminalOutput::from(error_message, window, cx)),
         }));
-        self.outputs_dirty = true;
+        self.outputs_version += 1;
         self.execution_start_time = None;
         self.is_executing = false;
         cx.notify();
@@ -941,24 +988,24 @@ impl CodeCell {
                 self.outputs.push(Output::Stream {
                     content: cx.new(|cx| TerminalOutput::from(&stream.text, window, cx)),
                 });
-                self.outputs_dirty = true;
+                self.outputs_version += 1;
             }
             JupyterMessageContent::DisplayData(display_data) => {
                 self.outputs
                     .push(Output::new(&display_data.data, None, window, cx));
-                self.outputs_dirty = true;
+                self.outputs_version += 1;
             }
             JupyterMessageContent::ExecuteResult(execute_result) => {
                 self.outputs
                     .push(Output::new(&execute_result.data, None, window, cx));
-                self.outputs_dirty = true;
+                self.outputs_version += 1;
             }
             JupyterMessageContent::ExecuteInput(input) => {
                 self.execution_count = serde_json::to_value(&input.execution_count)
                     .ok()
                     .and_then(|v| v.as_i64())
                     .map(|v| v as i32);
-                self.outputs_dirty = true;
+                self.outputs_version += 1;
             }
             JupyterMessageContent::ExecuteReply(_) => {
                 self.finish_execution();
@@ -970,7 +1017,7 @@ impl CodeCell {
                     traceback: cx
                         .new(|cx| TerminalOutput::from(&error.traceback.join("\n"), window, cx)),
                 }));
-                self.outputs_dirty = true;
+                self.outputs_version += 1;
             }
             _ => {}
         }

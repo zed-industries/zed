@@ -35,7 +35,7 @@ use crate::kernels::{
     Kernel, KernelSession, KernelSpecification, KernelStatus, LocalKernelSpecification,
     NativeRunningKernel, RemoteRunningKernel, SshRunningKernel, WslRunningKernel,
 };
-use crate::notebook::MovementDirection;
+use crate::notebook::{CellSaveState, MovementDirection};
 use crate::repl_store::ReplStore;
 
 use picker::Picker;
@@ -102,16 +102,9 @@ pub struct NotebookEditor {
     selected_cell_index: usize,
     cell_order: Vec<CellId>,
     original_cell_order: Vec<CellId>,
-    /// The notebook metadata that counts as saved: what was loaded or last
-    /// saved, plus whatever the kernel started automatically on open writes
-    /// (its kernelspec and the language info it reports). Those writes are
-    /// not changes the user made, so they must not dirty a fresh notebook.
-    baseline_metadata: serde_json::Value,
-    /// Set once the user picks a kernel. From then on every metadata write is
-    /// a consequence of that choice and is compared against `baseline_metadata`.
-    kernel_picked_by_user: bool,
-    /// The metadata that would be saved differs from `baseline_metadata`.
-    metadata_dirty: bool,
+    /// The dirty state last reported to the workspace, which caches it and
+    /// only re-reads it on item events.
+    reported_dirty: bool,
     cell_map: HashMap<CellId, Cell>,
     kernel: Kernel,
     kernel_specification: Option<KernelSpecification>,
@@ -119,14 +112,17 @@ pub struct NotebookEditor {
     kernel_picker_handle: PopoverMenuHandle<Picker<KernelPickerDelegate>>,
 }
 
-/// The notebook metadata as save writes it, for change detection.
-fn metadata_json(item: &NotebookItem) -> serde_json::Value {
-    serde_json::to_value(&item.notebook.metadata).expect("notebook metadata is plain JSON")
-}
-
 enum SaveDestination {
     CurrentPath,
     NewPath(ProjectPath),
+}
+
+/// What a save writes, kept until the write succeeds so that exactly that,
+/// and not edits made while the write was in flight, is marked as saved.
+struct NotebookSaveState {
+    cell_order: Vec<CellId>,
+    metadata: serde_json::Value,
+    cells: Vec<(CellId, CellSaveState)>,
 }
 
 impl NotebookEditor {
@@ -143,7 +139,6 @@ impl NotebookEditor {
         let worktree_id = notebook_item.read(cx).project_path.worktree_id;
 
         let notebook_language = notebook_item.read(cx).notebook_language();
-        let baseline_metadata = metadata_json(notebook_item.read(cx));
         let notebook_language = cx
             .spawn_in(window, async move |_, _| notebook_language.await)
             .shared();
@@ -158,64 +153,7 @@ impl NotebookEditor {
             cell_order.push(cell_id.clone());
             let cell_entity = Cell::load(&cell, &languages, notebook_language.clone(), window, cx);
 
-            match &cell_entity {
-                Cell::Code(code_cell) => {
-                    let cell_id_for_focus = cell_id.clone();
-                    cx.subscribe_in(code_cell, window, move |this, _cell, event, window, cx| {
-                        match event {
-                            CellEvent::Run(cell_id) => {
-                                this.execute_cell(cell_id.clone(), window, cx)
-                            }
-                            CellEvent::FocusedIn(_) => {
-                                this.select_cell_by_id(&cell_id_for_focus, cx)
-                            }
-                        }
-                    })
-                    .detach();
-
-                    let cell_id_for_editor = cell_id.clone();
-                    let editor = code_cell.read(cx).editor().clone();
-                    cx.subscribe(&editor, move |this, _editor, event, cx| {
-                        if let editor::EditorEvent::Focused = event {
-                            this.select_cell_by_id(&cell_id_for_editor, cx);
-                        }
-                    })
-                    .detach();
-                }
-                Cell::Markdown(markdown_cell) => {
-                    cx.subscribe(
-                        markdown_cell,
-                        move |_this, cell, event: &MarkdownCellEvent, cx| {
-                            match event {
-                                MarkdownCellEvent::FinishedEditing => {
-                                    cell.update(cx, |cell, cx| {
-                                        cell.reparse_markdown(cx);
-                                    });
-                                }
-                                MarkdownCellEvent::Run(_cell_id) => {
-                                    // run is handled separately by move_to_next_cell
-                                    // Just reparse here
-                                    cell.update(cx, |cell, cx| {
-                                        cell.reparse_markdown(cx);
-                                    });
-                                }
-                            }
-                        },
-                    )
-                    .detach();
-
-                    let cell_id_for_editor = cell_id.clone();
-                    let editor = markdown_cell.read(cx).editor().clone();
-                    cx.subscribe(&editor, move |this, _editor, event, cx| {
-                        if let editor::EditorEvent::Focused = event {
-                            this.select_cell_by_id(&cell_id_for_editor, cx);
-                        }
-                    })
-                    .detach();
-                }
-                Cell::Raw(_) => {}
-            }
-
+            Self::subscribe_to_cell(cell_id.clone(), &cell_entity, window, cx);
             cell_map.insert(cell_id.clone(), cell_entity);
         }
 
@@ -238,9 +176,7 @@ impl NotebookEditor {
             selected_cell_index: 0,
             cell_order: cell_order.clone(),
             original_cell_order: cell_order.clone(),
-            baseline_metadata,
-            kernel_picked_by_user: false,
-            metadata_dirty: false,
+            reported_dirty: false,
             cell_map: cell_map.clone(),
             kernel: Kernel::Shutdown,
             kernel_specification: None,
@@ -251,8 +187,9 @@ impl NotebookEditor {
         editor.refresh_language(cx);
         editor.refresh_kernelspecs(cx);
 
-        cx.subscribe(&notebook_item, |this, _item, _event, cx| {
-            this.refresh_language(cx);
+        cx.subscribe(&notebook_item, |this, _item, event, cx| match event {
+            NotebookItemEvent::MetadataChanged => this.refresh_language(cx),
+            NotebookItemEvent::MetadataDirtyChanged => this.dirty_state_changed(cx),
         })
         .detach();
 
@@ -291,19 +228,15 @@ impl NotebookEditor {
         self.notebook_language = task.shared();
     }
 
-    /// Call after anything writes to the notebook metadata.
-    fn metadata_written(&mut self, cx: &App) {
-        let current = metadata_json(self.notebook_item.read(cx));
-        if self.kernel_picked_by_user {
-            self.metadata_dirty = current != self.baseline_metadata;
-        } else {
-            self.baseline_metadata = current;
+    /// Tells the workspace when the notebook's dirty state flips. The
+    /// workspace caches it and only re-reads it on item events, so call this
+    /// after anything that can change it.
+    fn dirty_state_changed(&mut self, cx: &mut Context<Self>) {
+        let dirty = self.is_dirty(cx);
+        if dirty != self.reported_dirty {
+            self.reported_dirty = dirty;
+            cx.emit(NotebookEditorEvent::DirtyChanged);
         }
-    }
-
-    fn reset_metadata_baseline(&mut self, cx: &App) {
-        self.baseline_metadata = metadata_json(self.notebook_item.read(cx));
-        self.metadata_dirty = false;
     }
 
     fn has_structural_changes(&self) -> bool {
@@ -335,19 +268,35 @@ impl NotebookEditor {
         }
     }
 
-    pub fn mark_as_saved(&mut self, cx: &mut Context<Self>) {
-        self.original_cell_order = self.cell_order.clone();
-        self.reset_metadata_baseline(cx);
+    fn save_state(&self, cx: &App) -> NotebookSaveState {
+        NotebookSaveState {
+            cell_order: self.cell_order.clone(),
+            metadata: metadata_json(&self.notebook_item.read(cx).notebook.metadata),
+            cells: self
+                .cell_order
+                .iter()
+                .filter_map(|cell_id| {
+                    let saved = self.cell_map.get(cell_id)?.save_state(cx)?;
+                    Some((cell_id.clone(), saved))
+                })
+                .collect(),
+        }
+    }
 
-        for cell in self.cell_map.values() {
-            match cell {
-                Cell::Code(code_cell) => code_cell.update(cx, |cell, cx| cell.mark_saved(cx)),
-                Cell::Markdown(markdown_cell) => {
-                    markdown_cell.update(cx, |cell, cx| cell.mark_saved(cx))
-                }
-                Cell::Raw(_) => {}
+    /// Marks what `saved` describes as saved: the cell order, the metadata and
+    /// the cell versions that were written. Anything changed since stays dirty.
+    fn mark_as_saved(&mut self, saved: NotebookSaveState, cx: &mut Context<Self>) {
+        self.original_cell_order = saved.cell_order;
+        self.notebook_item.update(cx, |item, cx| {
+            item.set_metadata_baseline(saved.metadata, cx)
+        });
+        for (cell_id, cell_saved) in saved.cells {
+            if let Some(cell) = self.cell_map.get(&cell_id) {
+                cell.mark_saved(cell_saved, cx);
             }
         }
+        cx.emit(NotebookEditorEvent::Saved);
+        self.dirty_state_changed(cx);
         cx.notify();
     }
 
@@ -358,9 +307,8 @@ impl NotebookEditor {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let notebook = self.to_notebook(cx);
+        let saved = self.save_state(cx);
         let project_path = self.notebook_item.read(cx).project_path.clone();
-
-        self.mark_as_saved(cx);
 
         cx.spawn(async move |this, cx| {
             let json =
@@ -374,7 +322,7 @@ impl NotebookEditor {
                 SaveDestination::CurrentPath => {
                     project
                         .update(cx, |project, cx| project.save_buffer(buffer, cx))
-                        .await
+                        .await?;
                 }
                 SaveDestination::NewPath(new_path) => {
                     project
@@ -395,9 +343,13 @@ impl NotebookEditor {
                                 notebook_item.id = entry_id;
                             }
                         })
-                    })
+                    })?;
                 }
             }
+
+            // Only a write that went through counts. A failed save leaves the
+            // notebook dirty, so Save All and closing still catch it.
+            this.update(cx, |this, cx| this.mark_as_saved(saved, cx))
         })
     }
 
@@ -468,12 +420,10 @@ impl NotebookEditor {
                 "language": language
             });
 
-            if let Ok(k) = serde_json::from_value(kernelspec_json) {
-                item.notebook.metadata.kernelspec = Some(k);
-                cx.emit(());
+            if let Ok(kernelspec) = serde_json::from_value(kernelspec_json) {
+                item.set_kernelspec(kernelspec, cx);
             }
         });
-        self.metadata_written(cx);
 
         let kernel_task = match spec {
             KernelSpecification::Jupyter(local_spec) => NativeRunningKernel::new(
@@ -546,7 +496,8 @@ impl NotebookEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.kernel_picked_by_user = true;
+        self.notebook_item
+            .update(cx, |item, _| item.mark_kernel_picked_by_user());
 
         if let Kernel::RunningKernel(kernel) = &mut self.kernel {
             kernel.force_shutdown(window, cx).detach();
@@ -633,6 +584,7 @@ impl NotebookEditor {
         } else {
             self.execution_requests.insert(msg_id, cell_id.clone());
         }
+        self.dirty_state_changed(cx);
     }
 
     fn get_selected_cell(&self) -> Option<&Cell> {
@@ -660,6 +612,7 @@ impl NotebookEditor {
                 });
             }
         }
+        self.dirty_state_changed(cx);
         cx.notify();
     }
 
@@ -810,21 +763,21 @@ impl NotebookEditor {
     }
 
     fn move_cell_up(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        println!("Move cell up triggered");
         if self.selected_cell_index > 0 {
             self.cell_order
                 .swap(self.selected_cell_index, self.selected_cell_index - 1);
             self.selected_cell_index -= 1;
+            self.dirty_state_changed(cx);
             cx.notify();
         }
     }
 
     fn move_cell_down(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        println!("Move cell down triggered");
         if !self.cell_order.is_empty() && self.selected_cell_index < self.cell_order.len() - 1 {
             self.cell_order
                 .swap(self.selected_cell_index, self.selected_cell_index + 1);
             self.selected_cell_index += 1;
+            self.dirty_state_changed(cx);
             cx.notify();
         }
     }
@@ -847,6 +800,7 @@ impl NotebookEditor {
         }
         self.notebook_mode = NotebookMode::Command;
         window.focus(&self.focus_handle, cx);
+        self.dirty_state_changed(cx);
         cx.notify();
     }
 
@@ -861,6 +815,58 @@ impl NotebookEditor {
         self.selected_cell_index = insert_index;
         self.cell_list.splice(insert_index..insert_index, 1);
         self.cell_list.scroll_to_reveal_item(insert_index);
+    }
+
+    /// Keeps the notebook in step with one of its cells: running it or
+    /// focusing it selects it, and its editor going dirty or clean is
+    /// reported to the workspace. Every cell needs this, whether it was built
+    /// on open, added by the user or built by a reload.
+    fn subscribe_to_cell(
+        cell_id: CellId,
+        cell: &Cell,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let editor;
+        match cell {
+            Cell::Code(code_cell) => {
+                let cell_id = cell_id.clone();
+                cx.subscribe_in(
+                    code_cell,
+                    window,
+                    move |this, _cell, event, window, cx| match event {
+                        CellEvent::Run(cell_to_run) => {
+                            this.execute_cell(cell_to_run.clone(), window, cx)
+                        }
+                        CellEvent::FocusedIn(_) => this.select_cell_by_id(&cell_id, cx),
+                    },
+                )
+                .detach();
+                editor = code_cell.read(cx).editor().clone();
+            }
+            Cell::Markdown(markdown_cell) => {
+                cx.subscribe(
+                    markdown_cell,
+                    |_this, cell, event: &MarkdownCellEvent, cx| match event {
+                        MarkdownCellEvent::FinishedEditing | MarkdownCellEvent::Run(_) => {
+                            cell.update(cx, |cell, cx| {
+                                cell.reparse_markdown(cx);
+                            });
+                        }
+                    },
+                )
+                .detach();
+                editor = markdown_cell.read(cx).editor().clone();
+            }
+            Cell::Raw(_) => return,
+        }
+
+        cx.subscribe(&editor, move |this, _editor, event, cx| match event {
+            editor::EditorEvent::Focused => this.select_cell_by_id(&cell_id, cx),
+            editor::EditorEvent::DirtyChanged => this.dirty_state_changed(cx),
+            _ => {}
+        })
+        .detach();
     }
 
     fn add_markdown_block(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -880,28 +886,9 @@ impl NotebookEditor {
             )
         });
 
-        cx.subscribe(
-            &markdown_cell,
-            move |_this, cell, event: &MarkdownCellEvent, cx| match event {
-                MarkdownCellEvent::FinishedEditing | MarkdownCellEvent::Run(_) => {
-                    cell.update(cx, |cell, cx| {
-                        cell.reparse_markdown(cx);
-                    });
-                }
-            },
-        )
-        .detach();
-
-        let cell_id_for_editor = new_cell_id.clone();
-        let editor = markdown_cell.read(cx).editor().clone();
-        cx.subscribe(&editor, move |this, _editor, event, cx| {
-            if let editor::EditorEvent::Focused = event {
-                this.select_cell_by_id(&cell_id_for_editor, cx);
-            }
-        })
-        .detach();
-
-        self.insert_cell_at_current_position(new_cell_id, Cell::Markdown(markdown_cell.clone()));
+        let cell = Cell::Markdown(markdown_cell.clone());
+        Self::subscribe_to_cell(new_cell_id.clone(), &cell, window, cx);
+        self.insert_cell_at_current_position(new_cell_id, cell);
         markdown_cell.update(cx, |cell, cx| {
             cell.set_editing(true);
             cx.notify();
@@ -909,6 +896,7 @@ impl NotebookEditor {
         let editor = markdown_cell.read(cx).editor().clone();
         window.focus(&editor.focus_handle(cx), cx);
         self.notebook_mode = NotebookMode::Edit;
+        self.dirty_state_changed(cx);
         cx.notify();
     }
 
@@ -932,30 +920,13 @@ impl NotebookEditor {
             )
         });
 
-        let cell_id_for_run = new_cell_id.clone();
-        cx.subscribe_in(
-            &code_cell,
-            window,
-            move |this, _cell, event, window, cx| match event {
-                CellEvent::Run(cell_id) => this.execute_cell(cell_id.clone(), window, cx),
-                CellEvent::FocusedIn(_) => this.select_cell_by_id(&cell_id_for_run, cx),
-            },
-        )
-        .detach();
-
-        let cell_id_for_editor = new_cell_id.clone();
-        let editor = code_cell.read(cx).editor().clone();
-        cx.subscribe(&editor, move |this, _editor, event, cx| {
-            if let editor::EditorEvent::Focused = event {
-                this.select_cell_by_id(&cell_id_for_editor, cx);
-            }
-        })
-        .detach();
-
-        self.insert_cell_at_current_position(new_cell_id, Cell::Code(code_cell.clone()));
+        let cell = Cell::Code(code_cell.clone());
+        Self::subscribe_to_cell(new_cell_id.clone(), &cell, window, cx);
+        self.insert_cell_at_current_position(new_cell_id, cell);
         let editor = code_cell.read(cx).editor().clone();
         window.focus(&editor.focus_handle(cx), cx);
         self.notebook_mode = NotebookMode::Edit;
+        self.dirty_state_changed(cx);
         cx.notify();
     }
 
@@ -1651,6 +1622,17 @@ pub struct NotebookItem {
     languages: Arc<LanguageRegistry>,
     // Raw notebook data
     notebook: nbformat::v4::Notebook,
+    /// The metadata that counts as saved: what was loaded or last saved, plus
+    /// whatever the kernel started automatically on open writes (its
+    /// kernelspec and the language info it reports). Those writes are not
+    /// changes the user made, so they must not dirty a fresh notebook.
+    baseline_metadata: serde_json::Value,
+    /// Set once the user picks a kernel. From then on every metadata write is
+    /// a consequence of that choice and is compared against `baseline_metadata`.
+    kernel_picked_by_user: bool,
+    /// The metadata that would be saved differs from `baseline_metadata`.
+    /// Shared by every editor showing this notebook.
+    metadata_dirty: bool,
     // Store our version of the notebook in memory (cell_order, cell_map)
     id: ProjectEntryId,
 }
@@ -1734,6 +1716,9 @@ impl project::ProjectItem for NotebookItem {
                 Ok(cx.new(|_| NotebookItem {
                     project_path: path,
                     languages,
+                    baseline_metadata: metadata_json(&notebook.metadata),
+                    kernel_picked_by_user: false,
+                    metadata_dirty: false,
                     notebook,
                     id,
                 }))
@@ -1758,6 +1743,61 @@ impl project::ProjectItem for NotebookItem {
 }
 
 impl NotebookItem {
+    /// Records that the user picked a kernel. Metadata writes from now on are
+    /// changes the user made; writes before it came from the kernel started
+    /// automatically on open and folded into the baseline.
+    pub fn mark_kernel_picked_by_user(&mut self) {
+        self.kernel_picked_by_user = true;
+    }
+
+    pub fn set_kernelspec(&mut self, kernelspec: nbformat::v4::KernelSpec, cx: &mut Context<Self>) {
+        self.notebook.metadata.kernelspec = Some(kernelspec);
+        self.metadata_written(cx);
+    }
+
+    pub fn set_language_info(
+        &mut self,
+        language_info: nbformat::v4::LanguageInfo,
+        cx: &mut Context<Self>,
+    ) {
+        self.notebook.metadata.language_info = Some(language_info);
+        self.metadata_written(cx);
+    }
+
+    fn metadata_written(&mut self, cx: &mut Context<Self>) {
+        let current = metadata_json(&self.notebook.metadata);
+        if self.kernel_picked_by_user {
+            self.set_metadata_dirty(current != self.baseline_metadata, cx);
+        } else {
+            self.baseline_metadata = current;
+        }
+        cx.emit(NotebookItemEvent::MetadataChanged);
+    }
+
+    /// `baseline` is the metadata that counts as saved from now on. Metadata
+    /// written since it was taken stays an unsaved change if the user has
+    /// picked a kernel; before that, writes keep folding into the baseline.
+    pub fn set_metadata_baseline(&mut self, baseline: serde_json::Value, cx: &mut Context<Self>) {
+        let current = metadata_json(&self.notebook.metadata);
+        self.baseline_metadata = if self.kernel_picked_by_user {
+            baseline
+        } else {
+            current.clone()
+        };
+        self.set_metadata_dirty(current != self.baseline_metadata, cx);
+    }
+
+    fn set_metadata_dirty(&mut self, dirty: bool, cx: &mut Context<Self>) {
+        if self.metadata_dirty != dirty {
+            self.metadata_dirty = dirty;
+            cx.emit(NotebookItemEvent::MetadataDirtyChanged);
+        }
+    }
+
+    pub fn is_metadata_dirty(&self) -> bool {
+        self.metadata_dirty
+    }
+
     pub fn language_name(&self) -> Option<String> {
         self.notebook
             .metadata
@@ -1786,9 +1826,27 @@ impl NotebookItem {
     }
 }
 
-impl EventEmitter<()> for NotebookItem {}
+/// The notebook metadata as save writes it, for change detection.
+fn metadata_json(metadata: &NotebookMetadata) -> serde_json::Value {
+    serde_json::to_value(metadata).expect("notebook metadata is plain JSON")
+}
 
-impl EventEmitter<()> for NotebookEditor {}
+pub enum NotebookItemEvent {
+    /// The notebook metadata was written.
+    MetadataChanged,
+    /// Whether the notebook metadata differs from what is saved flipped.
+    MetadataDirtyChanged,
+}
+
+impl EventEmitter<NotebookItemEvent> for NotebookItem {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NotebookEditorEvent {
+    DirtyChanged,
+    Saved,
+}
+
+impl EventEmitter<NotebookEditorEvent> for NotebookEditor {}
 
 // pub struct NotebookControls {
 //     pane_focused: bool,
@@ -1836,7 +1894,15 @@ impl EventEmitter<()> for NotebookEditor {}
 // }
 
 impl Item for NotebookEditor {
-    type Event = ();
+    type Event = NotebookEditorEvent;
+
+    fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(ItemEvent)) {
+        match event {
+            NotebookEditorEvent::DirtyChanged | NotebookEditorEvent::Saved => {
+                f(ItemEvent::UpdateTab)
+            }
+        }
+    }
 
     fn can_split(&self) -> bool {
         true
@@ -1991,15 +2057,20 @@ impl Item for NotebookEditor {
                     cell_order.push(cell_id.clone());
                     let cell_entity =
                         Cell::load(cell, &languages, notebook_language.clone(), window, cx);
+                    Self::subscribe_to_cell(cell_id.clone(), &cell_entity, window, cx);
                     cell_map.insert(cell_id.clone(), cell_entity);
                 }
 
                 this.cell_order = cell_order.clone();
                 this.original_cell_order = cell_order;
-                this.reset_metadata_baseline(cx);
+                this.notebook_item.update(cx, |item, cx| {
+                    let baseline = metadata_json(&item.notebook.metadata);
+                    item.set_metadata_baseline(baseline, cx);
+                });
                 this.cell_map = cell_map;
                 this.cell_list =
                     ListState::new(this.cell_order.len(), gpui::ListAlignment::Top, px(1000.));
+                this.dirty_state_changed(cx);
                 cx.notify();
             })?;
 
@@ -2008,7 +2079,9 @@ impl Item for NotebookEditor {
     }
 
     fn is_dirty(&self, cx: &App) -> bool {
-        self.has_structural_changes() || self.metadata_dirty || self.has_content_changes(cx)
+        self.has_structural_changes()
+            || self.notebook_item.read(cx).is_metadata_dirty()
+            || self.has_content_changes(cx)
     }
 }
 
@@ -2040,11 +2113,8 @@ impl KernelSession for NotebookEditor {
             if let Ok(language_info) = serde_json::from_value::<nbformat::v4::LanguageInfo>(
                 serde_json::to_value(&reply.language_info).unwrap(),
             ) {
-                self.notebook_item.update(cx, |item, cx| {
-                    item.notebook.metadata.language_info = Some(language_info);
-                    cx.emit(());
-                });
-                self.metadata_written(cx);
+                self.notebook_item
+                    .update(cx, |item, cx| item.set_language_info(language_info, cx));
             }
             cx.notify();
         }
@@ -2059,6 +2129,7 @@ impl KernelSession for NotebookEditor {
                 }
             }
         }
+        self.dirty_state_changed(cx);
     }
 
     fn kernel_errored(&mut self, error_message: String, cx: &mut Context<Self>) {
@@ -2071,9 +2142,12 @@ impl KernelSession for NotebookEditor {
 mod tests {
     use super::*;
     use gpui::{TestAppContext, VisualTestContext};
-    use project::{FakeFs, Project, ProjectItem as _};
+    use project::{FakeFs, Fs as _, Project, ProjectItem as _};
     use serde_json::json;
     use settings::SettingsStore;
+    use std::cell::RefCell;
+    use std::path::Path;
+    use std::rc::Rc;
     use util::path;
     use util::rel_path::rel_path;
 
@@ -2375,16 +2449,7 @@ mod tests {
             cx.new(|cx| NotebookEditor::new(project.clone(), notebook_item, window, cx))
         });
 
-        let cell_editor = notebook_editor.read_with(cx, |notebook_editor, cx| {
-            let cell_id = notebook_editor
-                .cell_order
-                .first()
-                .expect("notebook has one cell");
-            let Some(Cell::Code(cell)) = notebook_editor.cell_map.get(cell_id) else {
-                panic!("expected a code cell");
-            };
-            cell.read(cx).editor().clone()
-        });
+        let cell_editor = first_code_cell_editor(&notebook_editor, cx);
         cell_editor.update_in(cx, |cell_editor, window, cx| {
             cell_editor.set_text("print('goodbye')", window, cx);
         });
@@ -2858,6 +2923,333 @@ mod tests {
             false,
             "reporting what is already saved is not an unsaved change",
             cx,
+        );
+    }
+
+    async fn open_test_notebook(
+        contents: &str,
+        cx: &mut TestAppContext,
+    ) -> (Arc<FakeFs>, Entity<Project>, Entity<NotebookItem>) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/notebooks"), json!({ "test.ipynb": contents }))
+            .await;
+
+        let project = Project::test(fs.clone(), [path!("/notebooks").as_ref()], cx).await;
+        cx.update(|cx| ReplStore::init(fs.clone(), cx));
+
+        let project_path = project.read_with(cx, |project, cx| ProjectPath {
+            worktree_id: project.worktrees(cx).next().unwrap().read(cx).id(),
+            path: rel_path("test.ipynb").into(),
+        });
+
+        let notebook_item = cx
+            .update(|cx| {
+                NotebookItem::try_open(&project, &project_path, cx)
+                    .expect("ipynb files should be openable as notebooks")
+            })
+            .await
+            .expect("notebook should parse");
+        (fs, project, notebook_item)
+    }
+
+    fn record_events(
+        notebook_editor: &Entity<NotebookEditor>,
+        cx: &mut VisualTestContext,
+    ) -> Rc<RefCell<Vec<NotebookEditorEvent>>> {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        cx.update(|_, cx| {
+            cx.subscribe(notebook_editor, {
+                let events = events.clone();
+                move |_, event: &NotebookEditorEvent, _| events.borrow_mut().push(*event)
+            })
+            .detach();
+        });
+        events
+    }
+
+    fn first_code_cell_editor(
+        notebook_editor: &Entity<NotebookEditor>,
+        cx: &VisualTestContext,
+    ) -> Entity<editor::Editor> {
+        notebook_editor.read_with(cx, |notebook_editor, cx| {
+            let cell_id = notebook_editor
+                .cell_order
+                .first()
+                .expect("notebook has at least one cell");
+            let Some(Cell::Code(cell)) = notebook_editor.cell_map.get(cell_id) else {
+                panic!("expected the first cell to be a code cell");
+            };
+            cell.read(cx).editor().clone()
+        })
+    }
+
+    /// Two views of one notebook (a split) share the metadata bookkeeping: a
+    /// kernel picked in one view dirties both, and a save through either view
+    /// cleans both and tells the other view.
+    #[gpui::test]
+    async fn test_split_views_share_metadata_dirtiness(cx: &mut TestAppContext) {
+        let (fs, project, notebook_item) =
+            open_test_notebook(NOTEBOOK_WITH_ONE_CODE_CELL, cx).await;
+
+        // See `test_save_goes_through_the_project` for why the notebook is not rendered.
+        let cx = cx.add_empty_window();
+        let view_a = cx.update(|window, cx| {
+            cx.new(|cx| NotebookEditor::new(project.clone(), notebook_item.clone(), window, cx))
+        });
+        let view_b = cx.update(|window, cx| {
+            cx.new(|cx| NotebookEditor::new(project.clone(), notebook_item, window, cx))
+        });
+        let view_b_events = record_events(&view_b, cx);
+
+        view_a.update_in(cx, |view_a, window, cx| {
+            view_a.change_kernel(
+                kernel_spec("other-kernel", path!("/nonexistent/a"), "Other Kernel"),
+                window,
+                cx,
+            );
+        });
+        assert_dirty(
+            &view_a,
+            true,
+            "the view that picked the kernel is dirty",
+            cx,
+        );
+        assert_dirty(
+            &view_b,
+            true,
+            "the other view shares the metadata, so it is dirty too",
+            cx,
+        );
+        assert_eq!(
+            view_b_events.borrow().as_slice(),
+            &[NotebookEditorEvent::DirtyChanged],
+            "the other view must tell the workspace it went dirty"
+        );
+
+        save_notebook(&view_b, &project, &fs, cx).await;
+        assert_dirty(
+            &view_b,
+            false,
+            "saving should leave the saving view clean",
+            cx,
+        );
+        assert_dirty(
+            &view_a,
+            false,
+            "a save through the other view saved this view's metadata too",
+            cx,
+        );
+    }
+
+    /// The workspace caches an item's dirty state and refreshes it only on
+    /// `UpdateTab`, so every dirty and save transition has to be reported.
+    #[gpui::test]
+    async fn test_dirty_and_save_transitions_reach_the_workspace(cx: &mut TestAppContext) {
+        let (fs, project, notebook_item) = open_test_notebook(NOTEBOOK_WITH_SAVED_OUTPUT, cx).await;
+
+        // See `test_save_goes_through_the_project` for why the notebook is not rendered.
+        let cx = cx.add_empty_window();
+        let notebook_editor = cx.update(|window, cx| {
+            cx.new(|cx| NotebookEditor::new(project.clone(), notebook_item, window, cx))
+        });
+        let events = record_events(&notebook_editor, cx);
+
+        notebook_editor.update_in(cx, |notebook_editor, window, cx| {
+            notebook_editor.clear_outputs(window, cx);
+        });
+        assert_eq!(
+            events.borrow().as_slice(),
+            &[NotebookEditorEvent::DirtyChanged],
+            "clearing outputs dirties the notebook, which the workspace must hear about"
+        );
+
+        save_notebook(&notebook_editor, &project, &fs, cx).await;
+        assert_eq!(
+            events.borrow().as_slice(),
+            &[
+                NotebookEditorEvent::DirtyChanged,
+                NotebookEditorEvent::Saved,
+                NotebookEditorEvent::DirtyChanged,
+            ],
+            "saving reports the save and the notebook going clean"
+        );
+
+        let cell_editor = first_code_cell_editor(&notebook_editor, cx);
+        cell_editor.update_in(cx, |cell_editor, window, cx| {
+            cell_editor.set_text("print('goodbye')", window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            events.borrow().len(),
+            4,
+            "editing a cell dirties the notebook, which the workspace must hear about: {:?}",
+            events.borrow()
+        );
+        assert_eq!(events.borrow()[3], NotebookEditorEvent::DirtyChanged);
+
+        for event in events.borrow().iter() {
+            let mut item_events = Vec::new();
+            NotebookEditor::to_item_events(event, &mut |item_event| item_events.push(item_event));
+            assert_eq!(
+                item_events,
+                vec![ItemEvent::UpdateTab],
+                "{event:?} must refresh the workspace's cached dirty state"
+            );
+        }
+    }
+
+    /// A save that fails must leave the notebook dirty, or Save All skips it
+    /// and closing it silently drops the changes.
+    #[gpui::test]
+    async fn test_failed_save_keeps_the_notebook_dirty(cx: &mut TestAppContext) {
+        let (fs, project, notebook_item) = open_test_notebook(NOTEBOOK_WITH_SAVED_OUTPUT, cx).await;
+
+        // See `test_save_goes_through_the_project` for why the notebook is not rendered.
+        let cx = cx.add_empty_window();
+        let notebook_editor = cx.update(|window, cx| {
+            cx.new(|cx| NotebookEditor::new(project.clone(), notebook_item, window, cx))
+        });
+        let events = record_events(&notebook_editor, cx);
+
+        notebook_editor.update_in(cx, |notebook_editor, window, cx| {
+            notebook_editor.clear_outputs(window, cx);
+        });
+        assert_dirty(
+            &notebook_editor,
+            true,
+            "clearing outputs is an unsaved change",
+            cx,
+        );
+
+        // The save writes through the project's buffer for the file. Holding
+        // that buffer open makes the save reuse it instead of loading the file
+        // again, so the write is the step that fails.
+        let project_path = notebook_editor.read_with(cx, |notebook_editor, cx| {
+            notebook_editor.notebook_item.read(cx).project_path.clone()
+        });
+        let _buffer = project
+            .update(cx, |project, cx| project.open_buffer(project_path, cx))
+            .await
+            .expect("the notebook should open as a buffer");
+
+        // Replace the notebook file with a directory, without the worktree
+        // noticing, so the write itself cannot succeed.
+        let notebook_path = Path::new(path!("/notebooks/test.ipynb"));
+        fs.pause_events();
+        fs.remove_file(notebook_path, Default::default())
+            .await
+            .expect("notebook file should be removable");
+        fs.create_dir(notebook_path)
+            .await
+            .expect("a directory should replace the notebook file");
+
+        let save = notebook_editor.update_in(cx, |notebook_editor, window, cx| {
+            notebook_editor.save(SaveOptions::default(), project.clone(), window, cx)
+        });
+        assert!(save.await.is_err(), "writing into a directory should fail");
+
+        assert_dirty(
+            &notebook_editor,
+            true,
+            "a failed save must not mark the notebook saved",
+            cx,
+        );
+        assert!(
+            !events.borrow().contains(&NotebookEditorEvent::Saved),
+            "a failed save must not be reported as a save: {:?}",
+            events.borrow()
+        );
+    }
+
+    /// Only what a save actually wrote counts as saved. An edit made while the
+    /// write is in flight, which matters for slow remote saves, stays unsaved.
+    #[gpui::test]
+    async fn test_edits_during_a_save_stay_unsaved(cx: &mut TestAppContext) {
+        let (fs, project, notebook_item) =
+            open_test_notebook(NOTEBOOK_WITH_ONE_CODE_CELL, cx).await;
+
+        // See `test_save_goes_through_the_project` for why the notebook is not rendered.
+        let cx = cx.add_empty_window();
+        let notebook_editor = cx.update(|window, cx| {
+            cx.new(|cx| NotebookEditor::new(project.clone(), notebook_item, window, cx))
+        });
+        let cell_editor = first_code_cell_editor(&notebook_editor, cx);
+
+        cell_editor.update_in(cx, |cell_editor, window, cx| {
+            cell_editor.set_text("print('one')", window, cx);
+        });
+        let save = notebook_editor.update_in(cx, |notebook_editor, window, cx| {
+            notebook_editor.save(SaveOptions::default(), project.clone(), window, cx)
+        });
+        // The write has not run yet; this edit must not ride along as saved.
+        cell_editor.update_in(cx, |cell_editor, window, cx| {
+            cell_editor.set_text("print('two')", window, cx);
+        });
+        save.await.expect("saving the notebook should succeed");
+
+        let saved = String::from_utf8(
+            fs.read_file_sync(path!("/notebooks/test.ipynb"))
+                .expect("notebook should still exist"),
+        )
+        .expect("notebook should be valid UTF-8");
+        assert!(
+            saved.contains("print('one')") && !saved.contains("print('two')"),
+            "the save should have written what it snapshotted, got: {saved}"
+        );
+        assert_dirty(
+            &notebook_editor,
+            true,
+            "the edit made during the save is still unsaved",
+            cx,
+        );
+
+        let saved = save_notebook(&notebook_editor, &project, &fs, cx).await;
+        assert!(saved.contains("print('two')"), "got: {saved}");
+        assert_dirty(
+            &notebook_editor,
+            false,
+            "the second save wrote the later edit",
+            cx,
+        );
+    }
+
+    /// A reload builds fresh cells. They need the same subscriptions as the
+    /// cells built on open, or their edits never reach the workspace.
+    #[gpui::test]
+    async fn test_cells_built_by_a_reload_still_report_edits(cx: &mut TestAppContext) {
+        let (_fs, project, notebook_item) =
+            open_test_notebook(NOTEBOOK_WITH_ONE_CODE_CELL, cx).await;
+
+        // See `test_save_goes_through_the_project` for why the notebook is not rendered.
+        let cx = cx.add_empty_window();
+        let notebook_editor = cx.update(|window, cx| {
+            cx.new(|cx| NotebookEditor::new(project.clone(), notebook_item, window, cx))
+        });
+        notebook_editor
+            .update_in(cx, |notebook_editor, window, cx| {
+                notebook_editor.reload(project.clone(), window, cx)
+            })
+            .await
+            .expect("reloading the notebook should succeed");
+        let events = record_events(&notebook_editor, cx);
+
+        let cell_editor = first_code_cell_editor(&notebook_editor, cx);
+        cell_editor.update_in(cx, |cell_editor, window, cx| {
+            cell_editor.set_text("print('changed')", window, cx);
+        });
+        cx.run_until_parked();
+        assert_dirty(&notebook_editor, true, "the edit is an unsaved change", cx);
+        assert_eq!(
+            events.borrow().as_slice(),
+            &[NotebookEditorEvent::DirtyChanged],
+            "a cell built by a reload must still tell the workspace about its edits"
         );
     }
 }
