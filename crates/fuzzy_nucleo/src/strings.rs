@@ -6,15 +6,13 @@ use std::{
     sync::atomic::{self, AtomicBool},
 };
 
-use gpui::{BackgroundExecutor, SharedString};
-use nucleo::Utf32Str;
-
 use crate::{
     Cancelled, Case, LengthPenalty, Query, case_penalty, count_case_mismatches,
     matcher::{self, LENGTH_PENALTY},
-    positions_from_sorted,
+    positions_from_sorted, utf32_str,
 };
 use fuzzy::CharBag;
+use gpui::{BackgroundExecutor, SharedString};
 
 #[derive(Clone, Debug)]
 pub struct StringMatchCandidate {
@@ -249,7 +247,7 @@ where
             continue;
         }
 
-        let haystack: Utf32Str = Utf32Str::new(borrowed.string.as_ref(), &mut buf);
+        let haystack = utf32_str(borrowed.string.as_ref(), &mut buf);
 
         let Some(score) = query.pattern.indices(haystack, matcher, &mut matched_chars) else {
             continue;
@@ -497,6 +495,37 @@ mod tests {
         for &pos in &m.positions {
             assert!(m.string.is_char_boundary(pos));
         }
+    }
+
+    #[test]
+    fn test_complete_grapheme_positions() {
+        let combining = candidates(&["a\u{308}b"]);
+        let combining_match = match_strings(&combining, "b", Case::Ignore, LengthPenalty::Off, 10);
+        assert_eq!(combining_match[0].positions, vec![3]);
+
+        let keycap = candidates(&["1\u{fe0f}\u{20e3}2"]);
+        let keycap_match = match_strings(&keycap, "1", Case::Ignore, LengthPenalty::Off, 10);
+        assert_eq!(keycap_match[0].positions, vec![0, 1, 4]);
+        assert!(
+            keycap_match[0]
+                .positions
+                .iter()
+                .all(|&position| keycap_match[0].string.is_char_boundary(position))
+        );
+    }
+
+    #[test]
+    fn test_non_ascii_query_with_escaped_space() {
+        let matches = match_strings(
+            &candidates(&["grö file"]),
+            "grö\\ file",
+            Case::Ignore,
+            LengthPenalty::Off,
+            10,
+        );
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].positions, vec![0, 1, 2, 4, 5, 6, 7, 8]);
     }
 
     #[gpui::test]
