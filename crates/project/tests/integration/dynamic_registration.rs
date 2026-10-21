@@ -3318,6 +3318,86 @@ async fn test_invalid_registration_pattern_preserves_previous_registration(
 }
 
 #[gpui::test]
+async fn test_invalid_sync_registration_pattern_preserves_previous_registration(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let (project, mut fake_server) =
+        setup_dynamic_registration_test(cx, lsp::ServerCapabilities::default()).await;
+    let (buffer, _lsp_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let uri = lsp::Uri::from_file_path(path!("/the-root/a.rs")).unwrap();
+
+    // Test builds send incremental changes without a sync kind, so the registered `FULL` sync
+    // tells whether the registration still applies.
+    for (method, registration_id, options) in [
+        (
+            "textDocument/didChange",
+            "change-a",
+            json!({ "syncKind": 1 }),
+        ),
+        (
+            "textDocument/didSave",
+            "save-a",
+            json!({ "includeText": false }),
+        ),
+    ] {
+        let register_options = |pattern: &str| {
+            let mut register_options = options.clone();
+            register_options["documentSelector"] = json!([{ "pattern": pattern }]);
+            register_options
+        };
+        register_capability(
+            &fake_server,
+            method,
+            registration_id,
+            Some(register_options("**/a.rs")),
+        )
+        .await;
+        let error = register_capabilities(
+            &fake_server,
+            vec![lsp::Registration {
+                id: registration_id.to_string(),
+                method: method.to_string(),
+                register_options: Some(register_options("**/[a.rs")),
+            }],
+        )
+        .await
+        .expect_err("an invalid replacement should produce an error response");
+        assert!(
+            error
+                .to_string()
+                .contains("invalid document filter pattern"),
+            "unexpected error for an invalid {method} replacement: {error:#}",
+        );
+    }
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        edit_and_receive_change(&buffer, &mut fake_server, cx).await,
+        (uri.clone(), false),
+        "expected the previous didChange registration to remain in effect",
+    );
+    project
+        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+        .await
+        .unwrap();
+    assert_eq!(
+        fake_server
+            .receive_notification::<lsp::notification::DidSaveTextDocument>()
+            .await
+            .text_document
+            .uri,
+        uri,
+        "expected the previous didSave registration to remain in effect",
+    );
+}
+
+#[gpui::test]
 async fn test_registration_patterns_respect_globstar_and_character_class_separators(
     cx: &mut gpui::TestAppContext,
 ) {

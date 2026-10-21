@@ -232,6 +232,7 @@ impl LspStore {
         sync_options: lsp::TextDocumentSyncOptions,
         cx: &mut Context<Self>,
     ) -> anyhow::Result<()> {
+        validate_document_selector(document_selector.as_ref())?;
         let local = self
             .as_local_mut()
             .context("Expected LSP Store to be local")?;
