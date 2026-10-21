@@ -7963,6 +7963,319 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_tab_navigation_stays_within_git_graph(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            serde_json::json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let mut rng = StdRng::seed_from_u64(42);
+        let commits = generate_random_commit_dag(&mut rng, 10, false);
+        fs.set_graph_commits(Path::new("/project/.git"), commits);
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+
+        let workspace = multi_workspace.read_with(&*cx, |multi, _| multi.workspace().clone());
+        let workspace_weak = workspace.downgrade();
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(git_graph.clone()), None, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        cx.draw(
+            point(px(0.), px(0.)),
+            gpui::size(px(1200.), px(800.)),
+            |_, _| multi_workspace.clone().into_any_element(),
+        );
+        cx.run_until_parked();
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.select_first(&menu::SelectFirst, window, cx);
+        });
+        cx.run_until_parked();
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            let table_focus_handle = graph.table_interaction_state.read(cx).focus_handle.clone();
+            window.focus(&table_focus_handle, cx);
+        });
+        cx.run_until_parked();
+
+        let mut reached_changed_files = false;
+        let mut reached_view_commit = false;
+        let mut wrapped_to_search = false;
+
+        for _ in 0..20 {
+            cx.dispatch_action(FocusNextTabStop);
+            cx.run_until_parked();
+
+            let done = git_graph.update_in(cx, |graph, window, cx| {
+                assert!(
+                    graph.focus_handle.contains_focused(window, cx),
+                    "Tab moved focus outside of the Git Graph"
+                );
+                reached_changed_files |= graph.changed_files_focus_handle.is_focused(window);
+                reached_view_commit |= graph.view_commit_focus_handle.is_focused(window);
+                graph.focus_handle(cx).is_focused(window) // the search editor
+            });
+            if done {
+                wrapped_to_search = true;
+                break;
+            }
+        }
+
+        assert!(
+            reached_changed_files,
+            "Tab should reach the changed files list"
+        );
+        assert!(
+            reached_view_commit,
+            "Tab should reach the View Commit button"
+        );
+        assert!(
+            wrapped_to_search,
+            "Tab should wrap around to the search editor"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_shift_tab_wraps_to_last_tab_stop(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            serde_json::json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let mut rng = StdRng::seed_from_u64(42);
+        let commits = generate_random_commit_dag(&mut rng, 10, false);
+        fs.set_graph_commits(Path::new("/project/.git"), commits);
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+
+        let workspace = multi_workspace.read_with(&*cx, |multi, _| multi.workspace().clone());
+        let workspace_weak = workspace.downgrade();
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(git_graph.clone()), None, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        cx.draw(
+            point(px(0.), px(0.)),
+            gpui::size(px(1200.), px(800.)),
+            |_, _| multi_workspace.clone().into_any_element(),
+        );
+        cx.run_until_parked();
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.select_first(&menu::SelectFirst, window, cx);
+        });
+        cx.run_until_parked();
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            window.focus(&graph.focus_handle(cx), cx);
+        });
+        cx.run_until_parked();
+
+        cx.dispatch_action(FocusPreviousTabStop);
+        cx.run_until_parked();
+
+        git_graph.update_in(cx, |graph, window, _| {
+            assert!(
+                graph.view_commit_focus_handle.is_focused(window),
+                "Shift-Tab from the search editor should wrap to View Commit"
+            );
+        });
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.cancel(&menu::Cancel, window, cx);
+            window.focus(&graph.focus_handle(cx), cx);
+        });
+        cx.run_until_parked();
+
+        cx.dispatch_action(FocusPreviousTabStop);
+        cx.run_until_parked();
+        git_graph.update_in(cx, |graph, window, cx| {
+            let table_focus_handle = graph.table_interaction_state.read(cx).focus_handle.clone();
+            assert!(
+                 table_focus_handle.is_focused(window),
+                 "Shift-Tab from the search editor should wrap to the table when no commit is selected"
+             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_changed_files_keyboard_selection(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            serde_json::json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let mut rng = StdRng::seed_from_u64(42);
+        let commits = generate_random_commit_dag(&mut rng, 10, false);
+        fs.set_graph_commits(Path::new("/project/.git"), commits);
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+
+        let workspace = multi_workspace.read_with(&*cx, |multi, _| multi.workspace().clone());
+        let workspace_weak = workspace.downgrade();
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(git_graph.clone()), None, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        cx.draw(
+            point(px(0.), px(0.)),
+            gpui::size(px(1200.), px(800.)),
+            |_, _| multi_workspace.clone().into_any_element(),
+        );
+        cx.run_until_parked();
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.select_first(&menu::SelectFirst, window, cx);
+        });
+        cx.run_until_parked();
+
+        git_graph.update(cx, |graph, cx| {
+            graph.changed_files_view_mode = ChangedFilesViewMode::Flat;
+            graph.selected_commit_diff = Some(CommitDiff {
+                files: vec![
+                    CommitFile {
+                        path: RepoPath::new("a.txt").expect("repository path should be valid"),
+                        old_text: Some("old".into()),
+                        new_text: Some("new".into()),
+                        is_binary: false,
+                    },
+                    CommitFile {
+                        path: RepoPath::new("b.txt").expect("repository path should be valid"),
+                        old_text: Some("old".into()),
+                        new_text: Some("new".into()),
+                        is_binary: false,
+                    },
+                ],
+                is_shallow_boundary: false,
+            });
+            cx.notify();
+        });
+
+        // Down past the end clamps to the last row
+        git_graph.update_in(cx, |graph, window, cx| {
+            for _ in 0..3 {
+                graph.select_next_changed_file(&menu::SelectNext, window, cx);
+            }
+            assert_eq!(graph.selected_changed_file_index, Some(1));
+        });
+
+        // Up past the start clamps to the first row
+        git_graph.update_in(cx, |graph, window, cx| {
+            for _ in 0..3 {
+                graph.select_previous_changed_file(&menu::SelectPrevious, window, cx);
+            }
+            assert_eq!(graph.selected_changed_file_index, Some(0));
+        });
+
+        // Selecting another commit resets the changed file selection
+        git_graph.update(cx, |graph, cx| {
+            graph.select_entry(1, ScrollStrategy::Nearest, cx);
+            assert_eq!(graph.selected_changed_file_index, None);
+        });
+
+        // An empty list (diff not loaded yet) leaves the selection unset
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.selected_commit_diff = None;
+            graph.select_next_changed_file(&menu::SelectNext, window, cx);
+            assert_eq!(graph.selected_changed_file_index, None);
+        });
+    }
+
+    #[gpui::test]
     async fn test_git_graph_navigation(cx: &mut TestAppContext) {
         init_test(cx);
 
