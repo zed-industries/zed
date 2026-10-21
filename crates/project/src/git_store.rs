@@ -4644,10 +4644,11 @@ impl GitStore {
             .iter()
             .map(|s| RepoPath::from_proto(s))
             .collect::<Result<Vec<_>>>()?;
+        let commit = Some(envelope.payload.commit.as_str()).filter(|commit| !commit.is_empty());
 
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
-                repository_handle.checkout_files(envelope.payload.commit.as_deref(), paths, cx)
+                repository_handle.checkout_files(commit, paths, cx)
             })
             .await?;
         Ok(proto::Ack {})
@@ -7177,7 +7178,7 @@ impl Repository {
                                     .request(proto::GitCheckoutFiles {
                                         project_id: project_id.0,
                                         repository_id: id.to_proto(),
-                                        commit,
+                                        commit: commit.unwrap_or_default(),
                                         paths: paths
                                             .into_iter()
                                             .map(|p| p.as_unix_str().to_owned())
