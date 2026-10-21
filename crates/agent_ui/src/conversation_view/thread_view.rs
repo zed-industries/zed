@@ -55,6 +55,7 @@ use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
 use super::elicitation::{
     ElicitationCard, ElicitationCardHandlers, ElicitationFormState, should_render_elicitation,
 };
+use super::subagent_card::{SubagentCardState, SubagentStatus};
 use super::*;
 
 const DATA_RETENTION_LEARN_MORE_URL: &str = "https://support.claude.com/en/articles/15425996-data-retention-practices-for-mythos-class-models";
@@ -398,6 +399,29 @@ fn parse_cat_numbered_line(line: &str) -> Option<(u32, &str)> {
     Some((number.parse().ok()?, text))
 }
 
+#[derive(IntoElement)]
+struct CatNumberedCodeBlock {
+    markdown: Entity<Markdown>,
+    parsed: ParsedCatNumberedCode,
+    markdown_style: MarkdownStyle,
+    copy_button_id: String,
+}
+
+impl RenderOnce for CatNumberedCodeBlock {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        self.markdown
+            .update(cx, |markdown, cx| markdown.ensure_parsed(cx));
+        let language = self.markdown.read(cx).first_code_block_language();
+        render_cat_numbered_code_block(
+            self.parsed,
+            language,
+            self.markdown_style,
+            self.copy_button_id,
+            cx,
+        )
+    }
+}
+
 fn render_cat_numbered_code_block(
     parsed: ParsedCatNumberedCode,
     language: Option<Arc<Language>>,
@@ -574,6 +598,68 @@ mod numbered_code_block_tests {
             )
             .is_none()
         );
+    }
+
+    #[gpui::test]
+    fn numbered_output_starts_parsing_when_rendered(cx: &mut gpui::TestAppContext) {
+        crate::test_support::init_test(cx);
+
+        let languages = Arc::new(language::LanguageRegistry::test(
+            cx.background_executor.clone(),
+        ));
+        languages.add(language::rust_lang());
+        let source = "```rust\n     1\tfn main() {}\n```\n";
+        let markdown = cx.new(|cx| {
+            Markdown::new_with_options(
+                SharedString::from(source),
+                Some(languages),
+                None,
+                markdown::MarkdownOptions {
+                    defer_parsing: true,
+                    ..markdown::MarkdownOptions::default()
+                },
+                cx,
+            )
+        });
+        let cx = cx.add_empty_window();
+        markdown.read_with(cx, |markdown, _| {
+            assert!(markdown.first_code_block_language().is_none());
+            assert!(!markdown.has_pending_render());
+        });
+        let view = cx.new(|_| NumberedOutputView(markdown.clone()));
+        cx.draw(
+            gpui::point(px(0.0), px(0.0)),
+            gpui::size(px(600.0), px(600.0)),
+            |_, _| view.into_any_element(),
+        );
+        cx.run_until_parked();
+
+        markdown.read_with(cx, |markdown, _| {
+            assert_eq!(
+                markdown
+                    .first_code_block_language()
+                    .map(|language| language.name()),
+                Some(language::LanguageName::from("Rust")),
+            );
+            assert!(!markdown.has_pending_render());
+        });
+    }
+
+    struct NumberedOutputView(Entity<Markdown>);
+
+    impl Render for NumberedOutputView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            CatNumberedCodeBlock {
+                parsed: ParsedCatNumberedCode {
+                    code: String::from("fn main() {}"),
+                    first_number: 1,
+                    line_count: 1,
+                },
+                markdown: self.0.clone(),
+                markdown_style: MarkdownStyle::default(),
+                copy_button_id: String::from("read-file-output-test"),
+            }
+        }
     }
 }
 
@@ -1449,6 +1535,17 @@ impl ThreadView {
         !self.message_queue.is_empty()
     }
 
+    fn materialize_tool_call_views(
+        &mut self,
+        entry_ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.entry_view_state.update(cx, |state, cx| {
+            state.materialize_entry(entry_ix, &self.thread, window, cx);
+        });
+    }
+
     // events
 
     pub fn handle_entry_view_event(
@@ -1623,25 +1720,31 @@ impl ThreadView {
         let duration = thread.activity_duration();
         let output_tokens = thread.reported_activity_output_tokens();
 
-        if activity == ForegroundActivity::Unconfirmed {
-            self.turn_fields.reported_activity_generation = None;
-        } else if activity.is_active() {
-            if self.turn_fields.reported_activity_generation != Some(activity_generation) {
-                self.initialize_turn(cx);
-                self.turn_fields.turn_started_at = started_at;
+        match activity {
+            ForegroundActivity::Unconfirmed => {
+                self.turn_fields.reported_activity_generation = None;
+            }
+            // Unknown activity neither ends the current turn nor starts a new one.
+            ForegroundActivity::Unknown => {}
+            ForegroundActivity::Running | ForegroundActivity::RequiresAction => {
+                if self.turn_fields.reported_activity_generation != Some(activity_generation) {
+                    self.initialize_turn(cx);
+                    self.turn_fields.turn_started_at = started_at;
+                    self.turn_fields.reported_activity_generation = Some(activity_generation);
+                }
+            }
+            ForegroundActivity::Idle => {
+                if self.turn_fields.turn_started_at.is_some() {
+                    self.stop_turn(self.turn_fields.turn_generation, cx);
+                }
+                if self.turn_fields.reported_activity_generation != Some(activity_generation) {
+                    self.turn_fields.last_turn_tokens = None;
+                }
                 self.turn_fields.reported_activity_generation = Some(activity_generation);
-            }
-        } else {
-            if self.turn_fields.turn_started_at.is_some() {
-                self.stop_turn(self.turn_fields.turn_generation, cx);
-            }
-            if self.turn_fields.reported_activity_generation != Some(activity_generation) {
-                self.turn_fields.last_turn_tokens = None;
-            }
-            self.turn_fields.reported_activity_generation = Some(activity_generation);
-            self.turn_fields.last_turn_duration = duration;
-            if let Some(output_tokens) = output_tokens {
-                self.turn_fields.last_turn_tokens = Some(output_tokens);
+                self.turn_fields.last_turn_duration = duration;
+                if let Some(output_tokens) = output_tokens {
+                    self.turn_fields.last_turn_tokens = Some(output_tokens);
+                }
             }
         }
         cx.notify();
@@ -5115,13 +5218,8 @@ impl ThreadView {
                     .thread
                     .read(cx)
                     .tool_call_for_subagent(&my_session_id)
-                    .is_some_and(|tc| {
-                        matches!(
-                            tc.status(),
-                            ToolCallStatus::Canceled
-                                | ToolCallStatus::Failed
-                                | ToolCallStatus::Rejected
-                        )
+                    .is_some_and(|tool_call| {
+                        SubagentStatus::from_tool_call(tool_call, cx).is_failed_or_canceled()
                     })
             })
     }
@@ -5338,25 +5436,7 @@ impl ThreadView {
                                     .min_w_0()
                                     .flex_wrap()
                                     .gap_1()
-                                    .when(
-                                        self.thread.read(cx).foreground_activity()
-                                            == ForegroundActivity::Unconfirmed,
-                                        |row| {
-                                            row.child(
-                                                div()
-                                                    .id("activity-unconfirmed")
-                                                    .debug_selector(|| "activity-unconfirmed".into())
-                                                    .child(
-                                                        Label::new("Activity unconfirmed")
-                                                            .size(LabelSize::Small)
-                                                            .color(Color::Muted),
-                                                    )
-                                                    .tooltip(Tooltip::text(
-                                                        "The session is attached, but the agent has not reported its activity. You can send manually; automatic sends wait for confirmed Idle.",
-                                                    )),
-                                            )
-                                        },
-                                    )
+                                    .children(self.render_activity_status_label(cx))
                                     .children(discard_draft_button)
                                     .children(self.render_token_usage(cx))
                                     .children(self.profile_selector.clone())
@@ -5371,6 +5451,31 @@ impl ThreadView {
                     ),
             )
             .into_any()
+    }
+
+    fn render_activity_status_label(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
+        let (id, label, tooltip) = match self.thread.read(cx).foreground_activity() {
+            ForegroundActivity::Unconfirmed => (
+                "activity-unconfirmed",
+                "Activity unconfirmed",
+                "The session is attached, but the agent has not reported its activity. You can send manually; automatic sends wait for confirmed Idle.",
+            ),
+            ForegroundActivity::Unknown => (
+                "activity-unknown",
+                "Activity unknown",
+                "The agent can't currently tell whether it is working. You can send manually; automatic sends wait for confirmed Idle.",
+            ),
+            ForegroundActivity::Idle
+            | ForegroundActivity::Running
+            | ForegroundActivity::RequiresAction => return None,
+        };
+        Some(
+            div()
+                .id(id)
+                .debug_selector(move || id.into())
+                .child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
+                .tooltip(Tooltip::text(tooltip)),
+        )
     }
 
     fn render_queue_steer_button(
@@ -8921,6 +9026,7 @@ impl ThreadView {
                 this.entry_view_state.update(cx, |state, _cx| {
                     state.toggle_tool_call_expansion(&id);
                 });
+                this.materialize_tool_call_views(entry_ix, window, cx);
                 this.refresh_thread_search(window, cx);
                 cx.notify();
             }
@@ -9197,7 +9303,12 @@ impl ThreadView {
                 .any(|content| matches!(content, ToolCallContent::DiffPatch { .. }));
 
         let is_cancelled_edit = is_edit && matches!(tool_call.status(), ToolCallStatus::Canceled);
-        let (has_revealed_diff, tool_call_output_focus, tool_call_output_focus_handle) = tool_call
+        let has_diff_changes = is_cancelled_edit
+            && tool_call
+                .diffs()
+                .next()
+                .is_some_and(|diff| diff.read(cx).has_changes(cx));
+        let (tool_call_output_focus, tool_call_output_focus_handle) = tool_call
             .diffs()
             .next()
             .and_then(|diff| {
@@ -9206,12 +9317,11 @@ impl ThreadView {
                     .read(cx)
                     .entry(entry_ix)
                     .and_then(|entry| entry.editor_for_diff(diff))?;
-                let has_revealed_diff = diff.read(cx).has_revealed_range(cx);
                 let has_focus = editor.read(cx).is_focused(window);
                 let focus_handle = editor.focus_handle(cx);
-                Some((has_revealed_diff, has_focus, focus_handle))
+                Some((has_focus, focus_handle))
             })
-            .unwrap_or_else(|| (false, false, focus_handle.clone()));
+            .unwrap_or((false, focus_handle.clone()));
 
         let use_card_layout = needs_confirmation || is_edit || is_terminal_tool;
 
@@ -9490,7 +9600,7 @@ impl ThreadView {
                                 tool_call,
                                 is_edit,
                                 is_cancelled_edit,
-                                has_revealed_diff,
+                                has_diff_changes,
                                 use_card_layout,
                                 window,
                                 cx,
@@ -9498,7 +9608,7 @@ impl ThreadView {
                             .child(
                                 h_flex()
                                     .when(is_collapsible || failed_or_canceled, |this| {
-                                        let diff_for_discard = if has_revealed_diff
+                                        let diff_for_discard = if has_diff_changes
                                             && is_cancelled_edit
                                         {
                                             tool_call.diffs().next().cloned()
@@ -9534,6 +9644,7 @@ impl ThreadView {
                                                                             );
                                                                     },
                                                                 );
+                                                                this.materialize_tool_call_views(entry_ix, window, cx);
                                                                 this.refresh_thread_search(window, cx);
                                                                 cx.notify();
                                                             }
@@ -9541,7 +9652,7 @@ impl ThreadView {
                                                     )
                                                 })
                                                 .when(failed_or_canceled, |this| {
-                                                    if is_cancelled_edit && !has_revealed_diff {
+                                                    if is_cancelled_edit && !has_diff_changes {
                                                         this.child(
                                                             div()
                                                                 .id(entry_ix)
@@ -9589,21 +9700,9 @@ impl ThreadView {
                                                                 let tool_call_id =
                                                                     tool_call_id.clone();
                                                                 move |this, _, _window, cx| {
-                                                                    let diff_data = diff.read(cx);
-                                                                    let base_text = diff_data
-                                                                        .base_text()
-                                                                        .clone();
-                                                                    let buffer =
-                                                                        diff_data.buffer().clone();
-                                                                    buffer.update(
-                                                                        cx,
-                                                                        |buffer, cx| {
-                                                                            buffer.set_text(
-                                                                                base_text.as_ref(),
-                                                                                cx,
-                                                                            );
-                                                                        },
-                                                                    );
+                                                                    diff.update(cx, |diff, cx| {
+                                                                        diff.discard_partial_edit(cx)
+                                                                    });
                                                                     this.discarded_partial_edits
                                                                         .insert(
                                                                             tool_call_id.clone(),
@@ -11001,7 +11100,7 @@ impl ThreadView {
         tool_call: &ToolCall,
         is_edit: bool,
         has_failed: bool,
-        has_revealed_diff: bool,
+        has_diff_changes: bool,
         use_card_layout: bool,
         window: &Window,
         cx: &Context<Self>,
@@ -11018,7 +11117,7 @@ impl ThreadView {
             Icon::new(IconName::ToolPencil).color(Color::Muted)
         };
 
-        let interrupted_edit = is_file && has_failed && has_revealed_diff;
+        let interrupted_edit = is_file && has_failed && has_diff_changes;
         let tool_icon = if interrupted_edit {
             div()
                 .child(DecoratedIcon::new(
@@ -11600,16 +11699,16 @@ impl ThreadView {
             return None;
         }
 
-        let markdown = markdown.read(cx);
-        let parsed = parse_cat_numbered_markdown_code_block(markdown.source())?;
-        let language = markdown.first_code_block_language();
-        Some(render_cat_numbered_code_block(
-            parsed,
-            language,
-            markdown_style,
-            format!("copy-read-file-output-{entry_ix}-{context_ix}"),
-            cx,
-        ))
+        let parsed = parse_cat_numbered_markdown_code_block(markdown.read(cx).source())?;
+        Some(
+            CatNumberedCodeBlock {
+                markdown,
+                parsed,
+                markdown_style,
+                copy_button_id: format!("copy-read-file-output-{entry_ix}-{context_ix}"),
+            }
+            .into_any_element(),
+        )
     }
 
     fn render_image_output(
@@ -11673,8 +11772,9 @@ impl ThreadView {
         let content = self.render_subagent_card(
             active_session_id,
             entry_ix,
+            &tool_call.id,
+            &SubagentCardState::from_tool_call(tool_call, cx),
             subagent_thread_view,
-            tool_call,
             focus_handle,
             window,
             cx,
@@ -11683,12 +11783,15 @@ impl ThreadView {
         v_flex().mx_5().my_1p5().gap_3().child(content)
     }
 
+    /// `card_id` keys the card's expansion state and element IDs, since the same
+    /// subagent can have one card per message it was sent.
     fn render_subagent_card(
         &self,
         active_session_id: &acp_v2::SessionId,
         entry_ix: usize,
+        card_id: &acp_v2::ToolCallId,
+        state: &SubagentCardState,
         thread_view: Option<&Entity<ThreadView>>,
-        tool_call: &ToolCall,
         focus_handle: &FocusHandle,
         window: &Window,
         cx: &Context<Self>,
@@ -11715,29 +11818,12 @@ impl ThreadView {
         let is_expanded = self
             .entry_view_state
             .read(cx)
-            .is_tool_call_expanded(&tool_call.id);
+            .is_tool_call_expanded(card_id);
         let files_changed = changed_buffers.len();
         let diff_stats = DiffStats::all_files(changed_buffers, cx);
 
-        let is_running = matches!(
-            tool_call.status(),
-            ToolCallStatus::Pending
-                | ToolCallStatus::InProgress
-                | ToolCallStatus::WaitingForConfirmation
-        );
-
-        let is_failed = matches!(
-            tool_call.status(),
-            ToolCallStatus::Failed | ToolCallStatus::Rejected
-        );
-
-        let is_cancelled = matches!(tool_call.status(), ToolCallStatus::Canceled)
-            || tool_call.content().iter().any(|c| match c {
-                ToolCallContent::ContentBlock { block, .. } => {
-                    block.text_content(cx) == Some("User canceled")
-                }
-                _ => false,
-            });
+        let is_running = state.status == SubagentStatus::Running;
+        let is_failed_or_canceled = state.status.is_failed_or_canceled();
 
         let model_name = thread_view
             .and_then(|view| view.read(cx).as_native_thread(cx))
@@ -11750,60 +11836,44 @@ impl ThreadView {
             .as_ref()
             .and_then(|t| t.read(cx).title())
             .filter(|t| !t.is_empty());
-        let tool_call_label = tool_call.label.read(cx).source().to_string();
-        let has_tool_call_label = !tool_call_label.is_empty();
 
-        let has_title = thread_title.is_some() || has_tool_call_label;
-        let has_no_title_or_canceled = !has_title || is_failed || is_cancelled;
+        let has_title = thread_title.is_some() || state.label.is_some();
+        let has_no_title_or_canceled = !has_title || is_failed_or_canceled;
 
-        let title: SharedString = if let Some(thread_title) = thread_title {
-            thread_title
-        } else if !tool_call_label.is_empty() {
-            tool_call_label.into()
-        } else if is_cancelled {
-            "Subagent Canceled".into()
-        } else if is_failed {
-            "Subagent Failed".into()
-        } else {
-            "Spawning Agent…".into()
-        };
+        let title = state.title(thread_title);
 
         let card_header_id = format!("subagent-header-{}", entry_ix);
         let status_icon = format!("status-icon-{}", entry_ix);
         let diff_stat_id = format!("subagent-diff-{}", entry_ix);
 
-        let icon = h_flex().w_4().justify_center().child(if is_running {
-            SpinnerLabel::new()
-                .size(LabelSize::Small)
-                .into_any_element()
-        } else if is_cancelled {
-            div()
-                .id(status_icon)
-                .child(
-                    Icon::new(IconName::Circle)
-                        .size(IconSize::Small)
-                        .color(Color::Custom(
-                            cx.theme().colors().icon_disabled.opacity(0.5),
-                        )),
-                )
-                .tooltip(Tooltip::text("Subagent Cancelled"))
-                .into_any_element()
-        } else if is_failed {
-            div()
-                .id(status_icon)
-                .child(
-                    Icon::new(IconName::Close)
-                        .size(IconSize::Small)
-                        .color(Color::Error),
-                )
-                .tooltip(Tooltip::text("Subagent Failed"))
-                .into_any_element()
-        } else {
-            Icon::new(IconName::Check)
-                .size(IconSize::Small)
-                .color(Color::Success)
-                .into_any_element()
-        });
+        let icon =
+            h_flex().w_4().justify_center().child(match state.status {
+                SubagentStatus::Running => SpinnerLabel::new()
+                    .size(LabelSize::Small)
+                    .into_any_element(),
+                SubagentStatus::Canceled => {
+                    div()
+                        .id(status_icon)
+                        .child(Icon::new(IconName::Circle).size(IconSize::Small).color(
+                            Color::Custom(cx.theme().colors().icon_disabled.opacity(0.5)),
+                        ))
+                        .tooltip(Tooltip::text("Subagent Cancelled"))
+                        .into_any_element()
+                }
+                SubagentStatus::Failed => div()
+                    .id(status_icon)
+                    .child(
+                        Icon::new(IconName::Close)
+                            .size(IconSize::Small)
+                            .color(Color::Error),
+                    )
+                    .tooltip(Tooltip::text("Subagent Failed"))
+                    .into_any_element(),
+                SubagentStatus::Completed => Icon::new(IconName::Check)
+                    .size(IconSize::Small)
+                    .color(Color::Success)
+                    .into_any_element(),
+            });
 
         let has_expandable_content = thread
             .as_ref()
@@ -11815,7 +11885,7 @@ impl ThreadView {
             "Click to Preview"
         };
 
-        let error_message = self.subagent_error_message(&tool_call.status(), tool_call, cx);
+        let error_message = state.error.clone();
 
         v_flex()
             .w_full()
@@ -11933,13 +12003,14 @@ impl ThreadView {
                                         ),
                                     )
                                     .on_click(cx.listener({
-                                        let tool_call_id = tool_call.id.clone();
+                                        let card_id = card_id.clone();
                                         move |this, _, window, cx| {
                                             let expanded =
                                                 this.entry_view_state.update(cx, |state, _cx| {
-                                                    state.toggle_tool_call_expansion(&tool_call_id);
-                                                    state.is_tool_call_expanded(&tool_call_id)
+                                                    state.toggle_tool_call_expansion(&card_id);
+                                                    state.is_tool_call_expanded(&card_id)
                                                 });
+                                            this.materialize_tool_call_views(entry_ix, window, cx);
                                             this.refresh_thread_search(window, cx);
                                             telemetry::event!("Subagent Toggled", expanded);
                                             cx.notify();
@@ -11947,7 +12018,7 @@ impl ThreadView {
                                     }))
                             }),
                     )
-                    .when(is_running && subagent_session_id.is_some(), |buttons| {
+                    .when(state.can_stop && subagent_session_id.is_some(), |buttons| {
                         buttons.child(
                             IconButton::new(format!("stop-subagent-{}", entry_ix), IconName::Stop)
                                 .icon_size(IconSize::Small)
@@ -11985,7 +12056,7 @@ impl ThreadView {
                     .w_full()
                     .justify_center()
                     .border_t_1()
-                    .when(is_failed, |this| this.border_dashed())
+                    .when(is_failed_or_canceled, |this| this.border_dashed())
                     .border_color(self.tool_card_border_color(cx))
                     .cursor_pointer()
                     .hover(|s| s.bg(cx.theme().colors().element_hover))
@@ -12026,7 +12097,8 @@ impl ThreadView {
                     this.when(is_expanded, |this| {
                         this.child(self.render_subagent_expanded_content(
                             thread_view,
-                            tool_call,
+                            card_id,
+                            state,
                             window,
                             cx,
                         ))
@@ -12048,7 +12120,8 @@ impl ThreadView {
     fn render_subagent_expanded_content(
         &self,
         thread_view: &Entity<ThreadView>,
-        tool_call: &ToolCall,
+        card_id: &acp_v2::ToolCallId,
+        state: &SubagentCardState,
         window: &Window,
         cx: &Context<Self>,
     ) -> impl IntoElement {
@@ -12056,11 +12129,6 @@ impl ThreadView {
 
         let subagent_view = thread_view.read(cx);
         let session_id = subagent_view.thread.read(cx).session_id().clone();
-
-        let is_canceled_or_failed = matches!(
-            tool_call.status(),
-            ToolCallStatus::Canceled | ToolCallStatus::Failed | ToolCallStatus::Rejected
-        );
 
         let editor_bg = cx.theme().colors().editor_background;
         let overlay = {
@@ -12078,19 +12146,7 @@ impl ThreadView {
 
         let entries = subagent_view.thread.read(cx).entries();
         let total_entries = entries.len();
-        let mut entry_range = if let Some(info) = tool_call.subagent_session_info.as_ref() {
-            info.message_start_index
-                ..info
-                    .message_end_index
-                    .map(|i| (i + 1).min(total_entries))
-                    .unwrap_or(total_entries)
-        } else {
-            0..total_entries
-        };
-        entry_range.start = entry_range
-            .end
-            .saturating_sub(MAX_PREVIEW_ENTRIES)
-            .max(entry_range.start);
+        let entry_range = state.preview_range(total_entries, MAX_PREVIEW_ENTRIES);
         let start_ix = entry_range.start;
 
         let scroll_handle = self
@@ -12116,51 +12172,25 @@ impl ThreadView {
         v_flex()
             .w_full()
             .border_t_1()
-            .when(is_canceled_or_failed, |this| this.border_dashed())
+            .when(state.status.is_failed_or_canceled(), |this| {
+                this.border_dashed()
+            })
             .border_color(self.tool_card_border_color(cx))
             .overflow_hidden()
             .child(
                 div()
                     .pb_1()
                     .min_h_0()
-                    // Include the tool call id so the same subagent session
+                    // Include the card id so the same subagent session
                     // rendered in multiple parent cards gets distinct element
                     // ids for its inlined entries (avoids duplicate a11y ids).
-                    .id(format!(
-                        "subagent-entries-{}-{}",
-                        session_id, tool_call.id.0
-                    ))
+                    .id(format!("subagent-entries-{}-{}", session_id, card_id.0))
                     .track_scroll(&scroll_handle)
                     .children(rendered_entries),
             )
             .h_56()
             .child(overlay)
             .into_any_element()
-    }
-
-    fn subagent_error_message(
-        &self,
-        status: &ToolCallStatus,
-        tool_call: &ToolCall,
-        cx: &App,
-    ) -> Option<SharedString> {
-        if matches!(status, ToolCallStatus::Failed) {
-            tool_call.content().iter().find_map(|content| {
-                if let ToolCallContent::ContentBlock { block, .. } = content {
-                    if let Some(source) = block.text_content(cx).filter(|source| !source.is_empty())
-                    {
-                        if source == "User canceled" {
-                            return None;
-                        } else {
-                            return Some(SharedString::from(source));
-                        }
-                    }
-                }
-                None
-            })
-        } else {
-            None
-        }
     }
 
     fn tool_card_header_bg(&self, cx: &Context<Self>) -> Hsla {

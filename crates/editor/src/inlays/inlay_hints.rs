@@ -7292,13 +7292,18 @@ let c = 3;"#
             })
             .await
             .unwrap();
-        let editor =
-            cx.add_window(|window, cx| Editor::for_buffer(buffer, Some(project), window, cx));
+        let mut fake_server_a = fake_servers_a.next().await.unwrap();
+        let mut fake_server_b = fake_servers_b.next().await.unwrap();
+        fake_server_a
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await;
+        fake_server_b
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await;
         cx.executor().run_until_parked();
 
-        let _fake_server_a = fake_servers_a.next().await.unwrap();
-        let fake_server_b = fake_servers_b.next().await.unwrap();
-
+        let editor =
+            cx.add_window(|window, cx| Editor::for_buffer(buffer, Some(project), window, cx));
         editor
             .update(cx, |editor, window, cx| {
                 editor.set_visible_line_count(50.0, window, cx);

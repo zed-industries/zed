@@ -526,6 +526,9 @@ pub struct MarkdownOptions {
     pub render_mermaid_diagrams: bool,
     pub parse_heading_slugs: bool,
     pub render_metadata_blocks: bool,
+    /// Defers parsing until the first [`MarkdownElement`] layout or [`Markdown::ensure_parsed`].
+    /// After parsing starts, source updates parse eagerly even when off-screen.
+    pub defer_parsing: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -662,6 +665,24 @@ impl Markdown {
             language_registry,
             fallback_code_block_language,
             MarkdownOptions::default(),
+            cx,
+        )
+    }
+
+    /// Creates Markdown with [`MarkdownOptions::defer_parsing`] enabled.
+    pub fn new_deferred(
+        source: impl Into<SharedString>,
+        language_registry: Option<Arc<LanguageRegistry>>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new_with_options(
+            source.into(),
+            language_registry,
+            None,
+            MarkdownOptions {
+                defer_parsing: true,
+                ..MarkdownOptions::default()
+            },
             cx,
         )
     }
@@ -950,7 +971,7 @@ impl Markdown {
     }
 
     pub fn scroll_to_heading_when_parsed(&mut self, slug: SharedString, cx: &mut Context<Self>) {
-        if self.pending_parse.is_some() || self.source.is_empty() {
+        if self.pending_parse.is_some() || self.options.defer_parsing || self.source.is_empty() {
             self.pending_heading_scroll = Some(slug);
         } else {
             self.scroll_to_heading(&slug, cx);
@@ -1004,7 +1025,7 @@ impl Markdown {
         source_index: usize,
         cx: &mut Context<Self>,
     ) {
-        if self.pending_parse.is_some() {
+        if self.pending_parse.is_some() || self.options.defer_parsing {
             self.pending_autoscroll = Some(source_index);
         } else {
             self.autoscroll_request = Some(source_index);
@@ -1036,7 +1057,7 @@ impl Markdown {
 
     pub fn reset(&mut self, source: SharedString, cx: &mut Context<Self>) {
         if &source == self.source() {
-            if self.pending_parse.is_none() {
+            if self.pending_parse.is_none() && !self.options.defer_parsing {
                 if let Some(slug) = self.pending_heading_scroll.take() {
                     self.pending_autoscroll = None;
                     self.scroll_to_heading(&slug, cx);
@@ -1201,7 +1222,26 @@ impl Markdown {
         self.context_menu_selected_markdown.as_ref()
     }
 
+    /// Starts parsing if still deferred; does not wait for completion.
+    /// Called automatically by [`MarkdownElement`] during layout.
+    pub fn ensure_parsed(&mut self, cx: &mut Context<Self>) {
+        if self.options.defer_parsing {
+            self.options.defer_parsing = false;
+            self.parse(cx);
+        }
+    }
+
+    /// Returns whether Markdown parsing or Mermaid rendering is in progress.
+    /// Unstarted deferred parsing does not count as pending.
+    pub fn has_pending_render(&self) -> bool {
+        self.pending_parse.is_some() || self.mermaid_state.has_pending_render()
+    }
+
     fn parse(&mut self, cx: &mut Context<Self>) {
+        if self.options.defer_parsing {
+            return;
+        }
+
         if self.source.is_empty() {
             self.should_reparse = false;
             self.pending_parse.take();
@@ -2516,9 +2556,14 @@ impl MarkdownElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<()> {
-        let autoscroll_index = self
-            .markdown
-            .update(cx, |markdown, _| markdown.autoscroll_request.take())?;
+        let autoscroll_index = self.markdown.update(cx, |markdown, _| {
+            let source_index = markdown.autoscroll_request?;
+            if markdown.has_pending_render() {
+                return None;
+            }
+            markdown.autoscroll_request = None;
+            Some(source_index)
+        })?;
         let (position, line_height) = rendered_text.position_for_source_index(autoscroll_index)?;
 
         match &self.autoscroll {
@@ -2599,6 +2644,9 @@ impl Element for MarkdownElement {
         window: &mut Window,
         cx: &mut App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
+        self.markdown
+            .update(cx, |markdown, cx| markdown.ensure_parsed(cx));
+
         let highlights = {
             let markdown = self.markdown.read(cx);
             let colors = cx.theme().colors();
@@ -5245,6 +5293,65 @@ mod tests {
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     };
+
+    #[gpui::test]
+    fn test_deferred_parsing_preserves_updates_and_autoscroll(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let cx = cx.add_empty_window();
+
+        for (initial_source, parse_on_layout) in [("", false), ("obsolete", true)] {
+            let markdown = cx.new(|cx| Markdown::new_deferred(initial_source, None, cx));
+            markdown.update(cx, |markdown, cx| {
+                markdown.append("discarded", cx);
+                markdown.reset(SharedString::default(), cx);
+                markdown.append("héllo **world**", cx);
+                markdown.request_autoscroll_to_source_index(9, cx);
+                markdown.reset(markdown.source().clone(), cx);
+            });
+            cx.run_until_parked();
+            markdown.read_with(cx, |markdown, _| {
+                assert!(markdown.options.defer_parsing);
+                assert!(!markdown.has_pending_render());
+                assert!(markdown.parsed_markdown.events.is_empty());
+                assert_eq!(markdown.pending_autoscroll, Some(9));
+                assert_eq!(markdown.autoscroll_request, None);
+            });
+
+            if parse_on_layout {
+                cx.draw(Point::default(), size(px(600.0), px(600.0)), |_, _| {
+                    MarkdownElement::new(markdown.clone(), MarkdownStyle::default())
+                });
+            } else {
+                markdown.update(cx, |markdown, cx| markdown.ensure_parsed(cx));
+            }
+            markdown.update(cx, |markdown, cx| {
+                assert!(!markdown.options.defer_parsing);
+                markdown.ensure_parsed(cx);
+                assert!(markdown.has_pending_render());
+                assert!(!markdown.should_reparse);
+            });
+            cx.run_until_parked();
+            markdown.update(cx, |markdown, cx| {
+                assert!(!markdown.options.defer_parsing);
+                assert!(!markdown.has_pending_render());
+                assert_eq!(markdown.parsed_markdown.source.as_ref(), "héllo **world**");
+                assert_eq!(
+                    markdown
+                        .parsed_markdown
+                        .events
+                        .iter()
+                        .filter(|(_, event)| *event == MarkdownEvent::Text)
+                        .map(|(range, _)| range.clone())
+                        .collect::<Vec<_>>(),
+                    vec![0..7, 9..14]
+                );
+                assert_eq!(markdown.pending_autoscroll, None);
+                assert_eq!(markdown.autoscroll_request, Some(9));
+                markdown.ensure_parsed(cx);
+                assert!(!markdown.has_pending_render());
+            });
+        }
+    }
 
     #[gpui::test]
     fn test_code_block_controls_are_unique_across_markdown_entities(cx: &mut TestAppContext) {

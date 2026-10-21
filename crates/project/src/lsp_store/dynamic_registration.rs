@@ -218,6 +218,113 @@ impl LspStore {
         }))
     }
 
+    /// `didChange` and `didSave` registrations both carry their options in
+    /// `textDocumentSync`, so they cannot share the per-field bookkeeping of
+    /// [`Self::register_dynamic_text_document_capability`].
+    fn register_dynamic_text_document_sync(
+        &mut self,
+        server: &LanguageServer,
+        method: &str,
+        registration_id: String,
+        document_selector: Option<lsp::DocumentSelector>,
+        sync_options: lsp::TextDocumentSyncOptions,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        let local = self
+            .as_local_mut()
+            .context("Expected LSP Store to be local")?;
+        local
+            .language_server_dynamic_registrations
+            .entry(server.server_id())
+            .or_default()
+            .text_documents
+            .entry(method.to_owned())
+            .or_default()
+            .insert(
+                registration_id,
+                DynamicTextDocumentRegistration {
+                    document_selector,
+                    server_capabilities: lsp::ServerCapabilities {
+                        text_document_sync: Some(lsp::TextDocumentSyncCapability::Options(
+                            sync_options,
+                        )),
+                        ..lsp::ServerCapabilities::default()
+                    },
+                },
+            );
+        self.mirror_dynamic_text_document_sync(server, cx)
+    }
+
+    fn unregister_dynamic_text_document_sync(
+        &mut self,
+        server: &LanguageServer,
+        unregistration: &lsp::Unregistration,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        let local = self
+            .as_local_mut()
+            .context("Expected LSP Store to be local")?;
+        let removed = local
+            .language_server_dynamic_registrations
+            .get_mut(&server.server_id())
+            .and_then(|registrations| registrations.text_documents.get_mut(&unregistration.method))
+            .and_then(|registrations| registrations.shift_remove(&unregistration.id));
+        if removed.is_none() {
+            log::warn!(
+                "Attempted to unregister non-existent {} registration with ID {}",
+                unregistration.method,
+                unregistration.id
+            );
+            return Ok(());
+        }
+        self.mirror_dynamic_text_document_sync(server, cx)
+    }
+
+    /// Mirrors the most recent `didChange` and `didSave` registrations (or the static
+    /// options, without any) into the server's merged capabilities, for consumers that
+    /// cannot evaluate document selectors.
+    fn mirror_dynamic_text_document_sync(
+        &mut self,
+        server: &LanguageServer,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        let server_id = server.server_id();
+        let local = self.as_local().context("Expected LSP Store to be local")?;
+        let mut initial_capabilities = local
+            .initial_server_capabilities
+            .get(&server_id)
+            .cloned()
+            .unwrap_or_default();
+        let mut sync_options = take_text_document_sync_options(&mut initial_capabilities);
+        let text_document_registrations = local
+            .language_server_dynamic_registrations
+            .get(&server_id)
+            .map(|registrations| &registrations.text_documents);
+        let latest_sync_options = |method: &str| {
+            let (_, registration) = text_document_registrations?.get(method)?.last()?;
+            match registration
+                .server_capabilities
+                .text_document_sync
+                .as_ref()?
+            {
+                lsp::TextDocumentSyncCapability::Options(options) => Some(options.clone()),
+                lsp::TextDocumentSyncCapability::Kind(_) => None,
+            }
+        };
+        if let Some(options) = latest_sync_options("textDocument/didChange") {
+            sync_options.change = options.change;
+        }
+        if let Some(options) = latest_sync_options("textDocument/didSave") {
+            sync_options.save = options.save;
+        }
+        server.update_capabilities(|capabilities| {
+            capabilities.text_document_sync =
+                Some(lsp::TextDocumentSyncCapability::Options(sync_options));
+        });
+        self.notify_server_capabilities_updated(server, cx);
+        Ok(())
+    }
+
     /// Returns `true` when the registration changed the server's active capability value:
     /// duplicate-ID replacements of non-active registrations and (re-)registrations with
     /// options identical to the active ones do not.
@@ -700,48 +807,49 @@ impl LspStore {
                     }
                 }
                 "textDocument/didChange" => {
+                    let document_selector =
+                        parse_text_document_registration(reg.register_options.as_ref())?;
                     if let Some(sync_kind) = reg
                         .register_options
                         .and_then(|opts| opts.get("syncKind").cloned())
                         .map(serde_json::from_value::<lsp::TextDocumentSyncKind>)
                         .transpose()?
                     {
-                        server.update_capabilities(|capabilities| {
-                            let mut sync_options = take_text_document_sync_options(capabilities);
-                            sync_options.change = Some(sync_kind);
-                            capabilities.text_document_sync =
-                                Some(lsp::TextDocumentSyncCapability::Options(sync_options));
-                        });
-                        self.notify_server_capabilities_updated(&server, cx);
+                        self.register_dynamic_text_document_sync(
+                            &server,
+                            &reg.method,
+                            reg.id,
+                            document_selector,
+                            lsp::TextDocumentSyncOptions {
+                                change: Some(sync_kind),
+                                ..lsp::TextDocumentSyncOptions::default()
+                            },
+                            cx,
+                        )?;
                     }
                 }
                 "textDocument/didSave" => {
-                    if let Some(include_text) = reg
+                    let document_selector =
+                        parse_text_document_registration(reg.register_options.as_ref())?;
+                    let include_text = reg
                         .register_options
-                        .map(|opts| {
-                            let transpose = opts
-                                .get("includeText")
-                                .cloned()
-                                .map(serde_json::from_value::<Option<bool>>)
-                                .transpose();
-                            match transpose {
-                                Ok(value) => Ok(value.flatten()),
-                                Err(e) => Err(e),
-                            }
-                        })
+                        .and_then(|opts| opts.get("includeText").cloned())
+                        .map(serde_json::from_value::<Option<bool>>)
                         .transpose()?
-                    {
-                        server.update_capabilities(|capabilities| {
-                            let mut sync_options = take_text_document_sync_options(capabilities);
-                            sync_options.save =
-                                Some(TextDocumentSyncSaveOptions::SaveOptions(lsp::SaveOptions {
-                                    include_text,
-                                }));
-                            capabilities.text_document_sync =
-                                Some(lsp::TextDocumentSyncCapability::Options(sync_options));
-                        });
-                        self.notify_server_capabilities_updated(&server, cx);
-                    }
+                        .flatten();
+                    self.register_dynamic_text_document_sync(
+                        &server,
+                        &reg.method,
+                        reg.id,
+                        document_selector,
+                        lsp::TextDocumentSyncOptions {
+                            save: Some(TextDocumentSyncSaveOptions::SaveOptions(
+                                lsp::SaveOptions { include_text },
+                            )),
+                            ..lsp::TextDocumentSyncOptions::default()
+                        },
+                        cx,
+                    )?;
                 }
                 "textDocument/codeLens" => {
                     let document_selector =
@@ -1120,23 +1228,8 @@ impl LspStore {
                         self.refresh_semantic_tokens(server_id, cx);
                     }
                 }
-                "textDocument/didChange" => {
-                    server.update_capabilities(|capabilities| {
-                        let mut sync_options = take_text_document_sync_options(capabilities);
-                        sync_options.change = None;
-                        capabilities.text_document_sync =
-                            Some(lsp::TextDocumentSyncCapability::Options(sync_options));
-                    });
-                    self.notify_server_capabilities_updated(&server, cx);
-                }
-                "textDocument/didSave" => {
-                    server.update_capabilities(|capabilities| {
-                        let mut sync_options = take_text_document_sync_options(capabilities);
-                        sync_options.save = None;
-                        capabilities.text_document_sync =
-                            Some(lsp::TextDocumentSyncCapability::Options(sync_options));
-                    });
-                    self.notify_server_capabilities_updated(&server, cx);
+                "textDocument/didChange" | "textDocument/didSave" => {
+                    self.unregister_dynamic_text_document_sync(&server, unreg, cx)?;
                 }
                 "textDocument/inlayHint" => {
                     if self

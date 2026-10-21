@@ -744,6 +744,7 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "NSButton",
     "NSControl",
     "NSDraggingItem",
+    "NSEvent",
     "NSGraphics",
     "NSImage",
     "NSOpenPanel",

@@ -513,11 +513,14 @@ impl ChatCompletionEventMapper {
                     reasoning_details,
                 )));
             }
-            if let Some(reasoning) = delta.reasoning.clone() {
-                push_thinking_event(reasoning, &mut events);
-            }
-            if let Some(reasoning_content) = delta.reasoning_content.clone() {
-                push_thinking_event(reasoning_content, &mut events);
+            // Gateways can mirror the same reasoning delta in both fields.
+            if let Some(reasoning) = delta
+                .reasoning
+                .as_ref()
+                .filter(|text| !text.is_empty())
+                .or(delta.reasoning_content.as_ref())
+            {
+                push_thinking_event(reasoning.clone(), &mut events);
             }
             if let Some(content) = delta.content.as_ref() {
                 match content {
@@ -911,28 +914,49 @@ mod tests {
 
     #[test]
     fn stream_maps_reasoning() {
-        let events = map_completion_events(vec![ResponseStreamEvent {
-            choices: vec![ChoiceDelta {
-                index: 0,
-                delta: Some(ResponseMessageDelta {
-                    content: None,
-                    reasoning: Some("thinking".into()),
-                    tool_calls: None,
-                    reasoning_content: None,
-                    reasoning_details: None,
-                }),
-                finish_reason: None,
-            }],
-            usage: None,
-        }]);
+        for (reasoning, reasoning_content, expected) in [
+            (Some("thinking"), None, Some("thinking")),
+            (None, Some("thinking"), Some("thinking")),
+            (Some("thinking"), Some("thinking"), Some("thinking")),
+            (Some("thinking"), Some("other"), Some("thinking")),
+            (Some(""), Some("thinking"), Some("thinking")),
+            (Some("thinking"), Some(""), Some("thinking")),
+            (None, None, None),
+            (Some(""), Some(""), None),
+        ] {
+            let mut mapper = ChatCompletionEventMapper::new();
+            // Identical successive chunks are still distinct pieces of text.
+            for _ in 0..2 {
+                let events = mapper
+                    .map_event(ResponseStreamEvent {
+                        choices: vec![ChoiceDelta {
+                            index: 0,
+                            delta: Some(ResponseMessageDelta {
+                                reasoning: reasoning.map(str::to_owned),
+                                reasoning_content: reasoning_content.map(str::to_owned),
+                                ..Default::default()
+                            }),
+                            finish_reason: None,
+                        }],
+                        ..Default::default()
+                    })
+                    .into_iter()
+                    .collect::<Result<Vec<_>, _>>()
+                    .expect("reasoning chunks should map successfully");
 
-        assert_eq!(
-            events,
-            vec![LanguageModelCompletionEvent::Thinking {
-                text: "thinking".into(),
-                signature: None,
-            }]
-        );
+                assert_eq!(
+                    events,
+                    expected
+                        .map(|text| LanguageModelCompletionEvent::Thinking {
+                            text: text.into(),
+                            signature: None,
+                        })
+                        .into_iter()
+                        .collect::<Vec<_>>(),
+                    "reasoning={reasoning:?}, reasoning_content={reasoning_content:?}"
+                );
+            }
+        }
     }
 
     #[test]
