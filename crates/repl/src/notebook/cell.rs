@@ -485,6 +485,19 @@ impl MarkdownCell {
         self.editor.read(cx).buffer().read(cx).is_dirty(cx)
     }
 
+    pub fn mark_saved(&mut self, cx: &mut Context<Self>) {
+        self.editor.update(cx, |editor, cx| {
+            editor.buffer().update(cx, |buffer, cx| {
+                if let Some(buffer) = buffer.as_singleton() {
+                    buffer.update(cx, |buffer, cx| {
+                        let version = buffer.version();
+                        buffer.did_save(version, None, cx);
+                    });
+                }
+            });
+        });
+    }
+
     pub fn to_nbformat_cell(&self, cx: &App) -> nbformat::v4::Cell {
         let source = self.current_source(cx);
         let source_lines: Vec<String> = source.lines().map(|l| format!("{}\n", l)).collect();
@@ -652,6 +665,9 @@ pub struct CodeCell {
     source: String,
     editor: Entity<editor::Editor>,
     outputs: Vec<Output>,
+    /// Outputs or the execution count changed since the notebook was loaded or
+    /// last saved. Tracked separately because those live outside the buffer.
+    outputs_dirty: bool,
     selected: bool,
     cell_position: Option<CellPosition>,
     _language_task: Task<()>,
@@ -733,6 +749,7 @@ impl CodeCell {
             source,
             editor,
             outputs,
+            outputs_dirty: false,
             selected: false,
             cell_position: None,
             execution_start_time: None,
@@ -768,7 +785,21 @@ impl CodeCell {
     }
 
     pub fn is_dirty(&self, cx: &App) -> bool {
-        self.editor.read(cx).buffer().read(cx).is_dirty(cx)
+        self.outputs_dirty || self.editor.read(cx).buffer().read(cx).is_dirty(cx)
+    }
+
+    pub fn mark_saved(&mut self, cx: &mut Context<Self>) {
+        self.outputs_dirty = false;
+        self.editor.update(cx, |editor, cx| {
+            editor.buffer().update(cx, |buffer, cx| {
+                if let Some(buffer) = buffer.as_singleton() {
+                    buffer.update(cx, |buffer, cx| {
+                        let version = buffer.version();
+                        buffer.did_save(version, None, cx);
+                    });
+                }
+            });
+        });
     }
 
     pub fn to_nbformat_cell(&self, cx: &App) -> nbformat::v4::Cell {
@@ -798,6 +829,9 @@ impl CodeCell {
     }
 
     pub fn clear_outputs(&mut self) {
+        if !self.outputs.is_empty() {
+            self.outputs_dirty = true;
+        }
         self.outputs.clear();
         self.execution_duration = None;
     }
@@ -833,6 +867,7 @@ impl CodeCell {
             evalue: "cell could not be executed".to_string(),
             traceback: cx.new(|cx| TerminalOutput::from(error_message, window, cx)),
         }));
+        self.outputs_dirty = true;
         self.execution_start_time = None;
         self.is_executing = false;
         cx.notify();
@@ -866,20 +901,24 @@ impl CodeCell {
                 self.outputs.push(Output::Stream {
                     content: cx.new(|cx| TerminalOutput::from(&stream.text, window, cx)),
                 });
+                self.outputs_dirty = true;
             }
             JupyterMessageContent::DisplayData(display_data) => {
                 self.outputs
                     .push(Output::new(&display_data.data, None, window, cx));
+                self.outputs_dirty = true;
             }
             JupyterMessageContent::ExecuteResult(execute_result) => {
                 self.outputs
                     .push(Output::new(&execute_result.data, None, window, cx));
+                self.outputs_dirty = true;
             }
             JupyterMessageContent::ExecuteInput(input) => {
                 self.execution_count = serde_json::to_value(&input.execution_count)
                     .ok()
                     .and_then(|v| v.as_i64())
                     .map(|v| v as i32);
+                self.outputs_dirty = true;
             }
             JupyterMessageContent::ExecuteReply(_) => {
                 self.finish_execution();
@@ -891,6 +930,7 @@ impl CodeCell {
                     traceback: cx
                         .new(|cx| TerminalOutput::from(&error.traceback.join("\n"), window, cx)),
                 }));
+                self.outputs_dirty = true;
             }
             _ => {}
         }

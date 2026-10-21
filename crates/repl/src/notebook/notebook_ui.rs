@@ -306,35 +306,9 @@ impl NotebookEditor {
 
         for cell in self.cell_map.values() {
             match cell {
-                Cell::Code(code_cell) => {
-                    code_cell.update(cx, |code_cell, cx| {
-                        let editor = code_cell.editor();
-                        editor.update(cx, |editor, cx| {
-                            editor.buffer().update(cx, |buffer, cx| {
-                                if let Some(buf) = buffer.as_singleton() {
-                                    buf.update(cx, |b, cx| {
-                                        let version = b.version();
-                                        b.did_save(version, None, cx);
-                                    });
-                                }
-                            });
-                        });
-                    });
-                }
+                Cell::Code(code_cell) => code_cell.update(cx, |cell, cx| cell.mark_saved(cx)),
                 Cell::Markdown(markdown_cell) => {
-                    markdown_cell.update(cx, |markdown_cell, cx| {
-                        let editor = markdown_cell.editor();
-                        editor.update(cx, |editor, cx| {
-                            editor.buffer().update(cx, |buffer, cx| {
-                                if let Some(buf) = buffer.as_singleton() {
-                                    buf.update(cx, |b, cx| {
-                                        let version = b.version();
-                                        b.did_save(version, None, cx);
-                                    });
-                                }
-                            });
-                        });
-                    });
+                    markdown_cell.update(cx, |cell, cx| cell.mark_saved(cx))
                 }
                 Cell::Raw(_) => {}
             }
@@ -2086,6 +2060,37 @@ mod tests {
         ]
     }"#;
 
+    const NOTEBOOK_WITH_SAVED_OUTPUT: &str = r#"{
+        "metadata": {
+            "kernelspec": {
+                "display_name": "Python 3",
+                "language": "python",
+                "name": "python3"
+            },
+            "language_info": {
+                "name": "python"
+            }
+        },
+        "nbformat": 4,
+        "nbformat_minor": 5,
+        "cells": [
+            {
+                "cell_type": "code",
+                "id": "cell-one",
+                "metadata": {},
+                "execution_count": 1,
+                "outputs": [
+                    {
+                        "output_type": "stream",
+                        "name": "stdout",
+                        "text": ["hello\n"]
+                    }
+                ],
+                "source": ["print('hello')"]
+            }
+        ]
+    }"#;
+
     /// When the configured interpreter doesn't exist (e.g. Python isn't installed),
     /// running a cell must not leave it stuck in the executing state. It should
     /// instead surface the kernel launch error as an error output on the cell.
@@ -2200,6 +2205,10 @@ mod tests {
             assert!(
                 !cell.is_executing(),
                 "cell must not be stuck in the executing state when the kernel is not running"
+            );
+            assert!(
+                editor.is_dirty(cx),
+                "the kernel error output is an unsaved change to the notebook"
             );
 
             let nbformat::v4::Cell::Code { outputs, .. } = cell.to_nbformat_cell(cx) else {
@@ -2428,6 +2437,99 @@ mod tests {
             assert!(
                 notebook_editor.is_dirty(cx),
                 "editing a cell should mark the notebook as having unsaved changes"
+            );
+        });
+    }
+
+    /// Outputs live outside the cell buffers, so clearing them (or getting new
+    /// ones from a kernel) must count as an unsaved change on its own. Otherwise
+    /// Save All skips the notebook and closing it never asks to save.
+    #[gpui::test]
+    async fn test_clearing_outputs_makes_the_notebook_dirty(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/notebooks"),
+            json!({ "test.ipynb": NOTEBOOK_WITH_SAVED_OUTPUT }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/notebooks").as_ref()], cx).await;
+        cx.update(|cx| ReplStore::init(fs.clone(), cx));
+
+        let project_path = project.read_with(cx, |project, cx| ProjectPath {
+            worktree_id: project.worktrees(cx).next().unwrap().read(cx).id(),
+            path: rel_path("test.ipynb").into(),
+        });
+
+        let notebook_item = cx
+            .update(|cx| {
+                NotebookItem::try_open(&project, &project_path, cx)
+                    .expect("ipynb files should be openable as notebooks")
+            })
+            .await
+            .expect("notebook should parse");
+
+        // See `test_save_goes_through_the_project` for why the notebook is not rendered.
+        let cx = cx.add_empty_window();
+        let notebook_editor = cx.update(|window, cx| {
+            cx.new(|cx| NotebookEditor::new(project.clone(), notebook_item, window, cx))
+        });
+
+        notebook_editor.read_with(cx, |notebook_editor, cx| {
+            assert!(
+                !notebook_editor.is_dirty(cx),
+                "a notebook with saved outputs should open clean"
+            );
+        });
+
+        notebook_editor.update_in(cx, |notebook_editor, window, cx| {
+            notebook_editor.clear_outputs(window, cx);
+        });
+        notebook_editor.read_with(cx, |notebook_editor, cx| {
+            assert!(
+                notebook_editor.is_dirty(cx),
+                "clearing saved outputs should mark the notebook as having unsaved changes"
+            );
+        });
+
+        notebook_editor
+            .update_in(cx, |notebook_editor, window, cx| {
+                notebook_editor.save(SaveOptions::default(), project.clone(), window, cx)
+            })
+            .await
+            .expect("saving the notebook should succeed");
+
+        let saved = String::from_utf8(
+            fs.read_file_sync(path!("/notebooks/test.ipynb"))
+                .expect("notebook should still exist"),
+        )
+        .expect("notebook should be valid UTF-8");
+        assert!(
+            saved.contains("\"outputs\": []"),
+            "the cleared outputs should be written to the notebook, got: {saved}"
+        );
+        notebook_editor.read_with(cx, |notebook_editor, cx| {
+            assert!(
+                !notebook_editor.is_dirty(cx),
+                "saving should leave the notebook clean"
+            );
+        });
+
+        // Clearing outputs that are already empty changes nothing.
+        notebook_editor.update_in(cx, |notebook_editor, window, cx| {
+            notebook_editor.clear_outputs(window, cx);
+        });
+        notebook_editor.read_with(cx, |notebook_editor, cx| {
+            assert!(
+                !notebook_editor.is_dirty(cx),
+                "clearing already-empty outputs should not mark the notebook dirty"
             );
         });
     }
