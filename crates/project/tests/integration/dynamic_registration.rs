@@ -3352,6 +3352,12 @@ async fn test_registration_patterns_respect_globstar_and_character_class_separat
         ("completion-globstars", "**/the-root/**/**", "."),
         ("completion-negated-class", "**/a[!x]b.rs", ":"),
         ("completion-range-class", "**/a[.-0]b.rs", "!"),
+        (
+            "completion-braced-globstar",
+            "**/the-root/{**,src}/a0b.rs",
+            ";",
+        ),
+        ("completion-literal-brace", "**/{[}],a0b}.rs", "?"),
     ] {
         register_capability(
             &fake_server,

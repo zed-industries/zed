@@ -15081,6 +15081,10 @@ fn document_filter_glob(pattern: &lsp::GlobPattern) -> (Option<&lsp::Uri>, &str)
     }
 }
 
+// Bound work on server-supplied patterns before the regex compiler's own limits apply.
+const DOCUMENT_FILTER_GLOB_MAX_ALTERNATIVES: usize = 256;
+const DOCUMENT_FILTER_GLOB_MAX_BYTES: usize = 1024 * 1024;
+
 /// Compiles an LSP glob pattern into a regular expression matching paths with `/` separators.
 ///
 /// Uses LSP glob semantics: `*` and `?` match characters (not bytes) within a path segment,
@@ -15089,66 +15093,148 @@ fn document_filter_glob(pattern: &lsp::GlobPattern) -> (Option<&lsp::Uri>, &str)
 /// Unlike VS Code's parser, consecutive `**` segments are equivalent to one, and character
 /// classes cannot consume `/`, even when a negation or range would otherwise include it.
 fn document_filter_glob_matcher(glob: &str) -> Result<regex::Regex> {
-    Ok(regex::Regex::new(&format!("^{}$", glob_regex(glob)?))?)
+    let mut regex = String::from("^(?:");
+    // Expand complete paths so `**` inside an alternative can absorb adjacent separators.
+    for (index, alternative) in expand_glob_braces(glob)?.iter().enumerate() {
+        let branch = glob_regex(alternative)?;
+        anyhow::ensure!(
+            regex.len() + branch.len() + 3 <= DOCUMENT_FILTER_GLOB_MAX_BYTES,
+            "document filter glob exceeds the compiled pattern size limit"
+        );
+        if index > 0 {
+            regex.push('|');
+        }
+        regex.push_str(&branch);
+    }
+    regex.push_str(")$");
+    Ok(regex::Regex::new(&regex)?)
+}
+
+fn expand_glob_braces(glob: &str) -> Result<Vec<String>> {
+    let mut remaining_bytes = DOCUMENT_FILTER_GLOB_MAX_BYTES
+        .checked_sub(glob.len())
+        .context("document filter glob exceeds the expansion size limit")?;
+    let mut pending = vec![glob.to_string()];
+    let mut expanded = Vec::new();
+    while let Some(pattern) = pending.pop() {
+        let Some((group, alternatives)) = glob_brace_alternatives(&pattern)? else {
+            expanded.push(pattern);
+            continue;
+        };
+        anyhow::ensure!(
+            expanded.len() + pending.len() + alternatives.len()
+                <= DOCUMENT_FILTER_GLOB_MAX_ALTERNATIVES,
+            "document filter glob exceeds the alternative count limit"
+        );
+        let prefix = &pattern[..group.start];
+        let suffix = &pattern[group.end..];
+        for alternative in alternatives.into_iter().rev() {
+            // Charge intermediate expansions too, so deeply nested single-choice groups
+            // cannot cause unbounded rescanning and copying even with few final alternatives.
+            remaining_bytes = remaining_bytes
+                .checked_sub(prefix.len() + alternative.len() + suffix.len())
+                .context("document filter glob exceeds the expansion size limit")?;
+            pending.push(format!("{prefix}{alternative}{suffix}"));
+        }
+    }
+    Ok(expanded)
+}
+
+fn glob_brace_alternatives(glob: &str) -> Result<Option<(Range<usize>, Vec<&str>)>> {
+    let mut chars = glob.char_indices();
+    let mut depth = 0;
+    let mut group_start = 0;
+    let mut alternative_start = 0;
+    let mut alternatives = Vec::new();
+    while let Some((index, character)) = chars.next() {
+        match character {
+            '[' => {
+                glob_character_class_end(glob, &mut chars)?;
+            }
+            '{' => {
+                if depth == 0 {
+                    group_start = index;
+                    alternative_start = index + 1;
+                }
+                depth += 1;
+            }
+            ',' if depth == 1 => {
+                anyhow::ensure!(
+                    alternatives.len() + 1 < DOCUMENT_FILTER_GLOB_MAX_ALTERNATIVES,
+                    "document filter glob exceeds the alternative count limit"
+                );
+                alternatives.push(&glob[alternative_start..index]);
+                alternative_start = index + 1;
+            }
+            '}' if depth > 0 => {
+                depth -= 1;
+                if depth == 0 {
+                    alternatives.push(&glob[alternative_start..index]);
+                    return Ok(Some((group_start..index + 1, alternatives)));
+                }
+            }
+            _ => {}
+        }
+    }
+    anyhow::ensure!(depth == 0, "unclosed `{{` in glob pattern {glob:?}");
+    Ok(None)
+}
+
+fn glob_character_class_end(glob: &str, chars: &mut std::str::CharIndices<'_>) -> Result<usize> {
+    let mut first = true;
+    let mut has_member = false;
+    for (index, character) in chars.by_ref() {
+        if character == ']' && has_member {
+            return Ok(index + 1);
+        }
+        // A leading `]`, also after negation, is a literal member rather than the delimiter.
+        if !first || !matches!(character, '!' | '^') {
+            has_member = true;
+        }
+        first = false;
+    }
+    anyhow::bail!("unclosed `[` in glob pattern {glob:?}")
 }
 
 fn glob_regex(glob: &str) -> Result<String> {
     const GLOBSTAR: &str = "**";
-    let mut segments = split_glob(glob, '/');
-    segments.dedup_by(|segment, previous| {
-        segment.as_str() == GLOBSTAR && previous.as_str() == GLOBSTAR
-    });
+    let mut segments = split_glob(glob, '/')?;
+    segments.dedup_by(|segment, previous| *segment == GLOBSTAR && *previous == GLOBSTAR);
     if segments.is_empty() {
         return Ok(String::new());
     }
-    if segments.iter().all(|segment| segment == GLOBSTAR) {
-        return Ok(".*".to_string());
+    if segments.iter().all(|segment| *segment == GLOBSTAR) {
+        return Ok("(?s:.*)".to_string());
+    }
+    if segments.as_slice() == ["", GLOBSTAR] {
+        return Ok("/(?s:.*)".to_string());
     }
 
     let mut regex = String::new();
     for (index, segment) in segments.iter().enumerate() {
         let is_last_segment = index + 1 == segments.len();
-        if segment == GLOBSTAR {
-            // Any number of segments, including the separators around them, and a last
-            // segment when nothing follows.
+        if *segment == GLOBSTAR {
+            // A terminal globstar owns its separator, but cannot extend the preceding
+            // segment (e.g. `/root/**` must not match `/rooted/`).
             regex.push_str(if is_last_segment {
-                "(?:/|[^/]+/|/[^/]+)*?"
+                "(?:/(?s:.*))?"
             } else {
                 "(?:/|[^/]+/)*?"
             });
             continue;
         }
 
-        let mut chars = segment.chars();
-        while let Some(char) = chars.next() {
+        let mut chars = segment.char_indices();
+        while let Some((index, char)) = chars.next() {
             match char {
-                '{' => {
-                    let mut choices = String::new();
-                    loop {
-                        match chars.next() {
-                            Some('}') => break,
-                            Some(char) => choices.push(char),
-                            None => anyhow::bail!("unclosed `{{` in glob pattern {glob:?}"),
-                        }
-                    }
-                    let choices = split_glob(&choices, ',')
-                        .iter()
-                        .map(|choice| glob_regex(choice))
-                        .collect::<Result<Vec<_>>>()?;
-                    regex.push_str(&format!("(?:{})", choices.join("|")));
-                }
                 '[' => {
+                    let end = glob_character_class_end(segment, &mut chars)?;
                     let mut class = String::new();
-                    loop {
-                        match chars.next() {
-                            // A `]` right after the `[` is a character of the class.
-                            Some(']') if !class.is_empty() => break,
-                            Some('-') => class.push('-'),
-                            Some('!' | '^') if class.is_empty() => class.push('^'),
-                            Some(char) => {
-                                class.push_str(&regex::escape(char.encode_utf8(&mut [0; 4])))
-                            }
-                            None => anyhow::bail!("unclosed `[` in glob pattern {glob:?}"),
+                    for char in segment[index + 1..end - 1].chars() {
+                        match char {
+                            '-' => class.push('-'),
+                            '!' | '^' if class.is_empty() => class.push('^'),
+                            char => class.push_str(&regex::escape(char.encode_utf8(&mut [0; 4]))),
                         }
                     }
                     regex.push_str(&format!("[[{class}]&&[^/]]"));
@@ -15160,9 +15246,10 @@ fn glob_regex(glob: &str) -> Result<String> {
         }
 
         // A following `**` that ends the pattern brings its own separator.
-        let next_segment_is_last_globstar =
-            segments.get(index + 1).is_some_and(|next| next == GLOBSTAR)
-                && index + 2 == segments.len();
+        let next_segment_is_last_globstar = segments
+            .get(index + 1)
+            .is_some_and(|next| *next == GLOBSTAR)
+            && index + 2 == segments.len();
         if !is_last_segment && !next_segment_is_last_globstar {
             regex.push('/');
         }
@@ -15170,30 +15257,24 @@ fn glob_regex(glob: &str) -> Result<String> {
     Ok(regex)
 }
 
-/// Splits a glob pattern at the separator, except within `{...}` and `[...]`.
-fn split_glob(glob: &str, separator: char) -> Vec<String> {
+/// Splits a brace-expanded glob without interpreting separators inside character classes.
+fn split_glob(glob: &str, separator: char) -> Result<Vec<&str>> {
     let mut parts = Vec::new();
-    let mut part = String::new();
-    let mut in_braces = false;
-    let mut in_brackets = false;
-    for char in glob.chars() {
-        match char {
-            char if char == separator && !in_braces && !in_brackets => {
-                parts.push(std::mem::take(&mut part));
-                continue;
-            }
-            '{' => in_braces = true,
-            '}' => in_braces = false,
-            '[' => in_brackets = true,
-            ']' => in_brackets = false,
-            _ => {}
+    if glob.is_empty() {
+        return Ok(parts);
+    }
+    let mut start = 0;
+    let mut chars = glob.char_indices();
+    while let Some((index, character)) = chars.next() {
+        if character == '[' {
+            glob_character_class_end(glob, &mut chars)?;
+        } else if character == separator {
+            parts.push(&glob[start..index]);
+            start = index + character.len_utf8();
         }
-        part.push(char);
     }
-    if !part.is_empty() {
-        parts.push(part);
-    }
-    parts
+    parts.push(&glob[start..]);
+    Ok(parts)
 }
 
 fn validate_document_filter_pattern(pattern: &lsp::GlobPattern) -> Result<()> {
@@ -18118,6 +18199,98 @@ mod tests {
     }
 
     #[test]
+    fn document_filter_brace_alternatives_preserve_path_segments() -> Result<()> {
+        for (pattern, path, expected) in [
+            ("/root/{**,src}/a.rs", "/root/a.rs", true),
+            ("/root/{**,src}/a.rs", "/root/sub/a.rs", true),
+            ("/root/{**,src}/a.rs", "/root/src/a.rs", true),
+            ("/root/{**,src}/a.rs", "/root/b.rs", false),
+            ("/root/{**,src}/a.rs", "/rooted/a.rs", false),
+            ("/root/{**,src}", "/root", true),
+            ("/root/{**,src}/**", "/root", true),
+            ("/root/{*,src}*/a.rs", "/root/a.rs", true),
+            ("/{root/**,other}/a.rs", "/root/a.rs", true),
+            ("/root/{src/,}a.rs", "/root/a.rs", true),
+            ("/root/{,src/}a.rs", "/root/src/a.rs", true),
+            ("/root/{,src}/a.rs", "/root/a.rs", false),
+            ("/root/{,src}/a.rs", "/root//a.rs", true),
+            ("/root/{src,{lib,tests}}/a.rs", "/root/lib/a.rs", true),
+            ("/root/{src,lib}/{a,b}.rs", "/root/lib/b.rs", true),
+            ("/root/{}a.rs", "/root/a.rs", true),
+        ] {
+            let matcher = document_filter_glob_matcher(pattern)?;
+            assert_eq!(
+                matcher.is_match(path),
+                expected,
+                "pattern {pattern:?}, path {path:?}",
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn document_filter_braces_in_character_classes_are_literal() -> Result<()> {
+        for (pattern, path, expected) in [
+            ("**/{[}],a}.rs", "/root/}.rs", true),
+            ("**/{[}],a}.rs", "/root/a.rs", true),
+            ("**/{[}],a}.rs", "/root/b.rs", false),
+            ("**/[{]/**/a.rs", "/root/{/a.rs", true),
+            ("**/[{]/**/a.rs", "/root/{/sub/a.rs", true),
+            ("**/[{]/**/a.rs", "/root/other/a.rs", false),
+            ("**/{[{],[}]}.rs", "/root/{.rs", true),
+            ("**/{[{],[}]}.rs", "/root/}.rs", true),
+            ("**/{[]}],a}.rs", "/root/].rs", true),
+            ("**/{[]}],a}.rs", "/root/}.rs", true),
+            ("**/{[,],a}.rs", "/root/,.rs", true),
+            ("**/{[!]],a}.rs", "/root/b.rs", true),
+            ("**/{[!]],a}.rs", "/root/].rs", false),
+        ] {
+            let matcher = document_filter_glob_matcher(pattern)?;
+            assert_eq!(
+                matcher.is_match(path),
+                expected,
+                "pattern {pattern:?}, path {path:?}",
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn document_filter_brace_expansion_is_bounded() -> Result<()> {
+        assert_eq!(
+            expand_glob_braces(&"{a,b}".repeat(8))?.len(),
+            DOCUMENT_FILTER_GLOB_MAX_ALTERNATIVES,
+        );
+        assert!(expand_glob_braces(&"{a,b}".repeat(9)).is_err());
+
+        let empty_alternatives = format!(
+            "{{{}}}",
+            ",".repeat(DOCUMENT_FILTER_GLOB_MAX_ALTERNATIVES - 1)
+        );
+        assert_eq!(
+            expand_glob_braces(&empty_alternatives)?.len(),
+            DOCUMENT_FILTER_GLOB_MAX_ALTERNATIVES,
+        );
+        let too_many_empty_alternatives =
+            format!("{{{}}}", ",".repeat(DOCUMENT_FILTER_GLOB_MAX_ALTERNATIVES));
+        assert!(expand_glob_braces(&too_many_empty_alternatives).is_err());
+
+        let at_size_limit = "a".repeat(DOCUMENT_FILTER_GLOB_MAX_BYTES);
+        assert_eq!(expand_glob_braces(&at_size_limit)?, vec![at_size_limit]);
+        assert!(expand_glob_braces(&"a".repeat(DOCUMENT_FILTER_GLOB_MAX_BYTES + 1)).is_err());
+        let deeply_nested = format!("{}a{}", "{".repeat(2048), "}".repeat(2048));
+        assert!(expand_glob_braces(&deeply_nested).is_err());
+        let large_regex = "*a".repeat(DOCUMENT_FILTER_GLOB_MAX_BYTES / 4);
+        assert!(
+            document_filter_glob_matcher(&large_regex)
+                .expect_err("the generated regex must also have a bounded size")
+                .to_string()
+                .contains("compiled pattern size limit")
+        );
+        Ok(())
+    }
+
+    #[test]
     fn document_filter_globstar_runs_match_path_segments() -> Result<()> {
         for (pattern, path, expected) in [
             ("/root/**/**", "/root/a.rs", true),
@@ -18125,6 +18298,22 @@ mod tests {
             ("/root/**/**", "/root", true),
             ("/root/**/**", "/root/", true),
             ("/root/**/**", "/rooted/a.rs", false),
+            ("/root/**", "/rooted/", false),
+            ("/root/**/**", "/rooted//a.rs", false),
+            ("/root/**", "/root//a.rs", true),
+            ("/root/**", "/root/a\nb.rs", true),
+            ("/root/**/a.rs", "/root/sub\ndir/a.rs", true),
+            ("**", "/root/a\nb.rs", true),
+            ("**/**", "/root/a\nb.rs", true),
+            ("/**", "", false),
+            ("/**", "a.rs", false),
+            ("/**", "/", true),
+            ("/**", "/a.rs", true),
+            ("/", "/", true),
+            ("a/", "a", false),
+            ("a/", "a/", true),
+            ("/root/**/", "/root/sub", false),
+            ("/root/**/", "/root/sub/", true),
             ("/root/**/**/**", "/root/a.rs", true),
             ("/root/**/**/a.rs", "/root/a.rs", true),
             ("/root/**/**/a.rs", "/root/sub/a.rs", true),
@@ -18214,7 +18403,7 @@ mod tests {
         assert!(!matches("/root/**/a.rs", "/rooted/a.rs"));
         assert!(!matches("/root/*.rs", "/root/sub/a.rs"));
 
-        for invalid_pattern in ["**/[a.rs", "**/{a,b.rs"] {
+        for invalid_pattern in ["**/[a.rs", "**/{a,b.rs", "**/{[}],a.rs", "**/{a,{b,c}"] {
             assert!(
                 validate_document_filter_pattern(&lsp::GlobPattern::String(
                     invalid_pattern.to_string()
