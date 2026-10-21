@@ -337,6 +337,7 @@ impl AcpV2Connection {
             session_list: Rc::new(RefCell::new(None)),
             request_elicitations: request_elicitations.clone(),
             active_request_scopes: Some(RefCell::new(Default::default())),
+            accepts_subagent_updates: true,
         };
         let (mut client_runtime, shutdown) = runtime::ClientRuntime::new(context, cx);
         let dispatch_tx = client_runtime.sender();
@@ -1411,6 +1412,18 @@ impl AgentConnection for AcpV2Connection {
         if !self.supports_close_session() {
             return Task::ready(Err(anyhow!("Closing sessions is not supported")));
         }
+        let is_subagent = self
+            .sessions
+            .borrow()
+            .get(session_id)
+            .and_then(|session| session.thread.upgrade())
+            .is_some_and(|thread| thread.read(cx).subagent_association().is_some());
+        if is_subagent {
+            // ACP forbids closing a subagent; the agent releases it when its parent closes.
+            return Task::ready(Err(anyhow!(
+                "ACP subagent sessions are closed with their parent"
+            )));
+        }
         let owner = self.session_owners.borrow().get(session_id).map(|owner| {
             (
                 owner.thread.clone(),
@@ -2348,6 +2361,141 @@ mod tests {
                 cx,
             );
         });
+    }
+
+    #[gpui::test]
+    async fn v2_subagent_updates_route_and_patch_child_sessions(cx: &mut TestAppContext) {
+        use acp_thread::{ThreadStatus, subagents::SubagentAssociation};
+        use agent_client_protocol::schema::MaybeUndefined;
+
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let parent = harness.thread(cx).await;
+        harness.send_update(
+            "session",
+            acp::SessionUpdate::SubagentUpdate(
+                acp::SubagentUpdate::new("child")
+                    .title("Investigator")
+                    .capabilities(
+                        acp::SubagentSessionCapabilities::new()
+                            .cancel(acp::SessionCancelCapabilities::new()),
+                    )
+                    .state(acp::StateUpdate::Running(acp::RunningStateUpdate::new())),
+            ),
+        );
+        harness.send_update(
+            "child",
+            acp::SessionUpdate::AgentMessage(
+                acp::AgentMessage::new("child-message").content(vec!["Looking".into()]),
+            ),
+        );
+        harness.drain_updates(cx).await;
+
+        let child = parent
+            .read_with(cx, |parent, _| parent.subagent(&"child".into()).cloned())
+            .expect("the parent owns the announced subagent");
+        child.read_with(cx, |child, _| {
+            assert_eq!(child.parent_session_id(), Some(&"session".into()));
+            assert_eq!(
+                child.subagent_association(),
+                Some(&SubagentAssociation {
+                    title: Some("Investigator".into()),
+                    description: None,
+                    can_cancel: true,
+                })
+            );
+            assert_eq!(child.entries().len(), 1, "child traffic reaches the child");
+            assert_eq!(
+                child.status(),
+                ThreadStatus::Unconfirmed,
+                "the parent's mirrored state does not report the child's activity"
+            );
+        });
+
+        harness.send_update(
+            "child",
+            acp::SessionUpdate::StateUpdate(acp::StateUpdate::Running(
+                acp::RunningStateUpdate::new(),
+            )),
+        );
+        harness.send_update(
+            "session",
+            acp::SessionUpdate::SubagentUpdate(
+                acp::SubagentUpdate::new("child").title(MaybeUndefined::Null),
+            ),
+        );
+        // Neither reparenting nor self-reference creates an association.
+        harness.send_update(
+            "child",
+            acp::SessionUpdate::SubagentUpdate(acp::SubagentUpdate::new("session")),
+        );
+        harness.send_update(
+            "session",
+            acp::SessionUpdate::SubagentUpdate(acp::SubagentUpdate::new("session")),
+        );
+        let _permission = harness
+            .agent
+            .send_request(acp::RequestPermissionRequest::new(
+                "child",
+                "Run tests",
+                vec![acp::PermissionOption::new(
+                    "allow",
+                    "Allow",
+                    acp::PermissionOptionKind::AllowOnce,
+                )],
+            ));
+        harness.drain_updates(cx).await;
+
+        child.read_with(cx, |child, _| {
+            assert_eq!(child.status(), ThreadStatus::Generating);
+            assert_eq!(
+                child.subagent_association(),
+                Some(&SubagentAssociation {
+                    title: None,
+                    description: None,
+                    can_cancel: true,
+                })
+            );
+            assert_eq!(child.subagents().count(), 0);
+            assert_eq!(
+                child.pending_permission_requests().count(),
+                1,
+                "child requests route to the child"
+            );
+        });
+        parent.read_with(cx, |parent, _| {
+            assert_eq!(parent.parent_session_id(), None);
+            assert_eq!(parent.subagents().collect::<Vec<_>>(), [&child]);
+        });
+        let error = bounded(
+            cx.update(|cx| harness.client.clone().close_session(&"child".into(), cx)),
+            cx,
+        )
+        .await
+        .expect_err("subagents cannot be closed");
+        assert!(
+            error
+                .to_string()
+                .contains("ACP subagent sessions are closed with their parent")
+        );
+
+        drop((parent, child));
+        cx.run_until_parked();
+        cx.update(|_| ());
+        assert_eq!(
+            harness
+                .client
+                .sessions
+                .borrow()
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>(),
+            Vec::<acp::SessionId>::new(),
+            "the subagent is released with its parent"
+        );
+        assert!(
+            harness.closes.is_empty(),
+            "releasing a subagent never closes it"
+        );
     }
 
     #[gpui::test]

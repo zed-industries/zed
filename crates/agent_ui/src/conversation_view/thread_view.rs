@@ -58,6 +58,16 @@ use super::elicitation::{
 use super::subagent_card::{SubagentCardState, SubagentStatus};
 use super::*;
 
+/// How a parent's view names a subagent. An ACP parent's own title for the subagent
+/// describes it in that view, so it wins over the subagent's title for itself.
+pub(super) fn subagent_label(thread: &AcpThread) -> SharedString {
+    thread
+        .subagent_association()
+        .and_then(|association| association.title.clone())
+        .or_else(|| thread.title())
+        .unwrap_or_else(|| "Subagent".into())
+}
+
 const DATA_RETENTION_LEARN_MORE_URL: &str = "https://support.claude.com/en/articles/15425996-data-retention-practices-for-mythos-class-models";
 
 pub(super) struct ThreadRecovery {
@@ -4329,7 +4339,7 @@ impl ThreadView {
                 } else {
                     Some(format!(
                         "Subagent: {} ({session_id})",
-                        thread.title().unwrap_or_else(|| "Subagent".into())
+                        subagent_label(thread)
                     ))
                 };
                 cards.push(self.render_generic_permission_card(
