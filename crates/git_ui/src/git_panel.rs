@@ -583,6 +583,14 @@ enum CommitHistory {
     Error(SharedString),
 }
 
+/// Discarding only unstaged changes leaves the index alone, so such an op says
+/// nothing about whether the file is staged.
+fn last_op_keeps_staged_changes(ops: &pending_op::PendingOps) -> bool {
+    ops.ops
+        .last()
+        .is_some_and(|op| op.git_status == pending_op::GitStatus::RevertedUnstaged)
+}
+
 fn commit_history_from_response(
     entries: Rc<[CommitHistoryEntry]>,
     is_loading: bool,
@@ -3439,7 +3447,7 @@ impl GitPanel {
                 // In case the last operation in the list of pending operations
                 // failed, we can't assume the stage status for this entry and
                 // need to fallback to the actual state in the repo.
-                if ops.last_op_errored() {
+                if ops.last_op_errored() || last_op_keeps_staged_changes(&ops) {
                     return None;
                 }
 
@@ -8172,6 +8180,7 @@ impl GitPanel {
 
         let is_staging_or_staged = repo
             .pending_ops_for_path(&repo_path)
+            .filter(|ops| !last_op_keeps_staged_changes(ops))
             .map(|ops| !ops.last_op_errored() && (ops.staging() || ops.staged()))
             .or_else(|| {
                 repo.status_for_path(&repo_path)
@@ -15729,6 +15738,52 @@ mod tests {
         discard_row(&panel, "untracked.txt", Section::Unstaged, &mut cx);
 
         assert!(!fs.is_file(path!("/project/untracked.txt").as_ref()).await);
+    }
+
+    #[gpui::test]
+    async fn test_discard_unstaged_changes_keeps_staged_row_staged(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (fs, panel, mut cx) = setup_git_panel_with_index_contents(
+            cx,
+            &[("partial.txt", "head\n")],
+            &[("partial.txt", "staged\n")],
+            json!({
+                ".git": {},
+                "partial.txt": "unstaged\n",
+            }),
+        )
+        .await;
+
+        // Hold back the status scan so the discard's pending op stays around.
+        fs.pause_events();
+        discard_row(&panel, "partial.txt", Section::Unstaged, &mut cx);
+        assert_eq!(
+            worktree_and_index(&fs, "partial.txt").await,
+            ("staged\n".into(), Some("staged\n".into()))
+        );
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.update_visible_entries(window, cx);
+            let index = panel
+                .entry_by_path_in_section(&repo_path("partial.txt"), Section::Staged)
+                .expect("the staged row should stay");
+            let entry = panel.entries[index].status_entry().unwrap().clone();
+            let repo = panel.active_repository.as_ref().unwrap().read(cx);
+            assert!(GitPanel::stage_status_for_entry(&entry, repo).has_staged());
+            assert!(panel.has_staged_changes());
+        });
+
+        fs.unpause_events_and_flush();
+        await_git_panel_entries(&panel, &mut cx).await;
+        cx.run_until_parked();
+        panel.read_with(&cx, |panel, _| {
+            assert!(
+                panel
+                    .entry_by_path_in_section(&repo_path("partial.txt"), Section::Unstaged)
+                    .is_none()
+            );
+            assert!(panel.has_staged_changes());
+        });
     }
 
     #[gpui::test]
