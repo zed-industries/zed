@@ -185,6 +185,12 @@ pub(crate) fn zed_default_dark() -> Theme {
                 ),
                 editor_document_highlight_write_background: gpui::red(),
                 editor_document_highlight_bracket_background: gpui::green(),
+                editor_diff_hunk_added_background: ADDED_COLOR.opacity(0.12),
+                editor_diff_hunk_added_hollow_background: ADDED_COLOR.opacity(0.06),
+                editor_diff_hunk_added_hollow_border: ADDED_COLOR.opacity(0.36),
+                editor_diff_hunk_deleted_background: REMOVED_COLOR.opacity(0.12),
+                editor_diff_hunk_deleted_hollow_background: REMOVED_COLOR.opacity(0.06),
+                editor_diff_hunk_deleted_hollow_border: REMOVED_COLOR.opacity(0.36),
 
                 terminal_background: bg,
                 // todo("Use one colors for terminal")
@@ -241,6 +247,7 @@ pub(crate) fn zed_default_dark() -> Theme {
                 minimap_thumb_active_background: hsla(225.0 / 360., 11.8 / 100., 26.7 / 100., 0.7),
                 minimap_thumb_border: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
                 editor_foreground: hsla(218. / 360., 14. / 100., 71. / 100., 1.),
+                editor_code_lens_foreground: None,
                 link_text_hover: blue,
                 version_control_added: ADDED_COLOR,
                 version_control_deleted: REMOVED_COLOR,

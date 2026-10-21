@@ -962,6 +962,18 @@ impl<'a> Chunks<'a> {
     }
 
     pub fn peek(&self) -> Option<&'a str> {
+        let (chunk, slice_range) = self.current_chunk()?;
+        Some(&chunk.text[slice_range])
+    }
+
+    /// Unlike `peek`, this can return bytes starting or ending inside a UTF-8 character.
+    /// The initial offset passed to `new` must still be a character boundary.
+    pub fn peek_bytes(&self) -> Option<&'a [u8]> {
+        let (chunk, slice_range) = self.current_chunk()?;
+        Some(&chunk.text.as_bytes()[slice_range])
+    }
+
+    fn current_chunk(&self) -> Option<(&'a Chunk, Range<usize>)> {
         if !self.offset_is_valid() {
             return None;
         }
@@ -978,26 +990,12 @@ impl<'a> Chunks<'a> {
             slice_start..slice_end
         };
 
-        Some(&chunk.text[slice_range])
+        Some((chunk, slice_range))
     }
 
     /// Returns bitmaps that represent character positions and tab positions
     pub fn peek_with_bitmaps(&self) -> Option<ChunkBitmaps<'a>> {
-        if !self.offset_is_valid() {
-            return None;
-        }
-
-        let chunk = self.chunks.item()?;
-        let chunk_start = *self.chunks.start();
-        let slice_range = if self.reversed {
-            let slice_start = cmp::max(chunk_start, self.range.start) - chunk_start;
-            let slice_end = self.offset - chunk_start;
-            slice_start..slice_end
-        } else {
-            let slice_start = self.offset - chunk_start;
-            let slice_end = cmp::min(self.chunks.end(), self.range.end) - chunk_start;
-            slice_start..slice_end
-        };
+        let (chunk, slice_range) = self.current_chunk()?;
         let chunk_start_offset = slice_range.start;
         let slice_text = &chunk.text[slice_range];
 
@@ -1732,7 +1730,7 @@ mod tests {
     use std::{cmp::Ordering, env, io::Read};
     use util::RandomCharIter;
 
-    #[ctor::ctor]
+    #[ctor::ctor(unsafe)]
     fn init_logger() {
         zlog::init_test();
     }
@@ -1743,6 +1741,42 @@ mod tests {
         let text = "🏀".repeat(256);
         rope.push(&text);
         assert_eq!(rope.text(), text);
+    }
+
+    #[test]
+    fn test_chunks_peek_bytes() {
+        let text = "aи中🧘z".repeat(128);
+        let rope = Rope::from(text.as_str());
+        for range in [0..text.len(), 1..text.len() - 1, 0..2] {
+            let mut chunks = rope.chunks_in_range(range.clone());
+            for offset in (range.clone()).chain(range.clone().rev()) {
+                chunks.seek(offset);
+                let bytes = chunks.peek_bytes().expect("chunk bytes");
+                assert!(!bytes.is_empty());
+                assert_eq!(bytes, &text.as_bytes()[offset..offset + bytes.len()]);
+                assert!(offset + bytes.len() <= range.end);
+                if text.is_char_boundary(offset) && text.is_char_boundary(offset + bytes.len()) {
+                    assert_eq!(chunks.peek().map(str::as_bytes), Some(bytes));
+                }
+            }
+            chunks.seek(range.end);
+            assert_eq!(chunks.peek_bytes(), None);
+        }
+
+        for range in [0..text.len(), 2..text.len() - 1, 2..3] {
+            let mut chunks = rope.reversed_chunks_in_range(range.clone());
+            let offsets = range.start + 1..=range.end;
+            for offset in offsets.clone().rev().chain(offsets) {
+                chunks.seek(offset);
+                let bytes = chunks.peek_bytes().expect("reversed chunk bytes");
+                assert!(!bytes.is_empty());
+                assert_eq!(bytes, &text.as_bytes()[offset - bytes.len()..offset]);
+                assert!(offset - bytes.len() >= range.start);
+            }
+            chunks.seek(range.start);
+            assert_eq!(chunks.peek_bytes(), None);
+        }
+        assert_eq!(Rope::new().chunks().peek_bytes(), None);
     }
 
     #[test]

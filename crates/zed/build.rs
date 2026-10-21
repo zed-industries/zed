@@ -86,6 +86,8 @@ fn main() {
         if cfg!(target_env = "msvc") {
             // todo(windows): This is to avoid stack overflow. Remove it when solved.
             println!("cargo:rustc-link-arg=/stack:{}", 8 * 1024 * 1024);
+            println!("cargo:rustc-link-arg=/DELAYLOAD:windowsperformancerecordercontrol");
+            println!("cargo:rustc-link-lib=delayimp");
         }
 
         if cfg!(target_arch = "x86_64") || cfg!(target_arch = "aarch64") {
@@ -100,7 +102,8 @@ fn main() {
             let conpty_dll_target = target_dir.join("conpty.dll");
             let open_console_target = target_dir.join("OpenConsole.exe");
 
-            let conpty_url = "https://github.com/microsoft/terminal/releases/download/v1.24.10621.0/Microsoft.Windows.Console.ConPTY.1.24.260303001.nupkg";
+            // TODO: Switch back to the stable channel once Microsoft finally decides to publish v1.26
+            let conpty_url = "https://github.com/microsoft/terminal/releases/download/v1.25.1912.0/Microsoft.Windows.Console.ConPTY.1.25.260710002-preview.nupkg";
             let nupkg_path = out_dir.join("conpty.nupkg.zip");
             let extract_dir = out_dir.join("conpty");
 
@@ -202,37 +205,12 @@ fn main() {
             }
         }
 
-        let release_channel = option_env!("RELEASE_CHANNEL").unwrap_or("dev");
-        let icon = match release_channel {
-            "stable" => "resources/windows/app-icon.ico",
-            "preview" => "resources/windows/app-icon-preview.ico",
-            "nightly" => "resources/windows/app-icon-nightly.ico",
-            "dev" => "resources/windows/app-icon-dev.ico",
-            _ => "resources/windows/app-icon-dev.ico",
-        };
-        let icon = std::path::Path::new(icon);
-
         println!("cargo:rerun-if-env-changed=RELEASE_CHANNEL");
-        println!("cargo:rerun-if-changed={}", icon.display());
+        println!("cargo:rerun-if-env-changed=GITHUB_RUN_NUMBER");
 
         #[cfg(windows)]
         {
-            let mut res = winresource::WindowsResource::new();
-
-            // Depending on the security applied to the computer, winresource might fail
-            // fetching the RC path. Therefore, we add a way to explicitly specify the
-            // toolkit path, allowing winresource to use a valid RC path.
-            if let Some(explicit_rc_toolkit_path) = std::env::var("ZED_RC_TOOLKIT_PATH").ok() {
-                res.set_toolkit_path(explicit_rc_toolkit_path.as_str());
-            }
-            res.set_icon(icon.to_str().unwrap());
-            res.set("FileDescription", "Zed");
-            res.set("ProductName", "Zed");
-
-            if let Err(e) = res.compile() {
-                eprintln!("{}", e);
-                std::process::exit(1);
-            }
+            windows_resources::compile(false).expect("failed to compile Windows resources");
         }
     }
 

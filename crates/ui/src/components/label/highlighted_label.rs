@@ -1,7 +1,9 @@
 use std::ops::Range;
 
 use gpui::{FontWeight, HighlightStyle, StyleRefinement, StyledText};
+use gpui_util::debug_panic;
 
+use crate::utils::replace_control_characters_remapping_offsets;
 use crate::{LabelCommon, LabelLike, LabelSize, LineHeightStyle, prelude::*};
 
 #[derive(IntoElement, RegisterComponent)]
@@ -14,14 +16,21 @@ pub struct HighlightedLabel {
 impl HighlightedLabel {
     /// Constructs a label with the given characters highlighted.
     /// Characters are identified by UTF-8 byte position.
-    pub fn new(label: impl Into<SharedString>, highlight_indices: Vec<usize>) -> Self {
+    #[track_caller]
+    pub fn new(label: impl Into<SharedString>, mut highlight_indices: Vec<usize>) -> Self {
         let label = label.into();
-        for &run in &highlight_indices {
-            assert!(
-                label.is_char_boundary(run),
-                "highlight index {run} is not a valid UTF-8 boundary"
+
+        if let Some(index) = highlight_indices
+            .iter()
+            .find(|&i| !label.is_char_boundary(*i))
+        {
+            let location = std::panic::Location::caller();
+            debug_panic!(
+                "highlight index {index} is not a valid UTF-8 boundary (called from {location})"
             );
+            highlight_indices.clear();
         }
+
         Self {
             base: LabelLike::new(),
             label,
@@ -62,6 +71,18 @@ impl HighlightedLabel {
 
     pub fn highlight_indices(&self) -> &[usize] {
         &self.highlight_indices
+    }
+
+    /// Truncates the label from the start, keeping the end visible.
+    pub fn truncate_start(mut self) -> Self {
+        self.base = self.base.truncate_start();
+        self
+    }
+
+    /// Truncates overflowing text with an ellipsis (`…`) in the middle if needed.
+    pub fn truncate_middle(mut self) -> Self {
+        self.base = self.base.truncate_middle();
+        self
     }
 }
 
@@ -146,6 +167,16 @@ impl LabelCommon for HighlightedLabel {
     }
 
     fn single_line(mut self) -> Self {
+        // The highlight indices are byte offsets into the label, and every
+        // stand-in is wider in bytes than the character it replaces, so they
+        // have to move with the text. Left alone they would index into the
+        // middle of a character, which panics when the highlight ranges are
+        // built — in release builds too.
+        if let Some(replaced) =
+            replace_control_characters_remapping_offsets(&self.label, &mut self.highlight_indices)
+        {
+            self.label = SharedString::from(replaced);
+        }
         self.base = self.base.single_line();
         self
     }
@@ -215,89 +246,146 @@ impl Component for HighlightedLabel {
         "HighlightedLabel"
     }
 
-    fn description() -> Option<&'static str> {
-        Some("A label with highlighted characters based on specified indices.")
+    fn description() -> &'static str {
+        "A label with highlighted characters based on specified indices."
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
-                .gap_6()
-                .children(vec![
-                    example_group_with_title(
-                        "Basic Usage",
-                        vec![
-                            single_example(
-                                "Default",
-                                HighlightedLabel::new("Highlighted Text", vec![0, 1, 2, 3]).into_any_element(),
-                            ),
-                            single_example(
-                                "Custom Color",
-                                HighlightedLabel::new("Colored Highlight", vec![0, 1, 7, 8, 9])
-                                    .color(Color::Accent)
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Styles",
-                        vec![
-                            single_example(
-                                "Bold",
-                                HighlightedLabel::new("Bold Highlight", vec![0, 1, 2, 3])
-                                    .weight(FontWeight::BOLD)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Italic",
-                                HighlightedLabel::new("Italic Highlight", vec![0, 1, 6, 7, 8])
-                                    .italic()
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Underline",
-                                HighlightedLabel::new("Underlined Highlight", vec![0, 1, 10, 11, 12])
-                                    .underline()
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Sizes",
-                        vec![
-                            single_example(
-                                "Small",
-                                HighlightedLabel::new("Small Highlight", vec![0, 1, 5, 6, 7])
-                                    .size(LabelSize::Small)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Large",
-                                HighlightedLabel::new("Large Highlight", vec![0, 1, 5, 6, 7])
-                                    .size(LabelSize::Large)
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Special Cases",
-                        vec![
-                            single_example(
-                                "Single Line",
-                                HighlightedLabel::new("Single Line Highlight\nWith Newline", vec![0, 1, 7, 8, 9])
-                                    .single_line()
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Truncate",
-                                HighlightedLabel::new("This is a very long text that should be truncated with highlights", vec![0, 1, 2, 3, 4, 5])
-                                    .truncate()
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                ])
-                .into_any_element()
-        )
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+        v_flex()
+            .gap_6()
+            .children(vec![
+                example_group_with_title(
+                    "Basic Usage",
+                    vec![
+                        single_example(
+                            "Default",
+                            HighlightedLabel::new("Highlighted Text", vec![0, 1, 2, 3])
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Custom Color",
+                            HighlightedLabel::new("Colored Highlight", vec![0, 1, 7, 8, 9])
+                                .color(Color::Accent)
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Styles",
+                    vec![
+                        single_example(
+                            "Bold",
+                            HighlightedLabel::new("Bold Highlight", vec![0, 1, 2, 3])
+                                .weight(FontWeight::BOLD)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Italic",
+                            HighlightedLabel::new("Italic Highlight", vec![0, 1, 6, 7, 8])
+                                .italic()
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Underline",
+                            HighlightedLabel::new("Underlined Highlight", vec![0, 1, 10, 11, 12])
+                                .underline()
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Sizes",
+                    vec![
+                        single_example(
+                            "Small",
+                            HighlightedLabel::new("Small Highlight", vec![0, 1, 5, 6, 7])
+                                .size(LabelSize::Small)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Large",
+                            HighlightedLabel::new("Large Highlight", vec![0, 1, 5, 6, 7])
+                                .size(LabelSize::Large)
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Special Cases",
+                    vec![
+                        single_example(
+                            "Single Line",
+                            HighlightedLabel::new(
+                                "Single Line Highlight\nWith Newline",
+                                vec![0, 1, 7, 8, 9],
+                            )
+                            .single_line()
+                            .into_any_element(),
+                        ),
+                        single_example(
+                            "Truncate",
+                            HighlightedLabel::new(
+                                "This is a very long text that should be truncated with highlights",
+                                vec![0, 1, 2, 3, 4, 5],
+                            )
+                            .truncate()
+                            .into_any_element(),
+                        ),
+                    ],
+                ),
+            ])
+            .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_single_line_replaces_control_characters() {
+        let label = HighlightedLabel::new("a\nb\rc\td", Vec::new()).single_line();
+        assert_eq!(label.text(), "a⏎b␍c␉d");
+    }
+
+    #[test]
+    fn test_single_line_moves_highlights_with_the_text() {
+        // Highlighting "a" and "b" in "a\tb": "b" sits at byte 2 before the
+        // replacement and at byte 4 after it, the stand-in being three bytes.
+        let label = HighlightedLabel::new("a\tb", vec![0, 2]).single_line();
+        assert_eq!(label.text(), "a␉b");
+        assert_eq!(label.highlight_indices(), &[0, 4]);
+    }
+
+    #[test]
+    fn test_single_line_keeps_highlights_on_character_boundaries() {
+        // Highlighting every character of a name full of control characters is
+        // what would panic while building the highlight ranges if the offsets
+        // were left pointing into the old text.
+        let text = "a\tb\nc\rd";
+        let indices: Vec<usize> = text.char_indices().map(|(ix, _)| ix).collect();
+        let label = HighlightedLabel::new(text, indices).single_line();
+        for index in label.highlight_indices() {
+            assert!(
+                label.text().is_char_boundary(*index),
+                "index {index} is not a boundary of {:?}",
+                label.text(),
+            );
+        }
+    }
+
+    #[test]
+    fn test_single_line_leaves_printable_text_alone() {
+        let label = HighlightedLabel::new("main.rs", vec![0, 5]).single_line();
+        assert_eq!(label.text(), "main.rs");
+        assert_eq!(label.highlight_indices(), &[0, 5]);
+    }
+
+    #[test]
+    fn test_replacement_only_happens_on_single_line() {
+        // Multi-line labels are a legitimate use, so nothing is substituted
+        // unless the caller asked for a single line.
+        let label = HighlightedLabel::new("a\nb", vec![0]);
+        assert_eq!(label.text(), "a\nb");
     }
 }

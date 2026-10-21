@@ -13,15 +13,7 @@ Zed's built-in REPL uses [Jupyter kernels](https://docs.jupyter.org/en/latest/pr
     <video loop controls playsinline>
         <source
             src="https://customer-snccc0j9v3kfzkif.cloudflarestream.com/aec66e79f23d6d1a0bee5e388a3f17cc/downloads/default.mp4"
-            type='video/webm; codecs="vp8.0, vorbis"'
-        />
-        <source
-            src="https://customer-snccc0j9v3kfzkif.cloudflarestream.com/aec66e79f23d6d1a0bee5e388a3f17cc/downloads/default.mp4"
             type='video/mp4; codecs="avc1.4D401E, mp4a.40.2"'
-        />
-        <source
-          src="https://zed.dev/img/post/repl/typescript-deno-kernel-markdown.png"
-          type="image/png"
         />
     </video>
 </figure>
@@ -39,21 +31,23 @@ Zed supports running code in multiple languages. To get started, you need to ins
 - [Julia](#julia)
 - [Scala (Almond)](#scala)
 
-Once installed, you can start using the REPL in the respective language files, or other places those languages are supported, such as Markdown. If you recently added the kernels, run the `repl: refresh kernelspecs` command to make them available in the editor.
+Once installed, you can start using the REPL in the respective language files, or other places those languages are supported, such as Markdown. If you recently added the kernels, run the {#action repl::RefreshKernelspecs} command to make them available in the editor.
+
+![Markdown documents become notebooks](https://images.zed.dev/blog/repl/typescript-deno-kernel-markdown.png)
 
 ## Using the REPL
 
-To start the REPL, open a file with the language you want to use and use the `repl: run` command (defaults to `ctrl-shift-enter` on macOS) to run a block, selection, or line. You can also click on the REPL icon in the toolbar.
+To start the REPL, open a file with the language you want to use and use the {#action repl::Run} command (defaults to `ctrl-shift-enter` on macOS) to run a block, selection, or line. You can also click on the REPL icon in the toolbar.
 
-The `repl: run` command will be executed on your selection(s), and the result will be displayed below the selection.
+The {#action repl::Run} command will be executed on your selection(s), and the result will be displayed below the selection.
 
-Outputs can be cleared with the `repl: clear outputs` command, or from the REPL menu in the toolbar.
+Outputs can be cleared with the {#action repl::ClearOutputs} command, or from the REPL menu in the toolbar.
 
 ### Cell mode
 
 Zed supports [notebooks as scripts](https://jupytext.readthedocs.io/en/latest/formats-scripts.html) using the `# %%` cell separator in Python and `// %%` in TypeScript. This allows you to write code in a single file and run it as if it were a notebook, cell by cell.
 
-The `repl: run` command will run each block of code between the `# %%` markers as a separate cell.
+The {#action repl::Run} command will run each block of code between the `# %%` markers as a separate cell.
 
 ```python
 # %% Cell 1
@@ -73,13 +67,7 @@ style.use('ggplot')
 
 #### Global environment
 
-<div class="warning">
-
-On macOS, your system Python will _not_ work. Either set up [pyenv](https://github.com/pyenv/pyenv?tab=readme-ov-file#installation) or use a virtual environment.
-
-</div>
-
-To setup your current Python to have an available kernel, run:
+To set up your current Python to have an available kernel, run:
 
 ```sh
 pip install ipykernel
@@ -101,6 +89,8 @@ source activate myenv
 pip install ipykernel
 python -m ipykernel install --user --name myenv --display-name "Python (myenv)"
 ```
+
+> Note: **On macOS, your system Python will _not_ work**. Either set up [pyenv](https://github.com/pyenv/pyenv?tab=readme-ov-file#installation) or use a virtual environment. Zed uses separate selections for the Python [toolchain](./configuring-languages.md#toolchains) and REPL kernel. If diagnostics differ from the REPL, align the toolchain with the kernel using {#action toolchain::Select}. Read more about the [toolchain selector for Python](./languages/python.md#selecting-a-toolchain).
 
 ### R (Ark Kernel) {#r-ark}
 
@@ -201,7 +191,7 @@ If execution is interrupted while an input prompt is active, the prompt automati
 
 ## Debugging Kernelspecs
 
-Available kernels are shown via the `repl: sessions` command. To refresh the kernels you can run, use the `repl: refresh kernelspecs` command.
+Available kernels are shown via the {#action repl::Sessions} command. To refresh the kernels you can run, use the {#action repl::RefreshKernelspecs} command.
 
 If you have `jupyter` installed, you can run `jupyter kernelspec list` to see the available kernels.
 
@@ -217,4 +207,4 @@ Available kernels:
   rust                  /Users/z/Library/Jupyter/kernels/rust
 ```
 
-> Note: Zed makes best effort usage of `sys.prefix` and `CONDA_PREFIX` to find kernels in Python environments. If you want explicitly control run `python -m ipykernel install --user --name myenv --display-name "Python (myenv)"` to install the kernel directly while in the environment.
+> Note: Zed makes best effort usage of `sys.prefix` and `CONDA_PREFIX` to find kernels in Python environments. If you want to explicitly control this, run `python -m ipykernel install --user --name myenv --display-name "Python (myenv)"` to install the kernel directly while in the environment.

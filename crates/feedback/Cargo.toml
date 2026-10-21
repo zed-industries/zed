@@ -10,6 +10,8 @@ workspace = true
 
 [lib]
 path = "src/feedback.rs"
+test = false
+doctest = false
 
 [features]
 test-support = []
@@ -22,4 +24,4 @@ urlencoding.workspace = true
 util.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-
+client.workspace = true

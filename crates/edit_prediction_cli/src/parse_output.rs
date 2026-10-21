@@ -1,11 +1,13 @@
 use crate::{
     PredictionProvider,
     example::{ActualCursor, Example},
-    format_prompt::{TeacherMultiRegionPrompt, TeacherPrompt},
+    format_prompt::{TeacherJumpsPrompt, TeacherPrompt},
     repair,
 };
 use anyhow::{Context as _, Result};
-use zeta_prompt::{ZetaFormat, parse_zeta2_model_output, parsed_output_to_patch};
+use zeta_prompt::{
+    ZetaFormat, parse_zeta2_model_output, parse_zeta2_model_output_as_patch, parsed_output_to_patch,
+};
 
 pub fn run_parse_output(example: &mut Example) -> Result<()> {
     example
@@ -40,9 +42,8 @@ pub fn parse_prediction_output(
         PredictionProvider::Teacher(_, _) | PredictionProvider::TeacherNonBatching(_, _) => {
             TeacherPrompt::parse(example, actual_output)
         }
-        PredictionProvider::TeacherMultiRegion(_)
-        | PredictionProvider::TeacherMultiRegionNonBatching(_) => {
-            TeacherMultiRegionPrompt::parse(example, actual_output)
+        PredictionProvider::TeacherJumps(_) | PredictionProvider::TeacherJumpsNonBatching(_) => {
+            TeacherJumpsPrompt::parse(example, actual_output)
         }
         PredictionProvider::Zeta2(version) => parse_zeta2_output(example, actual_output, version),
         PredictionProvider::Repair => repair::parse(example, actual_output),
@@ -62,6 +63,13 @@ fn parse_zeta2_output(
         .prompt_inputs
         .as_ref()
         .context("prompt_inputs required")?;
+
+    if format == ZetaFormat::V0615HashRegions {
+        return Ok((
+            parse_zeta2_model_output_as_patch(actual_output, format, prompt_inputs)?,
+            None,
+        ));
+    }
 
     let parsed = parse_zeta2_model_output(actual_output, format, prompt_inputs)?;
     let range_in_excerpt = parsed.range_in_excerpt.clone();

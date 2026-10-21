@@ -19,7 +19,6 @@ mod qa;
 mod reorder_patch;
 mod repair;
 mod retrieve_context;
-mod reversal_tracking;
 mod score;
 mod split_commit;
 mod split_dataset;
@@ -37,10 +36,11 @@ use gaoya::minhash::{
     MinHashIndex, MinHasher, MinHasher32, calculate_minhash_params, compute_minhash_similarity,
 };
 use gpui::{AppContext as _, BackgroundExecutor, Task};
-use zeta_prompt::ZetaFormat;
+use zeta_prompt::{ContextSource, ZetaFormat};
 
 use reqwest_client::ReqwestClient;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::collections::VecDeque;
 use std::env;
 use std::fmt::Display;
 use std::fs::{File, OpenOptions};
@@ -59,7 +59,9 @@ use crate::paths::{FAILED_EXAMPLES_DIR, RUN_DIR};
 use crate::predict::run_prediction;
 use crate::progress::Progress;
 use crate::pull_examples::{fetch_settled_examples_after, parse_settled_after_input};
-use crate::retrieve_context::run_context_retrieval;
+use crate::retrieve_context::{
+    ContextRetrievalType, context_sources_for_types, run_context_retrieval,
+};
 use crate::score::run_scoring;
 use crate::split_commit::SplitCommitArgs;
 use crate::split_dataset::SplitArgs;
@@ -73,6 +75,9 @@ struct EpArgs {
     printenv: bool,
     #[clap(long, default_value_t = 10, global = true)]
     max_parallelism: usize,
+    /// Process all examples from a repository together instead of distributing examples across workers.
+    #[clap(long, default_value_t = false, global = true)]
+    group_by_repo: bool,
     /// The limit for the number of examples to process
     /// Default is unlimited for processing local datasets, 5000 when pulling from snowflake
     #[clap(long, global = true)]
@@ -97,7 +102,7 @@ struct EpArgs {
     output: Option<PathBuf>,
     #[arg(long, short, global = true)]
     in_place: bool,
-    #[arg(long, short, global = true)]
+    #[arg(long, global = true)]
     failfast: bool,
     /// How to handle failed examples in output: keep them or skip them.
     /// Failed examples are always logged to the run's failed directory.
@@ -120,6 +125,27 @@ pub enum FailedHandling {
     Skip,
     /// Skip writing files
     SkipNoFiles,
+}
+
+#[derive(Args, Debug, Clone)]
+struct ContextArgs {
+    /// Which context collectors to run.
+    /// May be repeated or comma-delimited, e.g. `--type=all,oracle-file`.
+    #[arg(long = "type", value_enum, value_delimiter = ',')]
+    context_types: Vec<ContextRetrievalType>,
+    /// Recompute context even if the example already has related files.
+    #[arg(long, short = 'f', default_value_t = false)]
+    force: bool,
+}
+
+impl ContextArgs {
+    fn context_types(&self) -> Vec<ContextRetrievalType> {
+        if self.context_types.is_empty() {
+            vec![ContextRetrievalType::Lsp]
+        } else {
+            self.context_types.clone()
+        }
+    }
 }
 
 const INPUTS_HELP: &str = r#"
@@ -194,7 +220,7 @@ enum Command {
     /// Create git worktrees for each example and load file contents
     LoadProject,
     /// Retrieve context for input examples.
-    Context,
+    Context(ContextArgs),
     /// Generate a prompt string for a specific model
     FormatPrompt(FormatPromptArgs),
     /// Runs edit prediction
@@ -236,7 +262,19 @@ impl Display for Command {
         match self {
             Command::Read(_) => write!(f, "read"),
             Command::LoadProject => write!(f, "load-project"),
-            Command::Context => write!(f, "context"),
+            Command::Context(args) => {
+                write!(f, "context --type=")?;
+                for (index, context_type) in args.context_types().iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ",")?;
+                    }
+                    write!(f, "{}", context_type)?;
+                }
+                if args.force {
+                    write!(f, " --force")?;
+                }
+                Ok(())
+            }
             Command::FormatPrompt(args) => {
                 write!(f, "format-prompt --provider={}", args.provider)
             }
@@ -250,10 +288,28 @@ impl Display for Command {
                 None => write!(f, "score"),
             },
             Command::Distill => write!(f, "distill"),
-            Command::Eval(args) => match &args.predict.provider {
-                Some(provider) => write!(f, "eval --provider={}", provider),
-                None => write!(f, "eval"),
-            },
+            Command::Eval(args) => {
+                write!(f, "eval")?;
+                if args.context_only {
+                    write!(f, " --context-only")?;
+                }
+                if !args.context_types.is_empty() {
+                    write!(f, " --type=")?;
+                    for (index, context_type) in args.context_types.iter().enumerate() {
+                        if index > 0 {
+                            write!(f, ",")?;
+                        }
+                        write!(f, "{}", context_type)?;
+                    }
+                }
+                if args.related_context_limit != score::EVAL_RELATED_CONTEXT_TOKENS_LIMIT {
+                    write!(f, " --related-context-limit={}", args.related_context_limit)?;
+                }
+                if let Some(provider) = &args.predict.provider {
+                    write!(f, " --provider={}", provider)?;
+                }
+                Ok(())
+            }
             Command::Synthesize(args) => {
                 write!(f, "synthesize --repos {}", args.repos.join(" "))
             }
@@ -286,6 +342,9 @@ struct ReadArgs {}
 struct FormatPromptArgs {
     #[clap(long, short('p'), default_value_t = PredictionProvider::default())]
     provider: PredictionProvider,
+    /// Token budget for related-file context in teacher-jumps prompts.
+    #[clap(long, default_value_t = format_prompt::TeacherJumpsPrompt::DEFAULT_RELATED_FILES_BUDGET)]
+    related_files_budget: usize,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -306,6 +365,16 @@ struct PredictArgs {
 struct EvalArgs {
     #[clap(flatten)]
     predict: PredictArgs,
+    /// Only compute editable context coverage from expected patches and retrieved context.
+    #[clap(long)]
+    context_only: bool,
+    /// Only score persisted related context excerpts from these context types.
+    /// May be repeated or comma-delimited, e.g. `--type=current-file,edit-history`.
+    #[arg(long = "type", value_enum, value_delimiter = ',')]
+    context_types: Vec<ContextRetrievalType>,
+    /// Maximum number of retrieved context tokens to include when scoring.
+    #[clap(long, default_value_t = score::EVAL_RELATED_CONTEXT_TOKENS_LIMIT)]
+    related_context_limit: usize,
     /// Path to write summary scores as JSON
     #[clap(long)]
     summary_json: Option<PathBuf>,
@@ -314,12 +383,24 @@ struct EvalArgs {
     verbose: bool,
 }
 
+impl EvalArgs {
+    fn context_source_filter(&self) -> Option<Vec<ContextSource>> {
+        if self.context_types.is_empty() {
+            None
+        } else {
+            Some(context_sources_for_types(&self.context_types))
+        }
+    }
+}
+
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq, Hash)]
 pub enum TeacherBackend {
     Sonnet46,
     #[default]
     Sonnet45,
     Gpt52,
+    Gpt54,
+    Gpt55,
 }
 
 impl std::fmt::Display for TeacherBackend {
@@ -328,6 +409,8 @@ impl std::fmt::Display for TeacherBackend {
             TeacherBackend::Sonnet46 => write!(f, "sonnet46"),
             TeacherBackend::Sonnet45 => write!(f, "sonnet45"),
             TeacherBackend::Gpt52 => write!(f, "gpt52"),
+            TeacherBackend::Gpt54 => write!(f, "gpt54"),
+            TeacherBackend::Gpt55 => write!(f, "gpt55"),
         }
     }
 }
@@ -339,10 +422,12 @@ impl std::str::FromStr for TeacherBackend {
         match s.to_lowercase().as_str() {
             "sonnet45" | "sonnet" | "claude" => Ok(TeacherBackend::Sonnet45),
             "sonnet46" => Ok(TeacherBackend::Sonnet46),
-            "gpt52" | "gpt" | "openai" => Ok(TeacherBackend::Gpt52),
+            "gpt52" => Ok(TeacherBackend::Gpt52),
+            "gpt54" | "gpt" | "openai" => Ok(TeacherBackend::Gpt54),
+            "gpt55" => Ok(TeacherBackend::Gpt55),
             "v0114180editableregion" => Ok(TeacherBackend::Sonnet45),
             _ => anyhow::bail!(
-                "unknown teacher backend `{s}`. Valid options: sonnet45, sonnet46, gpt52"
+                "unknown teacher backend `{s}`. Valid options: sonnet45, sonnet46, gpt52, gpt54, gpt55"
             ),
         }
     }
@@ -354,6 +439,8 @@ impl TeacherBackend {
             TeacherBackend::Sonnet45 => "claude-sonnet-4-5",
             TeacherBackend::Sonnet46 => "claude-sonnet-4-6",
             TeacherBackend::Gpt52 => "gpt-5.2",
+            TeacherBackend::Gpt54 => "gpt-5.4",
+            TeacherBackend::Gpt55 => "gpt-5.5",
         }
     }
 }
@@ -365,9 +452,9 @@ enum PredictionProvider {
     Zeta2(ZetaFormat),
     Baseten(ZetaFormat),
     Teacher(TeacherBackend, ZetaFormat),
-    TeacherMultiRegion(TeacherBackend),
+    TeacherJumps(TeacherBackend),
     TeacherNonBatching(TeacherBackend, ZetaFormat),
-    TeacherMultiRegionNonBatching(TeacherBackend),
+    TeacherJumpsNonBatching(TeacherBackend),
     Repair,
 }
 
@@ -387,14 +474,14 @@ impl std::fmt::Display for PredictionProvider {
             PredictionProvider::Teacher(backend, format) => {
                 write!(f, "teacher:{backend}:{format:?}")
             }
-            PredictionProvider::TeacherMultiRegion(backend) => {
-                write!(f, "teacher-multi-region:{backend}")
+            PredictionProvider::TeacherJumps(backend) => {
+                write!(f, "teacher-jumps:{backend}")
             }
             PredictionProvider::TeacherNonBatching(backend, format) => {
                 write!(f, "teacher-non-batching:{backend}:{format:?}")
             }
-            PredictionProvider::TeacherMultiRegionNonBatching(backend) => {
-                write!(f, "teacher-multi-region-non-batching:{backend}")
+            PredictionProvider::TeacherJumpsNonBatching(backend) => {
+                write!(f, "teacher-jumps-non-batching:{backend}")
             }
             PredictionProvider::Repair => write!(f, "repair"),
         }
@@ -423,19 +510,19 @@ impl std::str::FromStr for PredictionProvider {
                 let (backend, format) = parse_teacher_args(arg)?;
                 Ok(PredictionProvider::TeacherNonBatching(backend, format))
             }
-            "teacher-multi-region" | "teacher_multi_region" => {
+            "teacher-jumps" | "teacher_jumps" => {
                 let backend = arg
                     .map(|a| a.parse())
                     .transpose()?
                     .unwrap_or(TeacherBackend::default());
-                Ok(PredictionProvider::TeacherMultiRegion(backend))
+                Ok(PredictionProvider::TeacherJumps(backend))
             }
-            "teacher-multi-region-non-batching" | "teacher_multi_region_non_batching" => {
+            "teacher-jumps-non-batching" | "teacher_jumps_non_batching" => {
                 let backend = arg
                     .map(|a| a.parse())
                     .transpose()?
                     .unwrap_or(TeacherBackend::default());
-                Ok(PredictionProvider::TeacherMultiRegionNonBatching(backend))
+                Ok(PredictionProvider::TeacherJumpsNonBatching(backend))
             }
             "repair" => Ok(PredictionProvider::Repair),
             "baseten" => {
@@ -447,9 +534,9 @@ impl std::str::FromStr for PredictionProvider {
             }
             _ => {
                 anyhow::bail!(
-                    "unknown provider `{provider}`. Valid options: mercury, zeta1, zeta2, zeta2:<version>, teacher, teacher:<backend>, teacher-multi-region, teacher-multi-region:<backend>, teacher-non-batching, teacher-multi-region-non-batching, repair\n\
+                    "unknown provider `{provider}`. Valid options: mercury, zeta1, zeta2, zeta2:<version>, teacher, teacher:<backend>, teacher-jumps, teacher-jumps:<backend>, teacher-non-batching, teacher-jumps-non-batching, repair\n\
                  For zeta2, you can optionally specify a version like `zeta2:ordered` or `zeta2:V0113_Ordered`.\n\
-                 For teacher providers, you can specify a backend like `teacher:sonnet46`, `teacher-multi-region:sonnet46`, `teacher-multi-region-non-batching:sonnet46`, or `teacher:gpt52`.\n\
+                 For teacher providers, you can specify a backend like `teacher:sonnet46`, `teacher-jumps:sonnet46`, `teacher-jumps-non-batching:sonnet46`, or `teacher:gpt52`.\n\
                  Available zeta versions:\n{}",
                     ZetaFormat::options_as_string()
                 )
@@ -538,32 +625,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn prediction_provider_multi_region_non_batched_round_trips_to_primary_spelling() {
-        let provider: PredictionProvider = "teacher-multi-region-non-batching:sonnet46"
-            .parse()
-            .unwrap();
+    fn prediction_provider_jumps_non_batched_round_trips_to_primary_spelling() {
+        let provider: PredictionProvider = "teacher-jumps-non-batching:sonnet46".parse().unwrap();
         assert_eq!(
             provider,
-            PredictionProvider::TeacherMultiRegionNonBatching(TeacherBackend::Sonnet46)
+            PredictionProvider::TeacherJumpsNonBatching(TeacherBackend::Sonnet46)
         );
-        assert_eq!(
-            provider.to_string(),
-            "teacher-multi-region-non-batching:sonnet46"
-        );
+        assert_eq!(provider.to_string(), "teacher-jumps-non-batching:sonnet46");
     }
 
     #[test]
-    fn prediction_provider_multi_region_non_batched_alias_round_trips_to_primary_spelling() {
-        let provider: PredictionProvider =
-            "teacher_multi_region_non_batching:gpt52".parse().unwrap();
+    fn prediction_provider_jumps_non_batched_alias_round_trips_to_primary_spelling() {
+        let provider: PredictionProvider = "teacher_jumps_non_batching:gpt52".parse().unwrap();
         assert_eq!(
             provider,
-            PredictionProvider::TeacherMultiRegionNonBatching(TeacherBackend::Gpt52)
+            PredictionProvider::TeacherJumpsNonBatching(TeacherBackend::Gpt52)
         );
-        assert_eq!(
-            provider.to_string(),
-            "teacher-multi-region-non-batching:gpt52"
-        );
+        assert_eq!(provider.to_string(), "teacher-jumps-non-batching:gpt52");
     }
 }
 
@@ -585,6 +663,7 @@ impl EpArgs {
 /// This version introduced the current request schema with predicted edits in the edit
 /// history, and open source repos distinguished.
 const MIN_CAPTURE_VERSION: pull_examples::MinCaptureVersion = pull_examples::MinCaptureVersion {
+    major: 0,
     minor: 224,
     patch: 1,
 };
@@ -731,16 +810,21 @@ async fn load_examples(
     let mut settled_after_timestamps = Vec::new();
     let mut rated_after_inputs: Vec<(String, Option<telemetry_events::EditPredictionRating>)> =
         Vec::new();
+    let mut accepted_after_timestamps = Vec::new();
     let mut file_inputs = Vec::new();
 
     for input in &args.inputs {
         let input_string = input.to_string_lossy();
         if let Some(timestamp) = pull_examples::parse_captured_after_input(input_string.as_ref()) {
             captured_after_timestamps.push(timestamp.to_string());
-        } else if let Some(timestamp) =
+        } else if let Some((explicit, timestamp)) =
             pull_examples::parse_rejected_after_input(input_string.as_ref())
         {
-            rejected_after_timestamps.push(timestamp.to_string());
+            rejected_after_timestamps.push((explicit, timestamp.to_string()));
+        } else if let Some(timestamp) =
+            pull_examples::parse_accepted_after_input(input_string.as_ref())
+        {
+            accepted_after_timestamps.push(timestamp.to_string());
         } else if let Some(timestamp) =
             pull_examples::parse_requested_after_input(input_string.as_ref())
         {
@@ -797,6 +881,21 @@ async fn load_examples(
             )
             .await?;
             examples.append(&mut rejected_examples);
+        }
+
+        if !accepted_after_timestamps.is_empty() {
+            accepted_after_timestamps.sort();
+
+            let mut accepted_examples = pull_examples::fetch_accepted_examples_after(
+                http_client.clone(),
+                &accepted_after_timestamps,
+                max_rows_per_timestamp,
+                remaining_offset,
+                background_executor.clone(),
+                Some(MIN_CAPTURE_VERSION),
+            )
+            .await?;
+            examples.append(&mut accepted_examples);
         }
 
         if !requested_after_timestamps.is_empty() {
@@ -898,6 +997,18 @@ fn spec_hash(spec: &edit_prediction::example_spec::ExampleSpec) -> u64 {
     let mut hasher = collections::FxHasher::default();
     spec.hash(&mut hasher);
     hasher.finish()
+}
+
+fn chunk_examples(examples: Vec<Example>, max_parallelism: usize) -> VecDeque<Vec<Example>> {
+    if examples.is_empty() || max_parallelism == 0 {
+        return VecDeque::new();
+    }
+
+    let chunk_size = examples.len().div_ceil(max_parallelism);
+    examples
+        .chunks(chunk_size)
+        .map(|chunk| chunk.to_vec())
+        .collect()
 }
 
 fn resume_from_output(path: &PathBuf, examples: &mut Vec<Example>, command: &Command) {
@@ -1118,7 +1229,9 @@ fn main() {
                         predict::sync_batches(args.provider.as_ref()).await?;
                     }
                     Command::Eval(args) => {
-                        predict::sync_batches(args.predict.provider.as_ref()).await?;
+                        if !args.context_only {
+                            predict::sync_batches(args.predict.provider.as_ref()).await?;
+                        }
                     }
                     Command::Qa(args) => {
                         qa::sync_batches(args).await?;
@@ -1174,7 +1287,12 @@ fn main() {
                     output_sender = Some(sender);
                 }
 
-                let grouped_examples = Mutex::new(group_examples_by_repo(examples));
+                let example_batches = if args.group_by_repo {
+                    group_examples_by_repo(examples)
+                } else {
+                    chunk_examples(examples, args.max_parallelism)
+                };
+                let example_batches = Mutex::new(example_batches);
                 let finished_examples = Mutex::new(Vec::new());
 
                 let mut tasks = Vec::new();
@@ -1182,7 +1300,7 @@ fn main() {
                     tasks.push(async {
                         loop {
                             let Some(mut repo_examples) =
-                                grouped_examples.lock().unwrap().pop_front()
+                                example_batches.lock().unwrap().pop_front()
                             else {
                                 break;
                             };
@@ -1202,11 +1320,13 @@ fn main() {
                                             )
                                             .await?;
                                         }
-                                        Command::Context => {
+                                        Command::Context(args) => {
                                             run_context_retrieval(
                                                 example,
                                                 app_state.clone(),
                                                 &example_progress,
+                                                args.context_types(),
+                                                args.force,
                                                 cx.clone(),
                                             )
                                             .await?;
@@ -1244,18 +1364,35 @@ fn main() {
                                                 app_state.clone(),
                                                 &example_progress,
                                                 cx.clone(),
+                                                false,
+                                                None,
+                                                None,
                                             )
                                             .await?;
                                         }
                                         Command::Eval(args) => {
-                                            run_scoring(
-                                                example,
-                                                &args.predict,
-                                                app_state.clone(),
-                                                &example_progress,
-                                                cx.clone(),
-                                            )
-                                            .await?;
+                                            let context_source_filter =
+                                                args.context_source_filter();
+                                            if args.context_only {
+                                                score::run_context_coverage_scoring(
+                                                    example,
+                                                    &example_progress,
+                                                    Some(args.related_context_limit * 3),
+                                                    context_source_filter.as_deref(),
+                                                )?;
+                                            } else {
+                                                run_scoring(
+                                                    example,
+                                                    &args.predict,
+                                                    app_state.clone(),
+                                                    &example_progress,
+                                                    cx.clone(),
+                                                    true,
+                                                    Some(args.related_context_limit * 3),
+                                                    context_source_filter,
+                                                )
+                                                .await?;
+                                            }
                                         }
                                         Command::Qa(args) => {
                                             qa::run_qa(example, args, &example_progress).await?;
@@ -1374,15 +1511,17 @@ fn main() {
                         }
                     }
                     Command::Eval(args) => {
-                        predict::sync_batches(args.predict.provider.as_ref()).await?;
-                        if args.predict.wait {
-                            predict::wait_for_batches(args.predict.provider.as_ref()).await?;
-                            let mut examples =
-                                std::mem::take(&mut *finished_examples.lock().unwrap());
-                            predict::reprocess_after_batch_wait(&mut examples, &args.predict)
-                                .await?;
-                            rewrite_output(&examples, write_path, is_markdown)?;
-                            *finished_examples.lock().unwrap() = examples;
+                        if !args.context_only {
+                            predict::sync_batches(args.predict.provider.as_ref()).await?;
+                            if args.predict.wait {
+                                predict::wait_for_batches(args.predict.provider.as_ref()).await?;
+                                let mut examples =
+                                    std::mem::take(&mut *finished_examples.lock().unwrap());
+                                predict::reprocess_after_batch_wait(&mut examples, &args.predict)
+                                    .await?;
+                                rewrite_output(&examples, write_path, is_markdown)?;
+                                *finished_examples.lock().unwrap() = examples;
+                            }
                         }
                     }
                     Command::Qa(args) => {
@@ -1405,9 +1544,21 @@ fn main() {
                 match &command {
                     Command::Eval(args) => {
                         let examples = finished_examples.lock().unwrap();
-                        score::print_report(&examples, args.verbose);
+                        let context_source_filter = args.context_source_filter();
+                        score::print_report(
+                            &examples,
+                            args.verbose,
+                            args.context_only,
+                            Some(args.related_context_limit * 3),
+                            context_source_filter.as_deref(),
+                        );
                         if let Some(summary_path) = &args.summary_json {
-                            score::write_summary_json(&examples, summary_path)?;
+                            score::write_summary_json(
+                                &examples,
+                                summary_path,
+                                Some(args.related_context_limit * 3),
+                                context_source_filter.as_deref(),
+                            )?;
                         }
                     }
                     Command::Repair(args) => {

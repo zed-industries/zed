@@ -38,10 +38,10 @@ Example:
 
 The docs use a custom preprocessor (`docs_preprocessor`) that expands special commands:
 
-| Syntax                        | Purpose                               | Example                         |
-| ----------------------------- | ------------------------------------- | ------------------------------- |
-| `{#kb action::ActionName}`    | Keybinding for action                 | `{#kb agent::ToggleFocus}`      |
-| `{#action agent::ActionName}` | Action reference (renders as command) | `{#action agent::OpenSettings}` |
+| Syntax                      | Purpose                               | Example                       |
+| --------------------------- | ------------------------------------- | ----------------------------- |
+| {#kb action::ActionName}    | Keybinding for action                 | {#kb agent::ToggleFocus}      |
+| {#action agent::ActionName} | Action reference (renders as command) | {#action agent::OpenSettings} |
 
 **Rules:**
 

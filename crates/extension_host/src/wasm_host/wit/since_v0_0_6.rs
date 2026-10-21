@@ -18,11 +18,11 @@ wasmtime::component::bindgen!({
     },
     path: "../extension_api/wit/since_v0.0.6",
     with: {
-         "worktree": ExtensionWorktree,
-         "zed:extension/github": since_v0_6_0::zed::extension::github,
-         "zed:extension/lsp": since_v0_1_0::zed::extension::lsp,
-         "zed:extension/nodejs": latest::zed::extension::nodejs,
-         "zed:extension/platform": latest::zed::extension::platform,
+        "worktree": ExtensionWorktree,
+        "zed:extension/github": since_v0_6_0::zed::extension::github,
+        "zed:extension/lsp": since_v0_1_0::zed::extension::lsp,
+        "zed:extension/nodejs": latest::zed::extension::nodejs,
+        "zed:extension/platform": since_v0_6_0::zed::extension::platform,
     },
 });
 
@@ -56,7 +56,13 @@ impl From<SettingsLocation> for latest::SettingsLocation {
     fn from(value: SettingsLocation) -> Self {
         Self {
             worktree_id: value.worktree_id,
-            path: value.path,
+            // Passing the path here causes project settings reads to fail,
+            // since the extension passes the absolute path to the worktree,
+            // not a relative one like the settings API expects.
+            //
+            // This has been fixed in the API itself as of v0.2.0. Align the behavior
+            // here so that older extensions can also read project settings.
+            path: String::new(),
         }
     }
 }
@@ -155,7 +161,7 @@ impl HostWorktree for WasmState {
         latest::HostWorktree::which(self, delegate, binary_name).await
     }
 
-    async fn drop(&mut self, _worktree: Resource<Worktree>) -> Result<()> {
+    async fn drop(&mut self, _worktree: Resource<Worktree>) -> wasmtime::Result<()> {
         // We only ever hand out borrows of worktrees.
         Ok(())
     }

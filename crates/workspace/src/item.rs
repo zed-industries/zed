@@ -12,7 +12,7 @@ use client::{Client, proto};
 use futures::channel::mpsc;
 use gpui::{
     Action, AnyElement, AnyEntity, AnyView, App, AppContext, Context, Entity, EntityId,
-    EventEmitter, FocusHandle, Focusable, Font, Pixels, Point, Render, SharedString, Task,
+    EventEmitter, FocusHandle, Focusable, Font, Pixels, Point, Render, SharedString, Task, TaskExt,
     WeakEntity, Window,
 };
 use language::Capability;
@@ -133,6 +133,9 @@ pub struct TabContentParams {
     pub preview: bool,
     /// Tab content should be deemphasized when active pane does not have focus.
     pub deemphasized: bool,
+    /// Maximum character length for the title. None = use the item's own default (typically MAX_TAB_TITLE_LEN).
+    pub max_title_len: Option<usize>,
+    pub truncate_title_middle: bool,
 }
 
 impl TabContentParams {
@@ -175,6 +178,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         let text = self.tab_content_text(params.detail.unwrap_or_default(), cx);
 
         Label::new(text)
+            .single_line()
             .color(params.text_color())
             .into_any_element()
     }
@@ -237,6 +241,24 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     fn buffer_kind(&self, _cx: &App) -> ItemBufferKind {
         ItemBufferKind::None
     }
+
+    /// Returns the project path that should be treated as active for this item.
+    ///
+    /// Singleton items use their only project item by default. Items backed by
+    /// multiple buffers should override this to return the path for the buffer
+    /// under the primary cursor or otherwise selected sub-item.
+    fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        if self.buffer_kind(cx) != ItemBufferKind::Singleton {
+            return None;
+        }
+
+        let mut result = None;
+        self.for_each_project_item(cx, &mut |_, item| {
+            result = item.project_path(cx);
+        });
+        result
+    }
+
     fn set_nav_history(&mut self, _: ItemNavHistory, _window: &mut Window, _: &mut Context<Self>) {}
 
     fn can_split(&self) -> bool {
@@ -275,6 +297,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     fn can_save_as(&self, _: &App) -> bool {
         false
     }
+
     fn save(
         &mut self,
         _options: SaveOptions,
@@ -407,7 +430,6 @@ pub trait SerializableItem: Item {
         workspace: &mut Workspace,
         item_id: ItemId,
         closing: bool,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>>;
 
@@ -420,7 +442,6 @@ pub trait SerializableItemHandle: ItemHandle {
         &self,
         workspace: &mut Workspace,
         closing: bool,
-        window: &mut Window,
         cx: &mut App,
     ) -> Option<Task<Result<()>>>;
     fn should_serialize(&self, event: &dyn Any, cx: &App) -> bool;
@@ -438,11 +459,10 @@ where
         &self,
         workspace: &mut Workspace,
         closing: bool,
-        window: &mut Window,
         cx: &mut App,
     ) -> Option<Task<Result<()>>> {
         self.update(cx, |this, cx| {
-            this.serialize(workspace, cx.entity_id().as_u64(), closing, window, cx)
+            this.serialize(workspace, cx.entity_id().as_u64(), closing, cx)
         })
     }
 
@@ -646,14 +666,7 @@ impl<T: Item> ItemHandle for Entity<T> {
     }
 
     fn project_path(&self, cx: &App) -> Option<ProjectPath> {
-        let this = self.read(cx);
-        let mut result = None;
-        if this.buffer_kind(cx) == ItemBufferKind::Singleton {
-            this.for_each_project_item(cx, &mut |_, item| {
-                result = item.project_path(cx);
-            });
-        }
-        result
+        <T as Item>::active_project_path(self.read(cx), cx)
     }
 
     fn workspace_settings<'a>(&self, cx: &'a App) -> &'a WorkspaceSettings {
@@ -910,6 +923,16 @@ impl<T: Item> ItemHandle for Entity<T> {
                             }
                         }
 
+                        ItemEvent::UpdateBreadcrumbs => {
+                            if &pane == workspace.active_pane()
+                                && pane.read(cx).active_item().is_some_and(|active_item| {
+                                    active_item.item_id() == item.item_id()
+                                })
+                            {
+                                workspace.active_item_path_changed(false, window, cx);
+                            }
+                        }
+
                         ItemEvent::Edit => {
                             let autosave = item.workspace_settings(cx).autosave;
 
@@ -932,8 +955,6 @@ impl<T: Item> ItemHandle for Entity<T> {
                             }
                             pane.update(cx, |pane, cx| pane.handle_item_edit(item.item_id(), cx));
                         }
-
-                        _ => {}
                     });
                 },
             ));
@@ -1414,6 +1435,7 @@ pub mod test {
         InteractiveElement, IntoElement, ParentElement, Render, SharedString, Task, WeakEntity,
         Window,
     };
+    use language::Capability;
     use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
     use std::{any::Any, cell::Cell, sync::Arc};
     use util::rel_path::rel_path;
@@ -1432,9 +1454,11 @@ pub mod test {
         pub save_as_count: usize,
         pub reload_count: usize,
         pub is_dirty: bool,
+        pub save_error: Option<String>,
         pub buffer_kind: ItemBufferKind,
         pub has_conflict: bool,
         pub has_deleted_file: bool,
+        pub capability: Capability,
         pub project_items: Vec<Entity<TestProjectItem>>,
         pub nav_history: Option<ItemNavHistory>,
         pub tab_descriptions: Option<Vec<&'static str>>,
@@ -1523,8 +1547,10 @@ pub mod test {
                 save_as_count: 0,
                 reload_count: 0,
                 is_dirty: false,
+                save_error: None,
                 has_conflict: false,
                 has_deleted_file: false,
+                capability: Capability::ReadWrite,
                 project_items: Vec::new(),
                 buffer_kind: ItemBufferKind::Singleton,
                 nav_history: None,
@@ -1562,8 +1588,18 @@ pub mod test {
             self
         }
 
+        pub fn with_save_error(mut self, message: impl Into<String>) -> Self {
+            self.save_error = Some(message.into());
+            self
+        }
+
         pub fn with_conflict(mut self, has_conflict: bool) -> Self {
             self.has_conflict = has_conflict;
+            self
+        }
+
+        pub fn with_capability(mut self, capability: Capability) -> Self {
+            self.capability = capability;
             self
         }
 
@@ -1711,9 +1747,11 @@ pub mod test {
                     save_as_count: self.save_as_count,
                     reload_count: self.reload_count,
                     is_dirty: self.is_dirty,
+                    save_error: self.save_error.clone(),
                     buffer_kind: self.buffer_kind,
                     has_conflict: self.has_conflict,
                     has_deleted_file: self.has_deleted_file,
+                    capability: self.capability,
                     project_items: self.project_items.clone(),
                     nav_history: None,
                     tab_descriptions: None,
@@ -1754,6 +1792,10 @@ pub mod test {
             self.buffer_kind == ItemBufferKind::Singleton
         }
 
+        fn capability(&self, _: &App) -> Capability {
+            self.capability
+        }
+
         fn save(
             &mut self,
             _: SaveOptions,
@@ -1761,6 +1803,9 @@ pub mod test {
             _window: &mut Window,
             cx: &mut Context<Self>,
         ) -> Task<anyhow::Result<()>> {
+            if let Some(error) = &self.save_error {
+                return Task::ready(Err(anyhow::anyhow!("{error}")));
+            }
             self.save_count += 1;
             self.is_dirty = false;
             for item in &self.project_items {
@@ -1828,7 +1873,6 @@ pub mod test {
             _workspace: &mut Workspace,
             _item_id: ItemId,
             _closing: bool,
-            _window: &mut Window,
             _cx: &mut Context<Self>,
         ) -> Option<Task<anyhow::Result<()>>> {
             if let Some(serialize) = self.serialize.take() {

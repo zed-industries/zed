@@ -9,7 +9,7 @@ use collections::HashSet;
 use futures::{Future, FutureExt, channel::oneshot, future::Shared};
 use gpui::{
     AnyView, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task,
-    WeakEntity, Window,
+    TaskExt, WeakEntity, Window,
 };
 use postage::watch;
 use project::Project;
@@ -35,13 +35,37 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
             return;
         };
 
-        let active_call_handle = active_call_handle.clone();
-        cx.subscribe_in(
-            &cx.entity(),
-            window,
+        cx.observe_window_activation(window, {
+            let active_call_handle = active_call_handle.clone();
+            move |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    workspace.update_active_view_for_followers(window, cx)
+                });
+
+                if window.is_window_active() {
+                    let project = workspace.read(cx).project().clone();
+                    if let Ok(task) = active_call_handle.update(cx, |active_call, cx| {
+                        active_call.set_location(Some(&project), cx)
+                    }) {
+                        task.detach_and_log_err(cx);
+                    }
+                } else if cx.active_window().is_none() {
+                    if let Ok(task) = active_call_handle
+                        .update(cx, |active_call, cx| active_call.set_location(None, cx))
+                    {
+                        task.detach_and_log_err(cx);
+                    }
+                }
+            }
+        })
+        .detach();
+
+        cx.subscribe_in(&cx.entity(), window, {
+            let active_call_handle = active_call_handle.clone();
             move |multi_workspace, _, event: &MultiWorkspaceEvent, window, cx| {
-                if !matches!(event, MultiWorkspaceEvent::ActiveWorkspaceChanged { .. })
-                    && window.is_window_active()
+                if !(matches!(event, MultiWorkspaceEvent::ActiveWorkspaceChanged { .. })
+                    && window.is_window_active())
                 {
                     return;
                 }
@@ -52,8 +76,8 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                 }) {
                     task.detach_and_log_err(cx);
                 }
-            },
-        )
+            }
+        })
         .detach();
     })
     .detach();
@@ -110,6 +134,13 @@ impl AnyActiveCall for ActiveCallEntity {
             .read(cx)
             .room()
             .map_or(false, |room| room.read(cx).is_sharing_project())
+    }
+
+    fn is_sharing_screen(&self, cx: &App) -> bool {
+        self.0
+            .read(cx)
+            .room()
+            .map_or(false, |room| room.read(cx).is_sharing_screen())
     }
 
     fn has_remote_participants(&self, cx: &App) -> bool {
@@ -182,7 +213,7 @@ impl AnyActiveCall for ActiveCallEntity {
         let room = self.0.read(cx).room()?.read(cx);
         room.remote_participants()
             .values()
-            .find(|p| p.user.id == user_id)
+            .find(|p| p.user.legacy_id == user_id)
             .map(|p| p.peer_id)
     }
 
@@ -209,6 +240,13 @@ impl AnyActiveCall for ActiveCallEntity {
                             participant_id: *participant_id,
                         })
                     }
+                    room::Event::LocalScreenShareStarted => {
+                        Some(ActiveCallEvent::LocalScreenShareStarted)
+                    }
+                    room::Event::LocalScreenShareStopped => {
+                        Some(ActiveCallEvent::LocalScreenShareStopped)
+                    }
+                    room::Event::RoomLeft { .. } => Some(ActiveCallEvent::RoomLeft),
                     _ => None,
                 };
                 if let Some(event) = mapped {
@@ -297,6 +335,18 @@ impl AnyActiveCall for ActiveCallEntity {
             )
         }))
     }
+
+    fn peer_ids_with_video_tracks(&self, cx: &App) -> Vec<proto::PeerId> {
+        let Some(room) = self.0.read(cx).room() else {
+            return Vec::new();
+        };
+        room.read(cx)
+            .remote_participants()
+            .values()
+            .filter(|p| p.has_video_tracks())
+            .map(|p| p.peer_id)
+            .collect()
+    }
 }
 
 pub struct OneAtATime {
@@ -341,6 +391,7 @@ pub struct IncomingCall {
 /// Singleton global maintaining the user's participation in a room across workspaces.
 pub struct ActiveCall {
     room: Option<(Entity<Room>, Vec<Subscription>)>,
+    last_call_diagnostics: Option<Entity<diagnostics::CallDiagnostics>>,
     pending_room_creation: Option<Shared<Task<Result<Entity<Room>, Arc<anyhow::Error>>>>>,
     location: Option<WeakEntity<Project>>,
     _join_debouncer: OneAtATime,
@@ -360,6 +411,7 @@ impl ActiveCall {
     fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
         Self {
             room: None,
+            last_call_diagnostics: None,
             pending_room_creation: None,
             location: None,
             pending_invites: Default::default(),
@@ -640,6 +692,7 @@ impl ActiveCall {
         Audio::end_call(cx);
 
         let channel_id = self.channel_id(cx);
+        self.retain_room_diagnostics(cx);
         if let Some((room, _)) = self.room.take() {
             cx.emit(Event::RoomLeft { channel_id });
             room.update(cx, |room, cx| room.leave(cx))
@@ -694,6 +747,7 @@ impl ActiveCall {
             Task::ready(Ok(()))
         } else {
             cx.notify();
+            self.retain_room_diagnostics(cx);
             if let Some(room) = room {
                 if room.read(cx).status().is_offline() {
                     self.room = None;
@@ -727,6 +781,23 @@ impl ActiveCall {
 
     pub fn room(&self) -> Option<&Entity<Room>> {
         self.room.as_ref().map(|(room, _)| room)
+    }
+
+    pub fn call_diagnostics(&self, cx: &App) -> Option<Entity<diagnostics::CallDiagnostics>> {
+        self.room()
+            .and_then(|room| room.read(cx).diagnostics())
+            .cloned()
+            .or_else(|| self.last_call_diagnostics.clone())
+    }
+
+    fn retain_room_diagnostics(&mut self, cx: &App) {
+        if let Some(diagnostics) = self
+            .room()
+            .and_then(|room| room.read(cx).diagnostics())
+            .cloned()
+        {
+            self.last_call_diagnostics = Some(diagnostics);
+        }
     }
 
     pub fn client(&self) -> Arc<Client> {

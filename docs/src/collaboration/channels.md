@@ -73,7 +73,7 @@ Open channel notes by clicking the document icon to the right of the channel nam
 ## Following Collaborators
 
 To follow a collaborator, click on their avatar in the top left of the title bar.
-You can also cycle through collaborators using {#kb workspace::FollowNextCollaborator} or `workspace: follow next collaborator` in the command palette.
+You can also cycle through collaborators using {#kb workspace::FollowNextCollaborator} or {#action workspace::FollowNextCollaborator} in the command palette.
 
 When you join a project, you'll immediately start following the collaborator that invited you.
 

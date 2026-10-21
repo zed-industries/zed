@@ -482,10 +482,12 @@ impl CompletionBuilder {
                 resolved: false,
             },
             icon_path: None,
+            icon_color: None,
             insert_text_mode: None,
             confirm: None,
             match_start: None,
             snippet_deduplication_key: None,
+            group: None,
         }
     }
 }
@@ -499,7 +501,7 @@ async fn filter_and_sort_matches(
     let candidates: Arc<[StringMatchCandidate]> = completions
         .iter()
         .enumerate()
-        .map(|(id, completion)| StringMatchCandidate::new(id, completion.label.filter_text()))
+        .map(|(id, completion)| StringMatchCandidate::new(id, completion.filter_text()))
         .collect();
     let cancel_flag = Arc::new(AtomicBool::new(false));
     let background_executor = cx.executor();

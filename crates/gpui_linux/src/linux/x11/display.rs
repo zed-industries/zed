@@ -37,8 +37,13 @@ impl X11Display {
 }
 
 impl PlatformDisplay for X11Display {
+    // An X screen spans every monitor, so it has no single refresh rate.
+    fn refresh_interval(&self) -> Option<std::time::Duration> {
+        None
+    }
+
     fn id(&self) -> DisplayId {
-        DisplayId::new(self.x_screen_index as u32)
+        DisplayId::new(self.x_screen_index as u64)
     }
 
     fn uuid(&self) -> anyhow::Result<Uuid> {

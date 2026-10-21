@@ -6,6 +6,9 @@
 ((inline) @injection.content
   (#set! injection.language "markdown-inline"))
 
+((pipe_table_cell) @injection.content
+  (#set! injection.language "markdown-inline"))
+
 ((html_block) @injection.content
   (#set! injection.language "html"))
 

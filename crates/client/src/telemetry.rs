@@ -95,13 +95,16 @@ pub static MINIDUMP_ENDPOINT: LazyLock<Option<String>> = LazyLock::new(|| {
         .or_else(|| env::var("ZED_MINIDUMP_ENDPOINT").ok())
 });
 
+pub fn should_install_crash_handler(channel: ReleaseChannel) -> bool {
+    matches!(
+        env::var("ZED_GENERATE_MINIDUMPS").as_deref(),
+        Ok("true" | "1")
+    ) || (channel != ReleaseChannel::Dev && MINIDUMP_ENDPOINT.is_some())
+}
+
 static DOTNET_PROJECT_FILES_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(global\.json|Directory\.Build\.props|.*\.(csproj|fsproj|vbproj|sln))$").unwrap()
 });
-
-#[cfg(target_os = "macos")]
-static MACOS_VERSION_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(\s*\(Build [^)]*[0-9]\))").unwrap());
 
 pub fn os_name() -> String {
     #[cfg(target_os = "macos")]
@@ -125,63 +128,57 @@ pub fn os_name() -> String {
 
 /// Note: This might do blocking IO! Only call from background threads
 pub fn os_version() -> String {
-    #[cfg(target_os = "macos")]
-    {
-        use objc2_foundation::NSProcessInfo;
-        let process_info = NSProcessInfo::processInfo();
-        let version_nsstring = process_info.operatingSystemVersionString();
-        // "Version 15.6.1 (Build 24G90)" -> "15.6.1 (Build 24G90)"
-        let version_string = version_nsstring.to_string().replace("Version ", "");
-        // "15.6.1 (Build 24G90)" -> "15.6.1"
-        // "26.0.0 (Build 25A5349a)" -> unchanged (Beta or Rapid Security Response; ends with letter)
-        MACOS_VERSION_REGEX
-            .replace_all(&version_string, "")
-            .to_string()
-    }
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    {
-        use std::path::Path;
+    cfg_select! {
+       feature = "test-support" => {
+           // MacOS branch in particular is quite slow, hence we ought to "avoid" it in tests.
+           "test binary".to_owned()
+       }
+       target_os = "macos" => {
+           static MACOS_VERSION_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+               Regex::new(r"(\s*\(Build [^)]*[0-9]\))").unwrap()
+           });
+           use objc2_foundation::NSProcessInfo;
+           let process_info = NSProcessInfo::processInfo();
+           let version_nsstring = process_info.operatingSystemVersionString();
+           // "Version 15.6.1 (Build 24G90)" -> "15.6.1 (Build 24G90)"
+           let version_string = version_nsstring.to_string().replace("Version ", "");
+           // "15.6.1 (Build 24G90)" -> "15.6.1"
+           // "26.0.0 (Build 25A5349a)" -> unchanged (Beta or Rapid Security Response; ends with letter)
+           MACOS_VERSION_REGEX
+               .replace_all(&version_string, "")
+               .to_string()
+       }
+       any(target_os = "linux", target_os = "freebsd") => {
+           use std::path::Path;
 
-        let content = if let Ok(file) = std::fs::read_to_string(&Path::new("/etc/os-release")) {
-            file
-        } else if let Ok(file) = std::fs::read_to_string(&Path::new("/usr/lib/os-release")) {
-            file
-        } else if let Ok(file) = std::fs::read_to_string(&Path::new("/var/run/os-release")) {
-            file
-        } else {
-            log::error!(
-                "Failed to load /etc/os-release, /usr/lib/os-release, or /var/run/os-release"
-            );
-            "".to_string()
-        };
-        let mut name = "unknown";
-        let mut version = "unknown";
-
-        for line in content.lines() {
-            match line.split_once('=') {
-                Some(("ID", val)) => name = val.trim_matches('"'),
-                Some(("VERSION_ID", val)) => version = val.trim_matches('"'),
-                _ => {}
-            }
-        }
-
-        format!("{} {}", name, version)
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let mut info = unsafe { std::mem::zeroed() };
-        let status = unsafe { windows::Wdk::System::SystemServices::RtlGetVersion(&mut info) };
-        if status.is_ok() {
-            semver::Version::new(
-                info.dwMajorVersion as _,
-                info.dwMinorVersion as _,
-                info.dwBuildNumber as _,
-            )
-            .to_string()
-        } else {
-            "unknown".to_string()
-        }
+           let content = if let Ok(file) = std::fs::read_to_string(&Path::new("/etc/os-release")) {
+               file
+           } else if let Ok(file) = std::fs::read_to_string(&Path::new("/usr/lib/os-release")) {
+               file
+           } else if let Ok(file) = std::fs::read_to_string(&Path::new("/var/run/os-release")) {
+               file
+           } else {
+               log::error!(
+                   "Failed to load /etc/os-release, /usr/lib/os-release, or /var/run/os-release"
+               );
+               "".to_string()
+           };
+           util::parse_os_release(&content).unwrap_or_else(|| "unknown".to_string())
+       }
+       target_os = "windows" => {
+           let mut info = unsafe { std::mem::zeroed() };
+           let status = unsafe { windows::Wdk::System::SystemServices::RtlGetVersion(&mut info) };
+           if status.is_ok() {
+               semver::Version::new(
+                   info.dwMajorVersion as _,
+                   info.dwMinorVersion as _,
+                   info.dwBuildNumber as _,
+               )
+               .to_string()
+           } else {
+               "unknown".to_string()
+           }
+       }
     }
 }
 
@@ -511,6 +508,61 @@ impl Telemetry {
         Some(project_types)
     }
 
+    /// Report a telemetry event that originated on a remote server.
+    ///
+    /// The remote server cannot upload telemetry itself, so it forwards events
+    /// (as a JSON-serialized [`Event`]) to the client. Since the OS metadata in
+    /// [`EventRequestBody`] is batch-level (describing the uploading client),
+    /// the remote server's OS is attached as event properties instead, so the
+    /// origin can still be distinguished downstream.
+    pub fn report_remote_event(
+        self: &Arc<Self>,
+        event_json: &str,
+        connection_type: &str,
+        os_name: String,
+        os_version: Option<String>,
+        architecture: String,
+    ) -> Result<()> {
+        // The remote server forwards a bare `telemetry_events::FlexibleEvent`
+        // (the type behind `telemetry::event!`), not the tagged `Event` enum.
+        let mut flexible: telemetry_events::FlexibleEvent =
+            serde_json::from_str(event_json).context("invalid remote telemetry event")?;
+        flexible
+            .event_properties
+            .insert("remote".into(), true.into());
+        flexible
+            .event_properties
+            .insert("remote_connection_type".into(), connection_type.into());
+        flexible
+            .event_properties
+            .insert("remote_os_name".into(), os_name.into());
+        flexible
+            .event_properties
+            .insert("remote_architecture".into(), architecture.into());
+        if let Some(os_version) = os_version {
+            flexible
+                .event_properties
+                .insert("remote_os_version".into(), os_version.into());
+        }
+        self.report_event(Event::Flexible(flexible));
+        Ok(())
+    }
+
+    /// Returns a snapshot of the currently queued (not-yet-flushed) telemetry
+    /// events, for use in tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn queued_events(self: &Arc<Self>) -> Vec<telemetry_events::FlexibleEvent> {
+        self.state
+            .lock()
+            .events_queue
+            .iter()
+            .map(|wrapper| {
+                let Event::Flexible(event) = &wrapper.event;
+                event.clone()
+            })
+            .collect()
+    }
+
     fn report_event(self: &Arc<Self>, mut event: Event) {
         let mut state = self.state.lock();
         // RUST_LOG=telemetry=trace to debug telemetry events
@@ -822,6 +874,79 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_report_remote_event_tags_origin(cx: &mut TestAppContext) {
+        init_test(cx);
+        let clock = Arc::new(FakeSystemClock::new());
+        let http = FakeHttpClient::with_200_response();
+
+        let telemetry = cx.update(|cx| {
+            let telemetry = Telemetry::new(clock.clone(), http, cx);
+            telemetry.start(
+                Some("system_id".to_string()),
+                Some("installation_id".to_string()),
+                "session_id".to_string(),
+                cx,
+            );
+            telemetry
+        });
+
+        // Mirror what the remote server forwards: a bare `FlexibleEvent`, which
+        // is the type produced by `telemetry::event!` / sent over the queue.
+        let event_json = serde_json::to_string(&FlexibleEvent {
+            event_type: "fs_watcher_poll".to_string(),
+            event_properties: HashMap::from_iter([(
+                "path".to_string(),
+                serde_json::Value::String("/code/project".to_string()),
+            )]),
+        })
+        .unwrap();
+
+        cx.update(|_| {
+            telemetry
+                .report_remote_event(
+                    &event_json,
+                    "ssh",
+                    "Linux".to_string(),
+                    Some("ubuntu 24.04".to_string()),
+                    "aarch64".to_string(),
+                )
+                .unwrap();
+        });
+
+        let queue = telemetry.state.lock().events_queue.clone();
+        assert_eq!(queue.len(), 1);
+        let Event::Flexible(event) = &queue[0].event;
+        assert_eq!(event.event_type, "fs_watcher_poll");
+        // Original properties are preserved.
+        assert_eq!(
+            event.event_properties.get("path"),
+            Some(&serde_json::Value::String("/code/project".to_string()))
+        );
+        // The remote server's OS is attached as properties, since the batch-level
+        // OS describes the uploading client rather than the remote host.
+        assert_eq!(
+            event.event_properties.get("remote"),
+            Some(&serde_json::Value::Bool(true))
+        );
+        assert_eq!(
+            event.event_properties.get("remote_connection_type"),
+            Some(&serde_json::Value::String("ssh".to_string()))
+        );
+        assert_eq!(
+            event.event_properties.get("remote_os_name"),
+            Some(&serde_json::Value::String("Linux".to_string()))
+        );
+        assert_eq!(
+            event.event_properties.get("remote_os_version"),
+            Some(&serde_json::Value::String("ubuntu 24.04".to_string()))
+        );
+        assert_eq!(
+            event.event_properties.get("remote_architecture"),
+            Some(&serde_json::Value::String("aarch64".to_string()))
+        );
+    }
+
+    #[gpui::test]
     fn test_project_discovery_does_not_double_report(cx: &mut gpui::TestAppContext) {
         init_test(cx);
 
@@ -959,7 +1084,7 @@ mod tests {
             .enumerate()
             .filter_map(|(i, path)| {
                 Some((
-                    Arc::from(RelPath::unix(path).ok()?),
+                    Arc::from(RelPath::from_unix_str(path).ok()?),
                     ProjectEntryId::from_proto(i as u64 + 1),
                     PathChange::Added,
                 ))
