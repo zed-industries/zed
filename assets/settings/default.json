@@ -967,7 +967,7 @@
     //    "files_first"
     "sort_mode": "directories_first",
     // Whether to sort file and folder names case-sensitively in the project panel.
-    // This setting can take four values:
+    // This setting can take five values:
     //
     // 1. Case-insensitive natural sort with lowercase preferred in ties (default):
     //    "default"
@@ -980,6 +980,10 @@
     // 4. Pure Unicode codepoint comparison.
     //    No case folding, no natural number sorting:
     //    "unicode"
+    // 5. Files are grouped by extension, with extensionless files (including
+    //    dotfiles such as ".gitignore") first and natural sort by name within
+    //    each group:
+    //    "extension"
     "sort_order": "default",
     // Whether to show error and warning count badges next to file names in the project panel.
     "diagnostic_badges": false,

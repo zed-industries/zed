@@ -136,6 +136,7 @@ dependencies = [
 name = "acp_tools"
 version = "0.1.0"
 dependencies = [
+ "acp_thread",
  "agent-client-protocol",
  "agent_servers",
  "agent_ui",
@@ -382,6 +383,7 @@ dependencies = [
  "client",
  "collections",
  "env_logger 0.11.8",
+ "feature_flags",
  "fs",
  "futures 0.3.34",
  "gpui",
@@ -6422,6 +6424,9 @@ dependencies = [
  "picker_preview",
  "pretty_assertions",
  "project",
+ "release_channel",
+ "remote",
+ "remote_server",
  "serde_json",
  "settings",
  "theme",
@@ -10476,7 +10481,7 @@ dependencies = [
 [[package]]
 name = "lsp-types"
 version = "0.95.1"
-source = "git+https://github.com/zed-industries/lsp-types?rev=f1783e63a7f4eb4397bf51d4148b4895a1f7ab16#f1783e63a7f4eb4397bf51d4148b4895a1f7ab16"
+source = "git+https://github.com/zed-industries/lsp-types?rev=82d7fc66ebdfabcfeb26ba16bbed9f3d26211fc3#82d7fc66ebdfabcfeb26ba16bbed9f3d26211fc3"
 dependencies = [
  "bitflags 1.3.2",
  "serde",
@@ -12385,11 +12390,14 @@ dependencies = [
 name = "opencode"
 version = "0.1.0"
 dependencies = [
+ "anthropic",
  "anyhow",
  "futures 0.3.34",
  "google_ai",
  "http_client",
  "language_model_core",
+ "log",
+ "open_ai",
  "schemars 1.0.4",
  "serde",
  "serde_json",
@@ -22577,7 +22585,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.26.0"
+version = "1.27.0"
 dependencies = [
  "acp_thread",
  "acp_tools",
