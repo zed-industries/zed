@@ -7227,7 +7227,6 @@ impl ThreadView {
                 .child(self.render_thread_controls(
                     &thread,
                     entry_ix,
-                    Self::agent_message_copy_index(thread.read(cx).entries(), entry_ix, cx),
                     entry_ix + 1 == total_entries,
                     user_message_index,
                     cx,
@@ -7246,14 +7245,7 @@ impl ThreadView {
                 .w_full()
                 .child(primary)
                 .when(!is_assistant, |this| {
-                    this.child(self.render_thread_controls(
-                        &thread,
-                        entry_ix,
-                        Self::agent_message_copy_index(thread.read(cx).entries(), entry_ix, cx),
-                        true,
-                        None,
-                        cx,
-                    ))
+                    this.child(self.render_thread_controls(&thread, entry_ix, true, None, cx))
                 })
                 .when_some(comments_editor, |this, editor| {
                     this.child(Self::render_feedback_feedback_editor(editor, cx))
@@ -7452,7 +7444,6 @@ impl ThreadView {
         &self,
         thread: &Entity<AcpThread>,
         entry_ix: usize,
-        copy_response_index: Option<usize>,
         is_thread_bottom: bool,
         user_message_index: Option<usize>,
         cx: &Context<Self>,
@@ -7465,20 +7456,23 @@ impl ThreadView {
             return Empty.into_any_element();
         }
 
-        let copy_response_button = CopyButton::new(("copy_agent_response", entry_ix), "")
-            .icon_size(IconSize::Small)
-            .tooltip_label("Copy This Agent Response")
-            .disabled(copy_response_index.is_none())
-            .when_some(copy_response_index, |button, response_index| {
-                let thread = thread.clone();
-                button.custom_on_click(move |_, cx| {
-                    let entries = thread.read(cx).entries();
-                    if let Some(text) = Self::get_agent_message_content(entries, response_index, cx)
-                    {
-                        cx.write_to_clipboard(ClipboardItem::new_string(text));
-                    }
-                })
-            });
+        let copy_response_button =
+            Self::agent_message_copy_index(thread.read(cx).entries(), entry_ix, cx).map(
+                |response_index| {
+                    let thread = thread.clone();
+                    CopyButton::new(("copy_agent_response", entry_ix), "")
+                        .icon_size(IconSize::Small)
+                        .tooltip_label("Copy This Agent Response")
+                        .custom_on_click(move |_, cx| {
+                            let entries = thread.read(cx).entries();
+                            if let Some(text) =
+                                Self::get_agent_message_content(entries, response_index, cx)
+                            {
+                                cx.write_to_clipboard(ClipboardItem::new_string(text));
+                            }
+                        })
+                },
+            );
 
         let scroll_to_recent_user_prompt = IconButton::new(
             ("scroll_to_recent_user_prompt", entry_ix),
@@ -7619,7 +7613,7 @@ impl ThreadView {
                 },
             )
             .when_some(feedback_buttons, |this, buttons| this.child(buttons))
-            .child(copy_response_button)
+            .when_some(copy_response_button, |this, button| this.child(button))
             .child(scroll_to_recent_user_prompt)
             .when_some(scroll_to_top, |this, button| this.child(button))
             .into_any_element()
@@ -8383,18 +8377,32 @@ impl ThreadView {
             .rev()
             .take_while(|(_, entry)| !matches!(entry, AgentThreadEntry::UserMessage(_)))
             .find_map(|(index, entry)| match entry {
-                AgentThreadEntry::AssistantMessage(message) => message
-                    .chunks
-                    .iter()
-                    .any(|chunk| match chunk {
-                        AssistantMessageChunk::Message { block, .. } => {
-                            !block.to_markdown(cx).trim().is_empty()
-                        }
-                        AssistantMessageChunk::Thought { .. } => false,
-                    })
-                    .then_some(index),
+                AgentThreadEntry::AssistantMessage(message) => {
+                    Self::assistant_message_copy_text(message, cx).map(|_| index)
+                }
                 _ => None,
             })
+    }
+
+    fn assistant_message_copy_text(message: &AssistantMessage, cx: &App) -> Option<String> {
+        let text = message
+            .chunks
+            .iter()
+            .filter_map(|chunk| match chunk {
+                AssistantMessageChunk::Message { block, .. } => {
+                    let markdown = block.to_markdown(cx);
+                    if markdown.trim().is_empty() {
+                        None
+                    } else {
+                        Some(markdown)
+                    }
+                }
+                AssistantMessageChunk::Thought { .. } => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        if text.is_empty() { None } else { Some(text) }
     }
 
     fn get_agent_message_content(
@@ -8420,29 +8428,11 @@ impl ThreadView {
 
         let parts: Vec<String> = (start_index..=end_index)
             .filter_map(|i| entries.get(i))
-            .filter_map(|entry| {
-                if let AgentThreadEntry::AssistantMessage(message) = entry {
-                    let text: String = message
-                        .chunks
-                        .iter()
-                        .filter_map(|chunk| match chunk {
-                            AssistantMessageChunk::Message { block, .. } => {
-                                let markdown = block.to_markdown(cx);
-                                if markdown.trim().is_empty() {
-                                    None
-                                } else {
-                                    Some(markdown)
-                                }
-                            }
-                            AssistantMessageChunk::Thought { .. } => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n\n");
-
-                    if text.is_empty() { None } else { Some(text) }
-                } else {
-                    None
+            .filter_map(|entry| match entry {
+                AgentThreadEntry::AssistantMessage(message) => {
+                    Self::assistant_message_copy_text(message, cx)
                 }
+                _ => None,
             })
             .collect();
 
