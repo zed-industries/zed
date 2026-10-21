@@ -13,6 +13,7 @@ use markdown::Markdown;
 use multi_buffer::{MultiBuffer, PathKey, excerpt_context_lines};
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
 use util::ResultExt;
+use util::paths::PathStyle;
 
 #[derive(Debug)]
 pub struct DiffPatch {
@@ -133,15 +134,28 @@ impl DiffPatch {
                 } else {
                     paths
                 };
-                let index = change_indices
-                    .get(&paths)
-                    .copied()
+                let index = if let Some(index) = change_indices.get(&paths) {
+                    *index
+                } else if [paths.0, paths.1]
+                    .into_iter()
                     .flatten()
-                    .ok_or_else(|| {
-                        anyhow!(
-                            "patch paths are ambiguous or do not match the reported file changes"
-                        )
-                    })?;
+                    .any(|path| !PathStyle::Windows.has_root(path))
+                {
+                    // Relative Git paths have no declared root. Only associate a
+                    // hunk when both sides identify one reported file operation.
+                    let mut matches = change_indices.iter().filter(|(reported, _)| {
+                        patch_path_matches(paths.0, reported.0)
+                            && patch_path_matches(paths.1, reported.1)
+                    });
+                    let index = matches.next().and_then(|(_, index)| *index);
+                    ensure!(matches.next().is_none(), "ambiguous relative patch paths");
+                    index
+                } else {
+                    None
+                }
+                .ok_or_else(|| {
+                    anyhow!("patch paths are ambiguous or do not match the reported file changes")
+                })?;
                 ensure!(seen.insert(index), "repeated patch file");
                 let change = source
                     .changes
@@ -151,7 +165,7 @@ impl DiffPatch {
                     matches!(change.file_type, None | Some(acp_v2::DiffFileType::Text)),
                     "text patch supplied for a non-text file"
                 );
-                if anonymous && let Some((old, new)) = diff_change_paths(change) {
+                if let Some((old, new)) = diff_change_paths(change) {
                     file.old_path = old.map(|path| path.to_string_lossy().into_owned());
                     file.new_path = new.map(|path| path.to_string_lossy().into_owned());
                 }
@@ -165,6 +179,15 @@ impl DiffPatch {
                 Ok((index, file))
             })
             .collect()
+    }
+}
+
+fn patch_path_matches(patch: Option<&Path>, reported: Option<&Path>) -> bool {
+    match (patch, reported) {
+        (None, None) => true,
+        (Some(patch), Some(reported)) if PathStyle::Windows.has_root(patch) => patch == reported,
+        (Some(patch), Some(reported)) => reported.ends_with(patch),
+        _ => false,
     }
 }
 
@@ -746,6 +769,63 @@ mod tests {
             ))
             .is_ok()
         );
+        for (patch, changes, expected) in [
+            (
+                "--- a/src/one.rs\n+++ b/src/one.rs\n@@ -1 +1 @@\n-old\n+new\n",
+                json!([
+                    {"operation": "modify", "path": "/project/src/one.rs"},
+                    {"operation": "modify", "path": "/project/src/two.rs"}
+                ]),
+                Some((0, Some("/project/src/one.rs"), Some("/project/src/one.rs"))),
+            ),
+            (
+                "--- old.rs\n+++ new.rs\n@@ -1 +1 @@\n-old\n+new\n",
+                json!([
+                    {"operation": "move", "oldPath": "/project/old.rs", "path": "/project/new.rs"},
+                    {"operation": "move", "oldPath": "/other/old.rs", "path": "/other/different.rs"}
+                ]),
+                Some((0, Some("/project/old.rs"), Some("/project/new.rs"))),
+            ),
+            (
+                "--- /dev/null\n+++ b/added.rs\n@@ -0,0 +1 @@\n+new\n",
+                json!([{"operation": "add", "path": "/project/added.rs"}]),
+                Some((0, None, Some("/project/added.rs"))),
+            ),
+            (
+                "--- a/deleted.rs\n+++ /dev/null\n@@ -1 +0,0 @@\n-old\n",
+                json!([{"operation": "delete", "path": "/project/deleted.rs"}]),
+                Some((0, Some("/project/deleted.rs"), None)),
+            ),
+            (
+                "--- one.rs\n+++ one.rs\n@@ -1 +1 @@\n-old\n+new\n",
+                json!([
+                    {"operation": "modify", "path": "/project/one.rs"},
+                    {"operation": "modify", "path": "/other/one.rs"}
+                ]),
+                None,
+            ),
+            (
+                "--- src/one.rs\n+++ src/one.rs\n@@ -1 +1 @@\n-old\n+new\n",
+                json!([{"operation": "modify", "path": "/project/not-src/one.rs"}]),
+                None,
+            ),
+            (
+                "--- old.rs\n+++ wrong.rs\n@@ -1 +1 @@\n-old\n+new\n",
+                json!([{"operation": "copy", "oldPath": "/project/old.rs", "path": "/project/new.rs"}]),
+                None,
+            ),
+        ] {
+            let parsed = DiffPatch::parse(&source(patch, changes));
+            if let Some((index, old, new)) = expected {
+                let parsed = parsed.expect("unique relative paths");
+                assert_eq!(parsed.len(), 1);
+                assert_eq!(parsed[0].0, index);
+                assert_eq!(parsed[0].1.old_path.as_deref(), old);
+                assert_eq!(parsed[0].1.new_path.as_deref(), new);
+            } else {
+                assert!(parsed.is_err(), "{patch}");
+            }
+        }
     }
 
     #[test]
@@ -823,7 +903,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_patch_hunks_render_read_only_snippets(cx: &mut TestAppContext) {
-        let patch = indoc! {"
+        let patch = indoc! {r#"
             diff --git /one /one
             --- /one
             +++ /one
@@ -844,7 +924,25 @@ mod tests {
             +++ /added
             @@ -0,0 +1 @@
             +added
-        "};
+            diff --git "/project/\303\251t\303\251.rs" "/project/\346\226\260.rs"
+            similarity index 75%
+            rename from "/project/\303\251t\303\251.rs"
+            rename to "/project/\346\226\260.rs"
+            --- "/project/\303\251t\303\251.rs"
+            +++ "/project/\346\226\260.rs"
+            @@ -1 +1 @@
+            -old
+            +new
+            diff --git /source /copy
+            similarity index 75%
+            copy from /source
+            copy to /copy
+            --- a/source
+            +++ b/copy
+            @@ -1 +1 @@
+            -before
+            +after
+        "#};
         let source = source(
             patch,
             json!([
@@ -852,7 +950,9 @@ mod tests {
                 {"operation": "delete", "path": "/deleted"},
                 {"operation": "add", "path": "/added"},
                 {"operation": "modify", "path": "/image", "fileType": "binary"},
-                {"operation": "move", "oldPath": "/old", "path": "/new"}
+                {"operation": "move", "oldPath": "/old", "path": "/new"},
+                {"operation": "move", "oldPath": "/project/été.rs", "path": "/project/新.rs"},
+                {"operation": "copy", "oldPath": "/source", "path": "/copy"}
             ]),
         );
         let render = cx.update(|cx| {
@@ -863,7 +963,7 @@ mod tests {
         assert!(render.fallback.is_none());
         assert_eq!(
             render.files.len(),
-            5,
+            7,
             "patchless files must remain represented"
         );
         assert_eq!(render.files[0].hunks.len(), 2);
@@ -879,6 +979,8 @@ mod tests {
                 (0, "context\nbefore\nafter\n"),
                 (1, "deleted\n"),
                 (2, "added\n"),
+                (5, "old\nnew\n"),
+                (6, "before\nafter\n"),
             ] {
                 let buffer = render.files[file_index].hunks[0].buffer.read(cx);
                 assert!(buffer.read_only());
