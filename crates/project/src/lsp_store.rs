@@ -15219,17 +15219,40 @@ fn validate_document_filter_pattern(pattern: &lsp::GlobPattern) -> Result<()> {
     Ok(())
 }
 
+fn normalize_document_filter_drive_letter(path: &str) -> Cow<'_, str> {
+    match path.as_bytes() {
+        [drive_letter, b':', b'/', ..] if drive_letter.is_ascii_uppercase() => {
+            let mut path = path.to_string();
+            path.replace_range(
+                ..1,
+                &char::from(drive_letter.to_ascii_lowercase()).to_string(),
+            );
+            Cow::Owned(path)
+        }
+        _ => Cow::Borrowed(path),
+    }
+}
+
 fn document_filter_pattern_matches(
     pattern: &lsp::GlobPattern,
     path: &str,
     path_style: PathStyle,
 ) -> bool {
     let (base_uri, glob) = document_filter_glob(pattern);
-    let Some(matcher) = document_filter_glob_matcher(glob).log_err() else {
+    // VS Code's fsPath lowercases the drive letter. Canonicalize literal drive prefixes on
+    // both sides without making the rest of the glob case-insensitive.
+    let (glob, path) = match (base_uri, path_style) {
+        (None, PathStyle::Windows) => (
+            normalize_document_filter_drive_letter(glob),
+            normalize_document_filter_drive_letter(path),
+        ),
+        _ => (Cow::Borrowed(glob), Cow::Borrowed(path)),
+    };
+    let Some(matcher) = document_filter_glob_matcher(&glob).log_err() else {
         return false;
     };
     let Some(base_uri) = base_uri else {
-        return matcher.is_match(path);
+        return matcher.is_match(&path);
     };
 
     // The base URI is on the same host as the document, so it is read in the same path style.
@@ -15237,19 +15260,26 @@ fn document_filter_pattern_matches(
         return false;
     };
     let base_path = path_with_slashes(&base_path.to_string_lossy(), path_style);
-    let base_path = base_path.trim_end_matches('/');
-    let Some(path_prefix) = path.get(..base_path.len()) else {
-        return false;
-    };
-    let base_path_matches = match path_style {
-        // Windows paths are case-insensitive, and URIs often carry lowercase drive letters.
-        PathStyle::Windows => path_prefix.eq_ignore_ascii_case(base_path),
-        PathStyle::Unix => path_prefix == base_path,
-    };
-    base_path_matches
-        && path[base_path.len()..]
-            .strip_prefix('/')
-            .is_some_and(|relative_path| matcher.is_match(relative_path))
+    let mut relative_path = path.as_ref();
+    // Case-equivalent components can have different UTF-8 lengths (e.g. K and k), so
+    // consume the candidate's components rather than slicing at the base's byte length.
+    for base_component in base_path.trim_end_matches('/').split('/') {
+        let Some((component, remainder)) = relative_path.split_once('/') else {
+            return false;
+        };
+        let matches = match path_style {
+            PathStyle::Windows => {
+                component == base_component
+                    || component.to_lowercase() == base_component.to_lowercase()
+            }
+            PathStyle::Unix => component == base_component,
+        };
+        if !matches {
+            return false;
+        }
+        relative_path = remainder;
+    }
+    matcher.is_match(relative_path)
 }
 
 fn remote_text_document_capabilities_match(
@@ -17988,6 +18018,114 @@ mod tests {
             ),
             "backslashes are not separators in Unix paths",
         );
+    }
+
+    #[test]
+    fn document_selector_absolute_pattern_normalizes_windows_drive_letter() {
+        for (pattern, path, expected) in [
+            ("c:/repo/a.rs", r"C:\repo\a.rs", true),
+            ("C:/repo/a.rs", r"c:\repo\a.rs", true),
+            ("C:/repo/a.rs", r"C:\repo\a.rs", true),
+            ("c:/repo/a.rs", r"c:\repo\a.rs", true),
+            ("c:/repo/**/a.rs", r"C:\repo\sub\a.rs", true),
+            ("c:/repo/a.rs", r"D:\repo\a.rs", false),
+            ("c:/Repo/a.rs", r"C:\repo\a.rs", false),
+            ("c:/repo/A.rs", r"C:\repo\a.rs", false),
+            ("c:/Équipe/a.rs", r"C:\équipe\a.rs", false),
+            ("//server/Share/a.rs", r"\\server\share\a.rs", false),
+        ] {
+            let selector = pattern_selector(None, lsp::GlobPattern::String(pattern.to_string()));
+            let context =
+                toml_file_context(DocumentSelectorPath::present(path, PathStyle::Windows));
+            assert_eq!(
+                document_selector_matches(selector.as_ref(), &context),
+                expected,
+                "pattern {pattern:?}, path {path:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn document_selector_relative_pattern_matches_unicode_windows_base() -> Result<()> {
+        for (base_uri, pattern, path, expected) in [
+            ("file:///C:/%C3%89quipe", "a.rs", r"C:\équipe\a.rs", true),
+            ("file:///c:/%C3%A9quipe", "a.rs", r"C:\Équipe\a.rs", true),
+            ("file:///C:/%E2%84%AA", "a.rs", r"c:\k\a.rs", true),
+            ("file:///c:/k", "a.rs", r"C:\K\a.rs", true),
+            ("file:///C:/%C3%89quipe/", "a.rs", r"c:\équipe\a.rs", true),
+            (
+                "file://server/%C3%89quipe",
+                "a.rs",
+                r"\\SERVER\équipe\a.rs",
+                true,
+            ),
+            ("file:///C:/", "Équipe/a.rs", r"c:\Équipe\a.rs", true),
+            ("file:///C:/%C3%89quipe", "a.rs", r"C:\équipe\A.rs", false),
+            (
+                "file:///C:/%C3%89quipe",
+                "Sub/a.rs",
+                r"C:\équipe\sub\a.rs",
+                false,
+            ),
+            (
+                "file:///C:/%C3%89quipe",
+                "a.rs",
+                r"C:\équipement\a.rs",
+                false,
+            ),
+            ("file:///C:/%E2%84%AA", "a.rs", r"C:\kelvin\a.rs", false),
+            ("file:///C:/%C3%89quipe", "a.rs", r"D:\équipe\a.rs", false),
+        ] {
+            let selector = pattern_selector(
+                None,
+                lsp::GlobPattern::Relative(lsp::RelativePattern {
+                    base_uri: OneOf::Right(base_uri.parse()?),
+                    pattern: pattern.to_string(),
+                }),
+            );
+            let context =
+                toml_file_context(DocumentSelectorPath::present(path, PathStyle::Windows));
+            assert_eq!(
+                document_selector_matches(selector.as_ref(), &context),
+                expected,
+                "base {base_uri:?}, pattern {pattern:?}, path {path:?}",
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn document_selector_patterns_preserve_unix_case() -> Result<()> {
+        for pattern in ["/C:/repo/a.rs", "/Équipe/a.rs"] {
+            let selector = pattern_selector(None, lsp::GlobPattern::String(pattern.to_string()));
+            let context = toml_file_context(DocumentSelectorPath::present(
+                &pattern.to_lowercase(),
+                PathStyle::Unix,
+            ));
+            assert!(!document_selector_matches(selector.as_ref(), &context));
+        }
+
+        for (base_uri, path, expected) in [
+            ("file:///%C3%89quipe", "/équipe/a.rs", false),
+            ("file:///%E2%84%AA", "/k/a.rs", false),
+            ("file:///%C3%89quipe", "/Équipe/a.rs", true),
+            ("file:///", "/a.rs", true),
+        ] {
+            let selector = pattern_selector(
+                None,
+                lsp::GlobPattern::Relative(lsp::RelativePattern {
+                    base_uri: OneOf::Right(base_uri.parse()?),
+                    pattern: "a.rs".to_string(),
+                }),
+            );
+            let context = toml_file_context(DocumentSelectorPath::present(path, PathStyle::Unix));
+            assert_eq!(
+                document_selector_matches(selector.as_ref(), &context),
+                expected,
+                "base {base_uri:?}, path {path:?}",
+            );
+        }
+        Ok(())
     }
 
     #[test]
