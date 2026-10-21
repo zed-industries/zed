@@ -28,7 +28,6 @@ use super::{Cell, CellEvent, CellPosition, MarkdownCellEvent, RenderableCell};
 use nbformat::v4::CellId;
 use nbformat::v4::Metadata as NotebookMetadata;
 use serde_json;
-use util::ResultExt as _;
 use uuid::Uuid;
 
 use crate::components::{KernelPickerDelegate, KernelSelector};
@@ -122,9 +121,7 @@ pub struct NotebookEditor {
 
 /// The notebook metadata as save writes it, for change detection.
 fn metadata_json(item: &NotebookItem) -> serde_json::Value {
-    serde_json::to_value(&item.notebook.metadata)
-        .log_err()
-        .unwrap_or(serde_json::Value::Null)
+    serde_json::to_value(&item.notebook.metadata).expect("notebook metadata is plain JSON")
 }
 
 enum SaveDestination {
