@@ -349,10 +349,6 @@ fn main() {
         .background_executor()
         .spawn(installation_id(KeyValueStore::from_app_db(&app_db)));
     let session_id = Uuid::new_v4().to_string();
-    let session = app.background_executor().spawn(Session::new(
-        session_id.clone(),
-        KeyValueStore::from_app_db(&app_db),
-    ));
     let background_executor = app.background_executor();
 
     let (open_listener, mut open_rx) = OpenListener::new();
@@ -382,6 +378,14 @@ fn main() {
         println!("zed is already running");
         return;
     }
+
+    // The session id is stored in the database as the lookup key for restoring the last
+    // session. Writing it before we know we are the primary instance lets a second instance
+    // overwrite the real session id, so nothing is restored on the next launch.
+    let session = app.background_executor().spawn(Session::new(
+        session_id.clone(),
+        KeyValueStore::from_app_db(&app_db),
+    ));
 
     let should_install_crash_handler =
         client::telemetry::should_install_crash_handler(*release_channel::RELEASE_CHANNEL);
@@ -1590,7 +1594,7 @@ pub(crate) async fn restorable_workspace_locations(
     cx: &mut AsyncApp,
     app_state: &Arc<AppState>,
 ) -> Option<Vec<SessionWorkspace>> {
-    let (mut restore_behavior, db) = cx.update(|cx| {
+    let (restore_behavior, db) = cx.update(|cx| {
         (
             WorkspaceSettings::get(None, cx).restore_on_startup,
             workspace::WorkspaceDb::global(cx),
@@ -1607,54 +1611,70 @@ pub(crate) async fn restorable_workspace_locations(
         )
     });
 
-    if last_session_id.is_none()
-        && matches!(
-            restore_behavior,
-            workspace::RestoreOnStartupBehavior::LastSession
-        )
-    {
-        restore_behavior = workspace::RestoreOnStartupBehavior::LastWorkspace;
-    }
-
     match restore_behavior {
         workspace::RestoreOnStartupBehavior::LastWorkspace => {
-            workspace::last_opened_workspace_location(&db, app_state.fs.as_ref())
-                .await
-                .map(|(workspace_id, location, paths)| {
-                    vec![SessionWorkspace {
-                        workspace_id,
-                        location,
-                        paths,
-                        window_id: None,
-                    }]
-                })
+            last_opened_workspace_locations(&db, app_state).await
         }
         workspace::RestoreOnStartupBehavior::LastSession => {
-            if let Some(last_session_id) = last_session_id {
-                let ordered = last_session_window_stack.is_some();
+            let last_session_locations = match &last_session_id {
+                Some(last_session_id) => {
+                    let ordered = last_session_window_stack.is_some();
 
-                let mut locations = workspace::last_session_workspace_locations(
-                    &db,
-                    &last_session_id,
-                    last_session_window_stack,
-                    app_state.fs.as_ref(),
-                )
-                .await
-                .filter(|locations| !locations.is_empty());
+                    let mut locations = workspace::last_session_workspace_locations(
+                        &db,
+                        last_session_id,
+                        last_session_window_stack,
+                        app_state.fs.as_ref(),
+                    )
+                    .await
+                    .filter(|locations| !locations.is_empty());
 
-                // Since last_session_window_order returns the windows ordered front-to-back
-                // we need to open the window that was frontmost last.
-                if ordered && let Some(locations) = locations.as_mut() {
-                    locations.reverse();
+                    // Since last_session_window_order returns the windows ordered front-to-back
+                    // we need to open the window that was frontmost last.
+                    if ordered && let Some(locations) = locations.as_mut() {
+                        locations.reverse();
+                    }
+
+                    locations
                 }
+                None => None,
+            };
 
-                locations
-            } else {
-                None
+            match last_session_locations {
+                Some(locations) => Some(locations),
+                // Workspace records only go missing for a saved session id when another
+                // instance overwrote it (two Zeds launching at once) or when no real workspace
+                // was open in that session. Restoring the last opened workspace is more useful
+                // than opening an empty window, so fall back to that.
+                None => {
+                    log::info!(
+                        "No workspaces saved for session {:?}, falling back to the last opened workspace",
+                        last_session_id
+                    );
+                    last_opened_workspace_locations(&db, app_state).await
+                }
             }
         }
         _ => None,
     }
+}
+
+/// Returns the last opened real workspace, used as the fallback when
+/// `restore_on_startup: last_session` finds nothing to restore.
+async fn last_opened_workspace_locations(
+    db: &workspace::WorkspaceDb,
+    app_state: &Arc<AppState>,
+) -> Option<Vec<SessionWorkspace>> {
+    workspace::last_opened_workspace_location(db, app_state.fs.as_ref())
+        .await
+        .map(|(workspace_id, location, paths)| {
+            vec![SessionWorkspace {
+                workspace_id,
+                location,
+                paths,
+                window_id: None,
+            }]
+        })
 }
 
 fn init_paths() -> HashMap<io::ErrorKind, Vec<&'static Path>> {

@@ -4082,6 +4082,8 @@ List of strings containing any combination of:
 }
 ```
 
+When the workspaces saved for the last session cannot be found, for example because another Zed instance replaced the saved session id while this one was launching, Zed falls back to restoring the last opened workspace instead of opening an empty window.
+
 2. Restore the workspace that was closed last:
 
 ```json [settings]
