@@ -62,7 +62,7 @@ fn main() {
             .foreground_executor()
             .block_on(Session::new(session_id, kvp));
         let session = cx.new(|cx| AppSession::new(session, cx));
-        let node_runtime = NodeRuntime::unavailable();
+        let node_runtime = NodeRuntime::unavailable(cx.background_executor().clone());
 
         let app_state = Arc::new(AppState {
             languages,

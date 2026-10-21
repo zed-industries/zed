@@ -188,9 +188,7 @@ impl LinuxCommon {
                     if let calloop::channel::Event::Msg(runnable) = event {
                         let common = common.clone();
                         loop_handle.insert_idle(move |_| {
-                            let location = runnable.metadata().location;
-                            let spawned = runnable.metadata().spawned;
-                            gpui::profiler::update_running_task(spawned, location);
+                            gpui::profiler::update_running_task(runnable.metadata());
                             runnable.run();
                             gpui::profiler::save_task_timing();
 

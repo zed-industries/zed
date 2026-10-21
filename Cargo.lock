@@ -932,11 +932,12 @@ name = "askpass"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-fs",
+ "async-lock",
  "futures 0.3.34",
  "gpui",
  "log",
  "net",
- "smol",
  "tempfile",
  "util",
  "which",
@@ -1433,6 +1434,7 @@ dependencies = [
  "client",
  "db",
  "editor",
+ "futures-lite 2.6.1",
  "gpui",
  "markdown_preview",
  "project",
@@ -1441,7 +1443,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol",
  "telemetry",
  "ui",
  "util",
@@ -3109,6 +3110,7 @@ dependencies = [
  "feature_flags",
  "fs",
  "futures 0.3.34",
+ "futures-lite 2.6.1",
  "gpui",
  "gpui_tokio",
  "http_client",
@@ -3130,7 +3132,6 @@ dependencies = [
  "serde_urlencoded",
  "settings",
  "sha2",
- "smol",
  "telemetry",
  "telemetry_events",
  "text",
@@ -3416,6 +3417,7 @@ name = "collab_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-fs",
  "call",
  "channel",
  "client",
@@ -3436,7 +3438,6 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
- "smol",
  "telemetry",
  "theme",
  "theme_settings",
@@ -4538,7 +4539,9 @@ name = "dap"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-channel 2.5.0",
  "async-compression",
+ "async-lock",
  "async-pipe",
  "async-tar",
  "async-trait",
@@ -4582,6 +4585,7 @@ name = "dap_adapters"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-lock",
  "async-trait",
  "collections",
  "dap",
@@ -4802,11 +4806,11 @@ dependencies = [
  "dap",
  "editor",
  "futures 0.3.34",
+ "futures-lite 2.6.1",
  "gpui",
  "project",
  "serde_json",
  "settings",
- "smol",
  "util",
  "workspace",
 ]
@@ -5406,6 +5410,7 @@ version = "0.1.0"
 dependencies = [
  "anthropic",
  "anyhow",
+ "async-process",
  "chrono",
  "clap",
  "client",
@@ -5448,7 +5453,6 @@ dependencies = [
  "settings",
  "shellexpand",
  "similar",
- "smol",
  "sqlez",
  "sqlez_macros",
  "strum 0.28.0",
@@ -6034,8 +6038,8 @@ dependencies = [
 name = "eval_utils"
 version = "0.1.0"
 dependencies = [
+ "async-lock",
  "gpui_platform",
- "smol",
 ]
 
 [[package]]
@@ -6685,6 +6689,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-channel 2.5.0",
+ "async-fs",
  "async-std",
  "async-tar",
  "async-trait",
@@ -6707,7 +6712,6 @@ dependencies = [
  "serde",
  "serde_json",
  "slotmap",
- "smol",
  "telemetry",
  "tempfile",
  "text",
@@ -7472,6 +7476,7 @@ dependencies = [
  "backtrace",
  "bench_metrics",
  "bitflags 2.13.1",
+ "blocking",
  "chrono",
  "collections",
  "criterion",
@@ -7552,6 +7557,7 @@ dependencies = [
  "anyhow",
  "async-task",
  "block2 0.6.2",
+ "blocking",
  "cbindgen",
  "collections",
  "core-foundation 0.10.0",
@@ -7616,6 +7622,7 @@ dependencies = [
  "anyhow",
  "as-raw-xcb-connection",
  "ashpd",
+ "blocking",
  "bytemuck",
  "calloop",
  "calloop-wayland-source",
@@ -7810,6 +7817,7 @@ dependencies = [
  "accesskit",
  "accesskit_windows",
  "anyhow",
+ "blocking",
  "collections",
  "dunce",
  "etagere",
@@ -9853,6 +9861,7 @@ dependencies = [
  "anyhow",
  "async-compression",
  "async-fs",
+ "async-lock",
  "async-tar",
  "async-trait",
  "chrono",
@@ -11398,18 +11407,19 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-compression",
+ "async-lock",
  "async-std",
  "async-tar",
  "async-trait",
  "chrono",
  "futures 0.3.34",
+ "gpui",
  "http_client",
  "log",
  "paths",
  "semver",
  "serde",
  "serde_json",
- "smol",
  "tempfile",
  "thiserror 2.0.17",
  "util",

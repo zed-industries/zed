@@ -1435,7 +1435,7 @@ impl AppState {
             languages,
             user_store,
             workspace_store,
-            node_runtime: NodeRuntime::unavailable(),
+            node_runtime: NodeRuntime::unavailable(cx.background_executor().clone()),
             build_window_options: |_, _| Default::default(),
             session,
         })
@@ -8481,7 +8481,7 @@ impl Workspace {
             user_store,
             fs: project.read(cx).fs().clone(),
             build_window_options: |_, _| Default::default(),
-            node_runtime: NodeRuntime::unavailable(),
+            node_runtime: NodeRuntime::unavailable(cx.background_executor().clone()),
             session,
         });
         let workspace = Self::new(Default::default(), project, app_state, window, cx);

@@ -346,7 +346,7 @@ impl TestServer {
             languages: language_registry,
             fs: fs.clone(),
             build_window_options: |_, _| Default::default(),
-            node_runtime: NodeRuntime::unavailable(),
+            node_runtime: NodeRuntime::unavailable(cx.executor()),
             session,
         });
 

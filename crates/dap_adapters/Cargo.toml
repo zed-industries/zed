@@ -22,6 +22,8 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
+async-lock.workspace = true
+async-fs.workspace = true
 async-trait.workspace = true
 collections.workspace = true
 dap.workspace = true
@@ -33,7 +35,6 @@ language.workspace = true
 log.workspace = true
 paths.workspace = true
 serde_json.workspace = true
-smol.workspace = true
 task.workspace = true
 util.workspace = true
 

@@ -40,9 +40,7 @@ impl LinuxDispatcher {
                     .name(format!("Worker-{i}"))
                     .spawn(move || {
                         for runnable in receiver.iter() {
-                            let location = runnable.metadata().location;
-                            let spawned = runnable.metadata().spawned;
-                            profiler::update_running_task(spawned, location);
+                            profiler::update_running_task(runnable.metadata());
                             runnable.run();
                             profiler::save_task_timing();
                         }
@@ -75,9 +73,7 @@ impl LinuxDispatcher {
                                     calloop::timer::Timer::from_duration(timer.duration),
                                     move |_, _, _| {
                                         if let Some(runnable) = runnable.take() {
-                                            let location = runnable.metadata().location;
-                                            let spawned = runnable.metadata().spawned;
-                                            profiler::update_running_task(spawned, location);
+                                            profiler::update_running_task(runnable.metadata());
                                             runnable.run();
                                             profiler::save_task_timing();
                                         }
@@ -114,6 +110,15 @@ impl PlatformDispatcher for LinuxDispatcher {
         self.background_sender
             .send(priority, runnable)
             .unwrap_or_else(|_| panic!("blocking sender returned without value"));
+    }
+
+    fn dispatch_blocking(&self, runnable: RunnableVariant) {
+        blocking::unblock(move || {
+            profiler::update_running_task(runnable.metadata());
+            let _timing = gpui_util::defer(profiler::save_task_timing);
+            runnable.run();
+        })
+        .detach();
     }
 
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) {

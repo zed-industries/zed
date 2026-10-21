@@ -544,7 +544,7 @@ mod tests {
 
         server_cx.update(HeadlessProject::init);
         let http_client = Arc::new(BlockedHttpClient);
-        let node_runtime = NodeRuntime::unavailable();
+        let node_runtime = NodeRuntime::unavailable(server_cx.executor());
         let languages = Arc::new(language::LanguageRegistry::new(server_cx.executor()));
         let proxy = Arc::new(ExtensionHostProxy::new());
 
@@ -626,7 +626,7 @@ mod tests {
 
         server_cx.update(HeadlessProject::init);
         let http_client = Arc::new(BlockedHttpClient);
-        let node_runtime = NodeRuntime::unavailable();
+        let node_runtime = NodeRuntime::unavailable(server_cx.executor());
         let languages = Arc::new(language::LanguageRegistry::new(server_cx.executor()));
         let proxy = Arc::new(ExtensionHostProxy::new());
 
@@ -801,7 +801,7 @@ mod tests {
 
         server_cx.update(HeadlessProject::init);
         let http_client = Arc::new(BlockedHttpClient);
-        let node_runtime = NodeRuntime::unavailable();
+        let node_runtime = NodeRuntime::unavailable(server_cx.executor());
         let languages = Arc::new(language::LanguageRegistry::new(server_cx.executor()));
         let proxy = Arc::new(ExtensionHostProxy::new());
 
@@ -893,7 +893,7 @@ mod tests {
 
         server_cx.update(HeadlessProject::init);
         let http_client = Arc::new(BlockedHttpClient);
-        let node_runtime = NodeRuntime::unavailable();
+        let node_runtime = NodeRuntime::unavailable(server_cx.executor());
         let languages = Arc::new(language::LanguageRegistry::new(server_cx.executor()));
         let proxy = Arc::new(ExtensionHostProxy::new());
 

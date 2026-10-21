@@ -121,6 +121,10 @@ impl Scheduler for PlatformScheduler {
         self.dispatcher.dispatch(runnable, priority);
     }
 
+    fn schedule_blocking(&self, runnable: Runnable<RunnableMeta>) {
+        self.dispatcher.dispatch_blocking(runnable);
+    }
+
     fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>) {
         self.dispatcher.spawn_realtime(f);
     }
@@ -136,6 +140,7 @@ impl Scheduler for PlatformScheduler {
             .metadata(RunnableMeta {
                 location,
                 spawned: scheduler::SpawnTime(Instant::now()),
+                kind: scheduler::TaskKind::Cooperative,
             })
             .spawn(
                 move |_| async move {
@@ -192,7 +197,7 @@ impl Clock for PlatformClock {
 #[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
     use super::*;
-    use crate::RunnableVariant;
+    use crate::{RunnableVariant, ThreadedDispatcher};
     use scheduler::BackgroundExecutor;
     use std::time::Instant as StdInstant;
 
@@ -207,6 +212,9 @@ mod tests {
         fn dispatch(&self, _runnable: RunnableVariant, _priority: Priority) {
             panic!("SmokeDispatcher should not be asked to dispatch in this test");
         }
+        fn dispatch_blocking(&self, _runnable: RunnableVariant) {
+            panic!("SmokeDispatcher does not implement blocking dispatch");
+        }
         fn dispatch_on_main_thread(&self, _runnable: RunnableVariant, _priority: Priority) {
             panic!("SmokeDispatcher does not implement a main thread");
         }
@@ -216,6 +224,90 @@ mod tests {
         fn spawn_realtime(&self, _f: Box<dyn FnOnce() + Send>) {
             panic!("SmokeDispatcher does not implement realtime");
         }
+    }
+
+    #[test]
+    fn spawn_blocking_uses_native_pool_and_returns_output() {
+        let scheduler = Arc::new(PlatformScheduler::new(Arc::new(ThreadedDispatcher::new())));
+        let background = BackgroundExecutor::new(scheduler.clone());
+        let caller = std::thread::current().id();
+        let task = background.spawn_blocking(|| {
+            let thread = std::thread::current();
+            (thread.id(), thread.name().map(str::to_owned), 42)
+        });
+
+        let Ok((thread_id, thread_name, output)) = scheduler
+            .foreground_executor()
+            .block_with_timeout(Duration::from_secs(5), task)
+        else {
+            panic!("blocking task did not complete");
+        };
+        assert_ne!(thread_id, caller);
+        assert!(
+            thread_name
+                .as_deref()
+                .is_some_and(|name| name.starts_with("blocking-"))
+        );
+        assert_eq!(output, 42);
+    }
+
+    #[test]
+    fn spawn_blocking_cancellation_does_not_interrupt_started_work() {
+        let background = BackgroundExecutor::new(Arc::new(PlatformScheduler::new(Arc::new(
+            ThreadedDispatcher::new(),
+        ))));
+        let (started_sender, started_receiver) = std::sync::mpsc::channel();
+        let (release_sender, release_receiver) = std::sync::mpsc::channel();
+        let (completed_sender, completed_receiver) = std::sync::mpsc::channel();
+        let task = background.spawn_blocking(move || {
+            started_sender
+                .send(std::thread::current().id())
+                .expect("test should receive the started signal");
+            release_receiver
+                .recv_timeout(Duration::from_secs(5))
+                .expect("test should release cancelled work");
+            completed_sender
+                .send(42)
+                .expect("test should observe work completing after cancellation");
+        });
+        let thread_id = started_receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("blocking work should start before cancellation");
+        assert_ne!(thread_id, std::thread::current().id());
+
+        drop(task);
+        release_sender
+            .send(())
+            .expect("cancellation must not interrupt running work");
+        assert_eq!(
+            completed_receiver
+                .recv_timeout(Duration::from_secs(5))
+                .expect("cancelled blocking work should still complete"),
+            42
+        );
+    }
+
+    #[cfg(feature = "profiler")]
+    #[test]
+    fn spawn_blocking_preserves_gpui_spawn_location_and_task_kind() {
+        let dispatcher = Arc::new(ThreadedDispatcher::new());
+        let background = crate::BackgroundExecutor::new(dispatcher.clone());
+        let foreground = crate::ForegroundExecutor::new(dispatcher);
+        let spawn_line = line!() + 1;
+        let task = background.spawn_blocking(|| {
+            crate::profiler::THREAD_TIMINGS.with(|timings| {
+                let timings = timings.lock();
+                let running = timings.running.as_ref().expect("blocking task is profiled");
+                (running.kind, running.location)
+            })
+        });
+        let Ok((kind, location)) = foreground.block_with_timeout(Duration::from_secs(5), task)
+        else {
+            panic!("profiled blocking task did not complete");
+        };
+        assert_eq!(kind, scheduler::TaskKind::Blocking);
+        assert_eq!(location.file(), file!());
+        assert_eq!(location.line(), spawn_line);
     }
 
     #[test]

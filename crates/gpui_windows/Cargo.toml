@@ -24,6 +24,7 @@ gpui.workspace = true
 accesskit.workspace = true
 accesskit_windows.workspace = true
 anyhow.workspace = true
+blocking.workspace = true
 collections.workspace = true
 dunce.workspace = true
 etagere.workspace = true

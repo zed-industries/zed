@@ -13,7 +13,6 @@ use node_runtime::NodeRuntime;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::WorktreeId;
-use smol::fs::File;
 use std::{
     borrow::Borrow,
     ffi::OsStr,
@@ -318,10 +317,7 @@ pub async fn download_adapter_from_github(
         }
         DownloadedFileType::Zip | DownloadedFileType::Vsix => {
             let zip_path = version_path.with_extension("zip");
-            let mut file = File::create(&zip_path).await?;
-            futures::io::copy(response.body_mut(), &mut file).await?;
-            let file = File::open(&zip_path).await?;
-            extract_zip(&version_path, file)
+            extract_zip(&version_path, response.body_mut())
                 .await
                 // we cannot check the status as some adapter include files with names that trigger `Illegal byte sequence`
                 .inspect_err(|e| log::warn!("ZIP extraction error: {}. Ignoring...", e))

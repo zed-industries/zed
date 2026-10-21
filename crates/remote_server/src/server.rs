@@ -6,6 +6,7 @@ mod remote_editing_tests;
 pub use headless_project::{HeadlessAppState, HeadlessProject};
 
 use anyhow::{Context as _, Result, anyhow};
+use async_channel::{Receiver, Sender};
 use clap::Subcommand;
 use client::ProxySettings;
 use collections::HashMap;
@@ -39,12 +40,7 @@ use reqwest_client::ReqwestClient;
 use rpc::proto::{self, Envelope, REMOTE_SERVER_PROJECT_ID};
 use rpc::{AnyProtoClient, TypedEnvelope};
 use settings::{Settings, SettingsStore, watch_config_file};
-use smol::{
-    Timer,
-    channel::{Receiver, Sender},
-    io::AsyncReadExt,
-    stream::StreamExt as _,
-};
+use smol::{Timer, io::AsyncReadExt, stream::StreamExt as _};
 use std::{
     ffi::OsStr,
     fs::File,
@@ -804,8 +800,12 @@ pub fn execute_run(
                 )
             };
 
-            let node_runtime =
-                NodeRuntime::new(http_client.clone(), shell_env_loaded_rx, node_settings_rx);
+            let node_runtime = NodeRuntime::new(
+                cx.background_executor().clone(),
+                http_client.clone(),
+                shell_env_loaded_rx,
+                node_settings_rx,
+            );
 
             let mut languages = LanguageRegistry::new(cx.background_executor().clone());
             languages.set_language_server_download_dir(paths::languages_dir().clone());

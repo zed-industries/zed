@@ -83,7 +83,7 @@ pub fn eval<P>(
     let (tx, rx) = mpsc::channel();
 
     let executor = gpui_platform::background_executor();
-    let semaphore = Arc::new(smol::lock::Semaphore::new(32));
+    let semaphore = Arc::new(async_lock::Semaphore::new(32));
     let evalf = Arc::new(evalf);
     // Warm the cache once
     let first_output = evalf();

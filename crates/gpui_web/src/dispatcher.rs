@@ -263,6 +263,10 @@ impl PlatformDispatcher for WebDispatcher {
         }
     }
 
+    fn dispatch_blocking(&self, runnable: RunnableVariant) {
+        self.dispatch(runnable, Priority::default());
+    }
+
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) {
         if self.on_main_thread() {
             schedule_runnable(&browser_window(), runnable, priority);

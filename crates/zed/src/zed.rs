@@ -3082,7 +3082,7 @@ mod tests {
 
         server_cx.update(HeadlessProject::init);
         let http_client = Arc::new(BlockedHttpClient);
-        let node_runtime = NodeRuntime::unavailable();
+        let node_runtime = NodeRuntime::unavailable(server_cx.executor());
         let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
         let extension_host_proxy = Arc::new(ExtensionHostProxy::new());
         let _headless = server_cx.new(|cx| {
@@ -6128,7 +6128,7 @@ mod tests {
         cx.set_global(settings);
         let languages = LanguageRegistry::test(cx.executor());
         let languages = Arc::new(languages);
-        let node_runtime = node_runtime::NodeRuntime::unavailable();
+        let node_runtime = node_runtime::NodeRuntime::unavailable(cx.executor());
         cx.update(|cx| {
             languages::init(languages.clone(), fs, node_runtime, cx);
         });

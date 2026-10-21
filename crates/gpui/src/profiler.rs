@@ -1,7 +1,7 @@
 #[cfg(feature = "profiler")]
 use hdrhistogram::Histogram;
 use itertools::Itertools;
-use scheduler::{Instant, SpawnTime};
+use scheduler::{Instant, RunnableMeta, SpawnTime, TaskKind};
 #[cfg(feature = "profiler")]
 use smallvec::SmallVec;
 use std::{
@@ -99,6 +99,7 @@ pub struct ActiveTiming {
     pub location: &'static core::panic::Location<'static>,
     pub spawned: SpawnTime,
     pub start: Instant,
+    pub kind: TaskKind,
 }
 
 impl TaskTiming {
@@ -200,6 +201,7 @@ impl ThreadTaskStatistics {
                         location,
                         spawned,
                         start,
+                        kind,
                     }) = timings.running
                 {
                     let end = YieldTime(Instant::now());
@@ -210,7 +212,10 @@ impl ThreadTaskStatistics {
                         end,
                     };
                     stats.add_runtime(timing);
-                    stats.add_yield_timing(timing);
+                    match kind {
+                        TaskKind::Cooperative => stats.add_yield_timing(timing),
+                        TaskKind::Blocking => (),
+                    }
                 }
 
                 Self {
@@ -577,18 +582,22 @@ impl ThreadTimings {
     #[cfg(feature = "profiler")]
     pub fn update_running_task(
         &mut self,
-        spawned: SpawnTime,
-        location: &'static std::panic::Location<'_>,
+        &RunnableMeta {
+            spawned,
+            location,
+            kind,
+        }: &RunnableMeta,
     ) {
         let start = Instant::now();
         self.running = Some(ActiveTiming {
             spawned,
             location,
             start,
+            kind,
         });
     }
     #[cfg(not(feature = "profiler"))]
-    pub fn update_running_task(&mut self, _: SpawnTime, _: &'static std::panic::Location<'_>) {}
+    pub fn update_running_task(&mut self, _: &RunnableMeta) {}
 
     #[cfg(feature = "profiler")]
     pub fn save_task_timing(&mut self, ended: YieldTime) -> TaskTiming {
@@ -596,6 +605,7 @@ impl ThreadTimings {
             location,
             start,
             spawned,
+            kind,
         } = self
             .running
             .take()
@@ -607,7 +617,10 @@ impl ThreadTimings {
             start,
             end: ended,
         };
-        self.stats.add_yield_timing(timing);
+        match kind {
+            TaskKind::Cooperative => self.stats.add_yield_timing(timing),
+            TaskKind::Blocking => (),
+        }
         self.stats.add_runtime(timing);
 
         if trace_enabled() {
@@ -666,11 +679,11 @@ impl Drop for ThreadTimings {
 }
 
 #[doc(hidden)]
-pub fn update_running_task(spawned: SpawnTime, location: &'static std::panic::Location<'_>) {
+pub fn update_running_task(metadata: &RunnableMeta) {
     #[cfg(feature = "profiler")]
     journal::begin_foreground_turn();
     THREAD_TIMINGS.with(|timings| {
-        timings.lock().update_running_task(spawned, location);
+        timings.lock().update_running_task(metadata);
     });
 }
 
@@ -1655,6 +1668,154 @@ impl FrameTimingCollector {
 mod tests {
     use super::*;
     use std::sync::{Mutex, MutexGuard};
+
+    #[test]
+    fn completed_blocking_tasks_retain_traces_and_runtime_without_crowding_poll_stats() {
+        let _trace_test_guard = TraceTestGuard::new();
+        let _trace_scope = trace_scope();
+        let mut timings = ThreadTimings::new(None, std::thread::current().id());
+        let start = Instant::now();
+        let blocking_location = std::panic::Location::caller();
+        let cooperative_location = std::panic::Location::caller();
+
+        for (kind, location) in [
+            (TaskKind::Blocking, blocking_location),
+            (TaskKind::Cooperative, cooperative_location),
+            (TaskKind::Blocking, blocking_location),
+        ] {
+            for milliseconds in 1..=5 {
+                let duration = match kind {
+                    TaskKind::Cooperative => Duration::from_millis(milliseconds),
+                    TaskKind::Blocking => Duration::from_secs(milliseconds),
+                };
+                timings.update_running_task(&RunnableMeta {
+                    location,
+                    spawned: SpawnTime(start),
+                    kind,
+                });
+                timings.running.as_mut().expect("task is running").start = start;
+                let timing = timings.save_task_timing(YieldTime(start + duration));
+                assert_eq!(timing.poll_duration(), duration);
+                assert!(timings.running.is_none());
+                if kind == TaskKind::Blocking {
+                    assert!(timings.stats.longest_poll_times.iter().all(|timing| {
+                        timing.poll_duration().is_zero() || timing.location == cooperative_location
+                    }));
+                }
+            }
+        }
+
+        let mut durations = timings.stats.longest_poll_times.map(|timing| {
+            assert_eq!(timing.location, cooperative_location);
+            timing.poll_duration()
+        });
+        durations.sort();
+        assert_eq!(durations, [1, 2, 3, 4, 5].map(Duration::from_millis));
+        assert!(timings.stats.longest_runtimes.iter().all(|timing| {
+            timing.location == blocking_location && timing.since_spawn() >= Duration::from_secs(1)
+        }));
+        assert_eq!(timings.total_pushed, 15);
+        let trace = timings.get_thread_task_timings(TasksIncluded::OnlyCompleted);
+        assert_eq!(trace.timings.len(), 15);
+        assert_eq!(
+            trace
+                .timings
+                .iter()
+                .filter(|timing| timing.location == blocking_location)
+                .count(),
+            10
+        );
+        assert_eq!(
+            trace
+                .timings
+                .iter()
+                .map(TaskTiming::poll_duration)
+                .sum::<Duration>(),
+            Duration::from_secs(30) + Duration::from_millis(15)
+        );
+    }
+
+    #[test]
+    fn running_blocking_tasks_retain_traces_and_runtime_but_not_poll_stats() {
+        for kind in [TaskKind::Blocking, TaskKind::Cooperative] {
+            let thread_id = std::thread::current().id();
+            let timings = Arc::new(spin::Mutex::new(ThreadTimings::new(None, thread_id)));
+            let start = Instant::now() - Duration::from_secs(1);
+            let location = std::panic::Location::caller();
+            {
+                let mut timings = timings.lock();
+                timings.update_running_task(&RunnableMeta {
+                    location,
+                    spawned: SpawnTime(start),
+                    kind,
+                });
+                timings.running.as_mut().expect("task is running").start = start;
+                assert!(
+                    timings
+                        .get_thread_task_timings(TasksIncluded::OnlyCompleted)
+                        .timings
+                        .is_empty()
+                );
+                let trace = timings.get_thread_task_timings(TasksIncluded::CompletedAndRunning);
+                assert_eq!(trace.timings.len(), 1);
+                assert_eq!(trace.timings[0].location, location);
+                assert_eq!(trace.timings[0].start, start);
+            }
+
+            let trace = ThreadTaskTimings::collect(
+                vec![(thread_id, timings.clone())],
+                TasksIncluded::CompletedAndRunning,
+            );
+            assert_eq!(trace[0].timings.len(), 1);
+            assert_eq!(trace[0].timings[0].location, location);
+            assert_eq!(trace[0].timings[0].start, start);
+
+            let completed = ThreadTaskStatistics::collect_and_reset(
+                vec![(thread_id, timings.clone())],
+                TasksIncluded::OnlyCompleted,
+            );
+            assert!(
+                completed[0]
+                    .stats
+                    .longest_runtimes
+                    .iter()
+                    .all(|timing| timing.since_spawn().is_zero())
+            );
+            for _ in 0..2 {
+                let stats = ThreadTaskStatistics::collect_and_reset(
+                    vec![(thread_id, timings.clone())],
+                    TasksIncluded::CompletedAndRunning,
+                );
+                let stats = &stats[0].stats;
+                assert!(stats.longest_runtimes.iter().any(|timing| {
+                    timing.location == location && timing.since_spawn() >= Duration::from_secs(1)
+                }));
+                match kind {
+                    TaskKind::Blocking => assert!(
+                        stats
+                            .longest_poll_times
+                            .iter()
+                            .all(|timing| timing.poll_duration().is_zero())
+                    ),
+                    TaskKind::Cooperative => {
+                        assert!(stats.longest_poll_times.iter().any(|timing| {
+                            timing.location == location
+                                && timing.poll_duration() >= Duration::from_secs(1)
+                        }))
+                    }
+                }
+                assert!(timings.lock().running.is_some());
+                assert!(
+                    timings
+                        .lock()
+                        .stats
+                        .longest_runtimes
+                        .iter()
+                        .all(|timing| timing.since_spawn().is_zero())
+                );
+            }
+        }
+    }
 
     #[test]
     fn interruptions_drop_latency_samples_but_hiding_keeps_draw_work() {

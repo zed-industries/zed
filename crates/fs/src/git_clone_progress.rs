@@ -1,5 +1,5 @@
 use futures::AsyncRead;
-use smol::io::AsyncReadExt;
+use futures::io::AsyncReadExt;
 use std::io;
 
 pub(crate) async fn read(

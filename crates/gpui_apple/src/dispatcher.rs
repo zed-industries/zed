@@ -48,6 +48,15 @@ impl PlatformDispatcher for AppleDispatcher {
         }
     }
 
+    fn dispatch_blocking(&self, runnable: RunnableVariant) {
+        blocking::unblock(move || {
+            gpui::profiler::update_running_task(runnable.metadata());
+            let _timing = gpui_util::defer(gpui::profiler::save_task_timing);
+            runnable.run();
+        })
+        .detach();
+    }
+
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, _priority: Priority) {
         let context = runnable.into_raw().as_ptr() as *mut c_void;
         unsafe {
@@ -193,9 +202,7 @@ extern "C" fn trampoline(context: *mut c_void) {
     let runnable =
         unsafe { Runnable::<RunnableMeta>::from_raw(NonNull::new_unchecked(context as *mut ())) };
 
-    let location = runnable.metadata().location;
-    let spawned = runnable.metadata().spawned;
-    gpui::profiler::update_running_task(spawned, location);
+    gpui::profiler::update_running_task(runnable.metadata());
     runnable.run();
     gpui::profiler::save_task_timing();
 }

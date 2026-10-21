@@ -359,7 +359,7 @@ async fn setup_worktree(example: &Example, step_progress: &StepProgress) -> Resu
         let uncommitted_diff =
             strip_diff_path_prefix(&example.spec.uncommitted_diff, &repo_name.name);
 
-        let mut apply_process = smol::process::Command::new("git")
+        let mut apply_process = async_process::Command::new("git")
             .current_dir(&worktree_path)
             .args(&["apply", "-"])
             .stdin(std::process::Stdio::piped())

@@ -140,7 +140,7 @@ impl CallStatsModal {
             };
             cx.background_spawn(async move {
                 let report = serde_json::to_string_pretty(&report)?;
-                smol::fs::write(path, report).await?;
+                async_fs::write(path, report).await?;
                 anyhow::Ok(())
             })
             .await

@@ -37,7 +37,6 @@ use git::repository::{GitRepository, RealGitRepository};
 use is_executable::IsExecutable;
 use rope::Rope;
 use serde::{Deserialize, Serialize};
-use smol::io::AsyncWriteExt;
 #[cfg(feature = "test-support")]
 use std::path::Component;
 use std::{
@@ -67,7 +66,7 @@ use git::{
 use util::paths::normalize_path;
 
 #[cfg(feature = "test-support")]
-use smol::io::AsyncReadExt;
+use futures::io::AsyncReadExt;
 #[cfg(feature = "test-support")]
 use std::ffi::OsStr;
 
@@ -739,15 +738,35 @@ fn read_dir_entries(path: PathBuf) -> Result<impl Send + Iterator<Item = Result<
 #[async_trait::async_trait]
 impl Fs for RealFs {
     async fn create_dir(&self, path: &Path) -> Result<()> {
-        Ok(smol::fs::create_dir_all(path).await?)
+        self.executor
+            .spawn_blocking({
+                let path = path.to_path_buf();
+                move || std::fs::create_dir_all(path)
+            })
+            .await
+            .map_err(Into::into)
     }
 
     async fn create_symlink(&self, path: &Path, target: PathBuf) -> Result<()> {
         #[cfg(unix)]
-        smol::fs::unix::symlink(target, path).await?;
+        self.executor
+            .spawn_blocking({
+                let path = path.to_path_buf();
+                let target = target.clone();
+                move || std::os::unix::fs::symlink(target, path)
+            })
+            .await?;
 
         #[cfg(windows)]
-        if smol::fs::metadata(&target).await?.is_dir() {
+        if self
+            .executor
+            .spawn_blocking({
+                let target = target.clone();
+                move || std::fs::metadata(&target)
+            })
+            .await?
+            .is_dir()
+        {
             let status = new_command("cmd")
                 .args(["/C", "mklink", "/J"])
                 .args([path, target.as_path()])
@@ -762,22 +781,31 @@ impl Fs for RealFs {
                 ));
             }
         } else {
-            smol::fs::windows::symlink_file(target, path).await?
+            self.executor
+                .spawn_blocking({
+                    let path = path.to_path_buf();
+                    let target = target.clone();
+                    move || std::os::windows::fs::symlink_file(target, path)
+                })
+                .await?
         }
 
         Ok(())
     }
 
     async fn create_file(&self, path: &Path, options: CreateOptions) -> Result<()> {
-        let mut open_options = smol::fs::OpenOptions::new();
+        let mut open_options = std::fs::OpenOptions::new();
         open_options.write(true).create(true);
         if options.overwrite {
             open_options.truncate(true);
         } else if !options.ignore_if_exists {
             open_options.create_new(true);
         }
-        open_options
-            .open(path)
+        self.executor
+            .spawn_blocking({
+                let path = path.to_path_buf();
+                move || open_options.open(path)
+            })
             .await
             .with_context(|| format!("Failed to create file at {:?}", path))?;
         Ok(())
@@ -788,7 +816,7 @@ impl Fs for RealFs {
         path: &Path,
         content: Pin<&mut (dyn AsyncRead + Send)>,
     ) -> Result<()> {
-        let mut file = smol::fs::File::create(&path)
+        let mut file = async_fs::File::create(&path)
             .await
             .with_context(|| format!("Failed to create file at {:?}", path))?;
         futures::io::copy(content, &mut file).await?;
@@ -805,15 +833,29 @@ impl Fs for RealFs {
     }
 
     async fn copy_file(&self, source: &Path, target: &Path, options: CopyOptions) -> Result<()> {
-        if !options.overwrite && smol::fs::metadata(target).await.is_ok() {
+        if !options.overwrite
+            && self
+                .executor
+                .spawn_blocking({
+                    let target = target.to_path_buf();
+                    move || std::fs::metadata(target)
+                })
+                .await
+                .is_ok()
+        {
             if options.ignore_if_exists {
                 return Ok(());
             } else {
                 anyhow::bail!("{target:?} already exists");
             }
         }
-
-        smol::fs::copy(source, target).await?;
+        self.executor
+            .spawn_blocking({
+                let target = target.to_path_buf();
+                let source = source.to_path_buf();
+                move || std::fs::copy(source, target)
+            })
+            .await?;
         Ok(())
     }
 
@@ -825,7 +867,13 @@ impl Fs for RealFs {
         }
 
         if options.overwrite {
-            smol::fs::rename(source, target).await?;
+            self.executor
+                .spawn_blocking({
+                    let target = target.to_path_buf();
+                    let source = source.to_path_buf();
+                    move || std::fs::rename(source, target)
+                })
+                .await?;
             return Ok(());
         }
 
@@ -836,7 +884,7 @@ impl Fs for RealFs {
                 let target = target.to_path_buf();
                 match self
                     .executor
-                    .spawn(async move { rename_without_replace(&source, &target) })
+                    .spawn_blocking(move || rename_without_replace(&source, &target))
                     .await
                 {
                     Ok(()) => return Ok(()),
@@ -870,7 +918,16 @@ impl Fs for RealFs {
             }
         };
 
-        if use_metadata_fallback && smol::fs::metadata(target).await.is_ok() {
+        if use_metadata_fallback
+            && self
+                .executor
+                .spawn_blocking({
+                    let target = target.to_path_buf();
+                    move || std::fs::metadata(target)
+                })
+                .await
+                .is_ok()
+        {
             if options.ignore_if_exists {
                 return Ok(());
             } else {
@@ -878,16 +935,30 @@ impl Fs for RealFs {
             }
         }
 
-        smol::fs::rename(source, target).await?;
+        self.executor
+            .spawn_blocking({
+                let source = source.to_path_buf();
+                let target = target.to_path_buf();
+                move || std::fs::rename(source, target)
+            })
+            .await?;
         Ok(())
     }
 
     async fn remove_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
-        let result = if options.recursive {
-            smol::fs::remove_dir_all(path).await
-        } else {
-            smol::fs::remove_dir(path).await
-        };
+        let result = self
+            .executor
+            .spawn_blocking({
+                let path = path.to_path_buf();
+                move || {
+                    if options.recursive {
+                        std::fs::remove_dir_all(path)
+                    } else {
+                        std::fs::remove_dir(path)
+                    }
+                }
+            })
+            .await;
         match result {
             Ok(()) => Ok(()),
             Err(err) if err.kind() == io::ErrorKind::NotFound && options.ignore_if_not_exists => {
@@ -914,7 +985,14 @@ impl Fs for RealFs {
             return Ok(());
         }
 
-        match smol::fs::remove_file(path).await {
+        match self
+            .executor
+            .spawn_blocking({
+                let path = path.to_path_buf();
+                move || std::fs::remove_file(path)
+            })
+            .await
+        {
             Ok(()) => Ok(()),
             Err(err) if err.kind() == io::ErrorKind::NotFound && options.ignore_if_not_exists => {
                 Ok(())
@@ -932,7 +1010,9 @@ impl Fs for RealFs {
         // its target and leave the link behind.
         let path = std::path::absolute(path).context("Could not make the path absolute")?;
 
-        let entry = smol::unblock(move || trash::delete_with_info(path))
+        let entry = self
+            .executor
+            .spawn_blocking(move || trash::delete_with_info(path))
             .await
             .context("Could not trash file or dir")?
             .into();
@@ -958,7 +1038,7 @@ impl Fs for RealFs {
     async fn load(&self, path: &Path) -> Result<String> {
         let path = path.to_path_buf();
         self.executor
-            .spawn(async move {
+            .spawn_blocking(move || {
                 std::fs::read_to_string(&path)
                     .with_context(|| format!("Failed to read file {}", path.display()))
             })
@@ -969,73 +1049,79 @@ impl Fs for RealFs {
         let path = path.to_path_buf();
         let bytes = self
             .executor
-            .spawn(async move { std::fs::read(path) })
+            .spawn_blocking(move || std::fs::read(path))
             .await?;
         Ok(bytes)
     }
 
     #[cfg(not(target_os = "windows"))]
     async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
-        smol::unblock(move || {
-            // Use the directory of the destination as temp dir to avoid
-            // invalid cross-device link error, and XDG_CACHE_DIR for fallback.
-            // See https://github.com/zed-industries/zed/pull/8437 for more details.
-            let mut tmp_file =
-                tempfile::NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))?;
-            tmp_file.write_all(data.as_bytes())?;
-            tmp_file.persist(path)?;
-            anyhow::Ok(())
-        })
-        .await?;
+        self.executor
+            .spawn_blocking(move || {
+                // Use the directory of the destination as temp dir to avoid
+                // invalid cross-device link error, and XDG_CACHE_DIR for fallback.
+                // See https://github.com/zed-industries/zed/pull/8437 for more details.
+                let mut tmp_file =
+                    tempfile::NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))?;
+                tmp_file.write_all(data.as_bytes())?;
+                tmp_file.persist(path)?;
+                anyhow::Ok(())
+            })
+            .await?;
 
         Ok(())
     }
 
     #[cfg(target_os = "windows")]
     async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
-        smol::unblock(move || {
-            // If temp dir is set to a different drive than the destination,
-            // we receive error:
-            //
-            // failed to persist temporary file:
-            // The system cannot move the file to a different disk drive. (os error 17)
-            //
-            // This is because `ReplaceFileW` does not support cross volume moves.
-            // See the remark section: "The backup file, replaced file, and replacement file must all reside on the same volume."
-            // https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew#remarks
-            //
-            // So we use the directory of the destination as a temp dir to avoid it.
-            // https://github.com/zed-industries/zed/issues/16571
-            let temp_dir = TempDir::new_in(path.parent().unwrap_or(paths::temp_dir()))?;
-            let temp_file = {
-                let temp_file_path = temp_dir.path().join("temp_file");
-                let mut file = std::fs::File::create_new(&temp_file_path)?;
-                file.write_all(data.as_bytes())?;
-                temp_file_path
-            };
-            atomic_replace(path.as_path(), temp_file.as_path())?;
-            anyhow::Ok(())
-        })
-        .await?;
+        self.executor
+            .spawn_blocking(move || {
+                // If temp dir is set to a different drive than the destination,
+                // we receive error:
+                //
+                // failed to persist temporary file:
+                // The system cannot move the file to a different disk drive. (os error 17)
+                //
+                // This is because `ReplaceFileW` does not support cross volume moves.
+                // See the remark section: "The backup file, replaced file, and replacement file must all reside on the same volume."
+                // https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew#remarks
+                //
+                // So we use the directory of the destination as a temp dir to avoid it.
+                // https://github.com/zed-industries/zed/issues/16571
+                let temp_dir = TempDir::new_in(path.parent().unwrap_or(paths::temp_dir()))?;
+                let temp_file = {
+                    let temp_file_path = temp_dir.path().join("temp_file");
+                    let mut file = std::fs::File::create_new(&temp_file_path)?;
+                    file.write_all(data.as_bytes())?;
+                    temp_file_path
+                };
+                atomic_replace(path.as_path(), temp_file.as_path())?;
+                anyhow::Ok(())
+            })
+            .await?;
         Ok(())
     }
 
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
-        let buffer_size = text.summary().len.min(10 * 1024);
-        if let Some(path) = path.parent() {
-            self.create_dir(path)
-                .await
-                .with_context(|| format!("Failed to create directory at {:?}", path))?;
-        }
-        let file = smol::fs::File::create(path)
+        let path = path.to_owned();
+        let text = text.clone();
+        self.executor
+            .spawn_blocking(move || {
+                let buffer_size = text.summary().len.min(10 * 1024);
+                if let Some(path) = path.parent() {
+                    std::fs::create_dir_all(path)
+                        .with_context(|| format!("Failed to create directory at {:?}", path))?;
+                }
+                let file = std::fs::File::create(&path)
+                    .with_context(|| format!("Failed to create file at {:?}", path))?;
+                let mut writer = io::BufWriter::with_capacity(buffer_size, file);
+                for chunk in text::chunks_with_line_ending(&text, line_ending) {
+                    writer.write_all(chunk.as_bytes())?;
+                }
+                writer.flush()?;
+                Ok(())
+            })
             .await
-            .with_context(|| format!("Failed to create file at {:?}", path))?;
-        let mut writer = smol::io::BufWriter::with_capacity(buffer_size, file);
-        for chunk in text::chunks_with_line_ending(text, line_ending) {
-            writer.write_all(chunk.as_bytes()).await?;
-        }
-        writer.flush().await?;
-        Ok(())
     }
 
     async fn write(&self, path: &Path, content: &[u8]) -> Result<()> {
@@ -1047,7 +1133,7 @@ impl Fs for RealFs {
         let path = path.to_owned();
         let contents = content.to_owned();
         self.executor
-            .spawn(async move {
+            .spawn_blocking(move || {
                 std::fs::write(path, contents)?;
                 Ok(())
             })
@@ -1057,7 +1143,7 @@ impl Fs for RealFs {
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf> {
         let path = path.to_owned();
         self.executor
-            .spawn(async move {
+            .spawn_blocking(move || {
                 #[cfg(target_os = "windows")]
                 let result = Self::canonicalize(&path);
 
@@ -1072,14 +1158,16 @@ impl Fs for RealFs {
     async fn is_file(&self, path: &Path) -> bool {
         let path = path.to_owned();
         self.executor
-            .spawn(async move { std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file()) })
+            .spawn_blocking(move || {
+                std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file())
+            })
             .await
     }
 
     async fn is_dir(&self, path: &Path) -> bool {
         let path = path.to_owned();
         self.executor
-            .spawn(async move { std::fs::metadata(path).is_ok_and(|metadata| metadata.is_dir()) })
+            .spawn_blocking(move || std::fs::metadata(path).is_ok_and(|metadata| metadata.is_dir()))
             .await
     }
 
@@ -1087,7 +1175,7 @@ impl Fs for RealFs {
         let path_buf = path.to_owned();
         let symlink_metadata = match self
             .executor
-            .spawn(async move { std::fs::symlink_metadata(&path_buf) })
+            .spawn_blocking(move || std::fs::symlink_metadata(&path_buf))
             .await
         {
             Ok(metadata) => metadata,
@@ -1105,7 +1193,7 @@ impl Fs for RealFs {
             // Read target metadata, if the target exists
             match self
                 .executor
-                .spawn(async move { std::fs::metadata(path_buf) })
+                .spawn_blocking(move || std::fs::metadata(path_buf))
                 .await
             {
                 Ok(target_metadata) => target_metadata,
@@ -1130,7 +1218,13 @@ impl Fs for RealFs {
         let inode = metadata.ino();
 
         #[cfg(windows)]
-        let inode = file_id(path).await?;
+        let inode = self
+            .executor
+            .spawn_blocking({
+                let path = path.to_path_buf();
+                move || file_id(&path)
+            })
+            .await?;
 
         #[cfg(windows)]
         let is_fifo = false;
@@ -1146,7 +1240,7 @@ impl Fs for RealFs {
         #[cfg(windows)]
         let is_executable = self
             .executor
-            .spawn(async move { path_buf.is_executable() })
+            .spawn_blocking(move || path_buf.is_executable())
             .await;
 
         Ok(Some(Metadata {
@@ -1165,7 +1259,7 @@ impl Fs for RealFs {
         let path = path.to_owned();
         let path = self
             .executor
-            .spawn(async move { std::fs::read_link(&path) })
+            .spawn_blocking(move || std::fs::read_link(&path))
             .await?;
         Ok(path)
     }
@@ -1177,7 +1271,7 @@ impl Fs for RealFs {
         let path = path.to_owned();
         let entries = self
             .executor
-            .spawn(async move { read_dir_entries(path) })
+            .spawn_blocking(move || read_dir_entries(path))
             .await?;
         Ok(Box::pin(iter(entries)))
     }
@@ -1348,7 +1442,7 @@ impl Fs for RealFs {
         if load != UNINITIALIZED {
             return load == CASE_SENSITIVE;
         }
-        let temp_dir = self.executor.spawn(async { TempDir::new() });
+        let temp_dir = self.executor.spawn_blocking(TempDir::new);
         let res = maybe!(async {
             let temp_dir = temp_dir.await?;
             let test_file_1 = temp_dir.path().join("case_sensitivity_test.tmp");
@@ -1414,16 +1508,10 @@ impl Fs for RealFs {
 
         let restored_item_path = trashed_entry.original_parent.join(&trashed_entry.name);
 
-        let (tx, rx) = futures::channel::oneshot::channel();
-        std::thread::Builder::new()
-            .name("restore trashed item".to_string())
-            .spawn(move || {
-                let res = trash::restore_all([trashed_entry.into_trash_item()]);
-                tx.send(res)
-            })
-            .expect("The OS can spawn a threads");
+        self.executor
+            .spawn_blocking(move || trash::restore_all([trashed_entry.into_trash_item()]))
+            .await?;
 
-        rx.await.expect("Restore all never panics")?;
         self.trash.lock().remove(trash_id);
         Ok(restored_item_path)
     }
@@ -3648,10 +3736,9 @@ fn read_recursive<'a>(
 // can we get file id not open the file twice?
 // https://github.com/rust-lang/rust/issues/63010
 #[cfg(target_os = "windows")]
-async fn file_id(path: impl AsRef<Path>) -> Result<u64> {
-    use std::os::windows::io::AsRawHandle;
+fn file_id(path: impl AsRef<Path>) -> Result<u64> {
+    use std::os::windows::{fs::OpenOptionsExt, io::AsRawHandle};
 
-    use smol::fs::windows::OpenOptionsExt;
     use windows::Win32::{
         Foundation::HANDLE,
         Storage::FileSystem::{
@@ -3659,21 +3746,17 @@ async fn file_id(path: impl AsRef<Path>) -> Result<u64> {
         },
     };
 
-    let file = smol::fs::OpenOptions::new()
+    let file = std::fs::OpenOptions::new()
         .read(true)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS.0)
-        .open(path)
-        .await?;
+        .open(path)?;
 
     let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
     // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle
     // This function supports Windows XP+
-    smol::unblock(move || {
-        unsafe { GetFileInformationByHandle(HANDLE(file.as_raw_handle() as _), &mut info)? };
+    unsafe { GetFileInformationByHandle(HANDLE(file.as_raw_handle() as _), &mut info)? };
 
-        Ok(((info.nFileIndexHigh as u64) << 32) | (info.nFileIndexLow as u64))
-    })
-    .await
+    Ok(((info.nFileIndexHigh as u64) << 32) | (info.nFileIndexLow as u64))
 }
 
 #[cfg(target_os = "windows")]

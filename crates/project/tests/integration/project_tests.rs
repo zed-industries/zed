@@ -117,23 +117,6 @@ async fn test_block_via_channel(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_block_via_smol(cx: &mut gpui::TestAppContext) {
-    cx.executor().allow_parking();
-
-    let io_task = smol::unblock(move || {
-        println!("sleeping on thread {:?}", std::thread::current().id());
-        std::thread::sleep(Duration::from_millis(10));
-        1
-    });
-
-    let task = cx.foreground_executor().spawn(async move {
-        io_task.await;
-    });
-
-    task.await;
-}
-
-#[gpui::test]
 async fn test_default_session_work_dirs_prefers_directory_worktrees_over_single_file_parents(
     cx: &mut gpui::TestAppContext,
 ) {

@@ -550,6 +550,17 @@ impl TestAppContext {
         self.foreground_executor.spawn(f(self.to_async()))
     }
 
+    /// Enqueues synchronous work on a reusable blocking pool on native platforms.
+    ///
+    /// Dropping the task does not cancel already running work.
+    #[track_caller]
+    pub fn spawn_blocking<R>(&self, work: impl FnOnce() -> R + Send + 'static) -> Task<R>
+    where
+        R: Send + 'static,
+    {
+        self.background_executor.spawn_blocking(work)
+    }
+
     /// true if the given global is defined
     pub fn has_global<G: Global>(&self) -> bool {
         let app = self.app.borrow();

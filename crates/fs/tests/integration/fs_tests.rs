@@ -13,8 +13,10 @@ use futures::{FutureExt, StreamExt};
 
 use fs::*;
 use gpui::{BackgroundExecutor, TestAppContext};
+use rope::Rope;
 use serde_json::json;
 use tempfile::TempDir;
+use text::LineEnding;
 use util::path;
 
 #[gpui::test]
@@ -481,6 +483,29 @@ async fn test_copy_recursive_with_ignoring(executor: BackgroundExecutor) {
 }
 
 #[gpui::test]
+async fn test_realfs_save(executor: BackgroundExecutor) {
+    let fs = RealFs::new(None, executor);
+    let directory = TempDir::new().unwrap();
+    let path = directory.path().join("nested").join("file.txt");
+    let content = "first\nsecond\n".repeat(2048);
+    let text = Rope::from(content.as_str());
+
+    for line_ending in [LineEnding::Unix, LineEnding::Windows] {
+        fs.save(&path, &text, line_ending).await.unwrap();
+        let expected = match line_ending {
+            LineEnding::Unix => content.clone(),
+            LineEnding::Windows => content.replace('\n', "\r\n"),
+        };
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
+    }
+
+    fs.save(&path, &Rope::new(), LineEnding::Unix)
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), b"");
+}
+
+#[gpui::test]
 async fn test_realfs_atomic_write(executor: BackgroundExecutor) {
     // With the file handle still open, the file should be replaced
     // https://github.com/zed-industries/zed/issues/30054
@@ -492,7 +517,9 @@ async fn test_realfs_atomic_write(executor: BackgroundExecutor) {
     // drop(file);  // We still hold the file handle here
     let content = std::fs::read_to_string(&file_to_be_replaced).unwrap();
     assert_eq!(content, "Hello");
-    gpui::block_on(fs.atomic_write(file_to_be_replaced.clone(), "World".into())).unwrap();
+    fs.atomic_write(file_to_be_replaced.clone(), "World".into())
+        .await
+        .unwrap();
     let content = std::fs::read_to_string(&file_to_be_replaced).unwrap();
     assert_eq!(content, "World");
 }
@@ -502,7 +529,9 @@ async fn test_realfs_atomic_write_non_existing_file(executor: BackgroundExecutor
     let fs = RealFs::new(None, executor);
     let temp_dir = TempDir::new().unwrap();
     let file_to_be_replaced = temp_dir.path().join("file.txt");
-    gpui::block_on(fs.atomic_write(file_to_be_replaced.clone(), "Hello".into())).unwrap();
+    fs.atomic_write(file_to_be_replaced.clone(), "Hello".into())
+        .await
+        .unwrap();
     let content = std::fs::read_to_string(&file_to_be_replaced).unwrap();
     assert_eq!(content, "Hello");
 }
@@ -831,7 +860,9 @@ async fn test_realfs_executable_metadata(executor: BackgroundExecutor) {
     std::fs::set_permissions(&executable_path, permissions).unwrap();
 
     let fs = RealFs::new(None, executor);
-    gpui::block_on(fs.create_symlink(&symlink_path, PathBuf::from("executable.sh"))).unwrap();
+    fs.create_symlink(&symlink_path, PathBuf::from("executable.sh"))
+        .await
+        .unwrap();
 
     let non_executable_metadata = fs
         .metadata(&non_executable_path)
@@ -863,7 +894,9 @@ async fn test_realfs_broken_symlink_metadata(executor: BackgroundExecutor) {
     let path = tempdir.path();
     let fs = RealFs::new(None, executor);
     let symlink_path = path.join("symlink");
-    gpui::block_on(fs.create_symlink(&symlink_path, PathBuf::from("file_a.txt"))).unwrap();
+    fs.create_symlink(&symlink_path, PathBuf::from("file_a.txt"))
+        .await
+        .unwrap();
     let metadata = fs
         .metadata(&symlink_path)
         .await
@@ -883,7 +916,9 @@ async fn test_realfs_symlink_loop_metadata(executor: BackgroundExecutor) {
     let path = tempdir.path();
     let fs = RealFs::new(None, executor);
     let symlink_path = path.join("symlink");
-    gpui::block_on(fs.create_symlink(&symlink_path, PathBuf::from("symlink"))).unwrap();
+    fs.create_symlink(&symlink_path, PathBuf::from("symlink"))
+        .await
+        .unwrap();
     let metadata = fs
         .metadata(&symlink_path)
         .await

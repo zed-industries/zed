@@ -70,8 +70,8 @@ use futures::{
 };
 use globset::{Glob, GlobBuilder, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{
-    App, AppContext, AsyncApp, Context, Entity, EventEmitter, PromptLevel, SharedString,
-    Subscription, Task, TaskExt, WeakEntity,
+    App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, PromptLevel,
+    SharedString, Subscription, Task, TaskExt, WeakEntity,
 };
 use http_client::HttpClient;
 use itertools::Itertools as _;
@@ -16500,6 +16500,7 @@ pub struct LocalLspAdapterDelegate {
     worktree: worktree::Snapshot,
     fs: Arc<dyn Fs>,
     http_client: Arc<dyn HttpClient>,
+    executor: BackgroundExecutor,
     language_registry: Arc<LanguageRegistry>,
     load_shell_env_task: Shared<Task<Option<HashMap<String, String>>>>,
 }
@@ -16524,6 +16525,7 @@ impl LocalLspAdapterDelegate {
             http_client,
             language_registry,
             load_shell_env_task,
+            executor: cx.background_executor().clone(),
         })
     }
 
@@ -16558,6 +16560,10 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         self.http_client.clone()
     }
 
+    fn background_executor(&self) -> BackgroundExecutor {
+        self.executor.clone()
+    }
+
     fn worktree_id(&self) -> WorktreeId {
         self.worktree.id()
     }
@@ -16582,8 +16588,12 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         let local_package_directory = self.worktree_root_path();
         let node_modules_directory = local_package_directory.join("node_modules");
 
-        if let Some(version) =
-            read_package_installed_version(node_modules_directory.clone(), package_name).await?
+        if let Some(version) = read_package_installed_version(
+            self.executor.clone(),
+            node_modules_directory.clone(),
+            package_name,
+        )
+        .await?
         {
             return Ok(Some((node_modules_directory, version)));
         }
@@ -16605,8 +16615,12 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         let global_node_modules =
             PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_string());
 
-        if let Some(version) =
-            read_package_installed_version(global_node_modules.clone(), package_name).await?
+        if let Some(version) = read_package_installed_version(
+            self.executor.clone(),
+            global_node_modules.clone(),
+            package_name,
+        )
+        .await?
         {
             return Ok(Some((global_node_modules, version)));
         }

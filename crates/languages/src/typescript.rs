@@ -1,4 +1,5 @@
 use anyhow::{Context as _, Result};
+use async_lock::RwLock;
 use async_trait::async_trait;
 use chrono::{DateTime, Local};
 use collections::HashMap;
@@ -14,7 +15,6 @@ use node_runtime::{NodeRuntime, VersionStrategy};
 use project::{Fs, lsp_store::language_server_settings};
 use semver::{Version, VersionReq};
 use serde_json::{Value, json};
-use smol::lock::RwLock;
 use std::{
     borrow::Cow,
     ffi::OsString,
