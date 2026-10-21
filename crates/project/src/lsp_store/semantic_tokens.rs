@@ -545,6 +545,7 @@ impl LspStore {
             && let Some(LanguageServerState::Running { adapter, .. }) =
                 local.language_servers.get(&server_id)
         {
+            let serves_language = self.language_server_serves_language(&adapter.name(), language);
             let context = document_selector_context_for_language(language, adapter);
             if let Some(registrations) = local
                 .language_server_dynamic_registrations
@@ -556,7 +557,11 @@ impl LspStore {
                 })
             {
                 for registration in registrations.values().rev() {
-                    if document_selector_matches(registration.document_selector.as_ref(), &context)
+                    if (serves_language || registration.document_selector.is_some())
+                        && document_selector_matches(
+                            registration.document_selector.as_ref(),
+                            &context,
+                        )
                         && let Some(provider) = registration
                             .server_capabilities
                             .semantic_tokens_provider
@@ -565,6 +570,9 @@ impl LspStore {
                         return Some(semantic_tokens_provider_legend(provider));
                     }
                 }
+            }
+            if !serves_language {
+                return None;
             }
             if let Some(provider) = local
                 .initial_server_capabilities

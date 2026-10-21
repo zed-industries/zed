@@ -3447,6 +3447,19 @@ impl LocalLspStore {
         }
     }
 
+    /// Returns whether the server's `didOpen` registrations opened the buffer in it. Static
+    /// capabilities and registrations without a selector do not apply to such buffers, as they
+    /// cover the documents of the languages the server serves.
+    fn buffer_opened_by_registrations(
+        &self,
+        buffer_id: BufferId,
+        server_id: LanguageServerId,
+    ) -> bool {
+        self.buffers_opened_by_registrations
+            .get(&buffer_id)
+            .is_some_and(|server_ids| server_ids.contains(&server_id))
+    }
+
     /// Returns whether the `method` registrations of the server select the document.
     ///
     /// Registrations without a selector stand for the documents of the languages the server
@@ -6309,6 +6322,20 @@ impl LspStore {
         Ok(proto::Ack {})
     }
 
+    /// Returns whether the server serves documents of the language, rather than only being opened
+    /// with them by its `didOpen` registrations, so that only the registrations selecting them
+    /// apply to them.
+    fn language_server_serves_language(
+        &self,
+        server_name: &LanguageServerName,
+        language: &LanguageName,
+    ) -> bool {
+        self.languages
+            .lsp_adapters(language)
+            .iter()
+            .any(|adapter| &adapter.name() == server_name)
+    }
+
     fn remote_document_selector_context(
         &self,
         server_id: LanguageServerId,
@@ -7310,8 +7337,20 @@ impl LspStore {
                 buffer.update(cx, |buffer, cx| {
                     local
                         .language_servers_for_buffer(buffer, cx)
-                        .filter(|(_, server)| {
-                            LinkedEditingRange::check_server_capabilities(&server.capabilities())
+                        .filter(|(adapter, server)| {
+                            text_document_capabilities_for_buffer(
+                                local,
+                                "textDocument/linkedEditingRange",
+                                buffer,
+                                adapter,
+                                server,
+                                cx,
+                            )
+                            .any(|capabilities| {
+                                LinkedEditingRange::check_server_capabilities(
+                                    capabilities.server_capabilities,
+                                )
+                            })
                         })
                         .filter(|(adapter, _)| {
                             scope
@@ -8991,10 +9030,11 @@ impl LspStore {
                         let local = self.as_local()?;
                         let server_id = server.server_id();
                         let mut providers_with_identifiers = Vec::new();
-                        if let Some(provider) = local
-                            .initial_server_capabilities
-                            .get(&server_id)
-                            .and_then(|capabilities| capabilities.diagnostic_provider.clone())
+                        if !local.buffer_opened_by_registrations(buffer_id, server_id)
+                            && let Some(provider) = local
+                                .initial_server_capabilities
+                                .get(&server_id)
+                                .and_then(|capabilities| capabilities.diagnostic_provider.clone())
                         {
                             providers_with_identifiers.push((None, provider));
                         }
@@ -9007,9 +9047,11 @@ impl LspStore {
                         {
                             for (registration_id, registration) in diagnostic_registrations {
                                 if !dynamic_text_document_registration_allows_buffer(
+                                    local,
                                     registration,
                                     buffer.read(cx),
                                     &adapter,
+                                    server_id,
                                     cx,
                                 ) {
                                     continue;
@@ -15865,11 +15907,18 @@ fn remote_text_document_capabilities_match(
 }
 
 fn dynamic_text_document_registration_allows_buffer(
+    local: &LocalLspStore,
     registration: &dynamic_registration::DynamicTextDocumentRegistration,
     buffer: &Buffer,
     adapter: &CachedLspAdapter,
+    server_id: LanguageServerId,
     cx: &App,
 ) -> bool {
+    if registration.document_selector.is_none()
+        && local.buffer_opened_by_registrations(buffer.remote_id(), server_id)
+    {
+        return false;
+    }
     let context = document_selector_context_for_buffer(buffer, adapter, cx);
     document_selector_matches(registration.document_selector.as_ref(), &context)
 }
@@ -15894,9 +15943,12 @@ fn text_document_capabilities_for_buffer<'a>(
     cx: &App,
 ) -> impl DoubleEndedIterator<Item = AdapterServerCapabilities<'a>> + use<'a> {
     let code_action_kinds = server.code_action_kinds();
+    let opened_by_registrations =
+        local.buffer_opened_by_registrations(buffer.remote_id(), server.server_id());
     let static_capabilities = local
         .initial_server_capabilities
         .get(&server.server_id())
+        .filter(|_| !opened_by_registrations)
         .map(move |server_capabilities| AdapterServerCapabilities {
             server_capabilities,
             code_action_kinds,
@@ -15911,7 +15963,8 @@ fn text_document_capabilities_for_buffer<'a>(
         .into_iter()
         .flat_map(|registrations| registrations.values())
         .filter(move |registration| {
-            document_selector_matches(registration.document_selector.as_ref(), &context)
+            (registration.document_selector.is_some() || !opened_by_registrations)
+                && document_selector_matches(registration.document_selector.as_ref(), &context)
         })
         .map(move |registration| AdapterServerCapabilities {
             server_capabilities: &registration.server_capabilities,
@@ -16011,10 +16064,11 @@ fn completion_trigger_characters_for_buffer(
     }
 
     let mut triggers = BTreeSet::new();
-    if let Some(options) = local
-        .initial_server_capabilities
-        .get(&server_id)
-        .and_then(|capabilities| capabilities.completion_provider.as_ref())
+    if !local.buffer_opened_by_registrations(buffer.remote_id(), server_id)
+        && let Some(options) = local
+            .initial_server_capabilities
+            .get(&server_id)
+            .and_then(|capabilities| capabilities.completion_provider.as_ref())
     {
         extend_triggers(&mut triggers, options);
     }
@@ -16024,11 +16078,17 @@ fn completion_trigger_characters_for_buffer(
         .and_then(|registrations| registrations.text_documents.get("textDocument/completion"))
     {
         for registration in registrations.values() {
-            if dynamic_text_document_registration_allows_buffer(registration, buffer, adapter, cx)
-                && let Some(options) = registration
-                    .server_capabilities
-                    .completion_provider
-                    .as_ref()
+            if dynamic_text_document_registration_allows_buffer(
+                local,
+                registration,
+                buffer,
+                adapter,
+                server_id,
+                cx,
+            ) && let Some(options) = registration
+                .server_capabilities
+                .completion_provider
+                .as_ref()
             {
                 extend_triggers(&mut triggers, options);
             }
@@ -17691,10 +17751,11 @@ fn did_save_include_text_for_buffer(
     }
 
     let server_id = server.server_id();
-    let opened_in_server = local
+    let opened_for_served_language = local
         .buffers_opened_in_servers
         .get(&buffer.remote_id())
-        .is_some_and(|servers| servers.contains(&server_id));
+        .is_some_and(|servers| servers.contains(&server_id))
+        && !local.buffer_opened_by_registrations(buffer.remote_id(), server_id);
     let context = document_selector_context_for_buffer(buffer, adapter, cx);
     // Later registrations take precedence over earlier ones. Registrations without a selector
     // stand for the documents the client selects for the server, like the static options.
@@ -17706,15 +17767,15 @@ fn did_save_include_text_for_buffer(
         .flat_map(|registrations| registrations.values())
         .filter(|registration| match registration.document_selector {
             Some(_) => document_selector_matches(registration.document_selector.as_ref(), &context),
-            None => opened_in_server,
+            None => opened_for_served_language,
         })
         .filter_map(|registration| save_options(&registration.server_capabilities))
         .next_back();
-    // Static options only cover the documents the server was opened with, while
-    // registrations may select any document, like the manifests a server reloads on save.
+    // Static options only cover the documents opened in the server for the languages it serves,
+    // while registrations may select any document, like the manifests a server reloads on save.
     let save_options = match registered_save_options {
         Some(save_options) => save_options,
-        None if opened_in_server => {
+        None if opened_for_served_language => {
             save_options(local.initial_server_capabilities.get(&server_id)?)?
         }
         None => return None,
