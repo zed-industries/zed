@@ -463,6 +463,7 @@ where
         summary.0
     }
 
+    // TODO: Rewrite this comment: see "test_seek_return_values".
     /// Returns whether we found the item you were seeking for.
     #[track_caller]
     #[instrument(skip_all)]
