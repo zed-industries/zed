@@ -8519,7 +8519,6 @@ impl GitPanel {
         all_created: bool,
         all_trashed: bool,
         all_deleted: bool,
-        keeps_staged_changes: bool,
         file_count: usize,
         target_kind: SelectionTargetKind,
         window: &mut Window,
@@ -8543,23 +8542,18 @@ impl GitPanel {
             (SelectionTargetKind::Multiple, false) => &format!("Stage {file_count} {file_label}"),
         };
 
-        let discard_title = if keeps_staged_changes {
-            "Discard Unstaged Changes"
-        } else {
-            "Discard Changes"
-        };
         let restore_title = match (target_kind, all_trashed, all_deleted) {
             (SelectionTargetKind::Directory, true, _) => "Trash Folder",
-            (SelectionTargetKind::Directory, false, _) => discard_title,
+            (SelectionTargetKind::Directory, false, _) => "Discard Changes",
             (SelectionTargetKind::File, true, _) => "Trash File",
             (SelectionTargetKind::File, _, true) => "Restore File",
-            (SelectionTargetKind::File, _, _) => discard_title,
+            (SelectionTargetKind::File, _, _) => "Discard Changes",
             (SelectionTargetKind::Multiple, true, _) => &format!("Trash {file_count} {file_label}"),
             (SelectionTargetKind::Multiple, _, true) => {
                 &format!("Restore {file_count} {file_label}")
             }
             (SelectionTargetKind::Multiple, _, _) => {
-                &format!("{discard_title} to {file_count} {file_label}")
+                &format!("Discard Changes to {file_count} {file_label}")
             }
         };
         let is_bulk = matches!(target_kind, SelectionTargetKind::Multiple);
@@ -8657,12 +8651,6 @@ impl GitPanel {
         let will_unstage = self.should_unstage(target_kind, &entries, cx);
         let discard_targets = self.discard_targets();
         let all_trashed = discard_targets.iter().all(DiscardTarget::is_trashed);
-        let keeps_staged_changes = discard_targets
-            .iter()
-            .all(|target| target.scope == DiscardScope::Unstaged)
-            && discard_targets
-                .iter()
-                .any(DiscardTarget::keeps_staged_changes);
 
         self.set_context_menu(
             self.build_context_menu(
@@ -8670,7 +8658,6 @@ impl GitPanel {
                 all_created,
                 all_trashed,
                 all_deleted,
-                keeps_staged_changes,
                 entries.len(),
                 target_kind,
                 window,
