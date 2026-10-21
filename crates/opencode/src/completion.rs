@@ -49,7 +49,7 @@ pub async fn stream_completion(
             } else {
                 anthropic::AnthropicModelMode::Default
             };
-            let request = into_anthropic(
+            let mut request = into_anthropic(
                 request,
                 model.id().to_string(),
                 1.0,
@@ -58,6 +58,11 @@ pub async fn stream_completion(
                 AnthropicPromptCacheMode::Automatic,
                 &config.provider_id,
             )?;
+            // OpenCode's Anthropic endpoint rejects the thinking-binding beta option.
+            if let Some(anthropic::Thinking::Adaptive { block_binding, .. }) = &mut request.thinking
+            {
+                *block_binding = None;
+            }
             let stream = anthropic::stream_completion(
                 client,
                 api_url,
@@ -193,24 +198,28 @@ mod tests {
 
     #[test]
     fn completion_dispatches_protocols_and_maps_streamed_text() -> Result<()> {
-        for (protocol, path, response) in [
+        for (protocol, model_id, path, response) in [
             (
                 ApiProtocol::Anthropic,
+                "claude-fable-5-1",
                 "/zen/go/v1/messages",
                 "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n\n",
             ),
             (
                 ApiProtocol::OpenAiChat,
+                "model",
                 "/zen/go/v1/chat/completions",
                 "data: {\"id\":\"chat-1\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\n\ndata: [DONE]\n\n",
             ),
             (
                 ApiProtocol::OpenAiResponses,
+                "model",
                 "/zen/go/v1/responses",
                 "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg-1\",\"output_index\":0,\"content_index\":0,\"delta\":\"Hello\"}\n\n",
             ),
             (
                 ApiProtocol::Google,
+                "model",
                 "/zen/go/v1/models/model:streamGenerateContent",
                 "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Hello\"}]},\"finishReason\":\"STOP\"}]}\n\n",
             ),
@@ -226,7 +235,11 @@ mod tests {
                     request.body_mut().read_to_string(&mut body).await?;
                     let body: serde_json::Value = serde_json::from_str(&body)?;
                     if protocol != ApiProtocol::Google {
-                        assert_eq!(body["model"], "model");
+                        assert_eq!(body["model"], model_id);
+                    }
+                    if protocol == ApiProtocol::Anthropic {
+                        assert_eq!(body["thinking"]["type"], "adaptive");
+                        assert!(body.pointer("/thinking/block_binding").is_none());
                     }
                     Ok(Response::builder()
                         .status(200)
@@ -234,7 +247,7 @@ mod tests {
                 });
                 let model = DiscoveredModel {
                     model: crate::Model::new(
-                        "model".into(),
+                        model_id.into(),
                         None,
                         1000,
                         Some(100),
@@ -244,13 +257,14 @@ mod tests {
                         false,
                     ),
                     supports_images: false,
-                    supports_thinking: false,
+                    supports_thinking: protocol == ApiProtocol::Anthropic,
                 };
                 let headers = CustomHeaders::new(vec![(
                     http::HeaderName::from_static("x-custom"),
                     http::HeaderValue::from_static("value"),
                 )]);
                 let request = LanguageModelRequest {
+                    thinking_allowed: true,
                     messages: vec![LanguageModelRequestMessage {
                         role: Role::User,
                         content: vec![MessageContent::Text("Hi".into())],
