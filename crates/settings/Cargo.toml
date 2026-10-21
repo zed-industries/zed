@@ -40,6 +40,7 @@ util.workspace = true
 [dev-dependencies]
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
 zlog.workspace = true
 
 indoc.workspace = true

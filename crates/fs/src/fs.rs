@@ -1480,6 +1480,13 @@ struct FakeWatches {
     event_sink: Option<Box<dyn Fn(notify::Result<notify::Event>) + Send + Sync>>,
     /// A file to create, without an event, when the given path is next watched.
     file_to_create_on_watch: Option<(PathBuf, PathBuf)>,
+    /// A path whose next watch fails with a permission error, as inotify does
+    /// for a directory the process may not read.
+    path_to_refuse_on_watch: Option<PathBuf>,
+    /// Whether a watch on a file is bound to its inode, as with inotify: the
+    /// watch dies with the inode when the file is replaced by rename or
+    /// removed. Recursive native watches (FSEvents, Windows) follow the path.
+    inode_bound: bool,
 }
 
 #[cfg(feature = "test-support")]
@@ -1717,6 +1724,64 @@ impl FakeFsState {
         callback(new_entry)
     }
 
+    /// The kernel side of replacing or removing a watched file: an inode-bound
+    /// watch registered on exactly this path is gone afterwards, so later
+    /// events for the path no longer reach the watcher. Only the loss is
+    /// modelled, not inotify's `IN_DELETE_SELF` on the old inode.
+    fn drop_inode_bound_watch(&mut self, path: &Path) {
+        if !self.watches.inode_bound {
+            return;
+        }
+        let path = normalize_path(path);
+        self.watches
+            .registered_paths
+            .retain(|registered_path| *registered_path != path);
+    }
+
+    /// What the kernel reports when a watched directory tree is removed:
+    /// every inode-bound watch registered on the directory or below it sees
+    /// the deletion of its direct children and then of itself, as inotify
+    /// does (`IN_DELETE` on the watch, then `IN_DELETE_SELF`). The events
+    /// must be emitted before `drop_inode_bound_watches_under`, because the
+    /// fake delivers only under a registered path. Watches are matched by
+    /// path, so one registered through a symlink alias of the removed tree
+    /// is neither reported nor dropped.
+    fn inode_bound_watch_removal_events(
+        &self,
+        path: &Path,
+        removed: &FakeFsEntry,
+    ) -> Vec<(PathBuf, Option<PathEventKind>)> {
+        let mut events = Vec::new();
+        if !self.watches.inode_bound {
+            return events;
+        }
+        for watched_path in &self.watches.registered_paths {
+            let Ok(relative_path) = watched_path.strip_prefix(path) else {
+                continue;
+            };
+            if let Some(FakeFsEntry::Dir { entries, .. }) = removed.descendant(relative_path) {
+                events.extend(
+                    entries
+                        .keys()
+                        .map(|name| (watched_path.join(name), Some(PathEventKind::Removed))),
+                );
+            }
+            events.push((watched_path.clone(), Some(PathEventKind::Removed)));
+        }
+        events
+    }
+
+    /// The kernel side of removing a watched directory tree: every
+    /// inode-bound watch registered on the directory or below it is gone.
+    fn drop_inode_bound_watches_under(&mut self, path: &Path) {
+        if !self.watches.inode_bound {
+            return;
+        }
+        self.watches
+            .registered_paths
+            .retain(|registered_path| !registered_path.starts_with(path));
+    }
+
     fn emit_event<I, T>(&mut self, paths: I)
     where
         I: IntoIterator<Item = (T, Option<PathEventKind>)>,
@@ -1789,6 +1854,16 @@ impl fs_watcher::WatchBackend for FakeWatchBackend {
             "fake filesystem state is locked; this execution would have caused a test hang",
         );
         state.watches.watch_calls.push(path.clone());
+        if state
+            .watches
+            .path_to_refuse_on_watch
+            .take_if(|refused| *refused == path)
+            .is_some()
+        {
+            return Err(notify::Error::io(io::Error::from(
+                io::ErrorKind::PermissionDenied,
+            )));
+        }
         if let Some((_, file_path)) = state
             .watches
             .file_to_create_on_watch
@@ -1870,7 +1945,11 @@ impl FakeFs {
                 state: state.clone(),
             })),
         );
-        state.lock().watches.event_sink = Some(Box::new(native_watcher.event_sink()));
+        {
+            let mut state = state.lock();
+            state.watches.event_sink = Some(Box::new(native_watcher.event_sink()));
+            state.watches.inode_bound = fs_watcher::native_file_watch_is_inode_bound();
+        }
         let poll_watcher =
             fs_watcher::OsWatcher::new(fs_watcher::OsWatcherKind::Poll, executor.clone());
 
@@ -2020,6 +2099,9 @@ impl FakeFs {
                 Ok(())
             })?;
             state.emit_event([(path, kind)]);
+            if recreate_inode && kind == Some(PathEventKind::Changed) {
+                state.drop_inode_bound_watch(path);
+            }
             Ok(())
         }
         inner(self, path.as_ref(), new_content, recreate_inode)
@@ -2077,6 +2159,17 @@ impl FakeFs {
     /// including paths that were later unwatched.
     pub fn watch_calls(&self) -> Vec<PathBuf> {
         self.state.lock().watches.watch_calls.clone()
+    }
+
+    /// Makes the next backend watch of `path` fail with a permission error.
+    pub fn refuse_next_watch_of(&self, path: impl AsRef<Path>) {
+        self.state.lock().watches.path_to_refuse_on_watch = Some(normalize_path(path.as_ref()));
+    }
+
+    /// The paths the watcher backend currently watches, as opposed to the
+    /// roots passed to `Fs::watch` that `watched_paths` reports.
+    pub fn backend_watched_paths(&self) -> Vec<PathBuf> {
+        self.state.lock().watches.registered_paths.clone()
     }
 
     /// Creates `path` without emitting an event when `watch_path` is next
@@ -2860,7 +2953,15 @@ impl FakeFs {
             }
         };
 
-        state.emit_event([(path, Some(PathEventKind::Removed))]);
+        let mut events = match &removed {
+            Some(removed) => state.inode_bound_watch_removal_events(&path, removed),
+            None => Vec::new(),
+        };
+        events.push((path.clone(), Some(PathEventKind::Removed)));
+        state.emit_event(events);
+        if removed.is_some() {
+            state.drop_inode_bound_watches_under(&path);
+        }
         Ok(removed)
     }
 
@@ -2898,7 +2999,10 @@ impl FakeFs {
             }
         };
 
-        state.emit_event([(path, Some(PathEventKind::Removed))]);
+        state.emit_event([(path.clone(), Some(PathEventKind::Removed))]);
+        if removed.as_ref().is_some_and(|entry| entry.is_file()) {
+            state.drop_inode_bound_watch(&path);
+        }
         Ok(removed)
     }
 
@@ -2941,6 +3045,17 @@ impl FakeFsEntry {
         } else {
             anyhow::bail!("not a directory: {path:?}");
         }
+    }
+
+    /// The entry at `relative_path` below this one, without following
+    /// symlinks; the entry itself for an empty path.
+    fn descendant(&self, relative_path: &Path) -> Option<&FakeFsEntry> {
+        relative_path
+            .components()
+            .try_fold(self, |entry, component| match entry {
+                Self::Dir { entries, .. } => entries.get(component.as_os_str().to_str()?),
+                Self::File { .. } | Self::Symlink { .. } => None,
+            })
     }
 }
 
@@ -3125,11 +3240,14 @@ impl Fs for FakeFs {
             return Ok(());
         }
 
+        let moved_entry_is_file = moved_entry.is_file();
+        let mut replaced_file = false;
         let mut moved = true;
         state.write_path(&new_path, |e| {
             match e {
                 btree_map::Entry::Occupied(mut e) => {
                     if options.overwrite {
+                        replaced_file = e.get().is_file();
                         *e.get_mut() = moved_entry;
                     } else if options.ignore_if_exists {
                         // `RealFs` reports success without moving anything here,
@@ -3162,9 +3280,15 @@ impl Fs for FakeFs {
             .unwrap();
 
         state.emit_event([
-            (old_path, Some(PathEventKind::Removed)),
-            (new_path, Some(PathEventKind::Created)),
+            (old_path.clone(), Some(PathEventKind::Removed)),
+            (new_path.clone(), Some(PathEventKind::Created)),
         ]);
+        if moved_entry_is_file {
+            state.drop_inode_bound_watch(&old_path);
+        }
+        if replaced_file {
+            state.drop_inode_bound_watch(&new_path);
+        }
         Ok(())
     }
 

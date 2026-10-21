@@ -16509,6 +16509,7 @@ dependencies = [
  "settings_json",
  "settings_macros",
  "smallvec",
+ "tempfile",
  "unindent",
  "util",
  "zlog",
