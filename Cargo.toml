@@ -692,7 +692,6 @@ mach2 = "0.6"
 markup5ever_rcdom = "0.39"
 mdbook = { version = "=0.4.40", default-features = false, features = ["search"] }
 merman = { version = "=0.8.0-alpha.5", default-features = false }
-metal = "0.33"
 mime = "0.3.17"
 minidumper = "0.11"
 moka = { version = "0.12.10", features = ["sync"] }
@@ -885,7 +884,7 @@ rustix = { version = "1.1", features = ["fs"] }
 rustls = "0.23.26"
 rustls-platform-verifier = "0.7"
 # WARNING: If you change this, you must also publish a new version of zed-scap to crates.io
-scap = { git = "https://github.com/zed-industries/scap", rev = "4afea48c3b002197176fb19cd0f9b180dd36eaac", default-features = false, package = "zed-scap", version = "0.0.8-zed" }
+scap = { git = "https://github.com/zed-industries/scap", rev = "b5c86ec58dd4b6b7732bf6ac8be03d6b1f190a82", default-features = false, package = "zed-scap", version = "0.0.8-zed" }
 schemars = { version = "1.0", default-features = false, features = ["std", "indexmap2"] }
 sea-orm = { version = "=1.1.10", default-features = false }
 seccompiler = "0.5"
