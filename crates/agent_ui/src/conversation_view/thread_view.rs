@@ -399,6 +399,29 @@ fn parse_cat_numbered_line(line: &str) -> Option<(u32, &str)> {
     Some((number.parse().ok()?, text))
 }
 
+#[derive(IntoElement)]
+struct CatNumberedCodeBlock {
+    markdown: Entity<Markdown>,
+    parsed: ParsedCatNumberedCode,
+    markdown_style: MarkdownStyle,
+    copy_button_id: String,
+}
+
+impl RenderOnce for CatNumberedCodeBlock {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        self.markdown
+            .update(cx, |markdown, cx| markdown.ensure_parsed(cx));
+        let language = self.markdown.read(cx).first_code_block_language();
+        render_cat_numbered_code_block(
+            self.parsed,
+            language,
+            self.markdown_style,
+            self.copy_button_id,
+            cx,
+        )
+    }
+}
+
 fn render_cat_numbered_code_block(
     parsed: ParsedCatNumberedCode,
     language: Option<Arc<Language>>,
@@ -575,6 +598,68 @@ mod numbered_code_block_tests {
             )
             .is_none()
         );
+    }
+
+    #[gpui::test]
+    fn numbered_output_starts_parsing_when_rendered(cx: &mut gpui::TestAppContext) {
+        crate::test_support::init_test(cx);
+
+        let languages = Arc::new(language::LanguageRegistry::test(
+            cx.background_executor.clone(),
+        ));
+        languages.add(language::rust_lang());
+        let source = "```rust\n     1\tfn main() {}\n```\n";
+        let markdown = cx.new(|cx| {
+            Markdown::new_with_options(
+                SharedString::from(source),
+                Some(languages),
+                None,
+                markdown::MarkdownOptions {
+                    defer_parsing: true,
+                    ..markdown::MarkdownOptions::default()
+                },
+                cx,
+            )
+        });
+        let cx = cx.add_empty_window();
+        markdown.read_with(cx, |markdown, _| {
+            assert!(markdown.first_code_block_language().is_none());
+            assert!(!markdown.has_pending_render());
+        });
+        let view = cx.new(|_| NumberedOutputView(markdown.clone()));
+        cx.draw(
+            gpui::point(px(0.0), px(0.0)),
+            gpui::size(px(600.0), px(600.0)),
+            |_, _| view.into_any_element(),
+        );
+        cx.run_until_parked();
+
+        markdown.read_with(cx, |markdown, _| {
+            assert_eq!(
+                markdown
+                    .first_code_block_language()
+                    .map(|language| language.name()),
+                Some(language::LanguageName::from("Rust")),
+            );
+            assert!(!markdown.has_pending_render());
+        });
+    }
+
+    struct NumberedOutputView(Entity<Markdown>);
+
+    impl Render for NumberedOutputView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            CatNumberedCodeBlock {
+                parsed: ParsedCatNumberedCode {
+                    code: String::from("fn main() {}"),
+                    first_number: 1,
+                    line_count: 1,
+                },
+                markdown: self.0.clone(),
+                markdown_style: MarkdownStyle::default(),
+                copy_button_id: String::from("read-file-output-test"),
+            }
+        }
     }
 }
 
@@ -11614,16 +11699,16 @@ impl ThreadView {
             return None;
         }
 
-        let markdown = markdown.read(cx);
-        let parsed = parse_cat_numbered_markdown_code_block(markdown.source())?;
-        let language = markdown.first_code_block_language();
-        Some(render_cat_numbered_code_block(
-            parsed,
-            language,
-            markdown_style,
-            format!("copy-read-file-output-{entry_ix}-{context_ix}"),
-            cx,
-        ))
+        let parsed = parse_cat_numbered_markdown_code_block(markdown.read(cx).source())?;
+        Some(
+            CatNumberedCodeBlock {
+                markdown,
+                parsed,
+                markdown_style,
+                copy_button_id: format!("copy-read-file-output-{entry_ix}-{context_ix}"),
+            }
+            .into_any_element(),
+        )
     }
 
     fn render_image_output(

@@ -1589,6 +1589,18 @@ impl ConversationView {
         let count = thread.read(cx).entries().len();
         let list_state = ListState::new(0, gpui::ListAlignment::Top, px(2048.0));
         list_state.set_follow_mode(gpui::FollowMode::Tail);
+        list_state.set_item_measurement_readiness({
+            let thread = thread.downgrade();
+            move |index, cx| {
+                thread.upgrade().is_none_or(|thread| {
+                    thread
+                        .read(cx)
+                        .entries()
+                        .get(index)
+                        .is_none_or(|entry| !entry.has_pending_markdown_render(cx))
+                })
+            }
+        });
 
         entry_view_state.update(cx, |view_state, cx| {
             for ix in 0..count {
@@ -1600,7 +1612,11 @@ impl ConversationView {
             );
         });
 
-        if let Some(scroll_position) = thread.read(cx).ui_scroll_position() {
+        let restored_scroll_position = thread
+            .read(cx)
+            .ui_scroll_position()
+            .filter(|offset| offset.item_ix < count);
+        if let Some(scroll_position) = restored_scroll_position {
             list_state.scroll_to(scroll_position);
         } else {
             list_state.scroll_to_end();
@@ -11126,6 +11142,160 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_restore_scroll_position_survives_deferred_markdown_parsing(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let repeated_destination = ListOffset {
+            item_ix: 1,
+            offset_in_item: px(80.0),
+        };
+        for (height, settle_restore, destination) in [
+            (600.0, false, None),
+            (1200.0, false, Some(ListOffset::default())),
+            (1200.0, true, Some(ListOffset::default())),
+            (1200.0, false, Some(repeated_destination)),
+            (1200.0, true, Some(repeated_destination)),
+        ] {
+            let (thread_view, cx) = setup_pending_scroll_restore(0, cx).await;
+            let list_state = thread_view.read_with(cx, |view, _| view.list_state.clone());
+            let restored = ListOffset {
+                item_ix: 5,
+                offset_in_item: px(if settle_restore { 2048.0 } else { 40.0 }),
+            };
+            if settle_restore {
+                list_state.scroll_to(restored);
+            }
+            let draw = |cx: &mut VisualTestContext| {
+                cx.draw(
+                    point(px(0.0), px(0.0)),
+                    size(px(800.0), px(height)),
+                    |_, _| thread_view.clone().into_any_element(),
+                );
+            };
+            for frame in 0..if settle_restore { 4 } else { 1 } {
+                if frame > 0 {
+                    cx.run_until_parked();
+                }
+                draw(cx);
+                assert_eq!(list_state.logical_scroll_top(), restored);
+                assert!(!list_state.is_following_tail());
+            }
+
+            let mut expected = restored;
+            if let Some(destination) = destination {
+                expected = destination;
+                thread_view.update(cx, |view, cx| view.scroll_to_top(cx));
+                draw(cx);
+                assert_eq!(list_state.logical_scroll_top(), ListOffset::default());
+                assert!(!list_state.is_following_tail());
+                assert!(thread_view.read_with(cx, |view, cx| {
+                    view.thread
+                        .read(cx)
+                        .entries()
+                        .get(1)
+                        .is_some_and(|entry| entry.has_pending_markdown_render(cx))
+                }));
+
+                if destination != ListOffset::default() {
+                    for target in [
+                        ListOffset {
+                            item_ix: 3,
+                            offset_in_item: px(20.0),
+                        },
+                        destination,
+                    ] {
+                        list_state.scroll_to(target);
+                        draw(cx);
+                        assert_eq!(list_state.logical_scroll_top(), target);
+                        assert!(!list_state.is_following_tail());
+                    }
+                }
+            }
+
+            for _ in 0..3 {
+                draw(cx);
+                cx.run_until_parked();
+                assert_eq!(list_state.logical_scroll_top(), expected);
+                assert!(!list_state.is_following_tail());
+            }
+            assert_eq!(
+                list_state
+                    .bounds_for_item(expected.item_ix)
+                    .map(|bounds| bounds.top()),
+                Some(list_state.viewport_bounds().top() - expected.offset_in_item),
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_scroll_to_end_during_pending_restore_renders_bottom(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (thread_view, cx) = setup_pending_scroll_restore(0, cx).await;
+        let list_state = thread_view.read_with(cx, |view, _| view.list_state.clone());
+        draw_restored_thread(&thread_view, cx);
+        assert!(!list_state.is_following_tail());
+
+        thread_view.update(cx, |view, cx| view.scroll_to_end(cx));
+        assert_eq!(
+            list_state.logical_scroll_top(),
+            ListOffset {
+                item_ix: 8,
+                offset_in_item: px(0.0),
+            },
+        );
+        for _ in 0..3 {
+            draw_restored_thread(&thread_view, cx);
+            assert!(list_state.is_following_tail());
+            cx.run_until_parked();
+        }
+        assert_eq!(
+            list_state.bounds_for_item(7).map(|bounds| bounds.bottom()),
+            Some(list_state.viewport_bounds().bottom()),
+        );
+    }
+
+    #[gpui::test]
+    async fn test_scrollbar_drag_cancels_pending_restore(cx: &mut TestAppContext) {
+        init_test(cx);
+        for draw_during_drag in [false, true] {
+            let (thread_view, cx) = setup_pending_scroll_restore(40, cx).await;
+            let list_state = thread_view.read_with(cx, |view, _| view.list_state.clone());
+            let restored = ListOffset {
+                item_ix: 5,
+                offset_in_item: px(40.0),
+            };
+            draw_restored_thread(&thread_view, cx);
+            list_state.scrollbar_drag_started();
+            if draw_during_drag {
+                draw_restored_thread(&thread_view, cx);
+            }
+            assert_eq!(list_state.logical_scroll_top(), restored);
+            assert!(!list_state.is_following_tail());
+            list_state.set_offset_from_scrollbar(point(px(0.0), px(-100_000.0)));
+            list_state.scrollbar_drag_ended();
+            assert!(list_state.is_following_tail());
+            assert_eq!(
+                list_state.logical_scroll_top(),
+                ListOffset {
+                    item_ix: 48,
+                    offset_in_item: px(0.0),
+                },
+            );
+
+            for _ in 0..3 {
+                draw_restored_thread(&thread_view, cx);
+                assert!(list_state.is_following_tail());
+                cx.run_until_parked();
+            }
+            assert_eq!(
+                list_state.bounds_for_item(47).map(|bounds| bounds.bottom()),
+                Some(list_state.viewport_bounds().bottom()),
+            );
+        }
+    }
+
+    #[gpui::test]
     async fn test_scroll_to_most_recent_user_prompt_falls_back_to_bottom_without_user_messages(
         cx: &mut TestAppContext,
     ) {
@@ -20080,6 +20250,84 @@ pub(crate) mod tests {
         assert!(
             result.unwrap_err().to_string().contains("not supported"),
             "Error message should indicate that closing is not supported"
+        );
+    }
+
+    async fn setup_pending_scroll_restore(
+        tool_call_count: usize,
+        cx: &mut TestAppContext,
+    ) -> (Entity<ThreadView>, &mut VisualTestContext) {
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let conversation = active_thread(&conversation_view, cx)
+            .read_with(cx, |view, _| view.conversation.clone());
+        let thread = conversation_view.update(cx, |view, cx| {
+            create_test_acp_thread(
+                None,
+                "restore-scroll",
+                Rc::new(StubAgentConnection::new()),
+                view.project.clone(),
+                cx,
+            )
+        });
+
+        let reply = "Long reply line.\n\n".repeat(200);
+        let result = thread.update(cx, |thread, cx| -> Result<()> {
+            for turn in 0..4 {
+                thread.handle_session_update(
+                    acp_v1::SessionUpdate::UserMessageChunk(acp_v1::ContentChunk::new(
+                        format!("Prompt {turn}").into(),
+                    )),
+                    cx,
+                )?;
+                thread.handle_session_update(
+                    acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new(
+                        reply.clone().into(),
+                    )),
+                    cx,
+                )?;
+            }
+            for index in 0..tool_call_count {
+                thread.handle_session_update(
+                    acp_v1::SessionUpdate::ToolCall(
+                        acp_v1::ToolCall::new(
+                            acp_v1::ToolCallId::new(format!("tool-{index}")),
+                            format!("Tool {index}"),
+                        )
+                        .kind(acp_v1::ToolKind::Other)
+                        .status(acp_v1::ToolCallStatus::Completed),
+                    ),
+                    cx,
+                )?;
+            }
+            assert_eq!(thread.entries().len(), 8 + tool_call_count);
+            assert!(matches!(
+                thread.entries().get(5),
+                Some(AgentThreadEntry::AssistantMessage(_))
+            ));
+            thread.set_ui_scroll_position(Some(ListOffset {
+                item_ix: 5,
+                offset_in_item: px(40.0),
+            }));
+            Ok(())
+        });
+        assert!(result.is_ok(), "{result:?}");
+
+        let thread_view = conversation_view.update_in(cx, |view, window, cx| {
+            conversation.update(cx, |conversation, cx| {
+                conversation.register_thread(thread.clone(), cx);
+            });
+            view.new_thread_view(thread, conversation, false, None, window, cx)
+        });
+        (thread_view, cx)
+    }
+
+    fn draw_restored_thread(thread_view: &Entity<ThreadView>, cx: &mut VisualTestContext) {
+        cx.draw(
+            point(px(0.0), px(0.0)),
+            size(px(800.0), px(600.0)),
+            |_, _| thread_view.clone().into_any_element(),
         );
     }
 
