@@ -7,7 +7,10 @@ use worktree::{PathKey, PathSummary};
 pub enum GitStatus {
     Staged,
     Unstaged,
+    /// Restored to `HEAD`, dropping staged and unstaged changes.
     Reverted,
+    /// Working tree restored from the index; staged changes are kept.
+    RevertedUnstaged,
     Unchanged,
 }
 

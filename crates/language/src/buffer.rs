@@ -119,7 +119,7 @@ pub struct Buffer {
     language: Option<Arc<Language>>,
     content_language_detection_enabled: bool,
     autoindent_requests: Vec<Arc<AutoindentRequest>>,
-    wait_for_autoindent_txs: Vec<oneshot::Sender<()>>,
+    wait_for_autoindent_txs: Vec<oneshot::Sender<Option<clock::Lamport>>>,
     pending_autoindent: Option<Task<()>>,
     sync_parse_timeout: Option<Duration>,
     syntax_map: Mutex<SyntaxMap>,
@@ -375,6 +375,12 @@ pub trait File: Send + Sync + Any {
     /// Returns the path of this file relative to the worktree's parent directory (this means it
     /// includes the name of the worktree's root folder).
     fn full_path(&self, cx: &App) -> PathBuf;
+
+    /// Returns the absolute path to this file in its backing file system.
+    /// For remote files, this is an absolute path on the remote host.
+    fn file_system_abs_path(&self, cx: &App) -> Option<PathBuf> {
+        self.as_local().map(|file| file.abs_path(cx))
+    }
 
     /// Returns the path style of this file.
     fn path_style(&self, cx: &App) -> PathStyle;
@@ -1239,7 +1245,7 @@ impl Buffer {
             let mut syntax = SyntaxMap::new(&text).snapshot();
             if let Some(language) = language.clone() {
                 let language_registry = language_registry.clone();
-                syntax.reparse(&text, language_registry, language);
+                syntax.reparse(&text, None, language_registry, language);
             }
             let tree_sitter_data = TreeSitterData::new(&text);
             BufferSnapshot {
@@ -1299,7 +1305,7 @@ impl Buffer {
                 .into_snapshot();
         let mut syntax = SyntaxMap::new(&text).snapshot();
         if let Some(language) = language.clone() {
-            syntax.reparse(&text, language_registry, language);
+            syntax.reparse(&text, None, language_registry, language);
         }
         let tree_sitter_data = TreeSitterData::new(&text);
         BufferSnapshot {
@@ -1386,10 +1392,16 @@ impl Buffer {
         let old_snapshot = self.text.snapshot().clone();
         let mut branch_buffer = self.text.branch();
         let mut syntax_snapshot = self.syntax_map.lock().snapshot();
+        let file = self.file.clone();
         cx.background_spawn(async move {
             if !edits.is_empty() {
                 if let Some(language) = language.clone() {
-                    syntax_snapshot.reparse(&old_snapshot, registry.clone(), language);
+                    syntax_snapshot.reparse(
+                        &old_snapshot,
+                        file.as_deref(),
+                        registry.clone(),
+                        language,
+                    );
                 }
 
                 branch_buffer.edit(edits.iter().cloned());
@@ -1397,7 +1409,7 @@ impl Buffer {
                 syntax_snapshot.interpolate(&snapshot);
 
                 if let Some(language) = language {
-                    syntax_snapshot.reparse(&snapshot, registry, language);
+                    syntax_snapshot.reparse(&snapshot, file.as_deref(), registry, language);
                 }
             }
             EditPreview {
@@ -1949,11 +1961,13 @@ impl Buffer {
         let language_registry = syntax_map.language_registry();
         let mut syntax_snapshot = syntax_map.snapshot();
         drop(syntax_map);
+        let file = self.file.clone();
 
         self.parse_status.0.send(ParseStatus::Parsing).unwrap();
         if may_block && let Some(sync_parse_timeout) = self.sync_parse_timeout {
             if let Ok(()) = syntax_snapshot.reparse_with_timeout(
                 &text,
+                file.as_deref(),
                 language_registry.clone(),
                 language.clone(),
                 sync_parse_timeout,
@@ -1973,7 +1987,7 @@ impl Buffer {
             let language = language.clone();
             let language_registry = language_registry.clone();
             async move {
-                syntax_snapshot.reparse(&text, language_registry, language);
+                syntax_snapshot.reparse(&text, file.as_deref(), language_registry, language);
                 syntax_snapshot
             }
         });
@@ -2111,7 +2125,7 @@ impl Buffer {
         } else {
             self.autoindent_requests.clear();
             for tx in self.wait_for_autoindent_txs.drain(..) {
-                tx.send(()).ok();
+                tx.send(None).ok();
             }
         }
     }
@@ -2302,9 +2316,7 @@ impl Buffer {
         cx: &mut Context<Self>,
     ) {
         self.autoindent_requests.clear();
-        for tx in self.wait_for_autoindent_txs.drain(..) {
-            tx.send(()).ok();
-        }
+        let wait_for_autoindent_txs = mem::take(&mut self.wait_for_autoindent_txs);
 
         let edits: Vec<_> = indent_sizes
             .into_iter()
@@ -2315,9 +2327,12 @@ impl Buffer {
             .collect();
 
         let preserve_preview = self.preserve_preview();
-        self.edit(edits, None, cx);
+        let edit_id = self.edit(edits, None, cx);
         if preserve_preview {
             self.refresh_preview();
+        }
+        for tx in wait_for_autoindent_txs {
+            tx.send(edit_id).ok();
         }
     }
 
@@ -2727,7 +2742,10 @@ impl Buffer {
         self.text.give_up_waiting();
     }
 
-    pub fn wait_for_autoindent_applied(&mut self) -> Option<oneshot::Receiver<()>> {
+    /// Resolves with the id of the edit that applied the pending autoindent, if it changed anything.
+    pub fn wait_for_autoindent_applied(
+        &mut self,
+    ) -> Option<oneshot::Receiver<Option<clock::Lamport>>> {
         let mut rx = None;
         if !self.autoindent_requests.is_empty() {
             let channel = oneshot::channel();
@@ -3097,6 +3115,7 @@ impl Buffer {
             return;
         }
 
+        self.pending_autoindent.take();
         self.reparse(cx, true);
         cx.emit(BufferEvent::Edited { source });
         let is_dirty = self.is_dirty();
@@ -3422,8 +3441,8 @@ impl Buffer {
 
     pub fn undo_operations(&mut self, counts: HashMap<Lamport, u32>, cx: &mut Context<Buffer>) {
         let was_dirty = self.is_dirty();
-        let operation = self.text.undo_operations(counts);
         let old_version = self.version.clone();
+        let operation = self.text.undo_operations(counts);
         self.send_operation(Operation::Buffer(operation), true, cx);
         self.did_edit(&old_version, was_dirty, BufferEditSource::User, cx);
     }
@@ -3554,13 +3573,18 @@ impl Buffer {
         let new_text = self.text.snapshot_with_edits(edits);
         cx.background_spawn(async move {
             if let Some(language) = language.clone() {
-                syntax.reparse(&text, registry.clone(), language);
+                syntax.reparse(&text, snapshot.file.as_deref(), registry.clone(), language);
             }
 
             syntax.interpolate(&new_text.snapshot);
 
             if let Some(language) = language {
-                syntax.reparse(&new_text.snapshot, registry, language);
+                syntax.reparse(
+                    &new_text.snapshot,
+                    snapshot.file.as_deref(),
+                    registry,
+                    language,
+                );
             }
 
             snapshot.text = new_text.snapshot.clone();
@@ -6107,6 +6131,16 @@ impl File for TestFile {
         PathBuf::from(self.root_name.clone()).join(self.path.as_std_path())
     }
 
+    fn file_system_abs_path(&self, _: &App) -> Option<PathBuf> {
+        let abs_path = self.local_root.as_ref()?.join(&self.root_name);
+        // Mirror worktree::Worktree::absolutize: an empty relative path refers to the root itself.
+        Some(if self.path.as_std_path().as_os_str().is_empty() {
+            abs_path
+        } else {
+            abs_path.join(self.path.as_std_path())
+        })
+    }
+
     fn as_local(&self) -> Option<&dyn LocalFile> {
         if self.local_root.is_some() {
             Some(self)
@@ -6318,4 +6352,50 @@ pub(crate) fn trailing_whitespace_ranges(
     }
 
     ranges
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AutoindentMode, Buffer};
+    use crate::rust_lang;
+    use futures::FutureExt as _;
+    use gpui::{AppContext as _, TestAppContext};
+    use settings::SettingsStore;
+
+    #[gpui::test]
+    fn test_undo_during_async_autoindent(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+        for undo_operations in [false, true] {
+            let buffer = cx.new(|cx| Buffer::local("fn a() {}", cx).with_language(rust_lang(), cx));
+            cx.run_until_parked();
+            let autoindent_applied = buffer.update(cx, |buffer, cx| {
+                buffer.set_sync_parse_timeout(None);
+                let edit_id = buffer
+                    .edit([(8..8, "\n\n")], Some(AutoindentMode::EachLine), cx)
+                    .unwrap();
+                let autoindent_applied = buffer.wait_for_autoindent_applied().unwrap();
+                buffer.reparse.take();
+                let snapshot = buffer.snapshot();
+                let mut syntax = snapshot.syntax;
+                syntax.reparse(&snapshot.text, snapshot.file.as_deref(), None, rust_lang());
+                buffer.did_finish_parsing(syntax, None, false, cx);
+                assert!(buffer.pending_autoindent.is_some());
+
+                if undo_operations {
+                    buffer.undo_operations([(edit_id, 1)].into_iter().collect(), cx);
+                } else {
+                    assert!(buffer.undo(cx).is_some());
+                }
+                assert!(buffer.pending_autoindent.is_none());
+                assert_eq!(buffer.text(), "fn a() {}");
+                autoindent_applied
+            });
+            cx.run_until_parked();
+            assert_eq!(buffer.read_with(cx, |buffer, _| buffer.text()), "fn a() {}");
+            autoindent_applied.now_or_never().unwrap().unwrap();
+        }
+    }
 }

@@ -19,6 +19,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: platform_default
     pub text_rendering_mode: Option<TextRenderingMode>,
+    /// Whether to render windows using the Display P3 color space (macOS only).
+    ///
+    /// Default: false
+    pub use_display_p3: Option<bool>,
     /// Layout mode for the bottom dock
     ///
     /// Default: contained
@@ -1052,6 +1056,11 @@ pub enum ProjectPanelSortOrder {
     /// Pure Unicode codepoint comparison. No case folding, no natural number sorting.
     /// Uppercase ASCII sorts before lowercase. Accented characters sort after ASCII.
     Unicode,
+    /// Files are grouped by their last extension (case-insensitive) in ascending order,
+    /// with extensionless files, including dotfiles such as `.gitignore`, first.
+    /// Dotfiles with a further suffix, such as `.config.json`, keep that extension.
+    /// Within a group, names use the default natural sort.
+    Extension,
 }
 
 impl From<ProjectPanelSortMode> for util::paths::SortMode {
@@ -1071,6 +1080,7 @@ impl From<ProjectPanelSortOrder> for util::paths::SortOrder {
             ProjectPanelSortOrder::Upper => Self::Upper,
             ProjectPanelSortOrder::Lower => Self::Lower,
             ProjectPanelSortOrder::Unicode => Self::Unicode,
+            ProjectPanelSortOrder::Extension => Self::Extension,
         }
     }
 }

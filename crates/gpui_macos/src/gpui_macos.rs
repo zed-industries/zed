@@ -23,12 +23,6 @@ pub mod metal_renderer {
     pub use gpui_apple::metal_renderer::MetalHeadlessRenderer;
 }
 
-#[cfg(feature = "font-kit")]
-mod open_type;
-
-#[cfg(feature = "font-kit")]
-mod text_system;
-
 mod platform;
 mod window;
 mod window_appearance;
@@ -39,6 +33,8 @@ use cocoa::{
 };
 
 use objc::runtime::{BOOL, NO, YES};
+use objc2::runtime::AnyObject;
+use objc2_foundation::NSString as Objc2NSString;
 use std::{
     ffi::{CStr, c_char},
     ops::Range,
@@ -50,9 +46,6 @@ pub(crate) use gpui_apple::{AppleActivity, AppleDispatcher};
 pub(crate) use keyboard::*;
 pub(crate) use platform::*;
 pub(crate) use window::*;
-
-#[cfg(feature = "font-kit")]
-pub(crate) use text_system::*;
 
 pub use platform::MacPlatform;
 
@@ -78,6 +71,22 @@ impl NSStringExt for id {
                 ""
             } else {
                 CStr::from_ptr(cstr as *mut c_char).to_str().unwrap()
+            }
+        }
+    }
+}
+
+impl NSStringExt for *mut AnyObject {
+    unsafe fn to_str(&self) -> &str {
+        unsafe {
+            let Some(string) = self.cast::<Objc2NSString>().as_ref() else {
+                return "";
+            };
+            let cstr = string.UTF8String();
+            if cstr.is_null() {
+                ""
+            } else {
+                CStr::from_ptr(cstr).to_str().unwrap()
             }
         }
     }
