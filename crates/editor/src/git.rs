@@ -166,6 +166,75 @@ pub(super) struct DiffHunkKey {
     pub(super) hunk_start_anchor: Anchor,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewCommentStatus {
+    #[default]
+    Draft,
+    Queued,
+    Sent,
+    Outdated,
+    Resolved,
+}
+
+impl ReviewCommentStatus {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Draft => "Draft",
+            Self::Queued => "Queued",
+            Self::Sent => "Sent",
+            Self::Outdated => "Outdated",
+            Self::Resolved => "Resolved",
+        }
+    }
+
+    pub fn is_sendable(self) -> bool {
+        matches!(self, Self::Draft | Self::Queued)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReviewSessionSource {
+    LocalDiff,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReviewComment {
+    pub id: String,
+    pub author: String,
+    pub body: String,
+    pub is_draft: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReviewThread {
+    pub id: String,
+    pub file_path: String,
+    pub start_line: u32,
+    pub end_line: u32,
+    pub excerpt: String,
+    pub status: ReviewCommentStatus,
+    pub comments: Vec<ReviewComment>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReviewSession {
+    pub source: ReviewSessionSource,
+    pub threads: Vec<ReviewThread>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct ReviewFeedback {
+    pub worktree_name: Option<String>,
+    pub file_path: String,
+    pub start_line: u32,
+    pub end_line: u32,
+    pub excerpt: String,
+    pub comment: String,
+    #[serde(default)]
+    pub status: ReviewCommentStatus,
+}
+
 /// A review comment stored locally before being sent to the Agent panel.
 #[derive(Clone)]
 pub(super) struct StoredReviewComment {
@@ -177,6 +246,8 @@ pub(super) struct StoredReviewComment {
     pub(super) range: Range<Anchor>,
     /// Whether this comment is currently being edited inline.
     pub(super) is_editing: bool,
+    /// Lifecycle status for the local draft thread.
+    pub(super) status: ReviewCommentStatus,
 }
 
 /// Represents an active diff review overlay that appears when clicking the "Add Review" button.
@@ -221,6 +292,7 @@ impl StoredReviewComment {
             comment,
             range: anchor_range,
             is_editing: false,
+            status: ReviewCommentStatus::Draft,
         }
     }
 }
@@ -745,12 +817,110 @@ impl Editor {
         cx.notify();
     }
 
-    /// Returns the total count of stored review comments across all hunks.
+    /// Returns the total count of sendable review comments across all hunks.
     pub(super) fn total_review_comment_count(&self) -> usize {
         self.stored_review_comments
             .iter()
-            .map(|(_, v)| v.len())
-            .sum()
+            .flat_map(|(_, comments)| comments.iter())
+            .filter(|comment| comment.status.is_sendable())
+            .count()
+    }
+
+    pub fn review_feedback(&self, cx: &App) -> Vec<ReviewFeedback> {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        self.stored_review_comments
+            .iter()
+            .flat_map(|(hunk, comments)| {
+                comments.iter().filter_map(|comment| {
+                    if !comment.status.is_sendable() {
+                        return None;
+                    }
+                    let start_point = comment.range.start.to_point(&snapshot);
+                    let end_point = comment.range.end.to_point(&snapshot);
+                    let buffer_ranges = snapshot.range_to_buffer_ranges(start_point..end_point);
+                    let (Some((first_buffer, first_range, _)), Some((last_buffer, last_range, _))) =
+                        (buffer_ranges.first(), buffer_ranges.last())
+                    else {
+                        log::debug!(
+                            "Skipping review comment {} for {} because its buffer range could not be resolved ({start_point:?}..{end_point:?})",
+                            comment.id,
+                            hunk.file_path.as_unix_str(),
+                        );
+                        return None;
+                    };
+                    let start_line = first_buffer.offset_to_point(first_range.start.0).row;
+                    let end_line = last_buffer.offset_to_point(last_range.end.0).row;
+                    let worktree_name = snapshot
+                        .file_at(start_point)
+                        .and_then(|file| {
+                            self.project
+                                .as_ref()?
+                                .read(cx)
+                                .worktree_for_id(file.worktree_id(cx), cx)
+                        })
+                        .map(|worktree| worktree.read(cx).root_name().as_unix_str().to_string());
+                    Some(ReviewFeedback {
+                        worktree_name,
+                        file_path: hunk.file_path.as_unix_str().to_string(),
+                        start_line: start_line.saturating_add(1),
+                        end_line: end_line.saturating_add(1),
+                        excerpt: snapshot
+                            .text_for_range(start_point..end_point)
+                            .collect::<String>(),
+                        comment: comment.comment.clone(),
+                        status: comment.status,
+                    })
+                })
+            })
+            .collect()
+    }
+
+    /// Builds a provider-agnostic review session from the local draft comments.
+    pub fn review_session(&self, cx: &App) -> ReviewSession {
+        let feedback = self.review_feedback(cx);
+        ReviewSession {
+            source: ReviewSessionSource::LocalDiff,
+            threads: feedback
+                .into_iter()
+                .enumerate()
+                .map(|(index, item)| ReviewThread {
+                    id: format!("local-{index}"),
+                    file_path: item.file_path,
+                    start_line: item.start_line,
+                    end_line: item.end_line,
+                    excerpt: item.excerpt,
+                    status: item.status,
+                    comments: vec![ReviewComment {
+                        id: format!("local-comment-{index}"),
+                        author: "You".to_string(),
+                        body: item.comment,
+                        is_draft: item.status == ReviewCommentStatus::Draft,
+                    }],
+                })
+                .collect(),
+        }
+    }
+
+    pub fn mark_review_feedback_sent(&mut self, cx: &mut Context<Self>) {
+        for (_, comments) in &mut self.stored_review_comments {
+            for comment in comments {
+                if comment.status.is_sendable() {
+                    comment.status = ReviewCommentStatus::Sent;
+                }
+            }
+        }
+        cx.emit(EditorEvent::ReviewCommentsChanged {
+            total_count: self.total_review_comment_count(),
+        });
+        cx.notify();
+    }
+
+    pub fn clear_review_feedback(&mut self, cx: &mut Context<Self>) {
+        self.dismiss_all_diff_review_overlays(cx);
+        self.stored_review_comments.clear();
+        self.next_review_comment_id = 0;
+        cx.emit(EditorEvent::ReviewCommentsChanged { total_count: 0 });
+        cx.notify();
     }
 
     /// Adds a new review comment to a specific hunk.
@@ -1215,37 +1385,54 @@ impl Editor {
         }
     }
 
-    /// Removes review comments whose anchors are no longer valid or whose
-    /// associated diff hunks no longer exist.
+    /// Marks review comments outdated when their anchors or hunks are no longer
+    /// valid, instead of silently dropping them.
     ///
-    /// This should be called when the buffer changes to prevent orphaned comments
-    /// from accumulating.
+    /// This should be called when the buffer changes so the UI can surface
+    /// outdated status without losing the author's text.
     pub(super) fn cleanup_orphaned_review_comments(&mut self, cx: &mut Context<Self>) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let original_count = self.total_review_comment_count();
+        let mut changed = false;
 
-        // Remove comments with invalid hunk anchors
-        self.stored_review_comments
-            .retain(|(hunk_key, _)| hunk_key.hunk_start_anchor.is_valid(&snapshot));
-
-        // Also clean up individual comments with invalid anchor ranges
-        for (_, comments) in &mut self.stored_review_comments {
-            comments.retain(|comment| {
-                comment.range.start.is_valid(&snapshot) && comment.range.end.is_valid(&snapshot)
-            });
+        for (hunk_key, comments) in &mut self.stored_review_comments {
+            let hunk_present = Self::diff_hunk_key_is_present(hunk_key, &snapshot);
+            for comment in comments {
+                let range_valid = comment.range.start.is_valid(&snapshot)
+                    && comment.range.end.is_valid(&snapshot);
+                if (!hunk_present || !range_valid)
+                    && comment.status != ReviewCommentStatus::Outdated
+                    && comment.status != ReviewCommentStatus::Resolved
+                {
+                    comment.status = ReviewCommentStatus::Outdated;
+                    changed = true;
+                }
+            }
         }
 
-        // Remove empty hunk entries
-        self.stored_review_comments
-            .retain(|(_, comments)| !comments.is_empty());
-
         let new_count = self.total_review_comment_count();
-        if new_count != original_count {
+        if changed || new_count != original_count {
             cx.emit(EditorEvent::ReviewCommentsChanged {
                 total_count: new_count,
             });
             cx.notify();
         }
+    }
+
+    fn diff_hunk_key_is_present(hunk_key: &DiffHunkKey, snapshot: &MultiBufferSnapshot) -> bool {
+        if !hunk_key.hunk_start_anchor.is_valid(snapshot) {
+            return false;
+        }
+        let key_point = hunk_key.hunk_start_anchor.to_point(snapshot);
+        snapshot
+            .diff_hunks_in_range(key_point..snapshot.max_point())
+            .any(|hunk| {
+                let hunk_start = hunk.multi_buffer_range.start.to_point(snapshot);
+                hunk_start == key_point
+                    && snapshot
+                        .file_at(hunk.multi_buffer_range.start)
+                        .is_some_and(|file| file.path() == &hunk_key.file_path)
+            })
     }
 
     /// Toggles the expanded state of the comments section in the overlay.
@@ -2572,7 +2759,7 @@ impl Editor {
                 .unwrap_or((Vec::new(), true, HashMap::default(), None, None));
 
         let comment_count = comments.len();
-        let avatar_size = px(20.);
+        let avatar_size = px(16.);
         let action_icon_size = IconSize::XSmall;
 
         v_flex()
@@ -2581,8 +2768,8 @@ impl Editor {
             .border_b_1()
             .border_color(colors.border)
             .px_2()
-            .pb_2()
-            .gap_2()
+            .pb_1p5()
+            .gap_1()
             // Line range indicator (only shown for multi-line selections or multiple excerpts)
             .when_some(line_ranges, |el, ranges| {
                 let label = format_line_ranges(&ranges);
@@ -2602,9 +2789,9 @@ impl Editor {
                 h_flex()
                     .w_full()
                     .items_center()
-                    .gap_2()
+                    .gap_1()
                     .px_2()
-                    .py_1p5()
+                    .py_1()
                     .rounded_md()
                     .bg(colors.surface_background)
                     .child(
@@ -2619,7 +2806,7 @@ impl Editor {
                                     .into_any_element()
                             } else {
                                 Icon::new(IconName::Person)
-                                    .size(IconSize::Small)
+                                    .size(IconSize::XSmall)
                                     .color(ui::Color::Muted)
                                     .into_any_element()
                             }),
@@ -2632,13 +2819,13 @@ impl Editor {
                             .rounded_md()
                             .bg(colors.editor_background)
                             .px_2()
-                            .py_1()
+                            .py_0p5()
                             .child(prompt_editor.clone()),
                     )
                     .child(
                         h_flex()
                             .flex_shrink_0()
-                            .gap_1()
+                            .gap_0p5()
                             .child(
                                 IconButton::new("diff-review-close", IconName::Close)
                                     .icon_color(ui::Color::Muted)
@@ -2755,19 +2942,31 @@ impl Editor {
     ) -> impl IntoElement {
         let comment_id = comment.id;
         let is_editing = inline_editor.is_some();
+        let status = comment.status;
+        let status_color = match status {
+            ReviewCommentStatus::Draft | ReviewCommentStatus::Queued => ui::Color::Muted,
+            ReviewCommentStatus::Sent | ReviewCommentStatus::Resolved => ui::Color::Success,
+            ReviewCommentStatus::Outdated => ui::Color::Warning,
+        };
+        let group_id = SharedString::from(format!("diff-review-comment-{comment_id}"));
 
         h_flex()
+            .id(SharedString::from(format!(
+                "diff-review-comment-row-{comment_id}"
+            )))
             .w_full()
-            .items_center()
-            .gap_2()
+            .items_start()
+            .gap_1()
             .px_2()
-            .py_1p5()
+            .py_1()
             .rounded_md()
             .bg(colors.surface_background)
+            .group(group_id.clone())
             .child(
                 div()
                     .size(avatar_size)
                     .flex_shrink_0()
+                    .mt_0p5()
                     .rounded_full()
                     .overflow_hidden()
                     .child(if let Some(ref avatar_uri) = user_avatar_uri {
@@ -2776,36 +2975,66 @@ impl Editor {
                             .into_any_element()
                     } else {
                         Icon::new(IconName::Person)
-                            .size(IconSize::Small)
+                            .size(IconSize::XSmall)
                             .color(ui::Color::Muted)
                             .into_any_element()
                     }),
             )
-            .child(if let Some(editor) = inline_editor {
-                // Inline edit mode: show an editable text field
-                div()
+            .child(
+                v_flex()
                     .flex_1()
-                    .border_1()
-                    .border_color(colors.border)
-                    .rounded_md()
-                    .bg(colors.editor_background)
-                    .px_2()
-                    .py_1()
-                    .child(editor)
-                    .into_any_element()
-            } else {
-                // Display mode: show the comment text
-                div()
-                    .flex_1()
-                    .text_sm()
-                    .text_color(colors.text)
-                    .child(comment.comment)
-                    .into_any_element()
-            })
+                    .gap_0p5()
+                    .min_w_0()
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .items_center()
+                            .gap_1()
+                            .child(Label::new("You").size(LabelSize::Small).color(Color::Muted))
+                            .child(
+                                h_flex()
+                                    .items_center()
+                                    .gap_0p5()
+                                    .child(
+                                        Icon::new(match status {
+                                            ReviewCommentStatus::Sent
+                                            | ReviewCommentStatus::Resolved => IconName::Check,
+                                            ReviewCommentStatus::Outdated => IconName::Warning,
+                                            _ => IconName::FileDiff,
+                                        })
+                                        .size(IconSize::XSmall)
+                                        .color(status_color),
+                                    )
+                                    .child(
+                                        Label::new(status.label())
+                                            .size(LabelSize::Small)
+                                            .color(status_color),
+                                    ),
+                            ),
+                    )
+                    .child(if let Some(editor) = inline_editor {
+                        div()
+                            .w_full()
+                            .border_1()
+                            .border_color(colors.border)
+                            .rounded_md()
+                            .bg(colors.editor_background)
+                            .px_2()
+                            .py_0p5()
+                            .child(editor)
+                            .into_any_element()
+                    } else {
+                        div()
+                            .w_full()
+                            .text_sm()
+                            .text_color(colors.text)
+                            .child(comment.comment)
+                            .into_any_element()
+                    }),
+            )
             .child(if is_editing {
-                // Editing mode: show close and confirm buttons
                 h_flex()
-                    .gap_1()
+                    .gap_0p5()
                     .child(
                         IconButton::new(
                             format!("diff-review-cancel-edit-{comment_id}"),
@@ -2842,8 +3071,42 @@ impl Editor {
                     )
                     .into_any_element()
             } else {
-                // Display mode: no action buttons for now (edit/delete not yet implemented)
-                gpui::Empty.into_any_element()
+                h_flex()
+                    .gap_0p5()
+                    .visible_on_hover(group_id)
+                    .when(status.is_sendable(), |this| {
+                        this.child(
+                            IconButton::new(
+                                format!("diff-review-edit-{comment_id}"),
+                                IconName::Pencil,
+                            )
+                            .icon_color(ui::Color::Muted)
+                            .icon_size(action_icon_size)
+                            .tooltip(Tooltip::text("Edit comment"))
+                            .on_click(move |_, window, cx| {
+                                window.dispatch_action(
+                                    Box::new(crate::actions::EditReviewComment { id: comment_id }),
+                                    cx,
+                                );
+                            }),
+                        )
+                    })
+                    .child(
+                        IconButton::new(
+                            format!("diff-review-delete-{comment_id}"),
+                            IconName::Trash,
+                        )
+                        .icon_color(ui::Color::Muted)
+                        .icon_size(action_icon_size)
+                        .tooltip(Tooltip::text("Delete comment"))
+                        .on_click(move |_, window, cx| {
+                            window.dispatch_action(
+                                Box::new(crate::actions::DeleteReviewComment { id: comment_id }),
+                                cx,
+                            );
+                        }),
+                    )
+                    .into_any_element()
             })
     }
 
