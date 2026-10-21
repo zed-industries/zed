@@ -1,4 +1,4 @@
-use std::{cmp::Reverse, rc::Rc, sync::Arc};
+use std::{rc::Rc, sync::Arc};
 
 use acp_thread::AgentSessionConfigOptions;
 use agent_client_protocol::schema::v2 as acp;
@@ -6,11 +6,10 @@ use agent_servers::AgentServer;
 
 use collections::HashSet;
 use fs::Fs;
-use fuzzy::StringMatchCandidate;
+use fuzzy_nucleo::StringMatchCandidate;
 use gpui::{
     App, BackgroundExecutor, Context, DismissEvent, Entity, Subscription, Task, Window, prelude::*,
 };
-use ordered_float::OrderedFloat;
 use picker::popover_menu::PickerPopoverMenu;
 use picker::{Picker, PickerDelegate};
 use settings::{AgentConfigOptionValue, SettingsStore};
@@ -22,6 +21,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use util::ResultExt as _;
 use zed_actions::agent::ToggleModelSelector;
 
+use crate::model_search;
 use crate::ui::documentation_aside_side;
 use crate::{
     CycleFavoriteModels, CycleModeSelector, CycleThinkingEffort, ToggleProfileSelector,
@@ -1074,32 +1074,22 @@ async fn fuzzy_search_options(
     query: &str,
     executor: BackgroundExecutor,
 ) -> Vec<ConfigOptionValue> {
-    let candidates = options
-        .iter()
-        .enumerate()
-        .map(|(ix, opt)| StringMatchCandidate::new(ix, &opt.name))
-        .collect::<Vec<_>>();
-
-    let mut matches = fuzzy::match_strings(
-        &candidates,
-        query,
-        false,
-        true,
-        100,
-        &Default::default(),
-        executor,
-    )
-    .await;
-
-    matches.sort_unstable_by_key(|mat| {
-        let candidate = &candidates[mat.candidate_id];
-        (Reverse(OrderedFloat(mat.score)), candidate.id)
-    });
-
-    matches
-        .into_iter()
-        .map(|mat| options[mat.candidate_id].clone())
-        .collect()
+    model_search::search(options, query, executor, |index, option| {
+        (
+            StringMatchCandidate::new(index, option.name.clone()),
+            StringMatchCandidate::new(
+                index,
+                format!(
+                    "{} {} {} {}",
+                    option.name,
+                    option.group.as_deref().unwrap_or_default(),
+                    option.description.as_deref().unwrap_or_default(),
+                    option.value.0,
+                ),
+            ),
+        )
+    })
+    .await
 }
 
 fn find_option_name(
@@ -1144,6 +1134,119 @@ mod tests {
     use parking_lot::Mutex;
     use project::{AgentId, Project};
     use std::{any::Any, cell::RefCell};
+
+    fn option_names(options: Vec<ConfigOptionValue>) -> Vec<String> {
+        options.into_iter().map(|option| option.name).collect()
+    }
+
+    #[gpui::test]
+    async fn config_option_search_matches_all_searchable_fields(executor: BackgroundExecutor) {
+        let options = vec![
+            ConfigOptionValue {
+                value: acp::SessionConfigValueId::new("openai/gpt-5.6-sol"),
+                name: "GPT-5.6 Sol".to_string(),
+                description: Some("Flagship reasoning model".to_string()),
+                group: Some("OpenAI".to_string()),
+            },
+            ConfigOptionValue {
+                value: acp::SessionConfigValueId::new("anthropic/claude-sonnet-4"),
+                name: "Claude Sonnet 4".to_string(),
+                description: None,
+                group: Some("Anthropic".to_string()),
+            },
+        ];
+
+        for query in [
+            "GPT 5.6",
+            "GPT-5.6",
+            "gpt5.6 sol",
+            "openai",
+            "openai/gpt-5.6-sol",
+            "flagship",
+            "openai reasoning",
+        ] {
+            assert_eq!(
+                option_names(fuzzy_search_options(options.clone(), query, executor.clone()).await),
+                ["GPT-5.6 Sol"],
+                "query {query:?} should match the GPT model",
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn config_option_search_ranks_names_before_metadata(executor: BackgroundExecutor) {
+        let options = vec![
+            ConfigOptionValue {
+                value: acp::SessionConfigValueId::new("reasoner"),
+                name: "Reasoner".to_string(),
+                description: Some("High reasoning effort".to_string()),
+                group: None,
+            },
+            ConfigOptionValue {
+                value: acp::SessionConfigValueId::new("xhigh"),
+                name: "Extra High".to_string(),
+                description: None,
+                group: None,
+            },
+            ConfigOptionValue {
+                value: acp::SessionConfigValueId::new("high"),
+                name: "High".to_string(),
+                description: Some(
+                    "High effort with advanced reasoning for complex tasks.".to_string(),
+                ),
+                group: None,
+            },
+        ];
+
+        assert_eq!(
+            option_names(fuzzy_search_options(options, "high", executor).await),
+            ["High", "Extra High", "Reasoner"],
+        );
+    }
+
+    #[gpui::test]
+    async fn config_option_search_preserves_name_order_with_different_metadata(
+        executor: BackgroundExecutor,
+    ) {
+        let options = vec![
+            ConfigOptionValue {
+                value: acp::SessionConfigValueId::new("model-a"),
+                name: "Model A".to_string(),
+                description: Some("Advanced reasoning for complex tasks".to_string()),
+                group: Some("Provider A".to_string()),
+            },
+            ConfigOptionValue {
+                value: acp::SessionConfigValueId::new("b"),
+                name: "Model B".to_string(),
+                description: None,
+                group: None,
+            },
+        ];
+
+        assert_eq!(
+            option_names(fuzzy_search_options(options, "model", executor).await),
+            ["Model A", "Model B"],
+        );
+    }
+
+    #[gpui::test]
+    async fn config_option_search_returns_more_than_one_hundred_matches(
+        executor: BackgroundExecutor,
+    ) {
+        let options = (0..101)
+            .map(|index| ConfigOptionValue {
+                value: acp::SessionConfigValueId::new(format!("model-{index}")),
+                name: format!("Model {index}"),
+                description: None,
+                group: None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            fuzzy_search_options(options, "model", executor).await.len(),
+            101
+        );
+    }
 
     #[gpui::test]
     fn config_defaults_wait_for_authoritative_response(cx: &mut TestAppContext) {

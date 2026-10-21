@@ -10,8 +10,6 @@ use futures::{
 };
 use heck::ToSnakeCase;
 use http_client::{self, AsyncBody, HttpClient};
-use language::LanguageConfig;
-use path::PathExt;
 use semver::Version;
 use serde::Deserialize;
 use std::{
@@ -97,7 +95,9 @@ impl ExtensionBuilder {
     ) -> Result<()> {
         let start = std::time::Instant::now();
 
-        populate_defaults(extension_manifest, extension_dir, fs.clone()).await?;
+        extension_manifest
+            .populate_defaults(extension_dir, fs.clone())
+            .await?;
 
         anyhow::ensure!(
             extension_dir.is_absolute(),
@@ -627,136 +627,6 @@ impl ExtensionBuilder {
     }
 }
 
-async fn populate_defaults(
-    manifest: &mut ExtensionManifest,
-    extension_path: &Path,
-    fs: Arc<dyn Fs>,
-) -> Result<()> {
-    // For legacy extensions on the v0 schema (aka, using `extension.json`), clear out any existing
-    // contents of the computed fields, since we don't care what the existing values are.
-    if manifest.schema_version.is_v0() {
-        manifest.languages.clear();
-        manifest.grammars.clear();
-        manifest.themes.clear();
-    }
-
-    let cargo_toml_path = extension_path.join("Cargo.toml");
-    if cargo_toml_path.exists() {
-        manifest.lib.kind = Some(ExtensionLibraryKind::Rust);
-    }
-
-    let languages_dir = extension_path.join("languages");
-    if fs.is_dir(&languages_dir).await {
-        let mut language_dir_entries = fs
-            .read_dir(&languages_dir)
-            .await
-            .context("listing languages directory")?;
-
-        while let Some(language_dir) = language_dir_entries.next().await {
-            let language_dir = language_dir?;
-            let config_path = language_dir.join(LanguageConfig::FILE_NAME);
-            if fs.is_file(config_path.as_path()).await {
-                let relative_language_dir = language_dir
-                    .strip_prefix(extension_path)?
-                    .to_rel_path_buf()?;
-                if !manifest.languages.contains(&relative_language_dir) {
-                    manifest.languages.push(relative_language_dir);
-                }
-            }
-        }
-    }
-
-    let themes_dir = extension_path.join("themes");
-    if fs.is_dir(&themes_dir).await {
-        let mut theme_dir_entries = fs
-            .read_dir(&themes_dir)
-            .await
-            .context("listing themes directory")?;
-
-        while let Some(theme_path) = theme_dir_entries.next().await {
-            let theme_path = theme_path?;
-            if theme_path.extension() == Some("json".as_ref()) {
-                let relative_theme_path =
-                    theme_path.strip_prefix(extension_path)?.to_rel_path_buf()?;
-                if !manifest.themes.contains(&relative_theme_path) {
-                    manifest.themes.push(relative_theme_path);
-                }
-            }
-        }
-    }
-
-    let icon_themes_dir = extension_path.join("icon_themes");
-    if fs.is_dir(&icon_themes_dir).await {
-        let mut icon_theme_dir_entries = fs
-            .read_dir(&icon_themes_dir)
-            .await
-            .context("listing icon themes directory")?;
-
-        while let Some(icon_theme_path) = icon_theme_dir_entries.next().await {
-            let icon_theme_path = icon_theme_path?;
-            if icon_theme_path.extension() == Some("json".as_ref()) {
-                let relative_icon_theme_path = icon_theme_path
-                    .strip_prefix(extension_path)?
-                    .to_rel_path_buf()?;
-                if !manifest.icon_themes.contains(&relative_icon_theme_path) {
-                    manifest.icon_themes.push(relative_icon_theme_path);
-                }
-            }
-        }
-    };
-    if manifest.snippets.is_none()
-        && let snippets_json_path = extension_path.join("snippets.json")
-        && fs.is_file(&snippets_json_path).await
-    {
-        manifest.snippets = Some("snippets.json".into());
-    }
-
-    // For legacy extensions on the v0 schema (aka, using `extension.json`), we want to populate the grammars in
-    // the manifest using the contents of the `grammars` directory.
-    if manifest.schema_version.is_v0() {
-        let grammars_dir = extension_path.join("grammars");
-        if fs.is_dir(&grammars_dir).await {
-            let mut grammar_dir_entries = fs
-                .read_dir(&grammars_dir)
-                .await
-                .context("listing grammars directory")?;
-
-            while let Some(grammar_path) = grammar_dir_entries.next().await {
-                let grammar_path = grammar_path?;
-                if grammar_path.extension() == Some("toml".as_ref()) {
-                    #[derive(Deserialize)]
-                    struct GrammarConfigToml {
-                        pub repository: String,
-                        pub commit: String,
-                        #[serde(default)]
-                        pub path: Option<String>,
-                    }
-
-                    let grammar_config = fs.load(&grammar_path).await?;
-                    let grammar_config: GrammarConfigToml = toml::from_str(&grammar_config)?;
-
-                    let grammar_name = grammar_path
-                        .file_stem()
-                        .and_then(|stem| stem.to_str())
-                        .context("no grammar name")?;
-                    if !manifest.grammars.contains_key(grammar_name) {
-                        manifest.grammars.insert(
-                            grammar_name.into(),
-                            GrammarManifestEntry {
-                                repository: grammar_config.repository,
-                                rev: grammar_config.commit,
-                                path: grammar_config.path,
-                            },
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
 /// Returns `true` if the target exists and its last modified time is greater than that
 /// of each dependency which exists (i.e., dependency paths which do not exist are ignored).
 ///
@@ -814,7 +684,7 @@ mod tests {
 
     use crate::{
         ExtensionManifest, ExtensionSnippets,
-        extension_builder::{file_newer_than_deps, installed_wasi_sdk_version, populate_defaults},
+        extension_builder::{file_newer_than_deps, installed_wasi_sdk_version},
     };
 
     #[test]
@@ -904,7 +774,8 @@ mod tests {
             .await
             .unwrap();
 
-        populate_defaults(&mut manifest, extension_path, fs.clone())
+        manifest
+            .populate_defaults(extension_path, fs.clone())
             .await
             .unwrap();
 
@@ -941,7 +812,8 @@ mod tests {
             .await
             .unwrap();
 
-        populate_defaults(&mut manifest, extension_path, fs.clone())
+        manifest
+            .populate_defaults(extension_path, fs.clone())
             .await
             .unwrap();
 

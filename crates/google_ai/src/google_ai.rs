@@ -295,8 +295,20 @@ fn completion_error_from_response(
         .as_ref()
         .map(|error| error.message.clone())
         .unwrap_or(body);
+    // Google uses HTTP 400 / INVALID_ARGUMENT even when the API key is invalid.
+    let invalid_api_key = status == StatusCode::BAD_REQUEST
+        && (parsed_error.as_ref().is_some_and(|error| {
+            error
+                .details
+                .iter()
+                .any(|detail| detail.reason.as_deref() == Some("API_KEY_INVALID"))
+        }) || message.starts_with("API key not valid."));
     let code = parsed_error.and_then(|error| error.status);
-    let category = ProviderErrorCategory::from_http_status(status, &message);
+    let category = if invalid_api_key {
+        ProviderErrorCategory::Authentication
+    } else {
+        ProviderErrorCategory::from_http_status(status, &message)
+    };
 
     LanguageModelCompletionError::from_provider_response(
         GOOGLE_PROVIDER_NAME,
@@ -317,11 +329,51 @@ struct GoogleErrorEnvelope {
 struct GoogleError {
     message: String,
     status: Option<String>,
+    #[serde(default)]
+    details: Vec<GoogleErrorDetail>,
+}
+
+#[derive(Deserialize)]
+struct GoogleErrorDetail {
+    reason: Option<String>,
 }
 
 #[cfg(test)]
 mod provider_error_tests {
     use super::*;
+
+    #[test]
+    fn invalid_api_keys_are_authentication_errors_not_invalid_requests() {
+        for (body, expected_category) in [
+            (
+                r#"{"error":{"code":400,"message":"Invalid credentials.","status":"INVALID_ARGUMENT","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"API_KEY_INVALID","domain":"googleapis.com"}]}}"#,
+                ProviderErrorCategory::Authentication,
+            ),
+            (
+                r#"{"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT"}}"#,
+                ProviderErrorCategory::Authentication,
+            ),
+            (
+                r#"{"error":{"code":400,"message":"Invalid value at 'contents'.","status":"INVALID_ARGUMENT","details":[{"@type":"type.googleapis.com/google.rpc.BadRequest","fieldViolations":[]}]}}"#,
+                ProviderErrorCategory::InvalidRequest,
+            ),
+        ] {
+            let error = completion_error_from_response(
+                StatusCode::BAD_REQUEST,
+                &HeaderMap::new(),
+                body.to_string(),
+            );
+            assert!(matches!(
+                error,
+                LanguageModelCompletionError::ProviderRejection {
+                    status: Some(StatusCode::BAD_REQUEST),
+                    code: Some(code),
+                    category,
+                    ..
+                } if code == "INVALID_ARGUMENT" && category == expected_category
+            ));
+        }
+    }
 
     #[test]
     fn google_rejections_preserve_wire_details_and_semantic_category() {
