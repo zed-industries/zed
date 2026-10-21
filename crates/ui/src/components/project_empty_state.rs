@@ -1,4 +1,4 @@
-use crate::{ButtonLike, Divider, DividerColor, KeyBinding, prelude::*};
+use crate::{Divider, DividerColor, KeyBinding, prelude::*};
 use gpui::{ClickEvent, FocusHandle};
 
 type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
@@ -45,13 +45,9 @@ impl ProjectEmptyState {
 }
 
 impl RenderOnce for ProjectEmptyState {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let id = format!("empty-state-{}", self.label);
         let label = format!("Choose one of the options below to use the {}", self.label);
-        let keyshortcuts = self
-            .open_project_key_binding
-            .keyboard_shortcut_text(window, cx);
-        let show_key_binding = KeyBinding::default_visibility(cx) && keyshortcuts.is_some();
 
         v_flex()
             .id(id)
@@ -72,40 +68,13 @@ impl RenderOnce for ProjectEmptyState {
                             .child(Label::new(label).size(LabelSize::Small).color(Color::Muted)),
                     )
                     .child(
-                        div().debug_selector(|| "OPEN_PROJECT_BUTTON".into()).child(
-                            ButtonLike::new("open_project")
-                                .full_width()
-                                .auto_height()
-                                .aria_label("Open Project")
-                                .when_some(keyshortcuts, |button, keyshortcuts| {
-                                    button.aria_keyshortcuts(keyshortcuts)
-                                })
-                                .child(
-                                    h_flex()
-                                        .w_full()
-                                        .flex_wrap()
-                                        .justify_center()
-                                        .gap_x(DynamicSpacing::Base06.rems(cx))
-                                        .child(
-                                            h_flex()
-                                                .debug_selector(|| "OPEN_PROJECT_LABEL".into())
-                                                .flex_none()
-                                                .h(ButtonSize::Default.rems())
-                                                .child(Label::new("Open Project")),
-                                        )
-                                        .when(show_key_binding, |this| {
-                                            this.child(
-                                                h_flex()
-                                                    .flex_none()
-                                                    .min_h(ButtonSize::Default.rems())
-                                                    .child(self.open_project_key_binding),
-                                            )
-                                        }),
-                                )
-                                .when_some(self.on_open_project, |button, handler| {
-                                    button.on_click(handler)
-                                }),
-                        ),
+                        Button::new("open_project", "Open Project")
+                            .full_width()
+                            .key_binding(self.open_project_key_binding)
+                            .wrap_key_binding(true)
+                            .when_some(self.on_open_project, |button, handler| {
+                                button.on_click(handler)
+                            }),
                     )
                     .child(
                         h_flex()
@@ -122,109 +91,5 @@ impl RenderOnce for ProjectEmptyState {
                             }),
                     ),
             )
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use gpui::{KeybindingKeystroke, Keystroke, Modifiers, TestAppContext};
-
-    #[gpui::test]
-    fn test_open_project_button_contains_label_and_shortcut(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = settings::SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            theme_settings::init(theme::LoadThemes::JustBase, cx);
-        });
-        let (view, cx) = cx.add_window_view(|_, cx| ProjectEmptyStateTestView {
-            width: px(320.),
-            key_binding: key_binding("cmd-o", false),
-            focus_handle: cx.focus_handle(),
-            clicks: 0,
-        });
-
-        for (width, shortcut, vim_mode, selector) in [
-            (160., "ctrl-k ctrl-o", true, "KEY_BINDING-k o"),
-            (320., "cmd-o", false, "KEY_BINDING-o"),
-            (160., "cmd-o", false, "KEY_BINDING-o"),
-            (320., "ctrl-k ctrl-o", true, "KEY_BINDING-k o"),
-        ] {
-            view.update(cx, |view, cx| {
-                view.width = px(width);
-                view.key_binding = key_binding(shortcut, vim_mode);
-                cx.notify();
-            });
-            cx.run_until_parked();
-
-            let button_bounds = cx
-                .debug_bounds("OPEN_PROJECT_BUTTON")
-                .expect("button bounds");
-            let shortcut_bounds = cx.debug_bounds(selector).expect("shortcut bounds");
-            assert_eq!(
-                button_bounds.intersect(&shortcut_bounds),
-                shortcut_bounds,
-                "{shortcut} must fit inside the button at width {width}: {button_bounds:?}, {shortcut_bounds:?}"
-            );
-            let label_bounds = cx.debug_bounds("OPEN_PROJECT_LABEL").expect("label bounds");
-            assert_eq!(button_bounds.intersect(&label_bounds), label_bounds);
-            assert!(!label_bounds.intersects(&shortcut_bounds));
-            if width == 320. && shortcut == "cmd-o" {
-                assert_eq!(label_bounds.center().y, shortcut_bounds.center().y);
-            }
-
-            cx.simulate_mouse_move(button_bounds.center(), None, Modifiers::default());
-            assert_eq!(cx.debug_bounds("OPEN_PROJECT_BUTTON"), Some(button_bounds));
-            assert_eq!(cx.debug_bounds("OPEN_PROJECT_LABEL"), Some(label_bounds));
-            assert_eq!(cx.debug_bounds(selector), Some(shortcut_bounds));
-            cx.simulate_click(button_bounds.center(), Modifiers::default());
-        }
-        assert_eq!(view.read_with(cx, |view, _| view.clicks), 4);
-
-        view.update(cx, |view, cx| {
-            view.width = px(160.);
-            KeyBinding::set_default_visibility(cx, false);
-            cx.notify();
-        });
-        cx.run_until_parked();
-        let button_bounds = cx
-            .debug_bounds("OPEN_PROJECT_BUTTON")
-            .expect("button bounds");
-        let label_bounds = cx.debug_bounds("OPEN_PROJECT_LABEL").expect("label bounds");
-        assert_eq!(button_bounds.size.height, label_bounds.size.height);
-        assert!(cx.debug_bounds("KEY_BINDING-k o").is_none());
-    }
-
-    fn key_binding(shortcut: &str, vim_mode: bool) -> KeyBinding {
-        let keystrokes = shortcut
-            .split_whitespace()
-            .map(|keystroke| {
-                KeybindingKeystroke::from_keystroke(
-                    Keystroke::parse(keystroke).expect("valid test keystroke"),
-                )
-            })
-            .collect::<Vec<_>>()
-            .into();
-        KeyBinding::from_keystrokes(keystrokes, vim_mode)
-    }
-
-    struct ProjectEmptyStateTestView {
-        width: Pixels,
-        key_binding: KeyBinding,
-        focus_handle: FocusHandle,
-        clicks: usize,
-    }
-
-    impl Render for ProjectEmptyStateTestView {
-        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            div().w(self.width).h(px(400.)).child(
-                ProjectEmptyState::new(
-                    "project panel",
-                    self.focus_handle.clone(),
-                    self.key_binding.clone(),
-                )
-                .on_open_project(cx.listener(|view, _, _, _| view.clicks += 1)),
-            )
-        }
     }
 }

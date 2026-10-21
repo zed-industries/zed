@@ -492,7 +492,7 @@ pub struct ButtonLike {
     pub(super) height: Option<Length>,
     pub(super) layer: Option<ElevationIndex>,
     tab_index: Option<isize>,
-    size: ButtonSize,
+    pub(super) size: ButtonSize,
     rounding: Option<ButtonLikeRounding>,
     pub(super) aria_label: Option<SharedString>,
     aria_description: Option<SharedString>,
