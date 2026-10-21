@@ -760,7 +760,7 @@ impl Platform for MacPlatform {
             background_executor,
             renderer_context,
             self.1,
-        )))
+        )?))
     }
 
     fn window_appearance(&self) -> WindowAppearance {

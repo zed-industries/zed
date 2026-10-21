@@ -31,7 +31,7 @@ use objc2_metal::{MTLBlitCommandEncoder, MTLOrigin, MTLRegion, MTLSize};
 use objc2_quartz_core::{CAMetalDrawable, CAMetalLayer};
 use parking_lot::Mutex;
 
-use std::{cell::Cell, ffi::c_void, mem, mem::MaybeUninit, ops::Range, ptr, slice, sync::Arc};
+use std::{cell::Cell, mem, mem::MaybeUninit, ops::Range, ptr, slice, sync::Arc};
 
 // Exported to metal
 pub(crate) type PointF = gpui::Point<f32>;
@@ -52,12 +52,9 @@ pub type Renderer = MetalRenderer;
 
 pub fn new_renderer(
     context: self::Context,
-    _native_window: *mut c_void,
-    _native_view: *mut c_void,
-    _bounds: gpui::Size<f32>,
     transparent: bool,
     use_display_p3: bool,
-) -> Renderer {
+) -> Result<Renderer> {
     MetalRenderer::new(context, transparent, use_display_p3)
 }
 
@@ -165,8 +162,8 @@ impl MetalRenderer {
         instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
         transparent: bool,
         use_display_p3: bool,
-    ) -> Self {
-        let device = Self::create_device();
+    ) -> Result<Self> {
+        let device = Self::create_device()?;
         let layer = CAMetalLayer::new();
         Self::configure_layer(&layer, &device, transparent, use_display_p3);
         Self::new_internal(device, Some(layer), !transparent, instance_buffer_pool)
@@ -179,8 +176,8 @@ impl MetalRenderer {
         instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
         layer: &CAMetalLayer,
         transparent: bool,
-    ) -> Self {
-        let device = Self::create_device();
+    ) -> Result<Self> {
+        let device = Self::create_device()?;
         let layer = layer.retain();
         Self::configure_layer(&layer, &device, transparent, false);
         Self::new_internal(device, Some(layer), !transparent, instance_buffer_pool)
@@ -228,18 +225,18 @@ impl MetalRenderer {
     /// This renderer can render scenes to images without requiring a CAMetalLayer,
     /// window, or AppKit. Use `render_scene_to_image()` to render scenes.
     #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
-    pub fn new_headless(instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>) -> Self {
-        let device = Self::create_device();
+    pub fn new_headless(instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>) -> Result<Self> {
+        let device = Self::create_device()?;
         Self::new_internal(device, None, true, instance_buffer_pool)
     }
 
     #[cfg(target_os = "macos")]
-    fn create_device() -> Retained<ProtocolObject<dyn MTLDevice>> {
+    fn create_device() -> Result<Retained<ProtocolObject<dyn MTLDevice>>> {
         if let Some(device) = MTLCopyAllDevices()
             .iter()
             .min_by_key(|device| (device.isRemovable(), !device.isLowPower()))
         {
-            device
+            Ok(device)
         } else {
             // For some reason `all()` can return an empty list, see https://github.com/zed-industries/zed/issues/37689
             // In that case, we fall back to the system default device.
@@ -251,15 +248,12 @@ impl MetalRenderer {
     }
 
     #[cfg(target_os = "ios")]
-    fn create_device() -> Retained<ProtocolObject<dyn MTLDevice>> {
+    fn create_device() -> Result<Retained<ProtocolObject<dyn MTLDevice>>> {
         Self::system_default_device()
     }
 
-    fn system_default_device() -> Retained<ProtocolObject<dyn MTLDevice>> {
-        MTLCreateSystemDefaultDevice().unwrap_or_else(|| {
-            log::error!("unable to access a compatible graphics device");
-            std::process::exit(1);
-        })
+    fn system_default_device() -> Result<Retained<ProtocolObject<dyn MTLDevice>>> {
+        MTLCreateSystemDefaultDevice().context("accessing a compatible Metal device")
     }
 
     fn new_internal(
@@ -267,20 +261,20 @@ impl MetalRenderer {
         layer: Option<Retained<CAMetalLayer>>,
         opaque: bool,
         instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
-    ) -> Self {
+    ) -> Result<Self> {
         #[cfg(feature = "runtime_shaders")]
         let library = device
             .newLibraryWithSource_options_error(
                 &NSString::from_str(SHADERS_SOURCE_FILE),
                 Some(&objc2_metal::MTLCompileOptions::new()),
             )
-            .expect("building Metal library");
+            .context("building Metal library")?;
         #[cfg(not(feature = "runtime_shaders"))]
         let library = device
             .newLibraryWithData_error(&dispatch2::DispatchData::from_static_bytes(
                 SHADERS_METALLIB,
             ))
-            .expect("loading Metal library");
+            .context("loading Metal library")?;
 
         fn to_float2_bits(point: PointF) -> u64 {
             let mut output = point.y.to_bits() as u64;
@@ -321,7 +315,7 @@ impl MetalRenderer {
                 },
             )
         }
-        .expect("allocating unit vertex buffer");
+        .context("allocating unit vertex buffer")?;
 
         let paths_rasterization_pipeline_state = build_path_rasterization_pipeline_state(
             &device,
@@ -331,7 +325,7 @@ impl MetalRenderer {
             "path_rasterization_fragment",
             MTLPixelFormat::BGRA8Unorm,
             PATH_SAMPLE_COUNT,
-        );
+        )?;
         let path_sprites_pipeline_state = build_path_sprite_pipeline_state(
             &device,
             &library,
@@ -339,7 +333,7 @@ impl MetalRenderer {
             "path_sprite_vertex",
             "path_sprite_fragment",
             MTLPixelFormat::BGRA8Unorm,
-        );
+        )?;
         let shadows_pipeline_state = build_pipeline_state(
             &device,
             &library,
@@ -347,7 +341,7 @@ impl MetalRenderer {
             "shadow_vertex",
             "shadow_fragment",
             MTLPixelFormat::BGRA8Unorm,
-        );
+        )?;
         let quads_pipeline_state = build_pipeline_state(
             &device,
             &library,
@@ -355,7 +349,7 @@ impl MetalRenderer {
             "quad_vertex",
             "quad_fragment",
             MTLPixelFormat::BGRA8Unorm,
-        );
+        )?;
         let underlines_pipeline_state = build_pipeline_state(
             &device,
             &library,
@@ -363,7 +357,7 @@ impl MetalRenderer {
             "underline_vertex",
             "underline_fragment",
             MTLPixelFormat::BGRA8Unorm,
-        );
+        )?;
         let monochrome_sprites_pipeline_state = build_pipeline_state(
             &device,
             &library,
@@ -371,7 +365,7 @@ impl MetalRenderer {
             "monochrome_sprite_vertex",
             "monochrome_sprite_fragment",
             MTLPixelFormat::BGRA8Unorm,
-        );
+        )?;
         let polychrome_sprites_pipeline_state = build_pipeline_state(
             &device,
             &library,
@@ -379,7 +373,7 @@ impl MetalRenderer {
             "polychrome_sprite_vertex",
             "polychrome_sprite_fragment",
             MTLPixelFormat::BGRA8Unorm,
-        );
+        )?;
         let surfaces_pipeline_state = build_pipeline_state(
             &device,
             &library,
@@ -387,9 +381,9 @@ impl MetalRenderer {
             "surface_vertex",
             "surface_fragment",
             MTLPixelFormat::BGRA8Unorm,
-        );
+        )?;
 
-        let command_queue = device.newCommandQueue().expect("creating command queue");
+        let command_queue = device.newCommandQueue().context("creating command queue")?;
         let supports_shared_storage = cfg!(target_os = "ios") || is_apple_gpu;
         #[expect(
             clippy::arc_with_non_send_sync,
@@ -401,15 +395,15 @@ impl MetalRenderer {
         let status = unsafe {
             CVMetalTextureCache::create(None, None, &device, None, ptr::NonNull::from(&mut cache))
         };
-        assert_eq!(
-            status, kCVReturnSuccess,
-            "creating CoreVideo Metal texture cache"
+        anyhow::ensure!(
+            status == kCVReturnSuccess,
+            "creating CoreVideo Metal texture cache: status {status}"
         );
-        let cache = ptr::NonNull::new(cache).expect("retrieving CoreVideo Metal texture cache");
+        let cache = ptr::NonNull::new(cache).context("retrieving CoreVideo Metal texture cache")?;
         // SAFETY: The successful create call transfers ownership of this non-null cache.
         let core_video_texture_cache = unsafe { CFRetained::from_raw(cache) };
 
-        Self {
+        Ok(Self {
             device,
             layer,
             presents_with_transaction: false,
@@ -434,7 +428,7 @@ impl MetalRenderer {
             path_sample_count: PATH_SAMPLE_COUNT,
             #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
             headless_render_target: None,
-        }
+        })
     }
 
     pub fn layer(&self) -> Option<&CAMetalLayer> {
@@ -1059,7 +1053,7 @@ impl MetalRenderer {
         viewport_size: Size<DevicePixels>,
         command_encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>,
     ) -> Result<()> {
-        let Some(first_path) = paths.first() else {
+        let (Some(first_path), Some(last_path)) = (paths.first(), paths.last()) else {
             return Ok(());
         };
         let intermediate_texture = self
@@ -1095,7 +1089,7 @@ impl MetalRenderer {
         // batch combines different draw orders, we perform a single copy
         // for a minimal spanning rect.
         let sprites;
-        if paths.last().unwrap().order == first_path.order {
+        if last_path.order == first_path.order {
             sprites = paths
                 .iter()
                 .map(|path| PathSprite {
@@ -1488,13 +1482,13 @@ fn build_pipeline_state(
     vertex_fn_name: &str,
     fragment_fn_name: &str,
     pixel_format: MTLPixelFormat,
-) -> Retained<ProtocolObject<dyn MTLRenderPipelineState>> {
+) -> Result<Retained<ProtocolObject<dyn MTLRenderPipelineState>>> {
     let vertex_fn = library
         .newFunctionWithName(&NSString::from_str(vertex_fn_name))
-        .expect("locating vertex function");
+        .with_context(|| format!("locating vertex function {vertex_fn_name}"))?;
     let fragment_fn = library
         .newFunctionWithName(&NSString::from_str(fragment_fn_name))
-        .expect("locating fragment function");
+        .with_context(|| format!("locating fragment function {fragment_fn_name}"))?;
 
     let descriptor = MTLRenderPipelineDescriptor::new();
     descriptor.setLabel(Some(&NSString::from_str(label)));
@@ -1513,7 +1507,7 @@ fn build_pipeline_state(
 
     device
         .newRenderPipelineStateWithDescriptor_error(&descriptor)
-        .expect("creating render pipeline")
+        .with_context(|| format!("creating {label} render pipeline"))
 }
 
 fn build_path_sprite_pipeline_state(
@@ -1523,13 +1517,13 @@ fn build_path_sprite_pipeline_state(
     vertex_fn_name: &str,
     fragment_fn_name: &str,
     pixel_format: MTLPixelFormat,
-) -> Retained<ProtocolObject<dyn MTLRenderPipelineState>> {
+) -> Result<Retained<ProtocolObject<dyn MTLRenderPipelineState>>> {
     let vertex_fn = library
         .newFunctionWithName(&NSString::from_str(vertex_fn_name))
-        .expect("locating vertex function");
+        .with_context(|| format!("locating vertex function {vertex_fn_name}"))?;
     let fragment_fn = library
         .newFunctionWithName(&NSString::from_str(fragment_fn_name))
-        .expect("locating fragment function");
+        .with_context(|| format!("locating fragment function {fragment_fn_name}"))?;
 
     let descriptor = MTLRenderPipelineDescriptor::new();
     descriptor.setLabel(Some(&NSString::from_str(label)));
@@ -1548,7 +1542,7 @@ fn build_path_sprite_pipeline_state(
 
     device
         .newRenderPipelineStateWithDescriptor_error(&descriptor)
-        .expect("creating render pipeline")
+        .with_context(|| format!("creating {label} render pipeline"))
 }
 
 fn build_path_rasterization_pipeline_state(
@@ -1559,13 +1553,13 @@ fn build_path_rasterization_pipeline_state(
     fragment_fn_name: &str,
     pixel_format: MTLPixelFormat,
     path_sample_count: u32,
-) -> Retained<ProtocolObject<dyn MTLRenderPipelineState>> {
+) -> Result<Retained<ProtocolObject<dyn MTLRenderPipelineState>>> {
     let vertex_fn = library
         .newFunctionWithName(&NSString::from_str(vertex_fn_name))
-        .expect("locating vertex function");
+        .with_context(|| format!("locating vertex function {vertex_fn_name}"))?;
     let fragment_fn = library
         .newFunctionWithName(&NSString::from_str(fragment_fn_name))
-        .expect("locating fragment function");
+        .with_context(|| format!("locating fragment function {fragment_fn_name}"))?;
 
     let descriptor = MTLRenderPipelineDescriptor::new();
     descriptor.setLabel(Some(&NSString::from_str(label)));
@@ -1588,7 +1582,7 @@ fn build_path_rasterization_pipeline_state(
 
     device
         .newRenderPipelineStateWithDescriptor_error(&descriptor)
-        .expect("creating render pipeline")
+        .with_context(|| format!("creating {label} render pipeline"))
 }
 
 #[derive(Clone)]
@@ -1823,10 +1817,10 @@ pub struct MetalHeadlessRenderer {
 
 #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
 impl MetalHeadlessRenderer {
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self> {
         let instance_buffer_pool = Arc::new(Mutex::new(InstanceBufferPool::default()));
-        let renderer = MetalRenderer::new_headless(instance_buffer_pool);
-        Self { renderer }
+        let renderer = MetalRenderer::new_headless(instance_buffer_pool)?;
+        Ok(Self { renderer })
     }
 }
 
@@ -1915,7 +1909,8 @@ mod tests {
         scene.finish();
 
         let mut renderer =
-            MetalRenderer::new_headless(Arc::new(Mutex::new(InstanceBufferPool::default())));
+            MetalRenderer::new_headless(Arc::new(Mutex::new(InstanceBufferPool::default())))
+                .unwrap();
         let image = renderer
             .render_scene_to_image(&scene, size(DevicePixels(16), DevicePixels(16)))
             .unwrap();
