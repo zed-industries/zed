@@ -395,6 +395,10 @@ where
     pub fn did_seek(&self) -> bool {
         self.did_seek
     }
+
+    pub fn at_end(&self) -> bool {
+        self.at_end
+    }
 }
 
 impl<'a, 'b, T, D> Cursor<'a, 'b, T, D>
