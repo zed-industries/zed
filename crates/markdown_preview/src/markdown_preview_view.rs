@@ -1568,16 +1568,19 @@ fn resolve_preview_image(
 
     if let Some(project) = project {
         // Collapsing `..` lexically is wrong after a symlinked directory, so the filesystem
-        // has to resolve it.
-        let path_with_parent_components = lookup_worktree.as_ref().and_then(|worktree| {
-            preview_image_path_with_parent_components(
-                &decoded,
-                workspace_relative_path,
-                source_project_path,
-                worktree,
-                cx,
-            )
-        });
+        // has to resolve it. Collaboration guests can't reach one and keep the project lookup.
+        let path_with_parent_components = lookup_worktree
+            .as_ref()
+            .filter(|_| !project.read(cx).is_via_collab())
+            .and_then(|worktree| {
+                preview_image_path_with_parent_components(
+                    &decoded,
+                    workspace_relative_path,
+                    source_project_path,
+                    worktree,
+                    cx,
+                )
+            });
         if let Some(path) = path_with_parent_components {
             let project = project.downgrade();
             return match image_store::use_image_location(project.clone(), vec![path], window, cx)? {
