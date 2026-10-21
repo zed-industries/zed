@@ -1620,10 +1620,11 @@ impl AgentConnection for AcpV2Connection {
     }
 
     fn session_list(&self, _cx: &mut App) -> Option<Rc<dyn AgentSessionList>> {
-        self.initialize_response.capabilities.session.as_ref()?;
+        let capabilities = self.initialize_response.capabilities.session.as_ref()?;
         Some(Rc::new(V2SessionList {
             connection: self.connection.clone(),
             dispatch_tx: self.dispatch_tx.clone(),
+            supports_delete: capabilities.delete.is_some(),
         }))
     }
 
@@ -1635,6 +1636,7 @@ impl AgentConnection for AcpV2Connection {
 struct V2SessionList {
     connection: V2ConnectionTo<Agent>,
     dispatch_tx: mpsc::UnboundedSender<ForegroundWork>,
+    supports_delete: bool,
 }
 
 impl AgentSessionList for V2SessionList {
@@ -1680,6 +1682,25 @@ impl AgentSessionList for V2SessionList {
                 next_cursor: response.next_cursor.map(|cursor| cursor.0.to_string()),
                 meta: response.meta,
             })
+        })
+    }
+
+    fn supports_delete(&self) -> bool {
+        self.supports_delete
+    }
+
+    fn delete_session(&self, session_id: &acp::SessionId, cx: &mut App) -> Task<Result<()>> {
+        if !self.supports_delete() {
+            return Task::ready(Err(anyhow!("Deleting sessions is not supported")));
+        }
+        let response = AcpV2Connection::scoped_request(
+            &self.connection,
+            &self.dispatch_tx,
+            acp::DeleteSessionRequest::new(session_id.clone()),
+        );
+        cx.foreground_executor().spawn(async move {
+            response.await?;
+            Ok(())
         })
     }
 
@@ -1906,6 +1927,10 @@ mod tests {
             acp::ListSessionsRequest,
             Responder<acp::ListSessionsResponse>,
         )>,
+        delete_requests: async_channel::Receiver<(
+            acp::DeleteSessionRequest,
+            Responder<acp::DeleteSessionResponse>,
+        )>,
         closes: async_channel::Receiver<acp::SessionId>,
         close_requests: async_channel::Receiver<(
             acp::CloseSessionRequest,
@@ -1944,6 +1969,7 @@ mod tests {
             let hold_new_responses = Arc::new(Mutex::new(false));
             let deferred_new = hold_new_responses.clone();
             let (list_sender, list_requests) = async_channel::unbounded();
+            let (delete_sender, delete_requests) = async_channel::unbounded();
             let (config_sender, config_requests) = async_channel::unbounded();
             let (config_responses, config_received) = async_channel::unbounded::<
                 Result<acp::SetSessionConfigOptionResponse, agent_client_protocol::Error>,
@@ -1982,6 +2008,15 @@ mod tests {
                             list_sender
                                 .try_send((request, responder))
                                 .expect("list receiver");
+                            Ok(())
+                        },
+                        agent_client_protocol::on_receive_request!(),
+                    )
+                    .on_receive_request(
+                        async move |request: acp::DeleteSessionRequest, responder, _| {
+                            delete_sender
+                                .try_send((request, responder))
+                                .expect("delete receiver");
                             Ok(())
                         },
                         agent_client_protocol::on_receive_request!(),
@@ -2126,6 +2161,7 @@ mod tests {
                 config_replies,
                 hold_config,
                 list_requests,
+                delete_requests,
                 closes,
                 close_requests,
                 hold_closes,
@@ -2956,7 +2992,7 @@ done
         let list = cx
             .update(|cx| harness.client.session_list(cx))
             .expect("session discovery");
-        assert!(!list.supports_delete(), "discovery is read-only");
+        assert!(!list.supports_delete(), "deletion was not advertised");
         assert!(
             cx.update(|cx| list.watch(cx)).is_none(),
             "discovery is snapshot-only"
@@ -3113,6 +3149,157 @@ done
                 .is_some_and(agent_client_protocol::is_incoming_transport_closed)
         );
         assert!(harness.new_requests.is_empty());
+        assert!(harness.closes.is_empty());
+    }
+
+    #[gpui::test]
+    async fn v2_delete_sdk_requires_advertised_capability(cx: &mut TestAppContext) {
+        for capabilities in [json!({"session": {}}), json!({"session": {"delete": null}})] {
+            let harness = SessionHarness::new(
+                serde_json::from_value(capabilities).expect("capabilities"),
+                vec![],
+                vec![],
+                cx,
+            )
+            .await;
+            let list = cx
+                .update(|cx| harness.client.session_list(cx))
+                .expect("session discovery");
+            assert!(!list.supports_delete());
+            let error = bounded(cx.update(|cx| list.delete_session(&"saved".into(), cx)), cx)
+                .await
+                .expect_err("unsupported deletion");
+            assert!(
+                error
+                    .to_string()
+                    .contains("Deleting sessions is not supported")
+            );
+            cx.run_until_parked();
+            assert!(harness.delete_requests.is_empty());
+            assert!(harness.list_requests.is_empty());
+            assert!(harness.closes.is_empty());
+        }
+    }
+
+    #[gpui::test]
+    async fn v2_delete_sdk_preserves_ids_without_closing_active_sessions(cx: &mut TestAppContext) {
+        let capabilities = acp::AgentCapabilities::new()
+            .session(acp::SessionCapabilities::new().delete(acp::SessionDeleteCapabilities::new()));
+        let harness = SessionHarness::new(capabilities, vec![], vec![], cx).await;
+        let list = cx
+            .update(|cx| harness.client.session_list(cx))
+            .expect("session discovery");
+        assert!(list.supports_delete());
+        let thread = harness.thread(cx).await;
+        let active_id = cx.read(|cx| thread.read(cx).session_id().clone());
+        for session_id in [
+            acp::SessionId::new(" opaque/会話:007?x=%2F \n"),
+            active_id.clone(),
+        ] {
+            let pending = cx.update(|cx| list.delete_session(&session_id, cx));
+            let (request, responder) = bounded(harness.delete_requests.recv(), cx)
+                .await
+                .expect("delete request");
+            assert_eq!(request, acp::DeleteSessionRequest::new(session_id));
+            responder
+                .respond(acp::DeleteSessionResponse::new().meta(meta("deleted")))
+                .expect("delete response");
+            bounded(pending, cx).await.expect("delete succeeds");
+            assert!(
+                harness
+                    .client
+                    .session_owners
+                    .borrow()
+                    .contains_key(&active_id)
+            );
+            assert!(
+                harness
+                    .client
+                    .sessions
+                    .borrow()
+                    .get(&active_id)
+                    .is_some_and(|session| session.thread.entity_id() == thread.entity_id())
+            );
+        }
+        assert!(
+            harness.closes.is_empty(),
+            "delete must not implicitly close"
+        );
+        assert!(harness.cancellations.is_empty());
+        assert!(harness.resume_requests.is_empty());
+        assert!(harness.new_requests.is_empty());
+        assert!(harness.list_requests.is_empty());
+        assert!(
+            bounded(cx.update(|cx| list.delete_sessions(cx)), cx)
+                .await
+                .is_err()
+        );
+        assert!(
+            harness.delete_requests.is_empty(),
+            "there is no bulk delete RPC"
+        );
+    }
+
+    #[gpui::test]
+    async fn v2_delete_sdk_preserves_errors_and_scopes_cancellation(cx: &mut TestAppContext) {
+        let capabilities = acp::AgentCapabilities::new()
+            .session(acp::SessionCapabilities::new().delete(acp::SessionDeleteCapabilities::new()));
+        let harness = SessionHarness::new(capabilities, vec![], vec![], cx).await;
+        let list = cx
+            .update(|cx| harness.client.session_list(cx))
+            .expect("session discovery");
+        let unpublished = cx.update(|cx| list.delete_session(&"unpublished".into(), cx));
+        drop(unpublished);
+        cx.run_until_parked();
+        assert!(
+            harness.delete_requests.is_empty(),
+            "an unpolled task must not publish"
+        );
+        let failed = cx.update(|cx| list.delete_session(&"rejected".into(), cx));
+        let (_, responder) = bounded(harness.delete_requests.recv(), cx)
+            .await
+            .expect("rejected delete");
+        let rejection = agent_client_protocol::Error::new(-32042, "Deletion refused")
+            .data(json!({"retain": [null, 7]}));
+        responder
+            .respond_with_error(rejection.clone())
+            .expect("rejection");
+        assert_eq!(
+            bounded(failed, cx)
+                .await
+                .expect_err("server rejection")
+                .downcast_ref::<agent_client_protocol::Error>(),
+            Some(&rejection)
+        );
+        let dropped = cx.update(|cx| list.delete_session(&"cancelled".into(), cx));
+        let (_, responder) = bounded(harness.delete_requests.recv(), cx)
+            .await
+            .expect("cancellable delete");
+        let cancellation = responder.cancellation();
+        let pending = cx.update(|cx| list.delete_session(&"retained".into(), cx));
+        let (_, retained) = bounded(harness.delete_requests.recv(), cx)
+            .await
+            .expect("retained delete");
+        let retained_cancellation = retained.cancellation();
+        drop(dropped);
+        bounded(cancellation.cancelled(), cx).await;
+        assert!(!retained_cancellation.is_cancelled());
+        assert!(
+            harness.cancellations.is_empty(),
+            "RPC cancellation is not session cancellation"
+        );
+        drop(harness._agent_task);
+        drop(harness.agent);
+        let error = bounded(pending, cx).await.expect_err("EOF settles delete");
+        assert!(
+            error
+                .downcast_ref::<agent_client_protocol::Error>()
+                .is_some_and(agent_client_protocol::is_incoming_transport_closed)
+        );
+        assert!(
+            harness.delete_requests.is_empty(),
+            "failed deletes must not retry"
+        );
         assert!(harness.closes.is_empty());
     }
 
