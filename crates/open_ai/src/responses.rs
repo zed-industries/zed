@@ -328,7 +328,7 @@ pub struct ResponseReasoningInputItem {
     #[serde(default)]
     pub summary: Vec<ResponseReasoningSummaryPart>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub content: Vec<Value>,
+    pub content: Vec<ReasoningContentPart>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub encrypted_content: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -713,11 +713,25 @@ pub struct ResponseReasoningItem {
     #[serde(default)]
     pub summary: Vec<ReasoningSummaryPart>,
     #[serde(default)]
-    pub content: Vec<Value>,
+    pub content: Vec<ReasoningContentPart>,
     #[serde(default)]
     pub encrypted_content: Option<String>,
     #[serde(default)]
     pub status: Option<String>,
+}
+
+/// Preserves unknown reasoning content for replay while exposing supported parts.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum ReasoningContentPart {
+    Known(KnownReasoningContentPart),
+    Unknown(Value),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum KnownReasoningContentPart {
+    ReasoningText { text: String },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -1010,10 +1024,9 @@ pub async fn stream_response(
                                     for (content_index, part) in
                                         reasoning.content.iter().enumerate()
                                     {
-                                        if part.get("type").and_then(Value::as_str)
-                                            == Some("reasoning_text")
-                                            && let Some(text) =
-                                                part.get("text").and_then(Value::as_str)
+                                        if let ReasoningContentPart::Known(
+                                            KnownReasoningContentPart::ReasoningText { text },
+                                        ) = part
                                         {
                                             all_events.push(StreamEvent::ReasoningTextDelta {
                                                 item_id: item_id.clone(),
@@ -1093,6 +1106,28 @@ mod tests {
     use language_model_core::OPEN_AI_PROVIDER_ID;
     use serde_json::json;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn reasoning_content_preserves_known_and_unknown_parts_for_replay() {
+        let content = json!([
+            {"type": "reasoning_text", "text": "Thinking"},
+            {"type": "future_reasoning", "payload": {"opaque": true}}
+        ]);
+        let item: ResponseReasoningItem = serde_json::from_value(json!({
+            "content": content
+        }))
+        .expect("reasoning item");
+        assert!(matches!(
+            item.content.first(),
+            Some(ReasoningContentPart::Known(
+                KnownReasoningContentPart::ReasoningText { text }
+            )) if text == "Thinking"
+        ));
+        assert_eq!(
+            serde_json::to_value(item).expect("serialized item")["content"],
+            content
+        );
+    }
 
     #[test]
     fn reasoning_text_maps_to_thinking_in_streaming_and_json_responses() {

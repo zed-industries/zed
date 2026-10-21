@@ -3930,10 +3930,11 @@ mod tests {
             Some("ENC"),
             Some("completed".into()),
         );
-        reasoning_item.content = vec![json!({
-            "type": "reasoning_text",
-            "text": "Internal reasoning text."
-        })];
+        reasoning_item.content = vec![crate::responses::ReasoningContentPart::Known(
+            crate::responses::KnownReasoningContentPart::ReasoningText {
+                text: "Internal reasoning text.".into(),
+            },
+        )];
 
         let events = vec![
             ResponsesStreamEvent::OutputItemDone {
