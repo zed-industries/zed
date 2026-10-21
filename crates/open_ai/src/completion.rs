@@ -881,7 +881,8 @@ impl OpenAiResponseEventMapper {
                     events
                 }
             }
-            ResponsesStreamEvent::ReasoningDelta { delta, .. } => {
+            ResponsesStreamEvent::ReasoningDelta { delta, .. }
+            | ResponsesStreamEvent::ReasoningTextDelta { delta, .. } => {
                 if delta.is_empty() {
                     Vec::new()
                 } else {
@@ -1085,6 +1086,7 @@ impl OpenAiResponseEventMapper {
             | ResponsesStreamEvent::ContentPartAdded { .. }
             | ResponsesStreamEvent::ContentPartDone { .. }
             | ResponsesStreamEvent::ReasoningSummaryTextDone { .. }
+            | ResponsesStreamEvent::ReasoningTextDone { .. }
             | ResponsesStreamEvent::ReasoningSummaryPartDone { .. }
             | ResponsesStreamEvent::ReasoningDone { .. }
             | ResponsesStreamEvent::Created { .. }

@@ -557,6 +557,20 @@ pub enum StreamEvent {
         output_index: usize,
         text: String,
     },
+    #[serde(rename = "response.reasoning_text.delta")]
+    ReasoningTextDelta {
+        item_id: String,
+        output_index: usize,
+        content_index: usize,
+        delta: String,
+    },
+    #[serde(rename = "response.reasoning_text.done")]
+    ReasoningTextDone {
+        item_id: String,
+        output_index: usize,
+        content_index: usize,
+        text: String,
+    },
     #[serde(rename = "response.reasoning_summary_part.done")]
     ReasoningSummaryPartDone {
         item_id: String,
@@ -993,6 +1007,22 @@ pub async fn stream_response(
                                             );
                                         }
                                     }
+                                    for (content_index, part) in
+                                        reasoning.content.iter().enumerate()
+                                    {
+                                        if part.get("type").and_then(Value::as_str)
+                                            == Some("reasoning_text")
+                                            && let Some(text) =
+                                                part.get("text").and_then(Value::as_str)
+                                        {
+                                            all_events.push(StreamEvent::ReasoningTextDelta {
+                                                item_id: item_id.clone(),
+                                                output_index,
+                                                content_index,
+                                                delta: text.to_owned(),
+                                            });
+                                        }
+                                    }
                                 }
                             }
                             // No synthesized deltas; the `OutputItemDone`
@@ -1063,6 +1093,96 @@ mod tests {
     use language_model_core::OPEN_AI_PROVIDER_ID;
     use serde_json::json;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn reasoning_text_maps_to_thinking_in_streaming_and_json_responses() {
+        use crate::completion::OpenAiResponseEventMapper;
+        use language_model_core::LanguageModelCompletionEvent;
+
+        for streaming in [true, false] {
+            let reasoning = json!({
+                "type": "reasoning",
+                "id": "rs_123",
+                "summary": [],
+                "content": [{"type": "reasoning_text", "text": "Let me think."}],
+                "status": "completed"
+            });
+            let response = json!({
+                "id": "resp_123",
+                "status": "completed",
+                "output": [reasoning]
+            });
+            let body = if streaming {
+                let events = [
+                    json!({
+                        "type": "response.reasoning_text.delta",
+                        "item_id": "rs_123", "output_index": 0, "content_index": 0,
+                        "delta": ""
+                    }),
+                    json!({
+                        "type": "response.reasoning_text.delta",
+                        "item_id": "rs_123", "output_index": 0, "content_index": 0,
+                        "delta": "Let me "
+                    }),
+                    json!({
+                        "type": "response.reasoning_text.delta",
+                        "item_id": "rs_123", "output_index": 0, "content_index": 0,
+                        "delta": "think."
+                    }),
+                    json!({
+                        "type": "response.reasoning_text.done",
+                        "item_id": "rs_123", "output_index": 0, "content_index": 0,
+                        "text": "Let me think."
+                    }),
+                    json!({"type": "response.output_item.done", "output_index": 0, "item": reasoning}),
+                    json!({"type": "response.completed", "response": response}),
+                ];
+                events
+                    .iter()
+                    .map(|event| format!("data: {event}\n\n"))
+                    .collect::<String>()
+            } else {
+                response.to_string()
+            };
+            let client = FakeHttpClient::create(move |_| {
+                let body = body.clone();
+                async move {
+                    Ok(http_client::Response::builder()
+                        .status(200)
+                        .body(AsyncBody::from(body))?)
+                }
+            });
+            let mut request = response_test_request();
+            request.stream = streaming;
+            let events = block_on(async {
+                stream_response(
+                    client.as_ref(),
+                    "Custom",
+                    "https://example.com/v1",
+                    "test-key",
+                    request,
+                    &CustomHeaders::default(),
+                )
+                .await
+                .expect("response stream")
+                .collect::<Vec<_>>()
+                .await
+            });
+            let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
+            let mut thinking = Vec::new();
+            for event in events {
+                for event in mapper.map_event(event.expect("decoded event")) {
+                    if let LanguageModelCompletionEvent::Thinking { text, .. } =
+                        event.expect("mapped event")
+                    {
+                        thinking.push(text);
+                    }
+                }
+            }
+            assert_eq!(thinking.concat(), "Let me think.");
+            assert!(thinking.iter().all(|text| !text.is_empty()));
+        }
+    }
 
     #[test]
     fn count_input_tokens_preserves_structured_input_without_generation_fields() {
