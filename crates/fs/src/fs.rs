@@ -1462,6 +1462,7 @@ struct FakeFsState {
     buffered_events: Vec<PathEvent>,
     metadata_call_count: usize,
     read_dir_call_count: usize,
+    read_dir_hooks: BTreeMap<PathBuf, BoxFuture<'static, ()>>,
     path_write_counts: std::collections::HashMap<PathBuf, usize>,
     job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
     trash: Mutex<SlotMap<TrashId, (TrashedEntry, FakeFsEntry)>>,
@@ -1857,6 +1858,7 @@ impl FakeFs {
             events_paused: false,
             read_dir_call_count: 0,
             metadata_call_count: 0,
+            read_dir_hooks: Default::default(),
             path_write_counts: Default::default(),
             job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
             trash: Mutex::new(SlotMap::with_key()),
@@ -2077,6 +2079,19 @@ impl FakeFs {
     /// including paths that were later unwatched.
     pub fn watch_calls(&self) -> Vec<PathBuf> {
         self.state.lock().watches.watch_calls.clone()
+    }
+
+    /// The paths currently registered with the watcher backend.
+    pub fn registered_watch_paths(&self) -> Vec<PathBuf> {
+        self.state.lock().watches.registered_paths.clone()
+    }
+
+    /// Runs once, immediately before the next `read_dir` resolves `path`.
+    pub fn before_read_dir(&self, path: impl AsRef<Path>, hook: BoxFuture<'static, ()>) {
+        self.state
+            .lock()
+            .read_dir_hooks
+            .insert(normalize_path(path.as_ref()), hook);
     }
 
     /// Creates `path` without emitting an event when `watch_path` is next
@@ -3403,6 +3418,10 @@ impl Fs for FakeFs {
     ) -> Result<Pin<Box<dyn Send + Stream<Item = Result<PathBuf>>>>> {
         self.simulate_random_delay().await;
         let path = normalize_path(path);
+        let hook = self.state.lock().read_dir_hooks.remove(&path);
+        if let Some(hook) = hook {
+            hook.await;
+        }
         let mut state = self.state.lock();
         state.read_dir_call_count += 1;
         let entry = state.entry(&path)?;
