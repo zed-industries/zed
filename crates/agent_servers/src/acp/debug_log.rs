@@ -40,14 +40,23 @@ pub struct AcpDebugMessage {
     pub message: AcpDebugMessageContent,
 }
 
+#[derive(Clone)]
+struct ParsedDebugMessage {
+    message: AcpDebugMessage,
+    valid_envelope: bool,
+}
+
 impl AcpDebugMessage {
-    fn parse_line(direction: AcpDebugMessageDirection, line: &str) -> Vec<Self> {
+    fn parse_line(direction: AcpDebugMessageDirection, line: &str) -> Vec<ParsedDebugMessage> {
         if direction == AcpDebugMessageDirection::Stderr {
-            return vec![Self {
-                direction,
-                message: AcpDebugMessageContent::Stderr {
-                    line: Arc::from(line),
+            return vec![ParsedDebugMessage {
+                message: Self {
+                    direction,
+                    message: AcpDebugMessageContent::Stderr {
+                        line: Arc::from(line),
+                    },
                 },
+                valid_envelope: false,
             }];
         }
 
@@ -64,8 +73,23 @@ impl AcpDebugMessage {
         }
     }
 
-    fn parse_value(direction: AcpDebugMessageDirection, value: serde_json::Value) -> Option<Self> {
+    fn parse_value(
+        direction: AcpDebugMessageDirection,
+        value: serde_json::Value,
+    ) -> Option<ParsedDebugMessage> {
         let object = value.as_object()?;
+        // Malformed frames are useful diagnostics, but cannot authorize protocol fallback.
+        let valid_envelope = object.get("jsonrpc").and_then(serde_json::Value::as_str)
+            == Some("2.0")
+            && if object.contains_key("method") {
+                object
+                    .get("method")
+                    .is_some_and(serde_json::Value::is_string)
+                    && !object.contains_key("result")
+                    && !object.contains_key("error")
+            } else {
+                object.contains_key("result") != object.contains_key("error")
+            };
 
         let parsed_id = object
             .get("id")
@@ -118,7 +142,10 @@ impl AcpDebugMessage {
             return None;
         };
 
-        Some(Self { direction, message })
+        Some(ParsedDebugMessage {
+            message: Self { direction, message },
+            valid_envelope,
+        })
     }
 }
 
@@ -126,6 +153,13 @@ impl AcpDebugMessage {
 struct AcpDebugLogState {
     messages: VecDeque<AcpDebugMessage>,
     subscribers: Vec<async_channel::Sender<AcpDebugMessage>>,
+    // Startup fallback must not depend on eviction from the diagnostic backlog.
+    initialization: Option<InitializationExchange>,
+}
+
+struct InitializationExchange {
+    request_id: RequestId,
+    response: Option<ParsedDebugMessage>,
 }
 
 #[derive(Clone, Default)]
@@ -134,6 +168,23 @@ pub(super) struct AcpDebugLog {
 }
 
 impl AcpDebugLog {
+    pub(super) fn initialization_response(
+        &self,
+    ) -> Option<Result<Option<serde_json::Value>, Error>> {
+        let state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let response = state.initialization.as_ref()?.response.as_ref()?;
+        if !response.valid_envelope {
+            return None;
+        }
+        match &response.message.message {
+            AcpDebugMessageContent::Response { result, .. } => Some(result.clone()),
+            _ => None,
+        }
+    }
+
     pub(super) fn subscribe(
         &self,
     ) -> (
@@ -158,14 +209,41 @@ impl AcpDebugLog {
         self.record_messages(messages);
     }
 
-    fn record_messages(&self, messages: Vec<AcpDebugMessage>) {
+    fn record_messages(&self, messages: Vec<ParsedDebugMessage>) {
         let mut state = self
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         state.subscribers.retain(|sender| !sender.is_closed());
-        for message in messages {
+        for parsed in messages {
+            let message = &parsed.message;
+            match (message.direction, &message.message) {
+                (
+                    AcpDebugMessageDirection::Outgoing,
+                    AcpDebugMessageContent::Request { id, method, .. },
+                ) if parsed.valid_envelope
+                    && method.as_ref() == "initialize"
+                    && state.initialization.is_none() =>
+                {
+                    state.initialization = Some(InitializationExchange {
+                        request_id: id.clone(),
+                        response: None,
+                    });
+                }
+                (
+                    AcpDebugMessageDirection::Incoming,
+                    AcpDebugMessageContent::Response { id, .. },
+                ) => {
+                    if let Some(initialization) = &mut state.initialization
+                        && initialization.request_id == *id
+                        && initialization.response.is_none()
+                    {
+                        initialization.response = Some(parsed.clone());
+                    }
+                }
+                _ => {}
+            }
             if state.messages.len() == MAX_DEBUG_BACKLOG_MESSAGES {
                 state.messages.pop_front();
             }
@@ -207,6 +285,76 @@ mod tests {
     use super::*;
 
     #[test]
+    fn malformed_initialization_envelopes_never_become_fallback_evidence() {
+        for response in [
+            r#"{"id":"initialize","result":{"protocolVersion":1}}"#,
+            r#"{"jsonrpc":"1.0","id":"initialize","result":{"protocolVersion":1}}"#,
+            r#"{"jsonrpc":"2.0","id":"initialize","result":{"protocolVersion":1},"error":{"code":-32022,"message":"Unsupported","data":{"requested":2,"supported":[1]}}}"#,
+            r#"{"jsonrpc":"2.0","id":"initialize","method":null,"result":{"protocolVersion":1}}"#,
+        ] {
+            let log = AcpDebugLog::default();
+            log.record_line(
+                AcpDebugMessageDirection::Outgoing,
+                r#"{"jsonrpc":"2.0","id":"initialize","method":"initialize","params":{"protocolVersion":2}}"#,
+            );
+            log.record_line(AcpDebugMessageDirection::Incoming, response);
+            assert!(log.initialization_response().is_none(), "{response}");
+            log.record_line(
+                AcpDebugMessageDirection::Incoming,
+                r#"{"jsonrpc":"2.0","id":"initialize","result":{"protocolVersion":1}}"#,
+            );
+            assert!(
+                log.initialization_response().is_none(),
+                "invalid first response must not be replaced"
+            );
+            assert_eq!(log.subscribe().0.len(), 3, "diagnostics remain visible");
+        }
+    }
+
+    #[test]
+    fn initialization_evidence_is_correlated_and_survives_backlog_eviction() {
+        let log = AcpDebugLog::default();
+        log.record_line(
+            AcpDebugMessageDirection::Outgoing,
+            r#"{"jsonrpc":"2.0","id":"initialize","method":"initialize","params":{"protocolVersion":2}}"#,
+        );
+        log.record_line(
+            AcpDebugMessageDirection::Incoming,
+            r#"{"jsonrpc":"2.0","id":"unrelated","result":{"protocolVersion":1}}"#,
+        );
+        assert!(log.initialization_response().is_none());
+        log.record_line(
+            AcpDebugMessageDirection::Incoming,
+            r#"{"jsonrpc":"2.0","id":"initialize","error":{"code":-32022,"message":"Unsupported","data":{"requested":2,"supported":[1]}}}"#,
+        );
+        log.record_line(
+            AcpDebugMessageDirection::Incoming,
+            r#"{"jsonrpc":"2.0","id":"initialize","result":{"protocolVersion":2}}"#,
+        );
+        for _ in 0..MAX_DEBUG_BACKLOG_MESSAGES {
+            log.record_line(
+                AcpDebugMessageDirection::Incoming,
+                r#"{"jsonrpc":"2.0","method":"_noise"}"#,
+            );
+        }
+        let error = log
+            .initialization_response()
+            .expect("retained initialization")
+            .expect_err("first response wins");
+        assert_eq!(error.code, Error::new(-32022, "").code);
+        assert_eq!(
+            error.data,
+            Some(serde_json::json!({"requested": 2, "supported": [1]}))
+        );
+        assert!(
+            log.subscribe().0.iter().all(|message| matches!(
+                message.message,
+                AcpDebugMessageContent::Notification { .. }
+            ))
+        );
+    }
+
+    #[test]
     fn preserves_shared_request_ids_payloads_and_runtime_error_data() {
         let id = RequestId::Str("opaque/request:雪".into());
         let params = serde_json::json!({
@@ -225,7 +373,7 @@ mod tests {
             id: request_id,
             method,
             params: actual_params,
-        } = &request.message
+        } = &request.message.message
         else {
             panic!("request message");
         };
@@ -246,7 +394,7 @@ mod tests {
         let AcpDebugMessageContent::Response {
             id: response_id,
             result: Err(actual_error),
-        } = &response.message
+        } = &response.message.message
         else {
             panic!("error response");
         };

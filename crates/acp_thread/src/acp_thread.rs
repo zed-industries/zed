@@ -3478,6 +3478,8 @@ pub struct AcpThread {
     connection: Rc<dyn AgentConnection>,
     submissions: SessionSubmissions,
     activity: SessionActivity,
+    received_session_state: bool,
+    reported_usage: Option<ReportedTokenUsage>,
     token_usage: Option<TokenUsage>,
     cost: Option<SessionCost>,
     prompt_capabilities: acp_v2::PromptCapabilities,
@@ -3597,15 +3599,38 @@ impl From<&AcpThread> for ActionLogTelemetry {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ReportedTokenUsage {
+    activity_generation: u64,
+    input_tokens: u64,
+    output_tokens: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OutputTokensUpdate {
+    Unchanged,
+    /// Preserve additive presentation for legacy/native usage notifications.
+    LegacyAdd {
+        activity_generation: u64,
+        output_tokens: u64,
+    },
+    Snapshot {
+        activity_generation: u64,
+        output_tokens: u64,
+    },
+}
+
 #[derive(Debug)]
 pub enum AcpThreadEvent {
     StatusChanged,
+    /// Initial Idle confirmation is not a foreground completion.
+    ActivityConfirmedIdle,
     SubmissionUpdated(SubmissionId),
     PromptUpdated,
     NewEntry,
     TitleUpdated,
     NoticesUpdated,
-    TokenUsageUpdated,
+    TokenUsageUpdated(OutputTokensUpdate),
     EntryUpdated(usize),
     EntriesRemoved(Range<usize>),
     ToolAuthorizationRequested(PermissionRequestId),
@@ -3621,6 +3646,7 @@ pub enum AcpThreadEvent {
         stop_reason: Option<acp_v2::StopReason>,
     },
     Error,
+    ConnectionLost,
     LoadError(LoadError),
     PromptCapabilitiesUpdated,
     Refusal,
@@ -3673,6 +3699,7 @@ pub enum TerminalProviderCommand {
 
 #[derive(PartialEq, Eq, Debug)]
 pub enum ThreadStatus {
+    Unconfirmed,
     Idle,
     Generating,
 }
@@ -3753,16 +3780,18 @@ impl AcpThread {
                     this.update_idle_sleep_prevention(cx);
                 }
                 AcpThreadEvent::PromptUpdated
+                | AcpThreadEvent::ActivityConfirmedIdle
                 | AcpThreadEvent::SubmissionUpdated(_)
                 | AcpThreadEvent::NewEntry
                 | AcpThreadEvent::TitleUpdated
                 | AcpThreadEvent::NoticesUpdated
-                | AcpThreadEvent::TokenUsageUpdated
+                | AcpThreadEvent::TokenUsageUpdated(_)
                 | AcpThreadEvent::EntryUpdated(_)
                 | AcpThreadEvent::Retry(_)
                 | AcpThreadEvent::SubagentSpawned(_)
                 | AcpThreadEvent::Stopped { .. }
                 | AcpThreadEvent::Error
+                | AcpThreadEvent::ConnectionLost
                 | AcpThreadEvent::LoadError(_)
                 | AcpThreadEvent::PromptCapabilitiesUpdated
                 | AcpThreadEvent::Refusal
@@ -3815,6 +3844,8 @@ impl AcpThread {
             turn_id: 0,
             submissions: SessionSubmissions::new(receipt_submissions),
             activity: SessionActivity::default(),
+            received_session_state: false,
+            reported_usage: None,
             connection,
             token_usage: None,
             cost: None,
@@ -4019,6 +4050,7 @@ impl AcpThread {
 
     pub fn status(&self) -> ThreadStatus {
         match self.foreground_activity() {
+            ForegroundActivity::Unconfirmed => ThreadStatus::Unconfirmed,
             ForegroundActivity::Idle => ThreadStatus::Idle,
             _ => ThreadStatus::Generating,
         }
@@ -4028,8 +4060,24 @@ impl AcpThread {
         self.submissions.receipt_transport().is_some()
     }
 
-    pub fn foreground_state(&self) -> &acp_v2::StateUpdate {
+    pub fn foreground_state(&self) -> Option<&acp_v2::StateUpdate> {
         self.activity.state()
+    }
+
+    pub fn mark_activity_unconfirmed(&mut self, cx: &mut Context<Self>) {
+        if self.uses_reported_activity()
+            && !self.received_session_state
+            && self.activity.generation() == 0
+        {
+            self.activity.mark_unconfirmed();
+            cx.emit(AcpThreadEvent::StatusChanged);
+            cx.notify();
+        }
+    }
+
+    /// Distinguishes a received snapshot from the default Idle used by new sessions.
+    pub fn has_received_session_state(&self) -> bool {
+        self.received_session_state
     }
 
     pub fn foreground_activity(&self) -> ForegroundActivity {
@@ -4038,6 +4086,12 @@ impl AcpThread {
 
     pub fn activity_generation(&self) -> u64 {
         self.activity.generation()
+    }
+
+    pub fn reported_activity_output_tokens(&self) -> Option<u64> {
+        self.reported_usage
+            .filter(|usage| usage.activity_generation == self.activity.generation())
+            .map(|usage| usage.output_tokens)
     }
 
     pub fn activity_started_at(&self) -> Option<Instant> {
@@ -4147,6 +4201,10 @@ impl AcpThread {
         self.submissions.recoverable()
     }
 
+    pub fn is_observation_closed(&self) -> bool {
+        self.activity.observation_closed()
+    }
+
     pub fn is_idle_for_retention(&self) -> bool {
         self.status() == ThreadStatus::Idle
             && !self.has_unsettled_submissions()
@@ -4173,6 +4231,7 @@ impl AcpThread {
 
     /// Ends receipt and cancellation observations without declaring remote execution stopped.
     pub fn handle_connection_lost(&mut self, cx: &mut Context<Self>) {
+        let was_observable = self.activity.ensure_observable().is_ok();
         self.activity.close_observation();
         let changed = self.submissions.disconnect();
         if !changed.is_empty() {
@@ -4181,6 +4240,52 @@ impl AcpThread {
             }
             cx.notify();
         }
+        if was_observable {
+            cx.emit(AcpThreadEvent::ConnectionLost);
+            cx.notify();
+        }
+    }
+
+    pub fn prepare_session_close(&mut self, cx: &mut Context<Self>) {
+        self.cancel_generic_permission_requests(cx);
+        let pending_receipt_ids = self.submissions.pending_receipt_ids().collect::<Vec<_>>();
+        if pending_receipt_ids.is_empty() {
+            return;
+        }
+        // Prompt receipts may follow successful close. Pin only those already pending:
+        // a rejected close must not extend this retention to later submissions.
+        let (sender, received) = oneshot::channel();
+        let mut sender = Some(sender);
+        let subscription = cx.subscribe_self(move |this, event, _cx| {
+            if matches!(event, AcpThreadEvent::SubmissionUpdated(_))
+                && !pending_receipt_ids.iter().any(|id| {
+                    this.submissions
+                        .get(*id)
+                        .is_some_and(|record| matches!(record.state, SubmissionState::Pending))
+                })
+                && let Some(sender) = sender.take()
+                && sender.send(()).is_err()
+            {
+                log::debug!("Receipt retention observer was dropped");
+            }
+        });
+        let thread = cx.entity();
+        cx.spawn(async move |_, _| {
+            let _subscription = subscription;
+            let _thread = thread;
+            if let Err(error) = received.await {
+                log::debug!("Receipt retention ended before settlement: {error}");
+            }
+        })
+        .detach();
+    }
+
+    pub fn handle_session_closed(&mut self, cx: &mut Context<Self>) {
+        // Close confirms stopping without inventing an Idle snapshot or ending receipts.
+        self.activity.finish_close();
+        self.cancel_generic_permission_requests(cx);
+        self.cancel_outstanding_elicitations(cx);
+        cx.notify();
     }
 
     fn register_submission(
@@ -4293,7 +4398,7 @@ impl AcpThread {
         self.activity
             .update(state, self.entries.len().saturating_sub(1));
         let current = self.foreground_activity();
-        if previous == ForegroundActivity::Idle && current != ForegroundActivity::Idle {
+        if !previous.is_active() && current.is_active() {
             self.had_error = false;
             self.local_execution_error = None;
         }
@@ -4301,7 +4406,7 @@ impl AcpThread {
     }
 
     pub fn sync_local_action_state(&mut self, cx: &mut Context<Self>) {
-        if self.foreground_activity() == ForegroundActivity::Idle {
+        if !self.foreground_activity().is_active() {
             return;
         }
         let desired = if self.has_pending_turn_action() {
@@ -4332,15 +4437,30 @@ impl AcpThread {
             "Session does not report foreground state"
         );
         let previous = self.foreground_activity();
-        let was_active = previous != ForegroundActivity::Idle;
+        let was_active = previous.is_active();
+        self.received_session_state = true;
         self.set_foreground_state(state, cx);
-        if let acp_v2::StateUpdate::Idle(idle) = self.activity.state() {
+        if let Some(acp_v2::StateUpdate::Idle(idle)) = self.activity.state() {
             let stop_reason = idle.stop_reason.clone();
             if let Some(usage) = &idle.usage {
+                let reported = ReportedTokenUsage {
+                    activity_generation: self.activity.generation(),
+                    input_tokens: usage.input_tokens,
+                    output_tokens: usage.output_tokens,
+                };
+                let changed = self.reported_usage != Some(reported);
                 let stored = self.token_usage.get_or_insert_with(Default::default);
                 stored.input_tokens = usage.input_tokens;
                 stored.output_tokens = usage.output_tokens;
-                cx.emit(AcpThreadEvent::TokenUsageUpdated);
+                self.reported_usage = Some(reported);
+                if changed {
+                    cx.emit(AcpThreadEvent::TokenUsageUpdated(
+                        OutputTokensUpdate::Snapshot {
+                            activity_generation: reported.activity_generation,
+                            output_tokens: usage.output_tokens,
+                        },
+                    ));
+                }
             }
             if was_active {
                 self.flush_streaming_text(cx);
@@ -4367,6 +4487,11 @@ impl AcpThread {
         }
         if previous != self.foreground_activity() {
             cx.emit(AcpThreadEvent::StatusChanged);
+        }
+        if previous == ForegroundActivity::Unconfirmed
+            && self.foreground_activity() == ForegroundActivity::Idle
+        {
+            cx.emit(AcpThreadEvent::ActivityConfirmedIdle);
         }
         Ok(())
     }
@@ -5397,8 +5522,16 @@ impl AcpThread {
         if usage.is_none() {
             self.cost = None;
         }
+        let output = usage
+            .as_ref()
+            .map_or(OutputTokensUpdate::Unchanged, |usage| {
+                OutputTokensUpdate::LegacyAdd {
+                    activity_generation: self.activity.generation(),
+                    output_tokens: usage.output_tokens,
+                }
+            });
         self.token_usage = usage;
-        cx.emit(AcpThreadEvent::TokenUsageUpdated);
+        cx.emit(AcpThreadEvent::TokenUsageUpdated(output));
     }
 
     pub fn update_usage(&mut self, update: acp_v2::UsageUpdate, cx: &mut Context<Self>) {
@@ -5413,7 +5546,9 @@ impl AcpThread {
                 meta: cost.meta,
             });
         }
-        cx.emit(AcpThreadEvent::TokenUsageUpdated);
+        cx.emit(AcpThreadEvent::TokenUsageUpdated(
+            OutputTokensUpdate::Unchanged,
+        ));
     }
 
     pub fn update_retry_status(&mut self, status: RetryStatus, cx: &mut Context<Self>) {
@@ -6816,7 +6951,12 @@ impl AcpThread {
                             let usage = this.token_usage.get_or_insert_with(Default::default);
                             usage.input_tokens = response_usage.input_tokens;
                             usage.output_tokens = response_usage.output_tokens;
-                            cx.emit(AcpThreadEvent::TokenUsageUpdated);
+                            cx.emit(AcpThreadEvent::TokenUsageUpdated(
+                                OutputTokensUpdate::LegacyAdd {
+                                    activity_generation: this.activity.generation(),
+                                    output_tokens: usage.output_tokens,
+                                },
+                            ));
                         }
 
                         if is_same_turn {
@@ -7137,7 +7277,7 @@ impl AcpThread {
     }
 
     fn update_last_checkpoint_if_changed(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        if self.foreground_activity() == ForegroundActivity::Idle {
+        if !self.foreground_activity().is_active() {
             return Task::ready(Ok(()));
         }
         let activity_generation = self.activity_generation();
@@ -7182,7 +7322,7 @@ impl AcpThread {
             }
 
             this.update(cx, |this, cx| {
-                if this.foreground_activity() == ForegroundActivity::Idle
+                if !this.foreground_activity().is_active()
                     || this.activity_generation() != activity_generation
                 {
                     return;
@@ -12031,7 +12171,7 @@ mod tests {
             assert!(thread.activity_started_at().is_some());
             assert!(thread.activity_duration().is_some());
             assert!(
-                matches!(thread.foreground_state(), acp_v2::StateUpdate::Running(running)
+                matches!(thread.foreground_state(), Some(acp_v2::StateUpdate::Running(running))
                 if running.meta.as_ref().and_then(|meta| meta.get("future")) == Some(&json!(42)))
             );
         });
@@ -12069,7 +12209,7 @@ mod tests {
                 SubmissionState::Pending
             ));
             assert!(
-                matches!(thread.foreground_state(), acp_v2::StateUpdate::Idle(idle)
+                matches!(thread.foreground_state(), Some(acp_v2::StateUpdate::Idle(idle))
                 if idle.stop_reason == Some(acp_v2::StopReason::Refusal))
             );
         });
@@ -12229,7 +12369,7 @@ mod tests {
                     .expect("running");
                 assert!(!thread.had_error());
                 thread.update_session_state(idle.clone(), cx).expect("idle");
-                assert_eq!(thread.foreground_state(), &idle);
+                assert_eq!(thread.foreground_state(), Some(&idle));
                 assert_eq!(thread.had_error(), expected_had_error);
                 assert_eq!(thread.entries().len(), 3);
                 assert!(matches!(
@@ -12256,6 +12396,382 @@ mod tests {
             assert_eq!(thread.latest_submission_id(), None);
             assert_eq!(thread.entries().len(), 3);
         });
+    }
+
+    #[gpui::test]
+    async fn test_unconfirmed_activity_waits_for_idle_without_inventing_completion(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        for initially_blocked in [false, true] {
+            let (thread, connection) = new_receipt_test_thread(cx).await;
+            let events = Rc::new(RefCell::new((0, 0)));
+            let _subscription = cx.update(|cx| {
+                cx.subscribe(&thread, {
+                    let events = events.clone();
+                    move |_, event, _| match event {
+                        AcpThreadEvent::Stopped { .. } => events.borrow_mut().0 += 1,
+                        AcpThreadEvent::ActivityConfirmedIdle => events.borrow_mut().1 += 1,
+                        _ => {}
+                    }
+                })
+            });
+            let mut cancelled = thread.update(cx, |thread, cx| {
+                thread.mark_activity_unconfirmed(cx);
+                assert_eq!(thread.status(), ThreadStatus::Unconfirmed);
+                assert!(thread.foreground_state().is_none());
+                assert!(thread.activity_started_at().is_none());
+                assert!(thread.activity_duration().is_none());
+                assert!(!thread.is_idle_for_retention());
+                thread.cancel(cx)
+            });
+            cx.run_until_parked();
+            assert!((&mut cancelled).now_or_never().is_none());
+            assert_eq!(connection.take_cancel_calls().len(), 1);
+            if initially_blocked {
+                thread.update(cx, |thread, cx| {
+                    thread
+                        .update_session_state(
+                            acp_v2::StateUpdate::RequiresAction(
+                                acp_v2::RequiresActionStateUpdate::new(),
+                            ),
+                            cx,
+                        )
+                        .expect("first report is blocked work");
+                    thread.mark_activity_unconfirmed(cx);
+                    assert_eq!(
+                        thread.foreground_activity(),
+                        ForegroundActivity::RequiresAction
+                    );
+                    assert_eq!(thread.activity_generation(), 1);
+                });
+                cx.run_until_parked();
+                assert!((&mut cancelled).now_or_never().is_none());
+            }
+            for _ in 0..2 {
+                thread.update(cx, |thread, cx| {
+                    thread
+                        .update_session_state(
+                            acp_v2::StateUpdate::Idle(
+                                acp_v2::IdleStateUpdate::new()
+                                    .stop_reason(acp_v2::StopReason::Cancelled),
+                            ),
+                            cx,
+                        )
+                        .expect("confirmed idle");
+                });
+            }
+            cancelled.await.expect("stop is now confirmed");
+            cx.run_until_parked();
+            assert_eq!(
+                *events.borrow(),
+                (
+                    usize::from(initially_blocked),
+                    usize::from(!initially_blocked)
+                )
+            );
+            thread.read_with(cx, |thread, _| {
+                assert_eq!(thread.status(), ThreadStatus::Idle);
+                assert_eq!(thread.activity_generation(), u64::from(initially_blocked));
+                assert!(thread.is_idle_for_retention());
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn test_unconfirmed_stop_reports_observation_loss(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (thread, _) = new_receipt_test_thread(cx).await;
+        let mut cancelled = thread.update(cx, |thread, cx| {
+            thread.mark_activity_unconfirmed(cx);
+            thread.cancel(cx)
+        });
+        cx.run_until_parked();
+        assert!((&mut cancelled).now_or_never().is_none());
+        thread.update(cx, |thread, cx| thread.handle_connection_lost(cx));
+        assert!(
+            cancelled
+                .await
+                .expect_err("observation loss cannot confirm stop")
+                .to_string()
+                .contains("before cancellation was confirmed")
+        );
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(
+                thread.foreground_activity(),
+                ForegroundActivity::Unconfirmed
+            );
+            assert_eq!(thread.activity_generation(), 0);
+            assert!(thread.activity_duration().is_none());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_reported_snapshots_are_idempotent_and_preserve_url_interactions(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (thread, _) = new_receipt_test_thread(cx).await;
+        thread.update(cx, |thread, cx| thread.mark_activity_unconfirmed(cx));
+        let stops = Rc::new(RefCell::new(Vec::new()));
+        let usage_updates = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&thread, {
+                let stops = stops.clone();
+                let usage_updates = usage_updates.clone();
+                move |_, event, _| match event {
+                    AcpThreadEvent::Stopped {
+                        activity_generation,
+                        stop_reason,
+                        ..
+                    } => {
+                        stops
+                            .borrow_mut()
+                            .push((*activity_generation, stop_reason.clone()));
+                    }
+                    AcpThreadEvent::TokenUsageUpdated(update) => {
+                        usage_updates.borrow_mut().push(*update)
+                    }
+                    _ => {}
+                }
+            })
+        });
+        let (entry_id, response) = thread.update(cx, |thread, cx| {
+            thread
+                .request_elicitation_with_id(
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationUrlMode::new(
+                            acp_v2::ElicitationSessionScope::new(thread.session_id().clone()),
+                            "current-url",
+                            "https://example.com/finish",
+                        ),
+                        "Continue in browser",
+                    ),
+                    cx,
+                )
+                .expect("URL elicitation")
+        });
+        thread.update(cx, |thread, cx| {
+            thread.respond_to_elicitation(
+                &entry_id,
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
+                    acp_v2::ElicitationAcceptAction::new(),
+                )),
+                cx,
+            );
+        });
+        assert!(matches!(
+            response.await.action,
+            acp_v2::ElicitationAction::Accept(_)
+        ));
+        let idle: acp_v2::StateUpdate = serde_json::from_value(json!({
+            "state": "idle", "stopReason": "cancelled",
+            "usage": {"totalTokens": 12, "inputTokens": 5, "outputTokens": 7}
+        }))
+        .expect("idle snapshot");
+        for _ in 0..2 {
+            thread
+                .update(cx, |thread, cx| {
+                    thread.update_session_state(idle.clone(), cx)
+                })
+                .expect("initial snapshot");
+        }
+        cx.run_until_parked();
+        assert!(stops.borrow().is_empty());
+        assert_eq!(usage_updates.borrow().len(), 1);
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.activity_generation(), 0);
+            assert!(matches!(
+                thread
+                    .elicitation(&entry_id)
+                    .expect("URL interaction")
+                    .1
+                    .status,
+                ElicitationStatus::Accepted
+            ));
+        });
+        for output_tokens in [7, 9] {
+            thread.update(cx, |thread, cx| {
+                thread
+                    .update_session_state(
+                        acp_v2::StateUpdate::RequiresAction(
+                            acp_v2::RequiresActionStateUpdate::new(),
+                        ),
+                        cx,
+                    )
+                    .expect("work starts blocked");
+            });
+            let generation = thread.read_with(cx, |thread, _| thread.activity_generation());
+            let snapshot: acp_v2::StateUpdate = serde_json::from_value(json!({
+                "state": "idle", "stopReason": "end_turn",
+                "usage": {"totalTokens": 5 + output_tokens, "inputTokens": 5, "outputTokens": output_tokens}
+            })).expect("completion snapshot");
+            for _ in 0..2 {
+                thread
+                    .update(cx, |thread, cx| {
+                        thread.update_session_state(snapshot.clone(), cx)
+                    })
+                    .expect("completion or repeat");
+            }
+            cx.run_until_parked();
+            assert_eq!(stops.borrow().len(), generation as usize);
+            assert_eq!(
+                usage_updates.borrow().last(),
+                Some(&OutputTokensUpdate::Snapshot {
+                    activity_generation: generation,
+                    output_tokens
+                })
+            );
+        }
+        assert_eq!(
+            usage_updates.borrow().len(),
+            3,
+            "one usage snapshot per observed interval"
+        );
+        let correction: acp_v2::StateUpdate = serde_json::from_value(json!({
+            "state": "idle", "stopReason": "cancelled",
+            "usage": {"totalTokens": 15, "inputTokens": 5, "outputTokens": 10}
+        }))
+        .expect("updated idle information");
+        thread
+            .update(cx, |thread, cx| thread.update_session_state(correction, cx))
+            .expect("idle information changes");
+        cx.run_until_parked();
+        assert_eq!(stops.borrow().len(), 2);
+        assert_eq!(usage_updates.borrow().len(), 4);
+        thread.update(cx, |thread, cx| {
+            assert!(matches!(
+                thread.elicitation(&entry_id).expect("URL").1.status,
+                ElicitationStatus::Accepted
+            ));
+            thread.complete_url_elicitation(&"current-url".into(), cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_reported_interactions_do_not_invent_foreground_transitions(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (thread, _) = new_receipt_test_thread(cx).await;
+        let (permission_id, permission) = thread.update(cx, |thread, cx| {
+            thread
+                .request_permission(test_generic_permission_request(thread, "background"), cx)
+                .expect("background permission")
+        });
+        let (elicitation_id, elicitation) = request_test_form_elicitation(&thread, cx);
+        cx.run_until_parked();
+        assert_eq!(
+            thread.read_with(cx, |thread, _| thread.foreground_activity()),
+            ForegroundActivity::Idle
+        );
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::RequiresAction(acp_v2::RequiresActionStateUpdate::new()),
+                    cx,
+                )
+                .expect("blocked foreground work");
+            thread.cancel_permission_request(permission_id, cx);
+        });
+        assert_eq!(
+            permission.await,
+            acp_v2::RequestPermissionOutcome::Cancelled
+        );
+        cx.run_until_parked();
+        assert_eq!(
+            thread.read_with(cx, |thread, _| thread.foreground_activity()),
+            ForegroundActivity::RequiresAction
+        );
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                    cx,
+                )
+                .expect("other foreground work can progress");
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            thread.read_with(cx, |thread, _| thread.foreground_activity()),
+            ForegroundActivity::Running
+        );
+        thread.update(cx, |thread, cx| {
+            thread.cancel_elicitation(&elicitation_id, cx)
+        });
+        assert_eq!(elicitation.await.action, acp_v2::ElicitationAction::Cancel);
+        cx.run_until_parked();
+        assert_eq!(
+            thread.read_with(cx, |thread, _| thread.foreground_activity()),
+            ForegroundActivity::Running
+        );
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new()),
+                    cx,
+                )
+                .expect("reported end");
+            assert_eq!(thread.activity_generation(), 1);
+            assert!(thread.latest_submission_id().is_none());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_reported_idle_preserves_unknown_completion_outcomes(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (thread, _) = new_receipt_test_thread(cx).await;
+        let stops = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&thread, {
+                let stops = stops.clone();
+                move |_, event, _| {
+                    if let AcpThreadEvent::Stopped { stop_reason, .. } = event {
+                        stops.borrow_mut().push(stop_reason.clone());
+                    }
+                }
+            })
+        });
+        for reason in [
+            None,
+            Some(json!(null)),
+            Some(json!(7)),
+            Some(json!({"invalid": true})),
+            Some(json!("_future")),
+        ] {
+            let mut snapshot = json!({"state": "idle"});
+            if let Some(reason) = reason {
+                snapshot["stopReason"] = reason;
+            }
+            let snapshot: acp_v2::StateUpdate =
+                serde_json::from_value(snapshot).expect("tolerant idle decoding");
+            thread.update(cx, |thread, cx| {
+                thread
+                    .update_session_state(
+                        acp_v2::StateUpdate::RequiresAction(
+                            acp_v2::RequiresActionStateUpdate::new(),
+                        ),
+                        cx,
+                    )
+                    .expect("active interval");
+                thread
+                    .update_session_state(snapshot.clone(), cx)
+                    .expect("idle");
+                thread
+                    .update_session_state(snapshot, cx)
+                    .expect("idle repeat");
+                assert_eq!(thread.foreground_activity(), ForegroundActivity::Idle);
+                assert!(!thread.had_error());
+            });
+            cx.run_until_parked();
+        }
+        let stops = stops.borrow();
+        assert_eq!(stops.len(), 5);
+        assert!(
+            stops
+                .iter()
+                .all(|reason| matches!(reason, None | Some(acp_v2::StopReason::Other(_))))
+        );
     }
 
     #[gpui::test]
