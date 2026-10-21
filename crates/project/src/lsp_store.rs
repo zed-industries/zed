@@ -15030,42 +15030,112 @@ fn document_selector_context_for_language(
     }
 }
 
+/// A document selector with the patterns of its filters compiled when it is registered, as
+/// documents are matched against it as often as on every edit.
+#[derive(Clone, Debug)]
+pub(super) struct CompiledDocumentSelector {
+    filters: Vec<CompiledDocumentFilter>,
+}
+
+#[derive(Clone, Debug)]
+struct CompiledDocumentFilter {
+    filter: lsp::DocumentFilter,
+    pattern: Option<DocumentFilterPattern>,
+}
+
+impl CompiledDocumentSelector {
+    /// Rejects unusable patterns up front, so that matching never has to decide what they mean.
+    pub(super) fn new(document_selector: lsp::DocumentSelector) -> Result<Self> {
+        let filters = document_selector
+            .into_iter()
+            .map(CompiledDocumentFilter::new)
+            .collect::<Result<_>>()?;
+        Ok(Self { filters })
+    }
+}
+
+impl CompiledDocumentFilter {
+    fn new(filter: lsp::DocumentFilter) -> Result<Self> {
+        let pattern = filter
+            .pattern
+            .as_ref()
+            .map(|pattern| {
+                DocumentFilterPattern::new(pattern)
+                    .with_context(|| format!("invalid document filter pattern {pattern:?}"))
+            })
+            .transpose()?;
+        Ok(Self { filter, pattern })
+    }
+}
+
+impl PartialEq for CompiledDocumentSelector {
+    fn eq(&self, other: &Self) -> bool {
+        self.filters
+            .iter()
+            .map(|filter| &filter.filter)
+            .eq(other.filters.iter().map(|filter| &filter.filter))
+    }
+}
+
+impl Serialize for CompiledDocumentSelector {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(self.filters.iter().map(|filter| &filter.filter))
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for CompiledDocumentSelector {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let document_selector = lsp::DocumentSelector::deserialize(deserializer)?;
+        // Hosts only share selectors they compiled. Should a guest still fail to compile a
+        // pattern, dropping its filter leaves it matching no document, while failing here would
+        // discard the server's other capabilities.
+        let filters = document_selector
+            .into_iter()
+            .filter_map(|filter| CompiledDocumentFilter::new(filter).log_err())
+            .collect();
+        Ok(Self { filters })
+    }
+}
+
 fn document_selector_matches(
-    document_selector: Option<&lsp::DocumentSelector>,
+    document_selector: Option<&CompiledDocumentSelector>,
     context: &DocumentSelectorContext,
 ) -> bool {
     let Some(document_selector) = document_selector else {
         return true;
     };
 
-    document_selector.iter().any(|filter| {
-        if let Some(language) = &filter.language
-            && context.language_id.as_ref() != Some(language)
-        {
-            return false;
-        }
+    document_selector
+        .filters
+        .iter()
+        .any(|CompiledDocumentFilter { filter, pattern }| {
+            if let Some(language) = &filter.language
+                && context.language_id.as_ref() != Some(language)
+            {
+                return false;
+            }
 
-        if let Some(scheme) = &filter.scheme
-            && !scheme.eq_ignore_ascii_case(context.scheme)
-        {
-            return false;
-        }
+            if let Some(scheme) = &filter.scheme
+                && !scheme.eq_ignore_ascii_case(context.scheme)
+            {
+                return false;
+            }
 
-        // Checked last, since it compiles the glob.
-        if let Some(pattern) = &filter.pattern {
-            match &context.path {
-                DocumentSelectorPath::Unknown => {}
-                DocumentSelectorPath::Absent => return false,
-                DocumentSelectorPath::Present { path, path_style } => {
-                    if !document_filter_pattern_matches(pattern, path, *path_style) {
-                        return false;
+            // Checked last, since it runs the glob.
+            if let Some(pattern) = pattern {
+                match &context.path {
+                    DocumentSelectorPath::Unknown => {}
+                    DocumentSelectorPath::Absent => return false,
+                    DocumentSelectorPath::Present { path, path_style } => {
+                        if !pattern.matches(path, *path_style) {
+                            return false;
+                        }
                     }
                 }
             }
-        }
 
-        true
-    })
+            true
+        })
 }
 
 fn document_filter_glob(pattern: &lsp::GlobPattern) -> (Option<&lsp::Uri>, &str) {
@@ -15092,10 +15162,7 @@ const DOCUMENT_FILTER_GLOB_MAX_BYTES: usize = 1024 * 1024;
 /// `[a-z]` or `[!a-z]` matches a character in or out of a range within a path segment.
 /// Unlike VS Code's parser, consecutive `**` segments are equivalent to one, and character
 /// classes cannot consume `/`, even when a negation or range would otherwise include it.
-fn document_filter_glob_matcher(glob: &str) -> Result<regex::Regex> {
-    compile_document_filter_glob(glob, false)
-}
-
+///
 /// With `normalize_drive_letters`, the drive letters of absolute Windows paths are lowercased
 /// in each alternative after brace expansion, as braces can enclose or even produce them.
 fn compile_document_filter_glob(glob: &str, normalize_drive_letters: bool) -> Result<regex::Regex> {
@@ -15309,18 +15376,6 @@ fn split_glob(glob: &str, separator: char) -> Result<Vec<&str>> {
     Ok(parts)
 }
 
-fn validate_document_filter_pattern(pattern: &lsp::GlobPattern) -> Result<()> {
-    let (base_uri, glob) = document_filter_glob(pattern);
-    if let Some(base_uri) = base_uri {
-        anyhow::ensure!(
-            base_uri.scheme() == "file",
-            "relative pattern base URI {base_uri} is not a file URI"
-        );
-    }
-    document_filter_glob_matcher(glob)?;
-    Ok(())
-}
-
 fn normalize_document_filter_drive_letter(path: &str) -> Cow<'_, str> {
     match path.as_bytes() {
         [drive_letter, b':', b'/', ..] if drive_letter.is_ascii_uppercase() => {
@@ -15335,53 +15390,86 @@ fn normalize_document_filter_drive_letter(path: &str) -> Cow<'_, str> {
     }
 }
 
-fn document_filter_pattern_matches(
-    pattern: &lsp::GlobPattern,
-    path: &str,
-    path_style: PathStyle,
-) -> bool {
-    let (base_uri, glob) = document_filter_glob(pattern);
-    // VS Code's fsPath lowercases the drive letter. Canonicalize literal drive prefixes on
-    // both sides without making the rest of the glob case-insensitive.
-    let normalize_drive_letters = base_uri.is_none() && path_style == PathStyle::Windows;
-    let path = if normalize_drive_letters {
-        normalize_document_filter_drive_letter(path)
-    } else {
-        Cow::Borrowed(path)
-    };
-    let Some(matcher) = compile_document_filter_glob(glob, normalize_drive_letters).log_err()
-    else {
-        return false;
-    };
-    let Some(base_uri) = base_uri else {
-        return matcher.is_match(&path);
-    };
+#[derive(Clone, Debug)]
+struct DocumentFilterPattern {
+    base: Option<RelativePatternBase>,
+    matcher: regex::Regex,
+}
 
-    // The base URI is on the same host as the document, so it is read in the same path style.
-    let Ok(base_path) = base_uri.to_file_path_ext(path_style) else {
-        return false;
-    };
-    let base_path = path_with_slashes(&base_path.to_string_lossy(), path_style);
-    let mut relative_path = path.as_ref();
-    // Case-equivalent components can have different UTF-8 lengths (e.g. K and k), so
-    // consume the candidate's components rather than slicing at the base's byte length.
-    for base_component in base_path.trim_end_matches('/').split('/') {
-        // The base may be the document itself, leaving an empty path for the pattern, which
-        // `**` matches. A path running out before the base does fails to match its components.
-        let (component, remainder) = relative_path.split_once('/').unwrap_or((relative_path, ""));
-        let matches = match path_style {
-            PathStyle::Windows => {
-                component == base_component
-                    || component.to_lowercase() == base_component.to_lowercase()
-            }
-            PathStyle::Unix => component == base_component,
-        };
-        if !matches {
-            return false;
-        }
-        relative_path = remainder;
+/// The base of a relative pattern, read in either path style, as the one of the host is only
+/// known when matching, with `/` separators and without a trailing one.
+#[derive(Clone, Debug)]
+struct RelativePatternBase {
+    unix_path: Option<String>,
+    windows_path: Option<String>,
+}
+
+impl DocumentFilterPattern {
+    fn new(pattern: &lsp::GlobPattern) -> Result<Self> {
+        let (base_uri, glob) = document_filter_glob(pattern);
+        let base = base_uri
+            .map(|base_uri| {
+                anyhow::ensure!(
+                    base_uri.scheme() == "file",
+                    "relative pattern base URI {base_uri} is not a file URI"
+                );
+                let base_path = |path_style| {
+                    let path = base_uri.to_file_path_ext(path_style).ok()?;
+                    let path = path_with_slashes(&path.to_string_lossy(), path_style);
+                    Some(path.trim_end_matches('/').to_string())
+                };
+                Ok(RelativePatternBase {
+                    unix_path: base_path(PathStyle::Unix),
+                    windows_path: base_path(PathStyle::Windows),
+                })
+            })
+            .transpose()?;
+        // VS Code's fsPath lowercases the drive letter, so drive prefixes of absolute patterns
+        // are canonicalized like those of Windows paths when matching. This leaves the matches
+        // of Unix paths unchanged, as they start with `/` rather than a drive letter.
+        let matcher = compile_document_filter_glob(glob, base.is_none())?;
+        Ok(Self { base, matcher })
     }
-    matcher.is_match(relative_path)
+
+    fn matches(&self, path: &str, path_style: PathStyle) -> bool {
+        let Some(base) = &self.base else {
+            let path = match path_style {
+                PathStyle::Windows => normalize_document_filter_drive_letter(path),
+                PathStyle::Unix => Cow::Borrowed(path),
+            };
+            return self.matcher.is_match(&path);
+        };
+
+        // The base URI is on the same host as the document, so it is read in the same path style.
+        let base_path = match path_style {
+            PathStyle::Windows => base.windows_path.as_deref(),
+            PathStyle::Unix => base.unix_path.as_deref(),
+        };
+        let Some(base_path) = base_path else {
+            return false;
+        };
+        let mut relative_path = path;
+        // Case-equivalent components can have different UTF-8 lengths (e.g. K and k), so
+        // consume the candidate's components rather than slicing at the base's byte length.
+        for base_component in base_path.split('/') {
+            // The base may be the document itself, leaving an empty path for the pattern, which
+            // `**` matches. A path running out before the base does fails to match its components.
+            let (component, remainder) =
+                relative_path.split_once('/').unwrap_or((relative_path, ""));
+            let matches = match path_style {
+                PathStyle::Windows => {
+                    component == base_component
+                        || component.to_lowercase() == base_component.to_lowercase()
+                }
+                PathStyle::Unix => component == base_component,
+            };
+            if !matches {
+                return false;
+            }
+            relative_path = remainder;
+        }
+        self.matcher.is_match(relative_path)
+    }
 }
 
 fn remote_text_document_capabilities_match(
@@ -15450,7 +15538,7 @@ fn text_document_capabilities_for_buffer<'a>(
     adapter: &CachedLspAdapter,
     server: &'a LanguageServer,
     cx: &App,
-) -> impl Iterator<Item = AdapterServerCapabilities<'a>> + use<'a> {
+) -> impl DoubleEndedIterator<Item = AdapterServerCapabilities<'a>> + use<'a> {
     let code_action_kinds = server.code_action_kinds();
     let static_capabilities = local
         .initial_server_capabilities
@@ -17296,7 +17384,8 @@ fn text_document_sync_kind_for_buffer(
     server: &LanguageServer,
     cx: &App,
 ) -> Option<lsp::TextDocumentSyncKind> {
-    // Later registrations take precedence over earlier ones and the static options.
+    // Later registrations take precedence over earlier ones and the static options, so
+    // searching from the latest one stops at the first registration selecting the buffer.
     text_document_capabilities_for_buffer(
         local,
         "textDocument/didChange",
@@ -17305,7 +17394,8 @@ fn text_document_sync_kind_for_buffer(
         server,
         cx,
     )
-    .filter_map(|capabilities| {
+    .rev()
+    .find_map(|capabilities| {
         match capabilities
             .server_capabilities
             .text_document_sync
@@ -17315,7 +17405,6 @@ fn text_document_sync_kind_for_buffer(
             lsp::TextDocumentSyncCapability::Options(options) => options.change,
         }
     })
-    .last()
 }
 
 /// Completion items are displayed in a `UniformList`.
@@ -17819,6 +17908,34 @@ mod tests {
         ));
         assert!(should_log_lsp_request_failure("something else entirely"));
     }
+
+    #[test]
+    fn synced_document_selector_drops_filters_that_fail_to_compile() {
+        let context =
+            |path: &str| toml_file_context(DocumentSelectorPath::present(path, PathStyle::Unix));
+        let selector: CompiledDocumentSelector = serde_json::from_value(serde_json::json!([
+            { "pattern": "**/[a.rs" },
+            { "pattern": "**/b.rs" },
+        ]))
+        .expect("a synced selector with an invalid pattern should deserialize");
+        assert!(!document_selector_matches(
+            Some(&selector),
+            &context("/root/a.rs")
+        ));
+        assert!(document_selector_matches(
+            Some(&selector),
+            &context("/root/b.rs")
+        ));
+
+        let selector: CompiledDocumentSelector =
+            serde_json::from_value(serde_json::json!([{ "pattern": "**/[a.rs" }]))
+                .expect("a synced selector with an invalid pattern should deserialize");
+        assert!(
+            !document_selector_matches(Some(&selector), &context("/root/a.rs")),
+            "a selector without any usable filter should match no document",
+        );
+    }
+
     #[test]
     fn synced_server_capabilities_wire_format_is_compatible_with_plain_capabilities() {
         let registrations: dynamic_registration::TextDocumentRegistrations =
@@ -17827,11 +17944,11 @@ mod tests {
                 collections::IndexMap::from_iter([(
                     "file-completion".to_string(),
                     dynamic_registration::DynamicTextDocumentRegistration {
-                        document_selector: Some(vec![lsp::DocumentFilter {
+                        document_selector: Some(compiled_selector(vec![lsp::DocumentFilter {
                             language: Some("rust".to_string()),
                             scheme: Some("file".to_string()),
                             pattern: None,
-                        }]),
+                        }])),
                         server_capabilities: lsp::ServerCapabilities {
                             completion_provider: Some(lsp::CompletionOptions {
                                 trigger_characters: Some(vec![".".to_string()]),
@@ -17978,15 +18095,19 @@ mod tests {
         }
     }
 
+    fn compiled_selector(document_selector: lsp::DocumentSelector) -> CompiledDocumentSelector {
+        CompiledDocumentSelector::new(document_selector).expect("valid document selector")
+    }
+
     fn pattern_selector(
         language: Option<&str>,
         pattern: lsp::GlobPattern,
-    ) -> Option<lsp::DocumentSelector> {
-        Some(vec![lsp::DocumentFilter {
+    ) -> Option<CompiledDocumentSelector> {
+        Some(compiled_selector(vec![lsp::DocumentFilter {
             language: language.map(str::to_string),
             scheme: None,
             pattern: Some(pattern),
-        }])
+        }]))
     }
 
     #[test]
@@ -18394,7 +18515,7 @@ mod tests {
             ("/root/{src,lib}/{a,b}.rs", "/root/lib/b.rs", true),
             ("/root/{}a.rs", "/root/a.rs", true),
         ] {
-            let matcher = document_filter_glob_matcher(pattern)?;
+            let matcher = compile_document_filter_glob(pattern, false)?;
             assert_eq!(
                 matcher.is_match(path),
                 expected,
@@ -18421,7 +18542,7 @@ mod tests {
             ("**/{[!]],a}.rs", "/root/b.rs", true),
             ("**/{[!]],a}.rs", "/root/].rs", false),
         ] {
-            let matcher = document_filter_glob_matcher(pattern)?;
+            let matcher = compile_document_filter_glob(pattern, false)?;
             assert_eq!(
                 matcher.is_match(path),
                 expected,
@@ -18458,7 +18579,7 @@ mod tests {
         assert!(expand_glob_braces(&deeply_nested).is_err());
         let large_regex = "*a".repeat(DOCUMENT_FILTER_GLOB_MAX_BYTES / 4);
         assert!(
-            document_filter_glob_matcher(&large_regex)
+            compile_document_filter_glob(&large_regex, false)
                 .expect_err("the generated regex must also have a bounded size")
                 .to_string()
                 .contains("compiled pattern size limit")
@@ -18503,7 +18624,7 @@ mod tests {
             ("/root/root/**/**", "/root/root/a.rs", true),
             ("/root/**/**/{a.rs,b.rs}", "/root/b.rs", true),
         ] {
-            let matcher = document_filter_glob_matcher(pattern)?;
+            let matcher = compile_document_filter_glob(pattern, false)?;
             assert_eq!(
                 matcher.is_match(path),
                 expected,
@@ -18540,7 +18661,7 @@ mod tests {
             ("**/a[]]b.rs", "/root/a]b.rs", true),
             ("**/a[x-]b.rs", "/root/a-b.rs", true),
         ] {
-            let matcher = document_filter_glob_matcher(pattern)?;
+            let matcher = compile_document_filter_glob(pattern, false)?;
             assert_eq!(
                 matcher.is_match(path),
                 expected,
@@ -18553,11 +18674,9 @@ mod tests {
     #[test]
     fn document_filter_pattern_matches_characters() {
         let matches = |pattern: &str, path: &str| {
-            document_filter_pattern_matches(
-                &lsp::GlobPattern::String(pattern.to_string()),
-                path,
-                PathStyle::Unix,
-            )
+            DocumentFilterPattern::new(&lsp::GlobPattern::String(pattern.to_string()))
+                .expect("valid pattern")
+                .matches(path, PathStyle::Unix)
         };
 
         // `?` and character classes match characters, not bytes.
@@ -18600,10 +18719,8 @@ mod tests {
             "**/[0--].rs",
         ] {
             assert!(
-                validate_document_filter_pattern(&lsp::GlobPattern::String(
-                    invalid_pattern.to_string()
-                ))
-                .is_err(),
+                DocumentFilterPattern::new(&lsp::GlobPattern::String(invalid_pattern.to_string()))
+                    .is_err(),
                 "expected {invalid_pattern:?} to be rejected",
             );
         }
@@ -18615,11 +18732,11 @@ mod tests {
         collections::IndexMap::from_iter([(
             "rename-registration".to_string(),
             dynamic_registration::DynamicTextDocumentRegistration {
-                document_selector: Some(vec![lsp::DocumentFilter {
+                document_selector: Some(compiled_selector(vec![lsp::DocumentFilter {
                     language: Some(language.to_string()),
                     scheme: Some("file".to_string()),
                     pattern: None,
-                }]),
+                }])),
                 server_capabilities: rename_capabilities(),
             },
         )])

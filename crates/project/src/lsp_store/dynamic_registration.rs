@@ -15,9 +15,8 @@ use lsp::{
 };
 
 use crate::lsp_store::{
-    LanguageServerState, LspStore, RenamePathsWatchedForServer,
+    CompiledDocumentSelector, LanguageServerState, LspStore, RenamePathsWatchedForServer,
     completion_trigger_characters_for_buffer, lsp_workspace_diagnostics_refresh,
-    validate_document_filter_pattern,
 };
 
 #[derive(Debug)]
@@ -56,7 +55,7 @@ impl CapabilityRegistrationChange {
 
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(super) struct DynamicTextDocumentRegistration {
-    pub(super) document_selector: Option<lsp::DocumentSelector>,
+    pub(super) document_selector: Option<CompiledDocumentSelector>,
     pub(super) server_capabilities: lsp::ServerCapabilities,
 }
 
@@ -84,7 +83,9 @@ impl LspStore {
         cx: &mut Context<Self>,
         capability_of: impl Fn(&mut lsp::ServerCapabilities) -> &mut Option<T>,
     ) -> anyhow::Result<CapabilityRegistrationChange> {
-        validate_document_selector(document_selector.as_ref())?;
+        let document_selector = document_selector
+            .map(CompiledDocumentSelector::new)
+            .transpose()?;
         let server_id = server.server_id();
         let local = self
             .as_local_mut()
@@ -232,7 +233,9 @@ impl LspStore {
         sync_options: lsp::TextDocumentSyncOptions,
         cx: &mut Context<Self>,
     ) -> anyhow::Result<()> {
-        validate_document_selector(document_selector.as_ref())?;
+        let document_selector = document_selector
+            .map(CompiledDocumentSelector::new)
+            .transpose()?;
         let local = self
             .as_local_mut()
             .context("Expected LSP Store to be local")?;
@@ -1380,19 +1383,6 @@ fn parse_text_document_registration(
         .map(serde_json::from_value::<lsp::TextDocumentRegistrationOptions>)
         .transpose()?
         .and_then(|options| options.document_selector))
-}
-
-/// Rejects unusable patterns up front, so that matching never has to decide what they mean.
-fn validate_document_selector(document_selector: Option<&lsp::DocumentSelector>) -> Result<()> {
-    for pattern in document_selector
-        .into_iter()
-        .flatten()
-        .filter_map(|filter| filter.pattern.as_ref())
-    {
-        validate_document_filter_pattern(pattern)
-            .with_context(|| format!("invalid document filter pattern {pattern:?}"))?;
-    }
-    Ok(())
 }
 
 // Registration with registerOptions as null, should fallback to true.
