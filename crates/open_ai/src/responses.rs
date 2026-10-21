@@ -720,18 +720,14 @@ pub struct ResponseReasoningItem {
     pub status: Option<String>,
 }
 
-/// Preserves unknown reasoning content for replay while exposing supported parts.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-#[serde(untagged)]
-pub enum ReasoningContentPart {
-    Known(KnownReasoningContentPart),
-    Unknown(Value),
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum KnownReasoningContentPart {
-    ReasoningText { text: String },
+pub enum ReasoningContentPart {
+    ReasoningText {
+        text: String,
+    },
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -1024,10 +1020,7 @@ pub async fn stream_response(
                                     for (content_index, part) in
                                         reasoning.content.iter().enumerate()
                                     {
-                                        if let ReasoningContentPart::Known(
-                                            KnownReasoningContentPart::ReasoningText { text },
-                                        ) = part
-                                        {
+                                        if let ReasoningContentPart::ReasoningText { text } = part {
                                             all_events.push(StreamEvent::ReasoningTextDelta {
                                                 item_id: item_id.clone(),
                                                 output_index,
@@ -1108,7 +1101,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     #[test]
-    fn reasoning_content_preserves_known_and_unknown_parts_for_replay() {
+    fn reasoning_content_accepts_unknown_parts() {
         let content = json!([
             {"type": "reasoning_text", "text": "Thinking"},
             {"type": "future_reasoning", "payload": {"opaque": true}}
@@ -1117,15 +1110,14 @@ mod tests {
             "content": content
         }))
         .expect("reasoning item");
-        assert!(matches!(
-            item.content.first(),
-            Some(ReasoningContentPart::Known(
-                KnownReasoningContentPart::ReasoningText { text }
-            )) if text == "Thinking"
-        ));
         assert_eq!(
-            serde_json::to_value(item).expect("serialized item")["content"],
-            content
+            item.content,
+            vec![
+                ReasoningContentPart::ReasoningText {
+                    text: "Thinking".into(),
+                },
+                ReasoningContentPart::Other,
+            ]
         );
     }
 

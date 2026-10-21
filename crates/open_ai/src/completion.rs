@@ -1512,7 +1512,12 @@ fn response_reasoning_input_item_from_output(
     ResponseReasoningInputItem {
         id: reasoning.id.clone(),
         summary,
-        content: reasoning.content.clone(),
+        content: reasoning
+            .content
+            .iter()
+            .filter(|part| !matches!(part, crate::responses::ReasoningContentPart::Other))
+            .cloned()
+            .collect(),
         encrypted_content,
         status: reasoning.status.clone(),
     }
@@ -3930,11 +3935,9 @@ mod tests {
             Some("ENC"),
             Some("completed".into()),
         );
-        reasoning_item.content = vec![crate::responses::ReasoningContentPart::Known(
-            crate::responses::KnownReasoningContentPart::ReasoningText {
-                text: "Internal reasoning text.".into(),
-            },
-        )];
+        reasoning_item.content = vec![crate::responses::ReasoningContentPart::ReasoningText {
+            text: "Internal reasoning text.".into(),
+        }];
 
         let events = vec![
             ResponsesStreamEvent::OutputItemDone {
