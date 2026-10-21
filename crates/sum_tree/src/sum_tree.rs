@@ -1269,11 +1269,15 @@ where
 pub enum Node<T: Item> {
     Internal {
         height: u8,
+        // The summary for the whole internal node. Searches can skip visiting
+        // this node based on it.
         summary: T::Summary,
         child_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }, u8>,
         child_trees: ArrayVec<SumTree<T>, { 2 * TREE_BASE }, u8>,
     },
     Leaf {
+        // The summary for the whole leaf node. Searches can skip visiting this
+        // node based on it.
         summary: T::Summary,
         items: ArrayVec<T, { 2 * TREE_BASE }, u8>,
         item_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }, u8>,

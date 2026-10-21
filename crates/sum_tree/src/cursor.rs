@@ -6,6 +6,8 @@ use ztracing::instrument;
 #[derive(Clone)]
 struct StackEntry<'a, T: Item, D> {
     tree: &'a SumTree<T>,
+    /// `index` selects a child subtree for an internal node, or an item for a
+    /// leaf node.
     index: u32,
     position: D,
 }
@@ -490,6 +492,10 @@ where
         // loop below is skipped.
         let should_start_from_root = self.stack.is_empty() && !self.at_end();
         if should_start_from_root {
+            // For implementation details, note that we start with the zero
+            // position, but also already with a zero index, meaning that this
+            // entry already refers to the first item or subtree in the tree, if
+            // any.
             self.stack
                 .push(StackEntry {
                     tree: self.tree,
@@ -499,35 +505,74 @@ where
                 .unwrap_oob();
         }
 
+        // The last entry we have in the stack will be our initial entry to
+        // consider. In the case of an initial seek (or after a cursor has been
+        // reset) it will be the root of the tree as pushed above. Otherwise,
+        // we're starting from an existing position, and the entry itself
+        // carries aggregate and current information to continue the search.
+
+        // We always start descending through the tree. If the position we seek
+        // is not in any subtree here, the end of the 'outer loop makes us
+        // ascend (to try again in another subtree).
         let mut ascending = false;
         'outer: while let Some(entry) = self.stack.last_mut() {
             match *entry.tree.0 {
+                // For an internal node, we need to either assess that it's
+                // completely covered by the seek (and thus move to its next
+                // sibling node) or identify the relevant subtree for the seek
+                // (and move there).
                 Node::Internal {
                     ref child_summaries,
                     ref child_trees,
                     ..
                 } => {
+                    // If we're ascending the tree, it's because we already
+                    // descended it and didn't find the target. The current
+                    // entry's index is the one we descended on, so to continue
+                    // the search we must look at the next index (which will
+                    // represent the next unexplored child node).
                     if ascending {
                         entry.index += 1;
                         entry.position = self.position.clone();
                     }
 
-                    for (child_tree, child_summary) in child_trees[entry.index()..]
+                    let current_child = entry.index();
+                    for (child_tree, child_summary) in child_trees[current_child..]
                         .iter()
                         .zip(&child_summaries[entry.index()..])
                     {
-                        let mut child_end = self.position.clone();
-                        child_end.add_summary(child_summary, self.cx);
+                        let dimension_including_child = self
+                            .position
+                            .clone()
+                            .with_added_summary(child_summary, self.cx);
 
-                        let comparison = target.cmp(&child_end, self.cx);
-                        if comparison == Ordering::Greater
-                            || (comparison == Ordering::Equal && bias == Bias::Right)
-                        {
-                            self.position = child_end;
+                        let must_continue = {
+                            let comparison = target.cmp(&dimension_including_child, self.cx);
+                            let target_is_greater = comparison == Ordering::Greater;
+                            let seek_is_inclusive =
+                                comparison == Ordering::Equal && bias == Bias::Right;
+                            target_is_greater || seek_is_inclusive
+                        };
+
+                        // This is the crucial characteristic of a SumTree: the
+                        // information contained in the summaries allows us to
+                        // skip entire subtrees -- provided we know our target
+                        // is past them.
+                        if must_continue {
+                            self.position = dimension_including_child;
                             aggregate.push_tree(child_tree, child_summary, self.cx);
+                            // Note that if this is the last child tree to be
+                            // considered in this internal node, the next index
+                            // will be out of bounds. This is fine because we
+                            // reach the end of the 'outer loop's code that will
+                            // pop this stack entry entirely (and ascend the
+                            // tree, since we didn't find the target in any
+                            // subtree here).
                             entry.index += 1;
                             entry.position = self.position.clone();
                         } else {
+                            // We have found the relevant subtree that contains
+                            // our target, and shall go there next.
                             self.stack
                                 .push(StackEntry {
                                     tree: child_tree,
@@ -540,6 +585,8 @@ where
                         }
                     }
                 }
+                // For a leaf node, we need to identify the item in the position
+                // we're seeking.
                 Node::Leaf {
                     ref items,
                     ref item_summaries,
@@ -547,20 +594,37 @@ where
                 } => {
                     aggregate.begin_leaf();
 
-                    for (item, item_summary) in items[entry.index()..]
+                    let current_item = entry.index();
+                    for (item, item_summary) in items[current_item..]
                         .iter()
                         .zip(&item_summaries[entry.index()..])
                     {
-                        let mut child_end = self.position.clone();
-                        child_end.add_summary(item_summary, self.cx);
+                        let dimension_including_item = self
+                            .position
+                            .clone()
+                            .with_added_summary(item_summary, self.cx);
 
-                        let comparison = target.cmp(&child_end, self.cx);
-                        if comparison == Ordering::Greater
-                            || (comparison == Ordering::Equal && bias == Bias::Right)
-                        {
-                            self.position = child_end;
+                        let must_continue = {
+                            let comparison = target.cmp(&dimension_including_item, self.cx);
+                            let target_is_greater = comparison == Ordering::Greater;
+                            let seek_is_inclusive =
+                                comparison == Ordering::Equal && bias == Bias::Right;
+                            target_is_greater || seek_is_inclusive
+                        };
+
+                        if must_continue {
+                            self.position = dimension_including_item;
                             aggregate.push_item(item, item_summary, self.cx);
                             entry.index += 1;
+                            // TODO: The fact that we do not update the entry's
+                            // position here means that it gets out of sync with
+                            // the cursor's. This is fine for correctness
+                            // because nothing relies on a leaf node entry's
+                            // position, but would be surprising while
+                            // debugging. We might want to refactor "stack
+                            // entry" to differentiate between internal and leaf
+                            // nodes, and then to not carry a position for leaf
+                            // nodes.
                         } else {
                             aggregate.end_leaf(self.cx);
                             break 'outer;
@@ -571,6 +635,15 @@ where
                 }
             }
 
+            // We only reach this point if we have not stopped early in the
+            // loop. That means we did not find a relevant child subtree to
+            // search (because that would mean `continue`ing the outer loop),
+            // and that we did not find the item in a leaf node (because that
+            // would mean `break`ing the outer loop).
+            //
+            // This means that our target must lie somewhere else in the tree
+            // (if it exists), and we must backtrack (ascend) the tree to
+            // continue looking.
             self.stack.pop();
             ascending = true;
         }
@@ -578,14 +651,21 @@ where
         self.at_end = self.stack.is_empty();
         debug_assert!(self.stack.is_empty() || self.stack.last().unwrap().tree.0.is_leaf());
 
-        let mut end = self.position.clone();
+        // Note that this is only for reporting purposes. It does not change the
+        // cursor's position.
+        let mut dimension_after_traversal = self.position.clone();
         if bias == Bias::Left
             && let Some(summary) = self.item_summary()
         {
-            end.add_summary(summary, self.cx);
+            // In the case of a left-biased seek, the attached item's
+            // "dimension-width" is also considered for the return value.
+            dimension_after_traversal.add_summary(summary, self.cx);
         }
 
-        target.cmp(&end, self.cx) == Ordering::Equal
+        // See `test_seek_return_values()` for a survey of the possible return
+        // values here.
+
+        target.cmp(&dimension_after_traversal, self.cx) == Ordering::Equal
     }
 }
 
