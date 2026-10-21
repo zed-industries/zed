@@ -1591,6 +1591,102 @@ mod tests {
     }
 
     #[test]
+    fn test_cursor_prev_after_seek_to_first_item() {
+        let tree = SumTree::from_iter([0u8], ());
+        let mut cursor = tree.cursor::<Count>(());
+
+        // count         0       1
+        // items         |---0---|
+        // target        ^ Right
+        // seek          [=======] start=0, end=1, item=Some(0)
+        assert!(cursor.seek(&Count(0), Bias::Right));
+        assert_eq!(cursor.item(), Some(&0));
+
+        // count         0       1
+        // items         |---0---|
+        // target        ^ Right
+        // seek          [=======] start=0, end=1, item=Some(0)
+        // prev          ^ start=end=0, item=None
+        cursor.prev();
+        assert_eq!(cursor.item(), None);
+        assert_eq!(cursor.start(), &Count(0));
+        assert_eq!(cursor.end(), Count(0));
+        assert_eq!(cursor.prev_item(), None);
+        assert_eq!(cursor.next_item(), Some(&0));
+
+        // Note that another call to `prev()` does nothing.
+        cursor.prev();
+        assert_eq!(cursor.item(), None);
+        assert_eq!(cursor.start(), &Count(0));
+
+        // count         0       1
+        // items         |---0---|
+        // target        ^ Right
+        // seek          [=======] start=0, end=1, item=Some(0)
+        // prev          ^ start=end=0, item=None
+        // next          [=======] start=0, end=1, item=Some(0)
+        // And a next() moves to the first item again.
+        cursor.next();
+        assert_eq!(cursor.item(), Some(&0));
+        assert_eq!(cursor.start(), &Count(0));
+        assert_eq!(cursor.end(), Count(1));
+    }
+
+    #[test]
+    fn test_cursor_slice_from_before_first_item() {
+        let tree = SumTree::from_iter([10u8, 20], ());
+        let mut cursor = tree.cursor::<Count>(());
+
+        // After this block, the cursor is "before the first item".
+        // count         0       1       2
+        // items         |--10---|--20---|
+        // prev                  [=======] start=1, end=2
+        // prev          [=======] start=0, end=1
+        // prev          ^ before-first; start=end=0, at_end=false
+        cursor.prev();
+        assert_eq!(cursor.item(), Some(&20));
+        cursor.prev();
+        assert_eq!(cursor.item(), Some(&10));
+        cursor.prev();
+        assert_eq!(cursor.item(), None);
+        assert_eq!(cursor.start(), &Count(0));
+        assert_eq!(cursor.end(), Count(0));
+        assert_eq!(cursor.prev_item(), None);
+        assert_eq!(cursor.next_item(), Some(&10));
+
+        // count         0       1       2
+        // items         |--10---|--20---|
+        // prev                  [=======] start=1, end=2
+        // prev          [=======] start=0, end=1
+        // prev          ^ before-first; start=end=0, at_end=false
+        //
+        // then,
+        //
+        // target                        ^ Right
+        // slice         (empty)
+        // cursor        ^ start=end=0, at_end=true
+        // cursor stays at 0, returns no items, and is marked at_end.
+        //
+        // (when it should actually be at 2 and return all items).
+        let slice = cursor.slice(&Count(2), Bias::Right);
+        assert!(slice.is_empty());
+        // assert_eq!(slice.items(), [10, 20]); <- expected
+        assert_eq!(cursor.item(), None);
+        assert_eq!(cursor.start(), &Count(0));
+        // assert_eq!(cursor.start(), &Count(2)); <- expected
+        assert_eq!(cursor.end(), Count(0));
+        // assert_eq!(cursor.end(), Count(2)); <- expected
+        assert_eq!(cursor.prev_item(), Some(&20));
+        assert_eq!(cursor.next_item(), None);
+        assert!(cursor.at_end());
+
+        cursor.next();
+        assert_eq!(cursor.item(), None);
+        assert_eq!(cursor.start(), &Count(0));
+        // assert_eq!(cursor.start(), &Count(2)); <- expected
+    }
+
+    #[test]
     fn test_cursor() {
         // Empty tree
         let tree = SumTree::<u8>::default();
