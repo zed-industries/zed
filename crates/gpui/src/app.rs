@@ -20,7 +20,7 @@ use parking_lot::RwLock;
 use slotmap::SlotMap;
 
 pub use async_context::*;
-#[cfg(feature = "bench-support")]
+#[cfg(all(feature = "bench-support", not(target_family = "wasm")))]
 pub use bench_context::{
     BenchAppContext, BenchMeasurement, BenchReport, BenchWindowContext, CountingAllocator,
     MetricReport, bench_platform,
@@ -61,7 +61,7 @@ use crate::{
 };
 
 mod async_context;
-#[cfg(feature = "bench-support")]
+#[cfg(all(feature = "bench-support", not(target_family = "wasm")))]
 mod bench_context;
 mod context;
 mod entity_map;

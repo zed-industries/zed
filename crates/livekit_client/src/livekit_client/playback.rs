@@ -6,8 +6,8 @@ use cpal::traits::{DeviceTrait, StreamTrait as _};
 use futures::channel::mpsc::Sender;
 use futures::{Stream, StreamExt as _};
 use gpui::{
-    AsyncApp, BackgroundExecutor, Priority, ScreenCaptureFrame, ScreenCaptureSource,
-    ScreenCaptureStream, Task,
+    AsyncApp, BackgroundExecutor, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
+    Task, ThreadPriority,
 };
 use libwebrtc::native::{apm, audio_mixer, audio_resampler};
 use livekit::track;
@@ -103,14 +103,16 @@ impl AudioStack {
             source.num_channels as i32,
         );
 
-        let receive_task = self.executor.spawn_with_priority(Priority::RealtimeAudio, {
-            let source = source.clone();
-            async move {
-                while let Some(frame) = stream.next().await {
-                    source.receive(frame);
+        let receive_task = self
+            .executor
+            .spawn_dedicated_with_priority(ThreadPriority::High, {
+                let source = source.clone();
+                move |_executor| async move {
+                    while let Some(frame) = stream.next().await {
+                        source.receive(frame);
+                    }
                 }
-            }
-        });
+            });
 
         let diagnostics = source.diagnostics.clone();
         let mixer = self.mixer.clone();
@@ -182,16 +184,18 @@ impl AudioStack {
 
         let input_lag_us = Arc::new(AtomicU64::new(0));
         let (frame_tx, mut frame_rx) = futures::channel::mpsc::channel::<TimestampedFrame>(1);
-        let transmit_task = self.executor.spawn_with_priority(Priority::RealtimeAudio, {
-            let input_lag_us = input_lag_us.clone();
-            async move {
-                while let Some(timestamped) = frame_rx.next().await {
-                    let lag = timestamped.captured_at.elapsed();
-                    input_lag_us.store(lag.as_micros() as u64, Ordering::Relaxed);
-                    source.capture_frame(&timestamped.frame).await.log_err();
+        let transmit_task = self
+            .executor
+            .spawn_dedicated_with_priority(ThreadPriority::High, {
+                let input_lag_us = input_lag_us.clone();
+                move |_executor| async move {
+                    while let Some(timestamped) = frame_rx.next().await {
+                        let lag = timestamped.captured_at.elapsed();
+                        input_lag_us.store(lag.as_micros() as u64, Ordering::Relaxed);
+                        source.capture_frame(&timestamped.frame).await.log_err();
+                    }
                 }
-            }
-        });
+            });
         let capture_task = {
             let input_audio_device =
                 AudioSettings::try_read_global(cx, |settings| settings.input_audio_device.clone())
@@ -239,14 +243,14 @@ impl AudioStack {
             let (output_device, output_config) =
                 crate::default_device(false, output_audio_device.as_ref())?;
             info!("Output config: {output_config:?}");
-            let (end_on_drop_tx, end_on_drop_rx) = std::sync::mpsc::channel::<()>();
+            let (end_on_drop_tx, end_on_drop_rx) = futures::channel::oneshot::channel::<()>();
             let mixer = mixer.clone();
             let apm = apm.clone();
             let mut resampler = audio_resampler::AudioResampler::default();
             let mut buf = Vec::new();
 
             executor
-                .spawn_with_priority(Priority::RealtimeAudio, async move {
+                .spawn_dedicated_with_priority(ThreadPriority::High, move |_executor| async move {
                     let output_stream = output_device.build_output_stream(
                         output_config.config(),
                         {
@@ -299,8 +303,8 @@ impl AudioStack {
                     };
 
                     output_stream.play().log_err();
-                    // Block forever to keep the output stream alive
-                    end_on_drop_rx.recv().ok();
+                    // Keep the output stream alive until the device changes.
+                    end_on_drop_rx.await.ok();
                 })
                 .detach();
 
@@ -320,14 +324,14 @@ impl AudioStack {
         loop {
             let mut device_change_listener = DeviceChangeListener::new(true)?;
             let (device, config) = crate::default_device(true, input_audio_device.as_ref())?;
-            let (end_on_drop_tx, end_on_drop_rx) = std::sync::mpsc::channel::<()>();
+            let (end_on_drop_tx, end_on_drop_rx) = futures::channel::oneshot::channel::<()>();
             let apm = apm.clone();
             let mut frame_tx = frame_tx.clone();
             let mut resampler = audio_resampler::AudioResampler::default();
 
             executor
-                .spawn_with_priority(Priority::RealtimeAudio, async move {
-                    maybe!({
+                .spawn_dedicated_with_priority(ThreadPriority::High, move |_executor| async move {
+                    maybe!(async {
                         if let Some(desc) = device.description().ok() {
                             log::info!("Using microphone: {}", desc.name())
                         } else {
@@ -398,10 +402,11 @@ impl AudioStack {
                             .context("failed to build input stream")?;
 
                         stream.play()?;
-                        // Keep the thread alive and holding onto the `stream`
-                        end_on_drop_rx.recv().ok();
+                        // Keep the stream alive until the device changes.
+                        end_on_drop_rx.await.ok();
                         anyhow::Ok(Some(()))
                     })
+                    .await
                     .log_err();
                 })
                 .detach();

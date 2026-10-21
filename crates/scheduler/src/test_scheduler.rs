@@ -1,6 +1,6 @@
 use crate::{
     BackgroundExecutor, Clock, Instant, LocalExecutor, Priority, RunnableMeta, Scheduler,
-    SessionId, Task, TestClock, Timer,
+    SessionId, Task, TestClock, ThreadPriority, Timer,
 };
 use async_task::Runnable;
 use backtrace::{Backtrace, BacktraceFrame};
@@ -657,10 +657,8 @@ impl Scheduler for TestScheduler {
         self.thread.unpark();
     }
 
-    fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>) {
-        std::thread::spawn(move || {
-            f();
-        });
+    fn schedule_blocking(&self, runnable: Runnable<RunnableMeta>) {
+        self.schedule_background(runnable);
     }
 
     #[track_caller]
@@ -685,6 +683,7 @@ impl Scheduler for TestScheduler {
     /// preserved.
     fn spawn_dedicated(
         self: Arc<Self>,
+        _priority: ThreadPriority,
         f: Box<
             dyn FnOnce(
                     LocalExecutor,

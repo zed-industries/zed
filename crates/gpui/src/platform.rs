@@ -1,4 +1,6 @@
 mod app_menu;
+#[cfg(not(target_family = "wasm"))]
+mod blocking_pool;
 mod keyboard;
 mod keystroke;
 
@@ -9,7 +11,10 @@ pub mod layer_shell;
 /// Types for configuring parent-anchored popup windows such as menus, dropdowns and tooltips.
 pub mod popup;
 
-#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+#[cfg(all(
+    not(target_family = "wasm"),
+    any(test, feature = "test-support", feature = "bench-support")
+))]
 mod threaded_dispatcher;
 
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
@@ -41,8 +46,8 @@ use crate::{
     FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap,
     LineLayout, MissingGlyphSink, Pixels, PlatformGestures, PlatformInput, Point, Priority,
     RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene, ShapedGlyph,
-    ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, Window, WindowControlArea,
-    hash, point, px, size,
+    ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, ThreadPriority, Window,
+    WindowControlArea, hash, point, px, size,
 };
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use anyhow::bail;
@@ -170,13 +175,19 @@ pub enum ActivationPolicy {
     Accessory,
 }
 
+#[cfg(not(target_family = "wasm"))]
+pub use blocking_pool::BlockingPool;
+
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 pub(crate) use test::*;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream};
 
-#[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+#[cfg(all(
+    not(target_family = "wasm"),
+    any(test, feature = "test-support", feature = "bench-support")
+))]
 pub use threaded_dispatcher::ThreadedDispatcher;
 
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
@@ -1456,6 +1467,9 @@ pub enum TasksIncluded {
 pub trait PlatformDispatcher: Send + Sync {
     fn is_main_thread(&self) -> bool;
     fn dispatch(&self, runnable: RunnableVariant, priority: Priority);
+
+    /// Dispatches synchronous work to a reusable pool separate from background workers.
+    fn dispatch_blocking(&self, runnable: RunnableVariant);
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority);
     fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant);
 
@@ -1472,7 +1486,21 @@ pub trait PlatformDispatcher: Send + Sync {
         None
     }
 
-    fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>);
+    /// Runs `body` on a new thread named `name`, scheduled with `priority`.
+    /// Backs `spawn_dedicated`, so it must not block the calling thread.
+    ///
+    /// The default spawns a `std` thread and ignores `priority`. Platforms
+    /// that can raise thread priority, or that need a different threading
+    /// primitive, override it.
+    fn spawn_dedicated_thread(
+        &self,
+        name: String,
+        _priority: ThreadPriority,
+        body: Box<dyn FnOnce() + Send>,
+    ) -> Result<()> {
+        std::thread::Builder::new().name(name).spawn(body)?;
+        Ok(())
+    }
 
     fn now(&self) -> Instant {
         Instant::now()
@@ -1493,7 +1521,10 @@ pub trait PlatformDispatcher: Send + Sync {
 
     // This cfg must match the `threaded_dispatcher` module's, which implements
     // this method whenever it compiles.
-    #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+    #[cfg(all(
+        not(target_family = "wasm"),
+        any(test, feature = "test-support", feature = "bench-support")
+    ))]
     fn as_threaded(&self) -> Option<&ThreadedDispatcher> {
         None
     }

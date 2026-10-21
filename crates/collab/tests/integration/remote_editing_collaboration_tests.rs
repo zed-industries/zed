@@ -94,7 +94,7 @@ async fn test_sharing_an_ssh_remote_project(
     // User A connects to the remote project via SSH.
     server_cx.update(HeadlessProject::init);
     let remote_http_client = Arc::new(BlockedHttpClient);
-    let node = NodeRuntime::unavailable();
+    let node = NodeRuntime::unavailable(server_cx.executor());
     let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
     languages.add(rust_lang());
     let _headless_project = server_cx.new(|cx| {
@@ -257,7 +257,7 @@ async fn test_ssh_collaboration_git_branches(
     // User A connects to the remote project via SSH.
     server_cx.update(HeadlessProject::init);
     let remote_http_client = Arc::new(BlockedHttpClient);
-    let node = NodeRuntime::unavailable();
+    let node = NodeRuntime::unavailable(server_cx.executor());
     let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
     let headless_project = server_cx.new(|cx| {
         HeadlessProject::new(
@@ -442,7 +442,7 @@ async fn test_ssh_collaboration_git_worktrees(
                 session: server_ssh,
                 fs: remote_fs.clone(),
                 http_client: Arc::new(BlockedHttpClient),
-                node_runtime: NodeRuntime::unavailable(),
+                node_runtime: NodeRuntime::unavailable(cx.background_executor().clone()),
                 languages,
                 extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
                 startup_time: std::time::Instant::now(),
@@ -718,7 +718,7 @@ async fn test_ssh_collaboration_formatting_with_prettier(
                 session: server_ssh,
                 fs: remote_fs.clone(),
                 http_client: remote_http_client,
-                node_runtime: NodeRuntime::unavailable(),
+                node_runtime: NodeRuntime::unavailable(cx.background_executor().clone()),
                 languages,
                 extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
                 startup_time: std::time::Instant::now(),
@@ -891,7 +891,7 @@ async fn test_ssh_restarting_language_server_replaces_remote_status(
                 session: server_ssh,
                 fs: remote_fs.clone(),
                 http_client: Arc::new(BlockedHttpClient),
-                node_runtime: NodeRuntime::unavailable(),
+                node_runtime: NodeRuntime::unavailable(cx.background_executor().clone()),
                 languages,
                 extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
                 startup_time: std::time::Instant::now(),
@@ -1060,7 +1060,7 @@ async fn test_remote_server_debugger(
     // User A connects to the remote project via SSH.
     server_cx.update(HeadlessProject::init);
     let remote_http_client = Arc::new(BlockedHttpClient);
-    let node = NodeRuntime::unavailable();
+    let node = NodeRuntime::unavailable(server_cx.executor());
     let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
     let _headless_project = server_cx.new(|cx| {
         HeadlessProject::new(
@@ -1173,7 +1173,7 @@ async fn test_slow_adapter_startup_retries(
     // User A connects to the remote project via SSH.
     server_cx.update(HeadlessProject::init);
     let remote_http_client = Arc::new(BlockedHttpClient);
-    let node = NodeRuntime::unavailable();
+    let node = NodeRuntime::unavailable(server_cx.executor());
     let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
     let _headless_project = server_cx.new(|cx| {
         HeadlessProject::new(
@@ -1342,7 +1342,7 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
 
     server_cx.update(HeadlessProject::init);
     let remote_http_client = Arc::new(BlockedHttpClient);
-    let node = NodeRuntime::unavailable();
+    let node = NodeRuntime::unavailable(server_cx.executor());
     let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
     languages.add(rust_lang());
 
@@ -1595,7 +1595,7 @@ async fn test_ssh_document_links_resolve(
 
     server_cx.update(HeadlessProject::init);
     let remote_http_client = Arc::new(BlockedHttpClient);
-    let node = NodeRuntime::unavailable();
+    let node = NodeRuntime::unavailable(server_cx.executor());
     let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
     languages.add(rust_lang());
 

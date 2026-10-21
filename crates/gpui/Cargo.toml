@@ -175,6 +175,7 @@ backtrace.workspace = true
 bench_metrics = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
+flume.workspace = true
 futures-concurrency.workspace = true
 postage = { workspace = true, features = ["blocking"] }
 web-time.workspace = true

@@ -22,13 +22,15 @@ use windows::Win32::{
 
 use crate::{HWND, SafeHwnd, WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD};
 use gpui::{
-    PlatformDispatcher, Priority, PriorityQueueSender, RunnableVariant, TimerResolutionGuard,
+    PlatformDispatcher, Priority, PriorityQueueSender, RunnableVariant, ThreadPriority,
+    TimerResolutionGuard,
 };
 
 pub(crate) struct WindowsDispatcher {
     pub(crate) wake_posted: AtomicBool,
     main_sender: PriorityQueueSender<RunnableVariant>,
     main_thread_id: ThreadId,
+    blocking_pool: gpui::BlockingPool,
     pub(crate) platform_window_handle: SafeHwnd,
     validation_number: usize,
 }
@@ -45,6 +47,7 @@ impl WindowsDispatcher {
         WindowsDispatcher {
             main_sender,
             main_thread_id,
+            blocking_pool: gpui::BlockingPool::new(Self::execute_runnable),
             platform_window_handle,
             validation_number,
             wake_posted: AtomicBool::new(false),
@@ -90,11 +93,9 @@ impl WindowsDispatcher {
 
     #[inline(always)]
     pub(crate) fn execute_runnable(runnable: RunnableVariant) {
-        let location = runnable.metadata().location;
-        let spawned = runnable.metadata().spawned;
-        gpui::profiler::update_running_task(spawned, location);
+        gpui::profiler::update_running_task(runnable.metadata());
+        let _timing = gpui_util::defer(gpui::profiler::save_task_timing);
         runnable.run();
-        gpui::profiler::save_task_timing();
     }
 }
 
@@ -105,14 +106,15 @@ impl PlatformDispatcher for WindowsDispatcher {
 
     fn dispatch(&self, runnable: RunnableVariant, priority: Priority) {
         let priority = match priority {
-            Priority::RealtimeAudio => {
-                panic!("RealtimeAudio priority should use spawn_realtime, not dispatch")
-            }
             Priority::High => TP_CALLBACK_PRIORITY_HIGH,
             Priority::Medium => TP_CALLBACK_PRIORITY_NORMAL,
             Priority::Low => TP_CALLBACK_PRIORITY_LOW,
         };
         self.dispatch_on_threadpool(priority, runnable);
+    }
+
+    fn dispatch_blocking(&self, runnable: RunnableVariant) {
+        self.blocking_pool.schedule(runnable);
     }
 
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) {
@@ -148,18 +150,28 @@ impl PlatformDispatcher for WindowsDispatcher {
         self.dispatch_on_threadpool_after(runnable, duration);
     }
 
-    fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>) {
-        std::thread::spawn(move || {
-            // SAFETY: always safe to call
-            let thread_handle = unsafe { GetCurrentThread() };
+    fn spawn_dedicated_thread(
+        &self,
+        name: String,
+        priority: ThreadPriority,
+        body: Box<dyn FnOnce() + Send>,
+    ) -> anyhow::Result<()> {
+        std::thread::Builder::new().name(name).spawn(move || {
+            match priority {
+                ThreadPriority::Normal => {}
+                ThreadPriority::High => {
+                    // SAFETY: always safe to call
+                    let thread_handle = unsafe { GetCurrentThread() };
 
-            // SAFETY: thread_handle is a valid handle to the current thread
-            unsafe { SetThreadPriority(thread_handle, THREAD_PRIORITY_TIME_CRITICAL) }
-                .context("thread priority")
-                .log_err();
-
-            f();
-        });
+                    // SAFETY: thread_handle is a valid handle to the current thread
+                    unsafe { SetThreadPriority(thread_handle, THREAD_PRIORITY_TIME_CRITICAL) }
+                        .context("thread priority")
+                        .log_err();
+                }
+            }
+            body();
+        })?;
+        Ok(())
     }
 
     fn increase_timer_resolution(&self) -> TimerResolutionGuard {

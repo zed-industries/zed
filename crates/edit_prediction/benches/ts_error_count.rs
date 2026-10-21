@@ -295,7 +295,7 @@ fn parsed_cases() -> Vec<ParsedCase> {
 
     let languages = Arc::new(LanguageRegistry::new(context.executor()));
     let fs = FakeFs::new(context.executor());
-    let node_runtime = NodeRuntime::unavailable();
+    let node_runtime = NodeRuntime::unavailable(context.executor());
     context.update(|cx| init_languages(languages.clone(), fs, node_runtime, cx));
 
     vec![

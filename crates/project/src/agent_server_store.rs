@@ -1399,6 +1399,7 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
                 )
                 .await?;
             let executable = node_runtime::read_package_executable(
+                cx.background_executor().clone(),
                 install_dir.join("node_modules"),
                 package_name,
             )
@@ -1743,7 +1744,7 @@ mod tests {
             LocalRegistryArchiveAgent {
                 fs,
                 http_client,
-                node_runtime: NodeRuntime::unavailable(),
+                node_runtime: NodeRuntime::unavailable(cx.background_executor().clone()),
                 project_environment,
                 installation_dir,
                 version: "1.0.0".into(),
@@ -1825,7 +1826,7 @@ mod tests {
 
             cx.new(|cx| {
                 AgentServerStore::local(
-                    NodeRuntime::unavailable(),
+                    NodeRuntime::unavailable(cx.background_executor().clone()),
                     fs,
                     project_environment,
                     http_client,

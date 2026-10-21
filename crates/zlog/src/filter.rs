@@ -35,6 +35,13 @@ static LEVEL_ENABLED_MAX_STATIC: AtomicU8 = AtomicU8::new(LEVEL_ENABLED_MAX_DEFA
 pub static LEVEL_ENABLED_MAX_CONFIG: AtomicU8 = AtomicU8::new(LEVEL_ENABLED_MAX_DEFAULT as u8);
 
 const DEFAULT_FILTERS: &[(&str, log::LevelFilter)] = &[
+    // ConPTY logs "Using conpty.dll for pseudoconsole" during normal terminal creation,
+    // adding noise without indicating a problem. Keep warnings and errors visible.
+    #[cfg(target_os = "windows")]
+    (
+        "alacritty_terminal::tty::windows::conpty",
+        log::LevelFilter::Warn,
+    ),
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     ("zbus", log::LevelFilter::Warn),
     #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))]

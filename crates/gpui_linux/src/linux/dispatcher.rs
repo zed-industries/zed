@@ -9,7 +9,7 @@ use std::{mem::MaybeUninit, thread, time::Duration};
 
 use gpui::{
     PlatformDispatcher, Priority, PriorityQueueReceiver, PriorityQueueSender, RunnableVariant,
-    profiler,
+    ThreadPriority, profiler,
 };
 
 struct TimerAfter {
@@ -21,6 +21,7 @@ pub(crate) struct LinuxDispatcher {
     main_sender: PriorityQueueCalloopSender<RunnableVariant>,
     timer_sender: Sender<TimerAfter>,
     background_sender: PriorityQueueSender<RunnableVariant>,
+    blocking_pool: gpui::BlockingPool,
     _background_threads: Vec<thread::JoinHandle<()>>,
     main_thread_id: thread::ThreadId,
 }
@@ -40,9 +41,7 @@ impl LinuxDispatcher {
                     .name(format!("Worker-{i}"))
                     .spawn(move || {
                         for runnable in receiver.iter() {
-                            let location = runnable.metadata().location;
-                            let spawned = runnable.metadata().spawned;
-                            profiler::update_running_task(spawned, location);
+                            profiler::update_running_task(runnable.metadata());
                             runnable.run();
                             profiler::save_task_timing();
                         }
@@ -75,9 +74,7 @@ impl LinuxDispatcher {
                                     calloop::timer::Timer::from_duration(timer.duration),
                                     move |_, _, _| {
                                         if let Some(runnable) = runnable.take() {
-                                            let location = runnable.metadata().location;
-                                            let spawned = runnable.metadata().spawned;
-                                            profiler::update_running_task(spawned, location);
+                                            profiler::update_running_task(runnable.metadata());
                                             runnable.run();
                                             profiler::save_task_timing();
                                         }
@@ -99,6 +96,11 @@ impl LinuxDispatcher {
             main_sender,
             timer_sender,
             background_sender,
+            blocking_pool: gpui::BlockingPool::new(|runnable| {
+                profiler::update_running_task(runnable.metadata());
+                let _timing = gpui_util::defer(profiler::save_task_timing);
+                runnable.run();
+            }),
             _background_threads: background_threads,
             main_thread_id: thread::current().id(),
         }
@@ -114,6 +116,10 @@ impl PlatformDispatcher for LinuxDispatcher {
         self.background_sender
             .send(priority, runnable)
             .unwrap_or_else(|_| panic!("blocking sender returned without value"));
+    }
+
+    fn dispatch_blocking(&self, runnable: RunnableVariant) {
+        self.blocking_pool.schedule(runnable);
     }
 
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) {
@@ -141,26 +147,37 @@ impl PlatformDispatcher for LinuxDispatcher {
         }
     }
 
-    fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>) {
-        std::thread::spawn(move || {
-            // SAFETY: always safe to call
-            let thread_id = unsafe { libc::pthread_self() };
-
-            let policy = libc::SCHED_FIFO;
-            let sched_priority = 65;
-
-            // SAFETY: all sched_param members are valid when initialized to zero.
-            let mut sched_param =
-                unsafe { MaybeUninit::<libc::sched_param>::zeroed().assume_init() };
-            sched_param.sched_priority = sched_priority;
-            // SAFETY: sched_param is a valid initialized structure
-            let result = unsafe { libc::pthread_setschedparam(thread_id, policy, &sched_param) };
-            if result != 0 {
-                log::warn!("failed to set realtime thread priority");
+    fn spawn_dedicated_thread(
+        &self,
+        name: String,
+        priority: ThreadPriority,
+        body: Box<dyn FnOnce() + Send>,
+    ) -> anyhow::Result<()> {
+        thread::Builder::new().name(name).spawn(move || {
+            match priority {
+                ThreadPriority::Normal => {}
+                ThreadPriority::High => set_high_thread_priority(),
             }
+            body();
+        })?;
+        Ok(())
+    }
+}
 
-            f();
-        });
+fn set_high_thread_priority() {
+    // SAFETY: always safe to call
+    let thread_id = unsafe { libc::pthread_self() };
+
+    let policy = libc::SCHED_FIFO;
+    let sched_priority = 65;
+
+    // SAFETY: all sched_param members are valid when initialized to zero.
+    let mut sched_param = unsafe { MaybeUninit::<libc::sched_param>::zeroed().assume_init() };
+    sched_param.sched_priority = sched_priority;
+    // SAFETY: sched_param is a valid initialized structure
+    let result = unsafe { libc::pthread_setschedparam(thread_id, policy, &sched_param) };
+    if result != 0 {
+        log::warn!("failed to set high thread priority");
     }
 }
 

@@ -1,5 +1,6 @@
 use gpui::{
     PlatformDispatcher, Priority, PriorityQueueReceiver, PriorityQueueSender, RunnableVariant,
+    ThreadPriority,
 };
 use std::cell::{Cell, RefCell};
 use std::sync::Arc;
@@ -45,8 +46,6 @@ enum MainThreadItem {
         timeout: Option<Duration>,
     },
     Function(Box<dyn FnOnce() + Send>),
-    // TODO-Wasm: Shouldn't these run on their own dedicated thread?
-    RealtimeFunction(Box<dyn FnOnce() + Send>),
 }
 
 struct MainThreadMailbox {
@@ -170,8 +169,11 @@ impl WebDispatcher {
             && shared_memory_supported()
             && wait_async_supported();
 
+        #[cfg(feature = "multithreaded")]
+        let hardware_concurrency = browser_window.navigator().hardware_concurrency();
+
         if supports_threads {
-            main_thread_mailbox.run_waker_loop(browser_window.clone());
+            main_thread_mailbox.run_waker_loop(browser_window);
         } else if cfg!(feature = "multithreaded") && allow_threads {
             log::warn!(
                 "Required WebAssembly threading APIs are unavailable; falling back to single-threaded dispatcher"
@@ -180,10 +182,7 @@ impl WebDispatcher {
 
         #[cfg(feature = "multithreaded")]
         let background_threads = if supports_threads {
-            let thread_count = browser_window
-                .navigator()
-                .hardware_concurrency()
-                .max(MIN_BACKGROUND_THREADS as f64) as usize;
+            let thread_count = hardware_concurrency.max(MIN_BACKGROUND_THREADS as f64) as usize;
 
             // TODO-Wasm: Is it bad to have web workers blocking for a long time like this?
             (0..thread_count)
@@ -263,9 +262,13 @@ impl PlatformDispatcher for WebDispatcher {
         }
     }
 
+    fn dispatch_blocking(&self, runnable: RunnableVariant) {
+        self.dispatch(runnable, Priority::default());
+    }
+
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority) {
         if self.on_main_thread() {
-            schedule_runnable(&browser_window(), runnable, priority);
+            schedule_runnable(&browser_window(), runnable);
         } else {
             self.main_thread_mailbox
                 .post(priority, MainThreadItem::Runnable(runnable));
@@ -290,16 +293,19 @@ impl PlatformDispatcher for WebDispatcher {
         }
     }
 
-    fn spawn_realtime(&self, function: Box<dyn FnOnce() + Send>) {
-        if self.on_main_thread() {
-            let callback = Closure::once_into_js(move || {
-                function();
-            });
-            browser_window().queue_microtask(callback.unchecked_ref());
-        } else {
-            self.main_thread_mailbox
-                .post(Priority::High, MainThreadItem::RealtimeFunction(function));
-        }
+    // Browsers don't expose thread scheduling priority, so `priority` is
+    // ignored.
+    fn spawn_dedicated_thread(
+        &self,
+        name: String,
+        _priority: ThreadPriority,
+        body: Box<dyn FnOnce() + Send>,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.supports_threads,
+            "dedicated threads require WebAssembly threading support"
+        );
+        spawn_worker(name, body)
     }
 
     fn dispatch_on_main_thread_when_idle(
@@ -355,7 +361,7 @@ fn execute_on_main_thread(window: &web_sys::Window, item: MainThreadItem) {
                 )
                 .ok();
         }
-        MainThreadItem::Function(function) | MainThreadItem::RealtimeFunction(function) => {
+        MainThreadItem::Function(function) => {
             function();
         }
     }
@@ -385,7 +391,7 @@ fn schedule_idle_runnable(
         // Safari: run idle work as ordinary macrotasks. With no metered
         // deadline, `idle_time_remaining` stays `None` and idle tasks bound
         // their own slices.
-        schedule_runnable(window, runnable, Priority::Low);
+        schedule_runnable(window, runnable);
         return;
     }
     let callback = Closure::once_into_js(move |deadline: web_sys::IdleDeadline| {
@@ -419,21 +425,25 @@ fn idle_callback_supported(window: &web_sys::Window) -> bool {
     })
 }
 
-fn schedule_runnable(window: &web_sys::Window, runnable: RunnableVariant, priority: Priority) {
+#[cfg(feature = "multithreaded")]
+fn spawn_worker(name: String, body: Box<dyn FnOnce() + Send>) -> anyhow::Result<()> {
+    wasm_thread::Builder::new().name(name).spawn(body)?;
+    Ok(())
+}
+
+#[cfg(not(feature = "multithreaded"))]
+fn spawn_worker(_name: String, _body: Box<dyn FnOnce() + Send>) -> anyhow::Result<()> {
+    anyhow::bail!("dedicated threads require the `multithreaded` feature")
+}
+
+fn schedule_runnable(window: &web_sys::Window, runnable: RunnableVariant) {
     let callback = Closure::once_into_js(move || {
         runnable.run();
     });
     let callback: &js_sys::Function = callback.unchecked_ref();
 
-    match priority {
-        Priority::RealtimeAudio => {
-            window.queue_microtask(callback);
-        }
-        _ => {
-            // TODO-Wasm: this ought to enqueue so we can dequeue with proper priority
-            window
-                .set_timeout_with_callback_and_timeout_and_arguments_0(callback, 0)
-                .ok();
-        }
-    }
+    // TODO-Wasm: this ought to enqueue so we can dequeue with proper priority
+    window
+        .set_timeout_with_callback_and_timeout_and_arguments_0(callback, 0)
+        .ok();
 }

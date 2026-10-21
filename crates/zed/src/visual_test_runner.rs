@@ -997,7 +997,7 @@ fn init_app_state(cx: &mut App) -> Arc<AppState> {
         languages,
         user_store,
         workspace_store,
-        node_runtime: NodeRuntime::unavailable(),
+        node_runtime: NodeRuntime::unavailable(cx.background_executor().clone()),
         build_window_options: |_, _| Default::default(),
         session,
     });

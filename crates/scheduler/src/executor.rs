@@ -1,4 +1,6 @@
-use crate::{Instant, Priority, RunnableMeta, Scheduler, SessionId, Timer};
+use crate::{
+    Instant, Priority, RunnableMeta, Scheduler, SessionId, TaskKind, ThreadPriority, Timer,
+};
 use async_task::Runnable;
 use std::{
     any::Any,
@@ -78,6 +80,7 @@ impl LocalExecutor {
             RunnableMeta {
                 location,
                 spawned: crate::SpawnTime(Instant::now()),
+                kind: TaskKind::Cooperative,
             },
         );
         runnable.schedule();
@@ -105,6 +108,7 @@ impl LocalExecutor {
             RunnableMeta {
                 location,
                 spawned: crate::SpawnTime(Instant::now()),
+                kind: TaskKind::Cooperative,
             },
         );
         runnable.schedule();
@@ -183,7 +187,7 @@ impl LocalExecutor {
     {
         self.scheduler
             .clone()
-            .spawn_dedicated(box_dedicated(f))
+            .spawn_dedicated(ThreadPriority::Normal, box_dedicated(f))
             .downcast::<Fut::Output>()
     }
 
@@ -239,45 +243,49 @@ impl BackgroundExecutor {
         F: Future + Send + 'static,
         F::Output: Send + 'static,
     {
-        let schedule = self.schedule_with_priority(priority);
-        let location = Location::caller();
-        let (runnable, task) = async_task::Builder::new()
-            .metadata(RunnableMeta {
-                location,
-                spawned: crate::SpawnTime(Instant::now()),
-            })
-            .spawn(move |_| future, schedule);
-        runnable.schedule();
-        Task(TaskState::Spawned(task))
+        self.spawn_inner(priority, TaskKind::Cooperative, future)
     }
 
-    /// Spawns a future on a dedicated realtime thread for audio processing.
+    /// Enqueues synchronous work through [`Scheduler::schedule_blocking`].
+    ///
+    /// Dropping the task does not cancel already running work.
     #[track_caller]
-    pub fn spawn_realtime<F>(&self, future: F) -> Task<F::Output>
+    pub fn spawn_blocking<R>(&self, work: impl FnOnce() -> R + Send + 'static) -> Task<R>
+    where
+        R: Send + 'static,
+    {
+        self.spawn_inner(
+            Priority::default(),
+            TaskKind::Blocking,
+            async move { work() },
+        )
+    }
+
+    #[track_caller]
+    fn spawn_inner<F>(&self, priority: Priority, kind: TaskKind, future: F) -> Task<F::Output>
     where
         F: Future + Send + 'static,
         F::Output: Send + 'static,
     {
-        let location = Location::caller();
-        let (tx, rx) = flume::bounded::<async_task::Runnable<RunnableMeta>>(1);
-
-        self.scheduler.spawn_realtime(Box::new(move || {
-            while let Ok(runnable) = rx.recv() {
-                runnable.run();
+        let scheduler = Arc::downgrade(&self.scheduler);
+        let schedule = move |runnable| {
+            if let Some(scheduler) = scheduler.upgrade() {
+                match kind {
+                    TaskKind::Cooperative => {
+                        scheduler.schedule_background_with_priority(runnable, priority)
+                    }
+                    TaskKind::Blocking => scheduler.schedule_blocking(runnable),
+                }
             }
-        }));
-
+        };
+        let location = Location::caller();
         let (runnable, task) = async_task::Builder::new()
             .metadata(RunnableMeta {
                 location,
                 spawned: crate::SpawnTime(Instant::now()),
+                kind,
             })
-            .spawn(
-                move |_| future,
-                move |runnable| {
-                    let _ = tx.send(runnable);
-                },
-            );
+            .spawn(move |_| future, schedule);
         runnable.schedule();
         Task(TaskState::Spawned(task))
     }
@@ -315,22 +323,27 @@ impl BackgroundExecutor {
         Fut: Future + 'static,
         Fut::Output: Send + Sync + 'static,
     {
-        self.scheduler
-            .clone()
-            .spawn_dedicated(box_dedicated(f))
-            .downcast::<Fut::Output>()
+        self.spawn_dedicated_with_priority(ThreadPriority::Normal, f)
     }
 
-    fn schedule_with_priority(
+    /// Like [`Self::spawn_dedicated`], but runs the dedicated thread with the
+    /// given OS scheduling `priority`. Under `TestScheduler` there is no
+    /// dedicated thread, so `priority` has no effect.
+    #[track_caller]
+    pub fn spawn_dedicated_with_priority<F, Fut>(
         &self,
-        priority: Priority,
-    ) -> impl Fn(Runnable<RunnableMeta>) + Send + Sync + 'static {
-        let scheduler = Arc::downgrade(&self.scheduler);
-        move |runnable| {
-            if let Some(scheduler) = scheduler.upgrade() {
-                scheduler.schedule_background_with_priority(runnable, priority);
-            }
-        }
+        priority: ThreadPriority,
+        f: F,
+    ) -> Task<Fut::Output>
+    where
+        F: FnOnce(LocalExecutor) -> Fut + Send + 'static,
+        Fut: Future + 'static,
+        Fut::Output: Send + Sync + 'static,
+    {
+        self.scheduler
+            .clone()
+            .spawn_dedicated(priority, box_dedicated(f))
+            .downcast::<Fut::Output>()
     }
 }
 

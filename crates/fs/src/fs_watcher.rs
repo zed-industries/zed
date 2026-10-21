@@ -606,12 +606,13 @@ async fn poll_path_until_created(
         let case_insensitive = if fs.is_fake() {
             !fs.is_path_case_sensitive(&path)
         } else {
-            smol::unblock({
-                let path = path.clone();
-                let fs = fs.clone();
-                move || !fs.is_path_case_sensitive(&path)
-            })
-            .await
+            executor
+                .spawn_blocking({
+                    let path = path.clone();
+                    let fs = fs.clone();
+                    move || !fs.is_path_case_sensitive(&path)
+                })
+                .await
         };
         let key = WatchKey::for_registration(SanitizedPath::new(&path), case_insensitive);
 
@@ -642,7 +643,7 @@ async fn poll_path_until_created(
         let registration = if fs.is_fake() {
             register()
         } else {
-            smol::unblock(register).await
+            executor.spawn_blocking(register).await
         };
 
         match registration {

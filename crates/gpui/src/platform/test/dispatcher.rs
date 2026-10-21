@@ -125,6 +125,10 @@ impl PlatformDispatcher for TestDispatcher {
             .schedule_background_with_priority(runnable, priority);
     }
 
+    fn dispatch_blocking(&self, runnable: RunnableVariant) {
+        self.scheduler.schedule_blocking(runnable);
+    }
+
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, _priority: Priority) {
         self.scheduler.schedule_local(self.session_id, runnable);
     }
@@ -138,11 +142,5 @@ impl PlatformDispatcher for TestDispatcher {
 
     fn as_test(&self) -> Option<&TestDispatcher> {
         Some(self)
-    }
-
-    fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>) {
-        std::thread::spawn(move || {
-            f();
-        });
     }
 }
