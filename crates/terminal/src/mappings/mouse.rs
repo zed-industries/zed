@@ -3,7 +3,7 @@ use std::iter::repeat;
 
 /// Most of the code, and specifically the constants, in this are copied from Alacritty,
 /// with modifications for our circumstances
-use gpui::{Modifiers, MouseButton, Pixels, Point as GpuiPoint, ScrollWheelEvent, px};
+use gpui::{Modifiers, MouseButton, Pixels, Point as GpuiPoint, ScrollEvent, px};
 
 use crate::{Modes, Point, SelectionSide, TerminalBounds};
 
@@ -52,13 +52,13 @@ impl MouseButtonCode {
     fn from_button(e: MouseButton) -> Self {
         match e {
             gpui::MouseButton::Left => MouseButtonCode::LeftButton,
-            gpui::MouseButton::Right => MouseButtonCode::MiddleButton,
-            gpui::MouseButton::Middle => MouseButtonCode::RightButton,
+            gpui::MouseButton::Middle => MouseButtonCode::MiddleButton,
+            gpui::MouseButton::Right => MouseButtonCode::RightButton,
             gpui::MouseButton::Navigate(_) => MouseButtonCode::Other,
         }
     }
 
-    fn from_scroll(e: &ScrollWheelEvent) -> Self {
+    fn from_scroll(e: &ScrollEvent) -> Self {
         let is_positive = match e.delta {
             gpui::ScrollDelta::Pixels(pixels) => pixels.y > px(0.),
             gpui::ScrollDelta::Lines(lines) => lines.y > 0.,
@@ -79,7 +79,7 @@ impl MouseButtonCode {
 pub(crate) fn scroll_report(
     point: Point,
     scroll_lines: i32,
-    e: &ScrollWheelEvent,
+    e: &ScrollEvent,
     mode: Modes,
 ) -> Option<impl Iterator<Item = Vec<u8>>> {
     if mode.intersects(Modes::MOUSE_MODE) {
@@ -105,7 +105,7 @@ mod tests {
     fn scroll_report_repeats_for_negative_scroll_lines() {
         let grid_point = Point::new(0, 0);
 
-        let scroll_event = ScrollWheelEvent {
+        let scroll_event = ScrollEvent {
             delta: ScrollDelta::Lines(point(0., -1.)),
             touch_phase: TouchPhase::Moved,
             ..Default::default()
@@ -123,7 +123,7 @@ mod tests {
     fn scroll_report_repeats_for_positive_scroll_lines() {
         let grid_point = Point::new(0, 0);
 
-        let scroll_event = ScrollWheelEvent {
+        let scroll_event = ScrollEvent {
             delta: ScrollDelta::Lines(point(0., 1.)),
             touch_phase: TouchPhase::Moved,
             ..Default::default()

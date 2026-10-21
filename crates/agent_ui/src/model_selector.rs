@@ -1,4 +1,4 @@
-use std::{cmp::Reverse, rc::Rc, sync::Arc};
+use std::{rc::Rc, sync::Arc};
 
 use acp_thread::{
     AgentModelIcon, AgentModelId, AgentModelInfo, AgentModelList, AgentModelSelector,
@@ -7,19 +7,19 @@ use acp_thread::{
 use anyhow::Result;
 use collections::{HashSet, IndexMap};
 use futures::FutureExt;
-use fuzzy::{StringMatchCandidate, match_strings};
+use fuzzy_nucleo::StringMatchCandidate;
 use gpui::{
     Action, AsyncWindowContext, BackgroundExecutor, DismissEvent, FocusHandle, Subscription, Task,
     TaskExt, WeakEntity,
 };
 use itertools::Itertools;
-use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use settings::SettingsStore;
 use ui::{DocumentationAside, IntoElement, prelude::*};
 use util::ResultExt;
 use zed_actions::agent::OpenSettings;
 
+use crate::model_search;
 use crate::ui::{
     ModelSelectorFooter, ModelSelectorHeader, ModelSelectorListItem, documentation_aside_side,
 };
@@ -35,8 +35,7 @@ pub fn acp_model_selector(
     let delegate = ModelPickerDelegate::new(selector, focus_handle, window, cx);
     Picker::list(delegate, window, cx)
         .show_scrollbar(true)
-        .width(rems(20.))
-        .max_height(Some(rems(20.).into()))
+        .initial_width(rems(20.))
 }
 
 enum ModelPickerEntry {
@@ -192,6 +191,10 @@ impl ModelPickerDelegate {
 impl PickerDelegate for ModelPickerDelegate {
     type ListItem = AnyElement;
 
+    fn name() -> &'static str {
+        "model selector"
+    }
+
     fn match_count(&self) -> usize {
         self.filtered_entries.len()
     }
@@ -266,6 +269,7 @@ impl PickerDelegate for ModelPickerDelegate {
     fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         if let Some(ModelPickerEntry::Model(model_info, _)) =
             self.filtered_entries.get(self.selected_index)
+            && model_info.disabled.is_none()
         {
             self.selector
                 .select_model(model_info.id.clone(), cx)
@@ -331,6 +335,7 @@ impl PickerDelegate for ModelPickerDelegate {
                                     Some(AgentModelIcon::Named(icon)) => this.icon(*icon),
                                     None => this,
                                 })
+                                .disabled(model_info.disabled.clone())
                                 .is_selected(is_selected)
                                 .is_focused(selected)
                                 .is_latest(model_info.is_latest)
@@ -436,44 +441,34 @@ async fn fuzzy_search(
 ) -> AgentModelList {
     async fn fuzzy_search_list(
         model_list: Vec<AgentModelInfo>,
+        group_name: Option<SharedString>,
         query: &str,
         executor: BackgroundExecutor,
     ) -> Vec<AgentModelInfo> {
-        let candidates = model_list
-            .iter()
-            .enumerate()
-            .map(|(ix, model)| StringMatchCandidate::new(ix, model.name.as_ref()))
-            .collect::<Vec<_>>();
-        let mut matches = match_strings(
-            &candidates,
-            query,
-            false,
-            true,
-            100,
-            &Default::default(),
-            executor,
-        )
-        .await;
-
-        matches.sort_unstable_by_key(|mat| {
-            let candidate = &candidates[mat.candidate_id];
-            (Reverse(OrderedFloat(mat.score)), candidate.id)
-        });
-
-        matches
-            .into_iter()
-            .map(|mat| model_list[mat.candidate_id].clone())
-            .collect()
+        model_search::search(model_list, query, executor, move |index, model| {
+            (
+                StringMatchCandidate::new(index, model.name.clone()),
+                StringMatchCandidate::new(
+                    index,
+                    format!(
+                        "{} {}",
+                        model.name,
+                        group_name.as_deref().unwrap_or_default()
+                    ),
+                ),
+            )
+        })
+        .await
     }
 
     match model_list {
         AgentModelList::Flat(model_list) => {
-            AgentModelList::Flat(fuzzy_search_list(model_list, &query, executor).await)
+            AgentModelList::Flat(fuzzy_search_list(model_list, None, &query, executor).await)
         }
         AgentModelList::Grouped(index_map) => {
             let groups =
                 futures::future::join_all(index_map.into_iter().map(|(group_name, models)| {
-                    fuzzy_search_list(models, &query, executor.clone())
+                    fuzzy_search_list(models, Some(group_name.0.clone()), &query, executor.clone())
                         .map(|results| (group_name, results))
                 }))
                 .await;
@@ -506,6 +501,7 @@ mod tests {
                             description: None,
                             icon: None,
                             is_latest: false,
+                            disabled: None,
                             cost: None,
                         })
                         .collect::<Vec<_>>(),
@@ -613,6 +609,7 @@ mod tests {
                     description: None,
                     icon: None,
                     is_latest: false,
+                    disabled: None,
                     cost: None,
                 },
                 AgentModelInfo {
@@ -621,6 +618,7 @@ mod tests {
                     description: None,
                     icon: None,
                     is_latest: false,
+                    disabled: None,
                     cost: None,
                 },
             ];
@@ -690,6 +688,53 @@ mod tests {
         // Fuzzy search - test with specific model name
         let results = fuzzy_search(models.clone(), "mistral".into(), cx.executor()).await;
         assert_models_eq(results, vec![("ollama", vec!["mistral"])]);
+
+        let models = create_model_list(vec![
+            ("OpenAI", vec!["GPT-5.6 Sol"]),
+            ("Anthropic", vec!["Claude Sonnet 4"]),
+        ]);
+        let results = fuzzy_search(models.clone(), "GPT 5.6".into(), cx.executor()).await;
+        assert_models_eq(results, vec![("OpenAI", vec!["GPT-5.6 Sol"])]);
+
+        let results = fuzzy_search(models.clone(), "openai 5.6".into(), cx.executor()).await;
+        assert_models_eq(results, vec![("OpenAI", vec!["GPT-5.6 Sol"])]);
+
+        let results = fuzzy_search(models, "openai".into(), cx.executor()).await;
+        assert_models_eq(results, vec![("OpenAI", vec!["GPT-5.6 Sol"])]);
+    }
+
+    #[gpui::test]
+    async fn test_fuzzy_match_prioritizes_names_over_group(cx: &mut TestAppContext) {
+        let models = create_model_list(vec![(
+            "High Provider",
+            vec!["Reasoner", "Extra High", "High"],
+        )]);
+
+        let results = fuzzy_search(models, "high".into(), cx.executor()).await;
+        assert_models_eq(
+            results,
+            vec![("High Provider", vec!["High", "Extra High", "Reasoner"])],
+        );
+    }
+
+    #[gpui::test(iterations = 20)]
+    async fn test_model_search_builds_candidates_in_background(executor: BackgroundExecutor) {
+        let background_executor = executor.clone();
+        let results = model_search::search(
+            vec!["High".to_string()],
+            "high",
+            executor,
+            move |index, name| {
+                assert!(!background_executor.is_main_thread());
+                (
+                    StringMatchCandidate::new(index, name.clone()),
+                    StringMatchCandidate::new(index, name.clone()),
+                )
+            },
+        )
+        .await;
+
+        assert_eq!(results, ["High"]);
     }
 
     #[gpui::test]
@@ -805,6 +850,7 @@ mod tests {
                 description: None,
                 icon: None,
                 is_latest: false,
+                disabled: None,
                 cost: None,
             },
             acp_thread::AgentModelInfo {
@@ -813,6 +859,7 @@ mod tests {
                 description: None,
                 icon: None,
                 is_latest: false,
+                disabled: None,
                 cost: None,
             },
         ]);
@@ -855,6 +902,7 @@ mod tests {
                 description: None,
                 icon: None,
                 is_latest: false,
+                disabled: None,
                 cost: None,
             },
             acp_thread::AgentModelInfo {
@@ -863,6 +911,7 @@ mod tests {
                 description: None,
                 icon: None,
                 is_latest: false,
+                disabled: None,
                 cost: None,
             },
         ]);

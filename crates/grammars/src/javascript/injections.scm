@@ -16,6 +16,16 @@
     (#set! injection.language "css")))
 
 (call_expression
+  function: (identifier) @_name
+  (#eq? @_name "css")
+  arguments: (arguments
+    (object
+      (pair
+        value: (template_string
+          (string_fragment) @injection.content
+          (#set! injection.language "css"))))))
+
+(call_expression
   function: (member_expression
     object: (identifier) @_obj
     (#eq? @_obj "styled")
@@ -34,7 +44,7 @@
 
 (call_expression
   function: (identifier) @_name
-  (#eq? @_name "html")
+  (#match? @_name "^(html|svg|mathml|raw)$")
   arguments: (template_string) @injection.content
   (#set! injection.language "html"))
 
@@ -142,3 +152,25 @@
   ])
   (#match? @_ecma_comment "^\\/\\*\\s*(css)\\s*\\*\\/")
   (#set! injection.language "css"))
+
+; '/* glsl */' or '/*glsl*/'
+(((comment) @_ecma_comment
+  [
+    (string
+      (string_fragment) @injection.content)
+    (template_string
+      (string_fragment) @injection.content)
+  ])
+  (#match? @_ecma_comment "^\\/\\*\\s*glsl\\s*\\*\\/")
+  (#set! injection.language "glsl"))
+
+; '/* wgsl */' or '/*wgsl*/'
+(((comment) @_ecma_comment
+  [
+    (string
+      (string_fragment) @injection.content)
+    (template_string
+      (string_fragment) @injection.content)
+  ])
+  (#match? @_ecma_comment "^\\/\\*\\s*wgsl\\s*\\*\\/")
+  (#set! injection.language "WGSL/WESL"))

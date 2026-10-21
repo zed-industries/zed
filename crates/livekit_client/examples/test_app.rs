@@ -360,9 +360,9 @@ impl Render for LivekitWindow {
                             .px_2()
                             .bg(rgb(0x8888ff))
                             .child(SharedString::from(if state.speaking {
-                                format!("{} (speaking)", &identity.0)
+                                format!("{} (speaking)", identity.0)
                             } else if state.muted {
-                                format!("{} (muted)", &identity.0)
+                                format!("{} (muted)", identity.0)
                             } else {
                                 identity.0.clone()
                             }))

@@ -1,10 +1,11 @@
 use super::register_zed_scheme;
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use gpui::{AppContext as _, AsyncApp, Context, PromptLevel, Window, actions};
 use release_channel::ReleaseChannel;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use util::ResultExt;
+use workspace::notifications::simple_message_notification::MessageNotification;
 use workspace::notifications::{DetachAndPromptErr, NotificationId};
 use workspace::{Toast, Workspace};
 
@@ -16,14 +17,20 @@ actions!(
     ]
 );
 
-async fn install_script(cx: &AsyncApp) -> Result<PathBuf> {
+const CANT_INSTALL_DOCS_URL: &str = "https://zed.dev/docs/macos#cant-install-cli";
+
+/// Attempts to install the CLI symlink. Returns the installed path on success,
+/// or `None` if the user dismissed the macOS administrator authentication
+/// prompt. Returns an error if the install could not be completed, most
+/// commonly because the user is not an admin.
+async fn install_script(cx: &AsyncApp) -> Result<Option<PathBuf>> {
     let cli_path = cx.update(|cx| cx.path_for_auxiliary_executable("cli"))?;
     let link_path = Path::new("/usr/local/bin/zed");
     let bin_dir_path = link_path.parent().unwrap();
 
     // Don't re-create symlink if it points to the same CLI binary.
     if smol::fs::read_link(link_path).await.ok().as_ref() == Some(&cli_path) {
-        return Ok(link_path.into());
+        return Ok(Some(link_path.into()));
     }
 
     // If the symlink is not there or is outdated, first try replacing it
@@ -34,12 +41,12 @@ async fn install_script(cx: &AsyncApp) -> Result<PathBuf> {
         .log_err()
         .is_some()
     {
-        return Ok(link_path.into());
+        return Ok(Some(link_path.into()));
     }
 
-    // The symlink could not be created, so use osascript with admin privileges
-    // to create it.
-    let status = smol::process::Command::new("/usr/bin/osascript")
+    // The symlink could not be created without escalating, so use osascript
+    // with admin privileges to create it.
+    let output = smol::process::Command::new("/usr/bin/osascript")
         .args([
             "-e",
             &format!(
@@ -52,13 +59,24 @@ async fn install_script(cx: &AsyncApp) -> Result<PathBuf> {
                 link_path.to_string_lossy(),
             ),
         ])
-        .stdout(smol::process::Stdio::inherit())
-        .stderr(smol::process::Stdio::inherit())
         .output()
-        .await?
-        .status;
-    anyhow::ensure!(status.success(), "error running osascript");
-    Ok(link_path.into())
+        .await?;
+
+    if output.status.success() {
+        return Ok(Some(link_path.into()));
+    }
+
+    // osascript reports "User canceled." (error -128) when the administrator
+    // prompt is dismissed. Treat that as a cancellation rather than a failure
+    // so we don't show an error the user already chose to avoid.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr.contains("User canceled") || stderr.contains("-128") {
+        return Ok(None);
+    }
+
+    // The privileged write failed, most commonly because the user is not an
+    // admin.
+    anyhow::bail!("error running osascript: {}", stderr.trim());
 }
 
 pub fn install_cli_binary(window: &mut Window, cx: &mut Context<Workspace>) {
@@ -75,9 +93,34 @@ pub fn install_cli_binary(window: &mut Window, cx: &mut Context<Workspace>) {
             cx.background_spawn(prompt).detach();
             return Ok(());
         }
-        let path = install_script(cx.deref())
-            .await
-            .context("error creating CLI symlink")?;
+        let path = match install_script(cx.deref()).await {
+            Ok(Some(path)) => path,
+            // The user dismissed the administrator prompt; nothing to do.
+            Ok(None) => return Ok(()),
+            Err(error) => {
+                log::error!("failed to install zed CLI: {error:#}");
+                workspace.update(cx, |workspace, cx| {
+                    struct CliInstallFailed;
+
+                    workspace.show_notification(
+                        NotificationId::unique::<CliInstallFailed>(),
+                        cx,
+                        |cx| {
+                            cx.new(|cx| {
+                                MessageNotification::new(
+                                    "You can add `zed` to your PATH manually.",
+                                    cx,
+                                )
+                                .with_title("Couldn't install the Zed CLI")
+                                .more_info_message("Show me how")
+                                .more_info_url(CANT_INSTALL_DOCS_URL)
+                            })
+                        },
+                    );
+                })?;
+                return Ok(());
+            }
+        };
 
         workspace.update_in(cx, |workspace, _, cx| {
             struct InstalledZedCli;
@@ -97,5 +140,5 @@ pub fn install_cli_binary(window: &mut Window, cx: &mut Context<Workspace>) {
         register_zed_scheme(cx).await.log_err();
         Ok(())
     })
-    .detach_and_prompt_err("Error installing zed cli", window, cx, |_, _, _| None);
+    .detach_and_prompt_err("Cannot install the Zed CLI", window, cx, |_, _, _| None);
 }

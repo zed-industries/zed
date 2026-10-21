@@ -1,5 +1,5 @@
 use documented::Documented;
-use gpui::{Hsla, point};
+use gpui::Hsla;
 
 use crate::components::Label;
 use crate::prelude::*;
@@ -71,13 +71,11 @@ impl RenderOnce for ProgressBar {
             .p_0p5()
             .rounded_full()
             .bg(self.bg_color)
-            .shadow(vec![gpui::BoxShadow {
-                color: gpui::black().opacity(0.08),
-                offset: point(px(0.), px(1.)),
-                blur_radius: px(0.),
-                spread_radius: px(0.),
-                inset: false,
-            }])
+            .shadow(vec![gpui::BoxShadow::new(
+                px(0.),
+                px(1.),
+                gpui::black().opacity(0.08),
+            )])
             .child(
                 div()
                     .h_full()

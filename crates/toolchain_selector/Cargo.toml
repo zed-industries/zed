@@ -27,3 +27,4 @@ workspace = true
 [lib]
 path = "src/toolchain_selector.rs"
 doctest = false
+test = false

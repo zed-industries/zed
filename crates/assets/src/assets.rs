@@ -2,20 +2,26 @@
 
 use anyhow::Context as _;
 use gpui::{App, AssetSource, Result, SharedString};
-use rust_embed::RustEmbed;
 
-#[derive(RustEmbed)]
-#[folder = "../../assets"]
-#[include = "fonts/**/*"]
-#[include = "icons/**/*"]
-#[include = "images/**/*"]
-#[include = "themes/**/*"]
-#[exclude = "themes/src/*"]
-#[include = "sounds/**/*"]
-#[include = "prompts/**/*"]
-#[include = "*.md"]
-#[exclude = "*.DS_Store"]
-pub struct Assets;
+// Release builds embed the assets; dev builds read them from the checkout at
+// runtime so edits show up on the next launch without a rebuild and no
+// build-time path is baked in (which corgi's sandbox rejects). See
+// `util::fs_embed!`.
+util::fs_embed! {
+    pub struct Assets,
+    crate_relative = "../../assets",
+    root_relative = "assets",
+    include = [
+        "fonts/**/*",
+        "icons/**/*",
+        "images/**/*",
+        "themes/**/*",
+        "sounds/**/*",
+        "prompts/**/*",
+        "*.md",
+    ],
+    exclude = ["themes/src/*", "*.DS_Store"],
+}
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<std::borrow::Cow<'static, [u8]>>> {

@@ -2,14 +2,11 @@ use client::{Client, UserStore};
 use codestral::{CodestralEditPredictionDelegate, load_codestral_api_key};
 use collections::HashMap;
 use copilot::CopilotEditPredictionDelegate;
-use edit_prediction::{EditPredictionModel, ZedEditPredictionDelegate};
-use editor::Editor;
+use edit_prediction::{EditPredictionModel, ZedEditPredictionDelegate, fim};
+use editor::{EditPredictionRequestTrigger, Editor};
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
-use language::{
-    ZetaVersion,
-    language_settings::{
-        EditPredictionPromptFormat, EditPredictionProvider, all_language_settings,
-    },
+use language::language_settings::{
+    EditPredictionPromptFormat, EditPredictionProvider, all_language_settings,
 };
 
 use settings::SettingsStore;
@@ -28,8 +25,6 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
             if !editor.mode().is_full() {
                 return;
             }
-
-            register_backward_compatible_actions(editor, cx);
 
             let Some(window) = window else {
                 return;
@@ -52,6 +47,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
             assign_edit_prediction_provider(
                 editor,
                 provider_config,
+                EditPredictionRequestTrigger::EditorCreated,
                 &client,
                 user_store.clone(),
                 window,
@@ -74,6 +70,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                 assign_edit_prediction_providers(
                     &editors,
                     provider_config,
+                    EditPredictionRequestTrigger::UserInfoChanged,
                     &client,
                     user_store,
                     cx,
@@ -100,6 +97,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                 assign_edit_prediction_providers(
                     &editors,
                     new_provider_config,
+                    EditPredictionRequestTrigger::ProviderChanged,
                     &client,
                     user_store.clone(),
                     cx,
@@ -129,7 +127,7 @@ fn edit_prediction_provider_config_for_settings(cx: &App) -> Option<EditPredicti
 
             let mut format = custom_settings.prompt_format;
             if format == EditPredictionPromptFormat::Infer {
-                if let Some(inferred_format) = infer_prompt_format(&custom_settings.model) {
+                if let Some(inferred_format) = fim::infer_prompt_format(&custom_settings.model) {
                     format = inferred_format;
                 } else {
                     // todo: notify user that prompt format inference failed
@@ -139,6 +137,10 @@ fn edit_prediction_provider_config_for_settings(cx: &App) -> Option<EditPredicti
 
             if matches!(format, EditPredictionPromptFormat::Zeta(_)) {
                 Some(EditPredictionProviderConfig::Zed(EditPredictionModel::Zeta))
+            } else if format == EditPredictionPromptFormat::Sweep {
+                Some(EditPredictionProviderConfig::Zed(
+                    EditPredictionModel::SweepPrompt,
+                ))
             } else {
                 Some(EditPredictionProviderConfig::Zed(
                     EditPredictionModel::Fim { format },
@@ -150,25 +152,6 @@ fn edit_prediction_provider_config_for_settings(cx: &App) -> Option<EditPredicti
             EditPredictionModel::Mercury,
         )),
     }
-}
-
-fn infer_prompt_format(model: &str) -> Option<EditPredictionPromptFormat> {
-    let model_base = model.split(':').next().unwrap_or(model);
-
-    Some(match model_base {
-        "zeta2" => EditPredictionPromptFormat::Zeta(ZetaVersion::Zeta2),
-        "zeta2.1" => EditPredictionPromptFormat::Zeta(ZetaVersion::Zeta2_1),
-        "codellama" | "code-llama" => EditPredictionPromptFormat::CodeLlama,
-        "starcoder" | "starcoder2" | "starcoderbase" => EditPredictionPromptFormat::StarCoder,
-        "deepseek-coder" | "deepseek-coder-v2" => EditPredictionPromptFormat::DeepseekCoder,
-        "qwen2.5-coder" | "qwen-coder" | "qwen" => EditPredictionPromptFormat::Qwen,
-        "codegemma" => EditPredictionPromptFormat::CodeGemma,
-        "codestral" | "mistral" => EditPredictionPromptFormat::Codestral,
-        "glm" | "glm-4" | "glm-4.5" => EditPredictionPromptFormat::Glm,
-        _ => {
-            return None;
-        }
-    })
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -186,6 +169,7 @@ impl EditPredictionProviderConfig {
             EditPredictionProviderConfig::Zed(model) => match model {
                 EditPredictionModel::Zeta => "Zeta",
                 EditPredictionModel::Fim { .. } => "FIM",
+                EditPredictionModel::SweepPrompt => "Sweep Prompt",
                 EditPredictionModel::Mercury => "Mercury",
             },
         }
@@ -201,6 +185,7 @@ fn clear_edit_prediction_store_edit_history(_: &edit_prediction::ClearHistory, c
 fn assign_edit_prediction_providers(
     editors: &Rc<RefCell<HashMap<WeakEntity<Editor>, AnyWindowHandle>>>,
     provider_config: Option<EditPredictionProviderConfig>,
+    trigger: EditPredictionRequestTrigger,
     client: &Arc<Client>,
     user_store: Entity<UserStore>,
     cx: &mut App,
@@ -214,6 +199,7 @@ fn assign_edit_prediction_providers(
                 assign_edit_prediction_provider(
                     editor,
                     provider_config,
+                    trigger,
                     client,
                     user_store.clone(),
                     window,
@@ -224,22 +210,10 @@ fn assign_edit_prediction_providers(
     }
 }
 
-fn register_backward_compatible_actions(editor: &mut Editor, cx: &mut Context<Editor>) {
-    // We renamed some of these actions to not be copilot-specific, but that
-    // would have not been backwards-compatible. So here we are re-registering
-    // the actions with the old names to not break people's keymaps.
-    editor
-        .register_action(cx.listener(
-            |editor, _: &copilot::Suggest, window: &mut Window, cx: &mut Context<Editor>| {
-                editor.show_edit_prediction(&Default::default(), window, cx);
-            },
-        ))
-        .detach();
-}
-
 fn assign_edit_prediction_provider(
     editor: &mut Editor,
     provider_config: Option<EditPredictionProviderConfig>,
+    trigger: EditPredictionRequestTrigger,
     client: &Arc<Client>,
     user_store: Entity<UserStore>,
     window: &mut Window,
@@ -250,7 +224,9 @@ fn assign_edit_prediction_provider(
 
     match provider_config {
         None => {
-            editor.set_edit_prediction_provider::<ZedEditPredictionDelegate>(None, window, cx);
+            editor.set_edit_prediction_provider::<ZedEditPredictionDelegate>(
+                None, trigger, window, cx,
+            );
         }
         Some(EditPredictionProviderConfig::Copilot) => {
             let ep_store = edit_prediction::EditPredictionStore::global(client, &user_store, cx);
@@ -267,13 +243,13 @@ fn assign_edit_prediction_provider(
                     });
                 }
                 let provider = cx.new(|_| CopilotEditPredictionDelegate::new(copilot));
-                editor.set_edit_prediction_provider(Some(provider), window, cx);
+                editor.set_edit_prediction_provider(Some(provider), trigger, window, cx);
             }
         }
         Some(EditPredictionProviderConfig::Codestral) => {
             let http_client = client.http_client();
             let provider = cx.new(|_| CodestralEditPredictionDelegate::new(http_client));
-            editor.set_edit_prediction_provider(Some(provider), window, cx);
+            editor.set_edit_prediction_provider(Some(provider), trigger, window, cx);
         }
         Some(EditPredictionProviderConfig::Zed(model)) => {
             let ep_store = edit_prediction::EditPredictionStore::global(client, &user_store, cx);
@@ -283,7 +259,7 @@ fn assign_edit_prediction_provider(
             {
                 if !organization_configuration.edit_prediction.is_enabled {
                     editor.set_edit_prediction_provider::<ZedEditPredictionDelegate>(
-                        None, window, cx,
+                        None, trigger, window, cx,
                     );
 
                     return;
@@ -307,7 +283,7 @@ fn assign_edit_prediction_provider(
                         cx,
                     )
                 });
-                editor.set_edit_prediction_provider(Some(provider), window, cx);
+                editor.set_edit_prediction_provider(Some(provider), trigger, window, cx);
             }
         }
     }
@@ -318,8 +294,102 @@ mod tests {
     use super::*;
     use editor::MultiBuffer;
     use gpui::{BorrowAppContext, TestAppContext};
-    use settings::{EditPredictionProvider, SettingsStore};
+    use settings::{EditPredictionPromptFormatContent, EditPredictionProvider, SettingsStore};
     use workspace::AppState;
+
+    #[gpui::test]
+    async fn test_sweep_prompt_format_routes_to_sweep_prompt_model(cx: &mut TestAppContext) {
+        let app_state = cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            client::init(&app_state.client, cx);
+            language_model::init(cx);
+            app_state
+        });
+
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store: &mut SettingsStore, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.edit_predictions =
+                        Some(settings::EditPredictionSettingsContent {
+                            provider: Some(EditPredictionProvider::OpenAiCompatibleApi),
+                            open_ai_compatible_api: Some(
+                                settings::CustomEditPredictionProviderSettingsContent {
+                                    api_url: Some(
+                                        "http://localhost:8080/v1/completions".to_string(),
+                                    ),
+                                    model: Some("sweep-next-edit-1.5b".to_string()),
+                                    prompt_format: Some(EditPredictionPromptFormatContent::Sweep),
+                                    ..Default::default()
+                                },
+                            ),
+                            ..Default::default()
+                        });
+                });
+            });
+        });
+
+        let config = cx.update(|cx| edit_prediction_provider_config_for_settings(cx));
+        assert!(
+            matches!(
+                config,
+                Some(EditPredictionProviderConfig::Zed(
+                    EditPredictionModel::SweepPrompt,
+                ))
+            ),
+            "expected self-hosted sweep prompt format to route to SweepPrompt"
+        );
+
+        let provider_name = config.map(|config| config.name());
+        assert_eq!(provider_name, Some("Sweep Prompt"));
+
+        drop(app_state);
+    }
+
+    #[gpui::test]
+    async fn test_ollama_provider_routes_to_fim_model(cx: &mut TestAppContext) {
+        let app_state = cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            client::init(&app_state.client, cx);
+            language_model::init(cx);
+            app_state
+        });
+
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store: &mut SettingsStore, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.edit_predictions =
+                        Some(settings::EditPredictionSettingsContent {
+                            provider: Some(EditPredictionProvider::Ollama),
+                            ollama: Some(settings::OllamaEditPredictionSettingsContent {
+                                api_url: Some("http://localhost:11434".to_string()),
+                                model: Some("qwen2.5-coder:3b".to_string().into()),
+                                prompt_format: Some(EditPredictionPromptFormatContent::Infer),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        });
+                });
+            });
+        });
+
+        let config = cx.update(|cx| edit_prediction_provider_config_for_settings(cx));
+        assert!(
+            matches!(
+                config,
+                Some(EditPredictionProviderConfig::Zed(
+                    EditPredictionModel::Fim {
+                        format: EditPredictionPromptFormat::Qwen,
+                    }
+                ))
+            ),
+            "expected qwen2.5-coder model to infer the Qwen FIM prompt format"
+        );
+
+        let provider_name = config.map(|config| config.name());
+        assert_eq!(provider_name, Some("FIM"));
+
+        drop(app_state);
+    }
 
     #[gpui::test]
     async fn test_subscribe_uses_stale_provider_config_after_settings_change(

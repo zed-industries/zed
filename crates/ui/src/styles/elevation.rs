@@ -1,6 +1,6 @@
 use std::fmt::{self, Display, Formatter};
 
-use gpui::{App, BoxShadow, Hsla, hsla, point, px};
+use gpui::{App, BoxShadow, Hsla, hsla, px};
 use theme::{ActiveTheme, Appearance};
 
 /// Today, elevation is primarily used to add shadows to elements, and set the correct background for elements like buttons.
@@ -47,51 +47,33 @@ impl ElevationIndex {
             ElevationIndex::EditorSurface => vec![],
 
             ElevationIndex::ElevatedSurface => vec![
-                BoxShadow {
-                    color: hsla(0., 0., 0., 0.12),
-                    offset: point(px(0.), px(2.)),
-                    blur_radius: px(3.),
-                    spread_radius: px(0.),
-                    inset: false,
-                },
-                BoxShadow {
-                    color: hsla(0., 0., 0., if is_light { 0.03 } else { 0.06 }),
-                    offset: point(px(0.), px(1.)),
-                    blur_radius: px(0.),
-                    spread_radius: px(0.),
-                    inset: false,
-                },
+                BoxShadow::new(px(0.), px(2.), hsla(0., 0., 0., 0.12)).blur_radius(px(3.)),
+                BoxShadow::new(
+                    px(0.),
+                    px(1.),
+                    hsla(0., 0., 0., if is_light { 0.03 } else { 0.06 }),
+                ),
             ],
 
             ElevationIndex::ModalSurface => vec![
-                BoxShadow {
-                    color: hsla(0., 0., 0., if is_light { 0.06 } else { 0.12 }),
-                    offset: point(px(0.), px(2.)),
-                    blur_radius: px(3.),
-                    spread_radius: px(0.),
-                    inset: false,
-                },
-                BoxShadow {
-                    color: hsla(0., 0., 0., if is_light { 0.06 } else { 0.08 }),
-                    offset: point(px(0.), px(3.)),
-                    blur_radius: px(6.),
-                    spread_radius: px(0.),
-                    inset: false,
-                },
-                BoxShadow {
-                    color: hsla(0., 0., 0., 0.04),
-                    offset: point(px(0.), px(6.)),
-                    blur_radius: px(12.),
-                    spread_radius: px(0.),
-                    inset: false,
-                },
-                BoxShadow {
-                    color: hsla(0., 0., 0., if is_light { 0.04 } else { 0.12 }),
-                    offset: point(px(0.), px(1.)),
-                    blur_radius: px(0.),
-                    spread_radius: px(0.),
-                    inset: false,
-                },
+                BoxShadow::new(
+                    px(0.),
+                    px(2.),
+                    hsla(0., 0., 0., if is_light { 0.06 } else { 0.12 }),
+                )
+                .blur_radius(px(3.)),
+                BoxShadow::new(
+                    px(0.),
+                    px(3.),
+                    hsla(0., 0., 0., if is_light { 0.06 } else { 0.08 }),
+                )
+                .blur_radius(px(6.)),
+                BoxShadow::new(px(0.), px(6.), hsla(0., 0., 0., 0.04)).blur_radius(px(12.)),
+                BoxShadow::new(
+                    px(0.),
+                    px(1.),
+                    hsla(0., 0., 0., if is_light { 0.04 } else { 0.12 }),
+                ),
             ],
 
             _ => vec![],

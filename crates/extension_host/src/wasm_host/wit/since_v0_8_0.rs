@@ -1,6 +1,9 @@
 use crate::wasm_host::wit::since_v0_6_0::slash_command::SlashCommandOutputSection;
 use crate::wasm_host::wit::{CompletionKind, CompletionLabelDetails, InsertTextFormat, SymbolKind};
-use crate::wasm_host::{WasmState, wit::ToWasmtimeResult};
+use crate::wasm_host::{
+    WasmState,
+    wit::{IntoWasmtimeResult, ToWasmtimeResult},
+};
 use ::http_client::{AsyncBody, HttpRequestExt};
 use ::settings::{Settings, WorktreeId};
 use anyhow::{Context as _, Result, bail};
@@ -45,7 +48,7 @@ wasmtime::component::bindgen!({
          "worktree": ExtensionWorktree,
          "project": ExtensionProject,
          "key-value-store": ExtensionKeyValueStore,
-         "zed:extension/http-client/http-response-stream": ExtensionHttpResponseStream
+         "zed:extension/http-client.http-response-stream": ExtensionHttpResponseStream
     },
 });
 
@@ -553,7 +556,7 @@ impl HostKeyValueStore for WasmState {
         kv_store.insert(key, value).await.to_wasmtime_result()
     }
 
-    async fn drop(&mut self, _worktree: Resource<ExtensionKeyValueStore>) -> Result<()> {
+    async fn drop(&mut self, _worktree: Resource<ExtensionKeyValueStore>) -> wasmtime::Result<()> {
         // We only ever hand out borrows of key-value stores.
         Ok(())
     }
@@ -568,7 +571,7 @@ impl HostProject for WasmState {
         Ok(project.worktree_ids())
     }
 
-    async fn drop(&mut self, _project: Resource<Project>) -> Result<()> {
+    async fn drop(&mut self, _project: Resource<Project>) -> wasmtime::Result<()> {
         // We only ever hand out borrows of projects.
         Ok(())
     }
@@ -595,7 +598,9 @@ impl HostWorktree for WasmState {
     ) -> wasmtime::Result<Result<String, String>> {
         let delegate = self.table.get(&delegate)?;
         Ok(delegate
-            .read_text_file(&RelPath::new(Path::new(&path), PathStyle::Posix)?)
+            .read_text_file(
+                &RelPath::new(Path::new(&path), PathStyle::Unix).into_wasmtime_result()?,
+            )
             .await
             .map_err(|error| error.to_string()))
     }
@@ -617,7 +622,7 @@ impl HostWorktree for WasmState {
         Ok(delegate.which(binary_name).await)
     }
 
-    async fn drop(&mut self, _worktree: Resource<Worktree>) -> Result<()> {
+    async fn drop(&mut self, _worktree: Resource<Worktree>) -> wasmtime::Result<()> {
         // We only ever hand out borrows of worktrees.
         Ok(())
     }
@@ -648,7 +653,7 @@ impl http_client::Host for WasmState {
         &mut self,
         request: http_client::HttpRequest,
     ) -> wasmtime::Result<Result<Resource<ExtensionHttpResponseStream>, String>> {
-        let request = convert_request(&request)?;
+        let request = convert_request(&request).into_wasmtime_result()?;
         let response = self.host.http_client.send(request);
         maybe!(async {
             let response = response.await?;
@@ -682,7 +687,10 @@ impl http_client::HostHttpResponseStream for WasmState {
         .to_wasmtime_result()
     }
 
-    async fn drop(&mut self, _resource: Resource<ExtensionHttpResponseStream>) -> Result<()> {
+    async fn drop(
+        &mut self,
+        _resource: Resource<ExtensionHttpResponseStream>,
+    ) -> wasmtime::Result<()> {
         Ok(())
     }
 }
@@ -787,7 +795,8 @@ impl nodejs::Host for WasmState {
         version: String,
     ) -> wasmtime::Result<Result<(), String>> {
         self.capability_granter
-            .grant_npm_install_package(&package_name)?;
+            .grant_npm_install_package(&package_name)
+            .into_wasmtime_result()?;
 
         self.host
             .node_runtime
@@ -859,18 +868,20 @@ impl github::Host for WasmState {
 }
 
 impl platform::Host for WasmState {
-    async fn current_platform(&mut self) -> Result<(platform::Os, platform::Architecture)> {
+    async fn current_platform(
+        &mut self,
+    ) -> wasmtime::Result<(platform::Os, platform::Architecture)> {
         Ok((
             match env::consts::OS {
                 "macos" => platform::Os::Mac,
                 "linux" => platform::Os::Linux,
                 "windows" => platform::Os::Windows,
-                _ => bail!("unsupported os"),
+                _ => return Err(wasmtime::Error::msg("unsupported os")),
             },
             match env::consts::ARCH {
                 "aarch64" => platform::Architecture::Aarch64,
                 "x86_64" => platform::Architecture::X8664,
-                _ => bail!("unsupported architecture"),
+                _ => return Err(wasmtime::Error::msg("unsupported architecture")),
             },
         ))
     }
@@ -948,7 +959,7 @@ impl ExtensionImports for WasmState {
         self.on_main_thread(|cx| {
             async move {
                 let path = location.as_ref().and_then(|location| {
-                    RelPath::new(Path::new(&location.path), PathStyle::Posix).ok()
+                    RelPath::new(Path::new(&location.path), PathStyle::Unix).ok()
                 });
                 let location = path
                     .as_ref()
@@ -968,6 +979,7 @@ impl ExtensionImports for WasmState {
                         );
                         Ok(serde_json::to_string(&settings::LanguageSettings {
                             tab_size: settings.tab_size,
+                            hard_tabs: settings.hard_tabs,
                             preferred_line_length: settings.preferred_line_length,
                         })?)
                     }
@@ -1052,9 +1064,11 @@ impl ExtensionImports for WasmState {
             LanguageServerInstallationStatus::Failed(error) => BinaryStatus::Failed { error },
         };
 
-        self.host
-            .proxy
-            .update_language_server_status(::lsp::LanguageServerName(server_name.into()), status);
+        self.host.proxy.update_language_server_status(
+            self.language_server_status_source,
+            ::lsp::LanguageServerName(server_name.into()),
+            status,
+        );
 
         Ok(())
     }
@@ -1138,7 +1152,8 @@ impl ExtensionImports for WasmState {
         let path = self
             .host
             .writeable_path_from_extension(&self.manifest.id, Path::new(&path))
-            .await?;
+            .await
+            .into_wasmtime_result()?;
 
         make_file_executable(&path)
             .await

@@ -184,6 +184,9 @@ impl Editor {
             .range_to_buffer_ranges(visible_range)
             .into_iter()
             .filter(|(_, excerpt_visible_range, _)| !excerpt_visible_range.is_empty())
+            .map(|(buffer_snapshot, buffer_offset_range, excerpt_range)| {
+                (buffer_snapshot.clone(), buffer_offset_range, excerpt_range)
+            })
             .collect()
     }
 
@@ -223,16 +226,91 @@ impl Editor {
                 push_to_lsp_host_history,
                 cx,
             )
-        });
+        })?;
+
+        // Cursors are right-biased, so an edit inserting text at one drags it along. Pin a
+        // left-biased copy, keyed by the current anchor so cursors the user moves are skipped.
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let cursors_to_pin = self
+            .selections
+            .disjoint_anchors()
+            .iter()
+            .filter(|selection| selection.start == selection.end)
+            .map(|selection| (selection.head(), snapshot.anchor_before(selection.head())))
+            .collect::<HashMap<_, _>>();
+
         Some(cx.spawn_in(window, async move |editor, cx| {
             if let Some(transaction) = on_type_formatting.await? {
-                if push_to_client_history {
-                    buffer.update(cx, |buffer, _| {
+                let (formatted_buffer_id, formatted_ranges) = buffer.update(cx, |buffer, _| {
+                    let formatted_ranges = buffer
+                        .edited_ranges_for_transaction::<usize>(&transaction)
+                        .collect::<Vec<_>>();
+                    if push_to_client_history {
                         buffer.push_transaction(transaction, Instant::now());
                         buffer.finalize_last_transaction();
-                    });
-                }
-                editor.update(cx, |editor, cx| {
+                    }
+                    (buffer.remote_id(), formatted_ranges)
+                });
+                editor.update_in(cx, |editor, window, cx| {
+                    let snapshot = editor.buffer.read(cx).snapshot(cx);
+                    let pinned_cursor = |selection: &Selection<Anchor>| {
+                        if selection.start != selection.end {
+                            return None;
+                        }
+                        let head = selection.head();
+                        let &cursor = cursors_to_pin.get(&head)?;
+                        let (buffer_cursor, cursor_snapshot) =
+                            snapshot.anchor_to_buffer_anchor(cursor)?;
+                        let (buffer_head, head_snapshot) =
+                            snapshot.anchor_to_buffer_anchor(head)?;
+                        if cursor_snapshot.remote_id() != formatted_buffer_id
+                            || head_snapshot.remote_id() != formatted_buffer_id
+                        {
+                            return None;
+                        }
+                        let cursor_offset = buffer_cursor.to_offset(cursor_snapshot);
+                        let head_offset = buffer_head.to_offset(head_snapshot);
+                        if cursor_offset == head_offset {
+                            return None;
+                        }
+                        // A gap in the formatter's edits means something else, such as a user edit
+                        // while the request was in flight, moved the cursor.
+                        let mut formatted_end = cursor_offset;
+                        for range in &formatted_ranges {
+                            if range.end <= formatted_end {
+                                continue;
+                            }
+                            if range.start > formatted_end || range.end > head_offset {
+                                break;
+                            }
+                            formatted_end = range.end;
+                        }
+                        (formatted_end == head_offset).then_some(cursor)
+                    };
+
+                    let mut restored_any_cursor = false;
+                    let pinned = editor
+                        .selections
+                        .disjoint_anchors()
+                        .iter()
+                        .map(|selection| match pinned_cursor(selection) {
+                            Some(cursor) => {
+                                restored_any_cursor = true;
+                                Selection {
+                                    start: cursor,
+                                    end: cursor,
+                                    goal: SelectionGoal::None,
+                                    ..*selection
+                                }
+                            }
+                            None => *selection,
+                        })
+                        .collect();
+                    if restored_any_cursor {
+                        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                            s.select_anchors(pinned)
+                        });
+                    }
                     editor.refresh_document_highlights(cx);
                 })?;
             }
@@ -263,14 +341,20 @@ impl Editor {
 
         let multibuffer_snapshot = self.buffer.read(cx).read(cx);
 
-        // Typically `start` == `end`, but with snippet tabstop choices the default choice is
-        // inserted and selected. To handle that case, the start of the selection is used so that
-        // the menu starts with all choices.
-        let position = self
-            .selections
-            .newest_anchor()
-            .start
-            .bias_right(&multibuffer_snapshot);
+        let is_showing_snippet_choices = matches!(
+            completions_source,
+            Some(CompletionsMenuSource::SnippetChoices)
+        );
+
+        let anchor = self.selections.newest_anchor();
+        let position = if is_showing_snippet_choices {
+            // Typically `start` == `end`, but with snippet tabstop choices the default choice is
+            // inserted and selected. To handle that case, the start of the selection is used so that
+            // the menu starts with all choices.
+            anchor.start.bias_right(&multibuffer_snapshot)
+        } else {
+            anchor.head().bias_right(&multibuffer_snapshot)
+        };
 
         if position.diff_base_anchor().is_some() {
             return;
@@ -312,7 +396,7 @@ impl Editor {
 
         // Hide the current completions menu when query is empty. Without this, cached
         // completions from before the trigger char may be reused (#32774).
-        if query.is_none() && menu_is_open {
+        if query.is_none() && menu_is_open && !is_showing_snippet_choices {
             self.hide_context_menu(window, cx);
         }
 
@@ -821,14 +905,19 @@ impl Editor {
         let old_text = buffer
             .text_for_range(replace_range.clone())
             .collect::<String>();
-        let lookbehind = newest_range_buffer
-            .start
-            .to_offset(buffer_snapshot)
-            .saturating_sub(replace_range.start.to_offset(&buffer_snapshot));
-        let lookahead = replace_range
-            .end
-            .to_offset(&buffer_snapshot)
-            .saturating_sub(newest_range_buffer.end.to_offset(&buffer));
+        let (lookbehind, lookahead) = if buffer.remote_id() == buffer_snapshot.remote_id() {
+            let lookbehind = newest_range_buffer
+                .start
+                .to_offset(&buffer)
+                .saturating_sub(replace_range.start.to_offset(&buffer));
+            let lookahead = replace_range
+                .end
+                .to_offset(&buffer)
+                .saturating_sub(newest_range_buffer.end.to_offset(&buffer));
+            (lookbehind, lookahead)
+        } else {
+            (0, 0)
+        };
         let prefix = &old_text[..old_text.len().saturating_sub(lookahead)];
         let suffix = &old_text[lookbehind.min(old_text.len())..];
 
@@ -1126,7 +1215,7 @@ fn has_strong_snippet_prefix_match(
 
     languages.iter().any(|language| {
         snippet_store
-            .snippets_for(Some(language.lsp_id()), cx)
+            .snippets_for(Some(language.snippet_scope_id()), cx)
             .iter()
             .flat_map(|snippet| snippet.prefix.iter())
             .flat_map(|prefix| snippet_candidate_suffixes(prefix, &is_word_char))
@@ -1147,7 +1236,7 @@ fn snippet_completions(
     let scopes: Vec<_> = languages
         .iter()
         .filter_map(|language| {
-            let language_name = language.lsp_id();
+            let language_name = language.snippet_scope_id();
             let snippets = snippet_store.snippets_for(Some(language_name), cx);
 
             if snippets.is_empty() {
@@ -1333,7 +1422,6 @@ fn snippet_completions(
                                     replace: lsp_range,
                                 },
                             )),
-                            filter_text: Some(snippet.body.clone()),
                             sort_text: Some(char::MAX.to_string()),
                             ..lsp::CompletionItem::default()
                         }),

@@ -15,6 +15,8 @@ To add custom tools beyond these built-in ones, see [MCP servers](./mcp.md).
 
 To choose which built-in tools and MCP tools are available in a Zed Agent thread, use [Agent Profiles](./agent-profiles.md). Profiles control tool availability; tool permissions control allow, deny, and confirm behavior.
 
+The terminal tool can also run with additional OS-level restrictions when [Zed Agent sandboxing](./sandboxing.md) is enabled.
+
 ## Read & Search Tools
 
 ### `diagnostics`
@@ -28,6 +30,8 @@ When no path is provided, shows a summary of error and warning counts for all fi
 ### `fetch`
 
 Fetches a URL and returns the content as Markdown. Useful for providing docs as context.
+
+`fetch` is governed by tool permissions, agent profiles, and project trust. It is not run inside the terminal OS sandbox, so terminal sandbox network grants such as `allow_hosts` and `allow_all_hosts` do not apply to it.
 
 **Example:** Fetching a library's changelog page to check whether a breaking API change was introduced in a recent version before writing integration code.
 
@@ -104,5 +108,7 @@ Loads instructions from an available [Skill](./skills.md) so the agent can follo
 ### `spawn_agent`
 
 Spawns a subagent with its own context window to perform a delegated task. Useful for running parallel investigations, completing self-contained tasks, or performing research where only the outcome matters. Each subagent has access to the same tools as the parent agent.
+
+To configure a subagent's model, reasoning effort, and speed, see [Subagent Models](./agent-settings.md#subagent-models).
 
 **Example:** While refactoring the authentication module, spawn a subagent to investigate how session tokens are validated elsewhere in the codebase. The parent agent continues its work and reviews the subagent's findings when it completes — keeping both context windows focused on a single task.

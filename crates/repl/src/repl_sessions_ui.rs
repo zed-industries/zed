@@ -398,10 +398,11 @@ mod tests {
             Language::new(
                 LanguageConfig {
                     name: "Python".into(),
-                    matcher: LanguageMatcher {
-                        path_suffixes: vec!["py".to_string()],
+                    matcher: (LanguageMatcher {
+                        path_suffixes: vec!["py".into()],
                         ..Default::default()
-                    },
+                    })
+                    .into(),
                     ..Default::default()
                 },
                 None,
