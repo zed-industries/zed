@@ -3221,9 +3221,12 @@ impl GitPanel {
                 cx.notify();
                 checkouts
             })?;
-            for checkout in checkouts {
-                checkout.await?;
-            }
+            // Dropping a checkout task cancels it and leaves its pending op
+            // running, so wait for both before reporting the first error.
+            futures::future::join_all(checkouts)
+                .await
+                .into_iter()
+                .collect::<Result<Vec<_>, _>>()?;
 
             let tasks: Vec<_> = cx.update(|_, cx| {
                 buffers
