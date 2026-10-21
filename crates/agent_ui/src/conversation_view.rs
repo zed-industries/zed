@@ -15089,6 +15089,113 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_replayed_terminal_output_search_reveals_last_match(cx: &mut TestAppContext) {
+        assert_replayed_terminal_output_search_reveals_matches("seq 1 100".to_string(), cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_replayed_terminal_output_search_reveals_matches_below_long_command(
+        cx: &mut TestAppContext,
+    ) {
+        let command = format!("cat <<'EOF'\n{}EOF", "ordinary command line\n".repeat(100));
+        assert_replayed_terminal_output_search_reveals_matches(command, cx).await;
+    }
+
+    async fn assert_replayed_terminal_output_search_reveals_matches(
+        command: String,
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(StubAgentConnection::new()), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        let tool_call_id = acp_v2::ToolCallId::new("replayed-terminal");
+        let saved_output = format!(
+            "```\nneedle at the start\n{}needle at the end\n```",
+            "ordinary output line\n".repeat(100),
+        );
+        thread
+            .update(cx, |thread, cx| {
+                thread.upsert_wire_tool_call(
+                    acp_v2::ToolCallUpdate::new(tool_call_id.clone())
+                        .title(command.clone())
+                        .kind(acp_v2::ToolKind::Execute)
+                        .status(acp_v2::ToolCallStatus::Completed)
+                        .raw_input(json!({"command": command, "cd": "."}))
+                        .raw_output(json!(saved_output)),
+                    cx,
+                )
+            })
+            .expect("saved terminal output should be restored");
+        cx.run_until_parked();
+        thread_view.update(cx, |view, cx| {
+            view.entry_view_state.update(cx, |state, _| {
+                state.expand_tool_call(tool_call_id.clone());
+            });
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        // The base test theme reuses colors for unrelated UI backgrounds.
+        let active_match_color = gpui::hsla(0.9, 1.0, 0.5, 1.0);
+        cx.update(|_, cx| {
+            let mut test_theme = cx.theme().as_ref().clone();
+            test_theme.styles.colors.search_active_match_background = active_match_color;
+            theme::GlobalTheme::update_theme(cx, Arc::new(test_theme));
+        });
+        thread_view.update_in(cx, |view, window, cx| {
+            view.toggle_search(&crate::ToggleSearch, window, cx);
+        });
+        let search_bar = thread_view
+            .read_with(cx, |view, _| view.thread_search_bar.clone())
+            .expect("thread search should be open");
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.query_editor.update(cx, |editor, cx| {
+                editor.set_text("needle", window, cx);
+            });
+            search_bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(search_bar.read_with(cx, |bar, _| bar.match_count()), 2);
+        assert_eq!(
+            search_bar.read_with(cx, |bar, _| bar.active_match_index()),
+            Some(0),
+        );
+
+        let active_match_is_visible = |cx: &mut VisualTestContext| {
+            cx.update(|window, _| {
+                window.painted_quads().iter().any(|quad| {
+                    quad.background == active_match_color.into()
+                        && !quad.bounds.intersect(&quad.content_mask.bounds).is_empty()
+                })
+            })
+        };
+        assert!(
+            active_match_is_visible(cx),
+            "search navigation should reveal the first match in the saved terminal output",
+        );
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.select_next_match(
+                &super::thread_search_bar::SelectNextThreadMatch,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            search_bar.read_with(cx, |bar, _| bar.active_match_index()),
+            Some(1),
+        );
+        assert!(
+            active_match_is_visible(cx),
+            "search navigation should reveal the last match inside the saved output viewport",
+        );
+    }
+
+    #[gpui::test]
     async fn test_terminal_snapshots_reuse_the_read_only_tool_view(cx: &mut TestAppContext) {
         init_test(cx);
         let (conversation_view, cx) =

@@ -664,6 +664,9 @@ pub struct ThreadView {
     /// its allow buttons stay disabled. See [`Self::sandbox_confusable_findings`].
     acknowledged_confusable_warnings: HashSet<acp_v2::ToolCallId>,
     pub subagent_scroll_handles: RefCell<HashMap<acp_v2::SessionId, ScrollHandle>>,
+    /// Shared between a replayed terminal card's height-capped output and the
+    /// markdown inside it, so thread search can scroll a match into view.
+    replayed_terminal_scroll_handles: RefCell<HashMap<acp_v2::ToolCallId, ScrollHandle>>,
     pub edits_expanded: bool,
     pub plan_expanded: bool,
     pub queue_expanded: bool,
@@ -1165,6 +1168,7 @@ impl ThreadView {
             collapsed_sandbox_network_details: HashSet::default(),
             acknowledged_confusable_warnings: HashSet::default(),
             subagent_scroll_handles: RefCell::new(HashMap::default()),
+            replayed_terminal_scroll_handles: RefCell::new(HashMap::default()),
             edits_expanded: false,
             plan_expanded: false,
             queue_expanded: true,
@@ -9365,13 +9369,104 @@ impl ThreadView {
         let body = v_flex()
             .map(|this| {
                 if is_terminal_tool {
-                    this.child(self.render_collapsible_command(
+                    // `render_tool_call` only handles `Execute`-kind tool calls
+                    // when there's no live `Terminal` entity in `content` —
+                    // i.e. when the thread was reloaded from disk and the
+                    // saved output was reconstructed as markdown from
+                    // `raw_output`. Without an explicit disclosure here, the
+                    // saved output is reachable only by expanding the tool call
+                    // in `entry_view_state`, which never happens because no
+                    // `NewTerminal` view event fires for a replayed call
+                    // (issue #57230).
+                    // A nonzero exit code isn't an error result for the
+                    // terminal tool; after a reload it only survives as a
+                    // sentinel in the saved output text, so recover it from
+                    // there to restore the live card's failure indicator.
+                    let saved_exit_code = tool_call
+                        .raw_output
+                        .as_ref()
+                        .and_then(|output| output.as_str())
+                        .and_then(agent::parse_failed_exit_code);
+                    // An external agent's `Execute` call streams content while it
+                    // is still running, so keying the header on content alone
+                    // would caption a live command in the past tense and take the
+                    // "Run Command" preview away from it.
+                    let command_finished = !matches!(
+                        tool_call.status(),
+                        ToolCallStatus::Pending
+                            | ToolCallStatus::InProgress
+                            | ToolCallStatus::WaitingForConfirmation
+                    );
+                    let has_header = command_finished
+                        && (is_collapsible || failed_or_canceled || saved_exit_code.is_some());
+                    let command_block = self.render_collapsible_command(
                         card_header_id.clone(),
-                        true,
+                        // Keep the "Run Command" preview label only while the
+                        // command hasn't produced a result (e.g. awaiting
+                        // confirmation); once there is one, the header row
+                        // below replaces it, mirroring the live card.
+                        !has_header,
                         tool_call.label.clone(),
                         window,
                         cx,
-                    ))
+                    );
+                    if !has_header {
+                        return this.child(command_block);
+                    }
+                    // A rejected call was denied before it ran: its body is empty,
+                    // so a disclosure would expand nothing, and the past-tense
+                    // label the other statuses get would state the opposite of
+                    // what happened. A canceled one did run before being stopped.
+                    let was_rejected = matches!(tool_call.status(), ToolCallStatus::Rejected);
+                    let can_expand = is_collapsible && !was_rejected;
+                    // The terminal tool's `cd` input is the closest surviving
+                    // analog of the live card's working-dir header label, but the
+                    // tool resolves "." and "" alike to the worktree root, so
+                    // neither is worth showing. Other `Execute` tools (e.g.
+                    // external ACP agents) have no `cd` at all.
+                    let working_dir = tool_call
+                        .raw_input
+                        .as_ref()
+                        .and_then(|input| input.get("cd"))
+                        .and_then(|cd| cd.as_str())
+                        .filter(|cd| !cd.is_empty() && *cd != ".")
+                        .map_or_else(
+                            || {
+                                SharedString::new_static(if was_rejected {
+                                    "Run Command"
+                                } else {
+                                    "Ran Command"
+                                })
+                            },
+                            SharedString::from,
+                        );
+                    this.child(
+                        TerminalToolHeader::new(
+                            format!("replayed-terminal-{entry_ix}"),
+                            format!("replayed-terminal-header-group-{entry_ix}"),
+                            working_dir,
+                            is_open,
+                        )
+                        .when(can_expand, |header| {
+                            header.on_toggle_expand(cx.listener({
+                                let id = tool_call.id.clone();
+                                move |this, _event, window, cx| {
+                                    this.entry_view_state.update(cx, |state, _cx| {
+                                        state.toggle_tool_call_expansion(&id);
+                                    });
+                                    this.refresh_thread_search(window, cx);
+                                    cx.notify();
+                                }
+                            }))
+                        })
+                        .when(failed_or_canceled || saved_exit_code.is_some(), |header| {
+                            header.failed(saved_exit_code)
+                        })
+                        .when(failed_or_canceled && saved_exit_code.is_none(), |header| {
+                            header.failure_tooltip(tool_call.status().to_string())
+                        })
+                        .command_slot(command_block),
+                    )
                 } else {
                     this.child(
                         h_flex()
@@ -9537,7 +9632,22 @@ impl ThreadView {
                     )
                 }
             })
-            .children(tool_output_display);
+            // A replayed card's saved output is plain markdown with no height of
+            // its own, so a long one grows the card until the disclosure that
+            // closes it is off screen. The live card bounds its terminal the same
+            // way.
+            .children(tool_output_display.map(|output| {
+                match self.replayed_terminal_scroll_handle(tool_call) {
+                    Some(scroll_handle) => div()
+                        .id(("replayed-terminal-output", entry_ix))
+                        .max_h_72()
+                        .overflow_y_scroll()
+                        .track_scroll(&scroll_handle)
+                        .child(output)
+                        .into_any_element(),
+                    None => output,
+                }
+            }));
 
         v_flex()
             .map(|this| {
@@ -11435,6 +11545,19 @@ impl ThreadView {
             .into_any()
     }
 
+    fn replayed_terminal_scroll_handle(&self, tool_call: &ToolCall) -> Option<ScrollHandle> {
+        let is_replayed_terminal = matches!(tool_call.kind(), acp_v2::ToolKind::Execute)
+            && !tool_call.is_subagent()
+            && tool_call.terminals().next().is_none();
+        is_replayed_terminal.then(|| {
+            self.replayed_terminal_scroll_handles
+                .borrow_mut()
+                .entry(tool_call.id.clone())
+                .or_default()
+                .clone()
+        })
+    }
+
     fn render_markdown_output(
         &self,
         markdown: Entity<Markdown>,
@@ -11456,8 +11579,12 @@ impl ThreadView {
                 cx,
             )
             .unwrap_or_else(|| {
-                self.render_markdown(markdown, markdown_style, cx)
-                    .into_any()
+                let markdown = self.render_markdown(markdown, markdown_style, cx);
+                match self.replayed_terminal_scroll_handle(tool_call) {
+                    Some(scroll_handle) => markdown.scroll_handle(scroll_handle),
+                    None => markdown,
+                }
+                .into_any()
             });
 
         v_flex()
@@ -14046,6 +14173,22 @@ mod tests {
                 expected,
             );
         }
+    }
+
+    /// A replayed terminal card gets its failure indicator from the exit code
+    /// recovered out of the persisted output, so a saved failure has to survive
+    /// the round trip that `TerminalToolHeader::failed` is then handed.
+    #[test]
+    fn test_replayed_terminal_recovers_saved_exit_code() {
+        let saved_output = "Command \"false\" failed with exit code 128.\n\n```\nfatal: oops\n```";
+        assert_eq!(agent::parse_failed_exit_code(saved_output), Some(128));
+
+        // Output not produced by the native terminal tool (e.g. Claude Code
+        // reporting "Exit code 2" in its own format) carries no code, and the
+        // header falls back to the tool call's status instead.
+        assert_eq!(agent::parse_failed_exit_code("Exit code 2"), None);
+        assert_eq!(ToolCallStatus::Canceled.to_string(), "Canceled");
+        assert_eq!(ToolCallStatus::Rejected.to_string(), "Rejected");
     }
 
     fn native_command(name: &str) -> acp_v2::AvailableCommand {
