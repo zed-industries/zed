@@ -232,7 +232,6 @@ struct Session {
     acp_thread: WeakEntity<acp_thread::AcpThread>,
     execution: Option<NativeExecution>,
     pending_cancellation: watch::Sender<()>,
-    subagents: Vec<Entity<acp_thread::AcpThread>>,
     project_id: EntityId,
     /// Latest snapshot to persist. Overwritten in place on every save request;
     /// the single save worker drains it, coalescing bursts into one write.
@@ -1071,7 +1070,6 @@ impl NativeAgent {
                 acp_thread: acp_thread.downgrade(),
                 execution: None,
                 pending_cancellation: watch::channel(()).0,
-                subagents: Vec::new(),
                 project_id,
                 pending_save,
                 last_streaming_save_key: None,
@@ -2937,11 +2935,6 @@ impl NativeAgentConnection {
                                     thread.update_tool_call(update, cx)
                                 })??;
                             }
-                            ThreadEvent::SubagentSpawned(session_id) => {
-                                acp_thread.update(cx, |thread, cx| {
-                                    thread.subagent_spawned(session_id, cx);
-                                })?;
-                            }
                             ThreadEvent::Retry(status) => {
                                 if acp_thread::refusal_fallback_model_from_meta(&status.meta)
                                     .is_some()
@@ -3742,14 +3735,13 @@ impl NativeThreadEnvironment {
                     .get(&parent_session_id)
                     .map(|s| s.project_id)
                     .context("parent session not found")?;
-                let acp_thread = agent.register_session(subagent_thread.clone(), project_id, cx);
-                let parent_session = agent
-                    .sessions
-                    .get_mut(&parent_session_id)
-                    .context("parent session not found")?;
-                parent_session.subagents.push(acp_thread.clone());
-                Ok(acp_thread)
+                Ok(agent.register_session(subagent_thread.clone(), project_id, cx))
             })??;
+        self.acp_thread
+            .update(cx, |parent, cx| {
+                parent.register_subagent(acp_thread.clone(), cx)
+            })
+            .context("Parent thread no longer exists")?;
 
         let depth = current_depth + 1;
 
@@ -9519,6 +9511,58 @@ mod internal_tests {
         assert_eq!(session_count, 0);
         assert_eq!(project_count, 0);
         assert!(weak_project.upgrade().is_none());
+    }
+
+    #[gpui::test]
+    async fn test_only_created_subagents_are_registered_with_the_parent(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({ "a": {} })).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = cx
+            .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
+        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+        let new_session = |cx: &mut TestAppContext| {
+            cx.update(|cx| {
+                connection
+                    .clone()
+                    .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
+            })
+        };
+        let parent = new_session(cx).await.unwrap();
+        let unrelated = new_session(cx).await.unwrap();
+        let parent_session_id = parent.read_with(cx, |thread, _| thread.session_id().clone());
+        let unrelated_session_id = unrelated.read_with(cx, |thread, _| thread.session_id().clone());
+        let environment = NativeThreadEnvironment {
+            agent: agent.downgrade(),
+            thread: cx
+                .update(|cx| native_thread_for_session(&agent, &parent_session_id, cx))
+                .downgrade(),
+            acp_thread: parent.downgrade(),
+        };
+
+        let child = cx
+            .update(|cx| environment.create_subagent_thread("child".to_string(), None, cx))
+            .unwrap();
+        cx.update(|cx| environment.resume_subagent_thread(child.id(), cx))
+            .expect("resume the child");
+        // Resuming a session the parent did not create, including itself, must not make
+        // the parent own it: that would be a reference cycle or a self-update.
+        cx.update(|cx| environment.resume_subagent_thread(unrelated_session_id, cx))
+            .expect("resume an unrelated live session");
+        cx.update(|cx| environment.resume_subagent_thread(parent_session_id, cx))
+            .expect("resume the parent's own session");
+
+        parent.read_with(cx, |parent, cx| {
+            assert_eq!(
+                parent
+                    .subagents()
+                    .map(|subagent| subagent.read(cx).session_id().clone())
+                    .collect::<Vec<_>>(),
+                [child.id()]
+            );
+        });
     }
 
     #[gpui::test]
