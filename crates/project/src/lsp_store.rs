@@ -7110,18 +7110,24 @@ impl LspStore {
             return None;
         }
 
-        let position = position.to_point_utf16(buffer.read(cx));
+        let position = {
+            let buffer = buffer.read(cx);
+            let position = position.to_point_utf16(buffer);
+            buffer.anchor_before(position)
+        };
         Some(self.on_type_format_impl(buffer, position, trigger, push_to_history, cx))
     }
 
     fn on_type_format_impl(
         &mut self,
         buffer: Entity<Buffer>,
-        position: PointUtf16,
+        position: Anchor,
         trigger: String,
         push_to_history: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<Transaction>>> {
+        let autoindent_applied =
+            buffer.update(cx, |buffer, _| buffer.wait_for_autoindent_applied());
         let options = buffer.update(cx, |buffer, cx| {
             lsp_command::lsp_formatting_options(
                 LanguageSettings::for_buffer_at(buffer, position, cx).as_ref(),
@@ -7129,11 +7135,21 @@ impl LspStore {
         });
 
         cx.spawn(async move |this, cx| {
-            if let Some(waiter) =
-                buffer.update(cx, |buffer, _| buffer.wait_for_autoindent_applied())
-            {
-                waiter.await?;
-            }
+            let autoindent_edit_id = match autoindent_applied {
+                Some(waiter) => waiter.await?,
+                None => None,
+            };
+            let position = buffer.read_with(cx, |buffer, _| {
+                let offset = position.to_offset(buffer);
+                let offset = autoindent_edit_id
+                    .and_then(|edit_id| {
+                        buffer
+                            .edited_ranges_for_edit_ids::<usize>([&edit_id])
+                            .find(|range| range.start == offset)
+                    })
+                    .map_or(offset, |range| range.end);
+                offset.to_point_utf16(buffer)
+            });
             cx.update(|cx| {
                 this.update(cx, |this, cx| {
                     this.request_lsp(
