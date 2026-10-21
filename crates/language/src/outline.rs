@@ -2,7 +2,6 @@ use crate::{BufferSnapshot, Language, Point, ToPoint, ToTreeSitterPoint};
 use fuzzy_nucleo::{Case, LengthPenalty, StringMatch, StringMatchCandidate};
 use gpui::{BackgroundExecutor, HighlightStyle, SharedString};
 use std::{ops::Range, sync::Arc};
-use text::Rope;
 use theme::SyntaxTheme;
 
 /// An outline of all the symbols contained in a buffer.
@@ -269,9 +268,10 @@ pub fn highlight_ranges_from_text(
     language: &Arc<Language>,
     syntax_theme: &SyntaxTheme,
 ) -> Vec<(Range<usize>, HighlightStyle)> {
-    let rope = Rope::from(text);
-    let runs = language.highlight_text(&rope, 0..text.len());
-    syntax_theme.resolve_runs(&runs).collect()
+    language
+        .highlight_text(text, 0..text.len())
+        .filter_map(|(range, highlight_id)| Some((range, *syntax_theme.get(highlight_id)?)))
+        .collect()
 }
 
 /// Interleaves synthetic [`OutlineSearchEntry::Ancestor`] rows before each match so callers

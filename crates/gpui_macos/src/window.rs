@@ -973,6 +973,7 @@ impl MacWindow {
             display_id,
             window_min_size,
             tabbing_identifier,
+            use_display_p3,
             ..
         }: WindowParams,
         cursor_visible: Arc<AtomicBool>,
@@ -1106,6 +1107,7 @@ impl MacWindow {
                     native_view as *mut _,
                     bounds.size.map(|pixels| pixels.as_f32()),
                     false,
+                    use_display_p3,
                 ),
                 request_frame_callback: None,
                 event_callback: None,
@@ -2650,7 +2652,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
     let mut lock = window_state.as_ref().lock();
 
     let window_height = lock.content_size().height;
-    let event = unsafe { platform_input_from_native(native_event, Some(window_height)) };
+    let event = unsafe { platform_input_from_native(native_event.cast(), Some(window_height)) };
 
     let Some(event) = event else {
         return NO;
@@ -2804,7 +2806,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
         }
         _ => {}
     }
-    let event = unsafe { platform_input_from_native(native_event, Some(window_height)) };
+    let event = unsafe { platform_input_from_native(native_event.cast(), Some(window_height)) };
 
     if let Some(mut event) = event {
         // AppKit unhides the cursor on the next mouse movement; mirror that here.
@@ -2815,7 +2817,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                 | PlatformInput::MouseUp(_)
                 | PlatformInput::MousePressure(_)
                 | PlatformInput::MouseExited(_)
-                | PlatformInput::ScrollWheel(_)
+                | PlatformInput::Scroll(_)
                 | PlatformInput::Pinch(_)
         ) {
             lock.cursor_visible.store(true, Ordering::Relaxed);

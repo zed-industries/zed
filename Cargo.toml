@@ -10,6 +10,7 @@ members = [
     "crates/agent_settings",
     "crates/agent_skills",
     "crates/agent_ui",
+    "crates/agent_ui_benchmarks",
     "crates/ai_onboarding",
     "crates/anthropic",
     "crates/askpass",
@@ -95,7 +96,6 @@ members = [
     "crates/gpui",
     "crates/gpui_apple",
     "crates/gpui_ios",
-    "crates/gpui_ios/examples/ios",
     "crates/gpui_linux",
     "crates/gpui_macos",
     "crates/gpui_macros",
@@ -530,7 +530,7 @@ accesskit = { version = "0.24.0", features = ["enumn"] }
 accesskit_macos = "0.26.0"
 accesskit_unix = "0.22"
 accesskit_windows = "0.34"
-agent-client-protocol = { version = "=3.3.0", features = ["schemars", "unstable", "unstable_protocol_v2"] }
+agent-client-protocol = { version = "=3.4.0", features = ["schemars", "unstable", "unstable_protocol_v2"] }
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "4c129667ce56611becdc82de6e28218c80e2e88f" }
 any_vec = "0.14"
@@ -688,7 +688,7 @@ linkify = "0.10.0"
 livekit = { version = "0.7.32", features = ["tokio", "rustls-tls-native-roots"] }
 log = { version = "0.4", default-features = false, features = ["std"] }
 lru = "0.16"
-lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "f1783e63a7f4eb4397bf51d4148b4895a1f7ab16" }
+lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "82d7fc66ebdfabcfeb26ba16bbed9f3d26211fc3" }
 mach2 = "0.6"
 markup5ever_rcdom = "0.39"
 mdbook = { version = "=0.4.40", default-features = false, features = ["search"] }
@@ -711,8 +711,14 @@ objc2-ui-kit = { version = "0.3.2", default-features = false, features = [
     "objc2-core-foundation",
     "NSText",
     "UIApplication",
+    "UICommand",
+    "UICornerConfiguration",
+    "UICornerRadius",
     "UIEvent",
     "UIGeometry",
+    "UIGestureRecognizer",
+    "UIPanGestureRecognizer",
+    "UIScreenEdgePanGestureRecognizer",
     "UIInterface",
     "UIOpenURLContext",
     "UIPasteboard",
@@ -738,6 +744,7 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "NSButton",
     "NSControl",
     "NSDraggingItem",
+    "NSEvent",
     "NSGraphics",
     "NSImage",
     "NSOpenPanel",
@@ -830,7 +837,7 @@ proc-macro2 = "1.0.93"
 profiling = "1"
 # replace this with main when #635 is merged
 pollster = "0.4.0"
-proptest = { git = "https://github.com/proptest-rs/proptest", rev = "3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b", features = ["attr-macro"] }
+proptest = { version = "1.12.0", features = ["attr-macro"] }
 proptest-derive = "0.8.0"
 prost = "0.14"
 prost-build = { version = "0.14", default-features = false }
@@ -982,7 +989,8 @@ web-sys = "0.3"
 web-time = "1.1.0"
 webpki-roots = "1.0.8"
 webrtc-sys = "0.3.23"
-wgpu = { version = "29.0", default-features = false }
+# 30.0.1 lacks the Vulkan surface-drop panic fix: https://github.com/gfx-rs/wgpu/pull/10230.
+wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "3b3506ea31154edc04de64debda0e780cba2639c", default-features = false }
 which = "8"
 windows-core = "0.62"
 windows-registry = "0.6.0"
