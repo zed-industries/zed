@@ -26,11 +26,18 @@ pub(crate) const ESCAPE_KEY: u16 = 0x1b;
 const TAB_KEY: u16 = 0x09;
 const SHIFT_TAB_KEY: u16 = 0x19;
 
+// Menu key equivalents use different character values than the ones NSEvent
+// reports for the same physical keys.
+//
+// See https://developer.apple.com/documentation/appkit/nsmenuitem/keyequivalent#Discussion
+const BACKSPACE_KEY_EQUIVALENT: u16 = 0x08;
+const DELETE_KEY_EQUIVALENT: u16 = 0x7f;
+
 pub fn key_to_native(key: &str) -> Cow<'_, str> {
     use cocoa::appkit::*;
     let code = match key {
         "space" => SPACE_KEY,
-        "backspace" => BACKSPACE_KEY,
+        "backspace" => BACKSPACE_KEY_EQUIVALENT,
         "escape" => ESCAPE_KEY,
         "up" => NSUpArrowFunctionKey,
         "down" => NSDownArrowFunctionKey,
@@ -40,7 +47,7 @@ pub fn key_to_native(key: &str) -> Cow<'_, str> {
         "pagedown" => NSPageDownFunctionKey,
         "home" => NSHomeFunctionKey,
         "end" => NSEndFunctionKey,
-        "delete" => NSDeleteFunctionKey,
+        "delete" => DELETE_KEY_EQUIVALENT,
         "insert" => NSHelpFunctionKey,
         "f1" => NSF1FunctionKey,
         "f2" => NSF2FunctionKey,
