@@ -3357,7 +3357,7 @@ impl GitPanel {
         }
 
         let prompt = prompt("Trash these files?", Some(&details), window, cx);
-        cx.spawn_in(window, async move |this, cx| {
+        cx.spawn_in(window, async move |_, cx| {
             match prompt.await? {
                 TrashCancel::Trash => {}
                 TrashCancel::Cancel => return Ok(()),
