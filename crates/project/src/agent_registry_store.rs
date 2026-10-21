@@ -532,6 +532,8 @@ async fn download_icon(
         bail!("icon status error {}, response: {text:?}", status.as_u16());
     }
 
+    crate::agent_icon::validate_svg(&body)?;
+
     let icon_path = registry_cache_dir()
         .join("icons")
         .join(format!("{}.svg", entry.id));
