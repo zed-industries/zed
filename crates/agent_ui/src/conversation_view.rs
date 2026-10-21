@@ -18043,10 +18043,6 @@ pub(crate) mod tests {
             assert!(control.left() >= card.left() && control.right() <= card.right());
         }
         assert!(cx.debug_bounds("standalone-generic-permissions").is_none());
-        assert!(
-            cx.debug_bounds("generic-permission-tool-permission-tool")
-                .is_none()
-        );
         thread.read_with(cx, |thread, _| {
             let (_, tool) = thread.tool_call(&"permission-tool".into()).expect("tool");
             assert!(tool.authorization_id().is_none());
@@ -18246,7 +18242,7 @@ pub(crate) mod tests {
                 Some(serde_json::json!({
                     "type": "tool_call", "toolCall": {"toolCallId": "unseen-tool"}
                 })),
-                Some("generic-permission-tool-unseen-tool"),
+                None,
             ),
         ] {
             let request = generic_permission_prompt(&thread, subject, cx);

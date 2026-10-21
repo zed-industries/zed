@@ -4273,17 +4273,6 @@ impl ThreadView {
                     )
                     .child(format!("Working directory: {}", command.cwd.0.display())),
             ),
-            Some(acp_v2::RequestPermissionSubject::ToolCall(subject))
-                if Self::permission_tool_call(self.thread.read(cx), request).is_none() =>
-            {
-                Some(
-                    v_flex()
-                        .debug_selector(|| {
-                            format!("generic-permission-tool-{}", subject.tool_call.tool_call_id)
-                        })
-                        .child(format!("Tool call: {}", subject.tool_call.tool_call_id)),
-                )
-            }
             Some(acp_v2::RequestPermissionSubject::ToolCall(_)) => None,
             Some(acp_v2::RequestPermissionSubject::Other(subject)) => Some(
                 v_flex()
