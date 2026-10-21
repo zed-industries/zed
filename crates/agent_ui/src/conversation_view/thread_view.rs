@@ -8377,32 +8377,16 @@ impl ThreadView {
             .rev()
             .take_while(|(_, entry)| !matches!(entry, AgentThreadEntry::UserMessage(_)))
             .find_map(|(index, entry)| match entry {
-                AgentThreadEntry::AssistantMessage(message) => {
-                    Self::assistant_message_copy_text(message, cx).map(|_| index)
-                }
+                AgentThreadEntry::AssistantMessage(message) => message
+                    .chunks
+                    .iter()
+                    .any(|chunk| match chunk {
+                        AssistantMessageChunk::Message { block, .. } => block.visible_content(cx),
+                        AssistantMessageChunk::Thought { .. } => false,
+                    })
+                    .then_some(index),
                 _ => None,
             })
-    }
-
-    fn assistant_message_copy_text(message: &AssistantMessage, cx: &App) -> Option<String> {
-        let text = message
-            .chunks
-            .iter()
-            .filter_map(|chunk| match chunk {
-                AssistantMessageChunk::Message { block, .. } => {
-                    let markdown = block.to_markdown(cx);
-                    if markdown.trim().is_empty() {
-                        None
-                    } else {
-                        Some(markdown)
-                    }
-                }
-                AssistantMessageChunk::Thought { .. } => None,
-            })
-            .collect::<Vec<_>>()
-            .join("\n\n");
-
-        if text.is_empty() { None } else { Some(text) }
     }
 
     fn get_agent_message_content(
@@ -8426,17 +8410,33 @@ impl ThreadView {
             .map(|i| i - 1)
             .unwrap_or(entries.len() - 1);
 
-        let parts: Vec<String> = (start_index..=end_index)
+        let text = (start_index..=end_index)
             .filter_map(|i| entries.get(i))
-            .filter_map(|entry| match entry {
-                AgentThreadEntry::AssistantMessage(message) => {
-                    Self::assistant_message_copy_text(message, cx)
-                }
-                _ => None,
-            })
-            .collect();
+            .filter_map(|entry| {
+                if let AgentThreadEntry::AssistantMessage(message) = entry {
+                    let text = message
+                        .chunks
+                        .iter()
+                        .filter_map(|chunk| match chunk {
+                            AssistantMessageChunk::Message { block, .. } => {
+                                let markdown = block.to_markdown(cx);
+                                if markdown.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(markdown)
+                                }
+                            }
+                            AssistantMessageChunk::Thought { .. } => None,
+                        })
+                        .join("\n\n");
 
-        let text = parts.join("\n\n");
+                    if text.is_empty() { None } else { Some(text) }
+                } else {
+                    None
+                }
+            })
+            .join("\n\n");
+
         if text.is_empty() { None } else { Some(text) }
     }
 
