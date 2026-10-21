@@ -1043,12 +1043,14 @@ impl MarkdownPreviewView {
                     cx.global_mut::<SuppressedAutoPreviews>()
                         .0
                         .insert(editor_entity_id);
-                    cx.observe_release(&editor, move |_, _, cx| {
+
+                    App::observe_release(cx, &editor, move |_, cx| {
                         cx.global_mut::<SuppressedAutoPreviews>()
                             .0
                             .remove(&editor_entity_id);
                     })
                     .detach();
+
                     workspace.add_item(
                         pane.clone(),
                         Box::new(editor),
