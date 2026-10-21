@@ -12386,11 +12386,14 @@ dependencies = [
 name = "opencode"
 version = "0.1.0"
 dependencies = [
+ "anthropic",
  "anyhow",
  "futures 0.3.34",
  "google_ai",
  "http_client",
  "language_model_core",
+ "log",
+ "open_ai",
  "schemars 1.0.4",
  "serde",
  "serde_json",
