@@ -261,6 +261,127 @@ impl LspStore {
         self.mirror_dynamic_text_document_sync(server, cx)
     }
 
+    /// `didOpen` and `didClose` registrations carry no options besides their selectors, which
+    /// decide the documents that are synchronized with the server beyond the languages it serves.
+    fn register_dynamic_text_document_open_close(
+        &mut self,
+        server: &LanguageServer,
+        method: &str,
+        registration_id: String,
+        document_selector: Option<lsp::DocumentSelector>,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        let document_selector = document_selector
+            .map(CompiledDocumentSelector::new)
+            .transpose()?;
+        let local = self
+            .as_local_mut()
+            .context("Expected LSP Store to be local")?;
+        local
+            .language_server_dynamic_registrations
+            .entry(server.server_id())
+            .or_default()
+            .text_documents
+            .entry(method.to_owned())
+            .or_default()
+            .insert(
+                registration_id,
+                DynamicTextDocumentRegistration {
+                    document_selector,
+                    server_capabilities: lsp::ServerCapabilities::default(),
+                },
+            );
+        self.notify_server_capabilities_updated(server, cx);
+        Ok(())
+    }
+
+    fn unregister_dynamic_text_document_open_close(
+        &mut self,
+        server: &LanguageServer,
+        unregistration: &lsp::Unregistration,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        let local = self
+            .as_local_mut()
+            .context("Expected LSP Store to be local")?;
+        let removed = local
+            .language_server_dynamic_registrations
+            .get_mut(&server.server_id())
+            .and_then(|registrations| registrations.text_documents.get_mut(&unregistration.method))
+            .and_then(|registrations| registrations.shift_remove(&unregistration.id));
+        if removed.is_none() {
+            log::warn!(
+                "Attempted to unregister non-existent {} registration with ID {}",
+                unregistration.method,
+                unregistration.id
+            );
+            return Ok(());
+        }
+        self.notify_server_capabilities_updated(server, cx);
+        Ok(())
+    }
+
+    /// Opens the buffers that the server's `didOpen` registrations select and closes the ones
+    /// they no longer select.
+    pub(super) fn update_buffers_opened_by_registrations(
+        &mut self,
+        server_id: LanguageServerId,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(local) = self.as_local() else {
+            return;
+        };
+        let buffers = self
+            .buffer_store
+            .read(cx)
+            .buffers()
+            .filter(|buffer| {
+                local
+                    .registered_buffers
+                    .contains_key(&buffer.read(cx).remote_id())
+            })
+            .collect::<Vec<_>>();
+
+        let mut closed_documents = Vec::new();
+        for buffer in buffers {
+            let Some(local) = self.as_local_mut() else {
+                return;
+            };
+            let buffer_id = buffer.read(cx).remote_id();
+            let opened_by_registrations = local
+                .buffers_opened_by_registrations
+                .get(&buffer_id)
+                .is_some_and(|server_ids| server_ids.contains(&server_id));
+            if !opened_by_registrations {
+                local.open_buffer_by_registrations(&buffer, server_id, cx);
+            } else if !local.registrations_open_buffer_in_server(buffer.read(cx), server_id, cx)
+                && let Some(abs_path) =
+                    local.close_buffer_opened_by_registrations(&buffer, server_id, cx)
+            {
+                closed_documents.push((buffer_id, abs_path));
+            }
+        }
+
+        // Like a server detached by a language change, the server may keep publishing for the
+        // closed documents, so only drop what it already said.
+        let clear_diagnostics = self
+            .as_local()
+            .is_some_and(|local| !local.server_pulls_workspace_diagnostics(server_id));
+        for (buffer_id, abs_path) in closed_documents {
+            if let Some(lsp_data) = self.lsp_data.get_mut(&buffer_id) {
+                lsp_data.remove_server_data(server_id);
+            }
+            if clear_diagnostics {
+                self.clear_path_diagnostics_for_servers(
+                    abs_path,
+                    vec![server_id],
+                    |_, _, _| false,
+                    cx,
+                );
+            }
+        }
+    }
+
     fn unregister_dynamic_text_document_sync(
         &mut self,
         server: &LanguageServer,
@@ -812,6 +933,21 @@ impl LspStore {
                         )?;
                     }
                 }
+                "textDocument/didOpen" | "textDocument/didClose" => {
+                    let document_selector =
+                        parse_text_document_registration(reg.register_options.as_ref())?;
+                    let opens_documents = reg.method == "textDocument/didOpen";
+                    self.register_dynamic_text_document_open_close(
+                        &server,
+                        &reg.method,
+                        reg.id,
+                        document_selector,
+                        cx,
+                    )?;
+                    if opens_documents {
+                        self.update_buffers_opened_by_registrations(server_id, cx);
+                    }
+                }
                 "textDocument/didChange" => {
                     let document_selector =
                         parse_text_document_registration(reg.register_options.as_ref())?;
@@ -1252,6 +1388,12 @@ impl LspStore {
                         )
                     {
                         self.refresh_semantic_tokens(server_id, cx);
+                    }
+                }
+                "textDocument/didOpen" | "textDocument/didClose" => {
+                    self.unregister_dynamic_text_document_open_close(&server, unreg, cx)?;
+                    if unreg.method == "textDocument/didOpen" {
+                        self.update_buffers_opened_by_registrations(server_id, cx);
                     }
                 }
                 "textDocument/didChange" | "textDocument/didSave" => {
