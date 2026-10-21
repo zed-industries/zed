@@ -477,9 +477,19 @@ where
             target.cmp(&self.position, self.cx).is_ge(),
             "cannot seek backward",
         );
+        self.did_seek = true;
 
-        if !self.did_seek {
-            self.did_seek = true;
+        // An empty stack means that there's no tree traversal to resume. This
+        // is normally because the cursor has been newly created (or because it
+        // has been reset). Another possibility is that the cursor has traversed
+        // back to a "before first item" state, and in that case we must restart
+        // the search from the root as well.
+        //
+        // Otherwise, the empty stack might mean the cursor is past the end of
+        // the tree, and in that case no further seeking is necessary and the
+        // loop below is skipped.
+        let should_start_from_root = self.stack.is_empty() && !self.at_end();
+        if should_start_from_root {
             self.stack
                 .push(StackEntry {
                     tree: self.tree,

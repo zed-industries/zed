@@ -1663,27 +1663,20 @@ mod tests {
         // then,
         //
         // target                        ^ Right
-        // slice         (empty)
-        // cursor        ^ start=end=0, at_end=true
-        // cursor stays at 0, returns no items, and is marked at_end.
-        //
-        // (when it should actually be at 2 and return all items).
+        // slice         |--10---|--20---|
+        // cursor                        ^ start=end=2, at_end=true
         let slice = cursor.slice(&Count(2), Bias::Right);
-        assert!(slice.is_empty());
-        // assert_eq!(slice.items(), [10, 20]); <- expected
+        assert_eq!(slice.items(()), [10, 20]);
         assert_eq!(cursor.item(), None);
-        assert_eq!(cursor.start(), &Count(0));
-        // assert_eq!(cursor.start(), &Count(2)); <- expected
-        assert_eq!(cursor.end(), Count(0));
-        // assert_eq!(cursor.end(), Count(2)); <- expected
+        assert_eq!(cursor.start(), &Count(2));
+        assert_eq!(cursor.end(), Count(2));
         assert_eq!(cursor.prev_item(), Some(&20));
         assert_eq!(cursor.next_item(), None);
         assert!(cursor.at_end());
 
         cursor.next();
         assert_eq!(cursor.item(), None);
-        assert_eq!(cursor.start(), &Count(0));
-        // assert_eq!(cursor.start(), &Count(2)); <- expected
+        assert_eq!(cursor.start(), &Count(2));
     }
 
     #[test]
