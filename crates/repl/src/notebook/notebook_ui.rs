@@ -107,11 +107,11 @@ pub struct NotebookEditor {
     /// saved, plus whatever the kernel started automatically on open writes
     /// (its kernelspec and the language info it reports). Those writes are
     /// not changes the user made, so they must not dirty a fresh notebook.
-    clean_metadata: serde_json::Value,
+    baseline_metadata: serde_json::Value,
     /// Set once the user picks a kernel. From then on every metadata write is
-    /// a consequence of that choice and is compared against `clean_metadata`.
+    /// a consequence of that choice and is compared against `baseline_metadata`.
     kernel_picked_by_user: bool,
-    /// The metadata that would be saved differs from `clean_metadata`.
+    /// The metadata that would be saved differs from `baseline_metadata`.
     metadata_dirty: bool,
     cell_map: HashMap<CellId, Cell>,
     kernel: Kernel,
@@ -146,7 +146,7 @@ impl NotebookEditor {
         let worktree_id = notebook_item.read(cx).project_path.worktree_id;
 
         let notebook_language = notebook_item.read(cx).notebook_language();
-        let clean_metadata = metadata_json(notebook_item.read(cx));
+        let baseline_metadata = metadata_json(notebook_item.read(cx));
         let notebook_language = cx
             .spawn_in(window, async move |_, _| notebook_language.await)
             .shared();
@@ -241,7 +241,7 @@ impl NotebookEditor {
             selected_cell_index: 0,
             cell_order: cell_order.clone(),
             original_cell_order: cell_order.clone(),
-            clean_metadata,
+            baseline_metadata,
             kernel_picked_by_user: false,
             metadata_dirty: false,
             cell_map: cell_map.clone(),
@@ -295,18 +295,17 @@ impl NotebookEditor {
     }
 
     /// Call after anything writes to the notebook metadata.
-    fn metadata_written(&mut self, cx: &mut Context<Self>) {
+    fn metadata_written(&mut self, cx: &App) {
         let current = metadata_json(self.notebook_item.read(cx));
         if self.kernel_picked_by_user {
-            self.metadata_dirty = current != self.clean_metadata;
+            self.metadata_dirty = current != self.baseline_metadata;
         } else {
-            self.clean_metadata = current;
+            self.baseline_metadata = current;
         }
-        cx.notify();
     }
 
-    fn mark_metadata_clean(&mut self, cx: &App) {
-        self.clean_metadata = metadata_json(self.notebook_item.read(cx));
+    fn reset_metadata_baseline(&mut self, cx: &App) {
+        self.baseline_metadata = metadata_json(self.notebook_item.read(cx));
         self.metadata_dirty = false;
     }
 
@@ -341,7 +340,7 @@ impl NotebookEditor {
 
     pub fn mark_as_saved(&mut self, cx: &mut Context<Self>) {
         self.original_cell_order = self.cell_order.clone();
-        self.mark_metadata_clean(cx);
+        self.reset_metadata_baseline(cx);
 
         for cell in self.cell_map.values() {
             match cell {
@@ -2000,7 +1999,7 @@ impl Item for NotebookEditor {
 
                 this.cell_order = cell_order.clone();
                 this.original_cell_order = cell_order;
-                this.mark_metadata_clean(cx);
+                this.reset_metadata_baseline(cx);
                 this.cell_map = cell_map;
                 this.cell_list =
                     ListState::new(this.cell_order.len(), gpui::ListAlignment::Top, px(1000.));
@@ -2623,7 +2622,7 @@ mod tests {
         })
     }
 
-    async fn save(
+    async fn save_notebook(
         notebook_editor: &Entity<NotebookEditor>,
         project: &Entity<Project>,
         fs: &FakeFs,
@@ -2718,7 +2717,7 @@ mod tests {
             cx,
         );
 
-        let saved = save(&notebook_editor, &project, &fs, cx).await;
+        let saved = save_notebook(&notebook_editor, &project, &fs, cx).await;
         assert!(
             saved.contains("\"display_name\": \"Other Kernel\""),
             "the picked kernel should be written to the notebook, got: {saved}"
@@ -2833,7 +2832,7 @@ mod tests {
                 cx,
             );
         });
-        let saved = save(&notebook_editor, &project, &fs, cx).await;
+        let saved = save_notebook(&notebook_editor, &project, &fs, cx).await;
         assert!(saved.contains("\"version\": \"3.12.0\""), "got: {saved}");
 
         report("3.13.0", cx);
@@ -2844,7 +2843,7 @@ mod tests {
             cx,
         );
 
-        let saved = save(&notebook_editor, &project, &fs, cx).await;
+        let saved = save_notebook(&notebook_editor, &project, &fs, cx).await;
         assert!(
             saved.contains("\"version\": \"3.13.0\""),
             "the reported language info should be written to the notebook, got: {saved}"
