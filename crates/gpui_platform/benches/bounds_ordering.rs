@@ -242,6 +242,14 @@ fn scene_ordering(criterion: &mut criterion::Criterion<gpui::BenchMeasurement>) 
             validate_scene(scene, rectangles, &case);
         });
         report.print("  ");
+        if std::env::var("GPUI_BENCH_SCENE_STATS").as_deref() == Ok("1")
+            && let Some((_, scene)) = &fixture
+        {
+            eprintln!(
+                "scene stats BoundsOrdering/scene/{case}: batches={}",
+                scene.batches().count()
+            );
+        }
     }
     group.finish();
 }
@@ -274,6 +282,15 @@ fn paint_rectangles(case: &Case, cx: &mut BenchAppContext) {
     assert!(updates > 0);
     assert_eq!(renders.get() - before, updates);
     window.update(|window, _| validate(window, &rectangles, case));
+    window.update(|window, _| {
+        if std::env::var("GPUI_BENCH_SCENE_STATS").as_deref() == Ok("1") {
+            eprintln!(
+                "scene stats BoundsOrdering/paint/{case}: batches={}, work={:?}",
+                window.rendered_scene().batches().count(),
+                window.view_reuse_stats()
+            );
+        }
+    });
     window.update(|window, _| window.remove_window());
     cx.run_until_idle();
 }

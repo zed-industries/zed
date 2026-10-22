@@ -1207,6 +1207,13 @@ fn first_populated_text_panels(panel_count: &usize, cx: &mut BenchAppContext) {
             ),
             None => eprintln!("first populated setup live heap: allocator statistics unavailable"),
         }
+        window.update(|window, _| {
+            report_scene_stats(
+                "TextPanels first populated",
+                &panel_count.to_string(),
+                window,
+            );
+        });
         let initial = window.update(|window, _| snapshot_output(window));
         window.update(|window, _| window.refresh());
         cx.run_until_idle();
