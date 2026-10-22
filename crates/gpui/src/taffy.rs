@@ -424,9 +424,7 @@ impl TaffyLayoutEngine {
     }
 
     pub(crate) fn enable_retention(&mut self) {
-        if self.retained.is_none() {
-            self.retained = Some(Box::default());
-        }
+        self.retained.get_or_insert_with(Box::default);
     }
 
     pub(crate) fn retained_style(&self, id: LayoutId) -> taffy::Style {

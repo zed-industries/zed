@@ -17,6 +17,7 @@ pub(crate) struct ViewOccurrenceId {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SpliceFallback {
     Blocked,
+    // Transactions forbid complete reuse as well as descendant splicing.
     Transaction,
 }
 
@@ -694,27 +695,23 @@ impl Window {
                 .as_ref()
                 .is_some_and(|layout| self.view_layout_scope_matches(&layout.scope, &scope))
             && !self.a11y.is_active();
-        if can_retain {
-            let result = if self.view_store.is_descendant_dirty(occurrence) {
-                self.prepare_implicit_layout(occurrence, cx)
-            } else {
-                Some(())
-            };
-            if result.is_some() {
-                let layout = self
-                    .view_store
-                    .retained(occurrence)
-                    .layout
-                    .as_ref()
-                    .expect("retained layout")
-                    .id;
-                self.layout_engine
-                    .as_mut()
-                    .expect("layout engine")
-                    .retain_subtree(layout);
-                self.current_view_occurrence = previous_parent;
-                return (layout, None);
-            }
+        if can_retain
+            && (!self.view_store.is_descendant_dirty(occurrence)
+                || self.prepare_implicit_layout(occurrence, cx).is_some())
+        {
+            let layout = self
+                .view_store
+                .retained(occurrence)
+                .layout
+                .as_ref()
+                .expect("retained layout")
+                .id;
+            self.layout_engine
+                .as_mut()
+                .expect("layout engine")
+                .retain_subtree(layout);
+            self.current_view_occurrence = previous_parent;
+            return (layout, None);
         }
         self.view_store.clear_global_access(occurrence);
         let previous_access = self.begin_view_entity_access(cx);

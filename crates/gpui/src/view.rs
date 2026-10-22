@@ -683,12 +683,12 @@ fn prepaint_view(
 
             if element.is_none()
                 && let Some(element_state) = element_state
-                && (!window.is_implicit_view(occurrence) || window.view_store.has_paint(occurrence))
+                && (!implicit || window.view_store.has_paint(occurrence))
                 && element_state.cache_key.bounds == bounds
                 && element_state.cache_key.inherited == inherited
                 && !window.view_store.is_own_dirty(occurrence)
                 && (!window.dirty_views.contains(&entity_id)
-                    || (window.view_splicing && window.view_store.is_descendant_dirty(occurrence)))
+                    || window.view_store.is_descendant_dirty(occurrence))
                 && window.retained_scope_fallback != Some(retained::SpliceFallback::Transaction)
                 && !window.refreshing
                 && !force_reconstruction
@@ -719,7 +719,6 @@ fn prepaint_view(
                 }
             }
 
-            let implicit = window.is_implicit_view(occurrence);
             // Ordinary entity ancestors do not invalidate explicit cached children
             // on reconstruction. Only an explicit cached miss implies a refresh.
             let refreshing = window.refreshing;
