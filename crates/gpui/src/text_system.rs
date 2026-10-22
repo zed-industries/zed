@@ -240,11 +240,11 @@ pub struct TextSystem {
     missing_glyph_receiver: Mutex<Option<MissingGlyphReceiver>>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum CachedFont {
     Direct(FontId),
     Fallback(FontId),
-    Missing,
+    Missing(Arc<anyhow::Error>),
 }
 
 impl TextSystem {
@@ -351,9 +351,9 @@ impl TextSystem {
     /// Panics if the font and none of the fallbacks can be resolved.
     pub fn resolve_font(&self, font: &Font) -> FontId {
         if let Some(CachedFont::Direct(font_id) | CachedFont::Fallback(font_id)) =
-            self.font_ids_by_font.read().get(font).copied()
+            self.font_ids_by_font.read().get(font)
         {
-            return font_id;
+            return *font_id;
         }
         self.resolve_font_uncached(font)
     }
@@ -568,7 +568,7 @@ impl TextSystem {
     }
 
     fn resolve_font_uncached(&self, font: &Font) -> FontId {
-        let mut errors = Vec::new();
+        let mut font_error = None;
         let font_id = {
             let mut font_ids = self.font_ids_by_font.upgradable_read();
             if let Some(CachedFont::Direct(font_id) | CachedFont::Fallback(font_id)) =
@@ -577,26 +577,29 @@ impl TextSystem {
                 return *font_id;
             }
 
-            let mut lookup_font = |font: &Font| {
-                if let Some(cached) = font_ids.get(font) {
-                    return match cached {
-                        CachedFont::Direct(font_id) => Some(*font_id),
-                        CachedFont::Fallback(_) | CachedFont::Missing => None,
+            let mut lookup_font = |candidate: &Font| {
+                let cached = if let Some(cached) = font_ids.get(candidate) {
+                    cached.clone()
+                } else {
+                    let cached = match self.platform_text_system.font_id(candidate) {
+                        Ok(font_id) => CachedFont::Direct(font_id),
+                        Err(error) => CachedFont::Missing(Arc::new(error)),
                     };
+                    font_ids.with_upgraded(|font_ids| {
+                        font_ids.insert(candidate.clone(), cached.clone());
+                    });
+                    cached
+                };
+                match cached {
+                    CachedFont::Direct(font_id) => Some(font_id),
+                    CachedFont::Fallback(_) => None,
+                    CachedFont::Missing(error) => {
+                        if candidate == font {
+                            font_error = Some(error);
+                        }
+                        None
+                    }
                 }
-
-                let result = self.platform_text_system.font_id(font);
-                let font_id = result.as_ref().ok().copied();
-                font_ids.with_upgraded(|font_ids| {
-                    font_ids.insert(
-                        font.clone(),
-                        font_id.map_or(CachedFont::Missing, CachedFont::Direct),
-                    );
-                });
-                if let Err(error) = result {
-                    errors.push((font.clone(), error));
-                }
-                font_id
             };
 
             if let Some(font_id) = lookup_font(font) {
@@ -611,7 +614,7 @@ impl TextSystem {
                 font_id
             }
         };
-        for (font, error) in errors {
+        if let Some(error) = font_error {
             log::warn!("failed to load font {font:?}: {error:#}");
         }
         font_id.unwrap_or_else(|| {
@@ -1485,11 +1488,12 @@ mod font_resolution_tests {
     fn caches_resolved_font_fallbacks() {
         let mut text_system = TextSystem::new(Arc::new(NoopTextSystem::new()));
         let requested = font("Missing Font").bold().italic();
+        let missing = CachedFont::Missing(Arc::new(anyhow::anyhow!("missing font")));
         {
             let mut font_ids = text_system.font_ids_by_font.write();
-            font_ids.insert(requested.clone(), CachedFont::Missing);
+            font_ids.insert(requested.clone(), missing.clone());
             for fallback in &text_system.fallback_font_stack {
-                font_ids.insert(fallback.clone(), CachedFont::Missing);
+                font_ids.insert(fallback.clone(), missing.clone());
             }
             font_ids.insert(font("Arial"), CachedFont::Direct(FontId(42)));
         }
