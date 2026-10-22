@@ -16,6 +16,7 @@ pub use v1::{AcpConnection, AcpSessionList, GEMINI_TERMINAL_AUTH_METHOD_ID};
 pub use v2::AcpV2Connection;
 
 use acp_thread::{AcpThread, AuthRequired, ElicitationStore, LoadError};
+use action_log::ActionLog;
 use agent_client_protocol::schema::{
     v1::{self as acp, ErrorCode},
     v2 as acp_v2,
@@ -28,7 +29,7 @@ use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
 use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use futures::{Future, channel::mpsc};
-use gpui::{App, AsyncApp, Entity, SharedString, Subscription, Task, WeakEntity};
+use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString, Subscription, Task, WeakEntity};
 use project::agent_server_store::{AgentServerCommand, AgentServerStore};
 use project::context_server_store::ContextServerConfiguration;
 use project::{AgentId, Project};
@@ -180,6 +181,11 @@ fn v1_only_mismatch(error: &agent_client_protocol::Error) -> bool {
 }
 
 fn initialization_error(error: anyhow::Error, debug_log: &AcpDebugLog) -> anyhow::Error {
+    // `connect` classifies the agent's answer in-band, but an agent that exits right after
+    // answering surfaces as a process exit, so its answer is recovered from the debug log.
+    if error.is::<UnsupportedVersion>() || error.is::<agent_client_protocol::Error>() {
+        return error;
+    }
     match debug_log.initialization_response() {
         Some(Ok(Some(value))) => {
             if serde_json::from_value::<acp::InitializeResponse>(value).is_ok_and(|response| {
@@ -192,11 +198,8 @@ fn initialization_error(error: anyhow::Error, debug_log: &AcpDebugLog) -> anyhow
         }
         Some(Err(protocol_error)) => {
             let retry_v1 = v1_only_mismatch(&protocol_error);
-            let error = if error.is::<agent_client_protocol::Error>() {
-                error
-            } else {
-                anyhow!(protocol_error).context(format!("ACP initialization failed: {error}"))
-            };
+            let error =
+                anyhow!(protocol_error).context(format!("ACP initialization failed: {error}"));
             if retry_v1 {
                 error.context(UnsupportedVersion)
             } else {
@@ -246,6 +249,9 @@ struct ClientContext {
     request_elicitations: Entity<ElicitationStore>,
     // Legacy and ingress-only contexts do not track caller ownership of outgoing RPCs.
     active_request_scopes: Option<RefCell<HashSet<acp_v2::RequestId>>>,
+    /// A v1 agent may only send `subagent_update` after Zed advertises the `subagents`
+    /// client capability. v2 includes subagents in every session.
+    accepts_subagent_updates: bool,
 }
 
 fn dispatch_queue_closed_error() -> acp::Error {
@@ -684,6 +690,15 @@ fn first_class_terminal_auth_task(
     })
 }
 
+fn is_disconnect_error(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<agent_client_protocol::Error>()
+        .is_some_and(|error| {
+            agent_client_protocol::is_incoming_transport_closed(error)
+                || agent_client_protocol::is_connection_terminated(error)
+        })
+}
+
 fn map_acp_error(err: acp::Error) -> anyhow::Error {
     let error = anyhow!(err);
     match AuthRequired::from_error(&error) {
@@ -743,12 +758,115 @@ fn close_undelivered_session(
         .log_err();
 }
 
+/// Applies a `subagent_update` received on `parent`'s stream. The first update for a
+/// session announces it: Zed creates its thread, routes the session's traffic on this
+/// connection, and hands the thread to the parent. Later updates patch the association.
+/// The update's `state` is left to the caller, since only v1 uses it as the subagent's
+/// activity.
+fn apply_subagent_update(
+    parent: &Entity<AcpThread>,
+    update: &acp_v2::SubagentUpdate,
+    sessions: &Rc<RefCell<HashMap<acp_v2::SessionId, AcpSession>>>,
+    cx: &mut App,
+) -> Result<Entity<AcpThread>> {
+    let parent_session_id = parent.read(cx).session_id().clone();
+    let session_id = update.session_id.clone();
+    if let Some(subagent) = parent.read(cx).subagent(&session_id).cloned() {
+        subagent.update(cx, |subagent, cx| {
+            subagent.update_subagent_association(update, cx)
+        })?;
+        return Ok(subagent);
+    }
+    // Announcing any other session this connection routes, including the parent itself,
+    // would reparent it, so this also rules out cycles.
+    anyhow::ensure!(
+        !sessions.borrow().contains_key(&session_id),
+        "Session {session_id} cannot become a subagent of {parent_session_id}"
+    );
+
+    let (connection, project, parent_action_log) = {
+        let parent = parent.read(cx);
+        (
+            parent.connection().clone(),
+            parent.project().clone(),
+            parent.action_log().clone(),
+        )
+    };
+    let action_log =
+        cx.new(|_| ActionLog::new(project.clone()).with_linked_action_log(parent_action_log));
+    let subagent = cx.new(|cx| {
+        AcpThread::new(
+            Some(parent_session_id),
+            None,
+            None,
+            connection,
+            project,
+            action_log,
+            session_id.clone(),
+            watch::Receiver::constant(acp_v2::PromptCapabilities::default()),
+            cx,
+        )
+        .agent_owned()
+    });
+    subagent.update(cx, |subagent, cx| {
+        subagent.update_subagent_association(update, cx)
+    })?;
+    // Unlike a session Zed opened, releasing a subagent must not close it: the agent
+    // releases subagents when their parent closes.
+    let release_subscription = cx.observe_release(&subagent, {
+        let sessions = Rc::downgrade(sessions);
+        let session_id = session_id.clone();
+        let thread_id = subagent.entity_id();
+        move |_, _| {
+            let Some(sessions) = sessions.upgrade() else {
+                return;
+            };
+            let mut sessions = sessions.borrow_mut();
+            if sessions
+                .get(&session_id)
+                .is_some_and(|session| session.thread.entity_id() == thread_id)
+            {
+                sessions.remove(&session_id);
+            }
+        }
+    });
+    sessions.borrow_mut().insert(
+        session_id,
+        AcpSession {
+            thread: subagent.downgrade(),
+            suppress_abort_err: false,
+            session_modes: None,
+            config_options: None,
+            default_config_task: None,
+            _release_subscription: release_subscription,
+        },
+    );
+    parent.update(cx, |parent, cx| {
+        parent.register_subagent(subagent.clone(), cx)
+    });
+    Ok(subagent)
+}
+
 fn apply_v2_session_notification(
     notification: InboundSessionNotification,
     thread: &WeakEntity<AcpThread>,
-    sessions: &RefCell<HashMap<acp_v2::SessionId, AcpSession>>,
+    sessions: &Rc<RefCell<HashMap<acp_v2::SessionId, AcpSession>>>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
+    if let InboundSessionUpdate::Subagent(update) = &notification.update {
+        let parent = thread
+            .upgrade()
+            .context("Session was released before its subagent was announced")?;
+        let parent_session_id = parent.read_with(cx, |parent, _| parent.session_id().clone());
+        anyhow::ensure!(
+            parent_session_id == notification.session_id,
+            "Subagent update belongs to a different ACP session"
+        );
+        // In v2 the subagent's own `state_update` reports its activity; the parent's copy
+        // only mirrors it.
+        cx.update(|cx| apply_subagent_update(&parent, update, sessions, cx))?;
+        return Ok(());
+    }
     if let InboundSessionUpdate::ConfigOptions(update) = &notification.update {
         let config_options = {
             let mut sessions = sessions.borrow_mut();

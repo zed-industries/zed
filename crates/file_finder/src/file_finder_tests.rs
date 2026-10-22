@@ -4458,7 +4458,7 @@ async fn test_keeps_file_finder_open_after_modifier_keys_release(cx: &mut gpui::
 
     open_queried_buffer("1", 1, "1.txt", &workspace, cx).await;
 
-    cx.simulate_modifiers_change(Modifiers::secondary_key());
+    cx.simulate_modifiers_change(cx.read(Modifiers::secondary_key));
     open_file_picker(&workspace, cx);
 
     cx.simulate_modifiers_change(Modifiers::none());
@@ -4489,7 +4489,7 @@ async fn test_opens_file_on_modifier_keys_release(cx: &mut gpui::TestAppContext)
     open_queried_buffer("1", 1, "1.txt", &workspace, cx).await;
     open_queried_buffer("2", 1, "2.txt", &workspace, cx).await;
 
-    cx.simulate_modifiers_change(Modifiers::secondary_key());
+    cx.simulate_modifiers_change(cx.read(Modifiers::secondary_key));
     let picker = open_file_picker(&workspace, cx);
     picker.update(cx, |finder, _| {
         assert_eq!(finder.delegate.matches.len(), 2);
@@ -4532,7 +4532,7 @@ async fn test_switches_between_release_norelease_modes_on_forward_nav(
     open_queried_buffer("2", 1, "2.txt", &workspace, cx).await;
 
     // Open with a shortcut
-    cx.simulate_modifiers_change(Modifiers::secondary_key());
+    cx.simulate_modifiers_change(cx.read(Modifiers::secondary_key));
     let picker = open_file_picker(&workspace, cx);
     picker.update(cx, |finder, _| {
         assert_eq!(finder.delegate.matches.len(), 2);
@@ -4553,7 +4553,7 @@ async fn test_switches_between_release_norelease_modes_on_forward_nav(
 
     // Back to navigation with initial shortcut
     // Open file on modifiers release
-    cx.simulate_modifiers_change(Modifiers::secondary_key());
+    cx.simulate_modifiers_change(cx.read(Modifiers::secondary_key));
     cx.dispatch_action(ToggleFileFinder::default());
     cx.simulate_modifiers_change(Modifiers::none());
     cx.read(|cx| {
@@ -4591,7 +4591,7 @@ async fn test_switches_between_release_norelease_modes_on_backward_nav(
     open_queried_buffer("3", 1, "3.txt", &workspace, cx).await;
 
     // Open with a shortcut
-    cx.simulate_modifiers_change(Modifiers::secondary_key());
+    cx.simulate_modifiers_change(cx.read(Modifiers::secondary_key));
     let picker = open_file_picker(&workspace, cx);
     picker.update(cx, |finder, _| {
         assert_eq!(finder.delegate.matches.len(), 3);
@@ -4614,7 +4614,7 @@ async fn test_switches_between_release_norelease_modes_on_backward_nav(
 
     // Back to navigation with initial shortcut
     // Open file on modifiers release
-    cx.simulate_modifiers_change(Modifiers::secondary_key());
+    cx.simulate_modifiers_change(cx.read(Modifiers::secondary_key));
     cx.dispatch_action(SelectPrevious); // <-- File Finder's SelectPrevious, not menu's
     cx.simulate_modifiers_change(Modifiers::none());
     cx.read(|cx| {
@@ -4645,7 +4645,7 @@ async fn test_extending_modifiers_does_not_confirm_selection(cx: &mut gpui::Test
 
     open_queried_buffer("1", 1, "1.txt", &workspace, cx).await;
 
-    cx.simulate_modifiers_change(Modifiers::secondary_key());
+    cx.simulate_modifiers_change(cx.read(Modifiers::secondary_key));
     open_file_picker(&workspace, cx);
 
     cx.simulate_modifiers_change(Modifiers::command_shift());

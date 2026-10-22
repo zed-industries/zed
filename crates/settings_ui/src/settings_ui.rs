@@ -3075,7 +3075,7 @@ impl SettingsWindow {
             "Focus Navbar"
         };
 
-        let mut key_context = KeyContext::new_with_defaults();
+        let mut key_context = KeyContext::new_with_defaults(cx.platform_info().os);
         key_context.add("NavigationMenu");
         key_context.add("menu");
         if self.search_bar.focus_handle(cx).is_focused(window) {

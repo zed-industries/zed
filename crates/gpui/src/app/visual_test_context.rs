@@ -223,8 +223,9 @@ impl VisualTestAppContext {
     ///
     /// Keystrokes are specified as a space-separated string, e.g., "cmd-p escape".
     pub fn simulate_keystrokes(&mut self, window: AnyWindowHandle, keystrokes: &str) {
+        let os = self.app.borrow().platform_info().os;
         for keystroke_text in keystrokes.split_whitespace() {
-            let keystroke = Keystroke::parse(keystroke_text)
+            let keystroke = Keystroke::parse_with_os(keystroke_text, os)
                 .unwrap_or_else(|_| panic!("Invalid keystroke: {}", keystroke_text));
             self.dispatch_keystroke(window, keystroke);
         }
