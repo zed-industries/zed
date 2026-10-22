@@ -144,10 +144,10 @@ unsafe impl objc::Encode for NSRange {
 
 /// Allow NSString::alloc use here because it sets autorelease
 #[allow(clippy::disallowed_methods)]
-unsafe fn legacy_ns_string(string: &str) -> id {
+fn legacy_ns_string(string: &str) -> id {
     unsafe { NSString::alloc(nil).init_str(string).autorelease() }
 }
 
-unsafe fn ns_string(string: &str) -> *mut AnyObject {
+fn ns_string(string: &str) -> *mut AnyObject {
     Retained::autorelease_ptr(Objc2NSString::from_str(string)).cast()
 }
