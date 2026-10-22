@@ -1403,6 +1403,7 @@ pub struct ViewReuseSnapshot {
     pub dispatch: Vec<String>,
     pub cursor_styles: Vec<String>,
     pub tab_stops: Vec<String>,
+    pub focused_node: Option<String>,
     pub accessed_element_states: Vec<String>,
 }
 
@@ -1410,6 +1411,12 @@ pub struct ViewReuseSnapshot {
 impl ViewReuseSnapshot {
     /// Report the first CPU-output mismatch with its frame and logical dispatch identities.
     pub fn compare(&self, reconstructed: &Self, frame: usize) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.focused_node == reconstructed.focused_node,
+            "view reuse mismatch in frame {frame}, focus: reused={:?}, reconstructed={:?}",
+            self.focused_node,
+            reconstructed.focused_node,
+        );
         for (name, reused, fresh) in [
             ("scene", &self.scene, &reconstructed.scene),
             (
@@ -2869,6 +2876,10 @@ impl Window {
             scene: frame.scene.reuse_snapshot(),
             rendered_primitives: frame.scene.rendered_snapshot(),
             accessed_element_states,
+            focused_node: self
+                .focus
+                .and_then(|focus| frame.dispatch_tree.focusable_node_id(focus))
+                .map(|node| format!("{node:?}")),
             hitboxes: frame
                 .hitboxes
                 .iter()

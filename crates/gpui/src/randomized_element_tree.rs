@@ -927,8 +927,16 @@ impl RandomizedElementTree {
                 RandomizedElementTreeMutation::ChildBorder { element_id }
             }
             RandomizedChildMutation::Bounds => {
-                node.style.width = self.rng.random_range(36.0..220.0);
-                node.style.height = self.rng.random_range(28.0..180.0);
+                node.style.width = if self.rng.random_bool(0.125) {
+                    0.0
+                } else {
+                    self.rng.random_range(36.0..220.0)
+                };
+                node.style.height = if self.rng.random_bool(0.125) {
+                    0.0
+                } else {
+                    self.rng.random_range(28.0..180.0)
+                };
                 RandomizedElementTreeMutation::ChildBounds { element_id }
             }
             RandomizedChildMutation::Clipping => {
@@ -1351,8 +1359,12 @@ fn render_node_body(
             element.cursor_pointer().on_click(|_event, _window, _cx| {})
         })
         .when(node.features.key_context, |element| {
-            element.key_context("RandomizedElementTree")
+            element
+                .key_context("RandomizedElementTree")
+                .tab_index((node.id % 5) as isize)
+                .tab_stop(!node.id.is_multiple_of(7))
         })
+        .when(node.id.is_multiple_of(5), |element| element.tab_group())
         .when(node.id % 4 == 1, |element| {
             element.underline().child("Retained glyphs: abc Ω")
         })
@@ -1378,10 +1390,10 @@ fn render_node_body(
                         );
                         path.line_to(origin + crate::point(px(-bend), bounds.size.height));
                         path.close();
-                        match path.build() {
-                            Ok(path) => window.paint_path(path, color),
-                            Err(error) => log::error!("randomized path: {error}"),
-                        }
+                        window.paint_path(
+                            path.build().expect("generated path must tessellate"),
+                            color,
+                        );
                     }
                 },
             )
@@ -1837,6 +1849,7 @@ mod tests {
             });
             let reconstructed = cx.open_window(WINDOW_SIZE, move |window, cx| {
                 window.set_view_retention(false);
+                window.layout_engine = Some(crate::TaffyLayoutEngine::new());
                 window.set_force_view_reconstruction(true);
                 RandomizedElementTree::new_with_config(config, cx)
             });
@@ -1893,6 +1906,11 @@ mod tests {
                         });
                         identities.insert(root.entity_id(), "root".into());
                         cx.update_window(window, |_, window, cx| {
+                            if frame % 4 == 1 {
+                                window.focus_next(cx);
+                            } else if frame % 4 == 3 {
+                                window.focus_prev(cx);
+                            }
                             let arena_clear_needed = window.draw(cx);
                             let snapshot = window.view_reuse_snapshot(|entity_id| {
                                 identities
