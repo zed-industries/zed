@@ -7,6 +7,8 @@ fn main() {
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 mod apple_build {
+    #[cfg(not(feature = "runtime_shaders"))]
+    use std::ffi::OsString;
     use std::{
         env,
         path::{Path, PathBuf},
@@ -126,6 +128,9 @@ mod apple_build {
     fn compile_metal_shaders(header_path: &Path) {
         use std::process::{self, Command};
 
+        println!("cargo:rerun-if-env-changed=SDKROOT");
+        println!("cargo:rerun-if-env-changed=DEVELOPER_DIR");
+
         // Build scripts run on the host, so the target platform must come from
         // Cargo's environment rather than `cfg!`. The target environment, not the
         // target name, identifies simulators: `x86_64-apple-ios` has no `-sim` suffix.
@@ -134,7 +139,7 @@ mod apple_build {
         let target_env = env::var("CARGO_CFG_TARGET_ENV")
             .expect("Cargo sets CARGO_CFG_TARGET_ENV for build scripts");
         let (sdk, minimum_version_argument) = match (target_os.as_str(), target_env.as_str()) {
-            ("macos", _) => ("macosx", "-mmacosx-version-min=10.15.7"),
+            ("macos", _) => ("macosx", "-mmacosx-version-min=12.0"),
             ("ios", "sim") => ("iphonesimulator", "-mios-simulator-version-min=15.0"),
             ("ios", "") => ("iphoneos", "-mios-version-min=15.0"),
             _ => {
@@ -143,6 +148,12 @@ mod apple_build {
                 );
                 process::exit(1);
             }
+        };
+
+        let sdk = if target_os == "macos" {
+            env::var_os("SDKROOT").unwrap_or_else(|| OsString::from(sdk))
+        } else {
+            OsString::from(sdk)
         };
 
         let shader_path = "./src/shaders.metal";
@@ -159,9 +170,9 @@ mod apple_build {
         std::fs::copy(shader_path, &staged_shader_path).unwrap();
 
         let output = Command::new("xcrun")
+            .arg("-sdk")
+            .arg(&sdk)
             .args([
-                "-sdk",
-                sdk,
                 "metal",
                 "-gline-tables-only",
                 minimum_version_argument,
@@ -183,7 +194,9 @@ mod apple_build {
         }
 
         let output = Command::new("xcrun")
-            .args(["-sdk", sdk, "metallib"])
+            .arg("-sdk")
+            .arg(&sdk)
+            .arg("metallib")
             .arg(&air_output_path)
             .arg("-o")
             .arg(metallib_output_path)
