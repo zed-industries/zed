@@ -2841,7 +2841,7 @@ mod test {
 
         // Test shift-r paste on selection from Helix Select Mode returns to Helix Normal Mode
         cx.set_state("foo «barˇ» baz fizz", Mode::HelixSelect);
-        cx.simulate_keystrokes("e"); // if we're in Select Mode, the selection should be extended to inlcude ` baz`
+        cx.simulate_keystrokes("e"); // if we're in Select Mode, the selection should be extended to include ` baz`
         cx.simulate_keystrokes("shift-r");
 
         cx.assert_state("foo hello worldˇ fizz", Mode::HelixNormal);
