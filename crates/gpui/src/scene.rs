@@ -125,8 +125,6 @@ impl Scene {
     }
 
     pub(crate) fn index(&self) -> SceneIndex {
-        #[cfg(feature = "bench-support")]
-        let _timer = crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::SceneIndex);
         SceneIndex {
             operations: self.paint_operations.len(),
             ordering: self.primitive_bounds.len(),
@@ -195,12 +193,7 @@ impl Scene {
                 range.start.ordering..range.end.ordering,
             );
         if !bulk {
-            self.replay(
-                range.start.operations..range.end.operations,
-                previous,
-                #[cfg(any(test, feature = "bench-support"))]
-                stats,
-            );
+            self.replay(range.start.operations..range.end.operations, previous);
             return;
         }
         #[cfg(debug_assertions)]
@@ -217,20 +210,18 @@ impl Scene {
         }
         previous.prepare_replay_arrays();
         macro_rules! copy {
-            ($index:expr, $field:ident, $stat:expr) => {{
+            ($index:expr, $field:ident) => {{
                 let values = &previous.replay_arrays.$field
                     [range.start.primitives[$index]..range.end.primitives[$index]];
                 self.$field.extend_from_slice(values);
-                #[cfg(any(test, feature = "bench-support"))]
-                stats.scene_primitives[$stat].copied(values);
             }};
         }
-        copy!(0, shadows, 0);
-        copy!(1, quads, 1);
-        copy!(2, underlines, 3);
-        copy!(3, monochrome_sprites, 4);
-        copy!(4, subpixel_sprites, 5);
-        copy!(5, polychrome_sprites, 6);
+        copy!(0, shadows);
+        copy!(1, quads);
+        copy!(2, underlines);
+        copy!(3, monochrome_sprites);
+        copy!(4, subpixel_sprites);
+        copy!(5, polychrome_sprites);
         #[cfg(any(test, feature = "bench-support"))]
         {
             stats.scene_bulk_segments += 1;
@@ -351,12 +342,7 @@ impl Scene {
         Some(PaintOperation::Primitive(primitive))
     }
 
-    pub fn replay(
-        &mut self,
-        range: Range<usize>,
-        prev_scene: &mut Scene,
-        #[cfg(any(test, feature = "bench-support"))] stats: &mut crate::ViewReuseStats,
-    ) {
+    pub fn replay(&mut self, range: Range<usize>, prev_scene: &mut Scene) {
         #[cfg(debug_assertions)]
         if !range.is_empty() {
             debug_assert!(
@@ -376,42 +362,6 @@ impl Scene {
             let previous_index = prev_scene.ordering_indices[previous_start + index - start];
             self.ordering_indices.push(self.primitive_bounds.len());
             let operation = self.paint_operations[index];
-            #[cfg(any(test, feature = "bench-support"))]
-            match operation {
-                PaintOperation::Primitive(primitive) => {
-                    match primitive {
-                        RecordedPrimitive::Shadow(value) => {
-                            stats.scene_primitives[0].copied(std::slice::from_ref(&value))
-                        }
-                        RecordedPrimitive::Quad(value) => {
-                            stats.scene_primitives[1].copied(std::slice::from_ref(&value))
-                        }
-                        RecordedPrimitive::Path { id, .. } => {
-                            stats.scene_primitives[2]
-                                .moved(std::slice::from_ref(prev_scene.path(id)));
-                            stats.index_fixups += 1;
-                        }
-                        RecordedPrimitive::Underline(value) => {
-                            stats.scene_primitives[3].copied(std::slice::from_ref(&value))
-                        }
-                        RecordedPrimitive::MonochromeSprite(value) => {
-                            stats.scene_primitives[4].copied(std::slice::from_ref(&value))
-                        }
-                        RecordedPrimitive::SubpixelSprite(value) => {
-                            stats.scene_primitives[5].copied(std::slice::from_ref(&value))
-                        }
-                        RecordedPrimitive::PolychromeSprite(value) => {
-                            stats.scene_primitives[6].copied(std::slice::from_ref(&value))
-                        }
-                        RecordedPrimitive::Surface { index, .. } => stats.scene_primitives[7]
-                            .cloned(std::slice::from_ref(prev_scene.surface(index))),
-                    }
-                    stats.index_fixups += 1;
-                }
-                PaintOperation::StartLayer(_) | PaintOperation::EndLayer => {
-                    stats.scene_layer_operations += 1;
-                }
-            }
             match operation {
                 PaintOperation::Primitive(primitive) => {
                     let primitive = match primitive {
@@ -1977,8 +1927,7 @@ mod tests {
             scene.insert_primitive(quad());
             scene.insert_primitive(quad());
         }
-        let mut stats = crate::ViewReuseStats::default();
-        target.replay(0..source.len(), &mut source, &mut stats);
+        target.replay(0..source.len(), &mut source);
         fresh.insert_primitive(quad());
         fresh.push_layer(quad().bounds);
         fresh.insert_primitive(path());
@@ -2007,12 +1956,8 @@ mod tests {
                 .collect::<Vec<_>>(),
             old_bounds
         );
-        assert_eq!(stats.scene_primitives[2].cloned_elements, 0);
-        assert_eq!(stats.scene_primitives[2].moved_elements, 3);
-        assert_eq!(stats.scene_primitives[1].copied_elements, 1);
-
         let mut next = Scene::default();
-        next.replay(0..target.len(), &mut target, &mut stats);
+        next.replay(0..target.len(), &mut target);
         next.finish();
         assert_eq!(next.reuse_snapshot(), fresh.reuse_snapshot());
     }
@@ -2025,9 +1970,8 @@ mod tests {
         source.insert_primitive(path());
         source.finish();
         let mut target = Scene::default();
-        let mut stats = crate::ViewReuseStats::default();
-        target.replay(0..1, &mut source, &mut stats);
-        target.replay(0..1, &mut source, &mut stats);
+        target.replay(0..1, &mut source);
+        target.replay(0..1, &mut source);
     }
 
     #[test]
@@ -2044,8 +1988,7 @@ mod tests {
         assert_eq!(source.paths[0].id, PathId(1));
         let expected = source.reuse_snapshot();
         let mut target = Scene::default();
-        let mut stats = crate::ViewReuseStats::default();
-        target.replay(0..source.len(), &mut source, &mut stats);
+        target.replay(0..source.len(), &mut source);
         target.finish();
         assert_eq!(target.reuse_snapshot(), expected);
     }

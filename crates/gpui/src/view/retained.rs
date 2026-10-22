@@ -16,18 +16,8 @@ pub(crate) struct ViewOccurrenceId {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SpliceFallback {
-    UncachedView,
-    DeferredDraw,
+    Blocked,
     Transaction,
-    Autoscroll,
-    Accessibility,
-    #[cfg_attr(not(any(feature = "inspector", debug_assertions)), allow(dead_code))]
-    Inspector,
-    ExecutionScope,
-    MissingView,
-    LayoutStyle,
-    LayoutSize,
-    LayoutConstraints,
 }
 
 struct ViewLayout {
@@ -44,8 +34,8 @@ struct ViewRecord {
     own_dirty: bool,
     descendant_dirty: bool,
     painted: bool,
-    blocked: Option<SpliceFallback>,
-    dirty_path_blocked: Option<SpliceFallback>,
+    blocked: bool,
+    dirty_path_blocked: bool,
 }
 
 struct RetainedView {
@@ -144,16 +134,10 @@ impl ViewStore {
         view: Option<&AnyWeakView>,
         fallback: Option<SpliceFallback>,
     ) -> ViewOccurrenceId {
-        #[cfg(feature = "bench-support")]
-        let _timer =
-            crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::BoundaryBookkeeping);
         let key = (entity, element_path);
         let id = if let Some(id) = self.by_occurrence.get(&key) {
             *id
         } else {
-            #[cfg(feature = "bench-support")]
-            let _timer =
-                crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::ViewStoreGrowth);
             let index = self.free.pop().unwrap_or_else(|| {
                 let index = self.records.len() as u32;
                 self.records.push(ViewRecord {
@@ -163,8 +147,8 @@ impl ViewStore {
                     own_dirty: false,
                     descendant_dirty: false,
                     painted: false,
-                    blocked: None,
-                    dirty_path_blocked: None,
+                    blocked: false,
+                    dirty_path_blocked: false,
                 });
                 self.cold.push(None);
                 index
@@ -176,8 +160,8 @@ impl ViewStore {
             self.records[index as usize].own_dirty = false;
             self.records[index as usize].descendant_dirty = false;
             self.records[index as usize].painted = false;
-            self.records[index as usize].blocked = None;
-            self.records[index as usize].dirty_path_blocked = None;
+            self.records[index as usize].blocked = false;
+            self.records[index as usize].dirty_path_blocked = false;
             self.cold[index as usize] = Some(RetainedView {
                 entity,
                 element_path,
@@ -204,9 +188,9 @@ impl ViewStore {
         // An uncached occurrence must not become a relayout boundary merely because
         // another embedding of this entity is cached.
         if view.is_none() {
-            record.blocked = Some(SpliceFallback::UncachedView);
+            record.blocked = true;
         } else if fallback.is_some() {
-            record.blocked = fallback;
+            record.blocked = fallback.is_some();
         }
         if view.is_none() {
             self.invalidate_state(id);
@@ -222,9 +206,6 @@ impl ViewStore {
     }
 
     pub(crate) fn finish_frame(&mut self) {
-        #[cfg(feature = "bench-support")]
-        let _timer =
-            crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::BoundaryBookkeeping);
         for (index, record) in self.records.iter_mut().enumerate() {
             if self.cold[index].is_none() {
                 continue;
@@ -266,7 +247,7 @@ impl ViewStore {
             } else {
                 record.own_dirty = false;
                 record.descendant_dirty = false;
-                record.dirty_path_blocked = None;
+                record.dirty_path_blocked = false;
                 let retained = self.cold[index].as_mut().expect("live occurrence");
                 retained.prepared = None;
                 // Hidden ancestors still prepaint children, but their previous
@@ -296,8 +277,8 @@ impl ViewStore {
             while let Some(id) = parent {
                 let record = self.record_mut(id);
                 record.descendant_dirty = true;
-                blocked = blocked.or(record.blocked);
-                record.dirty_path_blocked = record.dirty_path_blocked.or(blocked);
+                blocked |= record.blocked;
+                record.dirty_path_blocked |= blocked;
                 parent = record.parent;
             }
         }
@@ -313,8 +294,8 @@ impl ViewStore {
             while let Some(id) = parent {
                 let record = self.record_mut(id);
                 record.descendant_dirty = true;
-                blocked = blocked.or(record.blocked);
-                record.dirty_path_blocked = record.dirty_path_blocked.or(blocked);
+                blocked |= record.blocked;
+                record.dirty_path_blocked |= blocked;
                 parent = record.parent;
             }
         }
@@ -331,17 +312,6 @@ impl ViewStore {
                 self.by_global.entry(global).or_default().push(id);
             }
         }
-    }
-
-    #[cfg(any(test, feature = "bench-support"))]
-    fn storage_sizes(&self) -> (usize, usize, usize, usize, usize) {
-        (
-            self.by_occurrence.len(),
-            std::mem::size_of::<ViewRecord>(),
-            std::mem::size_of::<Option<RetainedView>>(),
-            std::mem::size_of::<RetainedViewState>(),
-            std::mem::size_of::<ViewLayout>(),
-        )
     }
 
     fn clear_global_access(&mut self, id: ViewOccurrenceId) {
@@ -361,7 +331,7 @@ impl ViewStore {
             while let Some(id) = current {
                 let record = self.record_mut(id);
                 record.descendant_dirty = true;
-                record.dirty_path_blocked = Some(SpliceFallback::UncachedView);
+                record.dirty_path_blocked = true;
                 current = record.parent;
             }
         }
@@ -440,9 +410,6 @@ impl ViewStore {
         mut own: collections::FxHashSet<EntityId>,
         paint: bool,
     ) {
-        #[cfg(feature = "bench-support")]
-        let _timer =
-            crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::BoundaryBookkeeping);
         own.remove(&self.retained(id).entity);
         if own.is_empty() {
             self.recycle_access_set(own);
@@ -530,11 +497,11 @@ impl ViewStore {
         }
     }
 
-    pub(crate) fn block_splicing(&mut self, id: ViewOccurrenceId, reason: SpliceFallback) {
+    pub(crate) fn block_splicing(&mut self, id: ViewOccurrenceId) {
         let mut current = Some(id);
         while let Some(id) = current {
             let record = self.record_mut(id);
-            record.blocked = Some(reason);
+            record.blocked = true;
             current = record.parent;
         }
     }
@@ -569,7 +536,7 @@ impl ViewStore {
             self.clear_global_access(id);
             self.set_layout_access(id, Default::default());
         }
-        self.record_mut(id).blocked = scope.fallback;
+        self.record_mut(id).blocked = scope.fallback.is_some();
     }
 
     pub(crate) fn is_descendant_dirty(&self, id: ViewOccurrenceId) -> bool {
@@ -590,9 +557,6 @@ impl ViewStore {
         state: RetainedViewState,
         scope: ViewExecutionScope,
     ) {
-        #[cfg(feature = "bench-support")]
-        let _timer =
-            crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::BoundaryBookkeeping);
         let retained = self.retained_mut(id);
         if let Some(previous) = retained.state.as_mut() {
             **previous = state;
@@ -625,9 +589,6 @@ impl ViewStore {
         range: Range<PaintIndex>,
         scope: ViewExecutionScope,
     ) {
-        #[cfg(feature = "bench-support")]
-        let _timer =
-            crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::BoundaryBookkeeping);
         self.record_mut(id).painted = true;
         let retained = self.retained_mut(id);
         retained.state.as_mut().expect("cached state").paint_range = range;
@@ -700,13 +661,6 @@ impl Window {
         result
     }
 
-    /// Live occurrences and inline bytes for hot records, cold slots, cache boxes
-    /// and implicit-layout boxes. Excludes map/set capacity and shared payloads.
-    #[cfg(any(test, feature = "bench-support"))]
-    pub fn retained_view_storage_sizes(&self) -> (usize, usize, usize, usize, usize) {
-        self.view_store.storage_sizes()
-    }
-
     pub(crate) fn invalidate_retained_global(&mut self, global: TypeId) {
         if self.view_splicing && self.view_store.dirty_global_readers(global) {
             self.invalidator.set_dirty(true);
@@ -761,9 +715,9 @@ impl Window {
             let result = if self.view_store.is_descendant_dirty(occurrence) {
                 self.prepare_implicit_layout(occurrence, cx)
             } else {
-                Ok(())
+                Some(())
             };
-            if result.is_ok() {
+            if result.is_some() {
                 let layout = self
                     .view_store
                     .retained(occurrence)
@@ -777,10 +731,6 @@ impl Window {
                     .retain_subtree(layout);
                 self.current_view_occurrence = previous_parent;
                 return (layout, None);
-            }
-            #[cfg(any(test, feature = "bench-support"))]
-            if let Err(reason) = result {
-                self.view_reuse_stats.splice_fallbacks[reason as usize] += 1;
             }
         }
         #[cfg(any(test, feature = "bench-support"))]
@@ -819,12 +769,10 @@ impl Window {
         (layout, Some(element))
     }
 
-    fn prepare_implicit_layout(
-        &mut self,
-        id: ViewOccurrenceId,
-        cx: &mut App,
-    ) -> Result<(), SpliceFallback> {
-        self.validate_view_splice(id)?;
+    fn prepare_implicit_layout(&mut self, id: ViewOccurrenceId, cx: &mut App) -> Option<()> {
+        if !self.can_splice_view(id) {
+            return None;
+        }
         for child in self.dirty_view_children(id) {
             if self.view_store.retained(child).layout.is_none() {
                 continue;
@@ -841,7 +789,7 @@ impl Window {
                 .as_ref()
                 .expect("layout engine")
                 .retained_style(old_id);
-            let input = layout.input.ok_or(SpliceFallback::LayoutConstraints)?;
+            let input = layout.input?;
             let old_output = layout.output.clone();
             let scope = layout.scope.clone();
             let old_size = retained
@@ -851,7 +799,7 @@ impl Window {
                 .cache_key
                 .bounds
                 .size;
-            let view = retained.view.clone().ok_or(SpliceFallback::MissingView)?;
+            let view = retained.view.clone()?;
             let global_id = self.element_id_interner.global_id(retained.element_path);
             let entity = retained.entity;
             let changes = self
@@ -875,7 +823,7 @@ impl Window {
             self.view_store.retained_mut(child).prepared = element.map(|element| (layout, element));
             let engine = self.layout_engine.as_ref().expect("layout engine");
             if engine.retained_style(layout) != old_style {
-                return Err(SpliceFallback::LayoutStyle);
+                return None;
             }
             let mut engine = self.layout_engine.take().expect("layout engine");
             engine.compute_retained_layout(layout, input, self, cx);
@@ -883,7 +831,7 @@ impl Window {
             let output = engine.retained_output(layout);
             self.layout_engine = Some(engine);
             if layout != old_id || size != old_size || output != old_output {
-                return Err(SpliceFallback::LayoutSize);
+                return None;
             }
             self.layout_engine
                 .as_mut()
@@ -896,13 +844,10 @@ impl Window {
                 .expect("implicit layout")
                 .input = Some(input);
         }
-        Ok(())
+        Some(())
     }
 
     pub(super) fn implicit_prepaint_layout(&mut self, id: ViewOccurrenceId) -> bool {
-        #[cfg(feature = "bench-support")]
-        let _timer =
-            crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::LayoutInputCapture);
         let geometry_unchanged = self
             .view_store
             .retained(id)
@@ -929,9 +874,6 @@ impl Window {
     }
 
     fn implicit_geometry_unchanged(&self, id: ViewOccurrenceId) -> bool {
-        #[cfg(feature = "bench-support")]
-        let _timer =
-            crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::GeometryValidation);
         let Some(layout) = self.view_store.retained(id).layout.as_ref() else {
             return true;
         };
@@ -1070,50 +1012,32 @@ impl Window {
             .collect()
     }
 
-    pub(super) fn prepare_view_splice(
-        &mut self,
-        id: ViewOccurrenceId,
-    ) -> Result<(), SpliceFallback> {
-        let result = self.validate_view_splice(id);
-        #[cfg(any(test, feature = "bench-support"))]
-        if let Err(reason) = result {
-            self.view_reuse_stats.splice_fallbacks[reason as usize] += 1;
-        }
-        result
-    }
-
-    fn validate_view_splice(&self, id: ViewOccurrenceId) -> Result<(), SpliceFallback> {
-        #[cfg(feature = "bench-support")]
-        let _timer =
-            crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::BoundaryChecks);
+    pub(super) fn can_splice_view(&self, id: ViewOccurrenceId) -> bool {
         if self.a11y.is_active() {
-            return Err(SpliceFallback::Accessibility);
+            return false;
         }
         #[cfg(any(feature = "inspector", debug_assertions))]
         if self.inspector_enabled() {
-            return Err(SpliceFallback::Inspector);
+            return false;
         }
         let record = self.view_store.record(id);
         if !record.own_dirty && !self.implicit_geometry_unchanged(id) {
-            return Err(SpliceFallback::LayoutSize);
+            return false;
         }
-        if let Some(reason) = record.dirty_path_blocked.or(record.blocked) {
-            return Err(reason);
+        if record.dirty_path_blocked || record.blocked {
+            return false;
         }
         let retained = self.view_store.retained(id);
-        let prepaint_scope = retained
-            .prepaint_scope
-            .as_ref()
-            .ok_or(SpliceFallback::ExecutionScope)?;
-        let paint_scope = retained
-            .paint_scope
-            .as_ref()
-            .ok_or(SpliceFallback::ExecutionScope)?;
+        let (Some(prepaint_scope), Some(paint_scope)) =
+            (&retained.prepaint_scope, &retained.paint_scope)
+        else {
+            return false;
+        };
         if !self.view_scope_is_current(prepaint_scope) || !self.view_scope_is_current(paint_scope) {
-            return Err(SpliceFallback::ExecutionScope);
+            return false;
         }
-        if let Some(reason) = prepaint_scope.fallback.or(paint_scope.fallback) {
-            return Err(reason);
+        if prepaint_scope.fallback.is_some() || paint_scope.fallback.is_some() {
+            return false;
         }
         if retained
             .view
@@ -1121,12 +1045,11 @@ impl Window {
             .and_then(AnyWeakView::upgrade)
             .is_none()
         {
-            return Err(SpliceFallback::MissingView);
+            return false;
         }
-        for child in self.dirty_view_children(id) {
-            self.validate_view_splice(child)?;
-        }
-        Ok(())
+        self.dirty_view_children(id)
+            .into_iter()
+            .all(|child| self.can_splice_view(child))
     }
 
     pub(super) fn splice_view_prepaint(&mut self, id: ViewOccurrenceId, cx: &mut App) {
@@ -1500,19 +1423,18 @@ mod tests {
         })
         .expect("intrinsic mount");
         let previous = leaf_renders.get();
+        let previous_branch = branch_renders.get();
         leaf.update(cx, |leaf, cx| {
             leaf.width = px(40.);
             cx.notify();
         });
-        let fallbacks = cx
-            .update_window(window.into(), |_, window, cx| {
-                window.draw(cx).clear(cx);
-                window.view_reuse_stats().splice_fallbacks
-            })
-            .expect("intrinsic size draw");
+        cx.update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+        })
+        .expect("intrinsic size draw");
         assert_eq!(leaf_renders.get(), previous + 1);
         assert!(
-            fallbacks[super::SpliceFallback::LayoutSize as usize] > 0,
+            branch_renders.get() > previous_branch,
             "an intrinsic size change must fall back even with an identical root style"
         );
     }
@@ -2359,7 +2281,6 @@ mod tests {
                 let stats = window.view_reuse_stats();
                 assert!(stats.splice_prepaint_calls > 0);
                 assert_eq!(stats.render_ancestor_caused, 0);
-                assert_eq!(stats.splice_fallbacks, [0; 11]);
             })
             .expect("splice counters");
         }
@@ -2402,14 +2323,6 @@ mod tests {
         compare_pair(&reused, &fresh, 2, cx);
         assert_eq!(reused.branch_renders.get(), 2);
         assert_eq!(reused.outer_renders.get(), 2);
-        cx.update_window(reused.window, |_, window, _| {
-            assert!(
-                window.view_reuse_stats().splice_fallbacks
-                    [super::SpliceFallback::DeferredDraw as usize]
-                    > 0
-            );
-        })
-        .expect("deferred fallback counter");
     }
 
     #[crate::test]
@@ -2464,14 +2377,6 @@ mod tests {
         }
         compare_pair(&reused, &fresh, 1, cx);
         assert!(reused.outer_renders.get() > outer_renders);
-        cx.update_window(reused.window, |_, window, _| {
-            assert!(
-                window.view_reuse_stats().splice_fallbacks
-                    [super::SpliceFallback::ExecutionScope as usize]
-                    > 0
-            );
-        })
-        .expect("dynamic traversal fallback");
     }
 
     #[crate::test]

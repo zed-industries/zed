@@ -1320,8 +1320,6 @@ impl Frame {
                 .extract_if(|key, _| accessed.contains(key)),
         );
 
-        #[cfg(feature = "bench-support")]
-        let _timer = RenderPhaseTimer::start(RenderPhase::SceneFinish);
         self.scene.finish();
     }
 
@@ -1345,80 +1343,6 @@ enum InputModality {
     Mouse,
     Keyboard,
     Touch,
-}
-
-#[cfg(feature = "bench-support")]
-#[derive(Clone, Copy)]
-pub(crate) enum RenderPhase {
-    Layout,
-    Retain,
-    BoundaryChecks,
-    PrepaintReplay,
-    PaintReplay,
-    DispatchReplay,
-    SceneFinish,
-    SceneInsert,
-    RootRequest,
-    RootPrepaint,
-    RootPaint,
-    TextMeasure,
-    TextShape,
-    TextWrap,
-    BoundaryBookkeeping,
-    DependencyPush,
-    DependencyPop,
-    ScopeCapture,
-    LayoutInputCapture,
-    SceneIndex,
-    DispatchPayloadIndex,
-    ViewStoreGrowth,
-    GeometryValidation,
-    ScopeTextStyle,
-    ScopeIdentity,
-    ScopeDispatch,
-    ScopeMask,
-    ScopeScalars,
-    ScopeImageCache,
-    ScopeEmpty,
-}
-
-#[cfg(feature = "bench-support")]
-thread_local! {
-    static RENDER_PHASE_TIMINGS: std::cell::RefCell<[(Duration, usize); 30]> =
-        const { std::cell::RefCell::new([(Duration::ZERO, 0); 30]) };
-}
-
-#[cfg(feature = "bench-support")]
-pub(crate) struct RenderPhaseTimer {
-    phase: RenderPhase,
-    start: std::time::Instant,
-}
-
-#[cfg(feature = "bench-support")]
-impl RenderPhaseTimer {
-    pub(crate) fn enabled() -> bool {
-        static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        *ENABLED.get_or_init(|| std::env::var("GPUI_RENDER_PHASE_TIMERS").as_deref() == Ok("1"))
-    }
-
-    pub(crate) fn start(phase: RenderPhase) -> Option<Self> {
-        Self::enabled().then(|| Self {
-            phase,
-            start: std::time::Instant::now(),
-        })
-    }
-}
-
-#[cfg(feature = "bench-support")]
-impl Drop for RenderPhaseTimer {
-    fn drop(&mut self) {
-        let elapsed = self.start.elapsed();
-        RENDER_PHASE_TIMINGS.with(|timings| {
-            let mut values = timings.borrow_mut();
-            values[self.phase as usize].0 += elapsed;
-            values[self.phase as usize].1 += 1;
-        });
-    }
 }
 
 /// Work performed by view caching since the last explicit reset.
@@ -1446,9 +1370,6 @@ pub struct ViewReuseStats {
     pub splice_prepaint_calls: usize,
     pub splice_paint_calls: usize,
     pub spliced_children: usize,
-    /// Uncached view, deferred draw, transaction, autoscroll, accessibility,
-    /// inspector, execution scope, missing view.
-    pub splice_fallbacks: [usize; 11],
     pub cached_hits: usize,
     pub cached_misses: usize,
     pub miss_first_mount: usize,
@@ -1463,19 +1384,6 @@ pub struct ViewReuseStats {
     pub bounds_origin_only_changed: usize,
     pub prepaint_reuse_calls: usize,
     pub paint_reuse_calls: usize,
-    pub hitboxes: ReuseArrayStats,
-    pub tooltips: ReuseArrayStats,
-    pub element_state_keys: ReuseArrayStats,
-    pub dispatch_nodes: ReuseArrayStats,
-    pub dispatch_contexts: ReuseArrayStats,
-    pub deferred_draws: ReuseArrayStats,
-    pub cursor_styles: ReuseArrayStats,
-    pub input_handlers: ReuseArrayStats,
-    pub mouse_listeners: ReuseArrayStats,
-    pub tab_stops: ReuseArrayStats,
-    pub text_layout_usage_indices: ReuseArrayStats,
-    /// Shadow, quad, path, underline, monochrome, subpixel, polychrome, surface.
-    pub scene_primitives: [ReuseArrayStats; 8],
     pub scene_layer_operations: usize,
     pub scene_bulk_segments: usize,
     pub index_fixups: usize,
@@ -1538,49 +1446,6 @@ impl ViewReuseSnapshot {
             }
         }
         Ok(())
-    }
-}
-
-/// Inline records replayed by an array's existing reuse implementation.
-#[cfg(any(test, feature = "bench-support"))]
-#[derive(Clone, Debug, Default)]
-#[expect(missing_docs)]
-pub struct ReuseArrayStats {
-    pub cloned_elements: usize,
-    pub cloned_bytes: usize,
-    pub copied_elements: usize,
-    pub copied_bytes: usize,
-    pub moved_elements: usize,
-    pub moved_bytes: usize,
-    pub rebuilt_elements: usize,
-    pub rebuilt_bytes: usize,
-}
-
-#[cfg(any(test, feature = "bench-support"))]
-impl ReuseArrayStats {
-    pub(crate) fn cloned<T>(&mut self, records: &[T]) {
-        self.cloned_elements += records.len();
-        self.cloned_bytes += std::mem::size_of_val(records);
-    }
-
-    pub(crate) fn copied<T>(&mut self, records: &[T]) {
-        self.copied_elements += records.len();
-        self.copied_bytes += std::mem::size_of_val(records);
-    }
-
-    pub(crate) fn moved<T>(&mut self, records: &[T]) {
-        self.moved_elements += records.len();
-        self.moved_bytes += std::mem::size_of_val(records);
-    }
-
-    pub(crate) fn moved_count<T>(&mut self, count: usize) {
-        self.moved_elements += count;
-        self.moved_bytes += count * std::mem::size_of::<T>();
-    }
-
-    pub(crate) fn rebuilt<T>(&mut self, count: usize) {
-        self.rebuilt_elements += count;
-        self.rebuilt_bytes += count * std::mem::size_of::<T>();
     }
 }
 
@@ -2696,47 +2561,6 @@ impl ContentMask<Pixels> {
 }
 
 impl Window {
-    /// Takes opt-in foreground phase totals. Timings are inclusive: replay and
-    /// layout totals are also included in the enclosing root phase.
-    #[cfg(feature = "bench-support")]
-    pub fn take_render_phase_timings(&self) -> [(&'static str, Duration, usize); 30] {
-        let values =
-            RENDER_PHASE_TIMINGS.with(|timings| timings.replace([(Duration::ZERO, 0); 30]));
-        let names = [
-            "layout",
-            "retain",
-            "boundary checks",
-            "prepaint replay",
-            "paint replay",
-            "dispatch replay",
-            "scene finish",
-            "scene insert (includes BoundsTree)",
-            "root request",
-            "root prepaint",
-            "root paint",
-            "text measure",
-            "platform text shape",
-            "text wrap",
-            "boundary bookkeeping",
-            "dependency push",
-            "dependency pop",
-            "scope capture",
-            "layout input capture",
-            "scene index",
-            "dispatch payload index",
-            "ViewStore growth",
-            "geometry validation",
-            "scope text style",
-            "scope identity",
-            "scope dispatch",
-            "scope content mask",
-            "scope rem scale opacity",
-            "scope image cache",
-            "scope empty timer",
-        ];
-        std::array::from_fn(|index| (names[index], values[index].0, values[index].1))
-    }
-
     pub(crate) fn begin_cached_entity_access(&mut self, cx: &mut App) -> FxHashSet<EntityId> {
         self.begin_entity_access(cx, true)
     }
@@ -2750,8 +2574,6 @@ impl Window {
         cx: &mut App,
         collect_descendants: bool,
     ) -> FxHashSet<EntityId> {
-        #[cfg(feature = "bench-support")]
-        let _timer = RenderPhaseTimer::start(RenderPhase::DependencyPush);
         if self.view_splicing {
             self.cached_global_access_stack.push((
                 cx.tracking_retained_globals.replace(true),
@@ -2776,8 +2598,6 @@ impl Window {
         previous: FxHashSet<EntityId>,
         cx: &mut App,
     ) -> (FxHashSet<EntityId>, FxHashSet<EntityId>) {
-        #[cfg(feature = "bench-support")]
-        let _timer = RenderPhaseTimer::start(RenderPhase::DependencyPop);
         if self.view_splicing {
             let (tracking, previous, occurrence) = self
                 .cached_global_access_stack
@@ -2823,12 +2643,6 @@ impl Window {
     }
 
     pub(crate) fn capture_view_scope(&mut self) -> ViewExecutionScope {
-        #[cfg(feature = "bench-support")]
-        let _timer = RenderPhaseTimer::start(RenderPhase::ScopeCapture);
-        #[cfg(feature = "bench-support")]
-        if _timer.is_some() {
-            return self.capture_view_scope_profiled();
-        }
         let image_cache = self.image_cache_stack.last().map(|cache| {
             let entity = cache.entity_id();
             if let Some(cache) = self
@@ -2863,70 +2677,6 @@ impl Window {
             dispatch_node: self.next_frame.dispatch_tree.active_node_id(),
             parent_occurrence: self.current_view_occurrence,
             fallback: self.retained_scope_fallback,
-        }
-    }
-
-    #[cfg(feature = "bench-support")]
-    fn capture_view_scope_profiled(&mut self) -> ViewExecutionScope {
-        drop(RenderPhaseTimer::start(RenderPhase::ScopeEmpty));
-        let timer = RenderPhaseTimer::start(RenderPhase::ScopeImageCache);
-        let image_cache = self.image_cache_stack.last().map(|cache| {
-            let entity = cache.entity_id();
-            if let Some(cache) = self
-                .scope_image_caches
-                .get(&entity)
-                .and_then(std::rc::Weak::upgrade)
-            {
-                cache
-            } else {
-                let cache = Rc::new(cache.clone());
-                self.scope_image_caches
-                    .insert(entity, Rc::downgrade(&cache));
-                cache
-            }
-        });
-        drop(timer);
-        let timer = RenderPhaseTimer::start(RenderPhase::ScopeTextStyle);
-        let text_style = self.retained_text_style_handle();
-        drop(timer);
-        let timer = RenderPhaseTimer::start(RenderPhase::ScopeIdentity);
-        let element_path = self.element_id_stack.handle();
-        let current_view = self.rendered_entity_stack.last().copied();
-        let offset = self
-            .element_offset_stack
-            .last()
-            .copied()
-            .unwrap_or_default();
-        drop(timer);
-        let timer = RenderPhaseTimer::start(RenderPhase::ScopeDispatch);
-        let dispatch_node = self.next_frame.dispatch_tree.active_node_id();
-        let parent_occurrence = self.current_view_occurrence;
-        drop(timer);
-        let timer = RenderPhaseTimer::start(RenderPhase::ScopeMask);
-        let content_mask = self.content_mask();
-        drop(timer);
-        let timer = RenderPhaseTimer::start(RenderPhase::ScopeScalars);
-        let rem_override = self.rem_size_override_stack.last().copied();
-        let opacity = self.element_opacity;
-        let rem_size = self.rem_size;
-        let scale_factor = self.scale_factor;
-        let fallback = self.retained_scope_fallback;
-        drop(timer);
-        ViewExecutionScope {
-            element_path,
-            text_style,
-            current_view,
-            offset,
-            content_mask,
-            rem_override,
-            image_cache,
-            opacity,
-            paint_suppressed: self.element_paint_suppressed,
-            rem_size,
-            scale_factor,
-            dispatch_node,
-            parent_occurrence,
-            fallback,
         }
     }
 
@@ -4765,8 +4515,6 @@ impl Window {
         #[cfg(feature = "profiler")]
         let request_layout_start = Instant::now();
         let mut root_element = self.root.as_ref().unwrap().clone().into_any_element();
-        #[cfg(feature = "bench-support")]
-        let timer = RenderPhaseTimer::start(RenderPhase::RootRequest);
         let root_layout_id = root_element.request_layout(self, cx);
         #[cfg(feature = "profiler")]
         let prepaint_start = Instant::now();
@@ -4774,15 +4522,9 @@ impl Window {
             .as_mut()
             .unwrap()
             .stretch_auto_size_to_fill(root_layout_id, root_size, scale_factor);
-        #[cfg(feature = "bench-support")]
-        drop(timer);
-        #[cfg(feature = "bench-support")]
-        let timer = RenderPhaseTimer::start(RenderPhase::RootPrepaint);
         self.window_root_layout = Some(root_layout_id);
         root_element.prepaint_as_root(Point::default(), root_size.into(), self, cx);
         self.window_root_layout = None;
-        #[cfg(feature = "bench-support")]
-        drop(timer);
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         let inspector_element = self.prepaint_inspector(_inspector_width, cx);
@@ -4818,11 +4560,7 @@ impl Window {
         #[cfg(feature = "profiler")]
         let paint_start = Instant::now();
         self.invalidator.set_phase(DrawPhase::Paint);
-        #[cfg(feature = "bench-support")]
-        let timer = RenderPhaseTimer::start(RenderPhase::RootPaint);
         root_element.paint(self, cx);
-        #[cfg(feature = "bench-support")]
-        drop(timer);
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         self.paint_inspector(inspector_element, cx);
@@ -5004,7 +4742,7 @@ impl Window {
                 );
                 let previous_fallback = self
                     .retained_scope_fallback
-                    .replace(crate::view::retained::SpliceFallback::DeferredDraw);
+                    .replace(crate::view::retained::SpliceFallback::Blocked);
 
                 let prepaint_start = self.prepaint_index();
                 if let Some(mut element) = element {
@@ -5131,8 +4869,6 @@ impl Window {
     }
 
     pub(crate) fn reuse_prepaint(&mut self, range: Range<PrepaintStateIndex>) {
-        #[cfg(feature = "bench-support")]
-        let _timer = RenderPhaseTimer::start(RenderPhase::PrepaintReplay);
         let new_start = self.prepaint_index();
         #[cfg(debug_assertions)]
         {
@@ -5149,23 +4885,6 @@ impl Window {
         {
             let stats = &mut self.view_reuse_stats;
             stats.prepaint_reuse_calls += 1;
-            stats.hitboxes.copied(
-                &self.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index],
-            );
-            stats.tooltips.moved(
-                &self.rendered_frame.tooltip_requests
-                    [range.start.tooltips_index..range.end.tooltips_index],
-            );
-            stats.element_state_keys.copied(
-                &self.rendered_frame.accessed_element_states[range
-                    .start
-                    .accessed_element_states_index
-                    ..range.end.accessed_element_states_index],
-            );
-            stats.deferred_draws.moved(
-                &self.rendered_frame.deferred_draws
-                    [range.start.deferred_draws_index..range.end.deferred_draws_index],
-            );
             stats.index_fixups += range.end.deferred_draws_index - range.start.deferred_draws_index;
         }
         self.next_frame.hitboxes.extend_from_slice(
@@ -5187,13 +4906,9 @@ impl Window {
         );
         self.text_system.reuse_layouts(
             range.start.line_layout_index.clone()..range.end.line_layout_index.clone(),
-            #[cfg(any(test, feature = "bench-support"))]
-            &mut self.view_reuse_stats.text_layout_usage_indices,
         );
 
         let replay = &self.dispatch_replay;
-        #[cfg(feature = "bench-support")]
-        let timer = RenderPhaseTimer::start(RenderPhase::DispatchReplay);
         let reused_subtree = self.next_frame.dispatch_tree.reuse_subtree(
             range.start.dispatch_tree_index..range.end.dispatch_tree_index,
             &mut self.rendered_frame.dispatch_tree,
@@ -5208,8 +4923,6 @@ impl Window {
             &mut self.view_reuse_stats,
         );
 
-        #[cfg(feature = "bench-support")]
-        drop(timer);
         if reused_subtree.contains_focus() {
             self.next_frame.focus = self.focus;
         }
@@ -5269,8 +4982,6 @@ impl Window {
     }
 
     pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) {
-        #[cfg(feature = "bench-support")]
-        let _timer = RenderPhaseTimer::start(RenderPhase::PaintReplay);
         let new_start = self.paint_index();
         #[cfg(debug_assertions)]
         {
@@ -5291,29 +5002,6 @@ impl Window {
         {
             let stats = &mut self.view_reuse_stats;
             stats.paint_reuse_calls += 1;
-            stats.cursor_styles.copied(
-                &self.rendered_frame.cursor_styles
-                    [range.start.cursor_styles_index..range.end.cursor_styles_index],
-            );
-            stats.input_handlers.moved(
-                &self.rendered_frame.input_handlers
-                    [range.start.input_handlers_index..range.end.input_handlers_index],
-            );
-            stats.mouse_listeners.moved(
-                &self.rendered_frame.mouse_listeners
-                    [range.start.mouse_listeners_index..range.end.mouse_listeners_index],
-            );
-            stats.element_state_keys.copied(
-                &self.rendered_frame.accessed_element_states[range
-                    .start
-                    .accessed_element_states_index
-                    ..range.end.accessed_element_states_index],
-            );
-            stats
-                .tab_stops
-                .rebuilt::<crate::tab_stop::TabStopOperation>(
-                    range.end.tab_handle_index - range.start.tab_handle_index,
-                );
         }
         // Cached elements still exist in the frame even when their paint methods don't run.
         #[cfg(any(test, feature = "test-support"))]
@@ -5350,19 +5038,13 @@ impl Window {
 
         self.text_system.reuse_layouts(
             range.start.line_layout_index.clone()..range.end.line_layout_index.clone(),
-            #[cfg(any(test, feature = "bench-support"))]
-            &mut self.view_reuse_stats.text_layout_usage_indices,
         );
-        #[cfg(feature = "bench-support")]
-        let timer = RenderPhaseTimer::start(RenderPhase::SceneInsert);
         self.next_frame.scene.replay_segment(
             range.start.scene_index..range.end.scene_index,
             &mut self.rendered_frame.scene,
             #[cfg(any(test, feature = "bench-support"))]
             &mut self.view_reuse_stats,
         );
-        #[cfg(feature = "bench-support")]
-        drop(timer);
         for occurrence in
             &self.rendered_frame.paint_views[range.start.views_index..range.end.views_index]
         {
@@ -5560,10 +5242,7 @@ impl Window {
     pub fn request_autoscroll(&mut self, bounds: Bounds<Pixels>) {
         self.invalidator.debug_assert_prepaint();
         if let Some(occurrence) = self.current_view_occurrence {
-            self.view_store.block_splicing(
-                occurrence,
-                crate::view::retained::SpliceFallback::Autoscroll,
-            );
+            self.view_store.block_splicing(occurrence);
         }
         self.requested_autoscroll = Some(bounds);
     }
@@ -5573,10 +5252,7 @@ impl Window {
     pub fn take_autoscroll(&mut self) -> Option<Bounds<Pixels>> {
         self.invalidator.debug_assert_prepaint();
         if let Some(occurrence) = self.current_view_occurrence {
-            self.view_store.block_splicing(
-                occurrence,
-                crate::view::retained::SpliceFallback::Autoscroll,
-            );
+            self.view_store.block_splicing(occurrence);
         }
         self.requested_autoscroll.take()
     }
@@ -10322,12 +9998,6 @@ mod tests {
                 .expect("deferred window exists");
             cx.run_until_parked();
         }
-        window
-            .update(cx, |_, window, _| {
-                assert!(window.view_reuse_stats().deferred_draws.moved_elements >= 8);
-                assert_eq!(window.view_reuse_stats().deferred_draws.cloned_elements, 0);
-            })
-            .expect("deferred window exists");
     }
 
     impl Render for EmptyView {

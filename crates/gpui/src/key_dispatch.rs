@@ -321,12 +321,6 @@ impl DispatchTree {
 
         self.topology
             .extend_from_slice(&source.topology[old_range.clone()]);
-        #[cfg(any(test, feature = "bench-support"))]
-        {
-            stats
-                .dispatch_nodes
-                .copied(&source.topology[old_range.clone()]);
-        }
         for (offset, topology) in self.topology[new_range.clone()].iter_mut().enumerate() {
             let old_id = old_range.start + offset;
             let old_parent = topology
@@ -351,19 +345,6 @@ impl DispatchTree {
         for old_node in &source.payload_nodes[payload_start..payload_end] {
             let new_node = DispatchNodeId(new_range.start + old_node.0 - old_range.start);
             let source = &mut source.nodes[old_node.0];
-            #[cfg(any(test, feature = "bench-support"))]
-            {
-                stats.dispatch_nodes.moved_count::<(
-                    Vec<KeyListener>,
-                    Vec<DispatchActionListener>,
-                    Vec<ModifiersChangedListener>,
-                )>(1);
-                if let Some(context) = &source.context {
-                    stats
-                        .dispatch_contexts
-                        .cloned(std::slice::from_ref(context));
-                }
-            }
             self.nodes[new_node.0] = DispatchNode {
                 context: source.context.clone(),
                 key_listeners: mem::take(&mut source.key_listeners),
@@ -729,10 +710,6 @@ impl DispatchTree {
     }
 
     fn active_node(&mut self) -> &mut DispatchNode {
-        #[cfg(feature = "bench-support")]
-        let _timer = crate::window::RenderPhaseTimer::start(
-            crate::window::RenderPhase::DispatchPayloadIndex,
-        );
         let active_node_id = self.active_node_id().unwrap();
         let index = self
             .payload_nodes
@@ -892,8 +869,6 @@ mod tests {
         assert!(source.node(child).key_listeners.is_empty());
         assert_eq!(target.node(new_child).key_listeners.len(), 1);
         assert_eq!(source.node(child).context, target.node(new_child).context);
-        assert_eq!(stats.dispatch_nodes.rebuilt_elements, 0);
-        assert_eq!(stats.dispatch_nodes.copied_elements, 2);
         assert_eq!(stats.index_fixups, 1);
 
         let mut next = test_dispatch_tree(Vec::new());
@@ -932,8 +907,6 @@ mod tests {
         let mut stats = crate::ViewReuseStats::default();
         target.reuse_subtree(0..1024, &mut source, None, |_| None, &mut stats);
         assert_eq!(target.payload_nodes.len(), 1);
-        assert_eq!(stats.dispatch_nodes.copied_elements, 1024);
-        assert_eq!(stats.dispatch_nodes.moved_elements, 1);
         assert!(
             source
                 .node(super::DispatchNodeId(512))

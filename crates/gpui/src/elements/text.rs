@@ -805,9 +805,6 @@ impl TextMeasure {
         window: &mut Window,
         cx: &mut App,
     ) -> Size<Pixels> {
-        #[cfg(feature = "bench-support")]
-        let _timer =
-            crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::TextMeasure);
         let Self {
             text,
             runs,

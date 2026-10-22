@@ -718,7 +718,7 @@ fn prepaint_view(
             {
                 let prepaint_range = element_state.prepaint_range.clone();
                 let can_reuse = !window.view_store.is_descendant_dirty(occurrence)
-                    || window.prepare_view_splice(occurrence).is_ok();
+                    || window.can_splice_view(occurrence);
                 if can_reuse {
                     #[cfg(any(test, feature = "bench-support"))]
                     {

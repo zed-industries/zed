@@ -97,8 +97,6 @@ struct RetainedLayouts {
     detailed_layout_info: SecondaryMap<DefaultKey, taffy::DetailedLayoutInfo>,
     previous_layouts: FxHashMap<NodeId, taffy::Layout>,
     boundaries: FxHashMap<NodeId, BoundaryLayout>,
-    #[cfg(feature = "bench-support")]
-    phase_timers: bool,
 }
 
 #[derive(Default)]
@@ -109,10 +107,6 @@ struct BoundaryLayout {
 
 impl RetainedLayouts {
     fn set_layout(&mut self, node: NodeId, layout: taffy::Layout) {
-        #[cfg(feature = "bench-support")]
-        let _timer = self.phase_timers.then(|| {
-            crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::LayoutInputCapture)
-        });
         if let Some(previous) = self.layouts.insert(node.into(), layout)
             && previous != layout
         {
@@ -186,17 +180,11 @@ where
         input: taffy::LayoutInput,
         block: Option<&mut taffy::BlockContext<'_>>,
     ) -> taffy::LayoutOutput {
-        #[cfg(feature = "bench-support")]
-        let timer = self.retained.phase_timers.then(|| {
-            crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::LayoutInputCapture)
-        });
         if input.run_mode == taffy::RunMode::PerformLayout
             && let Some(boundary) = self.retained.boundaries.get_mut(&node)
         {
             boundary.input = Some(input);
         }
-        #[cfg(feature = "bench-support")]
-        drop(timer);
         if input.run_mode == taffy::RunMode::PerformHiddenLayout {
             return taffy::compute_hidden_layout(self, node);
         }
@@ -222,10 +210,6 @@ where
                 taffy::compute_oof_layout(tree, node, &mut output);
             }
             output
-        });
-        #[cfg(feature = "bench-support")]
-        let _timer = self.retained.phase_timers.then(|| {
-            crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::LayoutInputCapture)
         });
         if input.run_mode == taffy::RunMode::PerformLayout
             && let Some(boundary) = self.retained.boundaries.get_mut(&node)
@@ -442,11 +426,6 @@ impl TaffyLayoutEngine {
     pub(crate) fn enable_retention(&mut self) {
         if self.retained.is_none() {
             self.retained = Some(Box::default());
-            #[cfg(feature = "bench-support")]
-            {
-                self.retained.as_mut().expect("retention").phase_timers =
-                    crate::window::RenderPhaseTimer::enabled();
-            }
         }
     }
 
@@ -541,8 +520,6 @@ impl TaffyLayoutEngine {
     }
 
     pub(crate) fn retain_subtree(&mut self, id: LayoutId) {
-        #[cfg(feature = "bench-support")]
-        let _timer = crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::Retain);
         let Some(cache) = self.cache.as_mut() else {
             return;
         };
@@ -1036,8 +1013,6 @@ impl TaffyLayoutEngine {
         window: &mut Window,
         cx: &mut App,
     ) {
-        #[cfg(feature = "bench-support")]
-        let _timer = crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::Layout);
         if let Some(cache) = self.cache.as_mut() {
             let generation = window.text_system().font_generation();
             if cache.font_generation != Some(generation) {

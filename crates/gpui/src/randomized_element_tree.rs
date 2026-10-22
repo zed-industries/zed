@@ -1921,8 +1921,8 @@ mod tests {
             {
                 assert!(stats.cached_hits > 0, "fixture exercises reuse");
                 assert!(
-                    stats.hitboxes.copied_elements > 0,
-                    "fixture replays hitboxes"
+                    stats.prepaint_reuse_calls > 0,
+                    "fixture replays prepaint output"
                 );
             }
             cx.update_window(reused.into(), |_, window, _| window.remove_window())
