@@ -2364,6 +2364,46 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn v2_resume_replay_delivers_subagent_history(cx: &mut TestAppContext) {
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let loading = harness.reopen(true, cx);
+        let (_, responder) = bounded(harness.resume_requests.recv(), cx)
+            .await
+            .expect("resume");
+        harness.send_update(
+            "saved",
+            acp::SessionUpdate::SubagentUpdate(acp::SubagentUpdate::new("child")),
+        );
+        harness.send_update(
+            "child",
+            acp::SessionUpdate::AgentMessage(
+                acp::AgentMessage::new("child-history").content(vec!["Replayed".into()]),
+            ),
+        );
+        let initial = initial_response();
+        responder
+            .respond(
+                acp::ResumeSessionResponse::new()
+                    .config_options(initial.config_options)
+                    .available_commands(initial.available_commands),
+            )
+            .expect("resumed");
+        let parent = bounded(loading, cx).await.expect("resumed parent");
+        cx.run_until_parked();
+
+        let child = parent
+            .read_with(cx, |parent, _| parent.subagent(&"child".into()).cloned())
+            .expect("the replayed announcement creates the subagent");
+        child.read_with(cx, |child, _| {
+            assert_eq!(
+                child.entries().len(),
+                1,
+                "history replayed before the resume response reaches the subagent"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn v2_subagent_updates_route_and_patch_child_sessions(cx: &mut TestAppContext) {
         use acp_thread::{ThreadStatus, subagents::SubagentAssociation};
         use agent_client_protocol::schema::MaybeUndefined;
