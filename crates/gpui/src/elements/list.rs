@@ -60,6 +60,7 @@ impl std::fmt::Debug for ListState {
 }
 
 struct StateInner {
+    version: crate::window::StateVersion,
     last_layout_bounds: Option<Bounds<Pixels>>,
     last_padding: Option<Edges<Pixels>>,
     items: SumTree<ListItem>,
@@ -75,7 +76,7 @@ struct StateInner {
     follow_state: FollowState,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 struct ScrollAnchor {
     position: ListOffset,
     pending: Option<PendingScroll>,
@@ -83,7 +84,7 @@ struct ScrollAnchor {
     pending_end: bool,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 enum PendingScroll {
     Absolute(Pixels),
     Proportional(f32),
@@ -313,6 +314,7 @@ impl ListState {
     /// that the list doesn't flicker or pop in when scrolling.
     pub fn new(item_count: usize, alignment: ListAlignment, overdraw: Pixels) -> Self {
         let state = Self(Rc::new(RefCell::new(StateInner {
+            version: crate::window::StateVersion::default(),
             last_layout_bounds: None,
             last_padding: None,
             items: SumTree::default(),
@@ -334,7 +336,10 @@ impl ListState {
     ///
     /// This is useful for ensuring that the scrollbar size is correct instead of based on only rendered elements.
     pub fn measure_all(self) -> Self {
-        self.0.borrow_mut().measuring_behavior = ListMeasuringBehavior::Measure(false);
+        let mut state = self.0.borrow_mut();
+        state.measuring_behavior = ListMeasuringBehavior::Measure(false);
+        state.version.bump();
+        drop(state);
         self
     }
 
@@ -390,6 +395,7 @@ impl ListState {
         let mut tree = SumTree::default();
         tree.extend(new_items, ());
         state.items = tree;
+        state.version.bump();
     }
 
     /// Remeasure all items while preserving proportional scroll position.
@@ -414,6 +420,9 @@ impl ListState {
 
     fn remeasure_items_with_scroll_anchor(&self, range: Range<usize>, mode: ScrollAnchorMode) {
         let state = &mut *self.0.borrow_mut();
+        if !range.is_empty() {
+            state.version.bump();
+        }
 
         if let Some(anchor) = state.scroll_anchor.as_mut()
             && range.contains(&anchor.position.item_ix)
@@ -501,6 +510,7 @@ impl ListState {
         focus_handles: impl IntoIterator<Item = Option<FocusHandle>>,
     ) {
         let state = &mut *self.0.borrow_mut();
+        state.version.bump();
 
         let mut old_items = state.items.cursor::<Count>(());
         let mut new_items = old_items.slice(&Count(old_range.start), Bias::Right);
@@ -561,6 +571,9 @@ impl ListState {
         let state = &mut *self.0.borrow_mut();
 
         if distance < px(0.) {
+            if state.follow_state.is_following() {
+                state.version.bump();
+            }
             state.follow_state.stop_following();
         }
 
@@ -607,6 +620,7 @@ impl ListState {
             self.pause_following_tail();
         }
         let state = &mut *self.0.borrow_mut();
+        let previous_follow = state.follow_state;
 
         match mode {
             FollowMode::Normal => {
@@ -623,6 +637,9 @@ impl ListState {
                 }
             }
         }
+        if state.follow_state != previous_follow {
+            state.version.bump();
+        }
     }
 
     /// Pause tail-following, freezing the list at its current scroll
@@ -636,6 +653,9 @@ impl ListState {
     /// to the end.
     pub fn pause_following_tail(&self) {
         let state = &mut *self.0.borrow_mut();
+        if state.follow_state.is_following() {
+            state.version.bump();
+        }
         if state.follow_state.is_following()
             && let Some(anchor) = state.scroll_anchor.as_mut()
         {
@@ -648,7 +668,9 @@ impl ListState {
     /// Measurements reported as `false` remain provisional and are retried on later layouts.
     /// The consumer must request a new frame when measurement becomes ready.
     pub fn set_item_measurement_readiness(&self, ready: impl Fn(usize, &App) -> bool + 'static) {
-        self.0.borrow_mut().item_measurement_ready = Some(Box::new(ready));
+        let mut state = self.0.borrow_mut();
+        state.item_measurement_ready = Some(Box::new(ready));
+        state.version.bump();
     }
 
     /// Returns whether the list is currently actively following the
@@ -670,6 +692,9 @@ impl ListState {
         }
 
         if scroll_top.item_ix < item_count {
+            if state.follow_state.is_following() {
+                state.version.bump();
+            }
             state.follow_state.stop_following();
         }
 
@@ -744,14 +769,21 @@ impl ListState {
     /// as items in the overdraw get measured, and help offset scroll position changes accordingly.
     pub fn scrollbar_drag_started(&self) {
         let mut state = self.0.borrow_mut();
-        state.scrollbar_drag_start_height = Some(state.items.summary().height);
+        let height = Some(state.items.summary().height);
+        if state.scrollbar_drag_start_height != height {
+            state.scrollbar_drag_start_height = height;
+            state.version.bump();
+        }
     }
 
     /// Called when the user stops dragging the scrollbar.
     ///
     /// See `scrollbar_drag_started`.
     pub fn scrollbar_drag_ended(&self) {
-        self.0.borrow_mut().scrollbar_drag_start_height.take();
+        let mut state = self.0.borrow_mut();
+        if state.scrollbar_drag_start_height.take().is_some() {
+            state.version.bump();
+        }
     }
 
     /// Returns `true` if the scrollbar is currently being dragged.
@@ -959,6 +991,9 @@ impl StateInner {
 
     fn set_scroll_anchor(&mut self, position: Option<ListOffset>) {
         let Some(position) = position else {
+            if self.scroll_anchor.is_some() {
+                self.version.bump();
+            }
             self.scroll_anchor = None;
             return;
         };
@@ -984,12 +1019,16 @@ impl StateInner {
                         })
                 }
             });
-        self.scroll_anchor = Some(ScrollAnchor {
+        let scroll_anchor = Some(ScrollAnchor {
             position,
             pending,
             provisional: false,
             pending_end: false,
         });
+        if self.scroll_anchor != scroll_anchor {
+            self.scroll_anchor = scroll_anchor;
+            self.version.bump();
+        }
     }
 
     fn layout_all_items(
@@ -1549,6 +1588,7 @@ impl Element for List {
         cx: &mut App,
     ) -> ListPrepaintState {
         let state = &mut *self.state.0.borrow_mut();
+        window.record_state_version_read(&state.version);
         state.reset = false;
 
         let mut style = Style::default();

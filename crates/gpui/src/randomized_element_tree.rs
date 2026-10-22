@@ -1875,7 +1875,6 @@ mod tests {
         virtual_list_scroll_regression(cx, true);
     }
 
-    #[ignore = "ListState scroll requests do not invalidate a retained reader"]
     #[gpui::test]
     fn variable_list_scroll_to_item_without_notify(cx: &mut TestAppContext) {
         virtual_list_scroll_regression(cx, false);
@@ -1885,7 +1884,7 @@ mod tests {
         let windows = virtual_list_windows(cx);
         for frame in 0..2 {
             let snapshots = windows.map(|window| {
-                if frame > 0 {
+                if frame == 1 {
                     let root = window.root(cx).expect("virtual list root");
                     root.read_with(cx, |root, _| {
                         if uniform {
@@ -1914,7 +1913,7 @@ mod tests {
         }
     }
 
-    #[ignore = "ListState scroll requests do not invalidate a retained reader"]
+    #[ignore = "retained replay keeps layout-only overdraw probe element state alive"]
     #[gpui::test(iterations = 2)]
     fn randomized_virtual_lists_match_forced_reconstruction(
         mut rng: StdRng,
