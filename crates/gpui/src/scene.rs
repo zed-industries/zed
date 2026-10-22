@@ -320,17 +320,9 @@ impl Scene {
 
     #[inline(always)]
     pub(crate) fn record_primitive(&mut self, primitive: impl Into<Primitive>) {
-        self.record_primitive_for::<true>(primitive);
-    }
-
-    #[inline(always)]
-    pub(crate) fn record_primitive_for<const RETAINED: bool>(
-        &mut self,
-        primitive: impl Into<Primitive>,
-    ) {
         // Materializing the enum before this branch prevents specialization of
         // the flat path for concrete primitive types.
-        if RETAINED && let Some(runs) = self.runs.as_mut() {
+        if let Some(runs) = self.runs.as_mut() {
             runs.recording_scene().insert_primitive(primitive);
         } else {
             self.insert_primitive(primitive);
