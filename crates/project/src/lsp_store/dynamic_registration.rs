@@ -368,6 +368,7 @@ impl LspStore {
         let clear_diagnostics = self
             .as_local()
             .is_some_and(|local| !local.server_pulls_workspace_diagnostics(server_id));
+        let closed_any_document = !closed_documents.is_empty();
         for (buffer_id, abs_path) in closed_documents {
             if let Some(lsp_data) = self.lsp_data.get_mut(&buffer_id) {
                 lsp_data.remove_server_data(server_id);
@@ -380,6 +381,17 @@ impl LspStore {
                     cx,
                 );
             }
+        }
+        // Clients keep what they fetched from the server for the closed documents, and may still
+        // return it when the server was the only one they asked, so they are told to drop it.
+        if closed_any_document {
+            self.refresh_semantic_tokens(server_id, cx);
+            self.refresh_inlay_hints(server_id, cx);
+            self.refresh_code_lens(Some(server_id), cx);
+            self.refresh_document_colors(Some(server_id), cx);
+            self.refresh_folding_ranges(Some(server_id), cx);
+            self.refresh_document_links(Some(server_id), cx);
+            self.refresh_document_symbols(Some(server_id), cx);
         }
     }
 
