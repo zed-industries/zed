@@ -6522,7 +6522,7 @@ impl ProjectPanel {
                                 project_panel.marked_entries.push(clicked_entry);
                             }
                         }
-                    } else if event.modifiers().secondary() {
+                    } else if event.modifiers().secondary(cx) {
                         if event.click_count() > 1 {
                             project_panel.split_entry(entry_id, false, None, cx);
                         } else {
@@ -7199,7 +7199,7 @@ impl ProjectPanel {
     }
 
     fn dispatch_context(&self, window: &Window, cx: &Context<Self>) -> KeyContext {
-        let mut dispatch_context = KeyContext::new_with_defaults();
+        let mut dispatch_context = KeyContext::new_with_defaults(cx.platform_info().os);
         dispatch_context.add("ProjectPanel");
         dispatch_context.add("menu");
 
@@ -7747,7 +7747,7 @@ impl Render for ProjectPanel {
                                          active_indent_guide: &IndentGuideLayout,
                                          window,
                                          cx| {
-                                            if window.modifiers().secondary() {
+                                            if window.modifiers().secondary(cx) {
                                                 let ix = active_indent_guide.offset.y;
                                                 let Some((target_entry, worktree)) = maybe!({
                                                     let (worktree_id, entry) =

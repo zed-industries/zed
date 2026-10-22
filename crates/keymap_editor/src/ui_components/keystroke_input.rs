@@ -812,20 +812,23 @@ mod tests {
                 "Keystroke count mismatch. Expected: {:?}, Actual: {:?}",
                 expected_keystrokes
                     .iter()
-                    .map(|k| k.unparse())
+                    .map(|k| k.unparse(gpui::OperatingSystem::Mac))
                     .collect::<Vec<_>>(),
-                actual.iter().map(|k| k.unparse()).collect::<Vec<_>>()
+                actual
+                    .iter()
+                    .map(|k| k.unparse(gpui::OperatingSystem::Mac))
+                    .collect::<Vec<_>>()
             );
 
             for (i, (actual, expected)) in actual.iter().zip(expected_keystrokes.iter()).enumerate()
             {
                 assert_eq!(
-                    actual.unparse(),
-                    expected.unparse(),
+                    actual.unparse(gpui::OperatingSystem::Mac),
+                    expected.unparse(gpui::OperatingSystem::Mac),
                     "Keystroke {} mismatch. Expected: '{}', Actual: '{}'",
                     i,
-                    expected.unparse(),
-                    actual.unparse()
+                    expected.unparse(gpui::OperatingSystem::Mac),
+                    actual.unparse(gpui::OperatingSystem::Mac)
                 );
             }
         }
@@ -1119,7 +1122,9 @@ mod tests {
             }
 
             fn keystrokes_str(ks: &[KeybindingKeystroke]) -> String {
-                ks.iter().map(|ks| ks.inner().unparse()).join(" ")
+                ks.iter()
+                    .map(|ks| ks.inner().unparse(gpui::OperatingSystem::Mac))
+                    .join(" ")
             }
         }
     }

@@ -355,7 +355,7 @@ mod tests {
         binding
             .keystrokes
             .iter()
-            .map(|keystroke| keystroke.inner().unparse())
+            .map(|keystroke| keystroke.inner().unparse(gpui::OperatingSystem::Mac))
             .collect()
     }
 
@@ -483,7 +483,7 @@ mod tests {
                     ),
                     true,
                     None,
-                    cx.keyboard_mapper().as_ref(),
+                    cx,
                 )
                 .expect("user binding with key equivalents")
                 .with_meta(KeybindSource::User.meta()),

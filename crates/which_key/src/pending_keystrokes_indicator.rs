@@ -563,7 +563,7 @@ mod tests {
                 keystrokes: render_state
                     .keystrokes
                     .iter()
-                    .map(|keystroke| keystroke.inner().unparse())
+                    .map(|keystroke| keystroke.inner().unparse(gpui::OperatingSystem::Mac))
                     .collect(),
                 generation: render_state.pending_input_generation,
                 bindings: render_state
@@ -574,7 +574,9 @@ mod tests {
                             binding
                                 .keystrokes
                                 .iter()
-                                .map(|keystroke| keystroke.inner().unparse())
+                                .map(|keystroke| {
+                                    keystroke.inner().unparse(gpui::OperatingSystem::Mac)
+                                })
                                 .collect(),
                             binding.action_name.to_string(),
                         )
@@ -778,7 +780,7 @@ mod tests {
             assert_eq!(
                 pending_keystrokes
                     .iter()
-                    .map(Keystroke::unparse)
+                    .map(|keystroke| keystroke.unparse(gpui::OperatingSystem::Mac))
                     .collect::<Vec<_>>(),
                 ["j"]
             );
@@ -931,7 +933,7 @@ mod tests {
         assert_eq!(
             window_pending_keystrokes(cx)
                 .iter()
-                .map(Keystroke::unparse)
+                .map(|keystroke| keystroke.unparse(gpui::OperatingSystem::Mac))
                 .collect::<Vec<_>>(),
             ["ctrl-b"]
         );
