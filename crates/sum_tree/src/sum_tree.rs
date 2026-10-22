@@ -2035,7 +2035,7 @@ mod tests {
     struct Count(usize);
 
     #[derive(Ord, PartialOrd, Default, Eq, PartialEq, Clone, Debug)]
-    struct Sum(usize);
+    pub(super) struct Sum(pub(super) usize);
 
     impl Item for u8 {
         type Summary = IntegersSummary;
