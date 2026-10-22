@@ -2463,6 +2463,81 @@ mod tests {
         }
     }
 
+    fn own_hover_repro(
+        snapshot: RandomizedElementTreeSnapshot,
+        cx: &mut TestAppContext,
+    ) -> anyhow::Result<()> {
+        let windows = [false, true].map(|fresh| {
+            let snapshot = snapshot.clone();
+            cx.open_window(WINDOW_SIZE, move |window, cx| {
+                window.set_view_retention(false);
+                window.set_force_view_reconstruction(fresh);
+                if fresh {
+                    window.layout_engine = Some(crate::TaffyLayoutEngine::new());
+                }
+                RandomizedElementTree::from_snapshot_with_entities(snapshot, cx)
+            })
+        });
+        let roots = windows.map(|window| window.root(cx).expect("own hover root"));
+        let mut result = Ok(());
+        for (frame, position) in [
+            crate::point(px(20.0), px(20.0)),
+            crate::point(px(72.40838), px(169.18626)),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let snapshots = windows.map(|window| {
+                cx.update_window(window.into(), |_, window, cx| {
+                    window.simulate_mouse_move(position, cx);
+                })
+                .expect("own hover input");
+                cx.update_window(window.into(), |_, window, cx| {
+                    window.draw(cx).clear(cx);
+                    window.view_reuse_snapshot(|id| {
+                        roots
+                            .iter()
+                            .find_map(|root| root.read(cx).view_element_identity(id))
+                            .map(|id| format!("element-{id}"))
+                            .unwrap_or_else(|| "root".into())
+                    })
+                })
+                .expect("own hover frame")
+            });
+            result = snapshots[0].compare(&snapshots[1], frame);
+            if result.is_err() {
+                break;
+            }
+        }
+        for window in windows {
+            cx.update_window(window.into(), |_, window, _| window.remove_window())
+                .expect("own hover window");
+        }
+        result
+    }
+
+    // A hover-driven ancestor layout change leaves cached descendant hover output stale.
+    #[ignore = "own-hover output can become stale when hover changes geometry or occlusion"]
+    #[gpui::test]
+    fn cached_own_hover_rechecks_changed_hitboxes(cx: &mut TestAppContext) {
+        let mut config = RandomizedElementTreeConfig::new(11657309575477221286, 64)
+            .with_topology(RandomizedElementTreeTopology::Narrow)
+            .with_entity_density(0.5)
+            .with_handler_density(0.5)
+            .with_cached_views(true);
+        config.hover_styles = true;
+        let mut snapshot = RandomizedElementTree::from_config(config).snapshot();
+        snapshot.children.retain(|node| node.id == 0);
+        let parent = snapshot.children.first_mut().expect("cached scroller");
+        parent.children.retain(|node| node.id == 1);
+        for child in &mut parent.children {
+            child.children.clear();
+        }
+        snapshot.rebuild_element_paths();
+        assert_eq!(snapshot.descendant_count(), 2);
+        own_hover_repro(snapshot, cx).expect("cached own-hover output matches reconstruction");
+    }
+
     fn inherited_scope_regression(cx: &mut TestAppContext, scroll: bool, retention: bool) {
         let config = RandomizedElementTreeConfig::new(0, 2)
             .with_topology(RandomizedElementTreeTopology::Deep)
@@ -2711,7 +2786,7 @@ mod tests {
                 reused_snapshot
                     .compare(&reconstructed_snapshot, frame)
                     .unwrap_or_else(|error| {
-                        panic!("cached={cached} retention={splice} topology={topology:?}: {error}")
+                        panic!("cached={cached} retention={splice} topology={topology:?} tree_seed={} pointer={pointer:?}: {error}", config.seed)
                     });
             }
             let stats = cx
