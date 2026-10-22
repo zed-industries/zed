@@ -37,11 +37,44 @@ function Get-VSArch {
     switch ($Arch) {
         "x86_64" { "amd64" }
         "aarch64" { "arm64" }
+        default { throw "Unsupported architecture: $Arch" }
     }
 }
 
+function Get-VisualStudioDevShell {
+    $candidatePaths = @(
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\Launch-VsDevShell.ps1",
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\Professional\Common7\Tools\Launch-VsDevShell.ps1",
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\Community\Common7\Tools\Launch-VsDevShell.ps1",
+        "${env:ProgramFiles}\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\Launch-VsDevShell.ps1",
+        "${env:ProgramFiles}\Microsoft Visual Studio\2022\Professional\Common7\Tools\Launch-VsDevShell.ps1",
+        "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\Common7\Tools\Launch-VsDevShell.ps1"
+    )
+
+    foreach ($candidate in $candidatePaths) {
+        if (Test-Path $candidate) {
+            return $candidate
+        }
+    }
+
+    $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+    if (Test-Path $vswhere) {
+        $installPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2>$null
+        if ($LASTEXITCODE -eq 0 -and $installPath) {
+            $resolved = Join-Path $installPath "Common7\Tools\Launch-VsDevShell.ps1"
+            if (Test-Path $resolved) {
+                return $resolved
+            }
+        }
+    }
+
+    throw "Could not locate Visual Studio Developer Shell. Ensure MSVC is installed on the runner."
+}
+
+$vsShell = Get-VisualStudioDevShell
+
 Push-Location
-& "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\Launch-VsDevShell.ps1" -Arch (Get-VSArch -Arch $Architecture) -HostArch (Get-VSArch -Arch $OSArchitecture)
+& $vsShell -Arch (Get-VSArch -Arch $Architecture) -HostArch (Get-VSArch -Arch $OSArchitecture)
 Pop-Location
 
 $target = "$Architecture-pc-windows-msvc"
@@ -106,6 +139,12 @@ function PrepareForBundle {
     New-Item -Path "$innoDir\bin" -ItemType Directory -Force
     New-Item -Path "$innoDir\tools" -ItemType Directory -Force
 
+    $env:WINVER = "0x0603"
+    $env:_WIN32_WINNT = "0x0603"
+    if (-not $env:RUSTFLAGS) {
+        $env:RUSTFLAGS = "-C link-arg=/SUBSYSTEM:WINDOWS,6.03"
+    }
+
     rustup target add $target
 }
 
@@ -165,7 +204,6 @@ function ZipZedAndItsFriendsDebug {
 
     Compress-Archive -Path $items -DestinationPath ".\$CargoOutDir\zed-$env:RELEASE_VERSION-$env:ZED_RELEASE_CHANNEL.dbg.zip" -Force
 }
-
 
 function UploadToSentry {
     if (-not (Get-Command "sentry-cli" -ErrorAction SilentlyContinue)) {
