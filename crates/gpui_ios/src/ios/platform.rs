@@ -23,10 +23,10 @@ use gpui::{
     PlatformWindow, Result, Task, ThermalState, WindowAppearance, WindowParams,
 };
 use gpui_apple::{
-    AppleDispatcher, keychain,
+    AppleDispatcher, keychain, main_thread_marker,
     thermal::{self, ThermalObserver},
 };
-use objc2::{MainThreadMarker, MainThreadOnly, rc::Retained, runtime::ProtocolObject};
+use objc2::{MainThreadOnly, rc::Retained, runtime::ProtocolObject};
 use objc2_foundation::{
     NSBundle, NSDictionary, NSNotification, NSNotificationCenter, NSObjectProtocol, NSString, NSURL,
 };
@@ -122,7 +122,7 @@ impl IosPlatform {
             // Legacy hosts can create a GPUI window without supplying a scene.
             #[allow(deprecated)]
             UIApplication::sharedApplication(
-                MainThreadMarker::new().expect("UIKit requires the main thread"),
+                main_thread_marker().expect("UIKit requires the main thread"),
             )
             .keyWindow()
         }?;
@@ -160,7 +160,7 @@ impl IosPlatform {
     fn open_url_with_system(url: &NSURL) {
         unsafe {
             let app = UIApplication::sharedApplication(
-                MainThreadMarker::new().expect("UIKit requires the main thread"),
+                main_thread_marker().expect("UIKit requires the main thread"),
             );
             app.openURL_options_completionHandler(url, &NSDictionary::new(), None);
         }
