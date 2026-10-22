@@ -766,8 +766,8 @@ impl Platform for MacPlatform {
     fn window_appearance(&self) -> WindowAppearance {
         unsafe {
             let app = NSApplication::sharedApplication(self.1);
-            let appearance: *mut AnyObject = msg_send![&app, effectiveAppearance];
-            crate::window_appearance::window_appearance_from_native(appearance)
+            let appearance: Option<Retained<NSAppearance>> = msg_send![&app, effectiveAppearance];
+            crate::window_appearance::window_appearance_from_native(appearance.as_deref())
         }
     }
 

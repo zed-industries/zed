@@ -35,12 +35,12 @@ use objc2::{
 };
 #[expect(
     deprecated,
-    reason = "Preserve the existing file-drag pasteboard format"
+    reason = "File-drop decoding expects a property-list array of paths; replacing NSFilenamesPboardType requires migrating both registration and decoding to file URLs"
 )]
 use objc2_app_kit::NSFilenamesPboardType;
 use objc2_app_kit::{
-    NSAlert, NSAlertStyle, NSAutoresizingMaskOptions, NSBackingStoreType, NSBeep, NSButton,
-    NSColor, NSDragOperation, NSDraggingContext, NSDraggingImageComponent,
+    NSAlert, NSAlertStyle, NSAppearance, NSAutoresizingMaskOptions, NSBackingStoreType, NSBeep,
+    NSButton, NSColor, NSDragOperation, NSDraggingContext, NSDraggingImageComponent,
     NSDraggingImageComponentIconKey, NSDraggingItem, NSEventModifierFlags, NSEventType,
     NSPasteboardWriting, NSRequestUserAttentionType, NSScreen, NSTrackingArea,
     NSTrackingAreaOptions, NSView, NSViewLayerContentsRedrawPolicy, NSVisualEffectBlendingMode,
@@ -325,7 +325,7 @@ extern "C" fn window_state_archiver_will_encode_object(
         let is_view: Bool = msg_send![object, isKindOfClass: class!(NSView)];
         let is_window: Bool = msg_send![object, isKindOfClass: class!(NSWindow)];
         if is_view == Bool::YES || is_window == Bool::YES {
-            ptr::null_mut::<AnyObject>()
+            ptr::null_mut()
         } else {
             object
         }
@@ -345,7 +345,7 @@ extern "C" fn window_state_unarchiver_restoration_options(
         minorVersion: 0,
         patchVersion: 0,
     }) {
-        return ptr::null_mut::<AnyObject>();
+        return ptr::null_mut();
     }
     // SAFETY: we look the class up by name and only send it `alloc`/`init`/`autorelease`, all of
     // which have the standard `-> id` signature. Returning `nil` when the class is absent is valid.
@@ -356,7 +356,7 @@ extern "C" fn window_state_unarchiver_restoration_options(
                 let options: *mut AnyObject = msg_send![options, init];
                 msg_send![options, autorelease]
             }
-            None => ptr::null_mut::<AnyObject>(),
+            None => ptr::null_mut(),
         }
     }
 }
@@ -770,6 +770,8 @@ impl MacWindowState {
     }
 
     fn native_window(&self) -> &NSWindow {
+        // SAFETY: `MacWindow::open` initializes this pointer with an `NSWindow` or `NSPanel` instance.
+        // Both types can be borrowed as `NSWindow`.
         unsafe { &*self.native_window.cast::<NSWindow>() }
     }
 
@@ -849,7 +851,7 @@ impl MacWindowState {
         let screen_frame = self
             .native_window()
             .screen()
-            .map_or(NSRect::ZERO, |screen| screen.visibleFrame());
+            .map_or_default(|screen| screen.visibleFrame());
         bounds.size == rect_to_size(screen_frame)
     }
 
@@ -910,7 +912,7 @@ impl MacWindowState {
         let NSSize { width, height } = self
             .native_window()
             .contentView()
-            .map_or(NSSize::ZERO, |view| view.frame().size);
+            .map_or_default(|view| view.frame().size);
         size(px(width as f32), px(height as f32))
     }
 
@@ -1016,7 +1018,7 @@ impl MacWindow {
             let target_screen = target_screen.or_else(|| NSScreen::mainScreen(marker));
             let screen_frame = target_screen
                 .as_ref()
-                .map_or(NSRect::ZERO, |screen| screen.frame());
+                .map_or_default(|screen| screen.frame());
 
             let window_rect = NSRect::new(
                 NSPoint::new(
@@ -1041,7 +1043,7 @@ impl MacWindow {
             assert!(!native_window.is_null());
             #[expect(
                 deprecated,
-                reason = "Preserve the existing file-drag pasteboard format"
+                reason = "File-drop decoding expects a property-list array of paths; replacing NSFilenamesPboardType requires migrating both registration and decoding to file URLs"
             )]
             let () = msg_send![
                 native_window,
@@ -1622,9 +1624,9 @@ impl PlatformWindow for MacWindow {
 
     fn appearance(&self) -> WindowAppearance {
         unsafe {
-            let appearance: *mut AnyObject =
+            let appearance: Option<Retained<NSAppearance>> =
                 msg_send![self.0.lock().native_window, effectiveAppearance];
-            crate::window_appearance::window_appearance_from_native(appearance)
+            crate::window_appearance::window_appearance_from_native(appearance.as_deref())
         }
     }
 
@@ -3663,7 +3665,7 @@ fn external_paths_from_event(dragging_info: *mut AnyObject) -> Option<ExternalPa
     }
     #[expect(
         deprecated,
-        reason = "Preserve the existing file-drag pasteboard format"
+        reason = "File-drop decoding expects a property-list array of paths; replacing NSFilenamesPboardType requires migrating both registration and decoding to file URLs"
     )]
     let filenames: *mut NSArray<NSString> =
         unsafe { msg_send![pasteboard, propertyListForType: NSFilenamesPboardType] };

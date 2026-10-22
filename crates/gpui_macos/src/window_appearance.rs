@@ -1,14 +1,14 @@
 use crate::NSStringExt;
 use gpui::WindowAppearance;
 use objc2::{msg_send, rc::Retained, runtime::AnyObject};
-use objc2_app_kit::{NSAppearanceNameVibrantDark, NSAppearanceNameVibrantLight};
+use objc2_app_kit::{NSAppearance, NSAppearanceNameVibrantDark, NSAppearanceNameVibrantLight};
 use objc2_foundation::NSString;
 
-pub(crate) unsafe fn window_appearance_from_native(appearance: *mut AnyObject) -> WindowAppearance {
+pub(crate) fn window_appearance_from_native(appearance: Option<&NSAppearance>) -> WindowAppearance {
+    let Some(appearance) = appearance else {
+        return WindowAppearance::Light;
+    };
     unsafe {
-        let Some(appearance) = appearance.as_ref() else {
-            return WindowAppearance::Light;
-        };
         let name: Option<Retained<NSString>> = msg_send![appearance, name];
         let Some(name) = name else {
             return WindowAppearance::Light;
