@@ -21,6 +21,7 @@ mod debug_overlay;
 mod element;
 mod elements;
 mod executor;
+mod frame_array;
 mod platform_scheduler;
 pub(crate) use platform_scheduler::PlatformScheduler;
 mod geometry;

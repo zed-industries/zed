@@ -6,7 +6,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, Hsla, Pixels,
-    Point, Radians, ScaledPixels, Size, bounds_tree::BoundsTree, point,
+    Point, Radians, ScaledPixels, Size,
+    bounds_tree::BoundsTree,
+    frame_array::{FrameArray, FramePosition},
+    point,
 };
 use std::{
     fmt::Debug,
@@ -24,7 +27,7 @@ pub type DrawOrder = u32;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct SceneIndex {
-    pub operations: usize,
+    pub operations: FramePosition<PaintOperation>,
     ordering: usize,
     primitives: [usize; 6],
     paths: usize,
@@ -35,7 +38,7 @@ pub(crate) struct SceneIndex {
 impl SceneIndex {
     pub(crate) fn rebase(self, old: Self, new: Self) -> Self {
         Self {
-            operations: self.operations - old.operations + new.operations,
+            operations: self.operations.rebase(old.operations, new.operations),
             ordering: self.ordering - old.ordering + new.ordering,
             primitives: std::array::from_fn(|index| {
                 self.primitives[index] - old.primitives[index] + new.primitives[index]
@@ -75,7 +78,7 @@ impl From<bool> for PaddedBool32 {
 #[derive(Default)]
 #[expect(missing_docs)]
 pub struct Scene {
-    pub(crate) paint_operations: Vec<PaintOperation>,
+    pub(crate) paint_operations: FrameArray<PaintOperation>,
     primitive_bounds: BoundsTree<ScaledPixels>,
     ordering_indices: Vec<usize>,
     layer_stack: Vec<DrawOrder>,
@@ -126,7 +129,7 @@ impl Scene {
 
     pub(crate) fn index(&self) -> SceneIndex {
         SceneIndex {
-            operations: self.paint_operations.len(),
+            operations: self.paint_operations.position(),
             ordering: self.primitive_bounds.len(),
             primitives: [
                 self.shadows.len(),
@@ -193,20 +196,24 @@ impl Scene {
                 range.start.ordering..range.end.ordering,
             );
         if !bulk {
-            self.replay(range.start.operations..range.end.operations, previous);
+            self.replay(
+                range.start.operations.range_to(range.end.operations),
+                previous,
+            );
             return;
         }
         #[cfg(debug_assertions)]
         {
             debug_assert!(
                 previous.consumed_segments.iter().all(|prior| {
-                    range.end.operations <= prior.start || prior.end <= range.start.operations
+                    range.end.operations.offset() <= prior.start
+                        || prior.end <= range.start.operations.offset()
                 }),
                 "scene segment consumed twice"
             );
             previous
                 .consumed_segments
-                .push(range.start.operations..range.end.operations);
+                .push(range.start.operations.range_to(range.end.operations));
         }
         previous.prepare_replay_arrays();
         macro_rules! copy {
@@ -226,11 +233,12 @@ impl Scene {
         {
             stats.scene_bulk_segments += 1;
         }
-        self.paint_operations.extend_from_slice(
-            &previous.paint_operations[range.start.operations..range.end.operations],
+        self.paint_operations.carry_copy(
+            &mut previous.paint_operations,
+            range.start.operations..range.end.operations,
         );
         self.ordering_indices.extend_from_slice(
-            &previous.ordering_indices[range.start.operations..range.end.operations],
+            &previous.ordering_indices[range.start.operations.range_to(range.end.operations)],
         );
     }
 
@@ -1867,7 +1875,10 @@ mod tests {
         target.push_layer(quad().bounds);
         assert_eq!(rebased.layer_depth, target.index().layer_depth);
         assert_eq!(rebased.ordering, target.index().ordering);
-        assert_eq!(rebased.operations, target.index().operations);
+        assert_eq!(
+            rebased.operations.offset(),
+            target.index().operations.offset()
+        );
         assert_eq!(rebased.rebase(new, old).layer_depth, descendant.layer_depth);
     }
 

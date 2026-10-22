@@ -49,6 +49,7 @@
 //!
 //!  KeyBinding::new("cmd-k left", pane::SplitLeft, Some("Pane"))
 
+use crate::frame_array::{FrameArray, FramePosition};
 use crate::{
     Action, ActionRegistry, App, DispatchPhase, EntityId, FocusId, KeyBinding, KeyContext, Keymap,
     Keystroke, ModifiersChangedEvent, Window,
@@ -72,7 +73,7 @@ pub(crate) struct DispatchTree {
     node_stack: Vec<DispatchNodeId>,
     pub(crate) context_stack: Vec<KeyContext>,
     view_stack: Vec<EntityId>,
-    nodes: Vec<DispatchNode>,
+    nodes: FrameArray<DispatchNode>,
     topology: Vec<DispatchTopology>,
     focus_nodes: Vec<DispatchNodeId>,
     view_nodes: Vec<DispatchNodeId>,
@@ -167,7 +168,7 @@ impl DispatchTree {
             node_stack: Vec::new(),
             context_stack: Vec::new(),
             view_stack: Vec::new(),
-            nodes: Vec::new(),
+            nodes: FrameArray::default(),
             topology: Vec::new(),
             focus_nodes: Vec::new(),
             view_nodes: Vec::new(),
@@ -196,8 +197,8 @@ impl DispatchTree {
         self.view_node_ids.clear();
     }
 
-    pub fn len(&self) -> usize {
-        self.nodes.len()
+    pub(crate) fn position(&self) -> FramePosition<DispatchNode> {
+        self.nodes.position()
     }
 
     pub fn push_node(&mut self) -> DispatchNodeId {
@@ -400,7 +401,7 @@ impl DispatchTree {
                 self.view_node_ids.remove(&view_id);
             }
         }
-        self.nodes.truncate(index);
+        self.nodes.truncate_offset(index);
         self.topology.truncate(index);
         self.focus_nodes
             .truncate(self.focus_nodes.partition_point(|node| node.0 < index));

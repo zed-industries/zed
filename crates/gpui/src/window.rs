@@ -26,6 +26,7 @@ use crate::{
 };
 
 use crate::element::{ElementIdInterner, InternedHandle};
+use crate::frame_array::{FrameArray, FramePosition};
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
 use crate::interactive::TouchEvent;
 use anyhow::{Context as _, Result, anyhow};
@@ -1067,108 +1068,89 @@ pub(crate) struct Frame {
     pub(crate) focus: Option<FocusId>,
     pub(crate) window_active: bool,
     pub(crate) element_states: FxHashMap<(InternedHandle, TypeId), ElementStateBox>,
-    accessed_element_states: Vec<(InternedHandle, TypeId)>,
-    state_version_reads: Vec<StateVersionRead>,
-    pub(crate) mouse_listeners: Vec<Option<AnyMouseListener>>,
+    accessed_element_states: FrameArray<(InternedHandle, TypeId)>,
+    state_version_reads: FrameArray<StateVersionRead>,
+    pub(crate) mouse_listeners: FrameArray<Option<AnyMouseListener>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
-    pub(crate) hitboxes: Vec<Hitbox>,
+    pub(crate) hitboxes: FrameArray<Hitbox>,
     pub(crate) window_control_hitboxes: Vec<(WindowControlArea, Hitbox)>,
-    pub(crate) deferred_draws: Vec<DeferredDraw>,
-    pub(crate) input_handlers: Vec<Option<PlatformInputHandler>>,
-    pub(crate) tooltip_requests: Vec<Option<TooltipRequest>>,
-    pub(crate) cursor_styles: Vec<CursorStyleRequest>,
+    pub(crate) deferred_draws: FrameArray<DeferredDraw>,
+    pub(crate) input_handlers: FrameArray<Option<PlatformInputHandler>>,
+    pub(crate) tooltip_requests: FrameArray<Option<TooltipRequest>>,
+    pub(crate) cursor_styles: FrameArray<CursorStyleRequest>,
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
     #[cfg(any(test, feature = "test-support"))]
-    debug_bounds_records: Vec<(String, Bounds<Pixels>)>,
+    debug_bounds_records: FrameArray<(String, Bounds<Pixels>)>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) next_inspector_instance_ids: FxHashMap<Rc<crate::InspectorElementPath>, usize>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) inspector_hitboxes: FxHashMap<HitboxId, crate::InspectorElementId>,
     pub(crate) tab_stops: TabStopMap,
-    pub(crate) prepaint_views: Vec<crate::view::ViewOccurrenceId>,
-    pub(crate) paint_views: Vec<crate::view::ViewOccurrenceId>,
-    #[cfg(debug_assertions)]
-    consumed_segments: [Vec<Range<usize>>; 6],
+    pub(crate) prepaint_views: FrameArray<crate::view::ViewOccurrenceId>,
+    pub(crate) paint_views: FrameArray<crate::view::ViewOccurrenceId>,
 }
 
-#[derive(Clone, Default)]
-pub(crate) struct PrepaintStateIndex {
-    pub(crate) hitboxes_index: usize,
-    pub(crate) tooltips_index: usize,
-    pub(crate) deferred_draws_index: usize,
-    pub(crate) dispatch_tree_index: usize,
-    pub(crate) accessed_element_states_index: usize,
-    state_version_reads_index: usize,
-    pub(crate) line_layout_index: LineLayoutIndex,
-    pub(crate) views_index: usize,
-}
-
-#[derive(Clone, Default)]
-pub(crate) struct PaintIndex {
-    scene_index: crate::scene::SceneIndex,
-    #[cfg(any(test, feature = "test-support"))]
-    debug_bounds_index: usize,
-    mouse_listeners_index: usize,
-    input_handlers_index: usize,
-    cursor_styles_index: usize,
-    accessed_element_states_index: usize,
-    tab_handle_index: usize,
-    line_layout_index: LineLayoutIndex,
-    pub(crate) views_index: usize,
-}
-
-impl PrepaintStateIndex {
-    pub(crate) fn rebase(&self, old: &Self, new: &Self) -> Self {
-        Self {
-            hitboxes_index: self.hitboxes_index - old.hitboxes_index + new.hitboxes_index,
-            tooltips_index: self.tooltips_index - old.tooltips_index + new.tooltips_index,
-            deferred_draws_index: self.deferred_draws_index - old.deferred_draws_index
-                + new.deferred_draws_index,
-            dispatch_tree_index: self.dispatch_tree_index - old.dispatch_tree_index
-                + new.dispatch_tree_index,
-            accessed_element_states_index: self.accessed_element_states_index
-                - old.accessed_element_states_index
-                + new.accessed_element_states_index,
-            state_version_reads_index: self.state_version_reads_index
-                - old.state_version_reads_index
-                + new.state_version_reads_index,
-            line_layout_index: self
-                .line_layout_index
-                .rebase(&old.line_layout_index, &new.line_layout_index),
-            views_index: self.views_index - old.views_index + new.views_index,
+macro_rules! frame_index {
+    ($name:ident { $($(#[$attribute:meta])* $visibility:vis $field:ident: $kind:ty,)* }) => {
+        #[derive(Clone, Default)]
+        pub(crate) struct $name {
+            $($(#[$attribute])* $visibility $field: $kind,)*
         }
+
+        impl $name {
+            pub(crate) fn rebase(&self, old: &Self, new: &Self) -> Self {
+                Self {
+                    $($(#[$attribute])* $field: crate::frame_array::FrameIndex::rebased(
+                        &self.$field, &old.$field, &new.$field,
+                    ),)*
+                }
+            }
+        }
+    };
+}
+
+impl crate::frame_array::FrameIndex for LineLayoutIndex {
+    fn rebased(&self, old: &Self, new: &Self) -> Self {
+        self.rebase(old, new)
     }
 }
+
+impl crate::frame_array::FrameIndex for crate::scene::SceneIndex {
+    fn rebased(&self, old: &Self, new: &Self) -> Self {
+        self.rebase(*old, *new)
+    }
+}
+
+frame_index! { PrepaintStateIndex {
+    pub(crate) hitboxes_index: FramePosition<Hitbox>,
+    pub(crate) tooltips_index: FramePosition<Option<TooltipRequest>>,
+    pub(crate) deferred_draws_index: FramePosition<DeferredDraw>,
+    pub(crate) dispatch_tree_index: FramePosition<crate::key_dispatch::DispatchNode>,
+    pub(crate) accessed_element_states_index: FramePosition<(InternedHandle, TypeId)>,
+    state_version_reads_index: FramePosition<StateVersionRead>,
+    pub(crate) line_layout_index: LineLayoutIndex,
+    pub(crate) views_index: FramePosition<crate::view::ViewOccurrenceId>,
+}}
+
+frame_index! { PaintIndex {
+    scene_index: crate::scene::SceneIndex,
+    #[cfg(any(test, feature = "test-support"))]
+    debug_bounds_index: FramePosition<(String, Bounds<Pixels>)>,
+    mouse_listeners_index: FramePosition<Option<AnyMouseListener>>,
+    input_handlers_index: FramePosition<Option<PlatformInputHandler>>,
+    cursor_styles_index: FramePosition<CursorStyleRequest>,
+    accessed_element_states_index: FramePosition<(InternedHandle, TypeId)>,
+    tab_handle_index: FramePosition<crate::tab_stop::TabStopOperation>,
+    line_layout_index: LineLayoutIndex,
+    pub(crate) views_index: FramePosition<crate::view::ViewOccurrenceId>,
+}}
 
 impl PaintIndex {
     pub(crate) fn with_cached_state_access(mut self) -> Self {
         self.accessed_element_states_index -= 1;
         self
-    }
-
-    pub(crate) fn rebase(&self, old: &Self, new: &Self) -> Self {
-        Self {
-            scene_index: self.scene_index.rebase(old.scene_index, new.scene_index),
-            #[cfg(any(test, feature = "test-support"))]
-            debug_bounds_index: self.debug_bounds_index - old.debug_bounds_index
-                + new.debug_bounds_index,
-            mouse_listeners_index: self.mouse_listeners_index - old.mouse_listeners_index
-                + new.mouse_listeners_index,
-            input_handlers_index: self.input_handlers_index - old.input_handlers_index
-                + new.input_handlers_index,
-            cursor_styles_index: self.cursor_styles_index - old.cursor_styles_index
-                + new.cursor_styles_index,
-            accessed_element_states_index: self.accessed_element_states_index
-                - old.accessed_element_states_index
-                + new.accessed_element_states_index,
-            tab_handle_index: self.tab_handle_index - old.tab_handle_index + new.tab_handle_index,
-            line_layout_index: self
-                .line_layout_index
-                .rebase(&old.line_layout_index, &new.line_layout_index),
-            views_index: self.views_index - old.views_index + new.views_index,
-        }
     }
 }
 
@@ -1202,22 +1184,22 @@ impl Frame {
             focus: None,
             window_active: false,
             element_states: FxHashMap::default(),
-            accessed_element_states: Vec::new(),
-            state_version_reads: Vec::new(),
-            mouse_listeners: Vec::new(),
+            accessed_element_states: FrameArray::default(),
+            state_version_reads: FrameArray::default(),
+            mouse_listeners: FrameArray::default(),
             dispatch_tree,
             scene: Scene::default(),
-            hitboxes: Vec::new(),
+            hitboxes: FrameArray::default(),
             window_control_hitboxes: Vec::new(),
-            deferred_draws: Vec::new(),
-            input_handlers: Vec::new(),
-            tooltip_requests: Vec::new(),
-            cursor_styles: Vec::new(),
+            deferred_draws: FrameArray::default(),
+            input_handlers: FrameArray::default(),
+            tooltip_requests: FrameArray::default(),
+            cursor_styles: FrameArray::default(),
 
             #[cfg(any(test, feature = "test-support"))]
             debug_bounds: FxHashMap::default(),
             #[cfg(any(test, feature = "test-support"))]
-            debug_bounds_records: Vec::new(),
+            debug_bounds_records: FrameArray::default(),
 
             #[cfg(any(feature = "inspector", debug_assertions))]
             next_inspector_instance_ids: FxHashMap::default(),
@@ -1225,10 +1207,8 @@ impl Frame {
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector_hitboxes: FxHashMap::default(),
             tab_stops: TabStopMap::default(),
-            prepaint_views: Vec::new(),
-            paint_views: Vec::new(),
-            #[cfg(debug_assertions)]
-            consumed_segments: Default::default(),
+            prepaint_views: FrameArray::default(),
+            paint_views: FrameArray::default(),
         }
     }
 
@@ -1249,11 +1229,6 @@ impl Frame {
         self.focus = None;
         self.prepaint_views.clear();
         self.paint_views.clear();
-        #[cfg(debug_assertions)]
-        for ranges in &mut self.consumed_segments {
-            ranges.clear();
-        }
-
         #[cfg(any(test, feature = "test-support"))]
         {
             self.debug_bounds.clear();
@@ -1321,20 +1296,6 @@ impl Frame {
         );
 
         self.scene.finish();
-    }
-
-    #[cfg(debug_assertions)]
-    fn consume_segment(&mut self, array: usize, range: Range<usize>) {
-        if !range.is_empty() {
-            let consumed = &mut self.consumed_segments[array];
-            debug_assert!(
-                consumed
-                    .iter()
-                    .all(|prior| range.end <= prior.start || prior.end <= range.start),
-                "frame segment consumed twice"
-            );
-            consumed.push(range);
-        }
     }
 }
 
@@ -4779,52 +4740,43 @@ impl Window {
 
     pub(crate) fn prepaint_index(&self) -> PrepaintStateIndex {
         PrepaintStateIndex {
-            hitboxes_index: self.next_frame.hitboxes.len(),
-            tooltips_index: self.next_frame.tooltip_requests.len(),
-            deferred_draws_index: self.next_frame.deferred_draws.len(),
-            dispatch_tree_index: self.next_frame.dispatch_tree.len(),
-            accessed_element_states_index: self.next_frame.accessed_element_states.len(),
-            state_version_reads_index: self.next_frame.state_version_reads.len(),
+            hitboxes_index: self.next_frame.hitboxes.position(),
+            tooltips_index: self.next_frame.tooltip_requests.position(),
+            deferred_draws_index: self.next_frame.deferred_draws.position(),
+            dispatch_tree_index: self.next_frame.dispatch_tree.position(),
+            accessed_element_states_index: self.next_frame.accessed_element_states.position(),
+            state_version_reads_index: self.next_frame.state_version_reads.position(),
             line_layout_index: self.text_system.layout_index(),
-            views_index: self.next_frame.prepaint_views.len(),
+            views_index: self.next_frame.prepaint_views.position(),
         }
     }
 
     pub(crate) fn reuse_prepaint(&mut self, range: Range<PrepaintStateIndex>) {
         let new_start = self.prepaint_index();
-        #[cfg(debug_assertions)]
-        {
-            self.rendered_frame
-                .consume_segment(0, range.start.hitboxes_index..range.end.hitboxes_index);
-            self.rendered_frame
-                .consume_segment(1, range.start.tooltips_index..range.end.tooltips_index);
-            self.rendered_frame.consume_segment(
-                2,
-                range.start.deferred_draws_index..range.end.deferred_draws_index,
-            );
-        }
         #[cfg(any(test, feature = "bench-support"))]
         {
             let stats = &mut self.view_reuse_stats;
             stats.prepaint_reuse_calls += 1;
-            stats.index_fixups += range.end.deferred_draws_index - range.start.deferred_draws_index;
+            stats.index_fixups +=
+                range.end.deferred_draws_index.offset() - range.start.deferred_draws_index.offset();
         }
-        self.next_frame.hitboxes.extend_from_slice(
-            &self.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index],
+        self.next_frame.hitboxes.carry_with(
+            &mut self.rendered_frame.hitboxes,
+            range.start.hitboxes_index..range.end.hitboxes_index,
+            |hitbox| hitbox.clone(),
         );
-        self.next_frame.tooltip_requests.extend(
-            self.rendered_frame.tooltip_requests
-                [range.start.tooltips_index..range.end.tooltips_index]
-                .iter_mut()
-                .map(|request| request.take()),
+        self.next_frame.tooltip_requests.carry_take(
+            &mut self.rendered_frame.tooltip_requests,
+            range.start.tooltips_index..range.end.tooltips_index,
         );
-        self.next_frame.accessed_element_states.extend_from_slice(
-            &self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
-                ..range.end.accessed_element_states_index],
+        self.next_frame.accessed_element_states.carry_copy(
+            &mut self.rendered_frame.accessed_element_states,
+            range.start.accessed_element_states_index..range.end.accessed_element_states_index,
         );
-        self.next_frame.state_version_reads.extend_from_slice(
-            &self.rendered_frame.state_version_reads
-                [range.start.state_version_reads_index..range.end.state_version_reads_index],
+        self.next_frame.state_version_reads.carry_with(
+            &mut self.rendered_frame.state_version_reads,
+            range.start.state_version_reads_index..range.end.state_version_reads_index,
+            |read| read.clone(),
         );
         self.text_system.reuse_layouts(
             range.start.line_layout_index.clone()..range.end.line_layout_index.clone(),
@@ -4832,7 +4784,10 @@ impl Window {
 
         let replay = &self.dispatch_replay;
         let reused_subtree = self.next_frame.dispatch_tree.reuse_subtree(
-            range.start.dispatch_tree_index..range.end.dispatch_tree_index,
+            range
+                .start
+                .dispatch_tree_index
+                .range_to(range.end.dispatch_tree_index),
             &mut self.rendered_frame.dispatch_tree,
             self.focus,
             |node| {
@@ -4849,30 +4804,29 @@ impl Window {
             self.next_frame.focus = self.focus;
         }
 
-        self.next_frame.deferred_draws.extend(
-            self.rendered_frame.deferred_draws
-                [range.start.deferred_draws_index..range.end.deferred_draws_index]
-                .iter_mut()
-                .map(|deferred_draw| DeferredDraw {
-                    current_view: deferred_draw.current_view,
-                    parent_occurrence: deferred_draw.parent_occurrence,
-                    parent_node: reused_subtree.refresh_node_id(deferred_draw.parent_node),
-                    element_id_stack: ElementIdStack {
-                        ids: mem::take(&mut deferred_draw.element_id_stack.ids),
-                        handles: mem::take(&mut deferred_draw.element_id_stack.handles),
-                        root: deferred_draw.element_id_stack.root,
-                    },
-                    text_style_stack: mem::take(&mut deferred_draw.text_style_stack),
-                    text_style_base: deferred_draw.text_style_base.take(),
-                    content_mask: deferred_draw.content_mask,
-                    rem_size: deferred_draw.rem_size,
-                    priority: deferred_draw.priority,
-                    element: None,
-                    absolute_offset: deferred_draw.absolute_offset,
-                    prepaint_range: deferred_draw.prepaint_range.clone(),
-                    paint_range: deferred_draw.paint_range.clone(),
-                    accessed_entities: mem::take(&mut deferred_draw.accessed_entities),
-                }),
+        self.next_frame.deferred_draws.carry_with(
+            &mut self.rendered_frame.deferred_draws,
+            range.start.deferred_draws_index..range.end.deferred_draws_index,
+            |deferred_draw| DeferredDraw {
+                current_view: deferred_draw.current_view,
+                parent_occurrence: deferred_draw.parent_occurrence,
+                parent_node: reused_subtree.refresh_node_id(deferred_draw.parent_node),
+                element_id_stack: ElementIdStack {
+                    ids: mem::take(&mut deferred_draw.element_id_stack.ids),
+                    handles: mem::take(&mut deferred_draw.element_id_stack.handles),
+                    root: deferred_draw.element_id_stack.root,
+                },
+                text_style_stack: mem::take(&mut deferred_draw.text_style_stack),
+                text_style_base: deferred_draw.text_style_base.take(),
+                content_mask: deferred_draw.content_mask,
+                rem_size: deferred_draw.rem_size,
+                priority: deferred_draw.priority,
+                element: None,
+                absolute_offset: deferred_draw.absolute_offset,
+                prepaint_range: deferred_draw.prepaint_range.clone(),
+                paint_range: deferred_draw.paint_range.clone(),
+                accessed_entities: mem::take(&mut deferred_draw.accessed_entities),
+            },
         );
         for occurrence in
             &self.rendered_frame.prepaint_views[range.start.views_index..range.end.views_index]
@@ -4892,34 +4846,19 @@ impl Window {
         PaintIndex {
             scene_index: self.next_frame.scene.index(),
             #[cfg(any(test, feature = "test-support"))]
-            debug_bounds_index: self.next_frame.debug_bounds_records.len(),
-            mouse_listeners_index: self.next_frame.mouse_listeners.len(),
-            input_handlers_index: self.next_frame.input_handlers.len(),
-            cursor_styles_index: self.next_frame.cursor_styles.len(),
-            accessed_element_states_index: self.next_frame.accessed_element_states.len(),
+            debug_bounds_index: self.next_frame.debug_bounds_records.position(),
+            mouse_listeners_index: self.next_frame.mouse_listeners.position(),
+            input_handlers_index: self.next_frame.input_handlers.position(),
+            cursor_styles_index: self.next_frame.cursor_styles.position(),
+            accessed_element_states_index: self.next_frame.accessed_element_states.position(),
             tab_handle_index: self.next_frame.tab_stops.paint_index(),
             line_layout_index: self.text_system.layout_index(),
-            views_index: self.next_frame.paint_views.len(),
+            views_index: self.next_frame.paint_views.position(),
         }
     }
 
     pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) {
         let new_start = self.paint_index();
-        #[cfg(debug_assertions)]
-        {
-            self.rendered_frame.consume_segment(
-                3,
-                range.start.cursor_styles_index..range.end.cursor_styles_index,
-            );
-            self.rendered_frame.consume_segment(
-                4,
-                range.start.input_handlers_index..range.end.input_handlers_index,
-            );
-            self.rendered_frame.consume_segment(
-                5,
-                range.start.mouse_listeners_index..range.end.mouse_listeners_index,
-            );
-        }
         // Cached elements still exist in the frame even when their paint methods don't run.
         #[cfg(any(test, feature = "test-support"))]
         for (selector, bounds) in &self.rendered_frame.debug_bounds_records
@@ -4928,25 +4867,21 @@ impl Window {
             self.next_frame
                 .record_debug_bounds(selector.clone(), *bounds);
         }
-        self.next_frame.cursor_styles.extend_from_slice(
-            &self.rendered_frame.cursor_styles
-                [range.start.cursor_styles_index..range.end.cursor_styles_index],
+        self.next_frame.cursor_styles.carry_copy(
+            &mut self.rendered_frame.cursor_styles,
+            range.start.cursor_styles_index..range.end.cursor_styles_index,
         );
-        self.next_frame.input_handlers.extend(
-            self.rendered_frame.input_handlers
-                [range.start.input_handlers_index..range.end.input_handlers_index]
-                .iter_mut()
-                .map(|handler| handler.take()),
+        self.next_frame.input_handlers.carry_take(
+            &mut self.rendered_frame.input_handlers,
+            range.start.input_handlers_index..range.end.input_handlers_index,
         );
-        self.next_frame.mouse_listeners.extend(
-            self.rendered_frame.mouse_listeners
-                [range.start.mouse_listeners_index..range.end.mouse_listeners_index]
-                .iter_mut()
-                .map(|listener| listener.take()),
+        self.next_frame.mouse_listeners.carry_take(
+            &mut self.rendered_frame.mouse_listeners,
+            range.start.mouse_listeners_index..range.end.mouse_listeners_index,
         );
-        self.next_frame.accessed_element_states.extend_from_slice(
-            &self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
-                ..range.end.accessed_element_states_index],
+        self.next_frame.accessed_element_states.carry_copy(
+            &mut self.rendered_frame.accessed_element_states,
+            range.start.accessed_element_states_index..range.end.accessed_element_states_index,
         );
         self.next_frame.tab_stops.replay(
             &self.rendered_frame.tab_stops.insertion_history
@@ -5136,7 +5071,7 @@ impl Window {
                 .truncate(index.deferred_draws_index);
             self.next_frame
                 .dispatch_tree
-                .truncate(index.dispatch_tree_index);
+                .truncate(index.dispatch_tree_index.offset());
             self.next_frame
                 .accessed_element_states
                 .truncate(index.accessed_element_states_index);
@@ -9775,18 +9710,6 @@ mod tests {
                 .update(cx, |_, window, _| window.remove_window())
                 .expect("query window exists");
         }
-    }
-
-    #[cfg(debug_assertions)]
-    #[test]
-    #[should_panic(expected = "frame segment consumed twice")]
-    fn replay_rejects_overlapping_frame_segments() {
-        let mut frame = super::Frame::new(crate::DispatchTree::new(
-            Rc::new(RefCell::new(crate::Keymap::default())),
-            Rc::new(crate::ActionRegistry::default()),
-        ));
-        frame.consume_segment(0, 1..4);
-        frame.consume_segment(0, 3..5);
     }
 
     #[test]

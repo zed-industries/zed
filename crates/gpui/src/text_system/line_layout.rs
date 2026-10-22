@@ -1,3 +1,4 @@
+use crate::frame_array::{FrameArray, FramePosition};
 use crate::{FontId, GlyphId, Pixels, PlatformTextSystem, Point, SharedString, Size, point, px};
 use collections::FxHashMap;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
@@ -469,8 +470,8 @@ pub(crate) struct LineLayoutCache {
 struct FrameCache {
     lines: FxHashMap<Arc<CacheKey>, Arc<LineLayout>>,
     wrapped_lines: FxHashMap<Arc<CacheKey>, Arc<WrappedLineLayout>>,
-    used_lines: Vec<Arc<CacheKey>>,
-    used_wrapped_lines: Vec<Arc<CacheKey>>,
+    used_lines: FrameArray<Arc<CacheKey>>,
+    used_wrapped_lines: FrameArray<Arc<CacheKey>>,
 
     // Content-addressable caches keyed by caller-provided text hash + layout params.
     // These allow cache hits without materializing a contiguous `SharedString`.
@@ -480,31 +481,34 @@ struct FrameCache {
     // On miss, we allocate once and store under an owned `HashedCacheKey`.
     lines_by_hash: FxHashMap<Arc<HashedCacheKey>, Arc<LineLayout>>,
     wrapped_lines_by_hash: FxHashMap<Arc<HashedCacheKey>, Arc<WrappedLineLayout>>,
-    used_lines_by_hash: Vec<Arc<HashedCacheKey>>,
-    used_wrapped_lines_by_hash: Vec<Arc<HashedCacheKey>>,
+    used_lines_by_hash: FrameArray<Arc<HashedCacheKey>>,
+    used_wrapped_lines_by_hash: FrameArray<Arc<HashedCacheKey>>,
 }
 
 #[derive(Clone, Default)]
 pub(crate) struct LineLayoutIndex {
     font_generation: usize,
-    lines_index: usize,
-    wrapped_lines_index: usize,
-    lines_by_hash_index: usize,
-    wrapped_lines_by_hash_index: usize,
+    lines_index: FramePosition<Arc<CacheKey>>,
+    wrapped_lines_index: FramePosition<Arc<CacheKey>>,
+    lines_by_hash_index: FramePosition<Arc<HashedCacheKey>>,
+    wrapped_lines_by_hash_index: FramePosition<Arc<HashedCacheKey>>,
 }
 
 impl LineLayoutIndex {
     pub(crate) fn rebase(&self, old: &Self, new: &Self) -> Self {
         Self {
             font_generation: new.font_generation,
-            lines_index: self.lines_index - old.lines_index + new.lines_index,
-            wrapped_lines_index: self.wrapped_lines_index - old.wrapped_lines_index
-                + new.wrapped_lines_index,
-            lines_by_hash_index: self.lines_by_hash_index - old.lines_by_hash_index
-                + new.lines_by_hash_index,
-            wrapped_lines_by_hash_index: self.wrapped_lines_by_hash_index
-                - old.wrapped_lines_by_hash_index
-                + new.wrapped_lines_by_hash_index,
+            lines_index: self.lines_index.rebase(old.lines_index, new.lines_index),
+            wrapped_lines_index: self
+                .wrapped_lines_index
+                .rebase(old.wrapped_lines_index, new.wrapped_lines_index),
+            lines_by_hash_index: self
+                .lines_by_hash_index
+                .rebase(old.lines_by_hash_index, new.lines_by_hash_index),
+            wrapped_lines_by_hash_index: self.wrapped_lines_by_hash_index.rebase(
+                old.wrapped_lines_by_hash_index,
+                new.wrapped_lines_by_hash_index,
+            ),
         }
     }
 }
@@ -529,10 +533,10 @@ impl LineLayoutCache {
         let frame = self.current_frame.read();
         LineLayoutIndex {
             font_generation,
-            lines_index: frame.used_lines.len(),
-            wrapped_lines_index: frame.used_wrapped_lines.len(),
-            lines_by_hash_index: frame.used_lines_by_hash.len(),
-            wrapped_lines_by_hash_index: frame.used_wrapped_lines_by_hash.len(),
+            lines_index: frame.used_lines.position(),
+            wrapped_lines_index: frame.used_wrapped_lines.position(),
+            lines_by_hash_index: frame.used_lines_by_hash.position(),
+            wrapped_lines_by_hash_index: frame.used_wrapped_lines_by_hash.position(),
         }
     }
 

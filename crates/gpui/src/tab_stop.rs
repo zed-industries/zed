@@ -4,13 +4,16 @@ use ::sum_tree::SumTree;
 use collections::FxHashMap;
 use sum_tree::Bias;
 
-use crate::{FocusHandle, FocusId};
+use crate::{
+    FocusHandle, FocusId,
+    frame_array::{FrameArray, FramePosition},
+};
 
 /// Represents a collection of focus handles using the tab-index APIs.
 #[derive(Debug)]
 pub(crate) struct TabStopMap {
     current_path: TabStopPath,
-    pub(crate) insertion_history: Vec<TabStopOperation>,
+    pub(crate) insertion_history: FrameArray<TabStopOperation>,
     by_id: FxHashMap<FocusId, TabStopNode>,
     order: SumTree<TabStopNode>,
 }
@@ -67,7 +70,7 @@ impl Default for TabStopMap {
     fn default() -> Self {
         Self {
             current_path: TabStopPath::default(),
-            insertion_history: Vec::new(),
+            insertion_history: FrameArray::default(),
             by_id: FxHashMap::default(),
             order: SumTree::new(()),
         }
@@ -192,8 +195,8 @@ impl TabStopMap {
         }
     }
 
-    pub fn paint_index(&self) -> usize {
-        self.insertion_history.len()
+    pub fn paint_index(&self) -> FramePosition<TabStopOperation> {
+        self.insertion_history.position()
     }
 
     pub(crate) fn tab_stop_count(&self) -> usize {
