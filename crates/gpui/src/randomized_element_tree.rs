@@ -1624,7 +1624,7 @@ mod tests {
                 .with_cached_views(true);
             for splice in [false, true] {
                 let window = cx.open_window(WINDOW_SIZE, move |window, cx| {
-                    window.set_view_splicing(splice);
+                    window.set_view_retention(splice);
                     RandomizedElementTree::new_with_config(config, cx)
                 });
                 cx.run_until_parked();
@@ -1829,14 +1829,14 @@ mod tests {
                 .with_cached_views(cached);
             let reused = cx.open_window(WINDOW_SIZE, move |window, cx| {
                 if cached {
-                    window.set_view_splicing(splice);
+                    window.set_view_retention(splice);
                 } else {
-                    window.set_implicit_view_splicing(true);
+                    window.set_view_retention(true);
                 }
                 RandomizedElementTree::new_with_config(config, cx)
             });
             let reconstructed = cx.open_window(WINDOW_SIZE, move |window, cx| {
-                window.set_view_splicing(false);
+                window.set_view_retention(false);
                 window.set_force_view_reconstruction(true);
                 RandomizedElementTree::new_with_config(config, cx)
             });
@@ -2140,7 +2140,7 @@ mod tests {
 
         let incremental_counters = root.read_with(cx, |tree, _| tree.work_counters());
         let retained = cx
-            .update_window(window, |_, window, _| window.implicit_view_splicing)
+            .update_window(window, |_, window, _| window.view_splicing)
             .expect("window");
         if retained {
             assert_eq!(incremental_counters.root_render_count(), 0);

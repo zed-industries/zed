@@ -816,17 +816,11 @@ impl Render for CachedTextPanelRoot {
 }
 
 fn verify_text_reuse(panel_count: usize, font_family: &'static str, cx: &mut BenchAppContext) {
-    let implicit = std::env::var("GPUI_VIEW_SPLICE").as_deref() == Ok("all")
-        && std::env::var("GPUI_LAYOUT_CACHE").as_deref() == Ok("1");
     let mut reused_window = cx.add_empty_window();
     let mut fresh_window = cx.add_empty_window();
     let create = |window: &mut Window, cx: &mut gpui::App, force| {
         window.set_force_view_reconstruction(force);
-        if implicit {
-            window.set_implicit_view_splicing(!force);
-        } else {
-            window.set_view_splicing(!force);
-        }
+        window.set_view_retention(!force);
         window.replace_root(cx, |_, cx| {
             CachedTextPanelRoot(
                 TextPanelRoot {
@@ -842,7 +836,7 @@ fn verify_text_reuse(panel_count: usize, font_family: &'static str, cx: &mut Ben
                     renders: Rc::new(Cell::new(0)),
                     font_family: font_family.into(),
                 },
-                !implicit,
+                false,
             )
         })
     };

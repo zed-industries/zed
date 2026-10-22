@@ -1609,7 +1609,6 @@ pub struct Window {
     pub(crate) next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
     pub(crate) dirty_views: FxHashSet<EntityId>,
     pub(crate) view_splicing: bool,
-    pub(crate) implicit_view_splicing: bool,
     pub(crate) implicit_ancestor_dirty: bool,
     window_root_layout: Option<LayoutId>,
     retained_a11y_active: bool,
@@ -2524,7 +2523,9 @@ impl Window {
             viewport_size: content_size,
             layout_engine: Some({
                 let mut engine = TaffyLayoutEngine::new();
-                if std::env::var("GPUI_LAYOUT_CACHE").as_deref() == Ok("1") {
+                if std::env::var("GPUI_LAYOUT_CACHE").as_deref() == Ok("1")
+                    || std::env::var("GPUI_RETAIN_VIEWS").as_deref() == Ok("1")
+                {
                     engine.enable_cache();
                 }
                 engine
@@ -2551,11 +2552,7 @@ impl Window {
             next_tooltip_id: TooltipId::default(),
             tooltip_bounds: None,
             dirty_views: FxHashSet::default(),
-            view_splicing: std::env::var("GPUI_VIEW_SPLICE")
-                .is_ok_and(|value| value == "1" || value == "all"),
-            implicit_view_splicing: std::env::var("GPUI_VIEW_SPLICE")
-                .is_ok_and(|value| value == "all")
-                && std::env::var("GPUI_LAYOUT_CACHE").as_deref() == Ok("1"),
+            view_splicing: std::env::var("GPUI_RETAIN_VIEWS").as_deref() == Ok("1"),
             implicit_ancestor_dirty: false,
             window_root_layout: None,
             retained_a11y_active: false,
@@ -2729,7 +2726,7 @@ impl Window {
     ) -> FxHashSet<EntityId> {
         #[cfg(feature = "bench-support")]
         let _timer = RenderPhaseTimer::start(RenderPhase::DependencyPush);
-        if self.implicit_view_splicing {
+        if self.view_splicing {
             self.cached_global_access_stack.push((
                 cx.tracking_retained_globals.replace(true),
                 mem::take(cx.accessed_retained_globals.get_mut()),
@@ -2755,7 +2752,7 @@ impl Window {
     ) -> (FxHashSet<EntityId>, FxHashSet<EntityId>) {
         #[cfg(feature = "bench-support")]
         let _timer = RenderPhaseTimer::start(RenderPhase::DependencyPop);
-        if self.implicit_view_splicing {
+        if self.view_splicing {
             let (tracking, previous, occurrence) = self
                 .cached_global_access_stack
                 .pop()
@@ -3028,29 +3025,22 @@ impl Window {
         self.force_view_reconstruction = force;
     }
 
-    /// Opt into descendant splicing for a fixture that obeys tracked rendering dependencies.
+    /// Enable retention for every entity view, including explicit cached views.
     ///
-    /// Production windows default to legacy ancestor reconstruction unless
-    /// `GPUI_VIEW_SPLICE=1` is set. Untracked shared state can invalidate retained output.
+    /// Production windows use legacy caching unless `GPUI_RETAIN_VIEWS=1` is set.
+    /// Retention requires tracked rendering dependencies and the persistent layout cache.
     #[cfg(any(test, feature = "bench-support"))]
-    pub fn set_view_splicing(&mut self, enabled: bool) {
-        self.implicit_view_splicing = false;
+    pub fn set_view_retention(&mut self, enabled: bool) {
+        if enabled {
+            self.layout_engine
+                .as_mut()
+                .expect("layout engine")
+                .enable_cache();
+        }
         if self.view_splicing != enabled {
             self.view_splicing = enabled;
             self.refresh();
         }
-    }
-
-    /// Opt into implicit entity-view boundaries as well as explicit cached views.
-    #[cfg(any(test, feature = "bench-support"))]
-    pub fn set_implicit_view_splicing(&mut self, enabled: bool) {
-        self.set_view_splicing(enabled);
-        self.implicit_view_splicing = enabled
-            && self
-                .layout_engine
-                .as_ref()
-                .is_some_and(|engine| engine.cache_enabled());
-        self.refresh();
     }
 
     /// Snapshot the completed frame outside benchmark timing.
@@ -3884,7 +3874,7 @@ impl Window {
         let appearance = self.platform_window.appearance();
         let changed = self.appearance != appearance;
         self.appearance = appearance;
-        if self.implicit_view_splicing && changed {
+        if self.view_splicing && changed {
             self.refresh();
         }
 
@@ -3894,7 +3884,7 @@ impl Window {
     }
 
     pub(crate) fn button_layout_changed(&mut self, cx: &mut App) {
-        if self.implicit_view_splicing {
+        if self.view_splicing {
             self.refresh();
         }
         self.button_layout_observers
@@ -4425,7 +4415,7 @@ impl Window {
             self.refresh();
         }
         self.invalidate_entities();
-        if self.implicit_view_splicing && self.retained_input_changed {
+        if self.view_splicing && self.retained_input_changed {
             self.refreshing = true;
             self.retained_input_changed = false;
         }
@@ -4690,7 +4680,7 @@ impl Window {
         self.tooltip_bounds.take();
 
         self.a11y.sync_active_flag();
-        if self.implicit_view_splicing {
+        if self.view_splicing {
             let a11y_active = self.a11y.is_active();
             let font_generation = self.text_system.font_generation();
             self.refreshing |= a11y_active != self.retained_a11y_active
@@ -6536,7 +6526,7 @@ impl Window {
             layout_engine.compute_window_root_layout(
                 layout_id,
                 available_space,
-                self.implicit_view_splicing && !self.refreshing,
+                self.view_splicing && !self.refreshing,
                 self,
                 cx,
             );
@@ -6891,7 +6881,7 @@ impl Window {
     /// Dispatch a mouse, keyboard, or touch event on the window.
     #[profiling::function]
     pub fn dispatch_event(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
-        if self.implicit_view_splicing
+        if self.view_splicing
             && matches!(
                 &event,
                 PlatformInput::MouseMove(_)
@@ -9316,6 +9306,7 @@ mod tests {
             .with_handler_density(0.2);
         let windows = [false, true].map(|cache_enabled| {
             cx.open_window(size(px(1200.0), px(900.0)), move |window, cx| {
+                window.set_view_retention(false);
                 let mut engine = TaffyLayoutEngine::new();
                 if cache_enabled {
                     engine.enable_cache();
@@ -10082,7 +10073,7 @@ mod tests {
                 let expected = expected.clone();
                 let checked = checked.clone();
                 move |window, cx| {
-                    window.set_view_splicing(splice);
+                    window.set_view_retention(splice);
                     let child = cx.new(|cx| ReplayQueryLeaf {
                         focus: cx.focus_handle(),
                     });
@@ -10239,7 +10230,7 @@ mod tests {
         let window = cx.open_window(size(px(100.), px(100.)), {
             let check_moves = check_moves.clone();
             move |window, cx| {
-                window.set_view_splicing(true);
+                window.set_view_retention(true);
                 ReplayDeferredQueries {
                     child: cx.new(|_| DeferredTextStyleView {
                         observations: Rc::default(),

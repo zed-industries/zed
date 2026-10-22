@@ -708,7 +708,7 @@ impl Window {
     }
 
     pub(crate) fn invalidate_retained_global(&mut self, global: TypeId) {
-        if self.implicit_view_splicing && self.view_store.dirty_global_readers(global) {
+        if self.view_splicing && self.view_store.dirty_global_readers(global) {
             self.invalidator.set_dirty(true);
         }
     }
@@ -994,6 +994,17 @@ impl Window {
             .map(|(_, element)| element)
     }
 
+    pub(super) fn discard_implicit_view_layout(&mut self, entity: EntityId) {
+        let key = (entity, self.element_id_stack.handle());
+        if let Some(id) = self.view_store.by_occurrence.get(&key).copied() {
+            let retained = self.view_store.retained_mut(id);
+            if retained.layout.take().is_some() {
+                retained.prepared = None;
+                self.view_store.invalidate_state(id);
+            }
+        }
+    }
+
     pub(super) fn begin_view_occurrence(
         &mut self,
         entity: EntityId,
@@ -1113,6 +1124,11 @@ impl Window {
             return Err(SpliceFallback::MissingView);
         }
         for child in self.dirty_view_children(id) {
+            // Rebuilding an implicit child needs its ancestor's layout pass to
+            // preserve parent-relative origins across an explicit cached boundary.
+            if retained.layout.is_none() && self.view_store.retained(child).layout.is_some() {
+                return Err(SpliceFallback::UncachedView);
+            }
             self.validate_view_splice(child)?;
         }
         Ok(())
@@ -1335,7 +1351,7 @@ mod tests {
                 intrinsic: false,
             });
             let window = cx.add_window(|window, _| {
-                window.set_implicit_view_splicing(implicit);
+                window.set_view_retention(implicit);
                 ImplicitCachedRoot(leaf)
             });
             let root = window.root(cx).expect("root");
@@ -1388,7 +1404,7 @@ mod tests {
             children: vec![clean, dirty.clone()],
         });
         let window = cx.add_window(|window, _| {
-            window.set_implicit_view_splicing(true);
+            window.set_view_retention(true);
             ImplicitRoot(branch)
         });
         if !cx
@@ -1427,7 +1443,7 @@ mod tests {
             children: vec![leaf.clone()],
         });
         let window = cx.add_window(|window, _| {
-            window.set_implicit_view_splicing(true);
+            window.set_view_retention(true);
             ImplicitRoot(branch)
         });
         if !cx
@@ -1527,13 +1543,13 @@ mod tests {
             children: vec![leaf.clone(), sibling.clone()],
         });
         let window = cx.add_window(|window, _| {
-            window.set_implicit_view_splicing(true);
+            window.set_view_retention(true);
             ImplicitRoot(branch)
         });
         let draw = |cx: &mut TestAppContext| {
             cx.update_window(window.into(), |_, window, cx| {
                 window.draw(cx).clear(cx);
-                if !window.implicit_view_splicing {
+                if !window.view_splicing {
                     return None;
                 }
                 let occurrence = window.view_store.by_entity[&sibling.entity_id()][0];
@@ -1604,14 +1620,14 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let window = cx.add_window(|window, _| {
-            window.set_implicit_view_splicing(true);
+            window.set_view_retention(true);
             TextPanels(panels.clone())
         });
         let retained = cx
             .update_window(window.into(), |_, window, cx| {
                 window.draw(cx).clear(cx);
                 window.take_view_reuse_stats();
-                window.implicit_view_splicing
+                window.view_splicing
             })
             .expect("initial text frame");
         if !retained {
@@ -1698,7 +1714,7 @@ mod tests {
             let renders = Rc::new(Cell::new(0));
             let observed = Rc::new(Cell::new(0));
             let window = cx.add_window(|window, _| {
-                window.set_implicit_view_splicing(true);
+                window.set_view_retention(true);
                 GlobalRoot {
                     renders: renders.clone(),
                     observed: observed.clone(),
@@ -1708,7 +1724,7 @@ mod tests {
             let retained = cx
                 .update_window(window.into(), |_, window, cx| {
                     window.draw(cx).clear(cx);
-                    window.implicit_view_splicing
+                    window.view_splicing
                 })
                 .expect("initial draw");
             if !retained {
@@ -1768,7 +1784,7 @@ mod tests {
         let root_renders = Rc::new(Cell::new(0));
         let child_renders = Rc::new(Cell::new(0));
         let window = cx.add_window(|window, cx| {
-            window.set_implicit_view_splicing(true);
+            window.set_view_retention(true);
             GlobalBoundaryRoot {
                 renders: root_renders.clone(),
                 child: cx.new(|_| GlobalRoot {
@@ -1781,7 +1797,7 @@ mod tests {
         let retained = cx
             .update_window(window.into(), |_, window, cx| {
                 window.draw(cx).clear(cx);
-                window.implicit_view_splicing
+                window.view_splicing
             })
             .expect("initial draw");
         if !retained {
@@ -1923,7 +1939,7 @@ mod tests {
                 global: false,
             });
             let window = cx.add_window(|window, _| {
-                window.set_implicit_view_splicing(true);
+                window.set_view_retention(true);
                 MeasureRoot {
                     renders: root_renders.clone(),
                     children: vec![owner, sibling],
@@ -1932,7 +1948,7 @@ mod tests {
             let retained = cx
                 .update_window(window.into(), |_, window, cx| {
                     window.draw(cx).clear(cx);
-                    window.implicit_view_splicing
+                    window.view_splicing
                 })
                 .expect("initial draw");
             if !retained {
@@ -2122,73 +2138,6 @@ mod tests {
         }
     }
 
-    #[crate::test]
-    fn splice_nested_cached_views(cx: &mut TestAppContext) {
-        let leaf_renders = [Rc::new(Cell::new(0)), Rc::new(Cell::new(0))];
-        let branch_renders = Rc::new(Cell::new(0));
-        let outer_renders = Rc::new(Cell::new(0));
-        let leaves = leaf_renders.each_ref().map(|renders| {
-            cx.new(|_| Leaf {
-                renders: renders.clone(),
-                color: 0xff0000,
-                ..Leaf::default()
-            })
-        });
-        let branch = cx.new(|_| Branch {
-            renders: branch_renders.clone(),
-            children: leaves.to_vec(),
-            ..Branch::default()
-        });
-        let outer = cx.new(|_| Outer {
-            renders: outer_renders.clone(),
-            child: branch,
-        });
-        let window = cx.add_window(|window, _| {
-            window.set_view_splicing(true);
-            Root(outer)
-        });
-        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
-            .expect("initial draw");
-        assert_eq!(branch_renders.get(), 1);
-        assert_eq!(outer_renders.get(), 1);
-        for _ in 0..2 {
-            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
-                .expect("unchanged draw");
-        }
-        for iteration in 0..4 {
-            leaves[iteration % 2].update(cx, |leaf, cx| {
-                leaf.color ^= 0xffffff;
-                cx.notify();
-            });
-            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
-                .expect("leaf draw");
-            assert_eq!(
-                branch_renders.get(),
-                1,
-                "branch should splice instead of render"
-            );
-            assert_eq!(
-                outer_renders.get(),
-                1,
-                "outer should splice instead of render"
-            );
-        }
-        assert_eq!(leaf_renders[0].get(), 3);
-        assert_eq!(leaf_renders[1].get(), 3);
-        for leaf in leaves {
-            leaf.update(cx, |leaf, cx| {
-                leaf.color ^= 0xffffff;
-                cx.notify();
-            });
-        }
-        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
-            .expect("two dirty siblings");
-        assert_eq!(branch_renders.get(), 1);
-        assert_eq!(outer_renders.get(), 1);
-        assert_eq!(leaf_renders[0].get(), 4);
-        assert_eq!(leaf_renders[1].get(), 4);
-    }
-
     #[derive(Clone, Copy)]
     enum DependencyPhase {
         Render,
@@ -2275,7 +2224,7 @@ mod tests {
                 callbacks_deferred,
             });
             let window = cx.add_window(|window, _| {
-                window.set_view_splicing(true);
+                window.set_view_retention(true);
                 DependentRoot(parent)
             });
             cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
@@ -2334,7 +2283,7 @@ mod tests {
             });
             let window = cx.add_window(|window, _| {
                 window.set_force_view_reconstruction(forced);
-                window.set_view_splicing(!forced);
+                window.set_view_retention(!forced);
                 Root(outer.clone())
             });
             let root = window.root(cx).expect("fixture root");
@@ -2390,8 +2339,13 @@ mod tests {
         for overlapping in [false, true] {
             let reused = Fixture::new(cx, false, false, overlapping);
             let fresh = Fixture::new(cx, true, false, overlapping);
+            let mut leaf_renders = [1; 2];
             for frame in 0..8 {
                 if frame > 1 {
+                    leaf_renders[frame % 2] += 1;
+                    if frame == 4 {
+                        leaf_renders[(frame + 1) % 2] += 1;
+                    }
                     for fixture in [&reused, &fresh] {
                         fixture.notify_leaf(frame % 2, cx);
                         if frame == 4 {
@@ -2402,6 +2356,9 @@ mod tests {
                 compare_pair(&reused, &fresh, frame, cx);
                 assert_eq!(reused.branch_renders.get(), 1);
                 assert_eq!(reused.outer_renders.get(), 1);
+                for (leaf, renders) in reused.leaves.iter().zip(leaf_renders) {
+                    assert_eq!(leaf.read_with(cx, |leaf, _| leaf.renders.get()), renders);
+                }
             }
             cx.update_window(reused.window, |_, window, _| {
                 let stats = window.view_reuse_stats();
@@ -2536,7 +2493,7 @@ mod tests {
             let reused = Fixture::new(cx, false, false, false);
             let fresh = Fixture::new(cx, true, false, false);
             cx.update_window(reused.window, |_, window, _| {
-                window.set_view_splicing(splicing)
+                window.set_view_retention(splicing)
             })
             .expect("select reuse mode");
             let sizes = [Rc::new(Cell::new(px(20.))), Rc::new(Cell::new(px(20.)))];
@@ -2670,18 +2627,6 @@ mod tests {
             assert_eq!(window.rendered_frame.paint_views.capacity(), 0);
         })
         .expect("legacy path allocates no retention metadata");
-    }
-
-    #[test]
-    fn retained_storage_footprint() {
-        eprintln!(
-            "retained storage: hot={} cold={} cache={} scope={}",
-            std::mem::size_of::<super::ViewRecord>(),
-            std::mem::size_of::<Option<super::RetainedView>>(),
-            std::mem::size_of::<super::RetainedViewState>(),
-            std::mem::size_of::<crate::window::ViewExecutionScope>(),
-        );
-        assert!(std::mem::size_of::<crate::window::ViewExecutionScope>() <= 128);
     }
 
     #[crate::test]

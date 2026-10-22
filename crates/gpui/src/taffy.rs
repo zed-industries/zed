@@ -431,9 +431,10 @@ impl TaffyLayoutEngine {
     }
 
     pub(crate) fn enable_cache(&mut self) {
-        self.cache = Some(Box::default());
+        self.cache.get_or_insert_with(Box::default);
     }
 
+    #[cfg(any(test, feature = "bench-support"))]
     pub(crate) fn cache_enabled(&self) -> bool {
         self.cache.is_some()
     }

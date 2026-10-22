@@ -426,12 +426,8 @@ impl<V: View> Element for ViewElement<V> {
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         if let Some(entity_id) = self.entity_id {
-            self.implicit = window.implicit_view_splicing
+            self.implicit = window.view_splicing
                 && self.cached_style.is_none()
-                && window
-                    .layout_engine
-                    .as_ref()
-                    .is_some_and(|engine| engine.cache_enabled())
                 && !window.is_inspector_picking(cx);
             if self.implicit {
                 window
@@ -586,6 +582,9 @@ fn request_layout_view(
         let caching_disabled = window.is_inspector_picking(cx);
         match cached_style {
             Some(style) if !caching_disabled => {
+                if window.view_splicing {
+                    window.discard_implicit_view_layout(entity_id);
+                }
                 let mut root_style = Style::default();
                 root_style.refine(style);
                 let layout_id = window.request_layout(root_style, None, cx);
