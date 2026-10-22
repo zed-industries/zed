@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use wgpu::TextureFormat;
 
+#[derive(Clone)]
 pub struct WgpuContext {
     pub instance: wgpu::Instance,
     pub adapter: wgpu::Adapter,
@@ -71,6 +72,12 @@ impl DeviceErrorState {
         }
         *generation = last_error.0;
         last_error.1.clone()
+    }
+
+    /// The generation an observer should start from to see only errors raised after
+    /// this call, for a renderer joining a device other renderers already used.
+    pub fn current_generation(&self) -> u64 {
+        self.last_error.lock().0
     }
 }
 
@@ -173,6 +180,28 @@ impl WgpuContext {
         any(test, feature = "bench-support", feature = "test-support")
     ))]
     pub(crate) fn new_headless() -> anyhow::Result<(Self, wgpu::TextureFormat)> {
+        // Creating a device takes tens of milliseconds, and benchmarks create a headless
+        // renderer for every window they open, so the process shares one device until it
+        // is lost. A static rather than a thread-local: the cached device is never dropped,
+        // because wgpu's queue reads its own thread-locals on drop and would panic if
+        // dropped while a thread's thread-locals are being destroyed.
+        static HEADLESS: Mutex<Option<(WgpuContext, wgpu::TextureFormat)>> = Mutex::new(None);
+        let mut headless = HEADLESS.lock();
+        if let Some((context, format)) = headless.as_ref()
+            && !context.device_lost()
+        {
+            return Ok((context.clone(), *format));
+        }
+        let created = Self::create_headless()?;
+        *headless = Some(created.clone());
+        Ok(created)
+    }
+
+    #[cfg(all(
+        not(target_family = "wasm"),
+        any(test, feature = "bench-support", feature = "test-support")
+    ))]
+    fn create_headless() -> anyhow::Result<(Self, wgpu::TextureFormat)> {
         let instance = Self::instance(None);
         let device_id_filter = Self::device_id_filter();
         let (adapter, device, queue, dual_source_blending, color_texture_format, target_format) =
@@ -345,6 +374,7 @@ impl WgpuContext {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
+                apply_limit_buckets: false,
             })
             .await
             .map_err(|error| {
@@ -427,6 +457,7 @@ impl WgpuContext {
                 memory_hints: wgpu::MemoryHints::MemoryUsage,
                 trace: wgpu::Trace::Off,
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                default_queue: wgpu::QueueDescriptor::default(),
             })
             .await
             .map_err(|e| anyhow::anyhow!("Failed to create wgpu device: {e}"))?;
@@ -629,6 +660,7 @@ impl WgpuContext {
         let test_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: caps.formats[0],
+            color_space: wgpu::SurfaceColorSpace::Auto,
             width: 64,
             height: 64,
             present_mode: wgpu::PresentMode::Fifo,

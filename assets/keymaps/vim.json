@@ -1009,6 +1009,20 @@
     },
   },
   {
+    "context": "Editor && DebuggerHover && VimControl && (vim_mode == normal || vim_mode == helix_normal)",
+    "bindings": {
+      "escape": "editor::Cancel",
+      "h": "editor::DebuggerHoverCollapseSelected",
+      "j": "editor::DebuggerHoverSelectNext",
+      "k": "editor::DebuggerHoverSelectPrevious",
+      "l": "editor::DebuggerHoverExpandSelected",
+      "left": "editor::DebuggerHoverCollapseSelected",
+      "down": "editor::DebuggerHoverSelectNext",
+      "up": "editor::DebuggerHoverSelectPrevious",
+      "right": "editor::DebuggerHoverExpandSelected"
+    }
+  },
+  {
     // netrw compatibility
     "context": "ProjectPanel && not_editing",
     "bindings": {
@@ -1216,6 +1230,8 @@
       "ctrl-d": "markdown::ScrollPageDown",
       "ctrl-y": "markdown::ScrollUp",
       "ctrl-e": "markdown::ScrollDown",
+      "ctrl-o": "pane::GoBack",
+      "ctrl-i": "pane::GoForward",
       "g g": "markdown::ScrollToTop",
       "shift-g": "markdown::ScrollToBottom",
       "/": "buffer_search::Deploy",

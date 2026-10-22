@@ -160,7 +160,7 @@ pub struct EditPredictionSettingsContent {
     /// Provider support required.
     pub mode: Option<EditPredictionsMode>,
     /// Settings specific to GitHub Copilot.
-    pub copilot: Option<CopilotSettingsContent>,
+    pub copilot: Option<CopilotEditPredictionSettingsContent>,
     /// Settings specific to Codestral.
     pub codestral: Option<CodestralSettingsContent>,
     /// Settings specific to Ollama.
@@ -241,6 +241,15 @@ pub enum EditPredictionPromptFormatContent {
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct CopilotSettingsContent {
+    /// Enterprise URI shared by Copilot Chat and edit predictions.
+    ///
+    /// Default: none
+    pub enterprise_uri: Option<String>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+pub struct CopilotEditPredictionSettingsContent {
     /// HTTP/HTTPS proxy to use for Copilot.
     ///
     /// Default: none
@@ -249,10 +258,6 @@ pub struct CopilotSettingsContent {
     ///
     /// Default: false
     pub proxy_no_verify: Option<bool>,
-    /// Enterprise URI for Copilot.
-    ///
-    /// Default: none
-    pub enterprise_uri: Option<String>,
     /// Whether the Copilot Next Edit Suggestions feature is enabled.
     ///
     /// Default: true
@@ -526,6 +531,34 @@ impl<'de> Deserialize<'de> for ConfiguredLanguageServer {
     }
 }
 
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::EnumString,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SoftWrapIndent {
+    /// Continuation lines start at column 0.
+    None,
+    /// Continuation lines match the original line's indentation.
+    #[default]
+    Same,
+    /// Continuation lines get 1 extra indent level beyond the original.
+    ExtraOne,
+    /// Continuation lines get 2 extra indent levels beyond the original.
+    ExtraTwo,
+}
+
 /// The settings for a particular language.
 #[with_fallible_options]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -544,6 +577,10 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: none
     pub soft_wrap: Option<SoftWrap>,
+    /// How to indent soft-wrapped continuation lines.
+    ///
+    /// Default: same
+    pub soft_wrap_indent: Option<SoftWrapIndent>,
     /// The column at which to soft-wrap lines, for buffers where soft-wrap
     /// is enabled.
     ///
@@ -564,7 +601,7 @@ pub struct LanguageSettingsContent {
     pub indent_guides: Option<IndentGuideSettingsContent>,
     /// Whether or not to perform a buffer format before saving.
     ///
-    /// Default: on
+    /// Default: off
     pub format_on_save: Option<FormatOnSave>,
     /// Whether or not to remove any trailing whitespace from lines of a buffer
     /// before saving it.

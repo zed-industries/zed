@@ -409,6 +409,10 @@ impl EditorElement {
         register_action(editor, window, Editor::select_page_up);
         register_action(editor, window, Editor::cancel);
         register_action(editor, window, Editor::blame_hover);
+        register_action(editor, window, Editor::debugger_hover_expand_selected);
+        register_action(editor, window, Editor::debugger_hover_collapse_selected);
+        register_action(editor, window, Editor::debugger_hover_select_next);
+        register_action(editor, window, Editor::debugger_hover_select_previous);
         register_action(editor, window, Editor::next_snippet_tabstop);
         register_action(editor, window, Editor::previous_snippet_tabstop);
         register_action(editor, window, Editor::copy);
@@ -607,6 +611,9 @@ impl EditorElement {
         register_action(editor, window, Editor::toggle_edit_predictions);
         if editor.read(cx).lsp_data_enabled() {
             register_action(editor, window, Editor::toggle_inlay_hints);
+            if editor.read(cx).can_accept_inlay_hint(cx) {
+                register_action(editor, window, Editor::accept_inlay_hint);
+            }
             register_action(editor, window, Editor::toggle_code_lens_action);
             register_action(editor, window, Editor::toggle_semantic_highlights);
             register_action(editor, window, Editor::toggle_diagnostics);
@@ -1672,6 +1679,12 @@ impl EditorElement {
         )
         .with_thumb_state(thumb_state);
 
+        let thumb_pixels_per_editor_line = MinimapLayout::thumb_pixels_per_editor_line(
+            &layout,
+            total_editor_lines,
+            minimap_line_height,
+        );
+
         minimap_editor.update(cx, |editor, cx| {
             editor.set_scroll_position(point(0., minimap_scroll_top), window, cx)
         });
@@ -1703,6 +1716,7 @@ impl EditorElement {
             minimap_line_height,
             minimap_scroll_top,
             max_scroll_top: total_editor_lines,
+            thumb_pixels_per_editor_line,
         })
     }
 
@@ -2094,98 +2108,7 @@ impl EditorElement {
         })?;
 
         let buffer_point = display_point.to_point(&snapshot.display_snapshot);
-
-        // do not show code action for folded line
-        if snapshot.is_line_folded(MultiBufferRow(buffer_point.row)) {
-            return None;
-        }
-
-        // do not show code action for blank line with cursor
-        let line_indent = snapshot
-            .display_snapshot
-            .buffer_snapshot()
-            .line_indent_for_row(MultiBufferRow(buffer_point.row));
-        if line_indent.is_line_blank() {
-            return None;
-        }
-
-        const INLINE_SLOT_CHAR_LIMIT: u32 = 4;
-        const MAX_ALTERNATE_DISTANCE: u32 = 8;
-
-        let is_valid_row = |row_candidate: u32| -> bool {
-            // move to other row if folded row
-            if snapshot.is_line_folded(MultiBufferRow(row_candidate)) {
-                return false;
-            }
-            if buffer_point.row == row_candidate {
-                // move to other row if cursor is in slot
-                if buffer_point.column < INLINE_SLOT_CHAR_LIMIT {
-                    return false;
-                }
-            } else {
-                let candidate_point = MultiBufferPoint {
-                    row: row_candidate,
-                    column: 0,
-                };
-                // move to other row if different excerpt
-                let range = if candidate_point < buffer_point {
-                    candidate_point..buffer_point
-                } else {
-                    buffer_point..candidate_point
-                };
-                if snapshot
-                    .display_snapshot
-                    .buffer_snapshot()
-                    .excerpt_containing(range)
-                    .is_none()
-                {
-                    return false;
-                }
-            }
-            let line_indent = snapshot
-                .display_snapshot
-                .buffer_snapshot()
-                .line_indent_for_row(MultiBufferRow(row_candidate));
-            // use this row if it's blank
-            if line_indent.is_line_blank() {
-                true
-            } else {
-                // use this row if code starts after slot
-                let indent_size = snapshot
-                    .display_snapshot
-                    .buffer_snapshot()
-                    .indent_size_for_line(MultiBufferRow(row_candidate));
-                indent_size.len >= INLINE_SLOT_CHAR_LIMIT
-            }
-        };
-
-        let new_buffer_row = if is_valid_row(buffer_point.row) {
-            Some(buffer_point.row)
-        } else {
-            let max_row = snapshot.display_snapshot.buffer_snapshot().max_point().row;
-            (1..=MAX_ALTERNATE_DISTANCE).find_map(|offset| {
-                let row_above = buffer_point.row.saturating_sub(offset);
-                let row_below = buffer_point.row + offset;
-                if row_above != buffer_point.row && is_valid_row(row_above) {
-                    Some(row_above)
-                } else if row_below <= max_row && is_valid_row(row_below) {
-                    Some(row_below)
-                } else {
-                    None
-                }
-            })
-        }?;
-
-        let new_display_row = snapshot
-            .display_snapshot
-            .point_to_display_point(
-                Point {
-                    row: new_buffer_row,
-                    column: buffer_point.column,
-                },
-                text::Bias::Left,
-            )
-            .row();
+        let new_display_row = snapshot.display_row_for_inline_code_action(buffer_point)?;
 
         let start_y = content_origin.y
             + (((new_display_row.as_f64() - scroll_position.y) as f32) * line_height)
@@ -3316,7 +3239,7 @@ impl EditorElement {
                 || snapshot.use_tree_sitter_for_syntax(rows.start, cx);
             let language_aware = LanguageAwareStyling {
                 tree_sitter: use_tree_sitter,
-                diagnostics: true,
+                diagnostics: snapshot.display_snapshot.diagnostics_visible(),
             };
             let chunks = snapshot.highlighted_chunks(rows.clone(), language_aware, style);
             LineWithInvisibles::from_chunks(
@@ -4536,7 +4459,7 @@ impl EditorElement {
             horizontal_offset: Pixels,
         }
 
-        let max_size = size(
+        let mut max_size = size(
             (120. * em_width) // Default size
                 .min(hitbox.size.width / 2.) // Shrink to half of the editor width
                 .max(MIN_POPOVER_CHARACTER_WIDTH * em_width), // Apply minimum width of 20 characters
@@ -4544,6 +4467,31 @@ impl EditorElement {
                 .min(hitbox.size.height / 2.) // Shrink to half of the editor height
                 .max(MIN_POPOVER_LINE_HEIGHT * line_height), // Apply minimum height of 4 lines
         );
+
+        let (is_single_debugger_hover, stable_debugger_hover_origin) = {
+            let editor = self.editor.read(cx);
+            (
+                editor.hover_state.is_single_debugger_hover(),
+                editor.hover_state.stable_debugger_hover_origin(),
+            )
+        };
+        if is_single_debugger_hover {
+            let available_height = stable_debugger_hover_origin
+                .map(|origin| {
+                    // Prefer scrolling below the existing origin to moving a row under the mouse.
+                    // After a resize, leave enough room for at least one row and its padding.
+                    (hitbox.bottom() - origin.y).max(line_height + px(10.))
+                })
+                .unwrap_or(hitbox.size.height)
+                .min(hitbox.size.height);
+            // The content container's limits exclude the popover's one-pixel border.
+            max_size.width = max_size
+                .width
+                .min((hitbox.size.width - px(2.)).max(Pixels::ZERO));
+            max_size.height = max_size
+                .height
+                .min((available_height - px(2.)).max(Pixels::ZERO));
+        }
 
         // Don't show hover popovers when context menu is open to avoid overlap
         let has_context_menu = self.editor.read(cx).mouse_context_menu.is_some();
@@ -4582,7 +4530,7 @@ impl EditorElement {
 
         let mut overall_height = Pixels::ZERO;
 
-        let measured_hover_popovers = hover_popovers
+        let mut measured_hover_popovers = hover_popovers
             .into_iter()
             .with_position()
             .map(|(position, mut hover_popover)| {
@@ -4686,9 +4634,9 @@ impl EditorElement {
             })
         };
 
-        let can_place_below = || {
+        let can_place_below = |popovers: &[MeasuredHoverPopover]| {
             let mut current_y = hovered_point.y + line_height;
-            measured_hover_popovers.iter().all(|popover| {
+            popovers.iter().all(|popover| {
                 let size = popover.size;
                 let popover_origin = point(hovered_point.x + popover.horizontal_offset, current_y);
                 let bounds = Bounds::new(popover_origin, size);
@@ -4697,10 +4645,45 @@ impl EditorElement {
             })
         };
 
+        if is_single_debugger_hover
+            && measured_hover_popovers.len() == 1
+            && let Some(popover) = measured_hover_popovers.pop()
+        {
+            let mut popover_origin = stable_debugger_hover_origin.unwrap_or_else(|| {
+                if can_place_below(std::slice::from_ref(&popover)) {
+                    point(
+                        hovered_point.x + popover.horizontal_offset,
+                        hovered_point.y + line_height,
+                    )
+                } else {
+                    point(
+                        hovered_point.x + popover.horizontal_offset,
+                        hovered_point.y - popover.size.height,
+                    )
+                }
+            });
+
+            // Preserve the origin while it fits, but keep expanded or resized hovers reachable.
+            popover_origin.x = popover_origin.x.clamp(
+                hitbox.left(),
+                (hitbox.right() - popover.size.width).max(hitbox.left()),
+            );
+            popover_origin.y = popover_origin.y.clamp(
+                hitbox.top(),
+                (hitbox.bottom() - popover.size.height).max(hitbox.top()),
+            );
+
+            window.defer_draw(popover.element, popover_origin, 2, None);
+            self.editor.update(cx, |editor, _| {
+                editor.hover_state.stable_debugger_hover_origin = Some(popover_origin);
+            });
+            return;
+        }
+
         if can_place_above {
             // try placing above hovered point
             place_popovers_above(hovered_point, measured_hover_popovers, window, cx);
-        } else if can_place_below() {
+        } else if can_place_below(&measured_hover_popovers) {
             // try placing below hovered point
             place_popovers_below(
                 hovered_point,
@@ -5759,7 +5742,7 @@ impl EditorElement {
         visible_rows: Range<DisplayRow>,
         line_layouts: &mut [LineWithInvisibles],
     ) {
-        if visible_rows.is_empty() {
+        if !snapshot.display_snapshot.diagnostics_visible() || visible_rows.is_empty() {
             return;
         }
 
@@ -5951,11 +5934,11 @@ impl EditorElement {
                     );
                 } else if !window.modifiers().modified()
                     && let Some(hovered_command) = editor.hovered_inlay_hint_command()
-                    && hovered_command.contains_point(
+                    && hovered_command.contains_glyph(
                         &layout.position_map.snapshot,
                         layout
                             .position_map
-                            .point_for_position(window.mouse_position()),
+                            .inlay_hint_glyph_for_position(window.mouse_position()),
                     )
                 {
                     window.set_cursor_style(
@@ -6785,17 +6768,13 @@ impl EditorElement {
             }
 
             let minimap_axis = ScrollbarAxis::Vertical;
-            let pixels_per_line = Pixels::from(
-                ScrollPixelOffset::from(minimap_hitbox.size.height) / layout.max_scroll_top,
-            )
-            .min(layout.minimap_line_height);
-
-            let mut mouse_position = window.mouse_position();
 
             window.on_mouse_event({
                 let editor = self.editor.clone();
 
                 let minimap_hitbox = minimap_hitbox.clone();
+
+                let mut mouse_position = window.mouse_position();
 
                 move |event: &MouseMoveEvent, phase, window, cx| {
                     if phase == DispatchPhase::Capture {
@@ -6808,9 +6787,10 @@ impl EditorElement {
                         {
                             let old_position = mouse_position.along(minimap_axis);
                             let new_position = event.position.along(minimap_axis);
-                            if (minimap_hitbox.origin.along(minimap_axis)
-                                ..minimap_hitbox.bottom_right().along(minimap_axis))
-                                .contains(&old_position)
+                            if let Some(pixels_per_line) = layout.thumb_pixels_per_editor_line
+                                && (minimap_hitbox.origin.along(minimap_axis)
+                                    ..minimap_hitbox.bottom_right().along(minimap_axis))
+                                    .contains(&old_position)
                             {
                                 let position =
                                     editor.scroll_position(cx).apply_along(minimap_axis, |p| {
@@ -10036,6 +10016,7 @@ impl Element for EditorElement {
                         snapshot,
                         text_align: self.style.text.text_align,
                         content_width: text_hitbox.size.width,
+                        content_origin,
                         gutter_hitbox: gutter_hitbox.clone(),
                         text_hitbox: text_hitbox.clone(),
                         inline_blame_bounds: inline_blame_layout
@@ -10725,6 +10706,7 @@ struct MinimapLayout {
     pub minimap_line_height: Pixels,
     pub thumb_border_style: MinimapThumbBorder,
     pub max_scroll_top: ScrollOffset,
+    pub thumb_pixels_per_editor_line: Option<Pixels>,
 }
 
 impl MinimapLayout {
@@ -10748,6 +10730,35 @@ impl MinimapLayout {
             scroll_percentage * (document_lines - visible_minimap_lines).max(0.)
         }
     }
+
+    /// How far the thumb moves on screen per scrolled editor line.
+    ///
+    /// The thumb moves along its oversized track, but the minimap content scrolls underneath
+    /// it at the same time (see [`Self::calculate_minimap_top_offset`]), so what we actually
+    /// see is the difference of the two. Returns `None` if the thumb can't move at all, e.g.
+    /// because the whole document fits into the editor or the thumb covers the entire minimap
+    /// (extremely unlikely, but may happen for very small editors that we currently allow)
+    fn thumb_pixels_per_editor_line(
+        thumb_layout: &ScrollbarLayout,
+        document_lines: f64,
+        minimap_line_height: Pixels,
+    ) -> Option<Pixels> {
+        let visible_editor_lines =
+            thumb_layout.visible_range.end - thumb_layout.visible_range.start;
+        let visible_minimap_lines = (thumb_layout.hitbox.size.height / minimap_line_height) as f64;
+        let scrollable_editor_lines = document_lines - visible_editor_lines;
+        if scrollable_editor_lines <= 0. {
+            return None;
+        }
+
+        let minimap_scroll_per_editor_line =
+            (document_lines - visible_minimap_lines).max(0.) / scrollable_editor_lines;
+        let pixels_per_line = Pixels::from(
+            ScrollOffset::from(thumb_layout.text_unit_size)
+                - minimap_scroll_per_editor_line * ScrollOffset::from(minimap_line_height),
+        );
+        (pixels_per_line > Pixels::ZERO).then_some(pixels_per_line)
+    }
 }
 
 struct CreaseTrailerLayout {
@@ -10768,6 +10779,7 @@ pub(crate) struct PositionMap {
     pub snapshot: EditorSnapshot,
     pub text_align: TextAlign,
     pub content_width: Pixels,
+    pub content_origin: gpui::Point<Pixels>,
     pub text_hitbox: Hitbox,
     pub gutter_hitbox: Hitbox,
     pub inline_blame_bounds: Option<(Bounds<Pixels>, BufferId, BlameEntry)>,
@@ -10822,6 +10834,26 @@ impl PointForPosition {
 }
 
 impl PositionMap {
+    pub(crate) fn inlay_hint_glyph_for_position(
+        &self,
+        position: gpui::Point<Pixels>,
+    ) -> Option<DisplayPoint> {
+        let position = position - self.content_origin;
+        if position.y < Pixels::ZERO {
+            return None;
+        }
+        let row = ((position.y / self.line_height) as f64 + self.scroll_position.y) as u32;
+        let line_index = row.checked_sub(self.visible_row_range.start.0)?;
+        let line = self.line_layouts.get(line_index as usize)?;
+        let x = position.x + (self.scroll_position.x as f32 * self.em_layout_width)
+            - line.alignment_offset(self.text_align, self.content_width);
+        if x < Pixels::ZERO {
+            return None;
+        }
+        let glyph = DisplayPoint::new(DisplayRow(row), line.index_for_x(x)? as u32);
+        self.snapshot.inlay_hint_at(glyph).map(|_| glyph)
+    }
+
     pub(crate) fn point_for_position(&self, position: gpui::Point<Pixels>) -> PointForPosition {
         let text_bounds = self.text_hitbox.bounds;
         let scroll_position = self.scroll_position;
@@ -10942,7 +10974,7 @@ pub fn layout_line(
         !snapshot.semantic_tokens_enabled || snapshot.use_tree_sitter_for_syntax(row, cx);
     let language_aware = LanguageAwareStyling {
         tree_sitter: use_tree_sitter,
-        diagnostics: true,
+        diagnostics: snapshot.display_snapshot.diagnostics_visible(),
     };
     let chunks = snapshot.highlighted_chunks(row..row + DisplayRow(1), language_aware, style);
     LineWithInvisibles::from_chunks(
@@ -11421,7 +11453,8 @@ mod tests {
     };
     use buffer_diff::BufferDiff;
     use gpui::{
-        Render, TestAppContext, Underline, UpdateGlobal, VisualTestContext, WindowHandle, font,
+        EntityInputHandler, Render, TestAppContext, Underline, UpdateGlobal, VisualTestContext,
+        WindowHandle, font,
     };
     use language::{
         Buffer, Capability, Diagnostic, DiagnosticEntry, DiagnosticSet, SelectionGoal,
@@ -11434,6 +11467,199 @@ mod tests {
     use std::num::NonZeroU32;
     use text::PointUtf16;
     use util::test::sample_text;
+
+    // Regression test for https://github.com/zed-industries/zed/issues/65453.
+    #[gpui::test]
+    fn test_highlight_underlines_are_only_hidden_in_minimap(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        fn has_highlight_underline(editor: &Editor, style: &EditorStyle, cx: &mut App) -> bool {
+            editor
+                .display_snapshot(cx)
+                .highlighted_chunks(
+                    DisplayRow(0)..DisplayRow(1),
+                    LanguageAwareStyling {
+                        tree_sitter: false,
+                        diagnostics: false,
+                    },
+                    style,
+                )
+                .any(|chunk| chunk.style.is_some_and(|style| style.underline.is_some()))
+        }
+
+        let single_line = cx.add_window(|window, cx| Editor::single_line(window, cx));
+        single_line
+            .update(cx, |editor, window, cx| {
+                editor.replace_and_mark_text_in_range(None, "ni", None, window, cx);
+                let style = editor.create_style(cx);
+                assert!(has_highlight_underline(editor, &style, cx));
+            })
+            .expect("checked single line editor");
+
+        let full = cx.add_window(|window, cx| {
+            let buffer = MultiBuffer::build_simple("", cx);
+            let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
+            editor.disable_diagnostics(cx);
+            editor
+        });
+        full.update(cx, |editor, window, cx| {
+            editor.replace_and_mark_text_in_range(None, "ni", None, window, cx);
+            let style = editor.create_style(cx);
+            assert!(has_highlight_underline(editor, &style, cx));
+
+            let minimap =
+                editor.initialize_new_minimap(EditorSettings::get_global(cx).minimap, window, cx);
+            let minimap_style = minimap.read(cx).create_style(cx);
+            assert!(!has_highlight_underline(editor, &minimap_style, cx));
+        })
+        .expect("checked full editor and minimap");
+    }
+
+    struct MinimapGeometry {
+        document_lines: f64,
+        visible_editor_lines: f64,
+        minimap_line_height: Pixels,
+        minimap_height: Pixels,
+    }
+
+    impl MinimapGeometry {
+        fn visible_minimap_lines(&self) -> f64 {
+            (self.minimap_height / self.minimap_line_height) as f64
+        }
+
+        fn thumb_layout(&self, scroll_position: f64) -> ScrollbarLayout {
+            let bounds = Bounds::new(point(px(0.), px(0.)), size(px(100.), self.minimap_height));
+            let hitbox = Hitbox {
+                id: gpui::HitboxId::placeholder(),
+                bounds,
+                content_mask: gpui::ContentMask { bounds },
+                behavior: HitboxBehavior::Normal,
+            };
+            let minimap_scroll_top = MinimapLayout::calculate_minimap_top_offset(
+                self.document_lines,
+                self.visible_editor_lines,
+                self.visible_minimap_lines(),
+                scroll_position,
+            );
+            ScrollbarLayout::for_minimap(
+                hitbox,
+                self.visible_editor_lines,
+                self.document_lines,
+                self.minimap_line_height,
+                scroll_position,
+                minimap_scroll_top,
+                true,
+            )
+        }
+
+        fn thumb_movement_for_drag(&self, scroll_position: f64, mouse_delta: Pixels) -> Pixels {
+            let layout = self.thumb_layout(scroll_position);
+            let pixels_per_line = self
+                .thumb_pixels_per_editor_line(&layout)
+                .expect("thumb should be draggable");
+
+            let new_scroll_position =
+                scroll_position + ScrollPixelOffset::from(mouse_delta / pixels_per_line);
+
+            let old_top = layout.thumb_bounds.expect("thumb should be shown").origin.y;
+            let new_top = self
+                .thumb_layout(new_scroll_position)
+                .thumb_bounds
+                .expect("thumb should be shown")
+                .origin
+                .y;
+            new_top - old_top
+        }
+
+        fn thumb_pixels_per_editor_line(&self, layout: &ScrollbarLayout) -> Option<Pixels> {
+            MinimapLayout::thumb_pixels_per_editor_line(
+                layout,
+                self.document_lines,
+                self.minimap_line_height,
+            )
+        }
+
+        #[track_caller]
+        fn assert_thumb_follows_drag(&self, scroll_position: f64) {
+            let mouse_delta = px(10.);
+            let movement = self.thumb_movement_for_drag(scroll_position, mouse_delta);
+            assert!(
+                (movement - mouse_delta).abs() < px(0.01),
+                "dragging by {mouse_delta:?} from scroll position {scroll_position} moved the thumb by {movement:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_minimap_thumb_follows_drag_in_short_document() {
+        let geometry = MinimapGeometry {
+            document_lines: 100.,
+            visible_editor_lines: 40.,
+            minimap_line_height: px(2.),
+            minimap_height: px(800.),
+        };
+        geometry.assert_thumb_follows_drag(0.);
+        geometry.assert_thumb_follows_drag(30.);
+    }
+
+    #[test]
+    fn test_minimap_thumb_follows_drag_in_long_document() {
+        let geometry = MinimapGeometry {
+            document_lines: 2000.,
+            visible_editor_lines: 40.,
+            minimap_line_height: px(2.),
+            minimap_height: px(800.),
+        };
+        geometry.assert_thumb_follows_drag(0.);
+        geometry.assert_thumb_follows_drag(500.);
+    }
+
+    #[test]
+    fn test_minimap_thumb_follows_drag_with_minimum_thumb_size() {
+        // 10 lines at 2px each would only be a 20px thumb, so this gets bumped up to
+        // `ScrollbarLayout::MIN_THUMB_SIZE`
+        let short_document = MinimapGeometry {
+            document_lines: 80.,
+            visible_editor_lines: 10.,
+            minimap_line_height: px(2.),
+            minimap_height: px(200.),
+        };
+        short_document.assert_thumb_follows_drag(0.);
+        short_document.assert_thumb_follows_drag(30.);
+
+        let long_document = MinimapGeometry {
+            document_lines: 2000.,
+            ..short_document
+        };
+        long_document.assert_thumb_follows_drag(0.);
+        long_document.assert_thumb_follows_drag(500.);
+    }
+
+    #[test]
+    fn test_minimap_thumb_not_draggable_without_room_to_move() {
+        let fits_in_editor = MinimapGeometry {
+            document_lines: 30.,
+            visible_editor_lines: 40.,
+            minimap_line_height: px(2.),
+            minimap_height: px(800.),
+        };
+        assert_eq!(
+            fits_in_editor.thumb_pixels_per_editor_line(&fits_in_editor.thumb_layout(0.)),
+            None
+        );
+
+        // 10 lines at 2px each is a 20px track, so the thumb (at least 25px) already covers all of it
+        let thumb_fills_track = MinimapGeometry {
+            document_lines: 10.,
+            visible_editor_lines: 5.,
+            minimap_line_height: px(2.),
+            minimap_height: px(800.),
+        };
+        assert_eq!(
+            thumb_fills_track.thumb_pixels_per_editor_line(&thumb_fills_track.thumb_layout(0.)),
+            None
+        );
+    }
 
     enum PrimaryNavigationOverlay {}
 

@@ -59,6 +59,11 @@ impl LocalExecutor {
         &self.scheduler
     }
 
+    /// Whether this executor runs on a [`TestScheduler`](crate::TestScheduler).
+    pub fn is_test(&self) -> bool {
+        self.scheduler.as_test().is_some()
+    }
+
     #[track_caller]
     pub fn spawn<F>(&self, future: F) -> Task<F::Output>
     where
@@ -288,6 +293,11 @@ impl BackgroundExecutor {
 
     pub fn scheduler(&self) -> &Arc<dyn Scheduler> {
         &self.scheduler
+    }
+
+    /// Whether this executor runs on a [`TestScheduler`](crate::TestScheduler).
+    pub fn is_test(&self) -> bool {
+        self.scheduler.as_test().is_some()
     }
 
     /// Spawn a closure on a fresh session pinned to its own [`LocalExecutor`].

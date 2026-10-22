@@ -1,6 +1,6 @@
 use crate::{AgentMessage, AgentMessageContent, UserMessage, UserMessageContent};
 use acp_thread::ClientUserMessageId;
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v2 as acp_v2;
 use agent_settings::AgentProfileId;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -27,8 +27,8 @@ pub type DbLanguageModel = crate::legacy_thread::SerializedLanguageModel;
 
 #[derive(Debug, Clone)]
 pub struct DbThreadMetadata {
-    pub id: acp::SessionId,
-    pub parent_session_id: Option<acp::SessionId>,
+    pub id: acp_v2::SessionId,
+    pub parent_session_id: Option<acp_v2::SessionId>,
     pub title: SharedString,
     pub updated_at: DateTime<Utc>,
     pub created_at: Option<DateTime<Utc>>,
@@ -76,7 +76,7 @@ pub struct DbThread {
     #[serde(default)]
     pub thinking_effort: Option<String>,
     #[serde(default)]
-    pub draft_prompt: Option<Vec<acp::ContentBlock>>,
+    pub draft_prompt: Option<Vec<acp_v2::ContentBlock>>,
     #[serde(default)]
     pub ui_scroll_position: Option<SerializedScrollPosition>,
     #[serde(default)]
@@ -398,6 +398,8 @@ pub(crate) struct ThreadsDatabase {
     /// hold a write in flight and interleave more save requests with it.
     #[cfg(test)]
     write_gate: Mutex<Option<Shared<futures::channel::oneshot::Receiver<()>>>>,
+    #[cfg(test)]
+    save_count: std::sync::atomic::AtomicUsize,
 }
 
 struct GlobalThreadsDatabase(Shared<Task<Result<Arc<ThreadsDatabase>, Arc<anyhow::Error>>>>);
@@ -489,6 +491,8 @@ impl ThreadsDatabase {
             connection: Arc::new(Mutex::new(connection)),
             #[cfg(test)]
             write_gate: Mutex::new(None),
+            #[cfg(test)]
+            save_count: Default::default(),
         };
 
         Ok(db)
@@ -496,7 +500,7 @@ impl ThreadsDatabase {
 
     fn save_thread_sync(
         connection: &Arc<Mutex<Connection>>,
-        id: acp::SessionId,
+        id: acp_v2::SessionId,
         thread: DbThread,
         folder_paths: &PathList,
     ) -> Result<()> {
@@ -599,8 +603,8 @@ impl ThreadsDatabase {
                     .map(|dt| dt.with_timezone(&Utc));
 
                 threads.push(DbThreadMetadata {
-                    id: acp::SessionId::new(id),
-                    parent_session_id: parent_id.map(acp::SessionId::new),
+                    id: acp_v2::SessionId::new(id),
+                    parent_session_id: parent_id.map(acp_v2::SessionId::new),
                     title: summary.into(),
                     updated_at: DateTime::parse_from_rfc3339(&updated_at)?.with_timezone(&Utc),
                     created_at,
@@ -612,7 +616,7 @@ impl ThreadsDatabase {
         })
     }
 
-    pub fn load_thread(&self, id: acp::SessionId) -> Task<Result<Option<DbThread>>> {
+    pub fn load_thread(&self, id: acp_v2::SessionId) -> Task<Result<Option<DbThread>>> {
         let connection = self.connection.clone();
 
         self.executor.spawn(async move {
@@ -632,13 +636,16 @@ impl ThreadsDatabase {
 
     pub fn save_thread(
         &self,
-        id: acp::SessionId,
+        id: acp_v2::SessionId,
         thread: DbThread,
         folder_paths: PathList,
     ) -> Task<Result<()>> {
         let connection = self.connection.clone();
         #[cfg(test)]
         let write_gate = self.write_gate.lock().clone();
+        #[cfg(test)]
+        self.save_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
         self.executor.spawn(async move {
             #[cfg(test)]
@@ -647,6 +654,11 @@ impl ThreadsDatabase {
             }
             Self::save_thread_sync(&connection, id, thread, &folder_paths)
         })
+    }
+
+    #[cfg(test)]
+    pub fn save_count(&self) -> usize {
+        self.save_count.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     #[cfg(test)]
@@ -688,7 +700,7 @@ impl ThreadsDatabase {
         }
     }
 
-    pub fn delete_thread(&self, id: acp::SessionId) -> Task<Result<()>> {
+    pub fn delete_thread(&self, id: acp_v2::SessionId) -> Task<Result<()>> {
         let connection = self.connection.clone();
 
         self.executor.spawn(async move {
@@ -780,6 +792,7 @@ impl ThreadsDatabase {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agent_client_protocol::schema::v1 as acp;
     use chrono::{DateTime, TimeZone, Utc};
     use collections::HashMap;
     use gpui::TestAppContext;
@@ -803,8 +816,111 @@ mod tests {
         assert_eq!(restored.updated_at, original.updated_at);
     }
 
-    fn session_id(value: &str) -> acp::SessionId {
-        acp::SessionId::new(Arc::<str>::from(value))
+    fn session_id(value: &str) -> acp_v2::SessionId {
+        acp_v2::SessionId::new(Arc::<str>::from(value))
+    }
+
+    #[test]
+    fn test_session_metadata_preserves_backing_storage() {
+        let storage: Arc<str> = Arc::from("  session/雪:\"quoted\"\\opaque  ");
+        let metadata = DbThreadMetadata {
+            id: acp_v2::SessionId::new(storage.clone()),
+            parent_session_id: None,
+            title: "Opaque session".into(),
+            updated_at: Utc::now(),
+            created_at: None,
+            folder_paths: PathList::default(),
+        };
+        let session_info = acp_thread::AgentSessionInfo::from(&metadata);
+
+        assert_eq!(session_info.session_id.0.as_ref(), storage.as_ref());
+        assert!(Arc::ptr_eq(&session_info.session_id.0, &storage));
+        assert!(Arc::ptr_eq(&metadata.id.0, &storage));
+    }
+
+    #[gpui::test]
+    async fn test_session_ids_preserve_legacy_persistence(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).expect("create database");
+        let thread_id = session_id("  session/雪:\"quoted\"\\opaque  ");
+        let parent_id = session_id("  parent/雪:\"quoted\"\\opaque  ");
+        let legacy_json = serde_json::json!({
+            "version": "0.3.0",
+            "title": "Legacy subagent",
+            "messages": [],
+            "updated_at": "2024-01-01T00:00:00Z",
+            "subagent_context": {
+                "parent_thread_id": parent_id.0.as_ref(),
+                "depth": 1,
+            },
+        });
+        {
+            let connection = database.connection.lock();
+            let mut insert = connection
+                .exec_bound::<(Arc<str>, Arc<str>, Vec<u8>)>(indoc! {"
+                    INSERT INTO threads (id, parent_id, summary, updated_at, data_type, data)
+                    VALUES (?1, ?2, 'Legacy subagent', '2024-01-01T00:00:00Z', 'json', ?3)
+                "})
+                .expect("prepare legacy row");
+            insert((
+                thread_id.0.clone(),
+                parent_id.0.clone(),
+                serde_json::to_vec(&legacy_json).expect("encode legacy JSON"),
+            ))
+            .expect("insert legacy row");
+        }
+
+        let restored = database
+            .load_thread(thread_id.clone())
+            .await
+            .expect("load legacy row")
+            .expect("legacy row exists");
+        assert_eq!(
+            serde_json::to_value(&restored.subagent_context).expect("encode restored context"),
+            legacy_json["subagent_context"]
+        );
+        let entries = database.list_threads().await.expect("list legacy row");
+        let metadata = entries.first().expect("legacy metadata exists");
+        assert_eq!(metadata.id, thread_id);
+        assert_eq!(metadata.parent_session_id.as_ref(), Some(&parent_id));
+
+        database
+            .save_thread(thread_id.clone(), restored, PathList::default())
+            .await
+            .expect("save with v2 session IDs");
+        {
+            let connection = database.connection.lock();
+            let mut select = connection
+                .select_bound::<Arc<str>, (String, String, DataType, Vec<u8>)>(
+                    "SELECT id, parent_id, data_type, data FROM threads WHERE id = ?",
+                )
+                .expect("prepare saved row query");
+            let rows = select(thread_id.0.clone()).expect("query saved row");
+            let (stored_id, stored_parent_id, data_type, data) =
+                rows.first().expect("saved row exists");
+            assert_eq!(stored_id, thread_id.0.as_ref());
+            assert_eq!(stored_parent_id, parent_id.0.as_ref());
+            assert_eq!(*data_type, DataType::Zstd);
+            let json = zstd::decode_all(data.as_slice()).expect("decompress saved JSON");
+            let saved_json: serde_json::Value =
+                serde_json::from_slice(&json).expect("decode saved JSON");
+            assert_eq!(saved_json["version"], legacy_json["version"]);
+            assert_eq!(
+                saved_json["subagent_context"],
+                legacy_json["subagent_context"]
+            );
+        }
+
+        database
+            .delete_thread(thread_id.clone())
+            .await
+            .expect("delete using v2 ID");
+        assert!(
+            database
+                .load_thread(thread_id)
+                .await
+                .expect("load deleted row")
+                .is_none()
+        );
     }
 
     fn make_thread(title: &str, updated_at: DateTime<Utc>) -> DbThread {
@@ -926,6 +1042,58 @@ mod tests {
         assert!(
             db_thread.draft_prompt.is_none(),
             "Legacy threads without draft_prompt field should default to None"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_draft_prompt_preserves_legacy_and_v2_content(cx: &mut TestAppContext) {
+        let legacy_draft = serde_json::to_value(vec![
+            acp::ContentBlock::Text(acp::TextContent::new("legacy draft")),
+            acp::ContentBlock::ResourceLink(acp::ResourceLink::new("file", "file:///a.md")),
+        ])
+        .expect("serialize v1 draft");
+        let mut thread: DbThread = serde_json::from_value(serde_json::json!({
+            "title": "Draft Thread",
+            "messages": [],
+            "updated_at": "2024-01-01T00:00:00Z",
+            "draft_prompt": legacy_draft,
+        }))
+        .expect("decode legacy thread with v2 draft blocks");
+        assert_eq!(
+            serde_json::to_value(&thread.draft_prompt).expect("serialize decoded draft"),
+            legacy_draft
+        );
+
+        let extension = serde_json::json!({
+            "type": "_draft_card",
+            "payload": {"items": [1, {"enabled": true}], "optional": null},
+            "_meta": {"source": "draft", "nested": {"version": 2}},
+        });
+        let extension_block: acp_v2::ContentBlock =
+            serde_json::from_value(extension.clone()).expect("decode v2-only draft block");
+        assert!(matches!(extension_block, acp_v2::ContentBlock::Other(_)));
+        thread
+            .draft_prompt
+            .as_mut()
+            .expect("legacy draft exists")
+            .push(extension_block);
+        let mut expected = legacy_draft.as_array().expect("draft is an array").clone();
+        expected.push(extension);
+
+        let database = ThreadsDatabase::new(cx.executor()).expect("create database");
+        let thread_id = session_id("draft-thread");
+        database
+            .save_thread(thread_id.clone(), thread, PathList::default())
+            .await
+            .expect("save mixed-version draft");
+        let restored = database
+            .load_thread(thread_id)
+            .await
+            .expect("load draft")
+            .expect("saved thread exists");
+        assert_eq!(
+            serde_json::to_value(restored.draft_prompt).expect("serialize restored draft"),
+            serde_json::Value::Array(expected)
         );
     }
 

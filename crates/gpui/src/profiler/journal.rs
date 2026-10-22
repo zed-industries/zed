@@ -6,8 +6,8 @@
 //! bound the stream by the number of slow polls while preserving their exact
 //! count and total duration.
 //!
-//! Presentation and the foreground going idle are explicit [`IntervalBoundary`]
-//! entries in the same stream. Independent [`ForegroundJournalCollector`]s
+//! Presentation, completed frame skips, and foreground idle are explicit
+//! [`IntervalBoundary`] entries in the same stream. Independent [`ForegroundJournalCollector`]s
 //! feed entries to [`IntervalSealer`], a pure state machine that groups all work
 //! preceding each boundary into a [`FrameSnapshot`]. The sealer does not infer
 //! boundaries from elapsed time or from incidental event kinds such as draws.
@@ -24,7 +24,7 @@ use std::time::Duration;
 use gpui_util::ResultExt;
 use scheduler::Instant;
 
-use super::{ActionTiming, FrameTiming, PresentTiming, TaskTiming};
+use super::{ActionTiming, FrameTiming, PresentTiming, TaskTiming, ViewTiming};
 use crate::{App, WindowId, WindowVisibility};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,9 +42,15 @@ pub const TASK_POLL_FLOOR: Duration = Duration::from_micros(100);
 /// foreground-idle boundaries, so a window that never presents (hidden or
 /// occluded windows receive no frame callbacks) cannot suppress boundaries
 /// indefinitely. Expiry only unblocks: the open interval still seals at a
-/// real presentation or idle boundary, keeping a starving hang and the frame
-/// it starved in one interval.
+/// presentation, completed frame skip, or idle boundary, keeping a starving
+/// hang and the callback it starved in one interval.
 pub const FRAME_DEADLINE: Duration = Duration::from_secs(1);
+
+/// Growth in [`system_suspended_time`] below this is attributed to reading
+/// its two clocks separately (on Windows both advance only on the system
+/// tick, up to 15.6 ms), not to a suspend. A real suspend, including freezing
+/// and thawing processes around it, takes far longer.
+const MIN_DETECTED_SUSPEND: Duration = Duration::from_millis(50);
 
 // Backstop against pathological event storms within a single interval. At the
 // 100us floor, a fully hung second can produce at most ~10k recordable polls,
@@ -78,6 +84,8 @@ pub enum ForegroundEvent {
     Input(InputTiming),
     /// A completed window draw.
     Draw(FrameTiming),
+    /// One phase of drawing a view, recorded during the draw that contains it.
+    View(ViewTiming),
     /// Work spent submitting a frame to the platform.
     Present(PresentTiming),
     /// Aggregate of task polls below [`TASK_POLL_FLOOR`], flushed before the
@@ -94,6 +102,7 @@ impl ForegroundEvent {
             Self::Action(timing) => timing.start,
             Self::Input(timing) => timing.start,
             Self::Draw(timing) => timing.draw_start,
+            Self::View(timing) => timing.start,
             Self::Present(timing) => timing.present_start,
             Self::SmallPolls(flush) => flush.since,
         }
@@ -106,6 +115,7 @@ impl ForegroundEvent {
             Self::Action(timing) => timing.end,
             Self::Input(timing) => timing.end,
             Self::Draw(timing) => timing.draw_end,
+            Self::View(timing) => timing.end,
             Self::Present(timing) => timing.present_end,
             Self::SmallPolls(flush) => flush.until,
         }
@@ -131,6 +141,41 @@ pub struct InputTiming {
     pub end: Instant,
     /// Whether handling the input invalidated a window.
     pub caused_invalidation: bool,
+}
+
+/// A frame callback entering the foreground, without implying foreground work.
+#[derive(Debug, Copy, Clone)]
+pub struct PlatformSignal {
+    /// The window receiving the callback.
+    pub window_id: WindowId,
+    /// When the platform requested the callback, if its clock is supported.
+    pub signal_at: Option<Instant>,
+    /// When foreground handling began.
+    pub handled_at: Instant,
+    /// Whether the callback came from the platform or local scheduling.
+    pub source: crate::FrameRequestSource,
+}
+
+/// Why a completed frame request did not draw a new frame.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum FrameSkipReason {
+    /// The callback completed without needing a new render.
+    NoRenderNeeded,
+    /// An inactive window deferred drawing.
+    InactiveFrameRateLimit,
+    /// Thermal throttling deferred drawing.
+    ThermalFrameRateLimit,
+}
+
+/// A completed frame request that returned without drawing a new frame.
+#[derive(Debug, Copy, Clone)]
+pub struct FrameSkipped {
+    /// The window whose callback returned.
+    pub window_id: WindowId,
+    /// When the foreground completed this callback.
+    pub at: Instant,
+    /// Why no new frame was drawn.
+    pub reason: FrameSkipReason,
 }
 
 /// Exact count and total duration of task polls below [`TASK_POLL_FLOOR`].
@@ -183,15 +228,19 @@ impl PresentedFrame {
 pub enum IntervalBoundary {
     /// A newly drawn frame was submitted to the platform.
     Presented(PresentedFrame),
+    /// A callback completed without drawing, excluding reentrant callbacks.
+    FrameSkipped(FrameSkipped),
     /// The foreground returned to an idle platform loop with no unexpired
     /// frame pending.
     Idle {
         /// When the foreground went idle.
         ended_at: Instant,
     },
-    /// A power notification interrupted the measurement interval.
+    /// A system suspend interrupted the measurement interval, observed either
+    /// through a power notification or through the suspend clock.
     PowerTransition {
-        /// When the foreground received the notification.
+        /// When the foreground noticed the suspend, through a notification or
+        /// the suspend clock.
         ended_at: Instant,
     },
 }
@@ -201,6 +250,7 @@ impl IntervalBoundary {
     pub fn end_time(&self) -> Instant {
         match self {
             Self::Presented(presented) => presented.presentation.present_end,
+            Self::FrameSkipped(skipped) => skipped.at,
             Self::Idle { ended_at } | Self::PowerTransition { ended_at } => *ended_at,
         }
     }
@@ -209,7 +259,7 @@ impl IntervalBoundary {
     pub fn dirty_at(&self) -> Option<Instant> {
         match self {
             Self::Presented(presented) => presented.frame.dirty_at,
-            Self::Idle { .. } | Self::PowerTransition { .. } => None,
+            Self::FrameSkipped(_) | Self::Idle { .. } | Self::PowerTransition { .. } => None,
         }
     }
 }
@@ -243,6 +293,15 @@ pub enum ForegroundJournalEntry {
     Boundary(IntervalBoundary),
     /// A change to pending-frame state. This is metadata, not foreground work.
     FrameState(FrameStateChange),
+    /// A callback entering the foreground; not work or an interval boundary.
+    PlatformSignal(PlatformSignal),
+    /// A nested frame request deferred while an enclosing draw was still running.
+    ReentrantFrameSkipped {
+        /// The window whose nested frame request was deferred.
+        window_id: WindowId,
+        /// When the nested frame request was deferred.
+        at: Instant,
+    },
     /// One or more logical entries were unavailable at this point in the
     /// stream. Consumers must not infer interval boundaries across this gap.
     Discontinuity {
@@ -416,6 +475,8 @@ struct ForegroundJournalWriter {
     windows: HashMap<WindowId, WindowFrameState>,
     power: PowerState,
     power_changed_at: Option<Instant>,
+    read_suspended_time: fn() -> Option<Duration>,
+    suspended_time: Option<Duration>,
     retained_since_boundary: bool,
     small_polls: Option<SmallPollFlush>,
 }
@@ -429,6 +490,8 @@ impl ForegroundJournalWriter {
             windows: HashMap::new(),
             power: PowerState::Awake,
             power_changed_at: None,
+            read_suspended_time: system_suspended_time,
+            suspended_time: system_suspended_time(),
             retained_since_boundary: false,
             small_polls: None,
         }
@@ -487,10 +550,41 @@ impl ForegroundJournalWriter {
         if self.power == power {
             return;
         }
+        self.power = power;
+        // A suspend that was notified after it happened must not be reported
+        // again by the suspend clock. A notification that precedes its
+        // suspend (macOS posts will-sleep up to 30 s early) leaves the clock
+        // to fire once more after wake, which only seals an empty interval.
+        self.suspended_time = (self.read_suspended_time)();
+        self.interrupt_measurements(at);
+    }
+
+    /// Interrupts measurements, as a power notification would, if the system
+    /// suspended since the previous check. Measurements that end call this
+    /// before deciding whether to keep themselves, so a suspend during them
+    /// is detected even if its notification hasn't been handled yet.
+    //
+    // Power notifications arrive on the foreground thread, so work that was
+    // running when the system suspended finishes before its notification is
+    // handled (and on Windows the notification may never arrive).
+    fn detect_suspend(&mut self, at: Instant) {
+        let Some(suspended_time) = (self.read_suspended_time)() else {
+            return;
+        };
+        let previous = self.suspended_time.replace(suspended_time);
+        if previous
+            .is_some_and(|previous| suspended_time.saturating_sub(previous) >= MIN_DETECTED_SUSPEND)
+        {
+            self.interrupt_measurements(at);
+        }
+    }
+
+    /// Seals the open interval and invalidates all measurements in progress
+    /// at `at`, since they may span a suspend.
+    fn interrupt_measurements(&mut self, at: Instant) {
         self.record_entry(ForegroundJournalEntry::Boundary(
             IntervalBoundary::PowerTransition { ended_at: at },
         ));
-        self.power = power;
         self.power_changed_at = Some(at);
         for window in self.windows.values_mut() {
             window.dirty_at = None;
@@ -548,8 +642,34 @@ impl ForegroundJournalWriter {
         }
     }
 
+    /// Publishes a point record that is neither work nor a boundary. Folded
+    /// polls stay folded: publishing them here would let them reach the
+    /// sealer even when [`Self::end_turn`] later discards folded-only work.
+    fn record_marker(&mut self, entry: ForegroundJournalEntry) {
+        self.publisher.publish([entry]);
+    }
+
     fn record_frame_state(&mut self, change: FrameStateChange) {
         self.record_entry(ForegroundJournalEntry::FrameState(change));
+    }
+
+    fn record_platform_signal(&mut self, signal: PlatformSignal) {
+        self.record_marker(ForegroundJournalEntry::PlatformSignal(signal));
+    }
+
+    /// Seals retained work at a frame request that didn't draw. Like idle
+    /// boundaries, skips require a retained event since the last boundary:
+    /// platforms that request a frame every refresh would otherwise seal an
+    /// empty interval, and flush folded polls, on every idle refresh.
+    fn record_frame_skipped(&mut self, skipped: FrameSkipped) {
+        if !self.retained_since_boundary {
+            return;
+        }
+        // Even a no-render callback can schedule or invalidate the next frame.
+        // Skipping does not establish that the window's pending demand is met.
+        self.record_entry(ForegroundJournalEntry::Boundary(
+            IntervalBoundary::FrameSkipped(skipped),
+        ));
     }
 
     fn record_frame_pending(&mut self, window_id: WindowId, dirty_at: Instant) {
@@ -663,10 +783,9 @@ pub(crate) fn install_test_foreground_journal(
     let foreground_runnables = foreground_runnable_counter();
     let (handle, publisher) = ForegroundJournal::new(capacity, pending_capacity);
     let previous = FOREGROUND_JOURNAL.with(|journal| {
-        journal.borrow_mut().replace(ForegroundJournalWriter::new(
-            foreground_runnables,
-            publisher,
-        ))
+        journal.borrow_mut().replace(
+            ForegroundJournalWriter::new(foreground_runnables, publisher).with_test_suspend_clock(),
+        )
     });
     (
         handle,
@@ -675,6 +794,35 @@ pub(crate) fn install_test_foreground_journal(
             _not_send: std::marker::PhantomData,
         },
     )
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_SUSPENDED_TIME: std::cell::Cell<Duration> = const { std::cell::Cell::new(Duration::ZERO) };
+}
+
+#[cfg(test)]
+fn test_suspended_time() -> Option<Duration> {
+    Some(TEST_SUSPENDED_TIME.get())
+}
+
+/// Simulates the system spending `duration` suspended, as observed through
+/// the suspend clock of journals using [`ForegroundJournalWriter::with_test_suspend_clock`].
+#[cfg(test)]
+pub(crate) fn advance_test_suspended_time(duration: Duration) {
+    TEST_SUSPENDED_TIME.set(TEST_SUSPENDED_TIME.get() + duration);
+}
+
+#[cfg(test)]
+impl ForegroundJournalWriter {
+    /// Replaces the system suspend clock, so a real suspend during a test
+    /// can't interrupt its measurements.
+    fn with_test_suspend_clock(mut self) -> Self {
+        TEST_SUSPENDED_TIME.set(Duration::ZERO);
+        self.read_suspended_time = test_suspended_time;
+        self.suspended_time = test_suspended_time();
+        self
+    }
 }
 
 fn with_journal(f: impl FnOnce(&mut ForegroundJournalWriter)) {
@@ -707,6 +855,101 @@ pub(crate) fn observe_power(cx: &App) {
     .detach();
 }
 
+/// Total time the system has spent suspended since boot, or `None` where no
+/// clock provides it: the difference between a clock that counts suspended
+/// time and one that doesn't. The suspend-excluding clock is read first so
+/// read latency can't make the difference negative. Every read is served from
+/// memory the kernel maps into the process, without a syscall.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn system_suspended_time() -> Option<Duration> {
+    // CLOCK_BOOTTIME is CLOCK_MONOTONIC plus time spent suspended:
+    // https://man7.org/linux/man-pages/man2/clock_gettime.2.html
+    let awake = read_clock(libc::CLOCK_MONOTONIC)?;
+    let total = read_clock(libc::CLOCK_BOOTTIME)?;
+    Some(total.saturating_sub(awake))
+}
+
+#[cfg(target_os = "macos")]
+fn system_suspended_time() -> Option<Duration> {
+    use std::sync::OnceLock;
+
+    // Declared here because libc deprecates its mach bindings, and these
+    // three functions don't justify a `mach2` dependency. `<mach/mach_time.h>`
+    // documents `mach_continuous_time` as "like mach_absolute_time, but
+    // advances during sleep", so both count the same ticks:
+    // https://github.com/apple-oss-distributions/xnu/blob/main/osfmk/mach/mach_time.h
+    #[repr(C)]
+    struct MachTimebaseInfo {
+        numer: u32,
+        denom: u32,
+    }
+    unsafe extern "C" {
+        fn mach_absolute_time() -> u64;
+        fn mach_continuous_time() -> u64;
+        fn mach_timebase_info(info: *mut MachTimebaseInfo) -> i32;
+    }
+
+    static TIMEBASE: OnceLock<Option<(u32, u32)>> = OnceLock::new();
+    let (numer, denom) = (*TIMEBASE.get_or_init(|| {
+        let mut info = MachTimebaseInfo { numer: 0, denom: 0 };
+        // SAFETY: `info` is a valid, writable mach_timebase_info.
+        let succeeded = unsafe { mach_timebase_info(&mut info) } == 0;
+        (succeeded && info.denom != 0).then_some((info.numer, info.denom))
+    }))?;
+    // SAFETY: neither function has preconditions.
+    let awake = unsafe { mach_absolute_time() };
+    // SAFETY: as above.
+    let total = unsafe { mach_continuous_time() };
+    let nanos = u128::from(total.saturating_sub(awake)) * u128::from(numer) / u128::from(denom);
+    Some(Duration::from_nanos(u64::try_from(nanos).ok()?))
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn read_clock(clock: libc::clockid_t) -> Option<Duration> {
+    let mut time = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `time` is a valid, writable timespec.
+    if unsafe { libc::clock_gettime(clock, &mut time) } != 0 {
+        return None;
+    }
+    Some(Duration::new(
+        u64::try_from(time.tv_sec).ok()?,
+        u32::try_from(time.tv_nsec).ok()?,
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn system_suspended_time() -> Option<Duration> {
+    use windows::Win32::System::WindowsProgramming::{
+        QueryInterruptTime, QueryUnbiasedInterruptTime,
+    };
+    let mut awake = 0;
+    // SAFETY: `awake` is a valid, writable u64.
+    if !unsafe { QueryUnbiasedInterruptTime(&mut awake) }.as_bool() {
+        return None;
+    }
+    // SAFETY: no preconditions.
+    let total = unsafe { QueryInterruptTime() };
+    // Both count 100 ns units; unbiased interrupt time excludes sleep and
+    // hibernation:
+    // https://learn.microsoft.com/en-us/windows/win32/sysinfo/interrupt-time
+    Some(Duration::from_nanos(
+        total.saturating_sub(awake).saturating_mul(100),
+    ))
+}
+
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "macos",
+    target_os = "windows"
+)))]
+fn system_suspended_time() -> Option<Duration> {
+    None
+}
+
 pub(crate) fn record_power_transition(state: PowerState) {
     with_journal(|journal| journal.power_transition(state, Instant::now()));
 }
@@ -715,7 +958,10 @@ pub(crate) fn record_power_transition(state: PowerState) {
 /// is dropped rather than measured.
 pub(crate) fn power_interrupted_since(start: Instant) -> bool {
     let mut interrupted = false;
-    with_journal(|journal| interrupted = journal.power_interrupted_since(start));
+    with_journal(|journal| {
+        journal.detect_suspend(Instant::now());
+        interrupted = journal.power_interrupted_since(start);
+    });
     interrupted
 }
 
@@ -728,6 +974,7 @@ pub(crate) fn record_window_visibility(id: WindowId, visibility: WindowVisibilit
 pub(crate) fn frame_sample_is_valid(id: WindowId, start: Instant) -> bool {
     let mut valid = true;
     with_journal(|journal| {
+        journal.detect_suspend(Instant::now());
         valid = !journal.power_interrupted_since(start)
             && journal.windows.get(&id).is_none_or(|window| {
                 window.visibility.is_visible()
@@ -758,7 +1005,12 @@ pub(crate) fn foreground_turn() -> ForegroundTurnGuard {
 }
 
 pub(crate) fn begin_foreground_turn() {
-    with_journal(ForegroundJournalWriter::begin_turn);
+    // Observing before the turn's work takes its start time means a suspend
+    // detected here never invalidates the work that follows it.
+    with_journal(|journal| {
+        journal.detect_suspend(Instant::now());
+        journal.begin_turn();
+    });
 }
 
 pub(crate) fn end_foreground_turn() {
@@ -768,6 +1020,7 @@ pub(crate) fn end_foreground_turn() {
 pub(crate) fn record_task_poll(timing: TaskTiming) {
     FOREGROUND_RUNNABLES.with(ForegroundRunnableCounter::finished);
     with_journal(|journal| {
+        journal.detect_suspend(timing.end.0);
         if journal.power_interrupted_since(timing.start) {
             journal.end_turn(timing.end.0);
             return;
@@ -789,12 +1042,36 @@ pub(crate) fn record_input(timing: InputTiming) {
     with_journal(|journal| journal.record_event(ForegroundEvent::Input(timing)));
 }
 
+pub(crate) fn record_view(timing: ViewTiming) {
+    with_journal(|journal| journal.record_event(ForegroundEvent::View(timing)));
+}
+
 pub(crate) fn record_draw(timing: FrameTiming) {
     with_journal(|journal| journal.record_event(ForegroundEvent::Draw(timing)));
 }
 
 pub(crate) fn record_present(timing: PresentTiming, frame: Option<FrameTiming>) {
     with_journal(|journal| journal.record_present(timing, frame));
+}
+
+pub(crate) fn record_platform_signal(signal: PlatformSignal) {
+    with_journal(|journal| journal.record_platform_signal(signal));
+}
+
+pub(crate) fn record_reentrant_frame_skipped(window_id: WindowId, at: Instant) {
+    with_journal(|journal| {
+        journal.record_marker(ForegroundJournalEntry::ReentrantFrameSkipped { window_id, at });
+    });
+}
+
+pub(crate) fn record_frame_skipped(window_id: WindowId, at: Instant, reason: FrameSkipReason) {
+    with_journal(|journal| {
+        journal.record_frame_skipped(FrameSkipped {
+            window_id,
+            at,
+            reason,
+        })
+    });
 }
 
 pub(crate) fn record_frame_pending(window_id: WindowId, dirty_at: Instant) {
@@ -1176,7 +1453,9 @@ impl IntervalSealer {
                 // Pending-frame state gates boundaries on the writer side;
                 // the entries remain in the stream for consumers that want
                 // dirty timing, but the sealer has no use for them.
-                ForegroundJournalEntry::FrameState(_) => {}
+                ForegroundJournalEntry::FrameState(_)
+                | ForegroundJournalEntry::PlatformSignal(_)
+                | ForegroundJournalEntry::ReentrantFrameSkipped { .. } => {}
                 ForegroundJournalEntry::Discontinuity { lost } => self.note_lost(lost),
             }
         }
@@ -1235,6 +1514,190 @@ mod tests {
 
     use super::*;
     use crate::{WindowId, profiler::YieldTime};
+
+    #[test]
+    fn platform_signals_are_journaled_without_sealing_or_occupying_time() {
+        let (journal, _guard) = install_test_foreground_journal(32, 4);
+        let mut collector = journal.collector();
+        let start = Instant::now();
+        let mut sealer = IntervalSealer::new(start);
+        let window_id = WindowId::from(1);
+        for source in [
+            crate::FrameRequestSource::NativeCallback,
+            crate::FrameRequestSource::LocalSchedule,
+        ] {
+            for signal_at in [None, Some(start + Duration::from_secs(5))] {
+                record_platform_signal(PlatformSignal {
+                    window_id,
+                    signal_at,
+                    handled_at: start + Duration::from_millis(5),
+                    source,
+                });
+                let entries = collector.collect_unseen().entries;
+                let [ForegroundJournalEntry::PlatformSignal(signal)] = entries.as_slice() else {
+                    panic!("expected a raw platform signal, got {entries:?}");
+                };
+                assert_eq!(signal.window_id, window_id);
+                assert_eq!(signal.signal_at, signal_at);
+                assert_eq!(signal.handled_at, start + Duration::from_millis(5));
+                assert_eq!(signal.source, source);
+                assert!(sealer.push_entries(entries).is_empty());
+            }
+        }
+        let ended_at = start + Duration::from_millis(10);
+        // An enclosing work span may complete after the callback metadata.
+        let snapshots = sealer.push_entries([
+            input_entry(start, ended_at),
+            ForegroundJournalEntry::Boundary(IntervalBoundary::Idle { ended_at }),
+        ]);
+        let [snapshot] = snapshots.as_slice() else {
+            panic!("expected one snapshot, got {snapshots:?}");
+        };
+        assert_eq!(snapshot.interval_start, start);
+        assert_eq!(snapshot.interval_end(), ended_at);
+        assert_eq!(snapshot.occupancy(), Duration::from_millis(10));
+        assert_eq!(snapshot.events.len(), 1);
+    }
+
+    #[test]
+    fn completed_skips_seal_without_retiring_pending_demand() {
+        let start = Instant::now();
+        let at = start + Duration::from_millis(10);
+        let window_id = WindowId::from(1);
+        for reason in [
+            FrameSkipReason::NoRenderNeeded,
+            FrameSkipReason::InactiveFrameRateLimit,
+            FrameSkipReason::ThermalFrameRateLimit,
+        ] {
+            let (mut writer, mut collector) = test_journal(ForegroundRunnableCounter::new());
+            writer.begin_turn();
+            writer.record_frame_pending(window_id, start);
+            writer.record_event(ForegroundEvent::Input(InputTiming {
+                kind: "test",
+                start,
+                end: start + Duration::from_millis(2),
+                caused_invalidation: false,
+            }));
+            writer.record_frame_skipped(FrameSkipped {
+                window_id,
+                at,
+                reason,
+            });
+
+            let mut sealer = IntervalSealer::new(start);
+            let snapshots = sealer.push_entries(collector.collect_unseen().entries);
+            let [snapshot] = snapshots.as_slice() else {
+                panic!("expected a completed skip, got {snapshots:?}");
+            };
+            assert!(
+                matches!(snapshot.boundary, IntervalBoundary::FrameSkipped(skipped)
+                if skipped.window_id == window_id && skipped.at == at && skipped.reason == reason)
+            );
+            assert_eq!(snapshot.interval_end(), at);
+            assert_eq!(snapshot.boundary.dirty_at(), None);
+            assert_eq!(snapshot.occupancy(), Duration::from_millis(2));
+
+            writer.record_event(ForegroundEvent::Input(InputTiming {
+                kind: "test",
+                start: at,
+                end: at + Duration::from_millis(1),
+                caused_invalidation: false,
+            }));
+            writer.end_turn(at + Duration::from_millis(1));
+            assert!(
+                !collector
+                    .collect_unseen()
+                    .entries
+                    .iter()
+                    .any(|entry| matches!(entry, ForegroundJournalEntry::Boundary(_))),
+                "pending demand must still block idle boundaries"
+            );
+        }
+    }
+
+    /// Platforms that request a frame every refresh skip most of them while
+    /// idle. Those skips seal nothing and leave folded polls folded, so
+    /// end-of-turn idle handling can still discard folded-only work.
+    #[test]
+    fn idle_refreshes_seal_nothing_and_keep_polls_folded() {
+        let start = Instant::now();
+        let window_id = WindowId::from(1);
+        let (mut writer, mut collector) = test_journal(ForegroundRunnableCounter::new());
+        for refresh in 0..3u32 {
+            let at = start + Duration::from_millis(16) * refresh;
+            writer.begin_turn();
+            writer.fold_small_poll(task_timing(at, at + Duration::from_micros(50)));
+            writer.record_platform_signal(PlatformSignal {
+                window_id,
+                signal_at: Some(at),
+                handled_at: at,
+                source: crate::FrameRequestSource::NativeCallback,
+            });
+            writer.record_frame_skipped(FrameSkipped {
+                window_id,
+                at,
+                reason: FrameSkipReason::NoRenderNeeded,
+            });
+            writer.end_turn(at + Duration::from_micros(60));
+        }
+
+        let entries = collector.collect_unseen().entries;
+        assert!(
+            entries
+                .iter()
+                .all(|entry| matches!(entry, ForegroundJournalEntry::PlatformSignal(_))),
+            "expected only platform signals, got {entries:?}"
+        );
+        assert!(IntervalSealer::new(start).push_entries(entries).is_empty());
+    }
+
+    #[test]
+    fn reentrant_skip_does_not_seal_the_enclosing_draw() {
+        let (journal, _guard) = install_test_foreground_journal(32, 4);
+        let mut collector = journal.collector();
+        let start = Instant::now();
+        let window_id = WindowId::from(1);
+        let mut sealer = IntervalSealer::new(start);
+        record_platform_signal(PlatformSignal {
+            window_id,
+            signal_at: None,
+            handled_at: start + Duration::from_millis(5),
+            source: crate::FrameRequestSource::LocalSchedule,
+        });
+        record_reentrant_frame_skipped(window_id, start + Duration::from_millis(6));
+        let entries = collector.collect_unseen().entries;
+        assert!(matches!(
+            entries.as_slice(),
+            [
+                ForegroundJournalEntry::PlatformSignal(_),
+                ForegroundJournalEntry::ReentrantFrameSkipped {
+                    window_id: skipped_window_id,
+                    at,
+                }
+            ]
+            if *skipped_window_id == window_id && *at == start + Duration::from_millis(6)
+        ));
+        assert!(sealer.push_entries(entries).is_empty());
+
+        let frame = FrameTiming {
+            refresh_interval: None,
+            signal_at: None,
+            window_id,
+            dirty_at: Some(start),
+            invalidations: 1,
+            draw_start: start,
+            draw_end: start + Duration::from_millis(20),
+            phases: Default::default(),
+        };
+        record_draw(frame);
+        record_present(presentation_timing(window_id, frame.draw_end), Some(frame));
+        let snapshots = sealer.push_entries(collector.collect_unseen().entries);
+        let [snapshot] = snapshots.as_slice() else {
+            panic!("expected the enclosing presentation, got {snapshots:?}");
+        };
+        assert!(matches!(snapshot.boundary, IntervalBoundary::Presented(_)));
+        assert_eq!(snapshot.occupancy(), Duration::from_millis(20));
+    }
 
     #[gpui::test]
     fn wake_rechecks_native_visibility(cx: &mut crate::TestAppContext) {
@@ -1295,6 +1758,69 @@ mod tests {
     }
 
     #[test]
+    fn a_poll_spanning_an_unnotified_suspend_is_dropped() {
+        let (journal, _guard) = install_test_foreground_journal(32, 4);
+        let mut collector = journal.collector();
+        let window = WindowId::from(1);
+        record_frame_pending(window, Instant::now());
+        begin_foreground_turn();
+        let start = Instant::now();
+        advance_test_suspended_time(Duration::from_secs(2));
+        record_task_poll(task_timing(start, Instant::now()));
+        let entries = collector.collect_unseen().entries;
+        assert!(entries.iter().any(|entry| matches!(
+            entry,
+            ForegroundJournalEntry::Boundary(IntervalBoundary::PowerTransition { .. })
+        )));
+        assert!(!entries.iter().any(|entry| matches!(
+            entry,
+            ForegroundJournalEntry::Event(ForegroundEvent::TaskPoll(_))
+        )));
+        with_journal(|writer| assert_eq!(writer.windows[&window].dirty_at, None));
+
+        begin_foreground_turn();
+        let start = Instant::now();
+        record_task_poll(task_timing(start, start + TASK_POLL_FLOOR));
+        let entries = collector.collect_unseen().entries;
+        assert!(entries.iter().any(|entry| matches!(
+            entry,
+            ForegroundJournalEntry::Event(ForegroundEvent::TaskPoll(_))
+        )));
+        assert!(!entries.iter().any(|entry| matches!(
+            entry,
+            ForegroundJournalEntry::Boundary(IntervalBoundary::PowerTransition { .. })
+        )));
+    }
+
+    #[test]
+    fn suspend_clock_ignores_jitter_and_notified_suspends() {
+        let (journal, _guard) = install_test_foreground_journal(32, 4);
+        let mut collector = journal.collector();
+        record_power_transition(PowerState::Suspended);
+        advance_test_suspended_time(Duration::from_secs(60));
+        record_power_transition(PowerState::Awake);
+        advance_test_suspended_time(MIN_DETECTED_SUSPEND - Duration::from_millis(1));
+        begin_foreground_turn();
+        let start = Instant::now();
+        record_task_poll(task_timing(start, start + TASK_POLL_FLOOR));
+        let entries = collector.collect_unseen().entries;
+        let power_transitions = entries
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry,
+                    ForegroundJournalEntry::Boundary(IntervalBoundary::PowerTransition { .. })
+                )
+            })
+            .count();
+        assert_eq!(power_transitions, 2, "only the two notifications");
+        assert!(entries.iter().any(|entry| matches!(
+            entry,
+            ForegroundJournalEntry::Event(ForegroundEvent::TaskPoll(_))
+        )));
+    }
+
+    #[test]
     fn visibility_and_power_changes_clear_pending_frames() {
         let (mut writer, _) = test_journal(ForegroundRunnableCounter::new());
         let start = Instant::now();
@@ -1336,11 +1862,14 @@ mod tests {
             caused_invalidation: true,
         };
         let frame = FrameTiming {
+            refresh_interval: None,
+            signal_at: None,
             window_id: WindowId::from(1),
             dirty_at: Some(input.start),
             invalidations: 1,
             draw_start: start + Duration::from_millis(3),
             draw_end: start + Duration::from_millis(4),
+            phases: Default::default(),
         };
         let presentation = PresentTiming {
             window_id: frame.window_id,
@@ -1378,7 +1907,9 @@ mod tests {
                 IntervalBoundary::Presented(presented) => {
                     presented.dirty_to_present_duration()
                 }
-                IntervalBoundary::Idle { .. } | IntervalBoundary::PowerTransition { .. } => None,
+                IntervalBoundary::FrameSkipped(_)
+                | IntervalBoundary::Idle { .. }
+                | IntervalBoundary::PowerTransition { .. } => None,
             },
             Some(Duration::from_millis(5))
         );
@@ -2181,6 +2712,7 @@ mod tests {
             ForegroundEvent::Draw(_) => 3,
             ForegroundEvent::Present(_) => 4,
             ForegroundEvent::SmallPolls(_) => 5,
+            ForegroundEvent::View(_) => 6,
         };
         NormalizedEvent {
             kind,
@@ -2205,6 +2737,7 @@ mod tests {
                 IntervalBoundary::Idle { .. } => 0,
                 IntervalBoundary::Presented(_) => 1,
                 IntervalBoundary::PowerTransition { .. } => 2,
+                IntervalBoundary::FrameSkipped(_) => 3,
             },
             interval_end: snapshot.interval_end().duration_since(origin).as_micros() as u64,
             events: snapshot
@@ -2304,6 +2837,7 @@ mod tests {
                                 IntervalBoundary::Idle { .. } => 0,
                                 IntervalBoundary::Presented(_) => 1,
                                 IntervalBoundary::PowerTransition { .. } => 2,
+                                IntervalBoundary::FrameSkipped(_) => 3,
                             },
                             interval_end,
                             events: std::mem::take(&mut events),
@@ -2314,7 +2848,9 @@ mod tests {
                         interval_start = interval_end;
                     }
                 }
-                ForegroundJournalEntry::FrameState(_) => {}
+                ForegroundJournalEntry::FrameState(_)
+                | ForegroundJournalEntry::PlatformSignal(_)
+                | ForegroundJournalEntry::ReentrantFrameSkipped { .. } => {}
                 ForegroundJournalEntry::Discontinuity { lost } => {
                     dropped_events += lost;
                     journal_discontinuous = true;
@@ -2933,7 +3469,7 @@ mod tests {
         let (journal, publisher) = ForegroundJournal::new(256, 8);
         let collector = journal.collector();
         (
-            ForegroundJournalWriter::new(foreground_runnables, publisher),
+            ForegroundJournalWriter::new(foreground_runnables, publisher).with_test_suspend_clock(),
             collector,
         )
     }
@@ -2962,11 +3498,14 @@ mod tests {
 
     fn frame_timing(window_id: WindowId, dirty_at: Instant, draw_end: Instant) -> FrameTiming {
         FrameTiming {
+            refresh_interval: None,
+            signal_at: None,
             window_id,
             dirty_at: Some(dirty_at),
             invalidations: 1,
             draw_start: draw_end,
             draw_end,
+            phases: Default::default(),
         }
     }
 

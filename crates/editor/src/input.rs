@@ -1812,7 +1812,7 @@ impl Editor {
             .filter_map(|keystroke| keystroke.key_char.clone())
             .collect();
 
-        if !self.input_enabled || self.read_only || !self.focus_handle.is_focused(window) {
+        if !self.input_enabled || !self.focus_handle.is_focused(window) {
             pending = "".to_string();
         }
 
@@ -1822,45 +1822,52 @@ impl Editor {
         if existing_pending.is_none() && pending.is_empty() {
             return;
         }
-        let transaction =
-            self.transact(window, cx, |this, window, cx| {
-                let selections = this
-                    .selections
-                    .all::<MultiBufferOffset>(&this.display_snapshot(cx));
-                let edits = selections
-                    .iter()
-                    .map(|selection| (selection.end..selection.end, pending.clone()));
-                this.edit(edits, cx);
-                this.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.select_ranges(selections.into_iter().enumerate().map(|(ix, sel)| {
-                        sel.start + ix * pending.len()..sel.end + ix * pending.len()
-                    }));
-                });
-                if let Some(existing_ranges) = existing_pending {
-                    let edits = existing_ranges.iter().map(|range| (range.clone(), ""));
-                    this.edit(edits, cx);
-                }
-            });
+        let mut inserted_ranges = Vec::new();
+        let transaction = self.transact(window, cx, |this, window, cx| {
+            let selections = this
+                .selections
+                .all::<MultiBufferOffset>(&this.display_snapshot(cx));
+            let buffer = this.buffer.read(cx).snapshot(cx);
+            let selection_ranges = selections
+                .iter()
+                .map(|selection| {
+                    buffer.anchor_before(selection.start)..buffer.anchor_before(selection.end)
+                })
+                .collect::<Vec<_>>();
+            inserted_ranges = selections
+                .iter()
+                .map(|selection| {
+                    buffer.anchor_before(selection.end)..buffer.anchor_after(selection.end)
+                })
+                .collect();
 
-        let snapshot = self.snapshot(window, cx);
-        let ranges = self
-            .selections
-            .all::<MultiBufferOffset>(&snapshot.display_snapshot)
-            .into_iter()
-            .map(|selection| {
-                snapshot.buffer_snapshot().anchor_after(selection.end)
-                    ..snapshot
-                        .buffer_snapshot()
-                        .anchor_before(selection.end + pending.len())
-            })
-            .collect();
+            let edits = selections
+                .iter()
+                .map(|selection| (selection.end..selection.end, pending.clone()));
+            this.edit(edits, cx);
+            this.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_anchor_ranges(selection_ranges);
+            });
+            if let Some(existing_ranges) = existing_pending {
+                let edits = existing_ranges.iter().map(|range| (range.clone(), ""));
+                this.edit(edits, cx);
+            }
+        });
 
         if pending.is_empty() {
             self.clear_highlights(HighlightKey::PendingInput, cx);
         } else {
+            let buffer = self.buffer.read(cx).snapshot(cx);
+            let pending_ranges = inserted_ranges
+                .iter()
+                .map(|range| {
+                    let range = range.to_offset(&buffer);
+                    buffer.anchor_after(range.start)..buffer.anchor_before(range.end)
+                })
+                .collect();
             self.highlight_text(
                 HighlightKey::PendingInput,
-                ranges,
+                pending_ranges,
                 HighlightStyle {
                     underline: Some(UnderlineStyle {
                         thickness: px(1.),
