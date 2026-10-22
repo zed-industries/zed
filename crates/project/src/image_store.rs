@@ -182,7 +182,7 @@ enum ImageLocationState {
 
 async fn resolve_image_location(
     project: &WeakEntity<Project>,
-    paths: &[String],
+    paths: &[PathBuf],
     error_level: log::Level,
     cx: &mut AsyncApp,
 ) -> Option<ImageLocation> {
@@ -203,7 +203,7 @@ async fn resolve_image_location(
 
 pub fn use_image_location(
     project: WeakEntity<Project>,
-    paths: Vec<String>,
+    paths: Vec<PathBuf>,
     window: &mut Window,
     cx: &mut App,
 ) -> Option<ImageLocation> {
@@ -411,7 +411,7 @@ pub struct ImageStore {
         ProjectPath,
         postage::watch::Receiver<Option<Result<Entity<ImageItem>, Arc<anyhow::Error>>>>,
     >,
-    image_locations: HashMap<Vec<String>, ImageLocationEntry>,
+    image_locations: HashMap<Vec<PathBuf>, ImageLocationEntry>,
 }
 
 impl ImageStore {
@@ -588,7 +588,7 @@ impl ImageStore {
     fn use_image_location(
         &mut self,
         project: WeakEntity<Project>,
-        paths: Vec<String>,
+        paths: Vec<PathBuf>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<ImageLocation> {
@@ -638,7 +638,7 @@ impl ImageStore {
 
     fn check_image_location(
         project: WeakEntity<Project>,
-        paths: Vec<String>,
+        paths: Vec<PathBuf>,
         error_level: log::Level,
         cx: &mut Context<Self>,
     ) -> Task<()> {
@@ -655,7 +655,7 @@ impl ImageStore {
     // image, and a recheck refreshes every open window that showed it.
     fn finish_image_location_check(
         &mut self,
-        paths: &[String],
+        paths: &[PathBuf],
         location: Option<ImageLocation>,
         cx: &mut Context<Self>,
     ) {
@@ -708,7 +708,7 @@ impl ImageStore {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn image_location_window_count(&self, paths: &[String]) -> Option<usize> {
+    pub fn image_location_window_count(&self, paths: &[PathBuf]) -> Option<usize> {
         self.image_locations
             .get(paths)
             .map(|entry| entry.windows.len())

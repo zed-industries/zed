@@ -404,7 +404,7 @@ async fn test_resolve_image_at_abs_path_keeps_non_utf8_symlink_target(
 
     let location = project
         .update(cx, |project, cx| {
-            project.resolve_image_at_abs_path(alias.to_str().unwrap(), cx)
+            project.resolve_image_at_abs_path(&alias, cx)
         })
         .await
         .unwrap();
@@ -415,6 +415,38 @@ async fn test_resolve_image_at_abs_path_keeps_non_utf8_symlink_target(
     project.read_with(cx, |project, cx| {
         assert_eq!(project.worktrees(cx).count(), 0);
     });
+}
+
+#[cfg(target_os = "linux")]
+#[gpui::test]
+async fn test_abs_paths_for_file_link_keeps_non_utf8_worktree_root(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+    let directory = TempTree::new(json!({}));
+    let root = directory
+        .path()
+        .join(OsStr::from_bytes(b"review-\xff"))
+        .join("project");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("shot.ppm"), "P3\n1 1\n255\n255 0 0\n").unwrap();
+    let project = Project::test(RealFs::new(None, cx.executor()), [root.as_path()], cx).await;
+
+    let paths = project.read_with(cx, |project, cx| {
+        project.abs_paths_for_file_link(Path::new("shot.ppm"), cx)
+    });
+    assert_eq!(paths, vec![root.join("shot.ppm")]);
+    let location = project
+        .update(cx, |project, cx| {
+            project.resolve_image_at_abs_path(&paths[0], cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        location,
+        Some(project::image_store::ImageLocation::Local(
+            root.join("shot.ppm").into()
+        ))
+    );
 }
 
 #[gpui::test]
@@ -456,7 +488,7 @@ async fn test_resolve_image_at_abs_path_local(cx: &mut gpui::TestAppContext) {
     ] {
         let location = project
             .update(cx, |project, cx| {
-                project.resolve_image_at_abs_path(path, cx)
+                project.resolve_image_at_abs_path(Path::new(path), cx)
             })
             .await
             .unwrap();
@@ -476,7 +508,7 @@ async fn test_resolve_image_at_abs_path_local(cx: &mut gpui::TestAppContext) {
     ] {
         let location = project
             .update(cx, |project, cx| {
-                project.resolve_image_at_abs_path(path, cx)
+                project.resolve_image_at_abs_path(Path::new(path), cx)
             })
             .await
             .unwrap();

@@ -8,7 +8,7 @@ use project::ProjectPath;
 use project::image_store::*;
 use serde_json::json;
 use settings::SettingsStore;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use util::path;
 use util::rel_path::rel_path;
@@ -85,7 +85,7 @@ fn test_compute_metadata_from_bytes() {
 
 struct ImageLocationTestView {
     project: WeakEntity<Project>,
-    paths: Vec<String>,
+    paths: Vec<PathBuf>,
     location: Option<ImageLocation>,
     renders: usize,
 }
@@ -109,7 +109,7 @@ async fn test_use_image_location_retries_missing_file_after_delay(cx: &mut TestA
     let calls_before_first_check = fs.is_file_call_count();
     let (view, cx) = cx.add_window_view(|_, _| ImageLocationTestView {
         project: project.downgrade(),
-        paths: vec![path!("/outside/later.ppm").to_string()],
+        paths: vec![PathBuf::from(path!("/outside/later.ppm"))],
         location: None,
         renders: 0,
     });
@@ -208,8 +208,8 @@ async fn test_use_image_location_revalidates_found_location(cx: &mut TestAppCont
     let (view, cx) = cx.add_window_view(|_, _| ImageLocationTestView {
         project: project.downgrade(),
         paths: vec![
-            path!("/a/work/../shot.ppm").to_string(),
-            path!("/b/work/../shot.ppm").to_string(),
+            PathBuf::from(path!("/a/work/../shot.ppm")),
+            PathBuf::from(path!("/b/work/../shot.ppm")),
         ],
         location: None,
         renders: 0,
@@ -269,7 +269,7 @@ async fn test_use_image_location_recheck_notifies_every_view(cx: &mut TestAppCon
     let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
     let new_view = || ImageLocationTestView {
         project: project.downgrade(),
-        paths: vec![path!("/outside/shared.ppm").to_string()],
+        paths: vec![PathBuf::from(path!("/outside/shared.ppm"))],
         location: None,
         renders: 0,
     };
@@ -326,7 +326,7 @@ async fn test_image_locations_are_released_with_their_project(cx: &mut TestAppCo
     )
     .await;
     let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
-    let paths = vec![path!("/project/shot.ppm").to_string()];
+    let paths = vec![PathBuf::from(path!("/project/shot.ppm"))];
     let (view, cx) = cx.add_window_view(|_, _| ImageLocationTestView {
         project: project.downgrade(),
         paths: paths.clone(),
@@ -354,8 +354,8 @@ async fn test_use_image_location_drops_unused_entries(cx: &mut TestAppContext) {
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(path!("/project"), json!({})).await;
     let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
-    let first = vec![path!("/outside/first.ppm").to_string()];
-    let second = vec![path!("/outside/second.ppm").to_string()];
+    let first = vec![PathBuf::from(path!("/outside/first.ppm"))];
+    let second = vec![PathBuf::from(path!("/outside/second.ppm"))];
     let (view, cx) = cx.add_window_view(|_, _| ImageLocationTestView {
         project: project.downgrade(),
         paths: first.clone(),
@@ -368,7 +368,7 @@ async fn test_use_image_location_drops_unused_entries(cx: &mut TestAppContext) {
             move |_, _| view.into_any_element()
         });
     };
-    let window_count = |paths: &[String], cx: &mut VisualTestContext| {
+    let window_count = |paths: &[PathBuf], cx: &mut VisualTestContext| {
         project.read_with(cx, |project, cx| {
             project
                 .image_store()
@@ -398,7 +398,7 @@ async fn test_use_image_location_recheck_skips_closed_windows(cx: &mut TestAppCo
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(path!("/project"), json!({})).await;
     let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-    let paths = vec![path!("/outside/shared.ppm").to_string()];
+    let paths = vec![PathBuf::from(path!("/outside/shared.ppm"))];
     let new_view = || ImageLocationTestView {
         project: project.downgrade(),
         paths: paths.clone(),

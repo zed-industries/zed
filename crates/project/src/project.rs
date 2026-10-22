@@ -5193,6 +5193,8 @@ impl Project {
             return paths;
         }
         let home_path = path.starts_with("~").then(|| path.to_path_buf());
+        // A native join keeps non-UTF-8 bytes of local worktree roots.
+        let is_local = self.is_local();
         let worktree_paths = self
             .visible_worktrees(cx)
             .filter(|worktree| !worktree.read(cx).is_single_file())
@@ -5205,9 +5207,13 @@ impl Project {
                 .into_iter()
                 .flatten()
                 .filter_map(|path| {
-                    path_style
-                        .join_path_preserving_components(worktree.abs_path(), path)
-                        .ok()
+                    if is_local {
+                        Some(worktree.abs_path().join(path))
+                    } else {
+                        path_style
+                            .join_path_preserving_components(worktree.abs_path(), path)
+                            .ok()
+                    }
                 })
                 .collect::<Vec<_>>()
             });
@@ -5280,13 +5286,16 @@ impl Project {
 
     pub fn resolve_image_at_abs_path(
         &self,
-        path: &str,
+        path: &Path,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<ImageLocation>>> {
         // Reading the requested path lets the OS resolve symlinks and `..` while keeping any
         // non-UTF-8 target bytes; canonicalizing is only needed to map remote paths to worktrees.
         if self.is_local() {
-            let path = PathBuf::from(shellexpand::tilde(path).into_owned());
+            let path = path.to_str().map_or_else(
+                || path.to_path_buf(),
+                |path| PathBuf::from(shellexpand::tilde(path).into_owned()),
+            );
             let fs = self.fs.clone();
             return cx.background_spawn(async move {
                 Ok(fs
@@ -5295,6 +5304,9 @@ impl Project {
                     .then(|| ImageLocation::Local(path.into())))
             });
         }
+        let Some(path) = path.to_str() else {
+            return Task::ready(Ok(None));
+        };
         let resolve = self.resolve_abs_file_link(path, cx);
         cx.spawn(async move |project, cx| {
             let Some(resolved_path) = resolve.await? else {

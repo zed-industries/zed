@@ -122,7 +122,7 @@ pub(crate) fn resolve_agent_image(
 
 enum AgentImageLookup {
     Source(ImageSource),
-    Disk(Vec<String>),
+    Disk(Vec<PathBuf>),
 }
 
 fn agent_image_lookup(
@@ -142,18 +142,20 @@ fn agent_image_lookup(
     let project_entity = project?;
     let project = project_entity.read(cx);
     let path_style = project.path_style(cx);
-    let paths: Vec<String> = image_path_candidates(dest_url, path_style)
+    let paths: Vec<PathBuf> = image_path_candidates(dest_url, path_style)
         .iter()
         .flat_map(|candidate| project.abs_paths_for_file_link(Path::new(candidate), cx))
-        .filter_map(|path| path.to_str().map(str::to_owned))
         .collect();
 
-    // Only the first candidate may skip the disk walk: an indexed later candidate must not
-    // win over an earlier one that exists on disk but isn't indexed (e.g. gitignored). It also
-    // needs a file entry, since an open buffer outlives its deleted file.
+    // Only an absolute first candidate may skip the disk walk: an indexed later candidate must
+    // not win over an earlier one that exists on disk but isn't indexed (e.g. gitignored), and
+    // an unexpanded `~` path is not worktree-relative. It also needs a file entry, since an open
+    // buffer outlives its deleted file.
     let first_path = paths.first()?;
-    let Some(project_path) = project
-        .project_path_for_file_link(Path::new(first_path), cx)
+    let Some(project_path) = path_style
+        .is_absolute(first_path)
+        .then(|| project.project_path_for_file_link(first_path, cx))
+        .flatten()
         .filter(|project_path| {
             project
                 .entry_for_path(project_path, cx)
@@ -1068,9 +1070,7 @@ mod tests {
 
     fn disk_paths(lookup: Option<AgentImageLookup>) -> Option<Vec<PathBuf>> {
         match lookup {
-            Some(AgentImageLookup::Disk(paths)) => {
-                Some(paths.into_iter().map(PathBuf::from).collect())
-            }
+            Some(AgentImageLookup::Disk(paths)) => Some(paths),
             _ => None,
         }
     }
@@ -1190,6 +1190,20 @@ mod tests {
             Some(vec![
                 PathBuf::from(path!("/one/shot.svg")),
                 PathBuf::from(path!("/two/shot.svg")),
+            ])
+        );
+    }
+
+    #[gpui::test]
+    async fn test_agent_image_lookup_checks_home_before_worktree_tilde_dir(
+        cx: &mut TestAppContext,
+    ) {
+        let project = image_test_project(json!({"~": {"shot.png": ""}}), cx).await;
+        assert_eq!(
+            disk_paths(lookup("~/shot.png", &project, cx)),
+            Some(vec![
+                PathBuf::from("~/shot.png"),
+                PathBuf::from(path!("/project/~/shot.png")),
             ])
         );
     }

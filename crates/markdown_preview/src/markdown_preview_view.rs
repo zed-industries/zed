@@ -1592,7 +1592,12 @@ fn resolve_preview_image(
             });
         if let Some(path) = path_with_parent_components {
             let project = project.downgrade();
-            return match image_store::use_image_location(project.clone(), vec![path], window, cx)? {
+            return match image_store::use_image_location(
+                project.clone(),
+                vec![PathBuf::from(path)],
+                window,
+                cx,
+            )? {
                 ImageLocation::Local(path) => Some(ImageSource::Resource(Resource::Path(path))),
                 ImageLocation::Project(path) => {
                     Some(image_store::project_image_source(project, path))

@@ -622,7 +622,7 @@ async fn test_resolve_image_at_abs_path_over_remote(
     ] {
         let location = project
             .update(cx, |project, cx| {
-                project.resolve_image_at_abs_path(abs_path, cx)
+                project.resolve_image_at_abs_path(Path::new(abs_path), cx)
             })
             .await
             .unwrap();
@@ -638,7 +638,8 @@ async fn test_resolve_image_at_abs_path_over_remote(
 
     let missing = project
         .update(cx, |project, cx| {
-            project.resolve_image_at_abs_path(path!("/code/project/docs/missing.ppm"), cx)
+            project
+                .resolve_image_at_abs_path(Path::new(path!("/code/project/docs/missing.ppm")), cx)
         })
         .await
         .unwrap();
@@ -646,7 +647,7 @@ async fn test_resolve_image_at_abs_path_over_remote(
 
     let outside = project
         .update(cx, |project, cx| {
-            project.resolve_image_at_abs_path(path!("/code/outside.ppm"), cx)
+            project.resolve_image_at_abs_path(Path::new(path!("/code/outside.ppm")), cx)
         })
         .await
         .unwrap();
@@ -684,7 +685,7 @@ async fn test_resolve_image_at_abs_path_over_remote_maps_canonical_path_into_wor
 
     let location = project
         .update(cx, |project, cx| {
-            project.resolve_image_at_abs_path(path!("/code/alias/shot.ppm"), cx)
+            project.resolve_image_at_abs_path(Path::new(path!("/code/alias/shot.ppm")), cx)
         })
         .await
         .unwrap();
@@ -699,7 +700,7 @@ async fn test_resolve_image_at_abs_path_over_remote_maps_canonical_path_into_wor
 
 struct RemoteImageLocationTestView {
     project: gpui::WeakEntity<Project>,
-    paths: Vec<String>,
+    paths: Vec<PathBuf>,
     location: Option<image_store::ImageLocation>,
 }
 
@@ -747,8 +748,8 @@ async fn test_use_image_location_skips_failing_candidates_over_remote(
     let (view, cx) = cx.add_window_view(|_window, _cx| RemoteImageLocationTestView {
         project: project.downgrade(),
         paths: vec![
-            path!("/code/outside.ppm").to_string(),
-            path!("/code/project/docs/image.ppm").to_string(),
+            PathBuf::from(path!("/code/outside.ppm")),
+            PathBuf::from(path!("/code/project/docs/image.ppm")),
         ],
         location: None,
     });
