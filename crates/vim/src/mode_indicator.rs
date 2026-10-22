@@ -63,7 +63,8 @@ impl ModeIndicator {
     }
 
     fn current_operators_description(&self, vim: Entity<Vim>, cx: &mut Context<Self>) -> String {
-        let recording = Vim::globals(cx)
+        let recording = cx
+            .global::<VimGlobals>()
             .recording_register
             .map(|reg| format!("recording @{reg} "))
             .into_iter();
