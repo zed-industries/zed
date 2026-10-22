@@ -130,6 +130,9 @@ fn agent_image_lookup(
     project: Option<&Entity<Project>>,
     cx: &App,
 ) -> Option<AgentImageLookup> {
+    if dest_url.starts_with("data:") {
+        return None;
+    }
     if dest_url.starts_with("http://") || dest_url.starts_with("https://") {
         return Some(AgentImageLookup::Source(ImageSource::Resource(
             Resource::Uri(SharedUri::from(dest_url.to_string())),
@@ -1279,6 +1282,7 @@ mod tests {
             );
         }
         assert!(lookup("file://not a url", &project, cx).is_none());
+        assert!(lookup("data:image/png;base64,iVBORw0KGgo=", &project, cx).is_none());
 
         let project = Project::test(fs::FakeFs::new(cx.executor()), [], cx).await;
         assert!(lookup("screenshots/shot.png", &project, cx).is_none());
