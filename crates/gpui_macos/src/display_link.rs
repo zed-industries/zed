@@ -1,4 +1,8 @@
-//! Frame pacing for macOS windows, built on `CVDisplayLink`.
+//! Frame pacing for macOS windows.
+//!
+//! On macOS 14 and later a window is paced by a `CAMetalDisplayLink` on its
+//! layer ([`MetalFrameSource`]). Earlier systems use the shared `CVDisplayLink`
+//! registry described below ([`WindowFrameSource`]).
 //!
 //! CVDisplayLink has no safe teardown: `CVDisplayLinkStop` merely flags the
 //! link's io thread to exit "soon" and returns immediately, and there is no
@@ -57,6 +61,14 @@ use dispatch2::{
 };
 use gpui::{FrameRequestSource, PlatformFrameSignal};
 use gpui_util::ResultExt;
+use objc2::rc::Retained;
+use objc2::runtime::{AnyClass, ProtocolObject};
+use objc2::{AnyThread, DefinedClass, define_class, msg_send};
+use objc2_foundation::{NSObject, NSObjectProtocol, NSRunLoop, NSRunLoopCommonModes};
+use objc2_quartz_core::{
+    CAFrameRateRange, CAMetalDisplayLink, CAMetalDisplayLinkDelegate, CAMetalDisplayLinkUpdate,
+    CAMetalLayer,
+};
 use scheduler::Instant;
 use std::{
     collections::{BTreeMap, btree_map},
@@ -284,6 +296,157 @@ fn unsubscribe(display_id: CGDirectDisplayID, subscriber_id: SubscriberId) {
         // A final output callback can still fire after this returns; it finds
         // no subscribers for this display and does nothing.
         unsafe { link.stop().log_err() };
+    }
+}
+
+/// Called by a [`MetalFrameSource`] on the main thread for each frame, with the
+/// window's native view and the update that carries the frame's drawable.
+pub type MetalFrameCallback = extern "C" fn(*mut c_void, &CAMetalDisplayLinkUpdate);
+
+struct MetalDisplayLinkDelegateIvars {
+    data: *mut c_void,
+    callback: MetalFrameCallback,
+}
+
+define_class!(
+    // SAFETY: `NSObject` has no subclassing requirements and
+    // `MetalDisplayLinkDelegate` does not implement `Drop`.
+    #[unsafe(super(NSObject))]
+    #[ivars = MetalDisplayLinkDelegateIvars]
+    struct MetalDisplayLinkDelegate;
+
+    unsafe impl NSObjectProtocol for MetalDisplayLinkDelegate {}
+
+    unsafe impl CAMetalDisplayLinkDelegate for MetalDisplayLinkDelegate {
+        #[unsafe(method(metalDisplayLink:needsUpdate:))]
+        fn needs_update(&self, _link: &CAMetalDisplayLink, update: &CAMetalDisplayLinkUpdate) {
+            let ivars = self.ivars();
+            (ivars.callback)(ivars.data, update);
+        }
+    }
+);
+
+impl MetalDisplayLinkDelegate {
+    fn new(data: *mut c_void, callback: MetalFrameCallback) -> Retained<Self> {
+        let this = Self::alloc().set_ivars(MetalDisplayLinkDelegateIvars { data, callback });
+        // SAFETY: `NSObject`'s `init` is its designated initializer.
+        unsafe { msg_send![super(this), init] }
+    }
+}
+
+/// A per-window source of frame requests on macOS 14 and later: a
+/// `CAMetalDisplayLink` on the window's layer.
+///
+/// A `CVDisplayLink` only ticks at vsync; the window then asks the layer for a
+/// drawable, renders and presents. Since macOS 26 that lands just past the
+/// compositor's deadline on some Macs (base M-series chips among them) once
+/// no input is arriving, so animation runs at half the refresh rate: each
+/// frame waits in `nextDrawable` for a drawable the compositor releases every
+/// other refresh. This link states the frame rate the window wants, and
+/// hands out each frame's drawable early enough to be shown at its target
+/// time.
+///
+/// The link fires on the main run loop, so unlike a `CVDisplayLink` its
+/// callback cannot race its teardown. While it is attached, the layer's
+/// `nextDrawable` raises `CAMetalLayerInvalidOperation`, so a window that has
+/// to draw synchronously (live resize, activation) drops its source first
+/// rather than pausing it.
+pub struct MetalFrameSource {
+    link: Retained<CAMetalDisplayLink>,
+    // The link holds its delegate weakly.
+    _delegate: Retained<MetalDisplayLinkDelegate>,
+}
+
+impl MetalFrameSource {
+    /// How many frames ahead of their presentation the link hands out
+    /// drawables. Two is the system default; one held 60 Hz on only about
+    /// half as many frames on an M5 under macOS 27.
+    const FRAME_LATENCY: f32 = 2.;
+
+    /// How long a window draws nothing before its link pauses. GPUI keeps
+    /// presenting for a second after high-rate input so a variable refresh
+    /// display stays fast between input events; a link that kept requesting
+    /// the display's full rate while idle would hold it there for good.
+    pub const IDLE_BEFORE_PAUSE: Duration = Duration::from_secs(1);
+
+    /// Whether this system has `CAMetalDisplayLink` (macOS 14 and later).
+    pub fn is_available() -> bool {
+        AnyClass::get(c"CAMetalDisplayLink").is_some()
+    }
+
+    pub fn new(layer: &CAMetalLayer, data: *mut c_void, callback: MetalFrameCallback) -> Self {
+        let delegate = MetalDisplayLinkDelegate::new(data, callback);
+        let link = CAMetalDisplayLink::initWithMetalLayer(CAMetalDisplayLink::alloc(), layer);
+        link.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+        link.setPreferredFrameLatency(Self::FRAME_LATENCY);
+        link.setPaused(true);
+        // SAFETY: windows are created on the main thread, and the main run
+        // loop outlives every window.
+        unsafe { link.addToRunLoop_forMode(&NSRunLoop::mainRunLoop(), NSRunLoopCommonModes) };
+        Self {
+            link,
+            _delegate: delegate,
+        }
+    }
+
+    /// Request frames at `frames_per_second`, the highest rate of the display
+    /// the window is on.
+    pub fn start(&self, frames_per_second: f32) {
+        self.link.setPreferredFrameRateRange(CAFrameRateRange {
+            minimum: frames_per_second,
+            maximum: frames_per_second,
+            preferred: frames_per_second,
+        });
+        self.link.setPaused(false);
+    }
+
+    pub fn pause(&self) {
+        self.link.setPaused(true);
+    }
+
+    pub fn resume(&self) {
+        self.link.setPaused(false);
+    }
+}
+
+/// Whether a window's display link should pause: once GPUI has asked for no
+/// frame for [`MetalFrameSource::IDLE_BEFORE_PAUSE`].
+#[derive(Default)]
+pub struct FrameDemand {
+    /// Whether GPUI asked for a frame since the current one began.
+    demanded: bool,
+    /// When the window last went without asking for a frame, if it still is.
+    idle_since: Option<Instant>,
+}
+
+impl FrameDemand {
+    /// A frame begins; GPUI hasn't asked for another yet.
+    pub fn begin_frame(&mut self) {
+        self.demanded = false;
+    }
+
+    /// GPUI asked for a frame.
+    pub fn demand(&mut self) {
+        self.demanded = true;
+        self.idle_since = None;
+    }
+
+    /// The frame that began last ended at `now`: whether the link should
+    /// pause until GPUI asks for a frame again.
+    pub fn end_frame(&mut self, now: Instant) -> bool {
+        if self.demanded {
+            return false;
+        }
+        let idle_since = *self.idle_since.get_or_insert(now);
+        now.saturating_duration_since(idle_since) >= MetalFrameSource::IDLE_BEFORE_PAUSE
+    }
+}
+
+impl Drop for MetalFrameSource {
+    fn drop(&mut self) {
+        // Windows are dropped on the main thread, which is the run loop the
+        // link fires on, so no callback is in flight or can follow.
+        self.link.invalidate();
     }
 }
 
@@ -533,6 +696,62 @@ mod sys {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `nextDrawable` raises `CAMetalLayerInvalidOperation` while a
+    /// `CAMetalDisplayLink` drives the layer, even a paused one, and the
+    /// exception cannot unwind through Rust: it aborts the process. A
+    /// renderer must not ask for a drawable then, and can again once the link
+    /// is gone.
+    #[test]
+    fn a_display_link_pauses_a_second_after_frames_stop_being_demanded() {
+        let start = Instant::now();
+        let at = |milliseconds| start + Duration::from_millis(milliseconds);
+        let mut demand = FrameDemand::default();
+
+        // A window that keeps asking for frames, as an animation does, never pauses.
+        for frame in 0..120 {
+            demand.begin_frame();
+            demand.demand();
+            assert!(!demand.end_frame(at(frame * 16)));
+        }
+
+        // Once it stops asking, it pauses a second after its first quiet frame.
+        demand.begin_frame();
+        assert!(!demand.end_frame(at(2_000)));
+        demand.begin_frame();
+        assert!(!demand.end_frame(at(2_999)));
+        demand.begin_frame();
+        assert!(demand.end_frame(at(3_000)));
+
+        // A request between frames, like the frame waker's, starts the second over.
+        demand.demand();
+        demand.begin_frame();
+        assert!(!demand.end_frame(at(4_000)));
+        demand.begin_frame();
+        assert!(!demand.end_frame(at(4_999)));
+        demand.begin_frame();
+        assert!(demand.end_frame(at(5_000)));
+    }
+
+    #[test]
+    fn a_renderer_never_asks_for_a_drawable_while_a_display_link_drives_its_layer() {
+        if !MetalFrameSource::is_available() {
+            return;
+        }
+        let mut renderer = crate::renderer::MetalRenderer::new(Default::default(), false);
+        renderer.update_drawable_size(gpui::size(gpui::DevicePixels(64), gpui::DevicePixels(64)));
+        // metal-rs and objc2 bind the same CAMetalLayer object.
+        let layer = unsafe { &*renderer.layer_ptr().cast::<CAMetalLayer>() };
+        // Creating a link attaches it to the layer; it never has to run for
+        // `nextDrawable` to start raising, so it stays off the main run loop.
+        let link = CAMetalDisplayLink::initWithMetalLayer(CAMetalDisplayLink::alloc(), layer);
+        renderer.set_display_link_attached(true);
+        renderer.draw(&gpui::Scene::default());
+
+        link.invalidate();
+        renderer.set_display_link_attached(false);
+        renderer.draw(&gpui::Scene::default());
+    }
 
     #[test]
     fn host_timestamp_preserves_request_age_at_different_clock_rates() {
