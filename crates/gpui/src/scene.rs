@@ -548,39 +548,6 @@ impl Scene {
     }
 
     pub fn finish(&mut self) {
-        #[cfg(feature = "bench-support")]
-        if *{
-            static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-            ENABLED.get_or_init(|| std::env::var_os("GPUI_SCENE_SORT_STATS").is_some())
-        } {
-            macro_rules! report {
-                ($field:ident, $key:expr) => {
-                    eprintln!(
-                        "scene-sort {} len={} sorted={}",
-                        stringify!($field),
-                        self.$field.len(),
-                        self.$field.is_sorted_by_key($key)
-                    );
-                };
-            }
-            report!(shadows, |primitive| primitive.order);
-            report!(quads, |primitive| primitive.order);
-            report!(paths, |primitive| primitive.order);
-            report!(underlines, |primitive| primitive.order);
-            report!(monochrome_sprites, |primitive| (
-                primitive.order,
-                primitive.tile.texture_id.index
-            ));
-            report!(subpixel_sprites, |primitive| (
-                primitive.order,
-                primitive.tile.texture_id.index
-            ));
-            report!(polychrome_sprites, |primitive| (
-                primitive.order,
-                primitive.tile.texture_id.index
-            ));
-            report!(surfaces, |primitive| primitive.order);
-        }
         let primitive_count = self
             .shadows
             .len()
