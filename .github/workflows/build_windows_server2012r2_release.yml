@@ -1,0 +1,151 @@
+name: build-windows-server2012r2-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to build, e.g. v0.199.0
+        required: true
+        type: string
+      create_release:
+        description: Create or update a GitHub Release after build
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-server2012r2:
+    name: Build Windows Server 2012 R2 artifact
+    runs-on: [self-hosted, windows, x64, server2012r2]
+    timeout-minutes: 180
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+      WINVER: 0x0603
+      _WIN32_WINNT: 0x0603
+      RUSTFLAGS: -C link-arg=/SUBSYSTEM:WINDOWS,6.03
+
+    steps:
+      - name: Determine tag
+        shell: pwsh
+        run: |
+          $tag = "${{ github.event.inputs.tag || github.ref_name }}"
+          if ([string]::IsNullOrWhiteSpace($tag)) {
+            throw "No tag provided."
+          }
+          if ($tag -notmatch '^v\d+\.\d+\.\d+') {
+            throw "Tag must look like vMAJOR.MINOR.PATCH, got: $tag"
+          }
+          "TAG_NAME=$tag" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG_NAME }}
+          fetch-depth: 0
+          clean: false
+
+      - name: Validate Windows build prerequisites
+        shell: pwsh
+        run: |
+          $vc = @(
+            "C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Auxiliary\\Build\\vcvars64.bat",
+            "C:\\Program Files\\Microsoft Visual Studio\\2022\\Professional\\VC\\Auxiliary\\Build\\vcvars64.bat",
+            "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Auxiliary\\Build\\vcvars64.bat",
+            "C:\\Program Files\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Auxiliary\\Build\\vcvars64.bat"
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+          if (-not $vc) {
+            throw "MSVC toolchain not found. Install Visual Studio 2022 Build Tools on the runner."
+          }
+
+          Write-Host "Using MSVC script: $vc"
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-msvc
+
+      - name: Configure cargo for Windows Server 2012 R2 compatibility
+        shell: pwsh
+        run: |
+          $cargoDir = Join-Path $env:USERPROFILE ".cargo"
+          New-Item -ItemType Directory -Path $cargoDir -Force | Out-Null
+
+          $config = @"
+          [target.x86_64-pc-windows-msvc]
+          rustflags = ["-C", "link-arg=/SUBSYSTEM:WINDOWS,6.03"]
+          "@
+
+          Set-Content -Path (Join-Path $cargoDir "config.toml") -Value $config -Encoding UTF8
+
+      - name: Clean target dir if needed
+        shell: pwsh
+        run: ./script/clear-target-dir-if-larger-than.ps1 350 200
+
+      - name: Build Windows bundle
+        shell: pwsh
+        run: |
+          ./script/bundle-windows.ps1 -Architecture x86_64
+
+      - name: Verify expected artifacts exist
+        shell: pwsh
+        run: |
+          $files = @(
+            "target/Zed-x86_64.exe",
+            "target/zed-remote-server-windows-x86_64.zip"
+          )
+
+          foreach ($f in $files) {
+            if (-not (Test-Path $f)) {
+              throw "Missing expected artifact: $f"
+            }
+          }
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: zed-windows-server2012r2-x86_64
+          path: |
+            target/Zed-x86_64.exe
+            target/zed-remote-server-windows-x86_64.zip
+          if-no-files-found: error
+
+      - name: Create or update GitHub Release
+        if: ${{ inputs.create_release == true }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ env.TAG_NAME }}"
+          $repo = "${{ github.repository }}"
+          $exists = gh release view $tag --repo $repo --json name 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Release not found, creating draft release: $tag"
+            gh release create $tag `
+              --repo $repo `
+              --title $tag `
+              --target ${{ github.sha }} `
+              --draft `
+              --generate-notes
+          } else {
+            Write-Host "Release exists, reusing it: $tag"
+          }
+
+      - name: Upload release assets
+        if: ${{ inputs.create_release == true }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ env.TAG_NAME }}"
+          $repo = "${{ github.repository }}"
+          gh release upload $tag `
+            --repo $repo `
+            target/Zed-x86_64.exe `
+            target/zed-remote-server-windows-x86_64.zip `
+            --clobber
