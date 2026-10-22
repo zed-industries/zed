@@ -93,6 +93,8 @@ struct LayoutScope {
 #[derive(Default)]
 struct RetainedLayouts {
     layouts: SecondaryMap<DefaultKey, taffy::Layout>,
+    hoisted_children: SecondaryMap<DefaultKey, Vec<NodeId>>,
+    detailed_layout_info: SecondaryMap<DefaultKey, taffy::DetailedLayoutInfo>,
     previous_layouts: FxHashMap<NodeId, taffy::Layout>,
     boundaries: FxHashMap<NodeId, BoundaryLayout>,
     #[cfg(feature = "bench-support")]
@@ -200,7 +202,7 @@ where
         }
         let output = taffy::compute_cached_layout(self, node, input, |tree, node, input| {
             let style = tree.taffy.style(node).expect(EXPECT_MESSAGE);
-            if style.display == taffy::Display::None {
+            let mut output = if style.display == taffy::Display::None {
                 taffy::compute_hidden_layout(tree, node)
             } else if tree.taffy.child_count(node) == 0 {
                 let style = style.clone();
@@ -215,7 +217,11 @@ where
                     }
                     taffy::Display::None => unreachable!(),
                 }
+            };
+            if input.run_mode == taffy::RunMode::PerformLayout {
+                taffy::compute_oof_layout(tree, node, &mut output);
             }
+            output
         });
         #[cfg(feature = "bench-support")]
         let _timer = self.retained.phase_timers.then(|| {
@@ -224,7 +230,7 @@ where
         if input.run_mode == taffy::RunMode::PerformLayout
             && let Some(boundary) = self.retained.boundaries.get_mut(&node)
         {
-            boundary.output = Some(output);
+            boundary.output = Some(output.clone());
         }
         output
     }
@@ -295,6 +301,42 @@ where
     }
 }
 
+impl<F> taffy::LayoutContainingBlock for RetainedLayoutTree<'_, F>
+where
+    Self: taffy::LayoutPartialTree<CustomIdent = String>,
+{
+    type OofItemStyle<'a>
+        = &'a taffy::Style
+    where
+        Self: 'a;
+
+    fn get_oof_item_style(&self, node: NodeId) -> Self::OofItemStyle<'_> {
+        self.taffy.style(node).expect(EXPECT_MESSAGE)
+    }
+
+    fn clear_hoisted_children(&mut self, node: NodeId) {
+        self.retained
+            .hoisted_children
+            .insert(node.into(), Vec::new());
+    }
+
+    fn add_hoisted_children(&mut self, node: NodeId, hoisted: &[NodeId]) {
+        self.retained
+            .hoisted_children
+            .entry(node.into())
+            .expect(EXPECT_MESSAGE)
+            .or_default()
+            .extend_from_slice(hoisted);
+    }
+
+    fn get_detailed_layout_info(&self, node: NodeId) -> &taffy::DetailedLayoutInfo {
+        self.retained
+            .detailed_layout_info
+            .get(node.into())
+            .unwrap_or(&taffy::DetailedLayoutInfo::None)
+    }
+}
+
 impl<F> taffy::LayoutFlexboxContainer for RetainedLayoutTree<'_, F>
 where
     Self: taffy::LayoutPartialTree,
@@ -333,6 +375,12 @@ where
     fn get_grid_child_style(&self, node: NodeId) -> Self::GridItemStyle<'_> {
         self.taffy.style(node).expect(EXPECT_MESSAGE)
     }
+
+    fn set_detailed_grid_info(&mut self, node: NodeId, info: taffy::DetailedGridInfo) {
+        self.retained
+            .detailed_layout_info
+            .insert(node.into(), taffy::DetailedLayoutInfo::Grid(Box::new(info)));
+    }
 }
 
 pub struct TaffyLayoutEngine {
@@ -360,6 +408,7 @@ const EXPECT_MESSAGE: &str = "we should avoid taffy layout errors by constructio
 fn text_layout_style() -> taffy::Style {
     taffy::Style {
         display: taffy::Display::Block,
+        position: taffy::Position::Relative,
         ..Default::default()
     }
 }
@@ -409,7 +458,12 @@ impl TaffyLayoutEngine {
     }
 
     pub(crate) fn retained_output(&self, id: LayoutId) -> Option<taffy::LayoutOutput> {
-        self.retained.as_ref()?.boundaries.get(&id.0)?.output
+        self.retained
+            .as_ref()?
+            .boundaries
+            .get(&id.0)?
+            .output
+            .clone()
     }
 
     pub(crate) fn register_retained_boundary(&mut self, id: LayoutId) {
@@ -614,6 +668,8 @@ impl TaffyLayoutEngine {
                             self.absolute_layout.remove(id.0.into());
                             if let Some(retained) = self.retained.as_mut() {
                                 retained.layouts.remove(id.0.into());
+                                retained.hoisted_children.remove(id.0.into());
+                                retained.detailed_layout_info.remove(id.0.into());
                                 retained.boundaries.remove(&id.0);
                             }
                             *node = None;

@@ -842,7 +842,7 @@ impl Window {
                 .expect("layout engine")
                 .retained_style(old_id);
             let input = layout.input.ok_or(SpliceFallback::LayoutConstraints)?;
-            let old_output = layout.output;
+            let old_output = layout.output.clone();
             let scope = layout.scope.clone();
             let old_size = retained
                 .state
