@@ -9,6 +9,7 @@ pub mod elicitation;
 mod mention;
 pub mod notices;
 pub mod prompt_capabilities;
+pub mod subagents;
 mod submission;
 mod terminal;
 pub use ::terminal::HeadlessTerminal;
@@ -3491,6 +3492,8 @@ pub struct AcpThread {
     parent_session_id: Option<acp_v2::SessionId>,
     /// Child sessions this session owns, such as subagents, in registration order.
     subagents: IndexMap<acp_v2::SessionId, Entity<AcpThread>>,
+    /// Set when this session is an ACP subagent announced by its parent.
+    subagent_association: Option<subagents::SubagentAssociation>,
     provisional_title: Option<SharedString>,
     entries: Vec<AgentThreadEntry>,
     // Notices stay with the live session, but never enter conversation history or exports.
@@ -3871,6 +3874,7 @@ impl AcpThread {
             elicitations: ElicitationStore::default(),
             permission_requests: IndexMap::default(),
             subagents: IndexMap::default(),
+            subagent_association: None,
             plans: HashMap::default(),
             visible_plan: None,
             provisional_title: None,
@@ -3908,13 +3912,32 @@ impl AcpThread {
         }
     }
 
-    /// Marks a session whose work the agent owns, such as an ACP subagent. Zed cannot
+    /// Marks an ACP subagent session, whose work its parent agent owns. Zed cannot
     /// submit prompts to it, and its foreground state is unconfirmed until the agent
     /// reports one.
     pub fn agent_owned(mut self) -> Self {
         self.submissions = SessionSubmissions::new(SubmissionTransport::AgentOwned);
         self.activity.mark_unconfirmed();
+        self.subagent_association = Some(subagents::SubagentAssociation::default());
         self
+    }
+
+    pub fn subagent_association(&self) -> Option<&subagents::SubagentAssociation> {
+        self.subagent_association.as_ref()
+    }
+
+    pub fn update_subagent_association(
+        &mut self,
+        update: &acp_v2::SubagentUpdate,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let association = self
+            .subagent_association
+            .as_mut()
+            .context("Session is not an ACP subagent")?;
+        association.apply(update);
+        cx.notify();
+        Ok(())
     }
 
     pub fn parent_session_id(&self) -> Option<&acp_v2::SessionId> {
@@ -4404,7 +4427,10 @@ impl AcpThread {
                         error.is::<SubmissionDisconnected>()
                             || error
                                 .downcast_ref::<agent_client_protocol::Error>()
-                                .is_some_and(agent_client_protocol::is_incoming_transport_closed)
+                                .is_some_and(|error| {
+                                    agent_client_protocol::is_incoming_transport_closed(error)
+                                        || agent_client_protocol::is_connection_terminated(error)
+                                })
                     })
                 {
                     this.handle_connection_lost(cx);
@@ -4554,6 +4580,21 @@ impl AcpThread {
             && self.foreground_activity() == ForegroundActivity::Idle
         {
             cx.emit(AcpThreadEvent::ActivityConfirmedIdle);
+        }
+        Ok(())
+    }
+
+    /// Forgets the reported foreground state without implying idle, as when an ACP
+    /// subagent association clears its `state`. Work in progress stays in progress.
+    pub fn clear_session_state(&mut self, cx: &mut Context<Self>) -> Result<()> {
+        anyhow::ensure!(
+            self.uses_reported_activity(),
+            "Session does not report foreground state"
+        );
+        let previous = self.foreground_activity();
+        self.activity.mark_unconfirmed();
+        if previous != self.foreground_activity() {
+            cx.emit(AcpThreadEvent::StatusChanged);
         }
         Ok(())
     }

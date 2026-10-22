@@ -328,7 +328,7 @@ pub struct ResponseReasoningInputItem {
     #[serde(default)]
     pub summary: Vec<ResponseReasoningSummaryPart>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub content: Vec<Value>,
+    pub content: Vec<ReasoningContentPart>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub encrypted_content: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -557,6 +557,20 @@ pub enum StreamEvent {
         output_index: usize,
         text: String,
     },
+    #[serde(rename = "response.reasoning_text.delta")]
+    ReasoningTextDelta {
+        item_id: String,
+        output_index: usize,
+        content_index: usize,
+        delta: String,
+    },
+    #[serde(rename = "response.reasoning_text.done")]
+    ReasoningTextDone {
+        item_id: String,
+        output_index: usize,
+        content_index: usize,
+        text: String,
+    },
     #[serde(rename = "response.reasoning_summary_part.done")]
     ReasoningSummaryPartDone {
         item_id: String,
@@ -699,11 +713,21 @@ pub struct ResponseReasoningItem {
     #[serde(default)]
     pub summary: Vec<ReasoningSummaryPart>,
     #[serde(default)]
-    pub content: Vec<Value>,
+    pub content: Vec<ReasoningContentPart>,
     #[serde(default)]
     pub encrypted_content: Option<String>,
     #[serde(default)]
     pub status: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ReasoningContentPart {
+    ReasoningText {
+        text: String,
+    },
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -1003,6 +1027,18 @@ pub async fn stream_response(
                                             );
                                         }
                                     }
+                                    for (content_index, part) in
+                                        reasoning.content.iter().enumerate()
+                                    {
+                                        if let ReasoningContentPart::ReasoningText { text } = part {
+                                            all_events.push(StreamEvent::ReasoningTextDelta {
+                                                item_id: item_id.clone(),
+                                                output_index,
+                                                content_index,
+                                                delta: text.to_owned(),
+                                            });
+                                        }
+                                    }
                                 }
                             }
                             // No synthesized deltas; the `OutputItemDone`
@@ -1089,6 +1125,117 @@ mod tests {
                 LanguageModelCompletionError::ApiReadResponseError { provider, error }
                     if provider.0.as_ref() == "Custom Responses" && error.kind() == kind
             ));
+        }
+    }
+
+    #[test]
+    fn reasoning_content_accepts_unknown_parts() {
+        let content = json!([
+            {"type": "reasoning_text", "text": "Thinking"},
+            {"type": "future_reasoning", "payload": {"opaque": true}}
+        ]);
+        let item: ResponseReasoningItem = serde_json::from_value(json!({
+            "content": content
+        }))
+        .expect("reasoning item");
+        assert_eq!(
+            item.content,
+            vec![
+                ReasoningContentPart::ReasoningText {
+                    text: "Thinking".into(),
+                },
+                ReasoningContentPart::Other,
+            ]
+        );
+    }
+
+    #[test]
+    fn reasoning_text_maps_to_thinking_in_streaming_and_json_responses() {
+        use crate::completion::OpenAiResponseEventMapper;
+        use language_model_core::LanguageModelCompletionEvent;
+
+        for streaming in [true, false] {
+            let reasoning = json!({
+                "type": "reasoning",
+                "id": "rs_123",
+                "summary": [],
+                "content": [{"type": "reasoning_text", "text": "Let me think."}],
+                "status": "completed"
+            });
+            let response = json!({
+                "id": "resp_123",
+                "status": "completed",
+                "output": [reasoning]
+            });
+            let body = if streaming {
+                let events = [
+                    json!({
+                        "type": "response.reasoning_text.delta",
+                        "item_id": "rs_123", "output_index": 0, "content_index": 0,
+                        "delta": ""
+                    }),
+                    json!({
+                        "type": "response.reasoning_text.delta",
+                        "item_id": "rs_123", "output_index": 0, "content_index": 0,
+                        "delta": "Let me "
+                    }),
+                    json!({
+                        "type": "response.reasoning_text.delta",
+                        "item_id": "rs_123", "output_index": 0, "content_index": 0,
+                        "delta": "think."
+                    }),
+                    json!({
+                        "type": "response.reasoning_text.done",
+                        "item_id": "rs_123", "output_index": 0, "content_index": 0,
+                        "text": "Let me think."
+                    }),
+                    json!({"type": "response.output_item.done", "output_index": 0, "item": reasoning}),
+                    json!({"type": "response.completed", "response": response}),
+                ];
+                events
+                    .iter()
+                    .map(|event| format!("data: {event}\n\n"))
+                    .collect::<String>()
+            } else {
+                response.to_string()
+            };
+            let client = FakeHttpClient::create(move |_| {
+                let body = body.clone();
+                async move {
+                    Ok(http_client::Response::builder()
+                        .status(200)
+                        .body(AsyncBody::from(body))?)
+                }
+            });
+            let mut request = response_test_request();
+            request.stream = streaming;
+            let events = block_on(async {
+                stream_response(
+                    client.as_ref(),
+                    "Custom",
+                    "https://example.com/v1",
+                    "test-key",
+                    request,
+                    &CustomHeaders::default(),
+                )
+                .await
+                .expect("response stream")
+                .collect::<Vec<_>>()
+                .await
+            });
+            let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
+            let mut thinking = Vec::new();
+            for event in events {
+                for event in mapper.map_event(event.expect("decoded event")) {
+                    if let LanguageModelCompletionEvent::Thinking { text, .. } =
+                        event.expect("mapped event")
+                    {
+                        thinking.push(text);
+                    }
+                }
+            }
+            assert_eq!(thinking.concat(), "Let me think.");
+            assert!(thinking.iter().all(|text| !text.is_empty()));
         }
     }
 

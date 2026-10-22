@@ -36794,17 +36794,17 @@ fn test_gutter_button_tooltip_updates_intent_with_secondary_modifier(cx: &mut Te
         on_render: None,
     };
 
-    let primary_intent = tooltip.active_intent(Modifiers::none());
+    let primary_intent = cx.read(|cx| tooltip.active_intent(Modifiers::none(), cx));
     assert_eq!(primary_intent, GutterButtonIntent::SetBreakpoint);
     assert!(primary_intent.action().as_any().is::<ToggleBreakpoint>());
 
-    let secondary_intent = tooltip.active_intent(Modifiers::secondary_key());
+    let secondary_intent = cx.read(|cx| tooltip.active_intent(Modifiers::secondary_key(cx), cx));
     assert_eq!(secondary_intent, GutterButtonIntent::SetBookmark);
     assert!(secondary_intent.action().as_any().is::<ToggleBookmark>());
 
     // When both features are enabled, the meta text advertises the
     // modifier-click alternative.
-    let meta = tooltip.meta_text();
+    let meta = cx.read(|cx| tooltip.meta_text(cx));
     assert!(meta.contains("-click to add a bookmark"), "got: {meta}");
     assert!(!meta.contains("-click to add a breakpoint"), "got: {meta}");
     assert!(meta.contains("right-click for more options"));
@@ -36818,7 +36818,7 @@ fn test_gutter_button_tooltip_updates_intent_with_secondary_modifier(cx: &mut Te
         focus_handle: tooltip.focus_handle,
         on_render: None,
     };
-    let meta = single_feature_tooltip.meta_text();
+    let meta = cx.read(|cx| single_feature_tooltip.meta_text(cx));
     assert_eq!(meta, "right-click for more options");
 }
 
@@ -36847,7 +36847,7 @@ fn test_gutter_button_tooltip_renders_modifier_transitions(cx: &mut TestAppConte
 
     assert_render("Set Breakpoint");
 
-    cx.simulate_modifiers_change(Modifiers::secondary_key());
+    cx.simulate_modifiers_change(cx.read(Modifiers::secondary_key));
     tooltip.update_in(cx, |_, _window, cx| cx.notify());
     cx.run_until_parked();
     assert_render("Set Bookmark");

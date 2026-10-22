@@ -67,7 +67,9 @@ impl Vim {
             Some(Operator::Literal {
                 prefix: Some(prefix),
             }) => {
-                if let Some(keystroke) = Keystroke::parse(&action.0).ok() {
+                if let Some(keystroke) =
+                    Keystroke::parse_with_os(&action.0, cx.platform_info().os).ok()
+                {
                     window.defer(cx, |window, cx| {
                         window.dispatch_keystroke(keystroke, cx);
                     });
