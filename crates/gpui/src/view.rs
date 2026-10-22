@@ -784,16 +784,23 @@ fn prepaint_view(
                 .view_store
                 .begin_reconstruction(occurrence, scope.as_ref().expect("cached view scope"));
             let prepaint_start = window.prepaint_index();
+            let mut reconstructed_origin = None;
             let mut element = if let Some(element) = element.take() {
                 element
             } else if implicit {
-                window.reconstruct_implicit_view(occurrence, cx, render)
+                let (element, layout) = window.reconstruct_implicit_view(occurrence, cx, render);
+                reconstructed_origin = Some(window.layout_bounds(layout).origin);
+                element
             } else {
                 let mut element = render(window, cx);
                 element.layout_as_root(Size::<AvailableSpace>::from(bounds.size), window, cx);
                 element
             };
-            if implicit {
+            // A standalone layout may reset its root origin or retain a cached
+            // parent-relative origin. Neither includes the restored ancestor scope.
+            if let Some(origin) = reconstructed_origin {
+                element.prepaint_at(bounds.origin - origin, window, cx);
+            } else if implicit {
                 element.prepaint(window, cx);
             } else {
                 element.prepaint_at(bounds.origin, window, cx);

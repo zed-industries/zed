@@ -964,7 +964,7 @@ impl Window {
         id: ViewOccurrenceId,
         cx: &mut App,
         render: &mut dyn FnMut(&mut Window, &mut App) -> AnyElement,
-    ) -> AnyElement {
+    ) -> (AnyElement, LayoutId) {
         let retained = self.view_store.retained(id);
         let layout = retained.layout.as_ref().expect("implicit layout");
         let input = layout.input.expect("computed layout input");
@@ -983,7 +983,7 @@ impl Window {
         let mut engine = self.layout_engine.take().expect("layout engine");
         engine.compute_retained_layout(layout, input, self, cx);
         self.layout_engine = Some(engine);
-        element.expect("fresh implicit output")
+        (element.expect("fresh implicit output"), layout)
     }
 
     pub(super) fn take_prepared_view(&mut self, id: ViewOccurrenceId) -> Option<AnyElement> {
@@ -1124,11 +1124,6 @@ impl Window {
             return Err(SpliceFallback::MissingView);
         }
         for child in self.dirty_view_children(id) {
-            // Rebuilding an implicit child needs its ancestor's layout pass to
-            // preserve parent-relative origins across an explicit cached boundary.
-            if retained.layout.is_none() && self.view_store.retained(child).layout.is_some() {
-                return Err(SpliceFallback::UncachedView);
-            }
             self.validate_view_splice(child)?;
         }
         Ok(())
@@ -2418,7 +2413,7 @@ mod tests {
     }
 
     #[crate::test]
-    fn uncached_dirty_path_falls_back_and_recovers(cx: &mut TestAppContext) {
+    fn implicit_children_preserve_offsets_and_can_become_explicit(cx: &mut TestAppContext) {
         let reused = Fixture::new(cx, false, false, false);
         let fresh = Fixture::new(cx, true, false, false);
         for fixture in [&reused, &fresh] {
@@ -2433,15 +2428,7 @@ mod tests {
             fixture.notify_leaf(0, cx);
         }
         compare_pair(&reused, &fresh, 1, cx);
-        assert_eq!(reused.outer_renders.get(), outer_renders + 1);
-        cx.update_window(reused.window, |_, window, _| {
-            assert!(
-                window.view_reuse_stats().splice_fallbacks
-                    [super::SpliceFallback::UncachedView as usize]
-                    > 0
-            );
-        })
-        .expect("uncached fallback");
+        assert_eq!(reused.outer_renders.get(), outer_renders);
         for fixture in [&reused, &fresh] {
             fixture.branch.update(cx, |branch, cx| {
                 branch.uncached_children = false;
