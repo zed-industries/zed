@@ -730,6 +730,8 @@ fn main() {
 
         editor::init(cx);
         image_viewer::init(cx);
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        video_viewer::init(cx);
         repl::notebook::init(cx);
         diagnostics::init(cx);
 
