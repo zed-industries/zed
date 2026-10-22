@@ -1,4 +1,9 @@
-use std::{cell::Cell, fmt, rc::Rc, time::Duration};
+use std::{
+    cell::{Cell, OnceCell},
+    fmt,
+    rc::Rc,
+    time::Duration,
+};
 
 use gpui::{
     Background, BenchAppContext, Bounds, Context, IntoElement, Pixels, Render, ScaledPixels, Scene,
@@ -31,6 +36,7 @@ impl Pattern {
 struct Case {
     pattern: Pattern,
     count: usize,
+    oracle: OnceCell<Vec<(Bounds<ScaledPixels>, u32)>>,
 }
 
 impl fmt::Display for Case {
@@ -58,7 +64,11 @@ fn cases() -> Vec<Case> {
                 Pattern::Overlay,
             ]
             .into_iter()
-            .map(move |pattern| Case { pattern, count })
+            .map(move |pattern| Case {
+                pattern,
+                count,
+                oracle: OnceCell::new(),
+            })
         })
         .collect()
 }
@@ -138,42 +148,55 @@ impl Render for OrderingView {
     }
 }
 
-fn validate(window: &Window, rectangles: &[Rectangle]) {
+fn validate(window: &Window, rectangles: &[Rectangle], case: &Case) {
     assert_eq!(
         window.layout_cache_enabled(),
         std::env::var("GPUI_LAYOUT_CACHE").is_ok_and(|value| value == "1")
     );
-    validate_scene(window.rendered_scene(), rectangles);
+    validate_scene(window.rendered_scene(), rectangles, case);
 }
 
-fn validate_scene(scene: &Scene, rectangles: &[Rectangle]) {
+fn validate_scene(scene: &Scene, rectangles: &[Rectangle], case: &Case) {
     assert_eq!(scene.quads.len(), rectangles.len());
     let mut actual: Vec<Option<(Bounds<ScaledPixels>, u32)>> = vec![None; rectangles.len()];
     for quad in &scene.quads {
-        let index = rectangles
-            .iter()
-            .position(|rectangle| rectangle.background == quad.background)
-            .expect("every painted quad has a unique input color");
-        assert!(
-            actual[index].is_none(),
-            "no input quad may be painted twice"
+        // The hue encodes the input index, including when scene sorting reorders quads.
+        let hue = quad.background.as_solid().expect("solid input color").h;
+        let index = (hue * rectangles.len() as f32).round() as usize;
+        assert_eq!(
+            rectangles.get(index).expect("input color index").background,
+            quad.background,
+            "every painted quad has a unique input color"
         );
-        actual[index] = Some((quad.bounds.intersect(&quad.content_mask.bounds), quad.order));
+        let entry = actual.get_mut(index).expect("input color index");
+        assert!(entry.is_none(), "no input quad may be painted twice");
+        *entry = Some((quad.bounds.intersect(&quad.content_mask.bounds), quad.order));
     }
-    let mut previous: Vec<(Bounds<ScaledPixels>, u32)> = Vec::with_capacity(rectangles.len());
-    for entry in actual {
-        let (bounds, order) = entry.expect("every input quad must be painted");
-        assert!(!bounds.is_empty());
-        let expected = previous
+    // Geometry is fixed for a case. Solve the independent quadratic oracle once,
+    // not twice for every Criterion warm-up and sample.
+    let expected = case.oracle.get_or_init(|| {
+        let mut previous: Vec<(Bounds<ScaledPixels>, u32)> = Vec::with_capacity(rectangles.len());
+        for entry in &actual {
+            let (bounds, _) = entry.expect("every input quad must be painted");
+            assert!(!bounds.is_empty());
+            let order = previous
+                .iter()
+                .filter(|(previous, _)| previous.intersects(&bounds))
+                .map(|(_, order)| *order)
+                .max()
+                .unwrap_or(0)
+                + 1;
+            previous.push((bounds, order));
+        }
+        previous
+    });
+    assert!(
+        actual
             .iter()
-            .filter(|(previous, _)| previous.intersects(&bounds))
-            .map(|(_, order)| *order)
-            .max()
-            .unwrap_or(0)
-            + 1;
-        assert_eq!(order, expected, "paint order must match the spatial oracle");
-        previous.push((bounds, expected));
-    }
+            .copied()
+            .eq(expected.iter().copied().map(Some)),
+        "painted bounds and order must match the spatial oracle"
+    );
 }
 
 fn build_scene(scene: &mut Scene, rectangles: &[Rectangle]) {
@@ -202,7 +225,7 @@ fn scene_ordering(criterion: &mut criterion::Criterion<gpui::BenchMeasurement>) 
         let rectangles = rectangles(&case, 512.);
         let mut scene = Scene::default();
         build_scene(&mut scene, &rectangles);
-        validate_scene(&scene, &rectangles);
+        validate_scene(&scene, &rectangles, &case);
         let report = bench_metrics::MetricReport::new();
         group.bench_function(case.to_string(), |bencher| {
             report.iter(bencher, || {
@@ -210,7 +233,7 @@ fn scene_ordering(criterion: &mut criterion::Criterion<gpui::BenchMeasurement>) 
                 std::hint::black_box(&scene);
             });
         });
-        validate_scene(&scene, &rectangles);
+        validate_scene(&scene, &rectangles, &case);
         report.print("  ");
     }
     group.finish();
@@ -232,7 +255,7 @@ fn paint_rectangles(case: &Case, cx: &mut BenchAppContext) {
         })
     });
     cx.run_until_idle();
-    window.update(|window, _| validate(window, &rectangles));
+    window.update(|window, _| validate(window, &rectangles, case));
     let before = renders.get();
     let mut updates = 0usize;
     cx.bench_renderer(root, |_, _, cx| {
@@ -241,7 +264,7 @@ fn paint_rectangles(case: &Case, cx: &mut BenchAppContext) {
     });
     assert!(updates > 0);
     assert_eq!(renders.get() - before, updates);
-    window.update(|window, _| validate(window, &rectangles));
+    window.update(|window, _| validate(window, &rectangles, case));
     window.update(|window, _| window.remove_window());
     cx.run_until_idle();
 }

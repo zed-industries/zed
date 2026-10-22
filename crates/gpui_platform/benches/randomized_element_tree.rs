@@ -206,41 +206,6 @@ fn measure_in_window(
         initial.element_render_count() >= config.element_count(),
         "every generated element renders in the first frame"
     );
-    window.update(|window, _| {
-        window.take_view_reuse_stats();
-        window.take_render_phase_timings();
-    });
-
-    if let Ok(frame_count) = std::env::var("GPUI_RETAINED_PHASE_FRAMES") {
-        let frame_count: usize = frame_count.parse().expect("fixed phase frame count");
-        assert!(frame_count > 0);
-        let mut entity_renders = 0;
-        cx.bench_iter(|cx| {
-            for frame in 0..frame_count {
-                window.update(|window, cx| {
-                    tree.update(cx, |tree, cx| {
-                        tree.reset_work_counters();
-                        mutate(tree, window, cx);
-                    });
-                });
-                cx.run_until_idle();
-                entity_renders += tree.read_with(cx, |tree, _| {
-                    assert!(tree.work_counters().element_render_count() > 0);
-                    tree.work_counters().entity_render_count()
-                });
-                window.update(|window, _| {
-                    let stats = window.take_view_reuse_stats();
-                    eprintln!("phase frame {group}/{} #{frame}: {stats:?}", input.family);
-                    report_render_phases(window, &format!("{group}/{} #{frame}", input.family));
-                });
-            }
-        });
-        return Measured {
-            frames: frame_count,
-            entity_renders,
-        };
-    }
-
     // Each iteration reads what the previous frame rendered before resetting for its own
     // mutation. Frame pacing may coalesce two mutations into one drawn frame, the more
     // often the faster the frames, so some observation windows legitimately see no draw;
@@ -274,11 +239,6 @@ fn measure_in_window(
         tree.reset_work_counters();
         mutate(tree, window, cx);
         frames += 1;
-    });
-    window.update(|window, _| {
-        let stats = window.take_view_reuse_stats();
-        eprintln!("view-reuse {group}/{}: {stats:?}", input.family);
-        report_render_phases(window, &format!("{group}/{}", input.family));
     });
     assert!(
         frames_that_rendered * 2 >= frames,
@@ -1026,18 +986,9 @@ fn measure_text_panel_updates(
                 root_renders.get(),
                 panel_renders.get()
             );
-            eprintln!(
-                "retained metadata (occurrences, hot, cold, cache, layout bytes): {:?}",
-                window.retained_view_storage_sizes()
-            );
         }
     });
     let initial_panel_renders = panel_renders.get();
-    let initial_root_renders = root_renders.get();
-    window.update(|window, _| {
-        window.take_view_reuse_stats();
-        window.take_render_phase_timings();
-    });
     let mut updates = 0usize;
     cx.bench_renderer(root, |root, _, cx| {
         for index in [0, panel_count / 2] {
@@ -1050,13 +1001,6 @@ fn measure_text_panel_updates(
                 });
         }
         updates += 1;
-    });
-    window.update(|window, _| {
-        let stats = window.take_view_reuse_stats();
-        eprintln!("view-reuse TextPanels/{font_family}/{panel_count}: root renders {}, panel renders {}, {stats:?}",
-            root_renders.get() - initial_root_renders,
-            panel_renders.get() - initial_panel_renders);
-        report_render_phases(window, &format!("TextPanels/{font_family}/{panel_count}"));
     });
     assert!(updates > 0);
     assert!(
@@ -1073,13 +1017,6 @@ fn measure_text_panel_updates(
     );
 }
 
-fn report_render_phases(window: &Window, label: &str) {
-    let phases = window.take_render_phase_timings();
-    if std::env::var("GPUI_RENDER_PHASE_TIMERS").as_deref() == Ok("1") {
-        eprintln!("render phases {label} (inclusive totals): {phases:?}");
-    }
-}
-
 fn assert_layout_cache_mode(window: &Window) {
     assert_eq!(
         window.layout_cache_enabled(),
@@ -1088,24 +1025,58 @@ fn assert_layout_cache_mode(window: &Window) {
     );
 }
 
-fn snapshot_glyphs(window: &Window) -> Vec<String> {
+#[derive(Debug, PartialEq)]
+enum GlyphAppearance {
+    Monochrome(gpui::Hsla, gpui::TransformationMatrix),
+    Subpixel(gpui::Hsla, gpui::TransformationMatrix),
+    Polychrome(gpui::PaddedBool32, f32, gpui::Corners<gpui::ScaledPixels>),
+}
+
+#[derive(Debug, PartialEq)]
+struct GlyphSnapshot {
+    order: gpui::DrawOrder,
+    pad: u32,
+    bounds: gpui::Bounds<gpui::ScaledPixels>,
+    content_mask: gpui::ContentMask<gpui::ScaledPixels>,
+    tile: gpui::AtlasTile,
+    appearance: GlyphAppearance,
+}
+
+fn snapshot_glyphs(window: &Window) -> Vec<GlyphSnapshot> {
     let scene = window.rendered_scene();
+    // Compare the same fields as the former Debug-string snapshots without formatting
+    // thousands of floats and allocating one string per glyph after every sample.
     scene
         .monochrome_sprites
         .iter()
-        .map(|sprite| format!("monochrome:{sprite:?}"))
-        .chain(
-            scene
-                .subpixel_sprites
-                .iter()
-                .map(|sprite| format!("subpixel:{sprite:?}")),
-        )
-        .chain(
-            scene
-                .polychrome_sprites
-                .iter()
-                .map(|sprite| format!("polychrome:{sprite:?}")),
-        )
+        .map(|sprite| GlyphSnapshot {
+            order: sprite.order,
+            pad: sprite.pad,
+            bounds: sprite.bounds,
+            content_mask: sprite.content_mask,
+            tile: sprite.tile,
+            appearance: GlyphAppearance::Monochrome(sprite.color, sprite.transformation),
+        })
+        .chain(scene.subpixel_sprites.iter().map(|sprite| GlyphSnapshot {
+            order: sprite.order,
+            pad: sprite.pad,
+            bounds: sprite.bounds,
+            content_mask: sprite.content_mask,
+            tile: sprite.tile,
+            appearance: GlyphAppearance::Subpixel(sprite.color, sprite.transformation),
+        }))
+        .chain(scene.polychrome_sprites.iter().map(|sprite| GlyphSnapshot {
+            order: sprite.order,
+            pad: sprite.pad,
+            bounds: sprite.bounds,
+            content_mask: sprite.content_mask,
+            tile: sprite.tile,
+            appearance: GlyphAppearance::Polychrome(
+                sprite.grayscale,
+                sprite.opacity,
+                sprite.corner_radii,
+            ),
+        }))
         .collect()
 }
 
@@ -1230,7 +1201,6 @@ fn first_populated_text_panels(panel_count: &usize, cx: &mut BenchAppContext) {
         let mut window = cx.add_empty_window();
         let before_population = bench_metrics::allocation_stats();
         let mut populated = window.update(|window, cx| {
-            window.take_render_phase_timings();
             FirstPopulatedFrame::attach(
                 window,
                 cx,
@@ -1256,7 +1226,6 @@ fn first_populated_text_panels(panel_count: &usize, cx: &mut BenchAppContext) {
                 std::env::var_os("GPUI_LAYOUT_CACHE"),
                 window.layout_cache_enabled(),
             );
-            report_render_phases(window, "first populated");
         });
         match before_window.zip(before_population).zip(after_population) {
             Some(((before, empty), after)) => eprintln!(
@@ -1501,7 +1470,7 @@ fn layout_churn(workload: &Churn, cx: &mut BenchAppContext) {
             true
         }
     });
-    if describe {
+    if describe && std::env::var("GPUI_BENCH_HEAP").as_deref() == Ok("1") {
         let before_window = bench_metrics::allocation_stats();
         let mut window = cx.add_empty_window();
         let root = window
