@@ -9587,6 +9587,184 @@ mod tests {
             })
             .unwrap();
     }
+
+    struct CachedOpacityChild {
+        renders: usize,
+    }
+
+    impl Render for CachedOpacityChild {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.renders += 1;
+            div().size_full().bg(crate::rgb(0xff0000))
+        }
+    }
+
+    /// Draws the window and returns the alpha of the cached child's quad and how many
+    /// times the child has rendered.
+    fn draw_cached_child(
+        window: AnyWindowHandle,
+        child: &crate::Entity<CachedOpacityChild>,
+        cx: &mut TestAppContext,
+    ) -> (f32, usize) {
+        cx.update_window(window, |_, window, cx| {
+            window.draw(cx).clear(cx);
+            let quads = &window.rendered_frame.scene.quads;
+            assert_eq!(quads.len(), 1);
+            let alpha = quads.first().expect("child quad").background.solid.a;
+            (alpha, child.read(cx).renders)
+        })
+        .expect("draw cached child")
+    }
+
+    /// Draws the window, then keeps delivering requested frames and drawing until none
+    /// are requested, and returns the cached child's final alpha.
+    fn draw_cached_child_until_settled(
+        window: AnyWindowHandle,
+        child: &crate::Entity<CachedOpacityChild>,
+        cx: &mut TestAppContext,
+    ) -> f32 {
+        let (mut alpha, _) = draw_cached_child(window, child, cx);
+        for _ in 0..3 {
+            let requested_frames = cx
+                .update_window(window, |_, window, cx| window.simulate_next_frame(cx))
+                .expect("deliver next frame");
+            if requested_frames == 0 {
+                return alpha;
+            }
+            alpha = draw_cached_child(window, child, cx).0;
+        }
+        panic!("cached child kept requesting frames");
+    }
+
+    #[gpui::test]
+    fn cached_view_inherits_opacity(cx: &mut TestAppContext) {
+        struct Root {
+            opacity: f32,
+            child: crate::Entity<CachedOpacityChild>,
+        }
+
+        impl Render for Root {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().opacity(self.opacity).child(
+                    self.child
+                        .clone()
+                        .cached(crate::StyleRefinement::default().size(px(100.))),
+                )
+            }
+        }
+
+        let child = cx.new(|_| CachedOpacityChild { renders: 0 });
+        let window = cx.add_window(|_, _| Root {
+            opacity: 1.,
+            child: child.clone(),
+        });
+        for (opacity, renders) in [(1., 1), (1., 1), (0.5, 2), (0.5, 2), (1., 3)] {
+            window
+                .update(cx, |root, _, cx| {
+                    root.opacity = opacity;
+                    cx.notify();
+                })
+                .expect("update wrapper opacity");
+            assert_eq!(
+                draw_cached_child(window.into(), &child, cx),
+                (opacity, renders)
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn cached_view_inherits_hover_opacity(cx: &mut TestAppContext) {
+        struct Root {
+            child: crate::Entity<CachedOpacityChild>,
+        }
+
+        impl Render for Root {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .size(px(200.))
+                    .opacity(0.5)
+                    .hover(|style| style.opacity(1.))
+                    .child(
+                        self.child
+                            .clone()
+                            .cached(crate::StyleRefinement::default().size(px(100.))),
+                    )
+            }
+        }
+
+        let child = cx.new(|_| CachedOpacityChild { renders: 0 });
+        let window = cx.add_window(|_, _| Root {
+            child: child.clone(),
+        });
+        let outside = point(px(500.), px(500.));
+        let inside = point(px(50.), px(50.));
+        for (mouse_position, opacity) in
+            [(outside, 0.5), (inside, 1.), (inside, 1.), (outside, 0.5)]
+        {
+            window
+                .update(cx, |_, window, cx| {
+                    window.simulate_mouse_move(mouse_position, cx);
+                    cx.notify();
+                })
+                .expect("move mouse");
+            assert_eq!(
+                draw_cached_child_until_settled(window.into(), &child, cx),
+                opacity
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn cached_view_redraws_when_hover_opacity_changes_under_a_still_mouse(cx: &mut TestAppContext) {
+        struct Root {
+            width: Pixels,
+            child: crate::Entity<CachedOpacityChild>,
+        }
+
+        impl Render for Root {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .w(self.width)
+                    .h(px(200.))
+                    .opacity(0.5)
+                    .hover(|style| style.opacity(1.))
+                    .child(
+                        self.child
+                            .clone()
+                            .cached(crate::StyleRefinement::default().size(px(100.))),
+                    )
+            }
+        }
+
+        let child = cx.new(|_| CachedOpacityChild { renders: 0 });
+        let window = cx.add_window(|_, _| Root {
+            width: px(200.),
+            child: child.clone(),
+        });
+        window
+            .update(cx, |_, window, cx| {
+                window.simulate_mouse_move(point(px(250.), px(50.)), cx);
+                cx.notify();
+            })
+            .expect("move mouse beside the wrapper");
+        assert_eq!(
+            draw_cached_child_until_settled(window.into(), &child, cx),
+            0.5
+        );
+
+        // Widening the wrapper puts it under the mouse without a mouse move, so only
+        // paint's hit test sees the hover.
+        window
+            .update(cx, |root, _, cx| {
+                root.width = px(300.);
+                cx.notify();
+            })
+            .expect("widen wrapper");
+        assert_eq!(
+            draw_cached_child_until_settled(window.into(), &child, cx),
+            1.
+        );
+    }
 }
 
 #[cfg(all(test, any(feature = "inspector", debug_assertions)))]
@@ -9693,60 +9871,6 @@ mod inspector_tests {
                 .update(cx, |_, window, cx| window.toggle_inspector(cx))
                 .expect("close inspector");
             assert_closed_inspector(windows[0].into(), cx);
-        }
-    }
-
-    #[gpui::test]
-    fn cached_view_inherits_opacity(cx: &mut TestAppContext) {
-        struct Child {
-            renders: usize,
-        }
-
-        impl Render for Child {
-            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                self.renders += 1;
-                div().size_full().bg(crate::rgb(0xff0000))
-            }
-        }
-
-        struct Root {
-            opacity: f32,
-            child: Entity<Child>,
-        }
-
-        impl Render for Root {
-            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                div().opacity(self.opacity).child(
-                    self.child
-                        .clone()
-                        .cached(StyleRefinement::default().size(px(100.))),
-                )
-            }
-        }
-
-        let window = cx.add_window(|_, cx| Root {
-            opacity: 1.,
-            child: cx.new(|_| Child { renders: 0 }),
-        });
-        for (opacity, expected_renders) in [(1., 1), (1., 1), (0.5, 2), (0.5, 2), (1., 3)] {
-            window
-                .update(cx, |root, _, cx| {
-                    root.opacity = opacity;
-                    cx.notify();
-                })
-                .expect("update wrapper opacity");
-            cx.update_window(window.into(), |root, window, cx| {
-                let root = root.downcast::<Root>().expect("test root");
-                window.draw(cx).clear(cx);
-                let quads = &window.rendered_frame.scene.quads;
-                assert_eq!(quads.len(), 1);
-                assert_eq!(
-                    quads.first().expect("child quad").background.solid.a,
-                    opacity
-                );
-                assert_eq!(root.read(cx).child.read(cx).renders, expected_renders);
-            })
-            .expect("draw cached child");
         }
     }
 
