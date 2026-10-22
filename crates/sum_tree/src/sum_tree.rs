@@ -1923,12 +1923,12 @@ mod tests {
             // end positions are (by default) 0. In that case, it will always
             // return true for seeking 0 (as it's both starting and ending at
             // the seeked position, even if no item is attached).
-            assert!(cursor.seek(&Sum(0), Bias::Left) == true && cursor.item() == None);
-            assert!(cursor.seek(&Sum(0), Bias::Right) == true && cursor.item() == None);
+            assert!(cursor.seek(&Sum(0), Bias::Left) && cursor.item() == None);
+            assert!(cursor.seek(&Sum(0), Bias::Right) && cursor.item() == None);
 
             // For other targets, it would return false as expected.
-            assert!(cursor.seek(&Sum(3), Bias::Left) == false);
-            assert!(cursor.seek(&Sum(5), Bias::Right) == false);
+            assert!(!cursor.seek(&Sum(3), Bias::Left));
+            assert!(!cursor.seek(&Sum(5), Bias::Right));
         }
 
         '_single_item_tree: {
@@ -1942,7 +1942,7 @@ mod tests {
             //
             // With left bias, it attaches to the first item, (with value 5) and
             // asks whether it ends at 0 (false).
-            assert!(cursor.seek(&Sum(0), Bias::Left) == false && cursor.item() == Some(&5));
+            assert!(!cursor.seek(&Sum(0), Bias::Left) && cursor.item() == Some(&5));
 
             // sum           0   1   2   3   4   5
             // items         |---------5---------|
@@ -1950,19 +1950,19 @@ mod tests {
             // cursor        [===================] start=0, end=5
             //
             // With right bias, it checks whether 5 starts exactly at 0 (true).
-            assert!(cursor.seek(&Sum(0), Bias::Right) == true && cursor.item() == Some(&5));
+            assert!(cursor.seek(&Sum(0), Bias::Right) && cursor.item() == Some(&5));
 
             // For a target position that is _inside_ the attached item, it
             // always returns false.
-            assert!(cursor.seek(&Sum(3), Bias::Left) == false && cursor.item() == Some(&5));
-            assert!(cursor.seek(&Sum(3), Bias::Right) == false && cursor.item() == Some(&5));
+            assert!(!cursor.seek(&Sum(3), Bias::Left) && cursor.item() == Some(&5));
+            assert!(!cursor.seek(&Sum(3), Bias::Right) && cursor.item() == Some(&5));
 
             // sum           0   1   2   3   4   5
             // items         |---------5---------|
             // target                       Left ^
             // cursor        [===================] start=0, end=5
             // It ends exactly at 5, so it returns true.
-            assert!(cursor.seek(&Sum(5), Bias::Left) == true && cursor.item() == Some(&5));
+            assert!(cursor.seek(&Sum(5), Bias::Left) && cursor.item() == Some(&5));
 
             // sum           0   1   2   3   4   5
             // items         |---------5---------|
@@ -1973,13 +1973,13 @@ mod tests {
             // and end will be at 5.
             //
             // Which then makes `seek()` return true.
-            assert!(cursor.seek(&Sum(5), Bias::Right) == true && cursor.item() == None);
+            assert!(cursor.seek(&Sum(5), Bias::Right) && cursor.item() == None);
 
             // For seeks with a dimension past the last item, it will always
             // return false, as there's no case where either start or end can
             // become that value.
-            assert!(cursor.seek(&Sum(6), Bias::Left) == false && cursor.item() == None);
-            assert!(cursor.seek(&Sum(6), Bias::Right) == false && cursor.item() == None);
+            assert!(!cursor.seek(&Sum(6), Bias::Left) && cursor.item() == None);
+            assert!(!cursor.seek(&Sum(6), Bias::Right) && cursor.item() == None);
         }
 
         '_multi_item_tree: {
@@ -1992,15 +1992,15 @@ mod tests {
             //
             // The same logic applies for seeking to position zero: attaches to
             // first item, checks start or end.
-            assert!(cursor.seek(&Sum(0), Bias::Left) == false && cursor.item() == Some(&5));
-            assert!(cursor.seek(&Sum(0), Bias::Right) == true && cursor.item() == Some(&5));
+            assert!(!cursor.seek(&Sum(0), Bias::Left) && cursor.item() == Some(&5));
+            assert!(cursor.seek(&Sum(0), Bias::Right) && cursor.item() == Some(&5));
 
             // And again, for any target position _inside_ any item, it returns false.
-            assert!(cursor.seek(&Sum(4), Bias::Left) == false && cursor.item() == Some(&5));
-            assert!(cursor.seek(&Sum(4), Bias::Right) == false && cursor.item() == Some(&5));
+            assert!(!cursor.seek(&Sum(4), Bias::Left) && cursor.item() == Some(&5));
+            assert!(!cursor.seek(&Sum(4), Bias::Right) && cursor.item() == Some(&5));
 
-            assert!(cursor.seek(&Sum(7), Bias::Left) == false && cursor.item() == Some(&2));
-            assert!(cursor.seek(&Sum(7), Bias::Right) == false && cursor.item() == Some(&2));
+            assert!(!cursor.seek(&Sum(7), Bias::Left) && cursor.item() == Some(&2));
+            assert!(!cursor.seek(&Sum(7), Bias::Right) && cursor.item() == Some(&2));
 
             // Target positions at the boundary between two items are the reason for bias.
             // Both return true as expected, but the attached item depends on the bias.
@@ -2009,30 +2009,30 @@ mod tests {
             // items         |---------5---------|-1-|---2---|
             // target                       Left ^
             // cursor        [===================] start=0, end=5
-            assert!(cursor.seek(&Sum(5), Bias::Left) == true && cursor.item() == Some(&5));
+            assert!(cursor.seek(&Sum(5), Bias::Left) && cursor.item() == Some(&5));
 
             // sum           0   1   2   3   4   5   6   7   8
             // items         |---------5---------|-1-|---2---|
             // target                            ^ Right
             // cursor                            [===] start=5, end=6
-            assert!(cursor.seek(&Sum(5), Bias::Right) == true && cursor.item() == Some(&1));
+            assert!(cursor.seek(&Sum(5), Bias::Right) && cursor.item() == Some(&1));
 
             // Likewise.
-            assert!(cursor.seek(&Sum(6), Bias::Left) == true && cursor.item() == Some(&1));
-            assert!(cursor.seek(&Sum(6), Bias::Right) == true && cursor.item() == Some(&2));
+            assert!(cursor.seek(&Sum(6), Bias::Left) && cursor.item() == Some(&1));
+            assert!(cursor.seek(&Sum(6), Bias::Right) && cursor.item() == Some(&2));
 
             // sum           0   1   2   3   4   5   6   7   8
             // items         |---------5---------|-1-|---2---|
             // target                                   Left ^
             // cursor                                [=======] start=6, end=8
-            assert!(cursor.seek(&Sum(8), Bias::Left) == true && cursor.item() == Some(&2));
+            assert!(cursor.seek(&Sum(8), Bias::Left) && cursor.item() == Some(&2));
             // And note again that a right-biased seek for the last dimension of
             // the tree still returns true, but attaches to no item.
             // sum           0   1   2   3   4   5   6   7   8
             // items         |---------5---------|-1-|---2---|
             // target                                        ^ Right
             // cursor                                        ^ start=end=8
-            assert!(cursor.seek(&Sum(8), Bias::Right) == true && cursor.item() == None);
+            assert!(cursor.seek(&Sum(8), Bias::Right) && cursor.item() == None);
         }
     }
 
@@ -2053,7 +2053,7 @@ mod tests {
         //
         // Attaching to the second 2 already makes end = target, so it does not
         // move on to the 0.
-        assert!(cursor.seek(&Sum(4), Bias::Left) == true);
+        assert!(cursor.seek(&Sum(4), Bias::Left));
         assert_eq!(cursor.start(), &Sum(2));
         assert_eq!(cursor.end(), Sum(4));
         assert_eq!(cursor.item(), Some(&2));
@@ -2068,7 +2068,7 @@ mod tests {
         // is inclusive and moves on.
         // Attaching to 0 _still_ makes end = target, so again it moves on.
         // And finally attaching to 1 makes end > target, and the search stops.
-        assert!(cursor.seek(&Sum(4), Bias::Right) == true);
+        assert!(cursor.seek(&Sum(4), Bias::Right));
         assert_eq!(cursor.start(), &Sum(4));
         assert_eq!(cursor.end(), Sum(5));
         assert_eq!(cursor.item(), Some(&1));
