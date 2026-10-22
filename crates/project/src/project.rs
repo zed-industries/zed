@@ -6875,6 +6875,10 @@ impl Project {
         &self.git_store
     }
 
+    pub fn image_store(&self) -> &Entity<ImageStore> {
+        &self.image_store
+    }
+
     pub fn agent_server_store(&self) -> &Entity<AgentServerStore> {
         &self.agent_server_store
     }

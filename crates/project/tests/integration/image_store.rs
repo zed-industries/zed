@@ -9,6 +9,7 @@ use project::image_store::*;
 use serde_json::json;
 use settings::SettingsStore;
 use std::path::Path;
+use std::time::Duration;
 use util::path;
 use util::rel_path::rel_path;
 
@@ -313,4 +314,132 @@ async fn test_use_image_location_recheck_notifies_every_view(cx: &mut TestAppCon
     assert!(renders(&second_view, cx) > second_renders_before_recheck);
     assert_eq!(location(&first_view, cx), expected);
     assert_eq!(location(&second_view, cx), expected);
+}
+
+#[gpui::test]
+async fn test_image_locations_are_released_with_their_project(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({"shot.ppm": "P3\n1 1\n255\n255 0 0\n"}),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let paths = vec![path!("/project/shot.ppm").to_string()];
+    let (view, cx) = cx.add_window_view(|_, _| ImageLocationTestView {
+        project: project.downgrade(),
+        paths: paths.clone(),
+        location: None,
+        renders: 0,
+    });
+    cx.run_until_parked();
+    assert!(view.read_with(cx, |view, _| view.location.is_some()));
+    let image_store = project.read_with(cx, |project, _| project.image_store().downgrade());
+    assert_eq!(
+        image_store
+            .read_with(cx, |image_store, _| image_store
+                .image_location_window_count(&paths))
+            .unwrap(),
+        Some(1)
+    );
+
+    cx.update(|_, _| drop(project));
+    assert!(image_store.upgrade().is_none());
+}
+
+#[gpui::test]
+async fn test_use_image_location_drops_unused_entries(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/project"), json!({})).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let first = vec![path!("/outside/first.ppm").to_string()];
+    let second = vec![path!("/outside/second.ppm").to_string()];
+    let (view, cx) = cx.add_window_view(|_, _| ImageLocationTestView {
+        project: project.downgrade(),
+        paths: first.clone(),
+        location: None,
+        renders: 0,
+    });
+    let draw = |cx: &mut VisualTestContext| {
+        cx.draw(Default::default(), size(px(10.), px(10.)), {
+            let view = view.clone();
+            move |_, _| view.into_any_element()
+        });
+    };
+    let window_count = |paths: &[String], cx: &mut VisualTestContext| {
+        project.read_with(cx, |project, cx| {
+            project
+                .image_store()
+                .read(cx)
+                .image_location_window_count(paths)
+        })
+    };
+    cx.run_until_parked();
+
+    view.update(cx, |view, _| view.paths = second.clone());
+    draw(cx);
+    cx.run_until_parked();
+    assert_eq!(window_count(&first, cx), Some(1));
+    assert_eq!(window_count(&second, cx), Some(1));
+
+    cx.executor()
+        .advance_clock(UNUSED_IMAGE_LOCATION_RETENTION + Duration::from_secs(1));
+    draw(cx);
+    cx.run_until_parked();
+    assert_eq!(window_count(&first, cx), None);
+    assert_eq!(window_count(&second, cx), Some(1));
+}
+
+#[gpui::test]
+async fn test_use_image_location_recheck_skips_closed_windows(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/project"), json!({})).await;
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+    let paths = vec![path!("/outside/shared.ppm").to_string()];
+    let new_view = || ImageLocationTestView {
+        project: project.downgrade(),
+        paths: paths.clone(),
+        location: None,
+        renders: 0,
+    };
+    let closed_window = cx.add_window(|_, _| new_view());
+    let open_window = cx.add_window(|_, _| new_view());
+    let open_view = open_window.root(cx).unwrap();
+    let open_cx = &mut VisualTestContext::from_window(*open_window, cx);
+    let window_count = |cx: &mut TestAppContext| {
+        project.read_with(cx, |project, cx| {
+            project
+                .image_store()
+                .read(cx)
+                .image_location_window_count(&paths)
+        })
+    };
+    cx.run_until_parked();
+    assert_eq!(window_count(cx), Some(2));
+
+    closed_window
+        .update(cx, |_, window, _| window.remove_window())
+        .unwrap();
+    fs.insert_tree(
+        path!("/outside"),
+        json!({"shared.ppm": "P3\n1 1\n255\n255 0 0\n"}),
+    )
+    .await;
+    cx.executor().advance_clock(IMAGE_RECHECK_DELAY);
+    open_cx.draw(Default::default(), size(px(10.), px(10.)), {
+        let view = open_view.clone();
+        move |_, _| view.into_any_element()
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        open_view.read_with(cx, |view, _| view.location.clone()),
+        Some(ImageLocation::Local(
+            Path::new(path!("/outside/shared.ppm")).into()
+        ))
+    );
+    assert_eq!(window_count(cx), Some(1));
 }

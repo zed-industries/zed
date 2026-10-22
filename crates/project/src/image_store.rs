@@ -6,21 +6,20 @@ use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet, hash_map};
 use futures::{StreamExt, channel::oneshot};
 use gpui::{
-    App, Asset, AssetLogger, AsyncApp, BackgroundExecutor, Context, Entity, EntityId, EventEmitter,
+    AnyWindowHandle, App, Asset, AssetLogger, AsyncApp, Context, Entity, EntityId, EventEmitter,
     ImageCacheError, ImageSource, Img, RenderImage, Subscription, Task, WeakEntity, Window,
     prelude::*,
 };
 pub use image::ImageFormat;
 use image::{ExtendedColorType, GenericImageView, ImageReader};
 use language::{DiskState, File};
-use parking_lot::Mutex;
 use rpc::{AnyProtoClient, ErrorExt as _, TypedEnvelope, proto};
 use std::future::Future;
 use std::mem;
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use util::{ResultExt, rel_path::RelPath};
 use worktree::{LoadedBinaryFile, PathChange, Worktree, WorktreeId};
 
@@ -154,109 +153,52 @@ pub fn project_image_source(project: WeakEntity<Project>, path: ProjectPath) -> 
 
 pub const IMAGE_RECHECK_DELAY: Duration = Duration::from_secs(2);
 const MAX_IMAGE_RECHECK_DELAY: Duration = Duration::from_secs(30);
+pub const UNUSED_IMAGE_LOCATION_RETENTION: Duration = Duration::from_secs(5 * 60);
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ImageLocation {
     Local(Arc<Path>),
     Project(ProjectPath),
 }
 
-#[derive(Clone, Eq, Hash, PartialEq)]
-struct ImagePathSource {
-    project: WeakEntity<Project>,
-    paths: Vec<String>,
+struct ImageLocationEntry {
+    state: ImageLocationState,
+    last_used: Instant,
+    windows: HashSet<AnyWindowHandle>,
 }
 
-impl ImagePathSource {
-    async fn resolve(&self, error_level: log::Level, cx: &mut AsyncApp) -> Option<ImageLocation> {
-        for path in &self.paths {
-            let resolve = self
-                .project
-                .update(cx, |project, cx| {
-                    project.resolve_image_at_abs_path(path, cx)
-                })
-                .ok()?;
-            match resolve.await {
-                Ok(Some(location)) => return Some(location),
-                Ok(None) => {}
-                Err(error) => log::log!(error_level, "Failed to resolve image {path:?}: {error:#}"),
-            }
-        }
-        None
-    }
+enum ImageLocationState {
+    Pending {
+        views: HashSet<EntityId>,
+        _lookup: Task<()>,
+    },
+    Resolved {
+        location: Option<ImageLocation>,
+        checked_at: Instant,
+        recheck_delay: Duration,
+        recheck: Option<Task<()>>,
+    },
 }
 
-#[derive(Clone)]
-struct ImagePathResolution {
-    location: Option<ImageLocation>,
-    /// Holds the elapsed recheck delay once the next check is due.
-    recheck_due: Arc<Mutex<Option<Duration>>>,
-    views: Arc<Mutex<HashSet<EntityId>>>,
-}
-
-enum ImagePathResolver {}
-
-impl Asset for ImagePathResolver {
-    type Source = ImagePathSource;
-    type Output = ImagePathResolution;
-
-    fn load(
-        source: Self::Source,
-        cx: &mut App,
-    ) -> impl Future<Output = Self::Output> + Send + 'static {
-        let executor = cx.background_executor().clone();
-        let resolve = cx.spawn(async move |cx| source.resolve(log::Level::Warn, cx).await);
-        async move {
-            let location = resolve.await;
-            let recheck_due = Arc::new(Mutex::new(None));
-            schedule_recheck(&executor, recheck_due.clone(), IMAGE_RECHECK_DELAY);
-            ImagePathResolution {
-                location,
-                recheck_due,
-                views: Arc::default(),
-            }
+async fn resolve_image_location(
+    project: &WeakEntity<Project>,
+    paths: &[String],
+    error_level: log::Level,
+    cx: &mut AsyncApp,
+) -> Option<ImageLocation> {
+    for path in paths {
+        let resolve = project
+            .update(cx, |project, cx| {
+                project.resolve_image_at_abs_path(path, cx)
+            })
+            .ok()?;
+        match resolve.await {
+            Ok(Some(location)) => return Some(location),
+            Ok(None) => {}
+            Err(error) => log::log!(error_level, "Failed to resolve image {path:?}: {error:#}"),
         }
     }
-}
-
-fn schedule_recheck(
-    executor: &BackgroundExecutor,
-    recheck_due: Arc<Mutex<Option<Duration>>>,
-    delay: Duration,
-) {
-    let timer = executor.timer(delay);
-    executor
-        .spawn(async move {
-            timer.await;
-            *recheck_due.lock() = Some(delay);
-        })
-        .detach();
-}
-
-// A changed result evicts the cached entry and redraws every view that showed it; an unchanged
-// one only re-arms the timer, so a visible image costs one check per delay and never redraws.
-fn recheck_image_location(
-    source: ImagePathSource,
-    resolution: ImagePathResolution,
-    delay: Duration,
-    cx: &mut App,
-) {
-    let executor = cx.background_executor().clone();
-    cx.spawn(async move |cx| {
-        if source.resolve(log::Level::Debug, cx).await != resolution.location {
-            let views = mem::take(&mut *resolution.views.lock());
-            cx.update(|cx| {
-                cx.remove_asset::<ImagePathResolver>(&source);
-                for view in views {
-                    cx.notify(view);
-                }
-            });
-        } else {
-            let next_delay = (delay * 2).min(MAX_IMAGE_RECHECK_DELAY);
-            schedule_recheck(&executor, resolution.recheck_due, next_delay);
-        }
-    })
-    .detach();
+    None
 }
 
 pub fn use_image_location(
@@ -265,15 +207,10 @@ pub fn use_image_location(
     window: &mut Window,
     cx: &mut App,
 ) -> Option<ImageLocation> {
-    let source = ImagePathSource { project, paths };
-    let resolution = window.use_asset::<ImagePathResolver>(&source, cx)?;
-    resolution.views.lock().insert(window.current_view());
-    let location = resolution.location.clone();
-    let elapsed_delay = resolution.recheck_due.lock().take();
-    if let Some(delay) = elapsed_delay {
-        recheck_image_location(source, resolution, delay, cx);
-    }
-    location
+    let image_store = project.upgrade()?.read(cx).image_store().clone();
+    image_store.update(cx, |image_store, cx| {
+        image_store.use_image_location(project, paths, window, cx)
+    })
 }
 
 impl ImageItem {
@@ -474,6 +411,7 @@ pub struct ImageStore {
         ProjectPath,
         postage::watch::Receiver<Option<Result<Entity<ImageItem>, Arc<anyhow::Error>>>>,
     >,
+    image_locations: HashMap<Vec<String>, ImageLocationEntry>,
 }
 
 impl ImageStore {
@@ -499,6 +437,7 @@ impl ImageStore {
             })),
             opened_images: Default::default(),
             loading_images_by_path: Default::default(),
+            image_locations: Default::default(),
             worktree_store,
         }
     }
@@ -519,6 +458,7 @@ impl ImageStore {
             })),
             opened_images: Default::default(),
             loading_images_by_path: Default::default(),
+            image_locations: Default::default(),
             worktree_store,
         }
     }
@@ -643,6 +583,135 @@ impl ImageStore {
                 local.image_changed_file(image, cx);
             })
         }
+    }
+
+    fn use_image_location(
+        &mut self,
+        project: WeakEntity<Project>,
+        paths: Vec<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<ImageLocation> {
+        let now = cx.background_executor().now();
+        if !self.image_locations.contains_key(&paths) {
+            let lookup =
+                Self::check_image_location(project.clone(), paths.clone(), log::Level::Warn, cx);
+            self.image_locations.insert(
+                paths.clone(),
+                ImageLocationEntry {
+                    state: ImageLocationState::Pending {
+                        views: HashSet::default(),
+                        _lookup: lookup,
+                    },
+                    last_used: now,
+                    windows: HashSet::default(),
+                },
+            );
+        }
+        let entry = self.image_locations.get_mut(&paths)?;
+        entry.last_used = now;
+        entry.windows.insert(window.window_handle());
+        match &mut entry.state {
+            ImageLocationState::Pending { views, .. } => {
+                views.insert(window.current_view());
+                None
+            }
+            ImageLocationState::Resolved {
+                location,
+                checked_at,
+                recheck_delay,
+                recheck,
+            } => {
+                if recheck.is_none() && now.saturating_duration_since(*checked_at) >= *recheck_delay
+                {
+                    *recheck = Some(Self::check_image_location(
+                        project,
+                        paths,
+                        log::Level::Debug,
+                        cx,
+                    ));
+                }
+                location.clone()
+            }
+        }
+    }
+
+    fn check_image_location(
+        project: WeakEntity<Project>,
+        paths: Vec<String>,
+        error_level: log::Level,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
+        cx.spawn(async move |this, cx| {
+            let location = resolve_image_location(&project, &paths, error_level, cx).await;
+            this.update(cx, |this, cx| {
+                this.finish_image_location_check(&paths, location, cx)
+            })
+            .ok();
+        })
+    }
+
+    // Only a changed result redraws: the first lookup notifies the views that asked for a found
+    // image, and a recheck refreshes every open window that showed it.
+    fn finish_image_location_check(
+        &mut self,
+        paths: &[String],
+        location: Option<ImageLocation>,
+        cx: &mut Context<Self>,
+    ) {
+        let now = cx.background_executor().now();
+        // A pending lookup still owes its views a notification, however long it takes.
+        self.image_locations.retain(|_, entry| {
+            matches!(entry.state, ImageLocationState::Pending { .. })
+                || now.saturating_duration_since(entry.last_used) <= UNUSED_IMAGE_LOCATION_RETENTION
+        });
+        let Some(entry) = self.image_locations.get_mut(paths) else {
+            return;
+        };
+        match &mut entry.state {
+            ImageLocationState::Pending { views, .. } => {
+                if location.is_some() {
+                    for view in mem::take(views) {
+                        App::notify(cx, view);
+                    }
+                }
+                entry.state = ImageLocationState::Resolved {
+                    location,
+                    checked_at: now,
+                    recheck_delay: IMAGE_RECHECK_DELAY,
+                    recheck: None,
+                };
+            }
+            ImageLocationState::Resolved {
+                location: current,
+                checked_at,
+                recheck_delay,
+                recheck,
+            } => {
+                *checked_at = now;
+                *recheck = None;
+                if *current == location {
+                    *recheck_delay = (*recheck_delay * 2).min(MAX_IMAGE_RECHECK_DELAY);
+                } else {
+                    *current = location;
+                    *recheck_delay = IMAGE_RECHECK_DELAY;
+                    // A window that is mid-draw fails `update` but is still open, so prune
+                    // by the open-window list rather than by the update result.
+                    let open_windows = cx.windows();
+                    entry.windows.retain(|window| open_windows.contains(window));
+                    for window in &entry.windows {
+                        window.update(cx, |_, window, _| window.refresh()).ok();
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn image_location_window_count(&self, paths: &[String]) -> Option<usize> {
+        self.image_locations
+            .get(paths)
+            .map(|entry| entry.windows.len())
     }
 
     pub fn handle_create_image_for_peer(
