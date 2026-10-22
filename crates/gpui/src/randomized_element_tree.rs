@@ -1670,7 +1670,6 @@ mod tests {
         views_match_forced_reconstruction(rng, cx, true, true, false);
     }
 
-    #[ignore = "tracked scroll offset changes without notify replay stale paths (seed 0, frame 1)"]
     #[gpui::test(iterations = 2)]
     fn scroll_offsets_match_forced_reconstruction(rng: StdRng, cx: &mut TestAppContext) {
         views_match_forced_reconstruction(rng, cx, true, false, true);
@@ -1679,16 +1678,17 @@ mod tests {
     #[ignore = "invisible ancestor leaves cached descendant key contexts and actions active"]
     #[gpui::test]
     fn cached_descendants_inherit_changed_visibility(cx: &mut TestAppContext) {
-        inherited_scope_regression(cx, false);
+        inherited_scope_regression(cx, false, true);
     }
 
-    #[ignore = "ScrollHandle::set_offset without notify does not invalidate a cached scroll container"]
     #[gpui::test]
     fn cached_scroll_offset_without_notify(cx: &mut TestAppContext) {
-        inherited_scope_regression(cx, true);
+        for retention in [false, true] {
+            inherited_scope_regression(cx, true, retention);
+        }
     }
 
-    fn inherited_scope_regression(cx: &mut TestAppContext, scroll: bool) {
+    fn inherited_scope_regression(cx: &mut TestAppContext, scroll: bool, retention: bool) {
         let config = RandomizedElementTreeConfig::new(0, 2)
             .with_topology(RandomizedElementTreeTopology::Deep)
             .with_entity_density(1.0)
@@ -1696,7 +1696,7 @@ mod tests {
             .with_cached_views(true);
         let windows = [false, true].map(|fresh| {
             cx.open_window(WINDOW_SIZE, move |window, cx| {
-                window.set_view_retention(true);
+                window.set_view_retention(retention);
                 window.set_force_view_reconstruction(fresh);
                 let tree = RandomizedElementTree::new_with_config(config, cx);
                 {

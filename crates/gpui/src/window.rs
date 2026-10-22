@@ -1047,11 +1047,28 @@ pub(crate) struct DeferredDraw {
     accessed_entities: FxHashSet<EntityId>,
 }
 
+#[derive(Clone, Debug, Default)]
+pub(crate) struct StateVersion(Rc<Cell<u64>>);
+
+impl StateVersion {
+    pub(crate) fn bump(&self) {
+        self.0.set(self.0.get().wrapping_add(1));
+    }
+}
+
+#[derive(Clone)]
+struct StateVersionRead {
+    owner: EntityId,
+    version: StateVersion,
+    observed: u64,
+}
+
 pub(crate) struct Frame {
     pub(crate) focus: Option<FocusId>,
     pub(crate) window_active: bool,
     pub(crate) element_states: FxHashMap<(InternedHandle, TypeId), ElementStateBox>,
     accessed_element_states: Vec<(InternedHandle, TypeId)>,
+    state_version_reads: Vec<StateVersionRead>,
     pub(crate) mouse_listeners: Vec<Option<AnyMouseListener>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
@@ -1083,6 +1100,7 @@ pub(crate) struct PrepaintStateIndex {
     pub(crate) deferred_draws_index: usize,
     pub(crate) dispatch_tree_index: usize,
     pub(crate) accessed_element_states_index: usize,
+    state_version_reads_index: usize,
     pub(crate) line_layout_index: LineLayoutIndex,
     pub(crate) views_index: usize,
 }
@@ -1113,6 +1131,9 @@ impl PrepaintStateIndex {
             accessed_element_states_index: self.accessed_element_states_index
                 - old.accessed_element_states_index
                 + new.accessed_element_states_index,
+            state_version_reads_index: self.state_version_reads_index
+                - old.state_version_reads_index
+                + new.state_version_reads_index,
             line_layout_index: self
                 .line_layout_index
                 .rebase(&old.line_layout_index, &new.line_layout_index),
@@ -1181,6 +1202,7 @@ impl Frame {
             window_active: false,
             element_states: FxHashMap::default(),
             accessed_element_states: Vec::new(),
+            state_version_reads: Vec::new(),
             mouse_listeners: Vec::new(),
             dispatch_tree,
             scene: Scene::default(),
@@ -1212,6 +1234,7 @@ impl Frame {
     pub(crate) fn clear(&mut self) {
         self.element_states.clear();
         self.accessed_element_states.clear();
+        self.state_version_reads.clear();
         self.mouse_listeners.clear();
         self.dispatch_tree.clear();
         self.scene.clear();
@@ -4602,6 +4625,15 @@ impl Window {
 
     fn invalidate_entities(&mut self) {
         let mut views = self.invalidator.take_views();
+        // Programmatic scroll changes do not schedule a frame, but the next frame
+        // must invalidate readers even when no entity was notified.
+        views.extend(
+            self.rendered_frame
+                .state_version_reads
+                .iter()
+                .filter(|read| read.observed != read.version.0.get())
+                .map(|read| read.owner),
+        );
         for entity in views.drain() {
             self.mark_view_dirty(entity);
         }
@@ -5063,6 +5095,14 @@ impl Window {
         sorted_indices
     }
 
+    pub(crate) fn record_state_version_read(&mut self, version: &StateVersion) {
+        self.next_frame.state_version_reads.push(StateVersionRead {
+            owner: self.current_view(),
+            observed: version.0.get(),
+            version: version.clone(),
+        });
+    }
+
     pub(crate) fn prepaint_index(&self) -> PrepaintStateIndex {
         PrepaintStateIndex {
             hitboxes_index: self.next_frame.hitboxes.len(),
@@ -5070,6 +5110,7 @@ impl Window {
             deferred_draws_index: self.next_frame.deferred_draws.len(),
             dispatch_tree_index: self.next_frame.dispatch_tree.len(),
             accessed_element_states_index: self.next_frame.accessed_element_states.len(),
+            state_version_reads_index: self.next_frame.state_version_reads.len(),
             line_layout_index: self.text_system.layout_index(),
             views_index: self.next_frame.prepaint_views.len(),
         }
@@ -5125,6 +5166,10 @@ impl Window {
         self.next_frame.accessed_element_states.extend_from_slice(
             &self.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
                 ..range.end.accessed_element_states_index],
+        );
+        self.next_frame.state_version_reads.extend_from_slice(
+            &self.rendered_frame.state_version_reads
+                [range.start.state_version_reads_index..range.end.state_version_reads_index],
         );
         self.text_system.reuse_layouts(
             range.start.line_layout_index.clone()..range.end.line_layout_index.clone(),
@@ -5469,6 +5514,9 @@ impl Window {
             self.next_frame
                 .accessed_element_states
                 .truncate(index.accessed_element_states_index);
+            self.next_frame
+                .state_version_reads
+                .truncate(index.state_version_reads_index);
             self.text_system.truncate_layouts(index.line_layout_index);
             self.view_store
                 .rollback_views(&self.next_frame.prepaint_views[index.views_index..]);

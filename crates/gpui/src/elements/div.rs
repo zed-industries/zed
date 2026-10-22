@@ -2506,6 +2506,9 @@ impl Interactivity {
 
                             let scroll_offset =
                                 self.clamp_scroll_position(bounds, &style, window, cx);
+                            if let Some(handle) = self.tracked_scroll_handle.as_ref() {
+                                window.record_state_version_read(&handle.0.borrow().version);
+                            }
                             let result = window.with_element_opacity(style.opacity, |window| {
                                 f(&style, scroll_offset, hitbox, window, cx)
                             });
@@ -4471,6 +4474,7 @@ impl ScrollAnchor {
 
 #[derive(Default, Debug)]
 struct ScrollHandleState {
+    version: crate::window::StateVersion,
     offset: Rc<RefCell<Point<Pixels>>>,
     ongoing_scroll: Rc<RefCell<OngoingScroll>>,
     bounds: Bounds<Pixels>,
@@ -4481,13 +4485,13 @@ struct ScrollHandleState {
     active_item: Option<ScrollActiveItem>,
 }
 
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone, Copy, PartialEq)]
 struct ScrollActiveItem {
     index: usize,
     strategy: ScrollStrategy,
 }
 
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone, Copy, PartialEq)]
 enum ScrollStrategy {
     #[default]
     FirstVisible,
@@ -4573,20 +4577,28 @@ impl ScrollHandle {
     /// Update [ScrollHandleState]'s active item for scrolling to in prepaint
     pub fn scroll_to_item(&self, ix: usize) {
         let mut state = self.0.borrow_mut();
-        state.active_item = Some(ScrollActiveItem {
+        let active_item = Some(ScrollActiveItem {
             index: ix,
             strategy: ScrollStrategy::default(),
         });
+        if state.active_item != active_item {
+            state.active_item = active_item;
+            state.version.bump();
+        }
     }
 
     /// Update [ScrollHandleState]'s active item for scrolling to in prepaint
     /// This scrolls the minimal amount to ensure that the child is the first visible element
     pub fn scroll_to_top_of_item(&self, ix: usize) {
         let mut state = self.0.borrow_mut();
-        state.active_item = Some(ScrollActiveItem {
+        let active_item = Some(ScrollActiveItem {
             index: ix,
             strategy: ScrollStrategy::Top,
         });
+        if state.active_item != active_item {
+            state.active_item = active_item;
+            state.version.bump();
+        }
     }
 
     /// Scrolls the minimal amount to either ensure that the child is
@@ -4643,7 +4655,10 @@ impl ScrollHandle {
     /// Scrolls to the bottom.
     pub fn scroll_to_bottom(&self) {
         let mut state = self.0.borrow_mut();
-        state.scroll_to_bottom = true;
+        if !state.scroll_to_bottom {
+            state.scroll_to_bottom = true;
+            state.version.bump();
+        }
     }
 
     /// Set the offset explicitly. The offset is the distance from the top left of the
@@ -4651,7 +4666,11 @@ impl ScrollHandle {
     /// As you scroll further down the offset becomes more negative.
     pub fn set_offset(&self, mut position: Point<Pixels>) {
         let state = self.0.borrow();
-        *state.offset.borrow_mut() = position;
+        let mut offset = state.offset.borrow_mut();
+        if *offset != position {
+            *offset = position;
+            state.version.bump();
+        }
     }
 
     /// Get the logical scroll top, based on a child index and a pixel offset.
