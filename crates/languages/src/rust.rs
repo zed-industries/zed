@@ -30,6 +30,7 @@ use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
 use util::command::{Stdio, new_command};
 use util::fs::{make_file_executable, remove_matching};
 use util::merge_json_value_into;
+use util::paths::PathStyle;
 use util::rel_path::RelPath;
 use util::{ResultExt, maybe};
 
@@ -731,6 +732,7 @@ impl LspAdapter for RustLspAdapter {
         &self,
         command_name: &str,
         arguments: &[serde_json::Value],
+        _path_style: PathStyle,
     ) -> Option<ClientCommand> {
         match command_name {
             "rust-analyzer.showReferences" => Some(ClientCommand::ShowLocations),

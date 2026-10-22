@@ -123,6 +123,11 @@ impl AppContext for TestAppContext {
 }
 
 impl TestAppContext {
+    /// Sets the runtime identity used by this test's application.
+    pub fn set_platform_info(&mut self, platform_info: crate::PlatformInfo) {
+        self.test_platform.platform_info.set(platform_info);
+    }
+
     /// Creates a new `TestAppContext`. Usually you can rely on `#[gpui::test]` to do this for you.
     pub fn build(dispatcher: TestDispatcher, fn_name: Option<&'static str>) -> Self {
         let arc_dispatcher = Arc::new(dispatcher.clone());
@@ -615,9 +620,10 @@ impl TestAppContext {
     /// in Zed, this will run backspace on the current editor through the command palette.
     /// This will also run the background executor until it's parked.
     pub fn simulate_keystrokes(&mut self, window: AnyWindowHandle, keystrokes: &str) {
+        let os = self.read(|cx| cx.platform_info().os);
         for keystroke in keystrokes
             .split(' ')
-            .map(Keystroke::parse)
+            .map(|source| Keystroke::parse_with_os(source, os))
             .map(Result::unwrap)
         {
             self.dispatch_keystroke(window, keystroke);
@@ -631,7 +637,12 @@ impl TestAppContext {
     /// will type abc into your current editor
     /// This will also run the background executor until it's parked.
     pub fn simulate_input(&mut self, window: AnyWindowHandle, input: &str) {
-        for keystroke in input.split("").map(Keystroke::parse).map(Result::unwrap) {
+        let os = self.read(|cx| cx.platform_info().os);
+        for keystroke in input
+            .split("")
+            .map(|source| Keystroke::parse_with_os(source, os))
+            .map(Result::unwrap)
+        {
             self.dispatch_keystroke(window, keystroke);
         }
 

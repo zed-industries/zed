@@ -5846,7 +5846,7 @@ mod tests {
 
             gpui::Keymap::new(bindings)
                 .bindings_for_input(
-                    &[gpui::Keystroke::parse(keystroke).unwrap()],
+                    &[gpui::Keystroke::parse_with_os(keystroke, cx.platform_info().os).unwrap()],
                     &[gpui::KeyContext::parse(context).unwrap()],
                 )
                 .0

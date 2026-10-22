@@ -2532,6 +2532,160 @@ async fn test_open_svg_preview_for_single_file_worktree(cx: &mut gpui::TestAppCo
 }
 
 #[gpui::test]
+async fn test_duplicate_preserves_clipboards(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "cut.txt": "",
+            "destination": {},
+            "folder": {
+                "nested.txt": ""
+            }
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        path!("/external"),
+        json!({
+            "external.txt": ""
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    select_path(&panel, "root/cut.txt", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.cut(&Cut, window, cx);
+    });
+
+    let system_clipboard = ClipboardItem {
+        entries: vec![GpuiClipboardEntry::ExternalPaths(ExternalPaths(smallvec![
+            PathBuf::from(path!("/external/external.txt"))
+        ]))],
+    };
+    cx.write_to_clipboard(system_clipboard.clone());
+
+    select_path(&panel, "root/folder", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.duplicate(&Duplicate, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        cx.read_from_clipboard(),
+        Some(system_clipboard),
+        "Duplicate should not modify the system clipboard"
+    );
+    assert!(
+        find_project_entry(&panel, "root/folder copy", cx).is_some(),
+        "Duplicate should copy the selected project entry"
+    );
+    assert!(
+        find_project_entry(&panel, "root/folder copy/nested.txt", cx).is_some(),
+        "Duplicate should recursively copy directories"
+    );
+    assert!(
+        find_project_entry(&panel, "root/external.txt", cx).is_none(),
+        "Duplicate should not paste external clipboard entries"
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(panel.confirm_edit(true, window, cx).is_none());
+    });
+    // Paste prefers external paths on the system clipboard over the panel's pending cut.
+    cx.write_to_clipboard(ClipboardItem::new_string("unrelated".into()));
+
+    select_path(&panel, "root/destination", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.paste(&Paste, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert!(
+        find_project_entry(&panel, "root/destination/cut.txt", cx).is_some(),
+        "Duplicate should preserve entries cut within the project panel"
+    );
+    assert!(
+        find_project_entry(&panel, "root/cut.txt", cx).is_none(),
+        "Duplicate should preserve the pending cut operation"
+    );
+}
+
+#[gpui::test]
+async fn test_duplicate_with_only_root_selected_does_nothing(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "folder": {
+                "cut.txt": ""
+            }
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        path!("/external"),
+        json!({
+            "external.txt": ""
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    select_path(&panel, "root/folder/cut.txt", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.cut(&Cut, window, cx);
+    });
+
+    select_path(&panel, "root", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.duplicate(&Duplicate, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert!(
+        find_project_entry(&panel, "root/folder/cut.txt", cx).is_some(),
+        "Duplicate on a worktree root should not consume a pending cut"
+    );
+
+    cx.write_to_clipboard(ClipboardItem {
+        entries: vec![GpuiClipboardEntry::ExternalPaths(ExternalPaths(smallvec![
+            PathBuf::from(path!("/external/external.txt"))
+        ]))],
+    });
+    panel.update_in(cx, |panel, window, cx| {
+        panel.duplicate(&Duplicate, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert!(
+        find_project_entry(&panel, "root/external.txt", cx).is_none(),
+        "Duplicate on a worktree root should not paste external clipboard entries"
+    );
+}
+
+#[gpui::test]
 async fn test_remove_opened_file(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
@@ -5850,7 +6004,7 @@ async fn test_range_selection_drag_moves_entire_folded_directories(cx: &mut Test
     // directory, which the range selection must still widen to the whole row.
     for (range_selection, source_click_modifiers, copy, (source_path, target_path)) in iproduct!(
         [RangeSelection::ShiftClick, RangeSelection::ShiftArrows],
-        [Modifiers::none(), Modifiers::secondary_key()],
+        [Modifiers::none(), cx.read(Modifiers::secondary_key)],
         [false, true],
         [
             ("project/root/a", "project/root/other"),

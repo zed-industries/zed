@@ -101,6 +101,7 @@ pub use toolchain::{
     ToolchainMetadata, ToolchainScope,
 };
 use tree_sitter::{self, QueryCursor, WasmStore, wasmtime};
+use util::paths::PathStyle;
 use util::rel_path::RelPath;
 
 pub use available_languages::AvailableLanguage;
@@ -688,6 +689,7 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
         &self,
         _command_name: &str,
         _arguments: &[serde_json::Value],
+        _path_style: PathStyle,
     ) -> Option<ClientCommand> {
         None
     }

@@ -20,7 +20,10 @@ use gpui::{
     TouchEvent, TouchId, TouchPhase, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
     WindowControlArea, WindowInsets, WindowParams, WindowVisibility, px, size,
 };
-use gpui_apple::metal_renderer::{Context as MetalContext, MetalRenderer};
+use gpui_apple::{
+    main_thread_marker,
+    metal_renderer::{Context as MetalContext, MetalRenderer},
+};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, ProtocolObject};
 use objc2::{
@@ -301,7 +304,7 @@ impl IosWindow {
         let screen_bounds = screen.bounds();
         let scale_factor = screen.scale();
 
-        let main_thread = MainThreadMarker::new().expect("UIKit requires the main thread");
+        let main_thread = main_thread_marker().expect("UIKit requires the main thread");
         // Create UIWindow
         let window_scene = platform.application.window_scene();
         let window_scene = window_scene.as_deref();

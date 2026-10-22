@@ -246,7 +246,10 @@ impl GoogleLanguageModelProvider {
     ) -> BoxFuture<
         'static,
         Result<
-            futures::stream::BoxStream<'static, Result<GenerateContentResponse>>,
+            futures::stream::BoxStream<
+                'static,
+                Result<GenerateContentResponse, LanguageModelCompletionError>,
+            >,
             LanguageModelCompletionError,
         >,
     > {

@@ -539,10 +539,8 @@ fn path_is_under(path: &SanitizedPath, root: &SanitizedPath, case_insensitive: b
 /// never be hit by a folded lookup (or vice versa); dispatch can therefore probe
 /// both forms of an event path without risking a cross-rule false match.
 ///
-/// NOTE: folding only normalizes case. macOS (APFS/HFS+) is also Unicode
-/// normalization-insensitive (NFC vs NFD); that normalization is intentionally
-/// centralized here so it can be added in one place later without touching the
-/// add/remove/dispatch call sites.
+/// Folded keys use path-component spelling so separators and `.` components
+/// agree with exact path equality. macOS also normalizes Unicode before folding.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum WatchKey {
     Exact(Arc<Path>),
@@ -555,7 +553,9 @@ impl WatchKey {
     }
 
     fn folded(path: &SanitizedPath) -> Self {
-        let lossy = path.as_path().to_string_lossy();
+        // Event ancestors omit trailing separators, even when registration paths include them.
+        let normalized_path = path.as_path().components().collect::<std::path::PathBuf>();
+        let lossy = normalized_path.to_string_lossy();
         // macOS (APFS/HFS+) compares names normalization-insensitively (NFC vs
         // NFD), and FSEvents can report NFD while a config/LSP supplies NFC, so
         // normalize before folding case. Windows (NTFS) and Linux are
@@ -1720,6 +1720,73 @@ mod tests {
             move |_: &notify::Event| *fired.lock() += 1
         };
         (fired, cb)
+    }
+
+    #[test]
+    fn equivalent_path_spellings_share_watch_delivery_and_lifetime() {
+        for case_insensitive in [false, true] {
+            for spelling in ["/repo/project/", "/repo//project", "/repo/./project"] {
+                let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+                let watcher = test_os_watcher(OsWatcherKind::Native, Some(backend.clone()));
+                let (first_fired, first_callback) = fired_count();
+                let first = watcher
+                    .add(Path::new(spelling).into(), case_insensitive, first_callback)
+                    .expect("add alternate spelling")
+                    .expect("registered alternate spelling");
+                watcher.dispatch(Ok(modify_event("/repo/project/file.txt")));
+                assert_eq!(
+                    *first_fired.lock(),
+                    1,
+                    "{spelling}, folded={case_insensitive}"
+                );
+
+                let (second_fired, second_callback) = fired_count();
+                let second = watcher
+                    .add(
+                        Path::new("/repo/project").into(),
+                        case_insensitive,
+                        second_callback,
+                    )
+                    .expect("add ordinary spelling")
+                    .expect("registered ordinary spelling");
+                assert_eq!(backend.lock().watch_calls.len(), 1);
+                watcher.dispatch(Ok(modify_event("/repo/project/file.txt")));
+                assert_eq!(*first_fired.lock(), 2);
+                assert_eq!(*second_fired.lock(), 1);
+
+                watcher.remove(first);
+                assert!(backend.lock().unwatch_calls.is_empty());
+                watcher.dispatch(Ok(modify_event("/repo/project/file.txt")));
+                assert_eq!(*first_fired.lock(), 2);
+                assert_eq!(*second_fired.lock(), 2);
+                watcher.remove(second);
+                assert_eq!(backend.lock().unwatch_calls.len(), 1);
+                assert!(backend.lock().watched_paths.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn folded_keys_preserve_root_and_parent_component_identity() {
+        for path in ["/", "/repo/../project", "./project", "project"] {
+            let ordinary = Path::new(path);
+            let with_separator = PathBuf::from(format!("{path}/"));
+            assert_eq!(ordinary, with_separator);
+            assert_eq!(
+                WatchKey::folded(SanitizedPath::new(ordinary)),
+                WatchKey::folded(SanitizedPath::new(&with_separator)),
+            );
+        }
+        for (left, right) in [
+            ("/", ""),
+            ("/repo/../project", "/project"),
+            ("./project", "project"),
+        ] {
+            assert_ne!(
+                WatchKey::folded(SanitizedPath::new(Path::new(left))),
+                WatchKey::folded(SanitizedPath::new(Path::new(right))),
+            );
+        }
     }
 
     #[test]
