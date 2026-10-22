@@ -13,7 +13,8 @@ raw logs, Criterion samples and summary.json persist under target/gpui-bench-com
 Nothing switches the invoking checkout or publishes a branch.
 
 The default core suite keeps five full-refresh tree shapes, leaf style, cached
-leaf style, warm installed-font text, text first frame, six bounds patterns and
+leaf style, warm installed-font text, text first frame, three scrolling workloads,
+six bounds patterns and
 two inspector workloads. --full selects every variant; --slow restores the old
 settings (including inspector's five-second measurement). --repetitions controls
 independent runs, not random seeds. Use --seed to compare another fixed tree.
@@ -63,6 +64,7 @@ CORE = {
         r"^(RandomizedTree/full refresh/tree/|"
         r"RandomizedTree/leaf style/tree/mixed/|"
         r"CachedTree/leaf style/tree/mixed/|"
+        r"Scroll/workload/|"
         r"TextPanels/installed font two updates/panels/32$|"
         r"TextPanels/first populated installed font/panels/32$)"
     ),

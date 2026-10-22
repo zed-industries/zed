@@ -1546,6 +1546,229 @@ fn layout_churn(workload: &Churn, cx: &mut BenchAppContext) {
     window.update(|window, _| window.remove_window());
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ScrollWorkload {
+    Text,
+    Virtual,
+    Nested,
+}
+
+impl fmt::Display for ScrollWorkload {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Text => "editor-like-text",
+            Self::Virtual => "uniform-list",
+            Self::Nested => "nested-retained-siblings",
+        })
+    }
+}
+
+struct ScrollPane {
+    workload: ScrollWorkload,
+    handle: gpui::ScrollHandle,
+    list_handle: gpui::UniformListScrollHandle,
+    distance: f32,
+    direction: f32,
+    renders: usize,
+}
+
+impl ScrollPane {
+    fn advance(&mut self, cx: &mut Context<Self>) {
+        // Reverse before either boundary: every measured frame changes the viewport,
+        // even in long Criterion calibration runs.
+        if self.distance >= 6000.0 {
+            self.direction = -1.0;
+        } else if self.distance <= 600.0 {
+            self.direction = 1.0;
+        }
+        self.distance += self.direction * 12.0;
+        self.handle
+            .set_offset(gpui::point(gpui::px(0.0), gpui::px(-self.distance)));
+        cx.notify();
+    }
+
+    fn row(index: usize) -> impl IntoElement {
+        gpui::div()
+            .flex()
+            .h(gpui::px(22.0))
+            .flex_shrink_0()
+            .child(
+                gpui::div()
+                    .w(gpui::px(64.0))
+                    .text_color(gpui::rgb(0x858585))
+                    .child(format!("{index:5}")),
+            )
+            .child(gpui::div().text_color(gpui::rgb(0xc586c0)).child("let "))
+            .child(
+                gpui::div()
+                    .text_color(gpui::rgb(0x9cdcfe))
+                    .child(format!("line_{index}")),
+            )
+            .child(
+                gpui::div()
+                    .text_color(gpui::rgb(0xd4d4d4))
+                    .child(" = document.visible_lines(viewport);"),
+            )
+    }
+}
+
+impl Render for ScrollPane {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.renders += 1;
+        let container = gpui::div()
+            .size_full()
+            .font_family("Noto Sans Mono")
+            .text_size(gpui::px(14.0))
+            .bg(gpui::rgb(0x202020));
+        if self.workload == ScrollWorkload::Virtual {
+            container
+                .child(
+                    gpui::uniform_list(
+                        "scroll-rows",
+                        5000,
+                        cx.processor(|_, range: std::ops::Range<usize>, _, _| {
+                            range.map(Self::row).collect()
+                        }),
+                    )
+                    .size_full()
+                    .track_scroll(&self.list_handle),
+                )
+                .into_any_element()
+        } else {
+            container
+                .id("scroll-text")
+                .overflow_y_scroll()
+                .track_scroll(&self.handle)
+                .children((0..1000).map(Self::row))
+                .into_any_element()
+        }
+    }
+}
+
+struct ScrollStaticPanel {
+    status: bool,
+}
+
+impl Render for ScrollStaticPanel {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        gpui::div()
+            .size_full()
+            .bg(gpui::rgb(0x303030))
+            .text_color(gpui::rgb(0xcccccc))
+            .children((0..if self.status { 1 } else { 40 }).map(|index| {
+                gpui::div().h(gpui::px(22.0)).child(format!(
+                    "{} {index}",
+                    if self.status { "Status" } else { "File" }
+                ))
+            }))
+    }
+}
+
+struct ScrollRoot {
+    pane: Entity<ScrollPane>,
+    sidebar: Entity<ScrollStaticPanel>,
+    status: Entity<ScrollStaticPanel>,
+    nested: bool,
+}
+
+impl Render for ScrollRoot {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        gpui::div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(
+                gpui::div()
+                    .flex()
+                    .flex_1()
+                    .min_h_0()
+                    .when(self.nested, |element| {
+                        element.child(
+                            gpui::div()
+                                .w(gpui::px(220.0))
+                                .h_full()
+                                .child(self.sidebar.clone()),
+                        )
+                    })
+                    .child(
+                        gpui::div()
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .overflow_hidden()
+                            .child(self.pane.clone()),
+                    ),
+            )
+            .when(self.nested, |element| {
+                element.child(gpui::div().h(gpui::px(28.0)).child(self.status.clone()))
+            })
+    }
+}
+
+/// Warm pixel scrolling, including the same owner notification as a wheel handler.
+/// The text case deliberately materializes lines; the list case is viewport-bounded.
+#[gpui::bench(inputs = vec![ScrollWorkload::Text, ScrollWorkload::Virtual, ScrollWorkload::Nested], input_name = "workload", group = "Scroll", fps = 360)]
+fn scroll(workload: &ScrollWorkload, cx: &mut BenchAppContext) {
+    let mut window = cx.add_empty_window();
+    let pane = window.update(|window, cx| {
+        let pane = cx.new(|_| {
+            let list_handle = gpui::UniformListScrollHandle::new();
+            let handle = if *workload == ScrollWorkload::Virtual {
+                list_handle.0.borrow().base_handle.clone()
+            } else {
+                gpui::ScrollHandle::new()
+            };
+            ScrollPane {
+                workload: *workload,
+                handle,
+                list_handle,
+                distance: 600.0,
+                direction: 1.0,
+                renders: 0,
+            }
+        });
+        window.replace_root(cx, |_, cx| ScrollRoot {
+            pane: pane.clone(),
+            sidebar: cx.new(|_| ScrollStaticPanel { status: false }),
+            status: cx.new(|_| ScrollStaticPanel { status: true }),
+            nested: *workload == ScrollWorkload::Nested,
+        });
+        pane
+    });
+    cx.run_until_idle();
+    for _ in 0..8 {
+        window.update(|_, cx| pane.update(cx, |pane, cx| pane.advance(cx)));
+        cx.run_until_idle();
+    }
+    let initial_renders = pane.read_with(cx, |pane, _| {
+        assert!(pane.handle.offset().y < gpui::px(-600.0));
+        pane.renders
+    });
+    let mut updates = 0;
+    cx.bench_renderer(pane.clone(), |pane, _, cx| {
+        pane.advance(cx);
+        updates += 1;
+    });
+    pane.read_with(cx, |pane, _| {
+        assert!(updates > 0);
+        assert!(pane.renders > initial_renders);
+        assert_eq!(pane.handle.offset().y, gpui::px(-pane.distance));
+    });
+    let incremental = window.update(|window, _| snapshot_glyphs(window));
+    assert!(
+        !incremental.is_empty(),
+        "the scrolled viewport must paint text"
+    );
+    window.update(|window, _| window.refresh());
+    cx.run_until_idle();
+    assert_eq!(
+        incremental,
+        window.update(|window, _| snapshot_glyphs(window)),
+        "scrolled glyph output must match full reconstruction"
+    );
+    window.update(|window, _| window.remove_window());
+}
+
 // Frames take 0.4 to 2.5 ms, so a 1 s measurement is already hundreds to thousands of
 // frames; Criterion's 3 s warm-up and 5 s measurement per id would make the suite take
 // most of an hour. Pass `ITERATIONS=6`, `--warm-up-time` or `--measurement-time` for a
@@ -1573,6 +1796,7 @@ gpui::bench_group!(
     installed_font_panel_updates,
     first_populated_text_panels,
     layout_churn,
+    scroll,
     family_summary
 );
 gpui::bench_group!(
