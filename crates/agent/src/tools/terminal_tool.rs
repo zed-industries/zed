@@ -1406,7 +1406,7 @@ fn resolve_cd_in_worktrees(
         let resolved_path = if subpath.is_empty() {
             abs_path.clone()
         } else {
-            path_style.join_path(&abs_path, subpath).ok()?
+            path_style.join(&abs_path, subpath)
         };
 
         if path_style.starts_with(&resolved_path, &abs_path) {

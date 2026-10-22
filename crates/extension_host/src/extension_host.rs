@@ -2293,11 +2293,8 @@ impl ExtensionStore {
         let dest_dir = RemotePathBuf::new(
             path_style
                 .join(remote_tmp_dir, &upload_name)
-                .with_context(|| {
-                    format!(
-                        "failed to construct destination path: {remote_tmp_dir:?}, {upload_name:?}"
-                    )
-                })?,
+                .to_string_lossy()
+                .into_owned(),
             path_style,
         );
         log::info!(

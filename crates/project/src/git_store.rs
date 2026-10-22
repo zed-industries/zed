@@ -89,7 +89,7 @@ use task::Shell;
 use text::{Bias, BufferId, OffsetRangeExt, Rope, ToOffset};
 use util::{
     ResultExt, debug_panic,
-    paths::{PathStyle, SanitizedPath, normalize_path},
+    paths::{PathStyle, SanitizedPath},
     post_inc,
     rel_path::RelPath,
 };
@@ -6153,6 +6153,9 @@ impl RepositorySnapshot {
         worktree_name: &str,
         worktree_directory_setting: &str,
     ) -> Result<PathBuf> {
+        if self.path_style.has_root(Path::new(worktree_name)) {
+            anyhow::bail!("worktree name must not contain a root directory component");
+        }
         let repository_anchor = self.linked_worktree_anchor_path();
         let project_name = self
             .path_style
@@ -6163,8 +6166,10 @@ impl RepositorySnapshot {
             worktree_directory_setting,
             self.path_style,
         )?;
-        let directory = self.path_style.join_path(&directory, worktree_name)?;
-        self.path_style.join_path(&directory, project_name)
+        let directory = self.path_style.join(&directory, worktree_name);
+        Ok(self
+            .path_style
+            .normalize_lexically(self.path_style.join(&directory, project_name)))
     }
 
     /// The main worktree is the original checkout that other worktrees were
@@ -6216,11 +6221,8 @@ impl RepositorySnapshot {
 
     pub fn repo_path_to_abs_path(&self, repo_path: &RepoPath) -> PathBuf {
         let repo_path = repo_path.display(self.path_style);
-        PathBuf::from(
-            self.path_style
-                .join(&self.work_directory_abs_path, repo_path.as_ref())
-                .unwrap(),
-        )
+        self.path_style
+            .join(&self.work_directory_abs_path, repo_path.as_ref())
     }
 
     #[inline]
@@ -10593,19 +10595,11 @@ pub fn worktrees_directory_for_repo(
         anyhow::bail!("git.worktree_directory must not be \"..\" (use \"../some-name\" instead)");
     }
 
-    let joined = path_style.join_path(repository_anchor_path, trimmed)?;
-    let resolved = if path_style.is_posix() {
-        joined
-    } else {
-        normalize_path(&joined)
-    };
+    let resolved = path_style.normalize_lexically(path_style.join(repository_anchor_path, trimmed));
     let resolved = if path_style.starts_with(resolved.as_path(), repository_anchor_path) {
         resolved
-    } else if let Some(repo_dir_name) = path_style
-        .file_name(repository_anchor_path)
-        .and_then(|name| name.to_str())
-    {
-        path_style.join_path(&resolved, repo_dir_name)?
+    } else if let Some(repo_dir_name) = path_style.file_name(repository_anchor_path) {
+        path_style.normalize_lexically(path_style.join(&resolved, repo_dir_name))
     } else {
         resolved
     };
@@ -12070,8 +12064,8 @@ mod tests {
         let work_dir = Path::new("/home/user/dev/lsp-tests");
         let directory =
             worktrees_directory_for_repo(work_dir, "../worktrees", PathStyle::Unix).unwrap();
-        let directory = PathStyle::Unix.join_path(&directory, "nimble-sky").unwrap();
-        let path = PathStyle::Unix.join_path(&directory, "lsp-tests").unwrap();
+        let directory = PathStyle::Unix.join(&directory, "nimble-sky");
+        let path = PathStyle::Unix.join(&directory, "lsp-tests");
 
         assert_eq!(
             path,
