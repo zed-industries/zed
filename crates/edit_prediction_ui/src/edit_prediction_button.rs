@@ -1483,7 +1483,7 @@ impl StatusItemView for EditPredictionButton {
         cx.notify();
     }
 
-    fn hide_setting(&self, _: &App) -> Option<HideStatusItem> {
+    fn hide_setting(_: &App) -> Option<HideStatusItem> {
         // This button is already gated on having a non-disabled edit
         // prediction provider, which the user manages through provider/AI
         // settings.

@@ -1594,7 +1594,7 @@ impl StatusItemView for PanelButtons {
         // Nothing to do, panel buttons don't depend on the active center item
     }
 
-    fn hide_setting(&self, _: &App) -> Option<HideStatusItem> {
+    fn hide_setting(_: &App) -> Option<HideStatusItem> {
         // Panel buttons are hidden on a per-panel basis through each panel
         // button's own context menu.
         None

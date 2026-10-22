@@ -190,7 +190,7 @@ impl StatusItemView for ModeIndicator {
     ) {
     }
 
-    fn hide_setting(&self, _: &App) -> Option<HideStatusItem> {
+    fn hide_setting(_: &App) -> Option<HideStatusItem> {
         // The Vim mode indicator is only visible while Vim mode is on.
         None
     }

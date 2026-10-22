@@ -296,7 +296,7 @@ impl StatusItemView for CursorPosition {
         cx.notify();
     }
 
-    fn hide_setting(&self, _: &App) -> Option<HideStatusItem> {
+    fn hide_setting(_: &App) -> Option<HideStatusItem> {
         Some(HideStatusItem::new(|settings| {
             settings
                 .status_bar

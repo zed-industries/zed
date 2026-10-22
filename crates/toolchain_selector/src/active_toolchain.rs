@@ -266,7 +266,7 @@ impl StatusItemView for ActiveToolchain {
         cx.notify();
     }
 
-    fn hide_setting(&self, _: &App) -> Option<HideStatusItem> {
+    fn hide_setting(_: &App) -> Option<HideStatusItem> {
         // The toolchain selector only appears when the active buffer has a
         // language with toolchain support.
         None

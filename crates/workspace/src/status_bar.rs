@@ -55,7 +55,10 @@ pub trait StatusItemView: Render {
     /// another user-exposed setting; otherwise, they should return `Some` so
     /// that the status bar can show a "Hide Button" entry in its
     /// right-click menu.
-    fn hide_setting(&self, cx: &App) -> Option<HideStatusItem>;
+    ///
+    /// This is type-level metadata, so querying it does not create a
+    /// rendering dependency on the status item's entity state.
+    fn hide_setting(cx: &App) -> Option<HideStatusItem>;
 }
 
 trait StatusItemViewHandle: Send {
@@ -495,12 +498,101 @@ impl<T: StatusItemView> StatusItemViewHandle for Entity<T> {
     }
 
     fn hide_setting(&self, cx: &App) -> Option<HideStatusItem> {
-        self.read(cx).hide_setting(cx)
+        T::hide_setting(cx)
     }
 }
 
 impl From<&dyn StatusItemViewHandle> for AnyView {
     fn from(val: &dyn StatusItemViewHandle) -> Self {
         val.to_any()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{AppContext, TestAppContext, div, px};
+    use std::{cell::Cell, rc::Rc};
+
+    struct TestStatusItem {
+        renders: Rc<Cell<usize>>,
+    }
+
+    impl Render for TestStatusItem {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            div().size(px(20.0))
+        }
+    }
+
+    impl StatusItemView for TestStatusItem {
+        fn set_active_pane_item(
+            &mut self,
+            _: Option<&dyn ItemHandle>,
+            _: &mut Window,
+            _: &mut Context<Self>,
+        ) {
+        }
+
+        fn hide_setting(_: &App) -> Option<HideStatusItem> {
+            None
+        }
+    }
+
+    struct StatusBarParent {
+        items: Vec<Entity<TestStatusItem>>,
+        renders: Rc<Cell<usize>>,
+    }
+
+    impl Render for StatusBarParent {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            h_flex().children(
+                self.items
+                    .iter()
+                    .enumerate()
+                    .map(|(index, item)| render_hideable_item("test-status-bar", index, item, cx)),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn status_item_metadata_does_not_read_entity(cx: &mut TestAppContext) {
+        let item = cx.new(|_| TestStatusItem {
+            renders: Rc::default(),
+        });
+        item.update(cx, |_, cx| {
+            assert!(StatusItemViewHandle::hide_setting(&item, cx).is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn status_item_notification_preserves_retained_parent(cx: &mut TestAppContext) {
+        let parent_renders = Rc::new(Cell::new(0));
+        let child_renders = Rc::new(Cell::new(0));
+        let sibling_renders = Rc::new(Cell::new(0));
+        let item = cx.new(|_| TestStatusItem {
+            renders: child_renders.clone(),
+        });
+        let sibling = cx.new(|_| TestStatusItem {
+            renders: sibling_renders.clone(),
+        });
+        let window = cx.add_window(|_, _| StatusBarParent {
+            items: vec![item.clone(), sibling],
+            renders: parent_renders.clone(),
+        });
+        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+            .expect("initial status bar frame");
+        let parent_before = parent_renders.get();
+        let child_before = child_renders.get();
+        let sibling_before = sibling_renders.get();
+        item.update(cx, |_, cx| cx.notify());
+        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+            .expect("status item notification");
+        assert!(child_renders.get() > child_before);
+        if std::env::var("GPUI_RETAIN_VIEWS").as_deref() == Ok("1") {
+            assert_eq!(parent_renders.get(), parent_before);
+            assert_eq!(sibling_renders.get(), sibling_before);
+        }
     }
 }

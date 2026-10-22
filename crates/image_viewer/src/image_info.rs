@@ -103,7 +103,7 @@ impl StatusItemView for ImageInfo {
         cx.notify();
     }
 
-    fn hide_setting(&self, _: &App) -> Option<HideStatusItem> {
+    fn hide_setting(_: &App) -> Option<HideStatusItem> {
         // The image info is only visible when an image viewer item is active.
         None
     }

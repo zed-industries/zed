@@ -1365,7 +1365,7 @@ impl StatusItemView for LspButton {
         }
     }
 
-    fn hide_setting(&self, _: &App) -> Option<workspace::HideStatusItem> {
+    fn hide_setting(_: &App) -> Option<workspace::HideStatusItem> {
         Some(workspace::HideStatusItem::new(|settings| {
             settings.global_lsp_settings.get_or_insert_default().button = Some(false);
         }))

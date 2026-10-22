@@ -127,7 +127,7 @@ impl workspace::StatusItemView for GitBlameStatus {
         }
     }
 
-    fn hide_setting(&self, _: &App) -> Option<workspace::HideStatusItem> {
+    fn hide_setting(_: &App) -> Option<workspace::HideStatusItem> {
         None
     }
 }

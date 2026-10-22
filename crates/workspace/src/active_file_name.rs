@@ -69,7 +69,7 @@ impl StatusItemView for ActiveFileName {
         cx.notify();
     }
 
-    fn hide_setting(&self, _: &App) -> Option<HideStatusItem> {
+    fn hide_setting(_: &App) -> Option<HideStatusItem> {
         Some(HideStatusItem::new(|settings| {
             settings.status_bar.get_or_insert_default().show_active_file = Some(false);
         }))

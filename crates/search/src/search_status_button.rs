@@ -65,7 +65,7 @@ impl StatusItemView for SearchButton {
         self.pane_item_focus_handle = active_pane_item.map(|item| item.item_focus_handle(cx));
     }
 
-    fn hide_setting(&self, _: &App) -> Option<HideStatusItem> {
+    fn hide_setting(_: &App) -> Option<HideStatusItem> {
         Some(HideStatusItem::new(|settings| {
             settings.editor.search.get_or_insert_default().button = Some(false);
         }))
