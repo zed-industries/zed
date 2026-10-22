@@ -1731,3 +1731,131 @@ async fn test_nearest_retained_workspace_skips_disconnected_workspace(cx: &mut T
         );
     });
 }
+
+fn active_root_paths(
+    window: WindowHandle<MultiWorkspace>,
+    cx: &mut TestAppContext,
+) -> Vec<PathBuf> {
+    window
+        .read_with(cx, |mw, cx| {
+            mw.workspace()
+                .read(cx)
+                .root_paths(cx)
+                .iter()
+                .map(|path| path.to_path_buf())
+                .collect()
+        })
+        .unwrap()
+}
+
+#[gpui::test]
+async fn test_open_from_empty_window_ignores_background_workspace_in_other_window(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let app_state = cx.update(AppState::test);
+    let fs = app_state.fs.as_fake();
+    fs.insert_tree(path!("/project_a"), json!({ "file.txt": "" }))
+        .await;
+    fs.insert_tree(path!("/project_b"), json!({ "file.txt": "" }))
+        .await;
+
+    let project_a = Project::test(app_state.fs.clone(), [path!("/project_a").as_ref()], cx).await;
+    let project_b = Project::test(app_state.fs.clone(), [path!("/project_b").as_ref()], cx).await;
+    let first_window = cx.add_window(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
+    first_window
+        .update(cx, |mw, window, cx| {
+            mw.test_add_workspace(project_b, window, cx);
+            mw.open_sidebar(cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    first_window
+        .read_with(cx, |mw, _cx| assert_eq!(mw.workspaces().count(), 2))
+        .unwrap();
+    assert_eq!(
+        active_root_paths(first_window, cx),
+        vec![PathBuf::from(path!("/project_b"))],
+    );
+
+    let empty_project = Project::test(app_state.fs.clone(), [], cx).await;
+    let second_window =
+        cx.add_window(|window, cx| MultiWorkspace::test_new(empty_project, window, cx));
+    cx.run_until_parked();
+
+    let open_task = second_window
+        .update(cx, |mw, window, cx| {
+            mw.workspace().clone().update(cx, |workspace, cx| {
+                workspace.open_workspace_for_paths(
+                    OpenMode::NewWindow,
+                    vec![PathBuf::from(path!("/project_a"))],
+                    window,
+                    cx,
+                )
+            })
+        })
+        .unwrap();
+    open_task.await.unwrap();
+    cx.run_until_parked();
+
+    assert_eq!(
+        active_root_paths(second_window, cx),
+        vec![PathBuf::from(path!("/project_a"))],
+        "project_a should open in the empty window it was picked from",
+    );
+    assert_eq!(
+        active_root_paths(first_window, cx),
+        vec![PathBuf::from(path!("/project_b"))],
+        "the first window should be left alone",
+    );
+    assert_eq!(
+        cx.update(|cx| cx.windows().len()),
+        2,
+        "no extra window should be opened"
+    );
+}
+
+#[gpui::test]
+async fn test_open_from_empty_window_focuses_window_with_project_active(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let app_state = cx.update(AppState::test);
+    let fs = app_state.fs.as_fake();
+    fs.insert_tree(path!("/project_a"), json!({ "file.txt": "" }))
+        .await;
+
+    let project_a = Project::test(app_state.fs.clone(), [path!("/project_a").as_ref()], cx).await;
+    let first_window = cx.add_window(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
+
+    let empty_project = Project::test(app_state.fs.clone(), [], cx).await;
+    let second_window =
+        cx.add_window(|window, cx| MultiWorkspace::test_new(empty_project, window, cx));
+    cx.run_until_parked();
+
+    let open_task = second_window
+        .update(cx, |mw, window, cx| {
+            mw.workspace().clone().update(cx, |workspace, cx| {
+                workspace.open_workspace_for_paths(
+                    OpenMode::NewWindow,
+                    vec![PathBuf::from(path!("/project_a"))],
+                    window,
+                    cx,
+                )
+            })
+        })
+        .unwrap();
+    open_task.await.unwrap();
+    cx.run_until_parked();
+
+    assert_eq!(
+        active_root_paths(first_window, cx),
+        vec![PathBuf::from(path!("/project_a"))],
+    );
+    assert!(
+        active_root_paths(second_window, cx).is_empty(),
+        "project_a is already active in the first window, so it should not be duplicated",
+    );
+    assert_eq!(cx.update(|cx| cx.windows().len()), 2);
+}
