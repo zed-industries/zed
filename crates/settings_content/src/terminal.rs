@@ -108,6 +108,120 @@ pub struct ProjectTerminalSettingsContent {
     pub path_hyperlink_timeout_ms: Option<u64>,
 }
 
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct TerminalSettingsProfiles {
+    pub defaults: TerminalSettingsContent,
+    pub profiles: Option<Vec<TerminalProfileContent>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct TerminalProfileContent {
+    pub name: String,
+    #[serde(flatten)]
+    pub settings: TerminalSettingsContent,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+enum TerminalSettingsFormat {
+    Profiles(Vec<TerminalProfileContent>),
+    Settings(TerminalSettingsContent),
+}
+
+impl<'de> Deserialize<'de> for TerminalSettingsProfiles {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        match TerminalSettingsFormat::deserialize(deserializer)? {
+            TerminalSettingsFormat::Settings(defaults) => Ok(defaults.into()),
+            TerminalSettingsFormat::Profiles(profiles) => {
+                let mut names = HashSet::default();
+                for profile in &profiles {
+                    if profile.name.trim().is_empty() {
+                        return Err(serde::de::Error::custom(
+                            "terminal profile names must not be empty",
+                        ));
+                    }
+                    if !names.insert(&profile.name) {
+                        return Err(serde::de::Error::custom(format!(
+                            "duplicate terminal profile name: {}",
+                            profile.name
+                        )));
+                    }
+                }
+                Ok(Self {
+                    defaults: TerminalSettingsContent::default(),
+                    profiles: Some(profiles),
+                })
+            }
+        }
+    }
+}
+
+impl Serialize for TerminalSettingsProfiles {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match &self.profiles {
+            Some(profiles) => profiles.serialize(serializer),
+            None => self.defaults.serialize(serializer),
+        }
+    }
+}
+
+impl JsonSchema for TerminalSettingsProfiles {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "TerminalSettingsProfiles".into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        TerminalSettingsFormat::json_schema(generator)
+    }
+}
+
+impl From<TerminalSettingsContent> for TerminalSettingsProfiles {
+    fn from(defaults: TerminalSettingsContent) -> Self {
+        Self {
+            defaults,
+            profiles: None,
+        }
+    }
+}
+
+impl crate::merge_from::MergeFrom for TerminalSettingsProfiles {
+    fn merge_from(&mut self, other: &Self) {
+        self.defaults.merge_from(&other.defaults);
+        if let Some(profiles) = &other.profiles {
+            self.profiles = Some(profiles.clone());
+        } else if let Some(profiles) = &mut self.profiles {
+            for profile in profiles {
+                profile.settings.merge_from(&other.defaults);
+            }
+        }
+    }
+}
+
+// The Settings UI edits the default profile, while the settings resolver keeps
+// the shared defaults separate so one profile cannot leak into another.
+impl std::ops::Deref for TerminalSettingsProfiles {
+    type Target = TerminalSettingsContent;
+
+    fn deref(&self) -> &Self::Target {
+        self.profiles
+            .as_ref()
+            .and_then(|profiles| profiles.first())
+            .map_or(&self.defaults, |profile| &profile.settings)
+    }
+}
+
+impl std::ops::DerefMut for TerminalSettingsProfiles {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        if self.profiles.as_ref().is_some_and(Vec::is_empty) {
+            self.profiles = None;
+        }
+        self.profiles
+            .as_mut()
+            .and_then(|profiles| profiles.first_mut())
+            .map_or(&mut self.defaults, |profile| &mut profile.settings)
+    }
+}
+
 #[with_fallible_options]
 #[derive(Clone, Debug, PartialEq, Default, Serialize, JsonSchema, MergeFrom)]
 pub struct TerminalSettingsContent {
@@ -629,6 +743,101 @@ mod test {
     use serde_json::json;
 
     use crate::{PathHyperlinkRegexes, ProjectSettingsContent, Shell, merge_from::MergeFrom};
+
+    #[test]
+    fn test_terminal_profiles_round_trip() -> anyhow::Result<()> {
+        let input = json!([
+            {"name": "PowerShell", "shell": {"with_arguments": {
+                "program": "pwsh.exe", "args": ["-NoLogo"]
+            }}, "font_size": 16},
+            {"name": "Ubuntu", "shell": {"with_arguments": {
+                "program": "wsl.exe", "args": ["-d", "Ubuntu"]
+            }}}
+        ]);
+        let mut settings: super::TerminalSettingsProfiles = serde_json::from_value(input)?;
+        assert_eq!(settings.profiles.as_ref().map(Vec::len), Some(2));
+        assert!(
+            matches!(&settings.project.shell, Some(Shell::WithArguments { program, args, .. })
+            if program == "pwsh.exe" && args == &["-NoLogo"])
+        );
+        settings.copy_on_select = Some(true);
+        let serialized = serde_json::to_value(&settings)?;
+        assert!(serialized.is_array());
+        assert_eq!(serialized[0]["name"], "PowerShell");
+        assert_eq!(serialized[0]["copy_on_select"], true);
+        assert!(serialized[1]["copy_on_select"].is_null());
+        assert_eq!(
+            serde_json::from_value::<super::TerminalSettingsProfiles>(serialized)?,
+            settings
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_terminal_profiles_accept_legacy_and_empty_settings() -> anyhow::Result<()> {
+        let mut legacy: super::TerminalSettingsProfiles = serde_json::from_value(json!({
+            "shell": {"program": "cmd.exe"}, "font_size": 14
+        }))?;
+        assert!(legacy.profiles.is_none());
+        legacy.copy_on_select = Some(true);
+        assert!(serde_json::to_value(&legacy)?.is_object());
+        let mut empty: super::TerminalSettingsProfiles = serde_json::from_value(json!([]))?;
+        empty.copy_on_select = Some(true);
+        assert_eq!(serde_json::to_value(&empty)?["copy_on_select"], true);
+        Ok(())
+    }
+
+    #[test]
+    fn test_terminal_profiles_validate_names() {
+        for input in [
+            json!([{"shell": "system"}]),
+            json!([{"name": ""}]),
+            json!([{"name": "  "}]),
+            json!([{"name": "Shell"}, {"name": "Shell"}]),
+        ] {
+            assert!(serde_json::from_value::<super::TerminalSettingsProfiles>(input).is_err());
+        }
+    }
+
+    #[test]
+    fn test_terminal_profiles_merge_without_sharing_profile_overrides() -> anyhow::Result<()> {
+        let mut settings: super::TerminalSettingsProfiles = serde_json::from_value(json!({
+            "font_size": 14, "env": {"DEFAULT": "1"}
+        }))?;
+        settings.merge_from(&serde_json::from_value(json!([
+            {"name": "First", "font_size": 20, "env": {"FIRST": "1"}},
+            {"name": "Second"}
+        ]))?);
+        assert_eq!(
+            serde_json::to_value(&settings.defaults)?["font_size"].as_f64(),
+            Some(14.)
+        );
+        let profiles = settings
+            .profiles
+            .as_ref()
+            .expect("profiles must be preserved");
+        assert!(
+            profiles
+                .get(1)
+                .expect("second profile")
+                .settings
+                .font_size
+                .is_none()
+        );
+        settings.merge_from(&serde_json::from_value(json!({"font_size": 18}))?);
+        assert_eq!(
+            serde_json::to_value(&settings)?[0]["font_size"].as_f64(),
+            Some(18.)
+        );
+        assert_eq!(
+            serde_json::to_value(&settings)?[1]["font_size"].as_f64(),
+            Some(18.)
+        );
+        settings.merge_from(&serde_json::from_value(json!([{"name": "Replacement"}]))?);
+        assert_eq!(settings.profiles.as_ref().map(Vec::len), Some(1));
+        assert_eq!(serde_json::to_value(&settings)?[0]["name"], "Replacement");
+        Ok(())
+    }
 
     #[test]
     fn test_path_hyperlink_regexes_preserve_entry_forms() -> anyhow::Result<()> {

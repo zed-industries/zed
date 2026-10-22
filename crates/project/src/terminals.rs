@@ -287,7 +287,7 @@ impl Project {
         cwd: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
-        self.create_terminal_shell_internal(cwd, false, cx)
+        self.create_terminal_shell_with_profile(cwd, false, None, cx)
     }
 
     /// Creates a local terminal even if the project is remote.
@@ -297,6 +297,14 @@ impl Project {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
+        self.create_local_terminal_with_profile(None, cx)
+    }
+
+    pub fn create_local_terminal_with_profile(
+        &mut self,
+        profile: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Terminal>>> {
         let working_directory = if self.remote_client.is_some() {
             // Remote project: don't use remote paths, let shell use Zed's cwd
             None
@@ -304,16 +312,14 @@ impl Project {
             // Local project: use project directory like normal terminals
             self.active_project_directory(cx).map(|p| p.to_path_buf())
         };
-        self.create_terminal_shell_internal(working_directory, true, cx)
+        self.create_terminal_shell_with_profile(working_directory, true, profile, cx)
     }
 
-    /// Internal method for creating terminal shells.
-    /// If force_local is true, creates a local terminal even if the project has a remote client.
-    /// This allows "breaking out" to a local shell in remote projects.
-    fn create_terminal_shell_internal(
+    pub fn create_terminal_shell_with_profile(
         &mut self,
         cwd: Option<PathBuf>,
         force_local: bool,
+        profile: Option<String>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
         let path = cwd.map(|p| Arc::from(&*p));
@@ -328,7 +334,15 @@ impl Project {
                 path: RelPath::empty(),
             });
         }
-        let settings = TerminalSettings::get(settings_location, cx).clone();
+        let terminal_settings = TerminalSettings::get(settings_location, cx);
+        let Some(settings) = terminal_settings.profile(profile.as_deref()).cloned() else {
+            return Task::ready(Err(anyhow::anyhow!(
+                "Terminal profile not found: {}",
+                profile.as_deref().unwrap_or_default()
+            )));
+        };
+        let profile_name = terminal_settings.profile_name(profile.as_deref());
+        let uses_profile = profile_name.is_some();
         let detect_venv = settings.detect_venv.as_option().is_some();
         let local_path = if is_via_remote { None } else { path.clone() };
 
@@ -354,16 +368,22 @@ impl Project {
         } else {
             self.remote_client.clone()
         };
-        let remote_shell_request = remote_client.as_ref().map(|remote_client| {
+        // Named profiles supply their own shell instead of asking the remote
+        // server for its legacy, single-terminal configuration.
+        let remote_shell_request =
             remote_client
-                .read(cx)
-                .proto_client()
-                .request(proto::GetTerminalShell {
-                    project_id: proto::REMOTE_SERVER_PROJECT_ID,
-                    worktree_id: settings_location
-                        .map(|settings_location| settings_location.worktree_id.to_proto()),
-                })
-        });
+                .as_ref()
+                .filter(|_| !uses_profile)
+                .map(|remote_client| {
+                    remote_client
+                        .read(cx)
+                        .proto_client()
+                        .request(proto::GetTerminalShell {
+                            project_id: proto::REMOTE_SERVER_PROJECT_ID,
+                            worktree_id: settings_location
+                                .map(|settings_location| settings_location.worktree_id.to_proto()),
+                        })
+                });
         let shell = match &remote_client {
             Some(remote_client) => remote_client
                 .read(cx)
@@ -384,7 +404,9 @@ impl Project {
 
         let lang_registry = self.languages.clone();
         cx.spawn(async move |project, cx| {
-            let remote_shell = if let Some(remote_shell_request) = remote_shell_request {
+            let remote_shell = if uses_profile && remote_client.is_some() {
+                Some(settings.shell.clone())
+            } else if let Some(remote_shell_request) = remote_shell_request {
                 let response = remote_shell_request
                     .await
                     .context("failed to get terminal shell settings from remote server")?;
@@ -400,7 +422,10 @@ impl Project {
             } else {
                 None
             };
-            let shell_program = remote_shell.as_ref().map(Shell::program).unwrap_or(shell);
+            let shell_program = match remote_shell.as_ref() {
+                Some(Shell::System) | None => shell,
+                Some(shell) => shell.program(),
+            };
             let shell_kind = ShellKind::new(&shell_program, path_style.is_windows());
             let mut env = env_task.await.unwrap_or_default();
             env.extend(settings.env);
@@ -461,7 +486,11 @@ impl Project {
                 })??
                 .await?;
             project.update(cx, move |this, cx| {
-                let terminal_handle = cx.new(|cx| builder.subscribe(cx));
+                let terminal_handle = cx.new(|cx| {
+                    let mut terminal = builder.subscribe(cx);
+                    terminal.profile_name = profile_name;
+                    terminal
+                });
 
                 this.terminals
                     .local_handles
@@ -503,11 +532,16 @@ impl Project {
             cwd
         };
 
+        let profile_name = terminal.read(cx).profile_name.clone();
         let builder = terminal.read(cx).clone_builder(cx, local_path);
-        cx.spawn(async |project, cx| {
+        cx.spawn(async move |project, cx| {
             let terminal = builder.await?;
             project.update(cx, |project, cx| {
-                let terminal_handle = cx.new(|cx| terminal.subscribe(cx));
+                let terminal_handle = cx.new(|cx| {
+                    let mut terminal = terminal.subscribe(cx);
+                    terminal.profile_name = profile_name;
+                    terminal
+                });
 
                 project
                     .terminals

@@ -16,7 +16,6 @@ use terminal::{
     Cell, Color, Content, CursorShape, IndexedCell, Modes, MouseInputMode, NamedColor, Point,
     Range, Terminal, TerminalBounds,
     is_app_chosen_exact_color as terminal_is_app_chosen_exact_color, is_default_background_color,
-    terminal_settings::TerminalSettings,
 };
 use theme::{ActiveTheme, Theme};
 use theme_settings::ThemeSettings;
@@ -1125,7 +1124,7 @@ impl Element for TerminalElement {
             } => {
                 let rem_size = window.rem_size();
                 let line_height = f32::from(window.text_style().font_size.to_pixels(rem_size))
-                    * TerminalSettings::get_global(cx).line_height.value();
+                    * self.terminal.read(cx).settings(cx).line_height.value();
                 // Round up to a whole device pixel to prevent pixel snapping from rounding down,
                 // which would result in the terminal being one row short after flooring.
                 let scale_factor = window.scale_factor().max(1.);
@@ -1182,7 +1181,7 @@ impl Element for TerminalElement {
 
                 let buffer_font_size = settings.buffer_font_size(cx);
 
-                let terminal_settings = TerminalSettings::get_global(cx);
+                let terminal_settings = self.terminal.read(cx).settings(cx);
                 let minimum_contrast = terminal_settings.minimum_contrast;
 
                 let font_family = terminal_settings.font_family.as_ref().map_or_else(

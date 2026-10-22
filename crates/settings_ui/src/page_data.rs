@@ -7249,9 +7249,21 @@ fn debugger_page() -> SettingsPage {
 }
 
 fn terminal_page() -> SettingsPage {
-    fn environment_section() -> [SettingsPageItem; 5] {
+    fn environment_section() -> [SettingsPageItem; 6] {
         [
                 SettingsPageItem::SectionHeader("Environment"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    files: USER,
+                    title: "Profiles",
+                    description: "Named terminal profiles shown in the terminal dropdown. The first profile is the default. Configure profiles in settings.json; other terminal controls edit the first profile.",
+                    field: Box::new(SettingField {
+                        organization_override: None,
+                        json_path: Some("terminal"),
+                        pick: |settings_content| settings_content.terminal.as_ref(),
+                        write: |_settings_content, _value, _| {},
+                    }.unimplemented()),
+                    metadata: None,
+                }),
                 SettingsPageItem::DynamicItem(DynamicItem {
                     discriminant: SettingItem {
                         files: USER | PROJECT,

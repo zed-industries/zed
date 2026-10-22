@@ -642,6 +642,9 @@ pub struct NewTerminal {
     /// If true, creates a local terminal even in remote projects.
     #[serde(default)]
     pub local: bool,
+    /// The name of the terminal profile to open. Defaults to the first profile.
+    #[serde(default)]
+    pub profile: Option<String>,
 }
 
 /// Increases size of a currently focused dock by a given amount of pixels.
