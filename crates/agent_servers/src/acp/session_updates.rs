@@ -172,6 +172,9 @@ pub enum InboundSessionUpdate {
     Notice(acp_v2::Notice),
     Compaction(acp_v2::CompactionUpdate),
     CompactionSummary(acp_v2::CompactionSummaryChunk),
+    /// Creates or patches a subagent session, so the connection applies it rather than
+    /// the parent thread.
+    Subagent(acp_v2::SubagentUpdate),
 }
 
 impl From<DecodedTerminalNotification> for InboundSessionNotification {
@@ -245,6 +248,7 @@ impl TryFrom<acp_v2::UpdateSessionNotification> for InboundSessionNotification {
             acp_v2::SessionUpdate::CompactionSummaryChunk(chunk) => {
                 InboundSessionUpdate::CompactionSummary(chunk)
             }
+            acp_v2::SessionUpdate::SubagentUpdate(update) => InboundSessionUpdate::Subagent(update),
             update => {
                 notification.update = update;
                 return Err(notification);
@@ -331,6 +335,9 @@ impl InboundSessionNotification {
             InboundSessionUpdate::CompactionSummary(chunk) => {
                 thread.append_context_compaction_summary(chunk, cx);
                 Ok(())
+            }
+            InboundSessionUpdate::Subagent(_) => {
+                anyhow::bail!("Subagent updates must be applied by the ACP connection")
             }
         }
     }
