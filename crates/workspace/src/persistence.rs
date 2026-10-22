@@ -1500,7 +1500,7 @@ impl WorkspaceDb {
         log::debug!("Saving workspace at location: {:?}", workspace.location);
         self.write(move |conn| {
             conn.with_savepoint("update_worktrees", || {
-                let remote_connection_id = match workspace.location.clone() {
+                let remote_connection_id = match &workspace.location {
                     SerializedWorkspaceLocation::Local => None,
                     SerializedWorkspaceLocation::Remote(connection_options) => {
                         Some(Self::get_or_create_remote_connection_internal(
@@ -1693,15 +1693,15 @@ impl WorkspaceDb {
         &self,
         options: RemoteConnectionOptions,
     ) -> Result<RemoteConnectionId> {
-        self.write(move |conn| Self::get_or_create_remote_connection_internal(conn, options))
+        self.write(move |conn| Self::get_or_create_remote_connection_internal(conn, &options))
             .await
     }
 
     fn get_or_create_remote_connection_internal(
         this: &Connection,
-        options: RemoteConnectionOptions,
+        options: &RemoteConnectionOptions,
     ) -> Result<RemoteConnectionId> {
-        let identity = RemoteConnectionIdentity::from(&options);
+        let identity = RemoteConnectionIdentity::from(options);
         let kind;
         let user: Option<Cow<'_, str>>;
         let mut host = None;
@@ -1747,7 +1747,7 @@ impl WorkspaceDb {
             }
         }
 
-        if let RemoteConnectionOptions::Docker(options) = &options {
+        if let RemoteConnectionOptions::Docker(options) = options {
             name = Some(options.name.as_str());
             use_podman = Some(options.use_podman);
             remote_env = serde_json::to_string(&options.remote_env).ok();

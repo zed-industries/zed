@@ -2428,17 +2428,6 @@ impl Project {
             .map(|remote| remote.read(cx).connection_options())
     }
 
-    pub fn path_host<'a>(&self, cx: &'a App) -> Option<ProjectHost<'a>> {
-        if let Some(connection) = self.remote_connection_options(cx) {
-            Some(ProjectHost::Remote(connection))
-        } else if self.is_local() {
-            Some(ProjectHost::Local)
-        } else {
-            // Collaboration guests cannot resolve paths directly on their host.
-            None
-        }
-    }
-
     pub fn matches_host(&self, requested: &ProjectHost<'_>, cx: &App) -> bool {
         match requested {
             ProjectHost::Local => self.is_local(),

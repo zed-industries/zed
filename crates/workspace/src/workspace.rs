@@ -10926,20 +10926,18 @@ pub struct WorkspaceOpenTarget {
     pub visible: OpenVisible,
 }
 
-fn matches_requested_host(lhost: &ProjectHost<'_>, rhost: &ProjectHost<'_>) -> bool {
-    match (lhost, rhost) {
-        (ProjectHost::Local, ProjectHost::Local) => true,
-        (
-            ProjectHost::Remote(RemoteConnectionOptions::Wsl(lopts)),
-            ProjectHost::Remote(RemoteConnectionOptions::Wsl(ropts)),
-        ) => {
+fn matches_requested_host(project: &Project, requested: &ProjectHost<'_>, cx: &App) -> bool {
+    match requested {
+        ProjectHost::Remote(RemoteConnectionOptions::Wsl(requested)) => {
             // WSL entry points do not consistently specify the user.
-            lopts.distro_name == ropts.distro_name
+            match project.remote_connection_options(cx) {
+                Some(RemoteConnectionOptions::Wsl(options)) => {
+                    options.distro_name == requested.distro_name
+                }
+                _ => false,
+            }
         }
-        (ProjectHost::Remote(lopts), ProjectHost::Remote(ropts)) => {
-            lopts.matches_project_connection(ropts)
-        }
-        _ => false,
+        _ => project.matches_host(requested, cx),
     }
 }
 
@@ -10953,12 +10951,7 @@ pub fn workspace_windows_for_host<'a>(
         .filter(move |multi_workspace| {
             multi_workspace.read(cx).is_ok_and(|multi_workspace| {
                 multi_workspace.workspaces().any(|workspace| {
-                    workspace
-                        .read(cx)
-                        .project
-                        .read(cx)
-                        .path_host(cx)
-                        .is_some_and(|project_host| matches_requested_host(&project_host, host))
+                    matches_requested_host(workspace.read(cx).project.read(cx), host, cx)
                 })
             })
         })
@@ -10969,12 +10962,7 @@ fn preferred_target_for_files(host: &ProjectHost<'_>, cx: &App) -> Option<Worksp
         let multi_workspace = window.read(cx).ok()?;
         let active_workspace = multi_workspace.workspace();
         let matches_host = |workspace: &Entity<Workspace>| {
-            workspace
-                .read(cx)
-                .project
-                .read(cx)
-                .path_host(cx)
-                .is_some_and(|project_host| matches_requested_host(&project_host, host))
+            matches_requested_host(workspace.read(cx).project.read(cx), host, cx)
         };
 
         let workspace = if matches_host(active_workspace) {
@@ -11030,10 +11018,7 @@ pub fn find_existing_workspace(
                         let workspace_ref = workspace.read(cx);
                         let project = workspace_ref.project.read(cx);
 
-                        if project
-                            .path_host(cx)
-                            .is_none_or(|project_host| !matches_requested_host(&project_host, host))
-                        {
+                        if !matches_requested_host(project, host, cx) {
                             continue;
                         }
 
@@ -11293,7 +11278,7 @@ pub fn open_workspace_by_id(
 pub fn open_paths(
     abs_paths: &[PathBuf],
     app_state: Arc<AppState>,
-    mut open_options: OpenOptions,
+    open_options: OpenOptions,
     cx: &mut App,
 ) -> Task<anyhow::Result<OpenResult>> {
     let abs_paths = abs_paths.to_vec();
@@ -11303,12 +11288,14 @@ pub fn open_paths(
         .find_map(|p| util::paths::WslPath::from_path(p));
 
     cx.spawn(async move |cx| {
-        let mut existing =
+        let mut reuse_target =
             find_existing_workspace(&abs_paths, &open_options, &ProjectHost::Local, cx);
+
+        let mut creation_window = open_options.requesting_window;
 
         // Fallback: if no workspace contains the paths and all paths are files,
         // prefer an existing local workspace window (active window first).
-        if open_options.should_reuse_existing_window() && existing.is_none() {
+        if open_options.should_reuse_existing_window() && reuse_target.is_none() {
             let all_paths = abs_paths.iter().map(|path| app_state.fs.metadata(path));
             let all_metadatas = futures::future::join_all(all_paths)
                 .await
@@ -11316,9 +11303,9 @@ pub fn open_paths(
                 .filter_map(|result| result.ok().flatten());
 
             if all_metadatas.into_iter().all(|file| !file.is_dir) {
-                existing = cx
+                reuse_target = cx
                     .update(|cx| preferred_target_for_files(&ProjectHost::Local, cx))
-                    .or(existing);
+                    .or(reuse_target);
             }
         }
 
@@ -11330,13 +11317,13 @@ pub fn open_paths(
         // open_workspace_for_paths reusing an empty window) already chose the
         // target window, so we must not open the sidebar as a side-effect.
         if open_options.should_reuse_existing_window()
-            && existing.is_none()
-            && open_options.requesting_window.is_none()
+            && reuse_target.is_none()
+            && creation_window.is_none()
         {
             let use_existing_window = open_options.add_dirs_to_sidebar;
 
             if use_existing_window {
-                let target_window = cx.update(|cx| {
+                creation_window = cx.update(|cx| {
                     let active_window = cx
                         .active_window()
                         .and_then(|window| window.downcast::<MultiWorkspace>());
@@ -11350,8 +11337,7 @@ pub fn open_paths(
                         })
                 });
 
-                if let Some(window) = target_window {
-                    open_options.requesting_window = Some(window);
+                if let Some(window) = creation_window {
                     window
                         .update(cx, |multi_workspace, _, cx| {
                             if AgentSettings::get_global(cx).threads_sidebar.auto_open {
@@ -11371,11 +11357,11 @@ pub fn open_paths(
         let open_in_dev_container = open_options.open_in_dev_container;
 
         let result = if let Some(WorkspaceOpenTarget {
-            window: existing,
+            window: target_window,
             workspace: target_workspace,
             visible: open_visible,
-        }) = existing {
-            let open_task = existing
+        }) = reuse_target {
+            let open_task = target_window
                 .update(cx, |multi_workspace, window, cx| {
                     window.activate_window();
                     multi_workspace.activate(target_workspace.clone(), None, window, cx);
@@ -11397,7 +11383,7 @@ pub fn open_paths(
                 })?
                 .await;
 
-            _ = existing.update(cx, |multi_workspace, _, cx| {
+            _ = target_window.update(cx, |multi_workspace, _, cx| {
                 let workspace = multi_workspace.workspace().clone();
                 workspace.update(cx, |workspace, cx| {
                     for item in open_task.iter().flatten() {
@@ -11408,7 +11394,7 @@ pub fn open_paths(
                 });
             });
 
-            Ok(OpenResult { window: existing, workspace: target_workspace, opened_items: open_task })
+            Ok(OpenResult { window: target_window, workspace: target_workspace, opened_items: open_task })
         } else {
             let init = if open_in_dev_container {
                 Some(Box::new(|workspace: &mut Workspace, _window: &mut Window, _cx: &mut Context<Workspace>| {
@@ -11422,7 +11408,7 @@ pub fn open_paths(
                     Workspace::new_local(
                         abs_paths,
                         app_state.clone(),
-                        open_options.requesting_window,
+                        creation_window,
                         open_options.env,
                         init,
                         open_options.open_mode,
