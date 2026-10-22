@@ -138,6 +138,15 @@ it faster or more correct.
 - **Window-root retention and the root layout skip:**
   - `2b3140be5e`, the root part;
   - `7476fe1d83`, `81a54a4c97`, `272c4cda62`, `075c6c4bc0`, `e1bd3a4239`.
+  - **TODO: measure what skipping the root layout pass saves.** The skip is
+    the only reason for `RetainedLayoutTree` in `taffy.rs`. That wrapper
+    records each boundary's exact `LayoutInput`/`LayoutOutput`, because
+    `TaffyTree`'s high-level API hides them. gpui-fast always runs Taffy and
+    compares outputs instead (change and re-measure counters, plus the final
+    layouts of the view's own nodes). Compare v6 against a variant that always
+    runs Taffy with the persistent cache and checks outputs, retention on,
+    across the tree, text and real-Zed workloads. If the gap is small, drop
+    the skip and the wrapper.
 - **Overhead reductions:** `91a0a77360`, `d9c63d132a`, `5b0dba3ca6`.
 - **Painter-order index for retained frames.** Use stage 0's positional
   replay first. Then decide between the grid (`2a05aa1f28`, `cba575e1cf`) and
