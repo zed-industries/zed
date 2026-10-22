@@ -1733,23 +1733,6 @@ impl From<Size<Pixels>> for Size<AvailableSpace> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn layout_input_storage_keeps_epoch_records_small() {
-        assert_eq!(
-            std::mem::size_of::<NodeEpochs>(),
-            4 * std::mem::size_of::<u64>() + 2 * std::mem::size_of::<usize>(),
-        );
-        eprintln!(
-            "NodeEpochs={} LayoutInputKey={} Option<LayoutInputKey>={} LayoutCache={} TaffyLayoutEngine={} RequestedStyle={}",
-            std::mem::size_of::<NodeEpochs>(),
-            std::mem::size_of::<LayoutInputKey>(),
-            std::mem::size_of::<Option<LayoutInputKey>>(),
-            std::mem::size_of::<LayoutCache>(),
-            std::mem::size_of::<TaffyLayoutEngine>(),
-            std::mem::size_of::<RequestedStyle>(),
-        );
-    }
-
     #[gpui::test]
     fn retained_epoch_walks_preserve_layout_input_storage(cx: &mut crate::TestAppContext) {
         cx.add_empty_window().update(|window, cx| {

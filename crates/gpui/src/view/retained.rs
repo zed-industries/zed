@@ -510,23 +510,6 @@ impl ViewStore {
         self.record(id).own_dirty
     }
 
-    #[cfg(any(test, feature = "bench-support"))]
-    pub(crate) fn is_entity(&self, id: ViewOccurrenceId, entity: EntityId) -> bool {
-        self.retained(id).entity == entity
-    }
-
-    #[cfg(any(test, feature = "bench-support"))]
-    pub(crate) fn has_own_dirty_ancestor(&self, id: ViewOccurrenceId) -> bool {
-        let mut parent = self.record(id).parent;
-        while let Some(id) = parent {
-            if self.record(id).own_dirty {
-                return true;
-            }
-            parent = self.record(id).parent;
-        }
-        false
-    }
-
     pub(super) fn begin_reconstruction(
         &mut self,
         id: ViewOccurrenceId,
@@ -733,13 +716,6 @@ impl Window {
                 return (layout, None);
             }
         }
-        #[cfg(any(test, feature = "bench-support"))]
-        self.record_view_render(
-            entity,
-            false,
-            true,
-            self.view_store.state(occurrence).is_none(),
-        );
         self.view_store.clear_global_access(occurrence);
         let previous_access = self.begin_view_entity_access(cx);
         let ancestor_dirty = self.implicit_ancestor_dirty;
@@ -1057,7 +1033,6 @@ impl Window {
         #[cfg(any(test, feature = "bench-support"))]
         {
             self.view_reuse_stats.splice_prepaint_calls += 1;
-            self.view_reuse_stats.spliced_children += children.len();
         }
         let retained = self.view_store.retained(id);
         let ancestor_range = retained
@@ -1153,10 +1128,6 @@ impl Window {
             self.reuse_paint(ancestor_range);
             return;
         };
-        #[cfg(any(test, feature = "bench-support"))]
-        {
-            self.view_reuse_stats.splice_paint_calls += 1;
-        }
         let mut cursor = ancestor_range.start;
         for mut child in children {
             self.reuse_paint(cursor..child.old_paint_range.start);
@@ -1300,55 +1271,17 @@ mod tests {
     }
 
     #[crate::test]
-    fn implicit_layout_fallback_preserves_clean_sibling(cx: &mut TestAppContext) {
+    fn implicit_boundaries_render_once_on_layout_fallback(cx: &mut TestAppContext) {
+        let leaf_renders = Rc::new(Cell::new(0));
+        let branch_renders = Rc::new(Cell::new(0));
         let clean_renders = Rc::new(Cell::new(0));
-        let dirty_renders = Rc::new(Cell::new(0));
         let clean = cx.new(|_| ImplicitLeaf {
             renders: clean_renders.clone(),
-            width: px(20.),
-            margin: px(0.),
-            color: 0xff0000,
-            intrinsic: false,
-        });
-        let dirty = cx.new(|_| ImplicitLeaf {
-            renders: dirty_renders.clone(),
             width: px(20.),
             margin: px(0.),
             color: 0x00ff00,
             intrinsic: false,
         });
-        let branch = cx.new(|_| ImplicitBranch {
-            renders: Rc::new(Cell::new(0)),
-            children: vec![clean, dirty.clone()],
-        });
-        let window = cx.add_window(|window, _| {
-            window.set_view_retention(true);
-            ImplicitRoot(branch)
-        });
-        if !cx
-            .update_window(window.into(), |_, window, _| window.layout_cache_enabled())
-            .expect("window")
-        {
-            return;
-        }
-        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
-            .expect("initial draw");
-        let first_clean_renders = clean_renders.get();
-        let first_dirty_renders = dirty_renders.get();
-        dirty.update(cx, |leaf, cx| {
-            leaf.width = px(30.);
-            cx.notify();
-        });
-        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
-            .expect("fallback draw");
-        assert_eq!(clean_renders.get(), first_clean_renders);
-        assert_eq!(dirty_renders.get(), first_dirty_renders + 1);
-    }
-
-    #[crate::test]
-    fn implicit_boundaries_render_once_on_layout_fallback(cx: &mut TestAppContext) {
-        let leaf_renders = Rc::new(Cell::new(0));
-        let branch_renders = Rc::new(Cell::new(0));
         let leaf = cx.new(|_| ImplicitLeaf {
             renders: leaf_renders.clone(),
             width: px(20.),
@@ -1358,60 +1291,33 @@ mod tests {
         });
         let branch = cx.new(|_| ImplicitBranch {
             renders: branch_renders.clone(),
-            children: vec![leaf.clone()],
+            children: vec![clean, leaf.clone()],
         });
         let window = cx.add_window(|window, _| {
             window.set_view_retention(true);
             ImplicitRoot(branch)
         });
-        if !cx
-            .update_window(window.into(), |_, window, _| window.layout_cache_enabled())
-            .expect("window")
-        {
-            return;
-        }
         cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
             .expect("initial draw");
         let initial_leaf_renders = leaf_renders.get();
         let initial_branch_renders = branch_renders.get();
-        leaf.update(cx, |leaf, cx| {
-            leaf.color ^= 0xffffff;
-            cx.notify();
-        });
-        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
-            .expect("color draw");
-        assert_eq!(leaf_renders.get(), initial_leaf_renders + 1);
-        assert_eq!(
-            branch_renders.get(),
-            initial_branch_renders,
-            "unchanged layout must splice"
-        );
-
-        leaf.update(cx, |leaf, cx| {
-            leaf.margin = px(3.);
-            cx.notify();
-        });
-        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
-            .expect("margin draw");
-        assert_eq!(
-            leaf_renders.get(),
-            initial_leaf_renders + 2,
-            "speculative Render must be consumed by fallback"
-        );
-        assert_eq!(
-            branch_renders.get(),
-            initial_branch_renders + 1,
-            "equal-size parent-facing style change must fall back"
-        );
-
-        leaf.update(cx, |leaf, cx| {
-            leaf.width = px(30.);
-            cx.notify();
-        });
-        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
-            .expect("size draw");
-        assert_eq!(leaf_renders.get(), initial_leaf_renders + 3);
-        assert_eq!(branch_renders.get(), initial_branch_renders + 2);
+        let initial_clean_renders = clean_renders.get();
+        let mutations: [fn(&mut ImplicitLeaf); 3] = [
+            |leaf| leaf.color ^= 0xffffff,
+            |leaf| leaf.margin = px(3.),
+            |leaf| leaf.width = px(30.),
+        ];
+        for (index, mutate) in mutations.into_iter().enumerate() {
+            leaf.update(cx, |leaf, cx| {
+                mutate(leaf);
+                cx.notify();
+            });
+            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+                .expect("mutation draw");
+            assert_eq!(leaf_renders.get(), initial_leaf_renders + index + 1);
+            assert_eq!(branch_renders.get(), initial_branch_renders + index);
+            assert_eq!(clean_renders.get(), initial_clean_renders);
+        }
 
         leaf.update(cx, |leaf, cx| {
             leaf.intrinsic = true;
@@ -1437,6 +1343,7 @@ mod tests {
             branch_renders.get() > previous_branch,
             "an intrinsic size change must fall back even with an identical root style"
         );
+        assert_eq!(clean_renders.get(), initial_clean_renders);
     }
 
     #[crate::test]
@@ -1466,9 +1373,6 @@ mod tests {
         let draw = |cx: &mut TestAppContext| {
             cx.update_window(window.into(), |_, window, cx| {
                 window.draw(cx).clear(cx);
-                if !window.view_splicing {
-                    return None;
-                }
                 let occurrence = window.view_store.by_entity[&sibling.entity_id()][0];
                 let bounds = window
                     .view_store
@@ -1476,18 +1380,16 @@ mod tests {
                     .expect("sibling state")
                     .cache_key
                     .bounds;
-                Some((window.take_view_reuse_stats(), bounds))
+                (window.take_view_reuse_stats(), bounds)
             })
             .expect("draw")
         };
-        let Some((_, initial_bounds)) = draw(cx) else {
-            return;
-        };
+        let (_, initial_bounds) = draw(cx);
         leaf.update(cx, |leaf, cx| {
             leaf.color ^= 0xffffff;
             cx.notify();
         });
-        let (stats, unchanged_bounds) = draw(cx).expect("retained color frame");
+        let (stats, unchanged_bounds) = draw(cx);
         assert_eq!(stats.root_layout_computations, 0);
         assert!(stats.frames > 0);
         assert_eq!(stats.root_layout_skips, stats.frames);
@@ -1496,7 +1398,7 @@ mod tests {
             leaf.width = px(30.);
             cx.notify();
         });
-        let (stats, moved_bounds) = draw(cx).expect("retained resize frame");
+        let (stats, moved_bounds) = draw(cx);
         assert_eq!(stats.root_layout_computations, 1);
         assert_eq!(moved_bounds.origin.x, initial_bounds.origin.x + px(10.));
         assert_eq!(moved_bounds.size, initial_bounds.size);
@@ -1540,16 +1442,11 @@ mod tests {
             window.set_view_retention(true);
             TextPanels(panels.clone())
         });
-        let retained = cx
-            .update_window(window.into(), |_, window, cx| {
-                window.draw(cx).clear(cx);
-                window.take_view_reuse_stats();
-                window.view_splicing
-            })
-            .expect("initial text frame");
-        if !retained {
-            return;
-        }
+        cx.update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+            window.take_view_reuse_stats();
+        })
+        .expect("initial text frame");
         let initial_renders = renders.get();
         for panel in panels.iter().take(2) {
             panel.update(cx, |panel, cx| {
@@ -1638,15 +1535,8 @@ mod tests {
                     phase,
                 }
             });
-            let retained = cx
-                .update_window(window.into(), |_, window, cx| {
-                    window.draw(cx).clear(cx);
-                    window.view_splicing
-                })
+            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
                 .expect("initial draw");
-            if !retained {
-                return;
-            }
             let initial = renders.get();
             cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
                 .expect("clean draw");
@@ -1711,15 +1601,8 @@ mod tests {
                 }),
             }
         });
-        let retained = cx
-            .update_window(window.into(), |_, window, cx| {
-                window.draw(cx).clear(cx);
-                window.view_splicing
-            })
+        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
             .expect("initial draw");
-        if !retained {
-            return;
-        }
         let initial_root = root_renders.get();
         let initial_child = child_renders.get();
         cx.set_global(ProbeGlobal(0x00ff00));
@@ -1862,15 +1745,8 @@ mod tests {
                     children: vec![owner, sibling],
                 }
             });
-            let retained = cx
-                .update_window(window.into(), |_, window, cx| {
-                    window.draw(cx).clear(cx);
-                    window.view_splicing
-                })
+            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
                 .expect("initial draw");
-            if !retained {
-                return;
-            }
             assert_eq!(observed.get(), 1);
             let initial = (
                 root_renders.get(),
@@ -2280,7 +2156,6 @@ mod tests {
             cx.update_window(reused.window, |_, window, _| {
                 let stats = window.view_reuse_stats();
                 assert!(stats.splice_prepaint_calls > 0);
-                assert_eq!(stats.render_ancestor_caused, 0);
             })
             .expect("splice counters");
         }
@@ -2300,10 +2175,6 @@ mod tests {
         compare_pair(&reused, &fresh, 1, cx);
         assert_eq!(reused.outer_renders.get(), 1);
         assert_eq!(reused.branch_renders.get(), 2);
-        cx.update_window(reused.window, |_, window, _| {
-            assert!(window.view_reuse_stats().miss_bounds > 0);
-        })
-        .expect("changed bounds counter");
         for fixture in [&reused, &fresh] {
             fixture.notify_leaf(0, cx);
         }

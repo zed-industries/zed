@@ -1346,9 +1346,6 @@ enum InputModality {
 }
 
 /// Work performed by view caching since the last explicit reset.
-///
-/// Miss reasons overlap: a view can have changed bounds and also be dirty.
-/// Byte counts describe inline array records, not allocations owned by those records.
 #[cfg(any(test, feature = "bench-support"))]
 #[derive(Clone, Debug, Default)]
 #[expect(missing_docs)]
@@ -1356,35 +1353,9 @@ pub struct ViewReuseStats {
     pub frames: usize,
     pub root_layout_computations: usize,
     pub root_layout_skips: usize,
-    /// Actual element callbacks, in request-layout, prepaint, paint order.
-    pub phase_element_visits: [usize; 3],
-    /// Cached boundary callbacks for hits; retained descendants have zero visits.
-    pub reused_view_boundary_visits: [usize; 3],
-    pub render_own_dirty: usize,
-    pub render_ancestor_caused: usize,
-    pub render_first_mount: usize,
-    pub render_refresh_or_inspector: usize,
-    pub render_cache_context: usize,
-    pub render_uncached: usize,
-    pub render_entity_dependency: usize,
     pub splice_prepaint_calls: usize,
-    pub splice_paint_calls: usize,
-    pub spliced_children: usize,
     pub cached_hits: usize,
-    pub cached_misses: usize,
-    pub miss_first_mount: usize,
-    pub miss_bounds: usize,
-    pub miss_content_mask: usize,
-    pub miss_text_style: usize,
-    pub miss_dirty: usize,
-    pub miss_refreshing: usize,
-    pub miss_inspector: usize,
-    pub miss_forced_reconstruction: usize,
-    pub bounds_size_changed: usize,
-    pub bounds_origin_only_changed: usize,
     pub prepaint_reuse_calls: usize,
-    pub paint_reuse_calls: usize,
-    pub scene_layer_operations: usize,
     pub scene_bulk_segments: usize,
     pub index_fixups: usize,
 }
@@ -1524,13 +1495,9 @@ pub struct Window {
         Option<crate::view::ViewOccurrenceId>,
     )>,
     #[cfg(any(test, feature = "bench-support"))]
-    own_dirty_views: FxHashSet<EntityId>,
-    #[cfg(any(test, feature = "bench-support"))]
     pub(crate) view_reuse_stats: ViewReuseStats,
     #[cfg(any(test, feature = "bench-support"))]
     pub(crate) force_view_reconstruction: bool,
-    #[cfg(any(test, feature = "bench-support"))]
-    pub(crate) cached_reconstruction_depth: usize,
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
     pub(crate) focus_lost_listeners: SubscriberSet<(), AnyObserver>,
     focus_lost_path: SmallVec<[FocusId; 8]>,
@@ -2465,14 +2432,10 @@ impl Window {
             frame_accessed_entities: FxHashSet::default(),
             cached_global_access_stack: Vec::new(),
             #[cfg(any(test, feature = "bench-support"))]
-            own_dirty_views: FxHashSet::default(),
-            #[cfg(any(test, feature = "bench-support"))]
             view_reuse_stats: ViewReuseStats::default(),
             #[cfg(any(test, feature = "bench-support"))]
             force_view_reconstruction: std::env::var("GPUI_FORCE_VIEW_RECONSTRUCTION")
                 .is_ok_and(|value| value == "1"),
-            #[cfg(any(test, feature = "bench-support"))]
-            cached_reconstruction_depth: 0,
             focus_listeners: SubscriberSet::new(),
             focus_lost_listeners: SubscriberSet::new(),
             focus_lost_path: SmallVec::new(),
@@ -2921,58 +2884,8 @@ impl Window {
         }
     }
 
-    #[cfg(any(test, feature = "bench-support"))]
-    pub(crate) fn record_view_render(
-        &mut self,
-        entity_id: EntityId,
-        inspector: bool,
-        cached: bool,
-        first_mount: bool,
-    ) {
-        if !cached && !inspector && self.cached_reconstruction_depth == 0 {
-            self.view_reuse_stats.render_uncached += 1;
-            return;
-        }
-        if first_mount
-            || self
-                .rendered_frame
-                .dispatch_tree
-                .view_path_reversed(entity_id)
-                .next()
-                .is_none()
-        {
-            self.view_reuse_stats.render_first_mount += 1;
-        } else if self.own_dirty_views.contains(&entity_id) {
-            self.view_reuse_stats.render_own_dirty += 1;
-        } else if self.current_view_occurrence.is_some_and(|occurrence| {
-            self.view_store.is_entity(occurrence, entity_id)
-                && self.view_store.is_own_dirty(occurrence)
-        }) {
-            self.view_reuse_stats.render_entity_dependency += 1;
-        } else if self.cached_reconstruction_depth > 0
-            || self
-                .current_view_occurrence
-                .is_some_and(|occurrence| self.view_store.has_own_dirty_ancestor(occurrence))
-        {
-            self.view_reuse_stats.render_ancestor_caused += 1;
-        } else if inspector || self.refreshing {
-            self.view_reuse_stats.render_refresh_or_inspector += 1;
-        } else if self
-            .rendered_frame
-            .dispatch_tree
-            .view_path_reversed(entity_id)
-            .any(|view| self.dirty_views.contains(&view))
-        {
-            self.view_reuse_stats.render_ancestor_caused += 1;
-        } else {
-            self.view_reuse_stats.render_cache_context += 1;
-        }
-    }
-
     fn mark_view_dirty(&mut self, view_id: EntityId) {
         let retained = !self.view_splicing || self.view_store.mark_dirty(view_id);
-        #[cfg(any(test, feature = "bench-support"))]
-        self.own_dirty_views.insert(view_id);
         // Mark ancestor views as dirty. If already in the `dirty_views` set, then all its ancestors
         // should already be dirty.
         for view_id in self
@@ -4271,8 +4184,6 @@ impl Window {
             self.scope_image_caches
                 .retain(|_, cache| cache.strong_count() > 0);
         }
-        #[cfg(any(test, feature = "bench-support"))]
-        self.own_dirty_views.clear();
         self.next_frame.window_active = self.active.get();
 
         // Register requested input handler with the platform window.
@@ -5008,11 +4919,6 @@ impl Window {
                 5,
                 range.start.mouse_listeners_index..range.end.mouse_listeners_index,
             );
-        }
-        #[cfg(any(test, feature = "bench-support"))]
-        {
-            let stats = &mut self.view_reuse_stats;
-            stats.paint_reuse_calls += 1;
         }
         // Cached elements still exist in the frame even when their paint methods don't run.
         #[cfg(any(test, feature = "test-support"))]

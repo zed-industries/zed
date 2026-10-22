@@ -610,10 +610,6 @@ impl<E: Element> Drawable<E> {
                     inspector_id = None;
                 }
 
-                #[cfg(any(test, feature = "bench-support"))]
-                {
-                    window.view_reuse_stats.phase_element_visits[0] += 1;
-                }
                 let (layout_id, request_layout) = self.element.request_layout(
                     global_id.as_ref(),
                     inspector_id.as_ref(),
@@ -699,10 +695,6 @@ impl<E: Element> Drawable<E> {
                 }
 
                 let node_id = window.next_frame.dispatch_tree.push_node();
-                #[cfg(any(test, feature = "bench-support"))]
-                {
-                    window.view_reuse_stats.phase_element_visits[1] += 1;
-                }
                 let mut prepaint = self.element.prepaint(
                     global_id.as_ref(),
                     inspector_id.as_ref(),
@@ -779,10 +771,6 @@ impl<E: Element> Drawable<E> {
                 }
 
                 window.next_frame.dispatch_tree.set_active_node(node_id);
-                #[cfg(any(test, feature = "bench-support"))]
-                {
-                    window.view_reuse_stats.phase_element_visits[2] += 1;
-                }
                 self.element.paint(
                     global_id.as_ref(),
                     inspector_id.as_ref(),

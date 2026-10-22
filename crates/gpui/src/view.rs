@@ -612,19 +612,6 @@ fn request_layout_view(
                 (layout_id, None)
             }
             _ => {
-                #[cfg(any(test, feature = "bench-support"))]
-                {
-                    window.record_view_render(
-                        entity_id,
-                        caching_disabled,
-                        cached_style.is_some(),
-                        false,
-                    );
-                    if cached_style.is_some() {
-                        window.view_reuse_stats.cached_misses += 1;
-                        window.view_reuse_stats.miss_inspector += 1;
-                    }
-                }
                 let mut element = render(window, cx);
                 let layout_id = element.request_layout(window, cx);
                 (layout_id, Some(element))
@@ -694,15 +681,6 @@ fn prepaint_view(
             #[cfg(not(any(test, feature = "bench-support")))]
             let force_reconstruction = false;
 
-            #[cfg(any(test, feature = "bench-support"))]
-            let cache_changes = element_state.map(|state| {
-                (
-                    state.cache_key.bounds != bounds,
-                    state.cache_key.bounds.size != bounds.size,
-                    state.cache_key.inherited.content_mask != inherited.content_mask,
-                    state.cache_key.inherited.text_style != inherited.text_style,
-                )
-            });
             if element.is_none()
                 && let Some(element_state) = element_state
                 && (!window.is_implicit_view(occurrence) || window.view_store.has_paint(occurrence))
@@ -723,8 +701,6 @@ fn prepaint_view(
                     #[cfg(any(test, feature = "bench-support"))]
                     {
                         window.view_reuse_stats.cached_hits += 1;
-                        window.view_reuse_stats.reused_view_boundary_visits[0] += 1;
-                        window.view_reuse_stats.reused_view_boundary_visits[1] += 1;
                     }
                     let prepaint_start = window.prepaint_index();
                     window.register_retained_access(occurrence, cx);
@@ -744,37 +720,6 @@ fn prepaint_view(
             }
 
             let implicit = window.is_implicit_view(occurrence);
-            #[cfg(any(test, feature = "bench-support"))]
-            let synthetic_refresh = !implicit && !window.refreshing;
-            #[cfg(any(test, feature = "bench-support"))]
-            {
-                let stats = &mut window.view_reuse_stats;
-                stats.cached_misses += 1;
-                if let Some((bounds_changed, size_changed, mask_changed, text_changed)) =
-                    cache_changes
-                {
-                    stats.miss_bounds += usize::from(bounds_changed);
-                    stats.miss_content_mask += usize::from(mask_changed);
-                    stats.miss_text_style += usize::from(text_changed);
-                    stats.miss_dirty += usize::from(
-                        window.dirty_views.contains(&entity_id)
-                            || window.view_store.is_own_dirty(occurrence),
-                    );
-                    stats.miss_refreshing += usize::from(window.refreshing);
-                    stats.miss_forced_reconstruction += usize::from(force_reconstruction);
-                    stats.bounds_size_changed += usize::from(size_changed);
-                    stats.bounds_origin_only_changed +=
-                        usize::from(bounds_changed && !size_changed);
-                } else {
-                    stats.miss_first_mount += 1;
-                }
-                if element.is_none() && !window.is_implicit_view(occurrence) {
-                    window.record_view_render(entity_id, false, true, cache_changes.is_none());
-                }
-                if synthetic_refresh {
-                    window.cached_reconstruction_depth += 1;
-                }
-            }
             // Ordinary entity ancestors do not invalidate explicit cached children
             // on reconstruction. Only an explicit cached miss implies a refresh.
             let refreshing = window.refreshing;
@@ -809,12 +754,6 @@ fn prepaint_view(
             let prepaint_end = window.prepaint_index();
             let (own, _) = window.end_cached_entity_access(previous_access, cx);
             window.refreshing = refreshing;
-            #[cfg(any(test, feature = "bench-support"))]
-            {
-                if synthetic_refresh {
-                    window.cached_reconstruction_depth -= 1;
-                }
-            }
 
             window.view_store.set_state(
                 occurrence,
@@ -889,10 +828,6 @@ fn paint_view(
                     window.view_store.set_own_access(occurrence, own, true);
                     window.current_view_occurrence = parent_occurrence;
                 } else {
-                    #[cfg(any(test, feature = "bench-support"))]
-                    {
-                        window.view_reuse_stats.reused_view_boundary_visits[2] += 1;
-                    }
                     window.splice_view_paint(occurrence, cx);
                 }
 
@@ -939,50 +874,9 @@ fn prepaint_legacy_view(
         window.with_element_state::<ViewElementState, _>(global_id.unwrap(), |state, window| {
             let inherited = InheritedViewScope::capture(window);
             #[cfg(any(test, feature = "bench-support"))]
-            let first_mount = state.is_none();
-            #[cfg(any(test, feature = "bench-support"))]
             let forced = window.force_view_reconstruction;
             #[cfg(not(any(test, feature = "bench-support")))]
             let forced = false;
-            #[cfg(any(test, feature = "bench-support"))]
-            {
-                let stats = &mut window.view_reuse_stats;
-                if let Some(state) = state.as_ref() {
-                    let bounds_changed = state.cache_key.bounds != bounds;
-                    let mask_changed =
-                        state.cache_key.inherited.content_mask != inherited.content_mask;
-                    let text_changed = state.cache_key.inherited.text_style != inherited.text_style;
-                    let dirty = window.dirty_views.contains(&entity_id);
-                    if bounds_changed
-                        || mask_changed
-                        || text_changed
-                        || state.cache_key.inherited != inherited
-                        || dirty
-                        || window.refreshing
-                        || forced
-                    {
-                        stats.cached_misses += 1;
-                        stats.miss_bounds += usize::from(bounds_changed);
-                        stats.miss_content_mask += usize::from(mask_changed);
-                        stats.miss_text_style += usize::from(text_changed);
-                        stats.miss_dirty += usize::from(dirty);
-                        stats.miss_refreshing += usize::from(window.refreshing);
-                        stats.miss_forced_reconstruction += usize::from(forced);
-                    } else {
-                        stats.cached_hits += 1;
-                        stats.reused_view_boundary_visits[0] += 1;
-                        stats.reused_view_boundary_visits[1] += 1;
-                    }
-                    if state.cache_key.bounds.size != bounds.size {
-                        stats.bounds_size_changed += 1;
-                    } else if bounds_changed {
-                        stats.bounds_origin_only_changed += 1;
-                    }
-                } else {
-                    stats.cached_misses += 1;
-                    stats.miss_first_mount += 1;
-                }
-            }
             if let Some(mut state) = state
                 && state.cache_key.bounds == bounds
                 && state.cache_key.inherited == inherited
@@ -990,20 +884,15 @@ fn prepaint_legacy_view(
                 && !window.refreshing
                 && !forced
             {
+                #[cfg(any(test, feature = "bench-support"))]
+                {
+                    window.view_reuse_stats.cached_hits += 1;
+                }
                 let start = window.prepaint_index();
                 window.reuse_prepaint(state.prepaint_range.clone());
                 cx.entities.extend_accessed(&state.accessed_entities);
                 state.prepaint_range = start..window.prepaint_index();
                 return (None, state);
-            }
-            #[cfg(any(test, feature = "bench-support"))]
-            let synthetic_refresh = !window.refreshing;
-            #[cfg(any(test, feature = "bench-support"))]
-            {
-                window.record_view_render(entity_id, false, true, first_mount);
-                if synthetic_refresh {
-                    window.cached_reconstruction_depth += 1;
-                }
             }
             let refreshing = mem::replace(&mut window.refreshing, true);
             let start = window.prepaint_index();
@@ -1015,12 +904,6 @@ fn prepaint_legacy_view(
             });
             let end = window.prepaint_index();
             window.refreshing = refreshing;
-            #[cfg(any(test, feature = "bench-support"))]
-            {
-                if synthetic_refresh {
-                    window.cached_reconstruction_depth -= 1;
-                }
-            }
             (
                 Some(element),
                 ViewElementState {
@@ -1053,10 +936,6 @@ fn paint_legacy_view(
                     element.paint(window, cx);
                     window.refreshing = refreshing;
                 } else {
-                    #[cfg(any(test, feature = "bench-support"))]
-                    {
-                        window.view_reuse_stats.reused_view_boundary_visits[2] += 1;
-                    }
                     window.reuse_paint(state.paint_range.clone());
                 }
                 state.paint_range = start..window.paint_index();

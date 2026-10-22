@@ -225,15 +225,6 @@ impl Scene {
         #[cfg(any(test, feature = "bench-support"))]
         {
             stats.scene_bulk_segments += 1;
-            let primitives = range
-                .start
-                .primitives
-                .iter()
-                .zip(range.end.primitives)
-                .map(|(start, end)| end - start)
-                .sum::<usize>();
-            stats.scene_layer_operations +=
-                range.end.operations - range.start.operations - primitives;
         }
         self.paint_operations.extend_from_slice(
             &previous.paint_operations[range.start.operations..range.end.operations],
