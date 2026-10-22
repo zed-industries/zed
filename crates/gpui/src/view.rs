@@ -361,6 +361,7 @@ struct ViewElementCacheKey {
     bounds: Bounds<Pixels>,
     content_mask: ContentMask<Pixels>,
     text_style: TextStyle,
+    opacity: f32,
 }
 
 #[cfg(not(gpui_hot_reload))]
@@ -392,6 +393,7 @@ struct RetainedViewCacheKey {
     bounds: Bounds<Pixels>,
     content_mask: ContentMask<Pixels>,
     text_style: Rc<TextStyle>,
+    opacity: f32,
 }
 
 impl<V: View> Element for ViewElement<V> {
@@ -660,6 +662,7 @@ fn prepaint_view(
             let constraints_unchanged = window.implicit_prepaint_layout(occurrence);
             let content_mask = window.content_mask();
             let text_style = window.retained_text_style_handle();
+            let opacity = window.element_opacity();
 
             let element_state = window.view_store.state(occurrence);
             #[cfg(any(test, feature = "bench-support"))]
@@ -682,6 +685,7 @@ fn prepaint_view(
                 && element_state.cache_key.bounds == bounds
                 && element_state.cache_key.content_mask == content_mask
                 && element_state.cache_key.text_style == text_style
+                && element_state.cache_key.opacity == opacity
                 && !window.view_store.is_own_dirty(occurrence)
                 && (!window.dirty_views.contains(&entity_id)
                     || (window.view_splicing && window.view_store.is_descendant_dirty(occurrence)))
@@ -792,6 +796,7 @@ fn prepaint_view(
                         bounds,
                         content_mask,
                         text_style,
+                        opacity,
                     },
                 },
                 scope.take().expect("cached views have a scope"),
@@ -910,6 +915,7 @@ fn prepaint_legacy_view(
         window.with_element_state::<ViewElementState, _>(global_id.unwrap(), |state, window| {
             let content_mask = window.content_mask();
             let text_style = window.text_style();
+            let opacity = window.element_opacity();
             #[cfg(any(test, feature = "bench-support"))]
             let first_mount = state.is_none();
             #[cfg(any(test, feature = "bench-support"))]
@@ -957,6 +963,7 @@ fn prepaint_legacy_view(
                 && state.cache_key.bounds == bounds
                 && state.cache_key.content_mask == content_mask
                 && state.cache_key.text_style == text_style
+                && state.cache_key.opacity == opacity
                 && !window.dirty_views.contains(&entity_id)
                 && !window.refreshing
                 && !forced
@@ -1001,6 +1008,7 @@ fn prepaint_legacy_view(
                         bounds,
                         content_mask,
                         text_style,
+                        opacity,
                     },
                     accessed_entities,
                 },
