@@ -3055,12 +3055,13 @@ impl Interactivity {
                 });
             let current_view = window.current_view();
 
+            // Layout may move the hitbox after input updated hover_state. Compare
+            // future events against the hit test used by the frame we painted.
+            let mut was_hovered = hitbox.is_hovered(window);
             window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, cx| {
                 let hovered = hitbox.is_hovered(window);
-                let was_hovered = hover_state
-                    .as_ref()
-                    .is_some_and(|state| state.borrow().element);
                 if phase == DispatchPhase::Capture && hovered != was_hovered {
+                    was_hovered = hovered;
                     if let Some(hover_state) = &hover_state {
                         hover_state.borrow_mut().element = hovered;
                         cx.notify(current_view);
@@ -3081,15 +3082,17 @@ impl Interactivity {
                     .cloned();
                 let current_view = window.current_view();
 
+                let mut was_group_hovered = window
+                    .group_hitboxes
+                    .resolve(&group_key)
+                    .is_some_and(|hitbox| hitbox.is_hovered(window));
                 window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, cx| {
                     let group_hovered = window
                         .group_hitboxes
                         .resolve(&group_key)
                         .is_some_and(|hitbox| hitbox.is_hovered(window));
-                    let was_group_hovered = hover_state
-                        .as_ref()
-                        .is_some_and(|state| state.borrow().group);
                     if phase == DispatchPhase::Capture && group_hovered != was_group_hovered {
+                        was_group_hovered = group_hovered;
                         if let Some(hover_state) = &hover_state {
                             hover_state.borrow_mut().group = group_hovered;
                             cx.notify(current_view);

@@ -2466,11 +2466,12 @@ mod tests {
     fn own_hover_repro(
         snapshot: RandomizedElementTreeSnapshot,
         cx: &mut TestAppContext,
+        retained: bool,
     ) -> anyhow::Result<()> {
         let windows = [false, true].map(|fresh| {
             let snapshot = snapshot.clone();
             cx.open_window(WINDOW_SIZE, move |window, cx| {
-                window.set_view_retention(false);
+                window.set_view_retention(retained && !fresh);
                 window.set_force_view_reconstruction(fresh);
                 if fresh {
                     window.layout_engine = Some(crate::TaffyLayoutEngine::new());
@@ -2517,7 +2518,6 @@ mod tests {
     }
 
     // A hover-driven ancestor layout change leaves cached descendant hover output stale.
-    #[ignore = "own-hover output can become stale when hover changes geometry or occlusion"]
     #[gpui::test]
     fn cached_own_hover_rechecks_changed_hitboxes(cx: &mut TestAppContext) {
         let mut config = RandomizedElementTreeConfig::new(11657309575477221286, 64)
@@ -2535,7 +2535,10 @@ mod tests {
         }
         snapshot.rebuild_element_paths();
         assert_eq!(snapshot.descendant_count(), 2);
-        own_hover_repro(snapshot, cx).expect("cached own-hover output matches reconstruction");
+        for retained in [false, true] {
+            own_hover_repro(snapshot.clone(), cx, retained)
+                .expect("cached own-hover output matches reconstruction");
+        }
     }
 
     fn inherited_scope_regression(cx: &mut TestAppContext, scroll: bool, retention: bool) {
