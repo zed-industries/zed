@@ -495,6 +495,36 @@ impl Scene {
     }
 
     #[cfg(any(test, feature = "bench-support"))]
+    pub(crate) fn rendered_snapshot(&self) -> Vec<String> {
+        let mut primitives = Vec::new();
+        macro_rules! append {
+            ($field:ident) => {
+                primitives.extend(self.$field.iter().map(|primitive| {
+                    (
+                        primitive.order,
+                        format!("{}:{primitive:?}", stringify!($field)),
+                    )
+                }));
+            };
+        }
+        append!(shadows);
+        append!(quads);
+        append!(paths);
+        append!(underlines);
+        append!(monochrome_sprites);
+        append!(subpixel_sprites);
+        append!(polychrome_sprites);
+        append!(surfaces);
+        // GPU batches are stored by kind, not painter order. Preserve order values and
+        // the relative sequence within each kind, including texture-sorted sprite ties.
+        primitives.sort_by_key(|(order, _)| *order);
+        primitives
+            .into_iter()
+            .map(|(_, primitive)| primitive)
+            .collect()
+    }
+
+    #[cfg(any(test, feature = "bench-support"))]
     pub(crate) fn reuse_snapshot(&self) -> Vec<String> {
         self.paint_operations
             .iter()

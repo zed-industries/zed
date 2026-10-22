@@ -1466,10 +1466,12 @@ pub struct ViewReuseStats {
 #[expect(missing_docs)]
 pub struct ViewReuseSnapshot {
     pub scene: Vec<String>,
+    pub rendered_primitives: Vec<String>,
     pub hitboxes: Vec<String>,
     pub dispatch: Vec<String>,
     pub cursor_styles: Vec<String>,
     pub tab_stops: Vec<String>,
+    pub accessed_element_states: Vec<String>,
 }
 
 #[cfg(any(test, feature = "bench-support"))]
@@ -1478,6 +1480,11 @@ impl ViewReuseSnapshot {
     pub fn compare(&self, reconstructed: &Self, frame: usize) -> anyhow::Result<()> {
         for (name, reused, fresh) in [
             ("scene", &self.scene, &reconstructed.scene),
+            (
+                "rendered primitives",
+                &self.rendered_primitives,
+                &reconstructed.rendered_primitives,
+            ),
             ("hitboxes", &self.hitboxes, &reconstructed.hitboxes),
             ("dispatch", &self.dispatch, &reconstructed.dispatch),
             (
@@ -1486,6 +1493,11 @@ impl ViewReuseSnapshot {
                 &reconstructed.cursor_styles,
             ),
             ("tab stops", &self.tab_stops, &reconstructed.tab_stops),
+            (
+                "accessed element states",
+                &self.accessed_element_states,
+                &reconstructed.accessed_element_states,
+            ),
         ] {
             if reused != fresh {
                 let index = reused
@@ -3051,8 +3063,35 @@ impl Window {
         mut view_identity: impl FnMut(EntityId) -> String,
     ) -> ViewReuseSnapshot {
         let frame = &self.rendered_frame;
+        let mut accessed_element_states = frame
+            .accessed_element_states
+            .iter()
+            .map(|(handle, state_type)| {
+                let identity = self
+                    .element_id_interner
+                    .global_id(*handle)
+                    .iter()
+                    .map(|id| match id {
+                        ElementId::View(entity_id) => format!("view:{}", view_identity(*entity_id)),
+                        id => format!("{id:?}"),
+                    })
+                    .collect::<Vec<_>>();
+                // The oracle can use the legacy cache while retention stores a handle
+                // to its out-of-line state. Both represent the same logical cache access.
+                if crate::view::is_view_element_state(*state_type) {
+                    format!("{identity:?}:view-cache")
+                } else {
+                    format!("{identity:?}:{state_type:?}")
+                }
+            })
+            .collect::<Vec<_>>();
+        // Reuse can coalesce repeated accesses; the live identity/type set must be identical.
+        accessed_element_states.sort();
+        accessed_element_states.dedup();
         ViewReuseSnapshot {
             scene: frame.scene.reuse_snapshot(),
+            rendered_primitives: frame.scene.rendered_snapshot(),
+            accessed_element_states,
             hitboxes: frame
                 .hitboxes
                 .iter()

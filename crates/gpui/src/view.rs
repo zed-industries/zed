@@ -357,6 +357,12 @@ struct ViewElementState {
 
 struct ViewElementHandle(ViewOccurrenceId);
 
+#[cfg(any(test, feature = "bench-support"))]
+pub(crate) fn is_view_element_state(state_type: std::any::TypeId) -> bool {
+    state_type == std::any::TypeId::of::<ViewElementHandle>()
+        || state_type == std::any::TypeId::of::<ViewElementState>()
+}
+
 struct ViewElementCacheKey {
     bounds: Bounds<Pixels>,
     content_mask: ContentMask<Pixels>,
