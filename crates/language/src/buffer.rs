@@ -5876,6 +5876,7 @@ impl<'a> BufferChunks<'a> {
             *diagnostics = diagnostic_endpoints.into_iter().peekable();
             self.diagnostic_depths = DiagnosticDepths::default();
             self.untagged_diagnostic_depths = DiagnosticDepths::default();
+            self.unnecessary_depths = DiagnosticDepths::default();
             self.deprecated_depths = DiagnosticDepths::default();
         }
     }
