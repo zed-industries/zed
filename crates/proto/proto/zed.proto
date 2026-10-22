@@ -587,6 +587,7 @@ enum ErrorCode {
   RemoteUpgradeRequired = 17;
   RateLimitExceeded = 18;
   CommitFailed = 19;
+  AlreadyExists = 20;
   reserved 6;
   reserved 14 to 15;
 }

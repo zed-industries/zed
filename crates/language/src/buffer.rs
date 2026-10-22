@@ -119,7 +119,7 @@ pub struct Buffer {
     language: Option<Arc<Language>>,
     content_language_detection_enabled: bool,
     autoindent_requests: Vec<Arc<AutoindentRequest>>,
-    wait_for_autoindent_txs: Vec<oneshot::Sender<()>>,
+    wait_for_autoindent_txs: Vec<oneshot::Sender<Option<clock::Lamport>>>,
     pending_autoindent: Option<Task<()>>,
     sync_parse_timeout: Option<Duration>,
     syntax_map: Mutex<SyntaxMap>,
@@ -1245,7 +1245,7 @@ impl Buffer {
             let mut syntax = SyntaxMap::new(&text).snapshot();
             if let Some(language) = language.clone() {
                 let language_registry = language_registry.clone();
-                syntax.reparse(&text, language_registry, language);
+                syntax.reparse(&text, None, language_registry, language);
             }
             let tree_sitter_data = TreeSitterData::new(&text);
             BufferSnapshot {
@@ -1305,7 +1305,7 @@ impl Buffer {
                 .into_snapshot();
         let mut syntax = SyntaxMap::new(&text).snapshot();
         if let Some(language) = language.clone() {
-            syntax.reparse(&text, language_registry, language);
+            syntax.reparse(&text, None, language_registry, language);
         }
         let tree_sitter_data = TreeSitterData::new(&text);
         BufferSnapshot {
@@ -1392,10 +1392,16 @@ impl Buffer {
         let old_snapshot = self.text.snapshot().clone();
         let mut branch_buffer = self.text.branch();
         let mut syntax_snapshot = self.syntax_map.lock().snapshot();
+        let file = self.file.clone();
         cx.background_spawn(async move {
             if !edits.is_empty() {
                 if let Some(language) = language.clone() {
-                    syntax_snapshot.reparse(&old_snapshot, registry.clone(), language);
+                    syntax_snapshot.reparse(
+                        &old_snapshot,
+                        file.as_deref(),
+                        registry.clone(),
+                        language,
+                    );
                 }
 
                 branch_buffer.edit(edits.iter().cloned());
@@ -1403,7 +1409,7 @@ impl Buffer {
                 syntax_snapshot.interpolate(&snapshot);
 
                 if let Some(language) = language {
-                    syntax_snapshot.reparse(&snapshot, registry, language);
+                    syntax_snapshot.reparse(&snapshot, file.as_deref(), registry, language);
                 }
             }
             EditPreview {
@@ -1955,11 +1961,13 @@ impl Buffer {
         let language_registry = syntax_map.language_registry();
         let mut syntax_snapshot = syntax_map.snapshot();
         drop(syntax_map);
+        let file = self.file.clone();
 
         self.parse_status.0.send(ParseStatus::Parsing).unwrap();
         if may_block && let Some(sync_parse_timeout) = self.sync_parse_timeout {
             if let Ok(()) = syntax_snapshot.reparse_with_timeout(
                 &text,
+                file.as_deref(),
                 language_registry.clone(),
                 language.clone(),
                 sync_parse_timeout,
@@ -1979,7 +1987,7 @@ impl Buffer {
             let language = language.clone();
             let language_registry = language_registry.clone();
             async move {
-                syntax_snapshot.reparse(&text, language_registry, language);
+                syntax_snapshot.reparse(&text, file.as_deref(), language_registry, language);
                 syntax_snapshot
             }
         });
@@ -2117,7 +2125,7 @@ impl Buffer {
         } else {
             self.autoindent_requests.clear();
             for tx in self.wait_for_autoindent_txs.drain(..) {
-                tx.send(()).ok();
+                tx.send(None).ok();
             }
         }
     }
@@ -2308,9 +2316,7 @@ impl Buffer {
         cx: &mut Context<Self>,
     ) {
         self.autoindent_requests.clear();
-        for tx in self.wait_for_autoindent_txs.drain(..) {
-            tx.send(()).ok();
-        }
+        let wait_for_autoindent_txs = mem::take(&mut self.wait_for_autoindent_txs);
 
         let edits: Vec<_> = indent_sizes
             .into_iter()
@@ -2321,9 +2327,12 @@ impl Buffer {
             .collect();
 
         let preserve_preview = self.preserve_preview();
-        self.edit(edits, None, cx);
+        let edit_id = self.edit(edits, None, cx);
         if preserve_preview {
             self.refresh_preview();
+        }
+        for tx in wait_for_autoindent_txs {
+            tx.send(edit_id).ok();
         }
     }
 
@@ -2733,7 +2742,10 @@ impl Buffer {
         self.text.give_up_waiting();
     }
 
-    pub fn wait_for_autoindent_applied(&mut self) -> Option<oneshot::Receiver<()>> {
+    /// Resolves with the id of the edit that applied the pending autoindent, if it changed anything.
+    pub fn wait_for_autoindent_applied(
+        &mut self,
+    ) -> Option<oneshot::Receiver<Option<clock::Lamport>>> {
         let mut rx = None;
         if !self.autoindent_requests.is_empty() {
             let channel = oneshot::channel();
@@ -3561,13 +3573,18 @@ impl Buffer {
         let new_text = self.text.snapshot_with_edits(edits);
         cx.background_spawn(async move {
             if let Some(language) = language.clone() {
-                syntax.reparse(&text, registry.clone(), language);
+                syntax.reparse(&text, snapshot.file.as_deref(), registry.clone(), language);
             }
 
             syntax.interpolate(&new_text.snapshot);
 
             if let Some(language) = language {
-                syntax.reparse(&new_text.snapshot, registry, language);
+                syntax.reparse(
+                    &new_text.snapshot,
+                    snapshot.file.as_deref(),
+                    registry,
+                    language,
+                );
             }
 
             snapshot.text = new_text.snapshot.clone();
@@ -6363,7 +6380,7 @@ mod tests {
                 buffer.reparse.take();
                 let snapshot = buffer.snapshot();
                 let mut syntax = snapshot.syntax;
-                syntax.reparse(&snapshot.text, None, rust_lang());
+                syntax.reparse(&snapshot.text, snapshot.file.as_deref(), None, rust_lang());
                 buffer.did_finish_parsing(syntax, None, false, cx);
                 assert!(buffer.pending_autoindent.is_some());
 

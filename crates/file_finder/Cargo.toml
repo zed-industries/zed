@@ -43,6 +43,9 @@ gpui = { workspace = true, features = ["test-support"] }
 
 picker = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
+release_channel.workspace = true
+remote = { workspace = true, features = ["test-support"] }
+remote_server = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
 theme = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
