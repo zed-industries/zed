@@ -62,6 +62,7 @@ pub struct RandomizedElementTreeConfig {
     entity_density: f64,
     handler_density: f64,
     cached_views: bool,
+    hover_styles: bool,
 }
 
 impl RandomizedElementTreeConfig {
@@ -74,6 +75,7 @@ impl RandomizedElementTreeConfig {
             entity_density: 0.0,
             handler_density: 0.0,
             cached_views: false,
+            hover_styles: false,
         }
     }
 
@@ -250,6 +252,7 @@ pub struct RandomizedElementTreeSnapshot {
     children: Vec<RandomizedElementNode>,
     next_element_id: u64,
     cached_views: bool,
+    hover_styles: bool,
     paths_by_element_id: HashMap<u64, Vec<usize>>,
 }
 
@@ -542,6 +545,7 @@ impl RandomizedElementTree {
             children,
             next_element_id: config.element_count as u64,
             cached_views: config.cached_views,
+            hover_styles: config.hover_styles,
             paths_by_element_id: HashMap::default(),
         };
         snapshot.rebuild_element_paths();
@@ -1101,6 +1105,9 @@ impl Render for RandomizedElementTree {
 
         div()
             .flex()
+            .when(snapshot.hover_styles, |element| {
+                element.group("randomized-tree-root")
+            })
             .when(root.vertical, |element| element.flex_col())
             .when(root.wrap, |element| element.flex_wrap())
             .gap(px(root.gap))
@@ -1121,6 +1128,7 @@ impl Render for RandomizedElementTree {
                     &self.scroll_handles,
                     &mut work_counters,
                     snapshot.cached_views,
+                    snapshot.hover_styles,
                 )
             }))
     }
@@ -1154,6 +1162,7 @@ impl Render for RandomizedElementEntity {
                     &self.scroll_handles,
                     &mut work_counters,
                     snapshot.cached_views,
+                    snapshot.hover_styles,
                 )
             })
             .unwrap_or_else(|| div().into_any_element())
@@ -1308,6 +1317,7 @@ fn render_node(
     scroll_handles: &RefCell<HashMap<u64, crate::ScrollHandle>>,
     work_counters: &mut RandomizedElementTreeWorkCounters,
     cached_views: bool,
+    hover_styles: bool,
 ) -> AnyElement {
     if node.is_entity
         && let Some(entity) = entities.get(&node.id)
@@ -1328,6 +1338,7 @@ fn render_node(
         scroll_handles,
         work_counters,
         cached_views,
+        hover_styles,
     )
 }
 
@@ -1338,6 +1349,7 @@ fn render_node_body(
     scroll_handles: &RefCell<HashMap<u64, crate::ScrollHandle>>,
     work_counters: &mut RandomizedElementTreeWorkCounters,
     cached_views: bool,
+    hover_styles: bool,
 ) -> AnyElement {
     work_counters.element_render_count += 1;
     work_counters.handler_registration_count += node.features.handler_count();
@@ -1356,6 +1368,15 @@ fn render_node_body(
         .w(px(style.width))
         .h(px(style.height))
         .bg(style.background)
+        .when(hover_styles, |element| {
+            element
+                .hover(|element| {
+                    element
+                        .bg(style.border_color)
+                        .border(px(style.border_width + 1.0))
+                })
+                .group_hover("randomized-tree-root", |element| element.opacity(0.65))
+        })
         .border(px(style.border_width))
         .border_color(style.border_color)
         .rounded(px(style.corner_radius))
@@ -1427,9 +1448,23 @@ fn render_node_body(
         })
         .children(node.children.iter().map(|child| {
             if let Some(entities) = entities {
-                render_node(child, entities, scroll_handles, work_counters, cached_views)
+                render_node(
+                    child,
+                    entities,
+                    scroll_handles,
+                    work_counters,
+                    cached_views,
+                    hover_styles,
+                )
             } else {
-                render_node_body(child, None, scroll_handles, work_counters, cached_views)
+                render_node_body(
+                    child,
+                    None,
+                    scroll_handles,
+                    work_counters,
+                    cached_views,
+                    hover_styles,
+                )
             }
         }))
         .into_any_element()
@@ -2191,22 +2226,94 @@ mod tests {
 
     #[gpui::test(iterations = 2)]
     fn cached_views_match_forced_reconstruction(rng: StdRng, cx: &mut TestAppContext) {
-        views_match_forced_reconstruction(rng, cx, true, false, false);
+        views_match_forced_reconstruction(rng, cx, true, false, false, false);
     }
 
     #[gpui::test(iterations = 2)]
     fn implicit_views_match_forced_reconstruction(rng: StdRng, cx: &mut TestAppContext) {
-        views_match_forced_reconstruction(rng, cx, false, false, false);
+        views_match_forced_reconstruction(rng, cx, false, false, false, false);
     }
 
     #[gpui::test(iterations = 2)]
     fn all_mutations_match_forced_reconstruction(rng: StdRng, cx: &mut TestAppContext) {
-        views_match_forced_reconstruction(rng, cx, true, true, false);
+        views_match_forced_reconstruction(rng, cx, true, true, false, false);
     }
 
     #[gpui::test(iterations = 2)]
     fn scroll_offsets_match_forced_reconstruction(rng: StdRng, cx: &mut TestAppContext) {
-        views_match_forced_reconstruction(rng, cx, true, false, true);
+        views_match_forced_reconstruction(rng, cx, true, false, true, false);
+    }
+
+    // Cached group-hover listeners retain an ancestor hitbox from an older frame.
+    #[ignore = "group-hover listeners in cached children retain an old ancestor hitbox"]
+    #[gpui::test(iterations = 2)]
+    fn hover_styles_match_forced_reconstruction(rng: StdRng, cx: &mut TestAppContext) {
+        views_match_forced_reconstruction(rng, cx, true, false, false, true);
+    }
+
+    // Redrawing a group replaces the ancestor hitbox captured by a cached child.
+    #[ignore = "a clean parent redraw replaces the hitbox captured by a cached group-hover listener"]
+    #[gpui::test]
+    fn cached_group_hover_survives_parent_redraw(cx: &mut TestAppContext) {
+        struct Leaf;
+        impl Render for Leaf {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .id("hover-leaf")
+                    .size_full()
+                    .bg(crate::rgb(0xff0000))
+                    .group_hover("hover-root", |style| style.bg(crate::rgb(0x0000ff)))
+                    .cursor_pointer()
+            }
+        }
+        struct Root(Entity<Leaf>);
+        impl Render for Root {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .id("hover-root")
+                    .group("hover-root")
+                    .w(px(200.0))
+                    .h(px(200.0))
+                    .child(
+                        self.0
+                            .clone()
+                            .cached(crate::StyleRefinement::default().size(px(100.0))),
+                    )
+            }
+        }
+        for retained in [false, true] {
+            let windows = [false, true].map(|fresh| {
+                cx.open_window(WINDOW_SIZE, |window, cx| {
+                    window.set_view_retention(retained && !fresh);
+                    window.set_force_view_reconstruction(fresh);
+                    Root(cx.new(|_| Leaf))
+                })
+            });
+            for (frame, inside) in [false, false, true, true, false, false, true]
+                .into_iter()
+                .enumerate()
+            {
+                let position = crate::point(px(if inside { 10.0 } else { 500.0 }), px(10.0));
+                let snapshots = windows.map(|window| {
+                    cx.update_window(window.into(), |_, window, cx| {
+                        window.simulate_mouse_move(position, cx);
+                    })
+                    .expect("hover input");
+                    cx.update_window(window.into(), |_, window, cx| {
+                        window.draw(cx).clear(cx);
+                        window.view_reuse_snapshot(|_| "hover-view".into())
+                    })
+                    .expect("hover frame")
+                });
+                snapshots[0]
+                    .compare(&snapshots[1], frame)
+                    .expect("group hover matches");
+            }
+            for window in windows {
+                cx.update_window(window.into(), |_, window, _| window.remove_window())
+                    .expect("hover window");
+            }
+        }
     }
 
     #[gpui::test]
@@ -2346,6 +2453,7 @@ mod tests {
         cached: bool,
         all_mutations: bool,
         scroll: bool,
+        mouse: bool,
     ) {
         for (topology, splice) in
             RandomizedElementTreeTopology::ALL
@@ -2357,11 +2465,12 @@ mod tests {
                         .map(move |splice| (topology, splice))
                 })
         {
-            let config = RandomizedElementTreeConfig::new(rng.random(), ELEMENT_COUNT)
+            let mut config = RandomizedElementTreeConfig::new(rng.random(), ELEMENT_COUNT)
                 .with_topology(topology)
                 .with_entity_density(0.5)
                 .with_handler_density(0.5)
                 .with_cached_views(cached);
+            config.hover_styles = mouse;
             let reused = cx.open_window(WINDOW_SIZE, move |window, cx| {
                 if cached {
                     window.set_view_retention(splice);
@@ -2387,12 +2496,24 @@ mod tests {
             } else {
                 16
             };
+            let mut pointer = crate::point(px(20.0), px(20.0));
             for frame in 0..frame_count {
+                if mouse && frame % 4 == 1 {
+                    pointer = crate::point(
+                        px(rng.random_range(0.0..250.0)),
+                        px(rng.random_range(0.0..250.0)),
+                    );
+                } else if mouse && frame % 4 == 3 {
+                    pointer = crate::point(px(1300.0), px(950.0));
+                }
                 if frame > 0 {
                     for root in [&reused_root, &reconstructed_root] {
                         root.update(cx, |tree, cx| {
                             if scroll {
                                 tree.scroll_without_notify();
+                                return;
+                            }
+                            if mouse {
                                 return;
                             }
                             let mutation = if all_mutations {
@@ -2420,6 +2541,12 @@ mod tests {
                 }
                 let capture =
                     |root: &Entity<RandomizedElementTree>, window, cx: &mut TestAppContext| {
+                        if mouse {
+                            cx.update_window(window, |_, window, cx| {
+                                window.simulate_mouse_move(pointer, cx);
+                            })
+                            .expect("mouse input window");
+                        }
                         let mut identities = root.read_with(cx, |tree, _| {
                             tree.entities
                                 .borrow()
@@ -2429,9 +2556,9 @@ mod tests {
                         });
                         identities.insert(root.entity_id(), "root".into());
                         cx.update_window(window, |_, window, cx| {
-                            if frame % 4 == 1 {
+                            if !mouse && frame % 4 == 1 {
                                 window.focus_next(cx);
-                            } else if frame % 4 == 3 {
+                            } else if !mouse && frame % 4 == 3 {
                                 window.focus_prev(cx);
                             }
                             let arena_clear_needed = window.draw(cx);
@@ -2450,7 +2577,9 @@ mod tests {
                 let reconstructed_snapshot = capture(&reconstructed_root, reconstructed.into(), cx);
                 reused_snapshot
                     .compare(&reconstructed_snapshot, frame)
-                    .expect("cached output matches reconstruction");
+                    .unwrap_or_else(|error| {
+                        panic!("cached={cached} retention={splice} topology={topology:?}: {error}")
+                    });
             }
             let stats = cx
                 .update_window(reused.into(), |_, window, _| window.take_view_reuse_stats())
