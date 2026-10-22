@@ -881,7 +881,8 @@ impl OpenAiResponseEventMapper {
                     events
                 }
             }
-            ResponsesStreamEvent::ReasoningDelta { delta, .. } => {
+            ResponsesStreamEvent::ReasoningDelta { delta, .. }
+            | ResponsesStreamEvent::ReasoningTextDelta { delta, .. } => {
                 if delta.is_empty() {
                     Vec::new()
                 } else {
@@ -1085,6 +1086,7 @@ impl OpenAiResponseEventMapper {
             | ResponsesStreamEvent::ContentPartAdded { .. }
             | ResponsesStreamEvent::ContentPartDone { .. }
             | ResponsesStreamEvent::ReasoningSummaryTextDone { .. }
+            | ResponsesStreamEvent::ReasoningTextDone { .. }
             | ResponsesStreamEvent::ReasoningSummaryPartDone { .. }
             | ResponsesStreamEvent::ReasoningDone { .. }
             | ResponsesStreamEvent::Created { .. }
@@ -1510,7 +1512,12 @@ fn response_reasoning_input_item_from_output(
     ResponseReasoningInputItem {
         id: reasoning.id.clone(),
         summary,
-        content: reasoning.content.clone(),
+        content: reasoning
+            .content
+            .iter()
+            .filter(|part| !matches!(part, crate::responses::ReasoningContentPart::Other))
+            .cloned()
+            .collect(),
         encrypted_content,
         status: reasoning.status.clone(),
     }
@@ -3928,10 +3935,9 @@ mod tests {
             Some("ENC"),
             Some("completed".into()),
         );
-        reasoning_item.content = vec![json!({
-            "type": "reasoning_text",
-            "text": "Internal reasoning text."
-        })];
+        reasoning_item.content = vec![crate::responses::ReasoningContentPart::ReasoningText {
+            text: "Internal reasoning text.".into(),
+        }];
 
         let events = vec![
             ResponsesStreamEvent::OutputItemDone {
