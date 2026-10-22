@@ -3695,7 +3695,14 @@ impl ProjectPanel {
             ClipboardEntry::Copied(entries) => (entries, EntryTransferOperation::Copy),
             ClipboardEntry::Cut(entries) => (entries, EntryTransferOperation::Move),
         };
-        self.transfer_entries(entries, operation, window, cx);
+        if self
+            .transfer_entries(entries, operation, window, cx)
+            .is_some()
+            && matches!(operation, EntryTransferOperation::Move)
+        {
+            // Convert the clipboard cut entry to a copy entry after the first paste.
+            self.clipboard = self.clipboard.take().map(ClipboardEntry::into_copy_entry);
+        }
     }
 
     fn transfer_entries(
@@ -3704,7 +3711,7 @@ impl ProjectPanel {
         operation: EntryTransferOperation,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Option<()> {
         maybe!({
             let (worktree, entry) = self.selected_entry_handle(cx)?;
             let entry = entry.clone();
@@ -3826,14 +3833,9 @@ impl ProjectPanel {
             })
             .detach_and_log_err(cx);
 
-            if matches!(operation, EntryTransferOperation::Move) {
-                // Convert the clipboard cut entry to a copy entry after the first paste.
-                self.clipboard = self.clipboard.take().map(ClipboardEntry::into_copy_entry);
-            }
-
             self.expand_entry(worktree_id, entry.id, cx);
             Some(())
-        });
+        })
     }
 
     fn download_from_remote(
