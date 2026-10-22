@@ -95,9 +95,9 @@ impl MarkdownElement {
                     &paragraph.contents,
                     source_allocator,
                     builder,
+                    markdown_end,
                     window,
                     cx,
-                    markdown_end,
                 );
                 self.pop_markdown_paragraph(builder);
             }
@@ -113,9 +113,9 @@ impl MarkdownElement {
                     &heading.contents,
                     source_allocator,
                     builder,
+                    markdown_end,
                     window,
                     cx,
-                    markdown_end,
                 );
                 self.pop_markdown_heading(builder);
             }
@@ -212,9 +212,9 @@ impl MarkdownElement {
                 caption,
                 source_allocator,
                 builder,
+                markdown_end,
                 window,
                 cx,
-                markdown_end,
             );
             builder.pop_div();
         }
@@ -315,9 +315,9 @@ impl MarkdownElement {
                     &cell.children,
                     source_allocator,
                     builder,
+                    markdown_end,
                     window,
                     cx,
-                    markdown_end,
                 );
                 builder.pop_div();
                 builder.pop_div();
@@ -368,9 +368,9 @@ impl MarkdownElement {
         paragraph: &HtmlParagraph,
         source_allocator: &mut HtmlSourceAllocator,
         builder: &mut MarkdownElementBuilder,
+        _markdown_end: usize,
         window: &mut Window,
         cx: &mut App,
-        _markdown_end: usize,
     ) {
         for chunk in paragraph {
             match chunk {
