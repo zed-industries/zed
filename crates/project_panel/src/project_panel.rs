@@ -3603,14 +3603,14 @@ impl ProjectPanel {
         }
     }
 
-    fn create_transfer_path(
+    fn create_paste_path(
         &self,
         source: &SelectedEntry,
         (worktree, target_entry): (Entity<Worktree>, &Entry),
         cx: &App,
     ) -> Option<(Arc<RelPath>, Option<Range<usize>>)> {
         let mut new_path = target_entry.path.to_rel_path_buf();
-        // Files and directories copied onto themselves must be placed alongside the source.
+        // If we're pasting into a file, or a directory into itself, go up one level.
         if target_entry.is_file() || (target_entry.is_dir() && target_entry.id == source.entry_id) {
             new_path.pop();
         }
@@ -3726,7 +3726,7 @@ impl ProjectPanel {
             let mut disambiguation_range = None;
             for source_entry in &entries {
                 let (new_path, new_disambiguation_range) =
-                    self.create_transfer_path(source_entry, self.selected_sub_entry(cx)?, cx)?;
+                    self.create_paste_path(source_entry, self.selected_sub_entry(cx)?, cx)?;
                 let source_entry_id = source_entry.entry_id;
                 let destination: ProjectPath = (worktree_id, new_path).into();
                 let task = match operation {
@@ -5285,7 +5285,7 @@ impl ProjectPanel {
                 let mut copy_tasks = Vec::new();
                 let mut disambiguation_range = None;
                 for selection in &entries {
-                    let (new_path, new_disambiguation_range) = self.create_transfer_path(
+                    let (new_path, new_disambiguation_range) = self.create_paste_path(
                         selection,
                         (target_worktree.clone(), &target_entry),
                         cx,
