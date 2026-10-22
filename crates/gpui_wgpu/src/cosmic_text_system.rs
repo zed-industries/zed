@@ -1,3 +1,4 @@
+use crate::hinting::FontHinting;
 use anyhow::{Context as _, Ok, Result};
 use collections::HashMap;
 use cosmic_text::{
@@ -65,9 +66,16 @@ struct LoadedFont {
     font: Arc<CosmicTextFont>,
     features: CosmicFontFeatures,
     is_known_emoji_font: bool,
+    hinting: FontHinting,
     /// resolved at load time so `layout_line` shares one chain across faces.
     /// `Arc` keeps clone cheap on the per-run hot path.
     user_fallback_chain: Arc<[(FontId, SharedString)]>,
+}
+
+impl LoadedFont {
+    fn should_hint(&self, glyph_id: u16) -> bool {
+        self.hinting.should_hint(self.font.as_swash(), glyph_id)
+    }
 }
 
 struct FontMatchProperties {
@@ -438,6 +446,7 @@ impl CosmicTextSystemState {
                 font,
                 features: cosmic_features.clone(),
                 is_known_emoji_font: check_is_known_emoji_font(&postscript_name),
+                hinting: FontHinting::for_font(&postscript_name),
                 user_fallback_chain: Arc::clone(&user_fallback_chain),
             });
             self.loaded_font_ids_by_key.insert(key, font_id);
@@ -517,6 +526,7 @@ impl CosmicTextSystemState {
         let loaded_font = &self.loaded_fonts[params.font_id.0];
         let font_ref = loaded_font.font.as_swash();
         let pixel_size = f32::from(params.font_size);
+        let glyph_id: u16 = params.glyph_id.0.try_into()?;
 
         let subpixel_offset = Vector::new(
             params.subpixel_variant.x as f32 / SUBPIXEL_VARIANTS_X as f32 / params.scale_factor,
@@ -527,7 +537,7 @@ impl CosmicTextSystemState {
             .swash_scale_context
             .builder(font_ref)
             .size(pixel_size * params.scale_factor)
-            .hint(true)
+            .hint(loaded_font.should_hint(glyph_id))
             .build();
 
         let sources: &[Source] = if params.is_emoji {
@@ -550,7 +560,6 @@ impl CosmicTextSystemState {
             renderer.format(Format::Alpha).offset(subpixel_offset);
         }
 
-        let glyph_id: u16 = params.glyph_id.0.try_into()?;
         renderer
             .render(&mut scaler, glyph_id)
             .with_context(|| format!("unable to render glyph via swash for {params:?}"))
@@ -587,6 +596,7 @@ impl CosmicTextSystemState {
                 font,
                 features: CosmicFontFeatures::new(),
                 is_known_emoji_font: check_is_known_emoji_font(&face.post_script_name),
+                hinting: FontHinting::for_font(&face.post_script_name),
                 user_fallback_chain: Arc::from(Vec::new()),
             });
 
@@ -1253,6 +1263,134 @@ mod tests {
         include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf");
     const LILEX: &[u8] = include_bytes!("../../../assets/fonts/lilex/Lilex-Regular.ttf");
 
+    #[test]
+    fn lilex_connected_hyphens_use_unhinted_glyphs() -> Result<()> {
+        for (font_name, font_bytes) in [
+            ("Regular", LILEX),
+            (
+                "Bold",
+                include_bytes!("../../../assets/fonts/lilex/Lilex-Bold.ttf") as &[u8],
+            ),
+            (
+                "Italic",
+                include_bytes!("../../../assets/fonts/lilex/Lilex-Italic.ttf") as &[u8],
+            ),
+            (
+                "BoldItalic",
+                include_bytes!("../../../assets/fonts/lilex/Lilex-BoldItalic.ttf") as &[u8],
+            ),
+        ] {
+            check_lilex_connected_hyphens(font_name, font_bytes)?;
+        }
+        Ok(())
+    }
+
+    fn check_lilex_connected_hyphens(font_name: &str, font_bytes: &'static [u8]) -> Result<()> {
+        let text_system = CosmicTextSystem::new_without_system_fonts("Lilex");
+        text_system.add_fonts(vec![Cow::Borrowed(font_bytes)])?;
+        let font_id = text_system.font_id(&gpui::font("Lilex"))?;
+        let render = |state: &mut CosmicTextSystemState, glyph: &ShapedGlyph, scale_factor: f32| {
+            state.render_glyph_image(&RenderGlyphParams {
+                font_id,
+                glyph_id: glyph.id,
+                font_size: gpui::px(12.0),
+                subpixel_variant: point(0, 0),
+                scale_factor,
+                is_emoji: false,
+                subpixel_rendering: false,
+                dilation: 0,
+            })
+        };
+        let stroke_row = |image: &swash::scale::image::Image| -> Result<i32> {
+            let width = image.placement.width as usize;
+            anyhow::ensure!(width > 0, "glyph has no raster columns");
+            let (row, _) = image
+                .data
+                .chunks_exact(width)
+                .enumerate()
+                .max_by_key(|(_, pixels)| pixels.iter().filter(|&&pixel| pixel > 128).count())
+                .context("glyph has no raster rows")?;
+            Ok(image.placement.top - row as i32)
+        };
+        for text in ["|-", "-|", "--|", "-----|", "-|-", "--|--"] {
+            let layout = text_system.layout_line(
+                text,
+                gpui::px(12.0),
+                &[FontRun {
+                    len: text.len(),
+                    font_id,
+                }],
+            );
+            let glyphs = layout
+                .runs
+                .iter()
+                .flat_map(|run| &run.glyphs)
+                .collect::<Vec<_>>();
+            anyhow::ensure!(
+                glyphs.len() >= 2,
+                "expected a Lilex glyph sequence for {text}"
+            );
+
+            let mut state = text_system.0.write();
+            for glyph in &glyphs {
+                assert!(!state.loaded_font(font_id).should_hint(glyph.id.0 as u16));
+            }
+            if font_name == "Regular" {
+                for scale_factor in [1.0, 1.25, 1.5, 2.0] {
+                    let mut connector_row = None;
+                    for glyph in &glyphs {
+                        let image = render(&mut state, glyph, scale_factor)?;
+                        let row = stroke_row(&image)?;
+                        if let Some(expected_row) = connector_row {
+                            assert_eq!(
+                                row, expected_row,
+                                "connector shifted for {text} at scale {scale_factor}"
+                            );
+                        } else {
+                            connector_row = Some(row);
+                        }
+                    }
+                }
+            }
+        }
+
+        for text in ["-", "|"] {
+            let plain_glyph =
+                text_system.layout_line(text, gpui::px(12.0), &[FontRun { len: 1, font_id }]);
+            let glyph = plain_glyph
+                .runs
+                .iter()
+                .flat_map(|run| &run.glyphs)
+                .next()
+                .context("missing ordinary glyph")?;
+            assert!(
+                text_system
+                    .0
+                    .read()
+                    .loaded_font(font_id)
+                    .should_hint(glyph.id.0 as u16)
+            );
+        }
+        let other_ligature =
+            text_system.layout_line("=>", gpui::px(12.0), &[FontRun { len: 2, font_id }]);
+        let other_glyphs = other_ligature
+            .runs
+            .iter()
+            .flat_map(|run| &run.glyphs)
+            .collect::<Vec<_>>();
+        anyhow::ensure!(other_glyphs.len() >= 2, "expected glyphs for => ligature");
+        for glyph in other_glyphs {
+            assert!(
+                text_system
+                    .0
+                    .read()
+                    .loaded_font(font_id)
+                    .should_hint(glyph.id.0 as u16)
+            );
+        }
+        Ok(())
+    }
+
     /// Every code point of `Bidi_Class=B`, each of which starts a new bidi
     /// paragraph and so can split one line into mixed-direction paragraphs.
     const SEPARATORS: &[char] = &[
@@ -1263,6 +1401,18 @@ mod tests {
         let text_system = CosmicTextSystem::new_without_system_fonts("IBM Plex Sans");
         text_system.add_fonts(vec![Cow::Borrowed(IBM_PLEX)])?;
         Ok(text_system)
+    }
+
+    #[test]
+    fn other_fonts_keep_glyph_hinting() -> Result<()> {
+        let text_system = text_system()?;
+        let font_id = text_system.font_id(&gpui::font("IBM Plex Sans"))?;
+        let state = text_system.0.read();
+        let font = state.loaded_font(font_id);
+        let glyph_id = font.font.as_swash().charmap().map('-');
+        assert_ne!(glyph_id, 0);
+        assert!(font.should_hint(glyph_id));
+        Ok(())
     }
 
     #[test]
