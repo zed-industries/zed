@@ -125,6 +125,7 @@ mod tests {
     struct SubscriptionPanel {
         leaf: Entity<SubscriptionLeaf>,
         phase: SubscriptionPhase,
+        deferred_child: bool,
         renders: Rc<Cell<usize>>,
     }
 
@@ -150,7 +151,11 @@ mod tests {
                     .into_any_element()
                 }
             };
-            deferred(child)
+            if self.deferred_child {
+                deferred(child).into_any_element()
+            } else {
+                child
+            }
         }
     }
 
@@ -176,8 +181,12 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_deferred_reuse_keeps_entity_subscriptions(cx: &mut TestAppContext) {
-        for phase in [SubscriptionPhase::Render, SubscriptionPhase::Paint] {
+    fn test_cached_reuse_keeps_entity_subscriptions(cx: &mut TestAppContext) {
+        for (phase, deferred_child) in [
+            (SubscriptionPhase::Render, true),
+            (SubscriptionPhase::Paint, true),
+            (SubscriptionPhase::Paint, false),
+        ] {
             for deferred_panel in [false, true] {
                 let output = Rc::new(Cell::new(0));
                 let renders = Rc::new(Cell::new(0));
@@ -189,6 +198,7 @@ mod tests {
                 let panel = cx.new(|_| SubscriptionPanel {
                     leaf: leaf.clone(),
                     phase,
+                    deferred_child,
                     renders: renders.clone(),
                 });
                 let window = cx.open_window(size(px(800.), px(600.)), |_, _| SubscriptionRoot {
@@ -217,7 +227,9 @@ mod tests {
                     cx.notify();
                 });
                 cx.run_until_parked();
-                let context = format!("phase {phase:?}, deferred panel {deferred_panel}");
+                let context = format!(
+                    "phase {phase:?}, deferred child {deferred_child}, deferred panel {deferred_panel}"
+                );
                 assert!(
                     root_renders.get() > renders_before_notify,
                     "leaf notification should redraw: {context}"

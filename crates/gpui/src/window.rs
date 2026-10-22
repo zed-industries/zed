@@ -1030,8 +1030,9 @@ pub(crate) struct DeferredDraw {
     absolute_offset: Point<Pixels>,
     prepaint_range: Range<PrepaintStateIndex>,
     paint_range: Range<PaintIndex>,
-    prepaint_accessed_entities: FxHashSet<EntityId>,
-    paint_accessed_entities: FxHashSet<EntityId>,
+    /// The entities the deferred element accessed while it was last drawn, in
+    /// any phase, restored when its prepaint is reused.
+    accessed_entities: FxHashSet<EntityId>,
 }
 
 pub(crate) struct Frame {
@@ -3901,13 +3902,12 @@ impl Window {
                             });
                         });
                     });
-                    self.next_frame.deferred_draws[deferred_draw_ix].prepaint_accessed_entities =
+                    self.next_frame.deferred_draws[deferred_draw_ix].accessed_entities =
                         accessed_entities;
                     self.next_frame.deferred_draws[deferred_draw_ix].element = Some(element);
                 } else {
                     cx.entities.extend_accessed(
-                        &self.next_frame.deferred_draws[deferred_draw_ix]
-                            .prepaint_accessed_entities,
+                        &self.next_frame.deferred_draws[deferred_draw_ix].accessed_entities,
                     );
                     self.reuse_prepaint(prepaint_range);
                 }
@@ -3953,10 +3953,8 @@ impl Window {
                         })
                     })
                 });
-                deferred_draw.paint_accessed_entities = accessed_entities;
+                deferred_draw.accessed_entities.extend(accessed_entities);
             } else {
-                cx.entities
-                    .extend_accessed(&deferred_draw.paint_accessed_entities);
                 self.reuse_paint(deferred_draw.paint_range.clone());
             }
             let paint_end = self.paint_index();
@@ -4031,8 +4029,7 @@ impl Window {
                     absolute_offset: deferred_draw.absolute_offset,
                     prepaint_range: deferred_draw.prepaint_range.clone(),
                     paint_range: deferred_draw.paint_range.clone(),
-                    prepaint_accessed_entities: deferred_draw.prepaint_accessed_entities.clone(),
-                    paint_accessed_entities: deferred_draw.paint_accessed_entities.clone(),
+                    accessed_entities: deferred_draw.accessed_entities.clone(),
                 }),
         );
     }
@@ -4515,8 +4512,7 @@ impl Window {
             absolute_offset,
             prepaint_range: PrepaintStateIndex::default()..PrepaintStateIndex::default(),
             paint_range: PaintIndex::default()..PaintIndex::default(),
-            prepaint_accessed_entities: FxHashSet::default(),
-            paint_accessed_entities: FxHashSet::default(),
+            accessed_entities: FxHashSet::default(),
         });
     }
 
