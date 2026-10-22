@@ -1461,6 +1461,7 @@ struct FakeFsState {
     events_paused: bool,
     buffered_events: Vec<PathEvent>,
     metadata_call_count: usize,
+    is_file_call_count: usize,
     read_dir_call_count: usize,
     path_write_counts: std::collections::HashMap<PathBuf, usize>,
     job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
@@ -1857,6 +1858,7 @@ impl FakeFs {
             events_paused: false,
             read_dir_call_count: 0,
             metadata_call_count: 0,
+            is_file_call_count: 0,
             path_write_counts: Default::default(),
             job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
             trash: Mutex::new(SlotMap::with_key()),
@@ -2796,6 +2798,11 @@ impl FakeFs {
         self.state.lock().metadata_call_count
     }
 
+    /// How many `is_file` calls have been issued.
+    pub fn is_file_call_count(&self) -> usize {
+        self.state.lock().is_file_call_count
+    }
+
     /// How many write operations have been issued for a specific path.
     pub fn write_count_for_path(&self, path: impl AsRef<Path>) -> usize {
         let path = path.as_ref().to_path_buf();
@@ -3323,6 +3330,7 @@ impl Fs for FakeFs {
         let path = normalize_path(path);
         self.simulate_random_delay().await;
         let mut state = self.state.lock();
+        state.is_file_call_count += 1;
         if let Some((entry, _)) = state.try_entry(&path, true) {
             entry.is_file()
         } else {

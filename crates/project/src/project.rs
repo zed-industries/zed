@@ -5281,12 +5281,24 @@ impl Project {
         path: &str,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<ImageLocation>>> {
+        // Reading the requested path lets the OS resolve symlinks and `..` while keeping any
+        // non-UTF-8 target bytes; canonicalizing is only needed to map remote paths to worktrees.
+        if self.is_local() {
+            let path = PathBuf::from(shellexpand::tilde(path).into_owned());
+            let fs = self.fs.clone();
+            return cx.background_spawn(async move {
+                Ok(fs
+                    .is_file(&path)
+                    .await
+                    .then(|| ImageLocation::Local(path.into())))
+            });
+        }
         let resolve = self.resolve_abs_file_link(path, cx);
         cx.spawn(async move |project, cx| {
             let Some(resolved_path) = resolve.await? else {
                 return Ok(None);
             };
-            project.read_with(cx, |project, cx| {
+            let location = project.read_with(cx, |project, cx| {
                 let project_path = match resolved_path {
                     ResolvedPath::ProjectPath { project_path, .. } => project_path,
                     ResolvedPath::AbsPath { path, .. } => {
@@ -5295,27 +5307,17 @@ impl Project {
                         let Some(project_path) =
                             project.project_path_for_absolute_path(Path::new(&path), cx)
                         else {
-                            anyhow::ensure!(
-                                project.is_local(),
+                            log::debug!(
                                 "cannot load an image outside the project's worktrees over a remote connection: {path}"
                             );
-                            return Ok(Some(ImageLocation::Local(Path::new(&path).into())));
+                            return None;
                         };
                         project_path
                     }
                 };
-                let worktree = project
-                    .worktree_for_id(project_path.worktree_id, cx)
-                    .context("worktree was closed")?;
-                if worktree.read(cx).is_local() {
-                    let abs_path = project
-                        .absolute_path(&project_path, cx)
-                        .context("absolutizing image path")?;
-                    Ok(Some(ImageLocation::Local(abs_path.into())))
-                } else {
-                    Ok(Some(ImageLocation::Project(project_path)))
-                }
-            })?
+                Some(ImageLocation::Project(project_path))
+            });
+            Ok(location.ok().flatten())
         })
     }
 

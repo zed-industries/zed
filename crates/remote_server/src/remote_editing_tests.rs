@@ -647,8 +647,9 @@ async fn test_resolve_image_at_abs_path_over_remote(
         .update(cx, |project, cx| {
             project.resolve_image_at_abs_path(path!("/code/outside.ppm"), cx)
         })
-        .await;
-    assert!(outside.is_err());
+        .await
+        .unwrap();
+    assert_eq!(outside, None);
 }
 
 #[gpui::test]

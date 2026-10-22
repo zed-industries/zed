@@ -388,6 +388,35 @@ async fn test_resolve_abs_file_link_rejects_non_utf8_target(cx: &mut gpui::TestA
     });
 }
 
+#[cfg(target_os = "linux")]
+#[gpui::test]
+async fn test_resolve_image_at_abs_path_keeps_non_utf8_symlink_target(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    cx.executor().allow_parking();
+    let directory = TempTree::new(json!({}));
+    let target = directory.path().join(OsStr::from_bytes(b"\xffshot.ppm"));
+    std::fs::write(&target, "P3\n1 1\n255\n255 0 0\n").unwrap();
+    let alias = directory.path().join("image-alias.ppm");
+    os::unix::fs::symlink(&target, &alias).unwrap();
+    let project = Project::test(RealFs::new(None, cx.executor()), [], cx).await;
+
+    let location = project
+        .update(cx, |project, cx| {
+            project.resolve_image_at_abs_path(alias.to_str().unwrap(), cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        location,
+        Some(project::image_store::ImageLocation::Local(alias.into()))
+    );
+    project.read_with(cx, |project, cx| {
+        assert_eq!(project.worktrees(cx).count(), 0);
+    });
+}
+
 #[gpui::test]
 async fn test_resolve_image_at_abs_path_local(cx: &mut gpui::TestAppContext) {
     init_test(cx);
@@ -405,6 +434,11 @@ async fn test_resolve_image_at_abs_path_local(cx: &mut gpui::TestAppContext) {
     .await;
     fs.insert_tree(path!("/outside"), json!({"shot.ppm": image_bytes}))
         .await;
+    fs.insert_symlink(
+        path!("/outside/dangling.ppm"),
+        PathBuf::from(path!("/outside/gone.ppm")),
+    )
+    .await;
     let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     project.read_with(cx, |project, cx| {
         assert_eq!(
@@ -413,24 +447,12 @@ async fn test_resolve_image_at_abs_path_local(cx: &mut gpui::TestAppContext) {
         );
     });
 
-    for (path, expected) in [
-        (
-            path!("/project/docs/shot.ppm"),
-            path!("/project/docs/shot.ppm"),
-        ),
-        (
-            path!("/project/sub/../docs/shot.ppm"),
-            path!("/project/docs/shot.ppm"),
-        ),
-        (
-            path!("/project/ignored/shot.ppm"),
-            path!("/project/ignored/shot.ppm"),
-        ),
-        (path!("/outside/shot.ppm"), path!("/outside/shot.ppm")),
-        (
-            path!("/project/../outside/shot.ppm"),
-            path!("/outside/shot.ppm"),
-        ),
+    for path in [
+        path!("/project/docs/shot.ppm"),
+        path!("/project/sub/../docs/shot.ppm"),
+        path!("/project/ignored/shot.ppm"),
+        path!("/outside/shot.ppm"),
+        path!("/project/../outside/shot.ppm"),
     ] {
         let location = project
             .update(cx, |project, cx| {
@@ -441,13 +463,17 @@ async fn test_resolve_image_at_abs_path_local(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             location,
             Some(project::image_store::ImageLocation::Local(
-                Path::new(expected).into()
+                Path::new(path).into()
             )),
             "{path}"
         );
     }
 
-    for path in [path!("/project/docs"), path!("/project/missing.ppm")] {
+    for path in [
+        path!("/project/docs"),
+        path!("/project/missing.ppm"),
+        path!("/outside/dangling.ppm"),
+    ] {
         let location = project
             .update(cx, |project, cx| {
                 project.resolve_image_at_abs_path(path, cx)

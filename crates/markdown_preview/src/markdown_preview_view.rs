@@ -3014,7 +3014,14 @@ mod tests {
                     )
                 }
             });
-            assert_resolved_preview_image_path(resolved, &root.join("real/shot.ppm"));
+            match resolved {
+                Some(ImageSource::Resource(Resource::Path(path))) => assert_eq!(
+                    std::fs::canonicalize(path.as_ref()).unwrap(),
+                    std::fs::canonicalize(root.join("real/shot.ppm")).unwrap(),
+                    "{dest_url}"
+                ),
+                _ => panic!("Expected {dest_url} to resolve to a local path"),
+            }
         }
     }
 

@@ -105,7 +105,7 @@ async fn test_use_image_location_retries_missing_file_after_delay(cx: &mut TestA
     let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
     cx.run_until_parked();
     // The window's initial draw in `add_window_view` starts the first check.
-    let calls_before_first_check = fs.metadata_call_count();
+    let calls_before_first_check = fs.is_file_call_count();
     let (view, cx) = cx.add_window_view(|_, _| ImageLocationTestView {
         project: project.downgrade(),
         paths: vec![path!("/outside/later.ppm").to_string()],
@@ -123,7 +123,7 @@ async fn test_use_image_location_retries_missing_file_after_delay(cx: &mut TestA
 
     cx.run_until_parked();
     assert_eq!(draw(cx), None);
-    let calls_after_first_check = fs.metadata_call_count();
+    let calls_after_first_check = fs.is_file_call_count();
     let calls_per_check = calls_after_first_check - calls_before_first_check;
     assert!(calls_per_check > 0);
 
@@ -131,13 +131,13 @@ async fn test_use_image_location_retries_missing_file_after_delay(cx: &mut TestA
         assert_eq!(draw(cx), None);
         cx.run_until_parked();
     }
-    assert_eq!(fs.metadata_call_count(), calls_after_first_check);
+    assert_eq!(fs.is_file_call_count(), calls_after_first_check);
 
     cx.executor().advance_clock(IMAGE_RECHECK_DELAY);
     assert_eq!(draw(cx), None);
     let renders_before_recheck = renders(cx);
     cx.run_until_parked();
-    let calls_after_recheck = fs.metadata_call_count();
+    let calls_after_recheck = fs.is_file_call_count();
     assert_eq!(
         calls_after_recheck,
         calls_after_first_check + calls_per_check
@@ -152,14 +152,14 @@ async fn test_use_image_location_retries_missing_file_after_delay(cx: &mut TestA
     assert_eq!(draw(cx), None);
     cx.run_until_parked();
     assert_eq!(
-        fs.metadata_call_count(),
+        fs.is_file_call_count(),
         calls_after_recheck,
         "the second re-check waits longer than the first"
     );
     cx.executor().advance_clock(IMAGE_RECHECK_DELAY);
     assert_eq!(draw(cx), None);
     cx.run_until_parked();
-    let calls_after_second_recheck = fs.metadata_call_count();
+    let calls_after_second_recheck = fs.is_file_call_count();
     assert_eq!(
         calls_after_second_recheck,
         calls_after_recheck + calls_per_check
@@ -174,7 +174,7 @@ async fn test_use_image_location_retries_missing_file_after_delay(cx: &mut TestA
         assert_eq!(draw(cx), None);
         cx.run_until_parked();
     }
-    assert_eq!(fs.metadata_call_count(), calls_after_second_recheck);
+    assert_eq!(fs.is_file_call_count(), calls_after_second_recheck);
 
     let expected = Some(ImageLocation::Local(
         Path::new(path!("/outside/later.ppm")).into(),
@@ -221,8 +221,12 @@ async fn test_use_image_location_revalidates_found_location(cx: &mut TestAppCont
         view.read_with(cx, |view, _| view.location.clone())
     };
     let renders = |cx: &mut VisualTestContext| view.read_with(cx, |view, _| view.renders);
-    let first = Some(ImageLocation::Local(Path::new(path!("/a/shot.ppm")).into()));
-    let second = Some(ImageLocation::Local(Path::new(path!("/b/shot.ppm")).into()));
+    let first = Some(ImageLocation::Local(
+        Path::new(path!("/a/work/../shot.ppm")).into(),
+    ));
+    let second = Some(ImageLocation::Local(
+        Path::new(path!("/b/work/../shot.ppm")).into(),
+    ));
 
     cx.run_until_parked();
     assert_eq!(draw(cx), first);
