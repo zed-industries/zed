@@ -1571,6 +1571,11 @@ fn resolve_preview_image(
 
     let path = if let (Some(stripped), Some(root)) = (workspace_relative_path, workspace_directory)
     {
+        // A second leading separator leaves a rooted path, which would replace
+        // the workspace root when joined.
+        if client_path_style.has_root(Path::new(stripped)) {
+            return None;
+        }
         client_path_style.normalize_lexically(client_path_style.join(root, stripped))
     } else if client_path_style.has_root(Path::new(&decoded)) {
         PathBuf::from(decoded)
@@ -2579,6 +2584,17 @@ mod tests {
             cx,
         );
         assert!(missing.is_none());
+
+        let outside_workspace = resolve_preview_image(
+            "//tmp/outside.svg",
+            Some(&base_directory),
+            Some(workspace_directory),
+            None,
+            None,
+            PathStyle::local(),
+            cx,
+        );
+        assert!(outside_workspace.is_none());
     }
 
     #[gpui::test]
