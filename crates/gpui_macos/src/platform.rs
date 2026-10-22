@@ -1,6 +1,6 @@
 use crate::{
-    AppleActivity, AppleDispatcher, MacDisplay, MacKeyboardLayout, MacKeyboardMapper, MacWindow,
-    events::key_to_native, ns_string, pasteboard::Pasteboard, renderer,
+    AppleActivity, AppleDispatcher, BoolExt, MacDisplay, MacKeyboardLayout, MacKeyboardMapper,
+    MacWindow, events::key_to_native, ns_string, pasteboard::Pasteboard, renderer,
     set_active_window_cursor_style,
 };
 use anyhow::{Context as _, anyhow};
@@ -766,8 +766,8 @@ impl Platform for MacPlatform {
     fn window_appearance(&self) -> WindowAppearance {
         unsafe {
             let app = NSApplication::sharedApplication(self.1);
-            let appearance: *mut AnyObject = msg_send![&app, effectiveAppearance];
-            crate::window_appearance::window_appearance_from_native(appearance.cast())
+            let appearance: Option<Retained<NSAppearance>> = msg_send![&app, effectiveAppearance];
+            crate::window_appearance::window_appearance_from_native(appearance.as_deref())
         }
     }
 
@@ -1497,7 +1497,7 @@ extern "C-unwind" fn validate_menu_item(this: &AnyObject, _: Sel, item: *mut Any
                 .validate_menu_command
                 .get_or_insert(callback);
         }
-        Bool::new(result)
+        result.to_objc()
     }
 }
 
