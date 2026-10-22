@@ -123,7 +123,9 @@ def prepare(root, cache, revision, features, timeout, environment):
     ).hexdigest()[:20]
     artifacts = cache / "binaries" / build_key
     artifacts.mkdir(parents=True, exist_ok=True)
-    environment = dict(environment, CARGO_TARGET_DIR=str(cache / "build"))
+    # Cargo's workspace fingerprints use mtimes, not source contents. Archives
+    # from different commits can otherwise reuse the preceding revision's binary.
+    environment = dict(environment, CARGO_TARGET_DIR=str(cache / "build" / commit))
     feature_log = artifacts / "features.log"
     run(
         ["cargo", "tree", "--locked", "-p", "gpui_platform", "--features", features,
