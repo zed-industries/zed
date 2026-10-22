@@ -33,6 +33,8 @@ use cocoa::{
 };
 
 use objc::runtime::{BOOL, NO, YES};
+use objc2::{rc::Retained, runtime::AnyObject};
+use objc2_foundation::NSString as Objc2NSString;
 use std::{
     ffi::{CStr, c_char},
     ops::Range,
@@ -69,6 +71,22 @@ impl NSStringExt for id {
                 ""
             } else {
                 CStr::from_ptr(cstr as *mut c_char).to_str().unwrap()
+            }
+        }
+    }
+}
+
+impl NSStringExt for *mut AnyObject {
+    unsafe fn to_str(&self) -> &str {
+        unsafe {
+            let Some(string) = self.cast::<Objc2NSString>().as_ref() else {
+                return "";
+            };
+            let cstr = string.UTF8String();
+            if cstr.is_null() {
+                ""
+            } else {
+                CStr::from_ptr(cstr).to_str().unwrap()
             }
         }
     }
@@ -126,6 +144,10 @@ unsafe impl objc::Encode for NSRange {
 
 /// Allow NSString::alloc use here because it sets autorelease
 #[allow(clippy::disallowed_methods)]
-unsafe fn ns_string(string: &str) -> id {
+fn legacy_ns_string(string: &str) -> id {
     unsafe { NSString::alloc(nil).init_str(string).autorelease() }
+}
+
+fn ns_string(string: &str) -> *mut AnyObject {
+    Retained::autorelease_ptr(Objc2NSString::from_str(string)).cast()
 }

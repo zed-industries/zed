@@ -6,6 +6,8 @@ use gpui::{Entity, TestAppContext, VisualTestContext};
 use menu::{Cancel, Confirm, SelectNext, SelectPrevious};
 use pretty_assertions::{assert_eq, assert_matches};
 use project::{FS_WATCH_LATENCY, RemoveOptions};
+use remote::RemoteClient;
+use remote_server::{HeadlessAppState, HeadlessProject};
 use serde_json::json;
 use settings::{SettingsStore, SplicingVec};
 use util::{path, rel_path::rel_path};
@@ -3536,6 +3538,359 @@ async fn test_nonexistent_history_items_not_shown(cx: &mut gpui::TestAppContext)
                 rel_path("test/third.rs").into()
             ],
             "Should have all opened files in the history, except the ones that do not exist on disk"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_deleted_remote_history_items_not_shown(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    cx.update(|cx| release_channel::init("0.0.0".parse().unwrap(), cx));
+    server_cx.update(|cx| release_channel::init("0.0.0".parse().unwrap(), cx));
+    let app_state = init_test(cx);
+    let server_app_state = init_test(server_cx);
+    server_app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/remote"),
+            json!({
+                "external.rs": "",
+                "src": {
+                    "root.rs": "",
+                    "nested": {
+                        "deleted.rs": "",
+                        "retained.rs": "",
+                    },
+                },
+            }),
+        )
+        .await;
+
+    let (options, session, _) = RemoteClient::fake_server(cx, server_cx);
+    server_cx.update(HeadlessProject::init);
+    let _headless_project = server_cx.new(|cx| {
+        HeadlessProject::new(
+            HeadlessAppState {
+                session,
+                fs: server_app_state.fs.clone(),
+                http_client: server_app_state.client.http_client(),
+                node_runtime: server_app_state.node_runtime.clone(),
+                languages: server_app_state.languages.clone(),
+                extension_host_proxy: Arc::default(),
+                startup_time: std::time::Instant::now(),
+            },
+            false,
+            cx,
+        )
+    });
+
+    let remote = RemoteClient::connect_mock(options, cx).await;
+
+    let project = cx.update(|cx| {
+        Project::init(&app_state.client, cx);
+        Project::remote(
+            remote,
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            false,
+            cx,
+        )
+    });
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/remote/src"), true, cx)
+        })
+        .await
+        .unwrap();
+
+    let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+        window.activate_window();
+        let workspace =
+            cx.new(|cx| Workspace::new(None, project.clone(), app_state.clone(), window, cx));
+        window.focus(&workspace.read(cx).focus_handle(cx), cx);
+        MultiWorkspace::new(workspace, window, cx)
+    });
+    let workspace = multi_workspace.read_with(cx, |workspace, _| workspace.workspace().clone());
+    workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_abs_path(
+                PathBuf::from(path!("/remote/external.rs")),
+                OpenOptions {
+                    visible: Some(OpenVisible::None),
+                    ..OpenOptions::default()
+                },
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    cx.dispatch_action(CloseActiveItem {
+        save_intent: None,
+        close_pinned: false,
+    });
+    workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_abs_path(
+                PathBuf::from(path!("/remote/src/nested/retained.rs")),
+                OpenOptions::default(),
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    cx.dispatch_action(CloseActiveItem {
+        save_intent: None,
+        close_pinned: false,
+    });
+    open_close_queried_buffer("deleted", 1, "deleted.rs", &workspace, cx).await;
+    open_close_queried_buffer("root", 1, "root.rs", &workspace, cx).await;
+    cx.run_until_parked();
+
+    for path in [
+        path!("/remote/src/root.rs"),
+        path!("/remote/src/nested/deleted.rs"),
+    ] {
+        server_app_state
+            .fs
+            .remove_file(Path::new(path), RemoveOptions::default())
+            .await
+            .unwrap();
+    }
+    advance_worktree_update_refresh(cx);
+    project.read_with(cx, |project, cx| {
+        for path in [
+            path!("/remote/src/root.rs"),
+            path!("/remote/src/nested/deleted.rs"),
+        ] {
+            let path = project
+                .project_path_for_absolute_path(Path::new(path), cx)
+                .unwrap();
+            assert!(project.entry_for_path(&path, cx).is_none());
+        }
+    });
+
+    let picker = open_file_picker(&workspace, cx);
+    picker.update(cx, |picker, cx| {
+        assert_eq!(
+            picker
+                .delegate
+                .matches
+                .matches
+                .iter()
+                .filter_map(|entry| match entry {
+                    Match::History { path, .. } => Some(path.absolute.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            vec![
+                PathBuf::from(path!("/remote/src/nested/retained.rs")),
+                PathBuf::from(path!("/remote/external.rs")),
+            ],
+        );
+        let external = picker.delegate.history_items.last().unwrap();
+        assert!(
+            project
+                .read(cx)
+                .worktree_for_id(external.project.worktree_id, cx)
+                .is_none()
+        );
+    });
+
+    simulate_input(cx, "deleted");
+    picker.update(cx, |picker, _| {
+        assert_matches!(
+            picker.delegate.matches.matches.as_slice(),
+            [Match::CreateNew(_)]
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_deleted_history_items_removed_while_picker_is_open(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/src"),
+            json!({
+                "root.rs": "",
+                "nested": {
+                    "deleted.rs": "",
+                    "retained.rs": "",
+                },
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |workspace, _| workspace.workspace().clone());
+    open_close_queried_buffer("retained", 1, "retained.rs", &workspace, cx).await;
+    open_close_queried_buffer("deleted", 1, "deleted.rs", &workspace, cx).await;
+    open_close_queried_buffer("root", 1, "root.rs", &workspace, cx).await;
+
+    let picker = open_file_picker(&workspace, cx);
+    picker.update(cx, |picker, _| {
+        assert_eq!(picker.delegate.matches.len(), 3);
+        assert_match_selection(picker, 0, "root.rs");
+    });
+    cx.dispatch_action(SelectNext);
+    app_state
+        .fs
+        .remove_file(Path::new(path!("/src/root.rs")), RemoveOptions::default())
+        .await
+        .unwrap();
+    advance_worktree_update_refresh(cx);
+
+    picker.update(cx, |picker, _| {
+        assert_eq!(picker.delegate.matches.len(), 2);
+        assert_match_selection(picker, 0, "deleted.rs");
+        assert_match_at_position(picker, 1, "retained.rs");
+    });
+
+    simulate_input(cx, "rs");
+    picker.update_in(cx, |picker, window, cx| {
+        assert_match_at_position(picker, 0, "deleted.rs");
+        picker.delegate.toggle_item_selected(0, window, cx);
+        assert_eq!(picker.delegate.selected_item_count(), 1);
+    });
+    app_state
+        .fs
+        .remove_file(
+            Path::new(path!("/src/nested/deleted.rs")),
+            RemoveOptions::default(),
+        )
+        .await
+        .unwrap();
+    advance_worktree_update_refresh(cx);
+
+    picker.update(cx, |picker, _| {
+        assert_eq!(picker.delegate.matches.len(), 2);
+        assert_match_selection(picker, 0, "retained.rs");
+        assert_eq!(picker.delegate.selected_item_count(), 0);
+        assert_matches!(picker.delegate.matches.get(0), Some(Match::History { .. }));
+        assert_matches!(picker.delegate.matches.get(1), Some(Match::CreateNew(_)));
+    });
+
+    cx.dispatch_action(Cancel);
+    let picker = open_file_picker(&workspace, cx);
+    picker.update(cx, |picker, _| {
+        assert_eq!(picker.delegate.matches.len(), 1);
+        assert_match_selection(picker, 0, "retained.rs");
+    });
+    cx.dispatch_action(Confirm);
+    let picker = open_file_picker(&workspace, cx);
+    simulate_input(cx, "retained");
+    app_state
+        .fs
+        .remove_file(
+            Path::new(path!("/src/nested/retained.rs")),
+            RemoveOptions::default(),
+        )
+        .await
+        .unwrap();
+    advance_worktree_update_refresh(cx);
+    picker.update(cx, |picker, _| {
+        assert!(picker.delegate.currently_opened_path.is_none());
+        assert_matches!(
+            picker.delegate.matches.matches.as_slice(),
+            [Match::CreateNew(_)]
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_history_refresh_preserves_other_worktrees_and_excluded_files(
+    cx: &mut TestAppContext,
+) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "one": { "nested": { "file.rs": "" } },
+                "two": { "nested": { "file.rs": "" } },
+            }),
+        )
+        .await;
+    let project = Project::test(
+        app_state.fs.clone(),
+        [path!("/root/one").as_ref(), path!("/root/two").as_ref()],
+        cx,
+    )
+    .await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = multi_workspace.read_with(cx, |workspace, _| workspace.workspace().clone());
+    for path in [
+        path!("/root/one/nested/file.rs"),
+        path!("/root/two/nested/file.rs"),
+    ] {
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_abs_path(PathBuf::from(path), OpenOptions::default(), window, cx)
+            })
+            .await
+            .unwrap();
+        cx.dispatch_action(CloseActiveItem {
+            save_intent: None,
+            close_pinned: false,
+        });
+    }
+    let picker = open_file_picker(&workspace, cx);
+    picker.update(cx, |picker, _| assert_eq!(picker.delegate.matches.len(), 2));
+    app_state
+        .fs
+        .remove_file(
+            Path::new(path!("/root/one/nested/file.rs")),
+            RemoveOptions::default(),
+        )
+        .await
+        .unwrap();
+    advance_worktree_update_refresh(cx);
+    picker.update_in(cx, |picker, window, cx| {
+        assert_eq!(picker.delegate.matches.len(), 1);
+        assert_eq!(
+            picker.delegate.history_items[0].absolute,
+            Path::new(path!("/root/two/nested/file.rs"))
+        );
+        picker.delegate.toggle_item_selected(0, window, cx);
+    });
+
+    cx.update(|_, cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions =
+                    Some(SplicingVec::from(vec!["**/file.rs".to_string()]));
+            });
+        });
+    });
+    advance_worktree_update_refresh(cx);
+    picker.update(cx, |picker, cx| {
+        let retained_path = &picker.delegate.history_items[0];
+        assert!(
+            project
+                .read(cx)
+                .entry_for_path(&retained_path.project, cx)
+                .is_none()
+        );
+        assert_eq!(picker.delegate.matches.len(), 1);
+        assert_eq!(picker.delegate.selected_item_count(), 1);
+        assert_eq!(
+            retained_path.absolute,
+            Path::new(path!("/root/two/nested/file.rs"))
         );
     });
 }

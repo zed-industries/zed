@@ -983,6 +983,36 @@ impl AgentThreadEntry {
         }
     }
 
+    pub fn has_pending_markdown_render(&self, cx: &App) -> bool {
+        let has_pending_render =
+            |markdown: &Entity<Markdown>| markdown.read(cx).has_pending_render();
+        match self {
+            Self::UserMessage(message) => message.content.markdowns().any(has_pending_render),
+            Self::AssistantMessage(message) => message.chunks.iter().any(|chunk| {
+                let (AssistantMessageChunk::Message { block, .. }
+                | AssistantMessageChunk::Thought { block, .. }) = chunk;
+                block.markdowns().any(has_pending_render)
+            }),
+            Self::ToolCall(call) => {
+                has_pending_render(&call.label)
+                    || call
+                        .raw_input_markdown
+                        .as_ref()
+                        .is_some_and(has_pending_render)
+                    || call
+                        .content()
+                        .iter()
+                        .filter_map(ToolCallContent::markdown)
+                        .any(has_pending_render)
+            }
+            Self::ContextCompaction(compaction) => {
+                compaction.error.as_ref().is_some_and(has_pending_render)
+                    || compaction.summary.markdowns().any(has_pending_render)
+            }
+            Self::Elicitation(_) => false,
+        }
+    }
+
     pub fn to_markdown(&self, cx: &App) -> String {
         match self {
             Self::UserMessage(message) => message.to_markdown(cx),
@@ -1644,7 +1674,7 @@ impl ToolCall {
                     (Some(markdown), Some(text)) => update_markdown_in_place(markdown, &text, cx),
                     (_, Some(text)) => {
                         self.raw_input_markdown = Some(cx.new(|cx| {
-                            Markdown::new(text.into(), Some(language_registry.clone()), None, cx)
+                            Markdown::new_deferred(text, Some(language_registry.clone()), cx)
                         }));
                     }
                     (_, None) => self.raw_input_markdown = None,
@@ -1697,7 +1727,7 @@ impl ToolCall {
             update_markdown_in_place(markdown, &text, cx);
         } else {
             let markdown =
-                cx.new(|cx| Markdown::new(text.into(), Some(language_registry.clone()), None, cx));
+                cx.new(|cx| Markdown::new_deferred(text, Some(language_registry.clone()), cx));
             self.raw_output_content = Some(Box::new(ToolCallContent::ContentBlock {
                 block: ContentBlock::from_markdown(markdown),
                 meta: None,
@@ -2689,6 +2719,7 @@ impl ContentBlock {
                 MarkdownOptions {
                     render_mermaid_diagrams: true,
                     render_metadata_blocks: true,
+                    defer_parsing: true,
                     ..Default::default()
                 },
                 cx,
@@ -3095,13 +3126,12 @@ impl ToolCallContent {
                 meta: content.meta,
             },
             PreparedToolCallContent::LegacyDiff(source) => {
-                let diff = cx.new(|cx| {
+                let diff = cx.new(|_| {
                     Diff::finalized(
                         source.path.to_string_lossy().into_owned(),
                         source.old_text.clone(),
                         source.new_text.clone(),
                         language_registry.clone(),
-                        cx,
                     )
                 });
                 Self::LegacyDiff { source, diff }
@@ -3179,7 +3209,7 @@ impl ToolCallContent {
 
     pub fn to_markdown(&self, cx: &App) -> String {
         match self {
-            Self::ContentBlock { block, .. } => block.to_markdown(cx).to_string(),
+            Self::ContentBlock { block, .. } => block.to_markdown(cx).to_owned(),
             Self::Diff(diff) | Self::LegacyDiff { diff, .. } => diff.read(cx).to_markdown(cx),
             Self::Terminal { terminal, .. } => terminal.read(cx).to_markdown(cx),
             Self::DiffPatch { source, .. } => format!(
@@ -8099,7 +8129,7 @@ fn markdown_for_raw_output(
     cx: &mut App,
 ) -> Option<Entity<Markdown>> {
     let text = raw_output_text(raw_output)?;
-    Some(cx.new(|cx| Markdown::new(text.into(), Some(language_registry.clone()), None, cx)))
+    Some(cx.new(|cx| Markdown::new_deferred(text, Some(language_registry.clone()), cx)))
 }
 
 fn raw_output_text(raw_output: &serde_json::Value) -> Option<String> {
@@ -9749,13 +9779,12 @@ mod tests {
             };
             assert_eq!(source.path, PathBuf::from("second.rs"));
             assert_ne!(diff, &previous);
-            let native_diff = cx.new(|cx| {
+            let native_diff = cx.new(|_| {
                 Diff::finalized(
                     "native.rs".into(),
                     Some("before".into()),
                     "after".into(),
                     languages.clone(),
-                    cx,
                 )
             });
             let mut native = ToolCallContent::Diff(native_diff.clone());
@@ -15073,6 +15102,12 @@ mod tests {
                     thread.to_markdown(cx),
                     format!("## Context Compaction (Completed)\n\n{summary}\n\n")
                 );
+                let entry = thread.entries.last().expect("compaction entry must exist");
+                assert!(!entry.has_pending_markdown_render(cx));
+                for markdown in compaction.summary.markdowns() {
+                    markdown.update(cx, |markdown, cx| markdown.ensure_parsed(cx));
+                }
+                assert!(entry.has_pending_markdown_render(cx));
             }
 
             thread
@@ -15104,6 +15139,13 @@ mod tests {
             assert_eq!(
                 thread.to_markdown(cx),
                 "## Context Compaction (Failed)\n\n**Error:** model unavailable\n\n"
+            );
+            assert!(
+                thread
+                    .entries
+                    .last()
+                    .expect("compaction entry must exist")
+                    .has_pending_markdown_render(cx)
             );
 
             for error in [
