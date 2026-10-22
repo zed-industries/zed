@@ -973,6 +973,38 @@ mod tests {
         )
     }
 
+    #[test]
+    fn test_go_test_task_template_cwd() {
+        for (path_style, uri, expected_cwd) in [
+            (
+                PathStyle::Windows,
+                "file:///C:/my%20repo/main_test.go",
+                r"C:\my repo",
+            ),
+            (
+                PathStyle::Windows,
+                "file://server/share/pkg/main_test.go",
+                r"\\server\share\pkg",
+            ),
+            (PathStyle::Windows, "file:///C:/main_test.go", r"C:\"),
+            (PathStyle::Unix, "file:///C:/repo/main_test.go", "/C:/repo"),
+            (
+                PathStyle::Unix,
+                "file:///my%20repo/main_test.go",
+                "/my repo",
+            ),
+        ] {
+            let template =
+                go_test_task_template(&json!({ "URI": uri, "Tests": ["TestExample"] }), path_style)
+                    .expect("test task should be generated");
+            assert_eq!(
+                template.cwd.as_deref(),
+                Some(expected_cwd),
+                "{path_style:?}: {uri}"
+            );
+        }
+    }
+
     #[gpui::test]
     async fn test_go_label_for_completion() {
         let adapter = Arc::new(GoLspAdapter);
