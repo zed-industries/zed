@@ -1465,12 +1465,7 @@ fn churn_workloads() -> Vec<Churn> {
     }
 }
 
-thread_local! {
-    static DESCRIBED_CHURN: RefCell<Vec<Churn>> = const { RefCell::new(Vec::new()) };
-}
-
-#[gpui::bench(inputs = churn_workloads(), input_name = "workload", group = "LayoutChurn", fps = 120)]
-fn layout_churn(workload: &Churn, cx: &mut BenchAppContext) {
+fn assert_churn_font(cx: &BenchAppContext) {
     let font = gpui::font("Noto Sans Mono");
     let text_system = cx.read(|cx| cx.text_system().clone());
     assert!(
@@ -1483,16 +1478,13 @@ fn layout_churn(workload: &Churn, cx: &mut BenchAppContext) {
         text_system.get_font_for_id(font_id).map(|font| font.family),
         Some(font.family)
     );
-    let describe = DESCRIBED_CHURN.with(|described| {
-        let mut described = described.borrow_mut();
-        if described.contains(workload) {
-            false
-        } else {
-            described.push(*workload);
-            true
-        }
-    });
-    if describe && std::env::var("GPUI_BENCH_HEAP").as_deref() == Ok("1") {
+}
+
+#[gpui::bench(inputs = churn_workloads(), input_name = "workload", group = "LayoutChurnHeap", fps = 120)]
+fn layout_churn_heap(workload: &Churn, cx: &mut BenchAppContext) {
+    assert_churn_font(cx);
+    // One iteration is a complete 3,000-frame lifetime, not a frame comparison.
+    cx.bench_iter(|cx| {
         let before_window = bench_metrics::allocation_stats();
         let mut window = cx.add_empty_window();
         let root = window
@@ -1527,7 +1519,12 @@ fn layout_churn(workload: &Churn, cx: &mut BenchAppContext) {
         window.update(|window, _| window.remove_window());
         drop(root);
         cx.run_until_idle();
-    }
+    });
+}
+
+#[gpui::bench(inputs = churn_workloads(), input_name = "workload", group = "LayoutChurn", fps = 120)]
+fn layout_churn(workload: &Churn, cx: &mut BenchAppContext) {
+    assert_churn_font(cx);
     let mut window = cx.add_empty_window();
     let root =
         window.update(|window, cx| window.replace_root(cx, |_, cx| ChurnRoot::new(*workload, cx)));
@@ -1578,4 +1575,12 @@ gpui::bench_group!(
     layout_churn,
     family_summary
 );
-gpui::bench_main!(benches);
+gpui::bench_group!(
+    name = heap_diagnostics;
+    config = criterion::Criterion::default()
+        .warm_up_time(Duration::from_millis(1))
+        .measurement_time(Duration::from_millis(1))
+        .sample_size(10);
+    targets = layout_churn_heap
+);
+gpui::bench_main!(benches, heap_diagnostics);

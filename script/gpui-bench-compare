@@ -29,7 +29,7 @@ Spread is the full range of independent run medians divided by their median,
 not a confidence interval. Warnings also flag wide within-run sample ranges;
 even slow settings can drift, so inspect raw samples before judging small changes.
 Do not run competing benchmarks on the same machine.
-GPUI_BENCH_HEAP=1 explicitly enables the separate 3000-frame churn heap diagnostic.
+LayoutChurnHeap diagnostics are excluded, including with --full or --filter.
 Both revisions inherit the same rendering mode: unset GPUI_LAYOUT_CACHE and
 GPUI_RETAIN_VIEWS for the default path, set GPUI_LAYOUT_CACHE=1 for cache-only,
 or GPUI_RETAIN_VIEWS=1 for retention (which implicitly enables the layout cache).
@@ -252,8 +252,6 @@ def main():
     environment = dict(os.environ, BENCH_MEASUREMENT="foreground-instructions",
                        SEED=str(args.seed), ITERATIONS="1")
     environment["GPUI_BENCH_NO_GPU"] = "1" if args.renderer == "cpu" else "0"
-    if environment.get("GPUI_BENCH_HEAP") == "1":
-        raise RuntimeError("unset GPUI_BENCH_HEAP: heap diagnostics are not frame comparisons")
     environment["PATH"] = str(Path.home() / ".cargo/bin") + os.pathsep + environment["PATH"]
     revisions = []
     if args.renderer == "cpu":
@@ -279,7 +277,8 @@ def main():
             run([str(revision["binaries"][target]), "--list", pattern],
                 cwd=output, environment=environment, log=log, timeout=args.timeout)
             listings.append([line.removesuffix(": benchmark") for line in log.read_text().splitlines()
-                             if line.endswith(": benchmark")])
+                             if line.endswith(": benchmark")
+                             and not line.startswith("LayoutChurnHeap/")])
         if listings[0] != listings[1]:
             raise RuntimeError(f"benchmark IDs differ for {target}")
         cases[target] = listings[0]
