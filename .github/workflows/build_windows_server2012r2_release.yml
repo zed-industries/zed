@@ -19,7 +19,7 @@ permissions:
 jobs:
   build-server2012r2:
     name: Build Windows Server 2012 R2 artifact
-    runs-on: [self-hosted, windows, x64, server2012r2]
+    runs-on: windows-2022
     timeout-minutes: 180
     env:
       CARGO_TERM_COLOR: always
@@ -48,22 +48,6 @@ jobs:
           fetch-depth: 0
           clean: false
 
-      - name: Validate Windows build prerequisites
-        shell: pwsh
-        run: |
-          $vc = @(
-            "C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC\\Auxiliary\\Build\\vcvars64.bat",
-            "C:\\Program Files\\Microsoft Visual Studio\\2022\\Professional\\VC\\Auxiliary\\Build\\vcvars64.bat",
-            "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Auxiliary\\Build\\vcvars64.bat",
-            "C:\\Program Files\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Auxiliary\\Build\\vcvars64.bat"
-          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
-
-          if (-not $vc) {
-            throw "MSVC toolchain not found. Install Visual Studio 2022 Build Tools on the runner."
-          }
-
-          Write-Host "Using MSVC script: $vc"
-
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -75,12 +59,10 @@ jobs:
         run: |
           $cargoDir = Join-Path $env:USERPROFILE ".cargo"
           New-Item -ItemType Directory -Path $cargoDir -Force | Out-Null
-
           $config = @"
           [target.x86_64-pc-windows-msvc]
           rustflags = ["-C", "link-arg=/SUBSYSTEM:WINDOWS,6.03"]
           "@
-
           Set-Content -Path (Join-Path $cargoDir "config.toml") -Value $config -Encoding UTF8
 
       - name: Clean target dir if needed
