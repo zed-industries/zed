@@ -2245,14 +2245,12 @@ mod tests {
     }
 
     // Cached group-hover listeners retain an ancestor hitbox from an older frame.
-    #[ignore = "group-hover listeners in cached children retain an old ancestor hitbox"]
     #[gpui::test(iterations = 2)]
     fn hover_styles_match_forced_reconstruction(rng: StdRng, cx: &mut TestAppContext) {
         views_match_forced_reconstruction(rng, cx, true, false, false, true);
     }
 
     // Redrawing a group replaces the ancestor hitbox captured by a cached child.
-    #[ignore = "a clean parent redraw replaces the hitbox captured by a cached group-hover listener"]
     #[gpui::test]
     fn cached_group_hover_survives_parent_redraw(cx: &mut TestAppContext) {
         struct Leaf;
@@ -2327,6 +2325,141 @@ mod tests {
     fn cached_scroll_offset_without_notify(cx: &mut TestAppContext) {
         for retention in [false, true] {
             inherited_scope_regression(cx, true, retention);
+        }
+    }
+
+    #[gpui::test]
+    fn cached_group_scope_tracks_anonymous_siblings(cx: &mut TestAppContext) {
+        struct Leaf;
+        impl Render for Leaf {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .id("leaf")
+                    .size_full()
+                    .bg(crate::rgb(0xff0000))
+                    .group_hover("shared", |style| style.bg(crate::rgb(0x0000ff)))
+                    .group_active("shared", |style| style.bg(crate::rgb(0x00ff00)))
+            }
+        }
+        struct Root {
+            leaves: [Entity<Leaf>; 2],
+            insert_empty: bool,
+            nested: bool,
+            hidden: bool,
+        }
+        impl Render for Root {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .id("groups")
+                    .flex()
+                    .flex_col()
+                    .w(px(200.0))
+                    .h(px(400.0))
+                    .when(self.insert_empty, |element| {
+                        element.child(div().group("shared").w(px(200.0)).h(px(0.0)))
+                    })
+                    .children(self.leaves.iter().enumerate().filter_map(|(index, leaf)| {
+                        if self.hidden && index == 0 {
+                            return None;
+                        }
+                        let child = leaf
+                            .clone()
+                            .cached(crate::StyleRefinement::default().size(px(100.0)))
+                            .into_any_element();
+                        let child = if self.nested && index == 0 {
+                            div()
+                                .group("shared")
+                                .w(px(100.0))
+                                .h(px(100.0))
+                                .child(child)
+                                .into_any_element()
+                        } else {
+                            child
+                        };
+                        Some(div().group("shared").w(px(200.0)).h(px(100.0)).child(child))
+                    }))
+            }
+        }
+        for retained in [false, true] {
+            let windows = [false, true].map(|fresh| {
+                cx.open_window(WINDOW_SIZE, |window, cx| {
+                    window.set_view_retention(retained && !fresh);
+                    window.set_force_view_reconstruction(fresh);
+                    Root {
+                        leaves: [cx.new(|_| Leaf), cx.new(|_| Leaf)],
+                        insert_empty: false,
+                        nested: false,
+                        hidden: false,
+                    }
+                })
+            });
+            for frame in 0..14 {
+                let position = match frame {
+                    2 | 5 | 7 | 9 | 11 | 13 => crate::point(px(10.0), px(10.0)),
+                    3 | 4 => crate::point(px(10.0), px(110.0)),
+                    8 => crate::point(px(150.0), px(10.0)),
+                    _ => crate::point(px(500.0), px(10.0)),
+                };
+                let snapshots = windows.map(|window| {
+                    if matches!(frame, 4 | 6 | 8 | 10) {
+                        window
+                            .update(cx, |root, _, cx| {
+                                root.insert_empty = frame == 4;
+                                root.nested = frame >= 8;
+                                root.hidden = frame >= 10;
+                                cx.notify();
+                            })
+                            .expect("anonymous group mutation");
+                    }
+                    cx.update_window(window.into(), |_, window, cx| {
+                        window.simulate_mouse_move(position, cx);
+                        if frame == 9 {
+                            window.dispatch_event(
+                                crate::PlatformInput::MouseDown(crate::MouseDownEvent {
+                                    position,
+                                    button: crate::MouseButton::Left,
+                                    modifiers: Default::default(),
+                                    click_count: 1,
+                                    first_mouse: false,
+                                }),
+                                cx,
+                            );
+                        } else if frame == 10 {
+                            window.dispatch_event(
+                                crate::PlatformInput::MouseUp(crate::MouseUpEvent {
+                                    position,
+                                    button: crate::MouseButton::Left,
+                                    modifiers: Default::default(),
+                                    click_count: 1,
+                                }),
+                                cx,
+                            );
+                        }
+                    })
+                    .expect("anonymous group input");
+                    let root = window.root(cx).expect("anonymous group root");
+                    let mut identities = root.read_with(cx, |root, _| {
+                        root.leaves
+                            .iter()
+                            .enumerate()
+                            .map(|(index, leaf)| (leaf.entity_id(), format!("leaf-{index}")))
+                            .collect::<HashMap<_, _>>()
+                    });
+                    identities.insert(root.entity_id(), "root".into());
+                    cx.update_window(window.into(), |_, window, cx| {
+                        window.draw(cx).clear(cx);
+                        window.view_reuse_snapshot(|id| identities[&id].clone())
+                    })
+                    .expect("anonymous group frame")
+                });
+                snapshots[0]
+                    .compare(&snapshots[1], frame)
+                    .expect("anonymous group scope matches");
+            }
+            for window in windows {
+                cx.update_window(window.into(), |_, window, _| window.remove_window())
+                    .expect("anonymous group window");
+            }
         }
     }
 

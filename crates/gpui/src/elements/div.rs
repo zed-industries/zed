@@ -18,13 +18,13 @@
 use crate::{
     Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, BackGestureEvent, Bounds, ClickEvent,
     DispatchPhase, Display, Element, ElementId, Entity, EntityId, ExternalDragPayload,
-    ExternalDragPayloadSource, FileDropEvent, FocusHandle, Global, GlobalElementId, Hitbox,
-    HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent,
-    KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId, LongPressEvent,
-    ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent, MouseExitEvent,
-    MouseMoveEvent, MousePressureEvent, MouseUpEvent, OngoingScroll, Overflow, ParentElement,
-    PinchEvent, Pixels, Point, Render, ScrollEvent, SharedString, Size, Style, StyleRefinement,
-    Styled, Task, TooltipId, TouchPhase, Visibility, Window, WindowControlArea, point, px, size,
+    ExternalDragPayloadSource, FileDropEvent, FocusHandle, GlobalElementId, Hitbox, HitboxBehavior,
+    HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent,
+    KeyboardButton, KeyboardClickEvent, LayoutId, LongPressEvent, ModifiersChangedEvent,
+    MouseButton, MouseClickEvent, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
+    MousePressureEvent, MouseUpEvent, OngoingScroll, Overflow, ParentElement, PinchEvent, Pixels,
+    Point, Render, ScrollEvent, SharedString, Size, Style, StyleRefinement, Styled, Task,
+    TooltipId, TouchPhase, Visibility, Window, WindowControlArea, point, px, size,
 };
 use collections::HashMap;
 use gpui_util::ResultExt;
@@ -2511,7 +2511,23 @@ impl Interactivity {
                                 // paint phase, where dispatch listeners would otherwise refresh.
                                 window.with_element_paint_suppressed(
                                     style.visibility == Visibility::Hidden,
-                                    |window| f(&style, scroll_offset, hitbox, window, cx),
+                                    |window| {
+                                        if let Some(group) = self.group.as_ref()
+                                            && let Some(hitbox) = hitbox.as_ref()
+                                        {
+                                            window.group_hitboxes.register(
+                                                group.clone(),
+                                                window.element_id_stack.handle(),
+                                                hitbox,
+                                            );
+                                        }
+                                        let grouped = self.group.is_some() && hitbox.is_some();
+                                        let result = f(&style, scroll_offset, hitbox, window, cx);
+                                        if grouped {
+                                            window.group_hitboxes.pop();
+                                        }
+                                        result
+                                    },
                                 )
                             });
                             (result, element_state)
@@ -2696,8 +2712,8 @@ impl Interactivity {
                                                 }
                                             }
 
-                                            if let Some(group) = self.group.clone() {
-                                                GroupHitboxes::push(group, hitbox.id, cx);
+                                            if self.group.is_some() {
+                                                window.group_hitboxes.enter(hitbox.id);
                                             }
 
                                             if let Some(area) = self.window_control {
@@ -2743,8 +2759,8 @@ impl Interactivity {
                                                 cx,
                                             );
 
-                                            if let Some(group) = self.group.as_ref() {
-                                                GroupHitboxes::pop(group, cx);
+                                            if self.group.is_some() {
+                                                window.group_hitboxes.pop();
                                             }
                                         }
                                     })
@@ -3058,7 +3074,7 @@ impl Interactivity {
             .as_ref()
             .and_then(|cold| cold.group_hover_style.as_ref())
         {
-            if let Some(group_hitbox_id) = GroupHitboxes::get(&group_hover.group, cx) {
+            if let Some(group_key) = window.group_hitboxes.key(&group_hover.group) {
                 let hover_state = element_state
                     .as_ref()
                     .and_then(|element| element.hover_state.as_ref())
@@ -3066,7 +3082,10 @@ impl Interactivity {
                 let current_view = window.current_view();
 
                 window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, cx| {
-                    let group_hovered = group_hitbox_id.is_hovered(window);
+                    let group_hovered = window
+                        .group_hitboxes
+                        .resolve(&group_key)
+                        .is_some_and(|hitbox| hitbox.is_hovered(window));
                     let was_group_hovered = hover_state
                         .as_ref()
                         .is_some_and(|state| state.borrow().group);
@@ -3462,12 +3481,14 @@ impl Interactivity {
                     .cold
                     .as_ref()
                     .and_then(|cold| cold.group_active_style.as_ref())
-                    .and_then(|group_active| GroupHitboxes::get(&group_active.group, cx));
+                    .and_then(|group_active| window.group_hitboxes.key(&group_active.group));
                 let hitbox = hitbox.clone();
                 window.on_mouse_event(move |_: &MouseDownEvent, phase, window, _cx| {
                     if phase == DispatchPhase::Bubble && !window.default_prevented() {
                         let group_hovered = active_group_hitbox
-                            .is_some_and(|group_hitbox_id| group_hitbox_id.is_hovered(window));
+                            .as_ref()
+                            .and_then(|key| window.group_hitboxes.resolve(key))
+                            .is_some_and(|hitbox| hitbox.is_hovered(window));
                         let element_hovered = hitbox.is_hovered(window);
                         if group_hovered || element_hovered {
                             *active_state.borrow_mut() = ElementClickedState {
@@ -3518,18 +3539,24 @@ impl Interactivity {
         }
     }
 
-    fn paint_hover_group_handler(&self, window: &mut Window, cx: &mut App) {
+    fn paint_hover_group_handler(&self, window: &mut Window, _cx: &mut App) {
         let group_hitbox = self
             .cold
             .as_ref()
             .and_then(|cold| cold.group_hover_style.as_ref())
-            .and_then(|group_hover| GroupHitboxes::get(&group_hover.group, cx));
+            .and_then(|group_hover| window.group_hitboxes.key(&group_hover.group));
 
-        if let Some(group_hitbox) = group_hitbox {
-            let was_hovered = group_hitbox.is_hovered(window);
+        if let Some(group_key) = group_hitbox {
+            let was_hovered = window
+                .group_hitboxes
+                .resolve(&group_key)
+                .is_some_and(|hitbox| hitbox.is_hovered(window));
             let current_view = window.current_view();
             window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, cx| {
-                let hovered = group_hitbox.is_hovered(window);
+                let hovered = window
+                    .group_hitboxes
+                    .resolve(&group_key)
+                    .is_some_and(|hitbox| hitbox.is_hovered(window));
                 if phase == DispatchPhase::Capture && hovered != was_hovered {
                     cx.notify(current_view);
                 }
@@ -3666,7 +3693,7 @@ impl Interactivity {
                 .and_then(|cold| cold.group_hover_style.as_ref())
             {
                 let is_group_hovered =
-                    if let Some(group_hitbox_id) = GroupHitboxes::get(&group_hover.group, cx) {
+                    if let Some(group_hitbox_id) = window.group_hitboxes.get(&group_hover.group) {
                         !window.last_input_was_touch() && group_hitbox_id.is_hovered(window)
                     } else if let Some(element_state) = element_state.as_ref() {
                         !window.last_input_was_touch()
@@ -3727,7 +3754,7 @@ impl Interactivity {
                         .flat_map(|cold| &cold.group_drag_over_styles)
                     {
                         if let Some(group_hitbox_id) =
-                            GroupHitboxes::get(&group_drag_style.group, cx)
+                            window.group_hitboxes.get(&group_drag_style.group)
                             && *state_type == drag.value.as_ref().type_id()
                             && group_hitbox_id.is_hovered(window)
                         {
@@ -4293,30 +4320,103 @@ fn handle_tooltip_check_visible_and_update(
     active_tooltip.borrow().is_some()
 }
 
-#[derive(Default)]
-pub(crate) struct GroupHitboxes(HashMap<SharedString, SmallVec<[HitboxId; 1]>>);
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct GroupHitboxKey {
+    name: SharedString,
+    path: crate::element::InternedHandle,
+    ordinal: usize,
+}
 
-impl Global for GroupHitboxes {}
+#[derive(Clone, PartialEq)]
+pub(crate) struct GroupHitboxScope {
+    key: GroupHitboxKey,
+    bounds: Bounds<Pixels>,
+    content_mask: crate::ContentMask<Pixels>,
+    parent: Option<Rc<GroupHitboxScope>>,
+}
+
+#[derive(Default)]
+pub(crate) struct GroupHitboxes {
+    pub(crate) scope: Option<Rc<GroupHitboxScope>>,
+    hitboxes: HashMap<GroupHitboxKey, HitboxId>,
+    scopes: HashMap<HitboxId, Rc<GroupHitboxScope>>,
+    ordinals: HashMap<(SharedString, crate::element::InternedHandle), usize>,
+}
 
 impl GroupHitboxes {
-    pub fn get(name: &SharedString, cx: &mut App) -> Option<HitboxId> {
-        cx.default_global::<Self>()
-            .0
-            .get(name)
-            .and_then(|bounds_stack| bounds_stack.last())
-            .cloned()
+    pub(crate) fn begin_frame(&mut self) {
+        debug_assert!(self.scope.is_none());
+        self.ordinals.clear();
     }
 
-    pub fn push(name: SharedString, hitbox_id: HitboxId, cx: &mut App) {
-        cx.default_global::<Self>()
-            .0
-            .entry(name)
-            .or_default()
-            .push(hitbox_id);
+    pub(crate) fn finish_frame(&mut self, hitboxes: impl Iterator<Item = HitboxId>) {
+        debug_assert!(self.scope.is_none());
+        if self.hitboxes.is_empty() {
+            return;
+        }
+        // Replayed groups do not register again, but removed groups must no
+        // longer resolve through a hitbox from an older frame.
+        let live = hitboxes.collect::<collections::FxHashSet<_>>();
+        self.hitboxes.retain(|_, hitbox| live.contains(hitbox));
+        self.scopes.retain(|hitbox, _| live.contains(hitbox));
     }
 
-    pub fn pop(name: &SharedString, cx: &mut App) {
-        cx.default_global::<Self>().0.get_mut(name).unwrap().pop();
+    fn register(
+        &mut self,
+        name: SharedString,
+        path: crate::element::InternedHandle,
+        hitbox: &Hitbox,
+    ) {
+        // Anonymous siblings share a path. Their ordinal is inherited scope,
+        // so inserting or removing one invalidates views that change groups.
+        let ordinal = self.ordinals.entry((name.clone(), path)).or_default();
+        let key = GroupHitboxKey {
+            name,
+            path,
+            ordinal: *ordinal,
+        };
+        *ordinal += 1;
+        let scope = Rc::new(GroupHitboxScope {
+            key: key.clone(),
+            bounds: hitbox.bounds,
+            content_mask: hitbox.content_mask,
+            parent: self.scope.clone(),
+        });
+        self.hitboxes.insert(key, hitbox.id);
+        self.scopes.insert(hitbox.id, scope.clone());
+        self.scope = Some(scope);
+    }
+
+    fn enter(&mut self, hitbox: HitboxId) {
+        self.scope = Some(
+            self.scopes
+                .get(&hitbox)
+                .expect("group hitbox registered during prepaint")
+                .clone(),
+        );
+    }
+
+    fn pop(&mut self) {
+        self.scope = self.scope.as_ref().and_then(|scope| scope.parent.clone());
+    }
+
+    fn key(&self, name: &SharedString) -> Option<GroupHitboxKey> {
+        let mut scope = self.scope.as_ref();
+        while let Some(current) = scope {
+            if current.key.name == *name {
+                return Some(current.key.clone());
+            }
+            scope = current.parent.as_ref();
+        }
+        None
+    }
+
+    fn resolve(&self, key: &GroupHitboxKey) -> Option<HitboxId> {
+        self.hitboxes.get(key).copied()
+    }
+
+    fn get(&self, name: &SharedString) -> Option<HitboxId> {
+        self.key(name).and_then(|key| self.resolve(&key))
     }
 }
 

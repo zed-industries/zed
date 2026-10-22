@@ -1165,6 +1165,7 @@ pub(crate) struct ViewExecutionScope {
     image_cache: Option<Rc<AnyImageCache>>,
     opacity: f32,
     paint_suppressed: bool,
+    groups: Option<Rc<crate::GroupHitboxScope>>,
     rem_size: Pixels,
     scale_factor: f32,
     pub(crate) dispatch_node: Option<DispatchNodeId>,
@@ -1422,6 +1423,7 @@ pub struct Window {
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) element_opacity: f32,
     pub(crate) element_paint_suppressed: bool,
+    pub(crate) group_hitboxes: crate::GroupHitboxes,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) requested_autoscroll: Option<Bounds<Pixels>>,
     /// The [`TextInputConfiguration`] most recently forwarded to the platform
@@ -2368,6 +2370,7 @@ impl Window {
             content_mask_stack: Vec::new(),
             element_opacity: 1.0,
             element_paint_suppressed: false,
+            group_hitboxes: crate::GroupHitboxes::default(),
             requested_autoscroll: None,
             last_text_input_configuration: None,
             focused_text_input: None,
@@ -2603,6 +2606,7 @@ impl Window {
             image_cache,
             opacity: self.element_opacity,
             paint_suppressed: self.element_paint_suppressed,
+            groups: self.group_hitboxes.scope.clone(),
             rem_size: self.rem_size,
             scale_factor: self.scale_factor,
             dispatch_node: self.next_frame.dispatch_tree.active_node_id(),
@@ -2627,6 +2631,7 @@ impl Window {
                 == new.image_cache.as_ref().map(|cache| cache.entity_id())
             && old.opacity == new.opacity
             && old.paint_suppressed == new.paint_suppressed
+            && old.groups == new.groups
             && old.content_mask == new.content_mask
     }
 
@@ -2690,6 +2695,7 @@ impl Window {
             &mut self.element_paint_suppressed,
             &mut scope.paint_suppressed,
         );
+        mem::swap(&mut self.group_hitboxes.scope, &mut scope.groups);
         mem::swap(
             &mut self.current_view_occurrence,
             &mut scope.parent_occurrence,
@@ -2710,6 +2716,7 @@ impl Window {
             &mut self.element_paint_suppressed,
             &mut scope.paint_suppressed,
         );
+        mem::swap(&mut self.group_hitboxes.scope, &mut scope.groups);
         mem::swap(
             &mut self.current_view_occurrence,
             &mut scope.parent_occurrence,
@@ -4087,6 +4094,7 @@ impl Window {
             self.refresh();
         }
         self.invalidate_entities();
+        self.group_hitboxes.begin_frame();
         if self.view_splicing && self.retained_input_changed {
             self.refreshing = true;
             self.retained_input_changed = false;
@@ -4140,6 +4148,8 @@ impl Window {
             }
         }
         self.dirty_views.clear();
+        self.group_hitboxes
+            .finish_frame(self.next_frame.hitboxes.iter().map(|hitbox| hitbox.id));
         if self.view_splicing {
             self.view_store.finish_frame();
             self.scope_image_caches
