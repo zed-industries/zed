@@ -98,7 +98,7 @@ pub enum ScrollStrategy {
     Nearest,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(missing_docs)]
 pub struct DeferredScrollToItem {
     /// The item index to scroll to
@@ -148,7 +148,7 @@ impl UniformListScrollHandle {
     /// If the item is out of view, it scrolls the minimum amount to bring it into view according
     /// to the strategy.
     pub fn scroll_to_item(&self, ix: usize, strategy: ScrollStrategy) {
-        self.0.borrow_mut().deferred_scroll_to_item = Some(DeferredScrollToItem {
+        self.defer_scroll_to_item(DeferredScrollToItem {
             item_index: ix,
             strategy,
             offset: 0,
@@ -161,7 +161,7 @@ impl UniformListScrollHandle {
     /// This uses strict scrolling: the item will always be scrolled to match the strategy position,
     /// even if it's already visible. Use this when you need precise positioning.
     pub fn scroll_to_item_strict(&self, ix: usize, strategy: ScrollStrategy) {
-        self.0.borrow_mut().deferred_scroll_to_item = Some(DeferredScrollToItem {
+        self.defer_scroll_to_item(DeferredScrollToItem {
             item_index: ix,
             strategy,
             offset: 0,
@@ -180,7 +180,7 @@ impl UniformListScrollHandle {
     /// - `ScrollStrategy::Center`: Shrinks from top, centers item in the reduced viewport
     /// - `ScrollStrategy::Bottom`: Shrinks from bottom, positions item at the new bottom
     pub fn scroll_to_item_with_offset(&self, ix: usize, strategy: ScrollStrategy, offset: usize) {
-        self.0.borrow_mut().deferred_scroll_to_item = Some(DeferredScrollToItem {
+        self.defer_scroll_to_item(DeferredScrollToItem {
             item_index: ix,
             strategy,
             offset,
@@ -204,12 +204,20 @@ impl UniformListScrollHandle {
         strategy: ScrollStrategy,
         offset: usize,
     ) {
-        self.0.borrow_mut().deferred_scroll_to_item = Some(DeferredScrollToItem {
+        self.defer_scroll_to_item(DeferredScrollToItem {
             item_index: ix,
             strategy,
             offset,
             scroll_strict: true,
         });
+    }
+
+    fn defer_scroll_to_item(&self, request: DeferredScrollToItem) {
+        let mut state = self.0.borrow_mut();
+        if state.deferred_scroll_to_item != Some(request) {
+            state.deferred_scroll_to_item = Some(request);
+            state.base_handle.bump_version();
+        }
     }
 
     /// Check if the list is flipped vertically.

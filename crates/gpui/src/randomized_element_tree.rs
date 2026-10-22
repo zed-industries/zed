@@ -1802,6 +1802,185 @@ mod tests {
         }
     }
 
+    struct VirtualListRoot {
+        rows: Entity<Vec<DependencyValue>>,
+        uniform: crate::UniformListScrollHandle,
+        variable: crate::ListState,
+    }
+
+    fn virtual_row(index: usize, row: DependencyValue, uniform: bool) -> AnyElement {
+        div()
+            .id(index)
+            .w_full()
+            .h(px(if uniform { 24.0 } else { row.extent }))
+            .bg(crate::rgb(row.color))
+            .cursor_pointer()
+            .focusable()
+            .on_click(|_, _, _| {})
+            .child(format!("Row {index}"))
+            .into_any_element()
+    }
+
+    impl Render for VirtualListRoot {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let count = self.rows.read(cx).len();
+            let uniform_rows = self.rows.clone();
+            let variable_rows = self.rows.clone();
+            div()
+                .flex()
+                .size_full()
+                .child(
+                    crate::uniform_list("uniform-rows", count, move |range, _, cx| {
+                        range
+                            .map(|index| virtual_row(index, uniform_rows.read(cx)[index], true))
+                            .collect()
+                    })
+                    .track_scroll(&self.uniform)
+                    .w(px(300.0))
+                    .h(px(200.0)),
+                )
+                .child(
+                    crate::list(self.variable.clone(), move |index, _, cx| {
+                        virtual_row(index, variable_rows.read(cx)[index], false)
+                    })
+                    .w(px(300.0))
+                    .h(px(200.0)),
+                )
+        }
+    }
+
+    fn virtual_list_windows(cx: &mut TestAppContext) -> [crate::WindowHandle<VirtualListRoot>; 2] {
+        [false, true].map(|fresh| {
+            cx.open_window(WINDOW_SIZE, move |window, cx| {
+                window.set_view_retention(!fresh);
+                window.set_force_view_reconstruction(fresh);
+                VirtualListRoot {
+                    rows: cx.new(|_| {
+                        (0..64)
+                            .map(|index| DependencyValue {
+                                color: 0x103050 + index as u32 * 1024,
+                                extent: 18.0 + (index % 4) as f32 * 8.0,
+                            })
+                            .collect()
+                    }),
+                    uniform: crate::UniformListScrollHandle::new(),
+                    variable: crate::ListState::new(64, crate::ListAlignment::Top, px(20.0)),
+                }
+            })
+        })
+    }
+
+    #[gpui::test]
+    fn uniform_list_scroll_to_item_without_notify(cx: &mut TestAppContext) {
+        virtual_list_scroll_regression(cx, true);
+    }
+
+    #[ignore = "ListState scroll requests do not invalidate a retained reader"]
+    #[gpui::test]
+    fn variable_list_scroll_to_item_without_notify(cx: &mut TestAppContext) {
+        virtual_list_scroll_regression(cx, false);
+    }
+
+    fn virtual_list_scroll_regression(cx: &mut TestAppContext, uniform: bool) {
+        let windows = virtual_list_windows(cx);
+        for frame in 0..2 {
+            let snapshots = windows.map(|window| {
+                if frame > 0 {
+                    let root = window.root(cx).expect("virtual list root");
+                    root.read_with(cx, |root, _| {
+                        if uniform {
+                            root.uniform.scroll_to_item(32, crate::ScrollStrategy::Top);
+                        } else {
+                            root.variable.scroll_to(crate::ListOffset {
+                                item_ix: 32,
+                                offset_in_item: px(0.0),
+                            });
+                        }
+                    });
+                }
+                cx.update_window(window.into(), |_, window, cx| {
+                    window.draw(cx).clear(cx);
+                    window.view_reuse_snapshot(|_| "root".into())
+                })
+                .expect("virtual list window")
+            });
+            snapshots[0]
+                .compare(&snapshots[1], frame)
+                .expect("scroll to item matches");
+        }
+        for window in windows {
+            cx.update_window(window.into(), |_, window, _| window.remove_window())
+                .expect("virtual list window");
+        }
+    }
+
+    #[ignore = "ListState scroll requests do not invalidate a retained reader"]
+    #[gpui::test(iterations = 2)]
+    fn randomized_virtual_lists_match_forced_reconstruction(
+        mut rng: StdRng,
+        cx: &mut TestAppContext,
+    ) {
+        let windows = virtual_list_windows(cx);
+        let roots = windows.map(|window| window.root(cx).expect("virtual list root"));
+        for frame in 0..24 {
+            let index = rng.random_range(0..48);
+            let color = rng.random_range(0..=0xffffff);
+            let height = rng.random_range(1.0..80.0);
+            for root in &roots {
+                root.update(cx, |root, cx| match frame % 8 {
+                    1 | 5 => root.uniform.scroll_to_item(
+                        index,
+                        [
+                            crate::ScrollStrategy::Top,
+                            crate::ScrollStrategy::Center,
+                            crate::ScrollStrategy::Bottom,
+                            crate::ScrollStrategy::Nearest,
+                        ][frame % 4],
+                    ),
+                    2 | 6 => root.variable.scroll_to(crate::ListOffset {
+                        item_ix: index,
+                        offset_in_item: px(3.0),
+                    }),
+                    3 => {
+                        root.rows.update(cx, |rows, cx| {
+                            rows[index] = DependencyValue {
+                                color,
+                                extent: height,
+                            };
+                            cx.notify();
+                        });
+                        root.variable.reset(root.rows.read(cx).len());
+                    }
+                    4 => {
+                        root.rows.update(cx, |rows, cx| {
+                            rows.push(DependencyValue {
+                                color,
+                                extent: height,
+                            });
+                            cx.notify();
+                        });
+                        root.variable.splice(64..64, 1);
+                    }
+                    _ => {}
+                });
+            }
+            let snapshots = windows.map(|window| {
+                cx.update_window(window.into(), |_, window, cx| {
+                    window.draw(cx).clear(cx);
+                    window.view_reuse_snapshot(|_| "root".into())
+                })
+                .expect("virtual list window")
+            });
+            snapshots[0]
+                .compare(&snapshots[1], frame)
+                .expect("virtual lists match reconstruction");
+        }
+        for window in windows {
+            cx.update_window(window.into(), |_, window, _| window.remove_window())
+                .expect("virtual list window");
+        }
+    }
+
     #[gpui::test]
     fn unnotified_model_updates_under_notified_root(cx: &mut TestAppContext) {
         cx.set_global(DependencyValue {

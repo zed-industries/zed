@@ -4523,6 +4523,10 @@ impl ScrollHandle {
         *self.0.borrow().offset.borrow()
     }
 
+    pub(crate) fn bump_version(&self) {
+        self.0.borrow().version.bump();
+    }
+
     /// Get the maximum scroll offset.
     pub fn max_offset(&self) -> Point<Pixels> {
         self.0.borrow().max_offset
