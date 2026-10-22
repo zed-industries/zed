@@ -799,6 +799,13 @@ fn paint_line_background(
     window: &mut Window,
     cx: &mut App,
 ) -> Result<()> {
+    if decoration_runs
+        .iter()
+        .all(|run| run.background_color.is_none())
+    {
+        return Ok(());
+    }
+
     let line_bounds = line_paint_bounds(
         origin,
         layout,
@@ -1050,6 +1057,200 @@ mod tests {
         }
     }
 
+    #[gpui::test]
+    fn test_line_background_runs(cx: &mut TestAppContext) {
+        test_underline_handler_at_scales(cx, |window, cx| {
+            let decoration = DecorationRun {
+                len: 2,
+                color: black(),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+            let color = hsla(0., 1., 0.5, 1.);
+            let transparent = hsla(0., 1., 0.5, 0.);
+            for backgrounds in [None, Some(color), Some(transparent)] {
+                for mixed in [false, true] {
+                    let decorations = [
+                        DecorationRun {
+                            background_color: backgrounds,
+                            ..decoration.clone()
+                        },
+                        DecorationRun {
+                            background_color: if mixed { None } else { backgrounds },
+                            ..decoration.clone()
+                        },
+                    ];
+                    let line = underline_test_line("abcd", &decorations, false, window);
+                    for wraps in [
+                        vec![],
+                        vec![WrapBoundary {
+                            run_ix: 0,
+                            glyph_ix: 1,
+                        }],
+                    ] {
+                        window.next_frame.scene.clear();
+                        paint_line_background(
+                            point(px(12.), px(12.)),
+                            &line.layout,
+                            px(20.),
+                            TextAlign::Left,
+                            None,
+                            &line.decoration_runs,
+                            &wraps,
+                            window,
+                            cx,
+                        )
+                        .unwrap();
+                        let scene = &window.next_frame.scene;
+                        if backgrounds.is_none() {
+                            assert_eq!(scene.len(), 0);
+                        } else {
+                            // Transparent backgrounds must still take the original layer path,
+                            // even if paint_quad chooses not to emit transparent geometry.
+                            assert!(matches!(
+                                scene.paint_operations.first(),
+                                Some(crate::scene::PaintOperation::StartLayer(_))
+                            ));
+                            assert!(matches!(
+                                scene.paint_operations.last(),
+                                Some(crate::scene::PaintOperation::EndLayer)
+                            ));
+                        }
+                        if backgrounds == Some(color) {
+                            let expected = if wraps.is_empty() {
+                                vec![Bounds::new(
+                                    point(px(12.), px(12.)),
+                                    size(px(if mixed { 16. } else { 32. }), px(20.)),
+                                )]
+                            } else {
+                                vec![
+                                    Bounds::new(point(px(12.), px(12.)), size(px(8.), px(20.))),
+                                    Bounds::new(
+                                        point(px(12.), px(32.)),
+                                        size(px(if mixed { 8. } else { 24. }), px(20.)),
+                                    ),
+                                ]
+                            };
+                            assert_eq!(scene.quads.len(), expected.len());
+                            for (quad, bounds) in scene.quads.iter().zip(expected) {
+                                assert_eq!(quad.bounds, bounds.scale(window.scale_factor()));
+                            }
+                        }
+                    }
+                }
+            }
+            for text in ["", "abcd"] {
+                let line = underline_test_line(text, &[], false, window);
+                window.next_frame.scene.clear();
+                line.paint_background(
+                    point(px(10.), px(10.)),
+                    px(20.),
+                    TextAlign::Left,
+                    None,
+                    window,
+                    cx,
+                )
+                .unwrap();
+                assert_eq!(window.next_frame.scene.len(), 0);
+            }
+        });
+    }
+
+    #[gpui::test]
+    fn test_no_background_preserves_neighboring_scene_batches(cx: &mut TestAppContext) {
+        test_underline_handler_at_scales(cx, |window, cx| {
+            let line = underline_test_line("abcd", &[], false, window);
+            let origin = point(px(10.), px(10.));
+            let line_height = px(20.);
+            for wraps in [
+                vec![],
+                vec![WrapBoundary {
+                    run_ix: 0,
+                    glyph_ix: 2,
+                }],
+            ] {
+                let bounds = line_paint_bounds(
+                    origin,
+                    &line.layout,
+                    line_height,
+                    TextAlign::Left,
+                    None,
+                    &wraps,
+                );
+                let mut batches = Vec::new();
+                for old_empty_layer in [true, false] {
+                    window.next_frame.scene.clear();
+                    window.paint_quad(fill(bounds, hsla(0., 1., 0.5, 1.)));
+                    if old_empty_layer {
+                        window.paint_layer(bounds, |_| {});
+                    } else {
+                        paint_line_background(
+                            origin,
+                            &line.layout,
+                            line_height,
+                            TextAlign::Left,
+                            None,
+                            &line.decoration_runs,
+                            &wraps,
+                            window,
+                            cx,
+                        )
+                        .unwrap();
+                    }
+                    // NoopTextSystem returns empty glyph raster bounds. Use a bounded sprite
+                    // to test scene ordering here, not platform font rasterization.
+                    window.paint_layer(bounds, |window| {
+                        let bounds = bounds.scale(window.scale_factor());
+                        window
+                            .next_frame
+                            .scene
+                            .insert_primitive(crate::MonochromeSprite {
+                                order: 0,
+                                pad: 0,
+                                bounds,
+                                content_mask: crate::ContentMask { bounds },
+                                color: black(),
+                                tile: crate::AtlasTile {
+                                    texture_id: crate::AtlasTextureId {
+                                        index: 0,
+                                        kind: crate::AtlasTextureKind::Monochrome,
+                                    },
+                                    tile_id: crate::TileId(0),
+                                    padding: 0,
+                                    bounds: Bounds::default(),
+                                },
+                                transformation: crate::TransformationMatrix::default(),
+                            });
+                    });
+                    window.paint_quad(fill(bounds, hsla(0.5, 1., 0.5, 1.)));
+                    let scene = &mut window.next_frame.scene;
+                    scene.finish();
+                    let glyph_orders: Vec<_> = scene
+                        .monochrome_sprites
+                        .iter()
+                        .map(|sprite| sprite.order)
+                        .chain(scene.subpixel_sprites.iter().map(|sprite| sprite.order))
+                        .chain(scene.polychrome_sprites.iter().map(|sprite| sprite.order))
+                        .collect();
+                    assert!(!glyph_orders.is_empty());
+                    assert_eq!(scene.quads.len(), 2);
+                    for order in glyph_orders {
+                        assert!(scene.quads[0].order < order);
+                        assert!(order < scene.quads[1].order);
+                    }
+                    batches.push(
+                        scene
+                            .batches()
+                            .map(|batch| batch.label())
+                            .collect::<Vec<_>>(),
+                    );
+                }
+                assert_eq!(batches[0], batches[1]);
+            }
+        });
+    }
+
     #[test]
     fn test_aligned_line_paint_bounds() {
         let line = make_shaped_line("abcd", &[(0, 0.), (1, 10.), (2, 20.), (3, 30.)], 40., &[]);
@@ -1110,6 +1311,59 @@ mod tests {
                 Bounds::new(origin, size(Pixels::ZERO, line_height)),
             );
         }
+    }
+
+    #[gpui::test]
+    fn test_wrapped_text_decoration_runs(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let text_system = crate::WindowTextSystem::new(cx.text_system().clone());
+            let line_text = "word word ".repeat(6);
+            let text = format!("{line_text}\n{line_text}\n");
+            let runs: Vec<TextRun> = (0..12)
+                .filter(|index| *index != 6)
+                .map(|index| TextRun {
+                    len: match index {
+                        5 => 21,
+                        11 => 11,
+                        _ => 10,
+                    },
+                    font: font("Helvetica"),
+                    color: hsla(index as f32 / 12., 1., 0.5, 1.),
+                    background_color: Some(hsla(index as f32 / 12., 0.5, 0.5, 1.)),
+                    underline: Some(UnderlineStyle {
+                        thickness: px(1.),
+                        color: None,
+                        wavy: index % 2 == 0,
+                    }),
+                    ..Default::default()
+                })
+                .collect();
+            let lines = text_system
+                .shape_text(text.into(), px(16.), &runs, Some(px(40.)), None)
+                .unwrap();
+
+            assert_eq!(lines.len(), 3);
+            for (line, expected_runs) in lines.iter().zip([&runs[..6], &runs[5..]]) {
+                assert_eq!(line.text.as_ref(), line_text);
+                assert!(!line.wrap_boundaries.is_empty());
+                assert_eq!(line.decoration_runs.len(), 6);
+                assert_eq!(
+                    line.decoration_runs.iter().map(|run| run.len).sum::<u32>(),
+                    line_text.len() as u32,
+                );
+                for (decoration, expected) in line.decoration_runs.iter().zip(expected_runs) {
+                    assert_eq!(decoration.len, 10);
+                    assert_eq!(decoration.color, expected.color);
+                    assert_eq!(decoration.background_color, expected.background_color);
+                    assert_eq!(decoration.underline, expected.underline);
+                    assert_eq!(decoration.strikethrough, expected.strikethrough);
+                }
+            }
+            let empty_line = lines.last().unwrap();
+            assert!(empty_line.text.is_empty());
+            assert!(empty_line.decoration_runs.is_empty());
+            assert_eq!(empty_line.decoration_runs.capacity(), 0);
+        });
     }
 
     #[gpui::test]

@@ -19,13 +19,15 @@
 //! stopped rendering the changed element is not an improvement.
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     fmt,
+    rc::Rc,
     time::{Duration, Instant},
 };
 
+use gpui::prelude::*;
 use gpui::{
-    BenchAppContext, Context, Window,
+    BenchAppContext, Context, Entity, Window,
     private::rand::{Rng as _, SeedableRng as _, rngs::StdRng},
     randomized_element_tree::{
         ChangeLocality, RandomizedElementTree, RandomizedElementTreeBounds,
@@ -180,6 +182,9 @@ fn measure_in_window(
     mut mutate: impl FnMut(&mut RandomizedElementTree, &mut Window, &mut Context<RandomizedElementTree>),
 ) -> Measured {
     let config = input.config;
+    if std::env::var("GPUI_VERIFY_REUSE_DIFFERENTIAL").is_ok_and(|value| value == "1") {
+        verify_tree_reuse(config.with_cached_views(true), cx);
+    }
     let before_window = bench_metrics::allocation_stats();
     let mut window = cx.add_empty_window();
     let tree = window.update(|window, cx| {
@@ -201,6 +206,40 @@ fn measure_in_window(
         initial.element_render_count() >= config.element_count(),
         "every generated element renders in the first frame"
     );
+    window.update(|window, _| {
+        window.take_view_reuse_stats();
+        window.take_render_phase_timings();
+    });
+
+    if let Ok(frame_count) = std::env::var("GPUI_RETAINED_PHASE_FRAMES") {
+        let frame_count: usize = frame_count.parse().expect("fixed phase frame count");
+        assert!(frame_count > 0);
+        let mut entity_renders = 0;
+        cx.bench_iter(|cx| {
+            for frame in 0..frame_count {
+                window.update(|window, cx| {
+                    tree.update(cx, |tree, cx| {
+                        tree.reset_work_counters();
+                        mutate(tree, window, cx);
+                    });
+                });
+                cx.run_until_idle();
+                entity_renders += tree.read_with(cx, |tree, _| {
+                    assert!(tree.work_counters().element_render_count() > 0);
+                    tree.work_counters().entity_render_count()
+                });
+                window.update(|window, _| {
+                    let stats = window.take_view_reuse_stats();
+                    eprintln!("phase frame {group}/{} #{frame}: {stats:?}", input.family);
+                    report_render_phases(window, &format!("{group}/{} #{frame}", input.family));
+                });
+            }
+        });
+        return Measured {
+            frames: frame_count,
+            entity_renders,
+        };
+    }
 
     // Each iteration reads what the previous frame rendered before resetting for its own
     // mutation. Frame pacing may coalesce two mutations into one drawn frame, the more
@@ -235,6 +274,11 @@ fn measure_in_window(
         tree.reset_work_counters();
         mutate(tree, window, cx);
         frames += 1;
+    });
+    window.update(|window, _| {
+        let stats = window.take_view_reuse_stats();
+        eprintln!("view-reuse {group}/{}: {stats:?}", input.family);
+        report_render_phases(window, &format!("{group}/{}", input.family));
     });
     assert!(
         frames_that_rendered * 2 >= frames,
@@ -514,6 +558,139 @@ impl fmt::Display for ChangingShareInput {
     }
 }
 
+fn cached_input(family: &TreeFamily, rng: &mut StdRng) -> TreeInput {
+    let mut input = family.sample(rng);
+    input.config = input.config.with_cached_views(true);
+    input
+}
+
+fn verify_tree_reuse(config: RandomizedElementTreeConfig, cx: &mut BenchAppContext) {
+    let mut reused_window = cx.add_empty_window();
+    let mut fresh_window = cx.add_empty_window();
+    let reused = reused_window.update(|window, cx| {
+        window.set_force_view_reconstruction(false);
+        window.replace_root(cx, |_, cx| {
+            RandomizedElementTree::new_with_config(config, cx)
+        })
+    });
+    let fresh = fresh_window.update(|window, cx| {
+        window.set_force_view_reconstruction(true);
+        window.replace_root(cx, |_, cx| {
+            RandomizedElementTree::new_with_config(config, cx)
+        })
+    });
+    for frame in 0..16 {
+        if frame > 0 {
+            for root in [&reused, &fresh] {
+                root.update(cx, |tree, cx| {
+                    let kind = match frame % 6 {
+                        0 => {
+                            cx.notify();
+                            return;
+                        }
+                        1 => RandomizedElementTreeMutationKind::ChildColor,
+                        2 => RandomizedElementTreeMutationKind::ChildBounds,
+                        3 => RandomizedElementTreeMutationKind::Insert,
+                        4 => RandomizedElementTreeMutationKind::RemoveLeaf,
+                        _ => RandomizedElementTreeMutationKind::Reorder,
+                    };
+                    tree.apply_mutation(kind, cx);
+                });
+            }
+        }
+        cx.run_until_idle();
+        let reused_snapshot = reused_window.update(|window, cx| {
+            window.view_reuse_snapshot(|id| {
+                if id == reused.entity_id() {
+                    "root".into()
+                } else {
+                    format!(
+                        "element-{}",
+                        reused
+                            .read(cx)
+                            .view_element_identity(id)
+                            .expect("fixture view")
+                    )
+                }
+            })
+        });
+        let fresh_snapshot = fresh_window.update(|window, cx| {
+            window.view_reuse_snapshot(|id| {
+                if id == fresh.entity_id() {
+                    "root".into()
+                } else {
+                    format!(
+                        "element-{}",
+                        fresh
+                            .read(cx)
+                            .view_element_identity(id)
+                            .expect("fixture view")
+                    )
+                }
+            })
+        });
+        reused_snapshot
+            .compare(&fresh_snapshot, frame)
+            .expect("differential tree output");
+    }
+    reused_window.update(|window, _| window.remove_window());
+    fresh_window.update(|window, _| window.remove_window());
+}
+
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "CachedTree/full refresh", fps = 120)]
+fn cached_full_refresh(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
+    let input = cached_input(family, &mut rng);
+    let measured = measure_in_window("cached full refresh", &input, cx, |_, window, _| {
+        window.refresh()
+    });
+    assert!(measured.frames > 0);
+}
+
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "CachedTree/leaf style", fps = 120)]
+fn cached_leaf_style(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
+    let input = cached_input(family, &mut rng);
+    let frames = measure("cached leaf style", &input, cx, |tree, cx| {
+        tree.apply_mutation(RandomizedElementTreeMutationKind::ChildColor, cx);
+    });
+    assert!(frames > 0);
+}
+
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "CachedTree/leaf bounds", fps = 120)]
+fn cached_leaf_bounds(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
+    let input = cached_input(family, &mut rng);
+    let frames = measure("cached leaf bounds", &input, cx, |tree, cx| {
+        tree.apply_mutation(RandomizedElementTreeMutationKind::ChildBounds, cx);
+    });
+    assert!(frames > 0);
+}
+
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "CachedTree/insert-remove", fps = 120)]
+fn cached_insert_remove(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
+    let input = cached_input(family, &mut rng);
+    let mut insert = true;
+    let frames = measure("cached insert-remove", &input, cx, |tree, cx| {
+        tree.apply_mutation(
+            if insert {
+                RandomizedElementTreeMutationKind::Insert
+            } else {
+                RandomizedElementTreeMutationKind::RemoveLeaf
+            },
+            cx,
+        );
+        insert = !insert;
+    });
+    assert!(frames > 0);
+}
+
+#[gpui::bench(inputs = families(), input_name = "tree", iterations = 2, group = "CachedTree/reorder", fps = 120)]
+fn cached_reorder(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
+    let input = cached_input(family, &mut rng);
+    let frames = measure("cached reorder", &input, cx, |tree, cx| {
+        tree.apply_mutation(RandomizedElementTreeMutationKind::Reorder, cx);
+    });
+    assert!(frames > 0);
+}
+
 /// The share of elements recolored per frame, from one element to all of them. A renderer
 /// that retains clean entity subtrees should fall toward the left of this axis; one that
 /// redraws everything is flat across it, so the two curves' distance is what retention
@@ -578,6 +755,809 @@ fn changing_share(input: &ChangingShareInput, mut rng: StdRng, cx: &mut BenchApp
     }
 }
 
+struct TextPanel {
+    index: usize,
+    value: u32,
+    renders: Rc<Cell<usize>>,
+}
+
+impl Render for TextPanel {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.renders.set(self.renders.get() + 1);
+        let value = self.value;
+        gpui::div()
+            .id(gpui::ElementId::NamedInteger(
+                "text-panel".into(),
+                self.index as u64,
+            ))
+            .flex()
+            .flex_col()
+            .w(gpui::px(220.))
+            .h(gpui::px(192.))
+            .bg(gpui::rgb(0x181818))
+            .overflow_hidden()
+            .children((0..64).map(|label| {
+                gpui::div()
+                    .flex_shrink_0()
+                    .h(gpui::px(16.))
+                    .child(format!("Metric {label:02}: {value:06}"))
+            }))
+    }
+}
+
+struct TextPanelRoot {
+    panels: Vec<Entity<TextPanel>>,
+    renders: Rc<Cell<usize>>,
+    font_family: gpui::SharedString,
+}
+
+impl TextPanelRoot {
+    fn new(
+        panel_count: usize,
+        font_family: &'static str,
+        root_renders: &Rc<Cell<usize>>,
+        panel_renders: &Rc<Cell<usize>>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self {
+            panels: (0..panel_count)
+                .map(|index| {
+                    cx.new(|_| TextPanel {
+                        index,
+                        value: 0,
+                        renders: panel_renders.clone(),
+                    })
+                })
+                .collect(),
+            renders: root_renders.clone(),
+            font_family: font_family.into(),
+        }
+    }
+}
+
+impl Render for TextPanelRoot {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.renders.set(self.renders.get() + 1);
+        gpui::div()
+            .id("text-panels")
+            .flex()
+            .flex_wrap()
+            .font_family(self.font_family.clone())
+            .text_size(gpui::px(12.))
+            .text_color(gpui::rgb(0xffffff))
+            .child("0123456789")
+            .children(self.panels.iter().cloned())
+    }
+}
+
+struct CachedTextPanelRoot(TextPanelRoot, bool);
+
+impl Render for CachedTextPanelRoot {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        gpui::div()
+            .id("text-panels")
+            .flex()
+            .flex_wrap()
+            .font_family(self.0.font_family.clone())
+            .text_size(gpui::px(12.))
+            .text_color(gpui::rgb(0xffffff))
+            .child("0123456789")
+            .children(self.0.panels.iter().cloned().map(|panel| {
+                let mut style = gpui::StyleRefinement::default();
+                style.size.width = Some(gpui::px(220.).into());
+                style.size.height = Some(gpui::px(192.).into());
+                if self.1 {
+                    panel.cached(style).into_any_element()
+                } else {
+                    panel.into_any_element()
+                }
+            }))
+    }
+}
+
+fn verify_text_reuse(panel_count: usize, font_family: &'static str, cx: &mut BenchAppContext) {
+    let implicit = std::env::var("GPUI_VIEW_SPLICE").as_deref() == Ok("all")
+        && std::env::var("GPUI_LAYOUT_CACHE").as_deref() == Ok("1");
+    let mut reused_window = cx.add_empty_window();
+    let mut fresh_window = cx.add_empty_window();
+    let create = |window: &mut Window, cx: &mut gpui::App, force| {
+        window.set_force_view_reconstruction(force);
+        if implicit {
+            window.set_implicit_view_splicing(!force);
+        } else {
+            window.set_view_splicing(!force);
+        }
+        window.replace_root(cx, |_, cx| {
+            CachedTextPanelRoot(
+                TextPanelRoot {
+                    panels: (0..panel_count)
+                        .map(|index| {
+                            cx.new(|_| TextPanel {
+                                index,
+                                value: 0,
+                                renders: Rc::new(Cell::new(0)),
+                            })
+                        })
+                        .collect(),
+                    renders: Rc::new(Cell::new(0)),
+                    font_family: font_family.into(),
+                },
+                !implicit,
+            )
+        })
+    };
+    let reused = reused_window.update(|window, cx| create(window, cx, false));
+    let fresh = fresh_window.update(|window, cx| create(window, cx, true));
+    for frame in 0..16 {
+        if frame > 0 {
+            for root in [&reused, &fresh] {
+                root.update(cx, |root, cx| {
+                    for index in [0, panel_count / 2] {
+                        root.0.panels.get(index).expect("configured panel").update(
+                            cx,
+                            |panel, cx| {
+                                panel.value += 1;
+                                cx.notify();
+                            },
+                        );
+                    }
+                });
+            }
+        }
+        cx.run_until_idle();
+        let capture = |window: &mut gpui::BenchWindowContext,
+                       root: &Entity<CachedTextPanelRoot>| {
+            window.update(|window, cx| {
+                window.view_reuse_snapshot(|id| {
+                    if id == root.entity_id() {
+                        "root".into()
+                    } else {
+                        let index = root
+                            .read(cx)
+                            .0
+                            .panels
+                            .iter()
+                            .position(|panel| panel.entity_id() == id)
+                            .expect("fixture panel");
+                        format!("panel-{index}")
+                    }
+                })
+            })
+        };
+        capture(&mut reused_window, &reused)
+            .compare(&capture(&mut fresh_window, &fresh), frame)
+            .expect("differential text output");
+    }
+    reused_window.update(|window, _| window.remove_window());
+    fresh_window.update(|window, _| window.remove_window());
+}
+
+fn text_panel_counts() -> Vec<usize> {
+    assert!(
+        !std::env::var("GPUI_RETAINED_DISPATCH").is_ok_and(|value| value == "1"),
+        "this mainline text benchmark supports fresh rendering only; unset GPUI_RETAINED_DISPATCH"
+    );
+    if cfg!(all(
+        target_os = "linux",
+        not(any(feature = "x11", feature = "wayland"))
+    )) {
+        eprintln!("TextPanels requires x11 or wayland on Linux for production text shaping");
+        Vec::new()
+    } else {
+        vec![8, 32, 96]
+    }
+}
+
+#[gpui::bench(inputs = text_panel_counts(), input_name = "panels", group = "TextPanels/two updates", fps = 120)]
+fn text_panel_updates(panel_count: &usize, cx: &mut BenchAppContext) {
+    measure_text_panel_updates(*panel_count, "monospace", cx);
+}
+
+fn installed_font_panel_counts() -> Vec<usize> {
+    if cfg!(target_os = "linux") {
+        text_panel_counts()
+    } else {
+        Vec::new()
+    }
+}
+
+#[gpui::bench(inputs = installed_font_panel_counts(), input_name = "panels", group = "TextPanels/installed font two updates", fps = 120)]
+fn installed_font_panel_updates(panel_count: &usize, cx: &mut BenchAppContext) {
+    let font = gpui::font("Noto Sans Mono");
+    let text_system = cx.read(|cx| cx.text_system().clone());
+    assert!(
+        text_system
+            .all_font_names()
+            .iter()
+            .any(|family| family == font.family.as_ref()),
+        "the installed-font comparison requires Noto Sans Mono"
+    );
+    let font_id = text_system.resolve_font(&font);
+    assert_eq!(
+        text_system.get_font_for_id(font_id).map(|font| font.family),
+        Some(font.family),
+        "the comparison font must resolve without falling back"
+    );
+    measure_text_panel_updates(*panel_count, "Noto Sans Mono", cx);
+}
+
+thread_local! {
+    static LAST_TEXT_PANELS: Cell<Option<(usize, &'static str)>> = const { Cell::new(None) };
+}
+
+fn measure_text_panel_updates(
+    panel_count: usize,
+    font_family: &'static str,
+    cx: &mut BenchAppContext,
+) {
+    if std::env::var("GPUI_VERIFY_REUSE_DIFFERENTIAL").is_ok_and(|value| value == "1") {
+        verify_text_reuse(panel_count, font_family, cx);
+    }
+    let mut window = cx.add_empty_window();
+    let root_renders = Rc::new(Cell::new(0));
+    let panel_renders = Rc::new(Cell::new(0));
+    let root = window.update(|window, cx| {
+        window.replace_root(cx, |_, cx| {
+            TextPanelRoot::new(panel_count, font_family, &root_renders, &panel_renders, cx)
+        })
+    });
+    cx.run_until_idle();
+    window.update(|window, _| {
+        assert_layout_cache_mode(window);
+        let scene = window.rendered_scene();
+        let glyph_count = scene.monochrome_sprites.len()
+            + scene.subpixel_sprites.len()
+            + scene.polychrome_sprites.len();
+        assert!(
+            glyph_count > 0,
+            "the text workload must produce glyph sprites: viewport {:?}, quads {}, root renders {}, panel renders {}",
+            window.viewport_size(),
+            scene.quads.len(),
+            root_renders.get(),
+            panel_renders.get()
+        );
+        if LAST_TEXT_PANELS.with(|last| last.replace(Some((panel_count, font_family))))
+            != Some((panel_count, font_family))
+        {
+            eprintln!(
+                "text panels: {panel_count}, requested family {font_family}, viewport {:?}, quads {}, glyphs {glyph_count}, initial root renders {}, panel renders {}",
+                window.viewport_size(),
+                scene.quads.len(),
+                root_renders.get(),
+                panel_renders.get()
+            );
+            eprintln!(
+                "retained metadata (occurrences, hot, cold, cache, layout bytes): {:?}",
+                window.retained_view_storage_sizes()
+            );
+        }
+    });
+    let initial_panel_renders = panel_renders.get();
+    let initial_root_renders = root_renders.get();
+    window.update(|window, _| {
+        window.take_view_reuse_stats();
+        window.take_render_phase_timings();
+    });
+    let mut updates = 0usize;
+    cx.bench_renderer(root, |root, _, cx| {
+        for index in [0, panel_count / 2] {
+            root.panels
+                .get(index)
+                .expect("configured panel")
+                .update(cx, |panel, cx| {
+                    panel.value = (panel.value + 1) % 1_000_000;
+                    cx.notify();
+                });
+        }
+        updates += 1;
+    });
+    window.update(|window, _| {
+        let stats = window.take_view_reuse_stats();
+        eprintln!("view-reuse TextPanels/{font_family}/{panel_count}: root renders {}, panel renders {}, {stats:?}",
+            root_renders.get() - initial_root_renders,
+            panel_renders.get() - initial_panel_renders);
+        report_render_phases(window, &format!("TextPanels/{font_family}/{panel_count}"));
+    });
+    assert!(updates > 0);
+    assert!(
+        panel_renders.get() > initial_panel_renders,
+        "updated panels must render"
+    );
+    let incremental = window.update(|window, _| snapshot_glyphs(window));
+    window.update(|window, _| window.refresh());
+    cx.run_until_idle();
+    assert_eq!(
+        incremental,
+        window.update(|window, _| snapshot_glyphs(window)),
+        "updated glyph output must match a full redraw of the final model"
+    );
+}
+
+fn report_render_phases(window: &Window, label: &str) {
+    let phases = window.take_render_phase_timings();
+    if std::env::var("GPUI_RENDER_PHASE_TIMERS").as_deref() == Ok("1") {
+        eprintln!("render phases {label} (inclusive totals): {phases:?}");
+    }
+}
+
+fn assert_layout_cache_mode(window: &Window) {
+    assert_eq!(
+        window.layout_cache_enabled(),
+        std::env::var("GPUI_LAYOUT_CACHE").is_ok_and(|value| value == "1"),
+        "the benchmark must exercise the requested layout-cache mode"
+    );
+}
+
+fn snapshot_glyphs(window: &Window) -> Vec<String> {
+    let scene = window.rendered_scene();
+    scene
+        .monochrome_sprites
+        .iter()
+        .map(|sprite| format!("monochrome:{sprite:?}"))
+        .chain(
+            scene
+                .subpixel_sprites
+                .iter()
+                .map(|sprite| format!("subpixel:{sprite:?}")),
+        )
+        .chain(
+            scene
+                .polychrome_sprites
+                .iter()
+                .map(|sprite| format!("polychrome:{sprite:?}")),
+        )
+        .collect()
+}
+
+struct FirstPopulatedFrame {
+    window: gpui::AsyncWindowContext,
+    root: Entity<TextPanelRoot>,
+    panel_count: usize,
+    root_renders: Rc<Cell<usize>>,
+    panel_renders: Rc<Cell<usize>>,
+    expected_frames: usize,
+}
+
+impl FirstPopulatedFrame {
+    fn attach(
+        window: &mut Window,
+        cx: &mut gpui::App,
+        panel_count: usize,
+        root_renders: Rc<Cell<usize>>,
+        panel_renders: Rc<Cell<usize>>,
+    ) -> Self {
+        let root = window.replace_root(cx, |_, cx| {
+            TextPanelRoot::new(
+                panel_count,
+                "Noto Sans Mono",
+                &root_renders,
+                &panel_renders,
+                cx,
+            )
+        });
+        Self {
+            window: window.to_async(cx),
+            root,
+            panel_count,
+            root_renders,
+            panel_renders,
+            expected_frames: 1,
+        }
+    }
+
+    fn validate(&mut self) {
+        assert_eq!(self.root_renders.get(), self.expected_frames);
+        assert_eq!(
+            self.panel_renders.get(),
+            self.panel_count * self.expected_frames
+        );
+        self.window
+            .update(|window, cx| {
+                assert_layout_cache_mode(window);
+                let root = self.root.read(cx);
+                assert_eq!(root.panels.len(), self.panel_count);
+                assert!(root.panels.iter().all(|panel| panel.read(cx).value == 0));
+                let scene = window.rendered_scene();
+                assert!(
+                    scene.monochrome_sprites.len()
+                        + scene.subpixel_sprites.len()
+                        + scene.polychrome_sprites.len()
+                        > 0,
+                    "the first populated frame must paint glyphs"
+                );
+            })
+            .expect("first populated window must remain open");
+    }
+}
+
+impl Drop for FirstPopulatedFrame {
+    fn drop(&mut self) {
+        // Criterion drops the task output after stopping measurement. Keep the
+        // root and window alive until then, including validation and teardown.
+        self.validate();
+        self.window
+            .update(|window, _| window.remove_window())
+            .expect("remove first populated window");
+    }
+}
+
+thread_local! {
+    static DESCRIBED_FIRST_POPULATED: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
+}
+
+fn first_populated_panel_counts() -> Vec<usize> {
+    for variable in ["GPUI_RETAINED_DISPATCH", "GPUI_VIEW_RETENTION"] {
+        assert!(
+            std::env::var_os(variable).is_none(),
+            "first populated fresh-rendering measurements require {variable} unset"
+        );
+    }
+    installed_font_panel_counts()
+}
+
+#[gpui::bench(inputs = first_populated_panel_counts(), input_name = "panels", group = "TextPanels/first populated installed font", fps = 120)]
+fn first_populated_text_panels(panel_count: &usize, cx: &mut BenchAppContext) {
+    let panel_count = *panel_count;
+    let font = gpui::font("Noto Sans Mono");
+    let text_system = cx.read(|cx| cx.text_system().clone());
+    assert!(
+        text_system
+            .all_font_names()
+            .iter()
+            .any(|family| family == font.family.as_ref()),
+        "the first populated comparison requires Noto Sans Mono"
+    );
+    let font_id = text_system.resolve_font(&font);
+    assert_eq!(
+        text_system.get_font_for_id(font_id).map(|font| font.family),
+        Some(font.family),
+        "the first populated font must resolve without falling back"
+    );
+
+    let describe = DESCRIBED_FIRST_POPULATED.with(|described| {
+        let mut described = described.borrow_mut();
+        if described.contains(&panel_count) {
+            false
+        } else {
+            described.push(panel_count);
+            true
+        }
+    });
+    if describe {
+        // Sample before validation snapshots/logging allocate. Font resolution
+        // above is intentionally shared setup, not window-held memory.
+        let before_window = bench_metrics::allocation_stats();
+        let mut window = cx.add_empty_window();
+        let before_population = bench_metrics::allocation_stats();
+        let mut populated = window.update(|window, cx| {
+            window.take_render_phase_timings();
+            FirstPopulatedFrame::attach(
+                window,
+                cx,
+                panel_count,
+                Rc::new(Cell::new(0)),
+                Rc::new(Cell::new(0)),
+            )
+        });
+        cx.run_until_idle();
+        let after_population = bench_metrics::allocation_stats();
+        populated.validate();
+        window.update(|window, _| {
+            let scene = window.rendered_scene();
+            eprintln!(
+                "first populated panels: {panel_count}, family Noto Sans Mono, viewport {:?}, quads {}, glyphs {}, root renders {}, panel renders {}; GPUI_RETAINED_DISPATCH={:?}, GPUI_VIEW_RETENTION={:?}; requested GPUI_LAYOUT_CACHE={:?}, actual layout cache {}",
+                window.viewport_size(),
+                scene.quads.len(),
+                scene.monochrome_sprites.len() + scene.subpixel_sprites.len() + scene.polychrome_sprites.len(),
+                populated.root_renders.get(),
+                populated.panel_renders.get(),
+                std::env::var_os("GPUI_RETAINED_DISPATCH"),
+                std::env::var_os("GPUI_VIEW_RETENTION"),
+                std::env::var_os("GPUI_LAYOUT_CACHE"),
+                window.layout_cache_enabled(),
+            );
+            report_render_phases(window, "first populated");
+        });
+        match before_window.zip(before_population).zip(after_population) {
+            Some(((before, empty), after)) => eprintln!(
+                "first populated setup live heap: before window {} B, empty window {} B, populated {} B; window+setup delta {} B, population delta {} B (process-wide estimates, not exclusive window ownership)",
+                before.live_bytes(),
+                empty.live_bytes(),
+                after.live_bytes(),
+                after.live_bytes() - before.live_bytes(),
+                after.live_bytes() - empty.live_bytes(),
+            ),
+            None => eprintln!("first populated setup live heap: allocator statistics unavailable"),
+        }
+        let initial = window.update(|window, _| snapshot_glyphs(window));
+        window.update(|window, _| window.refresh());
+        cx.run_until_idle();
+        populated.expected_frames = 2;
+        assert_eq!(populated.root_renders.get(), 2);
+        assert_eq!(populated.panel_renders.get(), panel_count * 2);
+        assert_eq!(
+            initial,
+            window.update(|window, _| snapshot_glyphs(window)),
+            "first populated glyph output must match a full redraw"
+        );
+        drop(populated);
+        cx.run_until_idle();
+    }
+
+    cx.bench_batched_task(
+        |cx| {
+            (
+                cx.add_empty_window(),
+                Rc::new(Cell::new(0)),
+                Rc::new(Cell::new(0)),
+            )
+        },
+        |(window, root_renders, panel_renders), _| {
+            let populated = window.update(|window, cx| {
+                FirstPopulatedFrame::attach(
+                    window,
+                    cx,
+                    panel_count,
+                    root_renders.clone(),
+                    panel_renders.clone(),
+                )
+            });
+            // bench_batched_task delivers pending production frame callbacks
+            // before polling this ready task, so layout through present is timed.
+            gpui::Task::ready(populated)
+        },
+    );
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Churn {
+    Replace,
+    Remount,
+    Id,
+    Text,
+}
+
+impl fmt::Display for Churn {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Replace => "replace-8-of-96",
+            Self::Remount => "remount-48-of-96",
+            Self::Id => "id-and-anonymous-count",
+            Self::Text => "text-96",
+        })
+    }
+}
+
+struct ChurnPanel {
+    index: usize,
+    frame: usize,
+    workload: Churn,
+    renders: Rc<Cell<usize>>,
+}
+
+impl Render for ChurnPanel {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.renders.set(self.renders.get() + 1);
+        let id = if self.workload == Churn::Id {
+            self.frame * 96 + self.index
+        } else {
+            self.index
+        };
+        // Checkpoints are multiples of ten, so their live shapes are identical.
+        let labels = if self.workload == Churn::Id {
+            56 + self.frame % 10
+        } else {
+            64
+        };
+        let value = if self.workload == Churn::Id {
+            0
+        } else {
+            self.frame % 1_000_000
+        };
+        gpui::div()
+            .id(gpui::ElementId::NamedInteger(
+                "churn-panel".into(),
+                id as u64,
+            ))
+            .flex()
+            .flex_col()
+            .w(gpui::px(220.))
+            .h(gpui::px(192.))
+            .bg(gpui::rgb(0x181818))
+            .overflow_hidden()
+            .children((0..labels).map(|label| {
+                gpui::div()
+                    .flex_shrink_0()
+                    .h(gpui::px(16.))
+                    .child(format!("Metric {label:02}: {value:06}"))
+            }))
+    }
+}
+
+struct ChurnRoot {
+    panels: Vec<Entity<ChurnPanel>>,
+    workload: Churn,
+    frame: usize,
+    renders: usize,
+    expected_panel_renders: usize,
+    panel_renders: Rc<Cell<usize>>,
+}
+
+impl ChurnRoot {
+    fn new(workload: Churn, cx: &mut Context<Self>) -> Self {
+        let panel_renders = Rc::new(Cell::new(0));
+        Self {
+            panels: (0..96)
+                .map(|index| {
+                    cx.new(|_| ChurnPanel {
+                        index,
+                        frame: 0,
+                        workload,
+                        renders: panel_renders.clone(),
+                    })
+                })
+                .collect(),
+            workload,
+            frame: 0,
+            renders: 0,
+            expected_panel_renders: 96,
+            panel_renders,
+        }
+    }
+
+    fn visible_panels(&self) -> usize {
+        if self.workload == Churn::Remount && self.frame % 2 == 1 {
+            48
+        } else {
+            96
+        }
+    }
+
+    fn advance(&mut self, cx: &mut Context<Self>) {
+        self.frame += 1;
+        match self.workload {
+            Churn::Replace => {
+                for offset in 0..8 {
+                    let index = ((self.frame - 1) * 8 + offset) % 96;
+                    let previous = self.panels.get_mut(index).expect("replacement panel");
+                    let replacement = cx.new(|_| ChurnPanel {
+                        index,
+                        frame: self.frame,
+                        workload: self.workload,
+                        renders: self.panel_renders.clone(),
+                    });
+                    assert_ne!(previous.entity_id(), replacement.entity_id());
+                    *previous = replacement;
+                }
+            }
+            Churn::Id | Churn::Text => {
+                for panel in &self.panels {
+                    panel.update(cx, |panel, cx| {
+                        panel.frame = self.frame;
+                        cx.notify();
+                    });
+                }
+            }
+            Churn::Remount => {}
+        }
+        self.expected_panel_renders += self.visible_panels();
+        cx.notify();
+    }
+
+    fn validate(&self) {
+        assert_eq!(self.renders, self.frame + 1);
+        assert_eq!(self.panel_renders.get(), self.expected_panel_renders);
+        assert_eq!(self.panels.len(), 96);
+    }
+}
+
+impl Render for ChurnRoot {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.renders += 1;
+        gpui::div()
+            .id("churn-root")
+            .flex()
+            .flex_wrap()
+            .font_family("Noto Sans Mono")
+            .text_size(gpui::px(12.))
+            .text_color(gpui::rgb(0xffffff))
+            .child("0123456789")
+            .children(self.panels.iter().take(self.visible_panels()).cloned())
+    }
+}
+
+fn churn_workloads() -> Vec<Churn> {
+    if first_populated_panel_counts().is_empty() {
+        Vec::new()
+    } else {
+        vec![Churn::Replace, Churn::Remount, Churn::Id, Churn::Text]
+    }
+}
+
+thread_local! {
+    static DESCRIBED_CHURN: RefCell<Vec<Churn>> = const { RefCell::new(Vec::new()) };
+}
+
+#[gpui::bench(inputs = churn_workloads(), input_name = "workload", group = "LayoutChurn", fps = 120)]
+fn layout_churn(workload: &Churn, cx: &mut BenchAppContext) {
+    let font = gpui::font("Noto Sans Mono");
+    let text_system = cx.read(|cx| cx.text_system().clone());
+    assert!(
+        text_system
+            .all_font_names()
+            .contains(&font.family.to_string())
+    );
+    let font_id = text_system.resolve_font(&font);
+    assert_eq!(
+        text_system.get_font_for_id(font_id).map(|font| font.family),
+        Some(font.family)
+    );
+    let describe = DESCRIBED_CHURN.with(|described| {
+        let mut described = described.borrow_mut();
+        if described.contains(workload) {
+            false
+        } else {
+            described.push(*workload);
+            true
+        }
+    });
+    if describe {
+        let before_window = bench_metrics::allocation_stats();
+        let mut window = cx.add_empty_window();
+        let root = window
+            .update(|window, cx| window.replace_root(cx, |_, cx| ChurnRoot::new(*workload, cx)));
+        cx.run_until_idle();
+        let mut checkpoints = Vec::with_capacity(6);
+        checkpoints.push((0, bench_metrics::allocation_stats()));
+        for frame in 1..=3000 {
+            window.update(|_, cx| root.update(cx, |root, cx| root.advance(cx)));
+            cx.run_until_idle();
+            if [50, 200, 1000, 2000, 3000].contains(&frame) {
+                checkpoints.push((frame, bench_metrics::allocation_stats()));
+            }
+            window.update(|_, cx| root.read(cx).validate());
+        }
+        // Logging and scene snapshots allocate, so defer both until all heap reads.
+        window.update(|window, cx| {
+            assert_layout_cache_mode(window);
+            root.read(cx).validate();
+            assert!(!snapshot_glyphs(window).is_empty());
+        });
+        for (frame, stats) in checkpoints {
+            match before_window.zip(stats) {
+                Some((before, after)) => eprintln!(
+                    "layout churn {workload}: frame {frame}, live heap {} B, window delta {} B (process-wide requested bytes)",
+                    after.live_bytes(),
+                    after.live_bytes() - before.live_bytes(),
+                ),
+                None => eprintln!("layout churn {workload}: frame {frame}, heap unavailable"),
+            }
+        }
+        window.update(|window, _| window.remove_window());
+        drop(root);
+        cx.run_until_idle();
+    }
+    let mut window = cx.add_empty_window();
+    let root =
+        window.update(|window, cx| window.replace_root(cx, |_, cx| ChurnRoot::new(*workload, cx)));
+    cx.run_until_idle();
+    cx.bench_renderer(root.clone(), |root, _, cx| root.advance(cx));
+    window.update(|window, cx| {
+        assert_layout_cache_mode(window);
+        root.read(cx).validate();
+        assert!(root.read(cx).frame > 0);
+    });
+    let incremental = window.update(|window, _| snapshot_glyphs(window));
+    window.update(|window, _| window.refresh());
+    cx.run_until_idle();
+    assert!(!incremental.is_empty());
+    assert_eq!(
+        incremental,
+        window.update(|window, _| snapshot_glyphs(window))
+    );
+    window.update(|window, _| window.remove_window());
+}
+
 // Frames take 0.4 to 2.5 ms, so a 1 s measurement is already hundreds to thousands of
 // frames; Criterion's 3 s warm-up and 5 s measurement per id would make the suite take
 // most of an hour. Pass `ITERATIONS=6`, `--warm-up-time` or `--measurement-time` for a
@@ -589,6 +1569,11 @@ gpui::bench_group!(
         .measurement_time(Duration::from_secs(1))
         .sample_size(20);
     targets = full_refresh,
+    cached_full_refresh,
+    cached_leaf_style,
+    cached_leaf_bounds,
+    cached_insert_remove,
+    cached_reorder,
     unchanged,
     leaf_style,
     leaf_bounds,
@@ -596,6 +1581,10 @@ gpui::bench_group!(
     insert_remove,
     reorder,
     changing_share,
+    text_panel_updates,
+    installed_font_panel_updates,
+    first_populated_text_panels,
+    layout_churn,
     family_summary
 );
 gpui::bench_main!(benches);

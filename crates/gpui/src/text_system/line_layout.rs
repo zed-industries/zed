@@ -493,6 +493,22 @@ pub(crate) struct LineLayoutIndex {
     wrapped_lines_by_hash_index: usize,
 }
 
+impl LineLayoutIndex {
+    pub(crate) fn rebase(&self, old: &Self, new: &Self) -> Self {
+        Self {
+            font_generation: new.font_generation,
+            lines_index: self.lines_index - old.lines_index + new.lines_index,
+            wrapped_lines_index: self.wrapped_lines_index - old.wrapped_lines_index
+                + new.wrapped_lines_index,
+            lines_by_hash_index: self.lines_by_hash_index - old.lines_by_hash_index
+                + new.lines_by_hash_index,
+            wrapped_lines_by_hash_index: self.wrapped_lines_by_hash_index
+                - old.wrapped_lines_by_hash_index
+                + new.wrapped_lines_by_hash_index,
+        }
+    }
+}
+
 impl LineLayoutCache {
     pub fn new(
         platform_text_system: Arc<dyn PlatformTextSystem>,
@@ -520,7 +536,11 @@ impl LineLayoutCache {
         }
     }
 
-    pub fn reuse_layouts(&self, range: Range<LineLayoutIndex>) {
+    pub fn reuse_layouts(
+        &self,
+        range: Range<LineLayoutIndex>,
+        #[cfg(any(test, feature = "bench-support"))] stats: &mut crate::ReuseArrayStats,
+    ) {
         let font_generation = self.clear_if_font_generation_changed();
         if range.start.font_generation != font_generation
             || range.end.font_generation != font_generation
@@ -529,6 +549,24 @@ impl LineLayoutCache {
         }
         let mut current_frame = &mut *self.current_frame.write();
         let mut previous_frame = &mut *self.previous_frame.lock();
+
+        #[cfg(any(test, feature = "bench-support"))]
+        {
+            stats
+                .cloned(&previous_frame.used_lines[range.start.lines_index..range.end.lines_index]);
+            stats.cloned(
+                &previous_frame.used_wrapped_lines
+                    [range.start.wrapped_lines_index..range.end.wrapped_lines_index],
+            );
+            stats.cloned(
+                &previous_frame.used_lines_by_hash
+                    [range.start.lines_by_hash_index..range.end.lines_by_hash_index],
+            );
+            stats.cloned(
+                &previous_frame.used_wrapped_lines_by_hash[range.start.wrapped_lines_by_hash_index
+                    ..range.end.wrapped_lines_by_hash_index],
+            );
+        }
 
         for key in &previous_frame.used_lines[range.start.lines_index..range.end.lines_index] {
             if let Some((key, line)) = previous_frame.lines.remove_entry(key) {
@@ -638,6 +676,9 @@ impl LineLayoutCache {
             let text = SharedString::from(text);
             let unwrapped_layout = self.layout_line::<&SharedString>(&text, font_size, runs, None);
             let wrap_boundaries = if let Some(wrap_width) = wrap_width {
+                #[cfg(feature = "bench-support")]
+                let _timer =
+                    crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::TextWrap);
                 unwrapped_layout.compute_wrap_boundaries(text.as_ref(), wrap_width, max_lines)
             } else {
                 SmallVec::new()
@@ -697,9 +738,14 @@ impl LineLayoutCache {
             layout
         } else {
             let text = SharedString::from(text);
+            #[cfg(feature = "bench-support")]
+            let timer =
+                crate::window::RenderPhaseTimer::start(crate::window::RenderPhase::TextShape);
             let mut layout = self
                 .platform_text_system
                 .layout_line(&text, font_size, runs);
+            #[cfg(feature = "bench-support")]
+            drop(timer);
 
             if let Some(force_width) = force_width {
                 apply_force_width_to_layout(&mut layout, force_width);
