@@ -2364,6 +2364,54 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn v2_session_messages_reach_both_transcripts(cx: &mut TestAppContext) {
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let parent = harness.thread(cx).await;
+        harness.send_update(
+            "session",
+            acp::SessionUpdate::SubagentUpdate(acp::SubagentUpdate::new("child")),
+        );
+        let message = acp::SessionMessage::new("delegation")
+            .sender_session_id(acp::SessionId::new("session"))
+            .recipient_session_id(acp::SessionId::new("child"))
+            .content(vec!["Investigate the failure".into()]);
+        harness.send_update(
+            "session",
+            acp::SessionUpdate::SessionMessage(message.clone()),
+        );
+        harness.send_update("child", acp::SessionUpdate::SessionMessage(message));
+        harness.send_update(
+            "child",
+            acp::SessionUpdate::SessionMessageChunk(acp::SessionMessageChunk::new(
+                "delegation",
+                " on Windows".into(),
+            )),
+        );
+        harness.drain_updates(cx).await;
+
+        let child = parent
+            .read_with(cx, |parent, _| parent.subagent(&"child".into()).cloned())
+            .expect("announced subagent");
+        for (thread, expected_blocks) in [
+            (&parent, vec!["Investigate the failure".into()]),
+            (
+                &child,
+                vec!["Investigate the failure".into(), " on Windows".into()],
+            ),
+        ] {
+            thread.read_with(cx, |thread, _| {
+                let [acp_thread::AgentThreadEntry::SessionMessage(message)] = thread.entries()
+                else {
+                    panic!("expected one session message in {}", thread.session_id());
+                };
+                assert_eq!(message.sender_session_id, Some("session".into()));
+                assert_eq!(message.recipient_session_id, Some("child".into()));
+                assert_eq!(message.content.source_blocks(), expected_blocks.as_slice());
+            });
+        }
+    }
+
+    #[gpui::test]
     async fn v2_resume_replay_delivers_subagent_history(cx: &mut TestAppContext) {
         let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
         let loading = harness.reopen(true, cx);

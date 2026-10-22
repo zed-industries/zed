@@ -549,6 +549,16 @@ impl EntryViewState {
                     );
                 }
             }
+            AgentThreadEntry::SessionMessage(_) => {
+                if !matches!(self.entries.get(index), Some(Entry::SessionMessage { .. })) {
+                    self.set_entry(
+                        index,
+                        Entry::SessionMessage {
+                            focus_handle: cx.focus_handle(),
+                        },
+                    );
+                }
+            }
             AgentThreadEntry::AssistantMessage(message) => {
                 let entry = if let Some(Entry::AssistantMessage(entry)) =
                     self.entries.get_mut(index)
@@ -620,6 +630,7 @@ impl EntryViewState {
             match entry {
                 Entry::UserMessage { .. }
                 | Entry::AssistantMessage { .. }
+                | Entry::SessionMessage { .. }
                 | Entry::Elicitation { .. }
                 | Entry::ContextCompaction => {}
                 Entry::ToolCall(ToolCallEntry { content, .. }) => {
@@ -698,6 +709,9 @@ pub enum Entry {
         synced_source_version: acp_thread::MessageContentVersion,
     },
     AssistantMessage(AssistantMessageEntry),
+    SessionMessage {
+        focus_handle: FocusHandle,
+    },
     ToolCall(ToolCallEntry),
     Elicitation {
         focus_handle: FocusHandle,
@@ -710,6 +724,7 @@ impl Entry {
         match self {
             Self::UserMessage { editor, .. } => Some(editor.read(cx).focus_handle(cx)),
             Self::AssistantMessage(message) => Some(message.focus_handle.clone()),
+            Self::SessionMessage { focus_handle } => Some(focus_handle.clone()),
             Self::ToolCall(tool_call) => Some(tool_call.focus_handle.clone()),
             Self::Elicitation { focus_handle } => Some(focus_handle.clone()),
             Self::ContextCompaction => None,
@@ -720,6 +735,7 @@ impl Entry {
         match self {
             Self::UserMessage { editor, .. } => Some(editor),
             Self::AssistantMessage(_)
+            | Self::SessionMessage { .. }
             | Self::ToolCall(_)
             | Self::Elicitation { .. }
             | Self::ContextCompaction => None,
@@ -757,6 +773,7 @@ impl Entry {
         match self {
             Self::AssistantMessage(message) => message.scroll_handle_for_chunk(chunk_ix),
             Self::UserMessage { .. }
+            | Self::SessionMessage { .. }
             | Self::ToolCall(_)
             | Self::Elicitation { .. }
             | Self::ContextCompaction => None,
@@ -776,6 +793,7 @@ impl Entry {
             Self::ToolCall(ToolCallEntry { content, .. }) => !content.is_empty(),
             Self::UserMessage { .. }
             | Self::AssistantMessage(_)
+            | Self::SessionMessage { .. }
             | Self::Elicitation { .. }
             | Self::ContextCompaction => false,
         }
@@ -793,6 +811,7 @@ impl Focusable for Entry {
         match self {
             Self::UserMessage { editor, .. } => editor.read(cx).focus_handle(cx),
             Self::AssistantMessage(message) => message.focus_handle.clone(),
+            Self::SessionMessage { focus_handle } => focus_handle.clone(),
             Self::ToolCall(tool_call) => tool_call.focus_handle.clone(),
             Self::Elicitation { focus_handle } => focus_handle.clone(),
             Self::ContextCompaction => cx.focus_handle(),

@@ -58,6 +58,38 @@ use super::elicitation::{
 use super::subagent_card::{SubagentCardState, SubagentStatus};
 use super::*;
 
+/// Which side of a session message a transcript shows, and the other participant when it
+/// is known.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SessionMessageSide<'a> {
+    Outgoing {
+        recipient: Option<&'a acp_v2::SessionId>,
+    },
+    Incoming {
+        sender: Option<&'a acp_v2::SessionId>,
+    },
+    Unknown,
+}
+
+/// The transcript's own session is always one participant, so a single known participant
+/// that is another session also tells the direction.
+pub(super) fn session_message_side<'a>(
+    message: &'a acp_thread::SessionMessage,
+    own_session_id: &acp_v2::SessionId,
+) -> SessionMessageSide<'a> {
+    let sender = message.sender_session_id.as_ref();
+    let recipient = message.recipient_session_id.as_ref();
+    if sender == Some(own_session_id) {
+        SessionMessageSide::Outgoing { recipient }
+    } else if recipient == Some(own_session_id) || sender.is_some() {
+        SessionMessageSide::Incoming { sender }
+    } else if recipient.is_some() {
+        SessionMessageSide::Outgoing { recipient }
+    } else {
+        SessionMessageSide::Unknown
+    }
+}
+
 /// How a parent's view names a subagent. An ACP parent's own title for the subagent
 /// describes it in that view, so it wins over the subagent's title for itself.
 pub(super) fn subagent_label(thread: &AcpThread) -> SharedString {
@@ -7535,6 +7567,19 @@ impl ThreadView {
             AgentThreadEntry::ContextCompaction(compaction) => {
                 self.render_context_compaction(entry_ix, compaction, window, cx)
             }
+            AgentThreadEntry::SessionMessage(message) => {
+                let session_message = self.render_session_message(entry_ix, message, window, cx);
+                if let Some(handle) = self
+                    .entry_view_state
+                    .read(cx)
+                    .entry(entry_ix)
+                    .and_then(|entry| entry.focus_handle(cx))
+                {
+                    session_message.track_focus(&handle).into_any()
+                } else {
+                    session_message.into_any()
+                }
+            }
         };
 
         let is_subagent_output = self.is_subagent()
@@ -8851,11 +8896,96 @@ impl ThreadView {
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::Elicitation(_)
                 | AgentThreadEntry::AssistantMessage(_)
+                | AgentThreadEntry::SessionMessage(_)
                 | AgentThreadEntry::ContextCompaction(_) => {}
             }
         }
 
         has_running_terminal_call
+    }
+
+    fn render_session_message(
+        &self,
+        entry_ix: usize,
+        message: &acp_thread::SessionMessage,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Div {
+        let own_session_id = self.thread.read(cx).session_id().clone();
+        let (icon, direction, participant) = match session_message_side(message, &own_session_id) {
+            SessionMessageSide::Outgoing { recipient } => (IconName::Send, "To", recipient),
+            SessionMessageSide::Incoming { sender } => (IconName::Envelope, "From", sender),
+            SessionMessageSide::Unknown => (IconName::Envelope, "Message between sessions", None),
+        };
+        let participant = participant.map(|session_id| {
+            match self.session_participant_label(session_id, cx) {
+                Some(label) => div()
+                    .debug_selector(move || format!("session-message-participant-{entry_ix}"))
+                    .child(
+                        Button::new(("session-message-participant", entry_ix), label)
+                            .label_size(LabelSize::Small)
+                            .tooltip(Tooltip::text("Open Session"))
+                            .on_click(cx.listener({
+                                let session_id = session_id.clone();
+                                move |this, _, window, cx| {
+                                    this.server_view
+                                        .update(cx, |view, cx| {
+                                            view.navigate_to_thread(session_id.clone(), window, cx)
+                                        })
+                                        .log_err();
+                                }
+                            })),
+                    )
+                    .into_any_element(),
+                // The RFD allows messages naming a session this conversation never learned about.
+                None => Label::new("Unavailable Session")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted)
+                    .into_any_element(),
+            }
+        });
+
+        v_flex()
+            .px_5()
+            .py_1p5()
+            .w_full()
+            .gap_1p5()
+            .text_ui(cx)
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))
+                    .child(
+                        Label::new(direction)
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .children(participant),
+            )
+            .child(
+                div()
+                    .pl_3()
+                    .border_l_2()
+                    .border_color(cx.theme().colors().border)
+                    .child(self.render_message_content(entry_ix, 0, &message.content, window, cx)),
+            )
+    }
+
+    /// How this conversation names another of its sessions, or `None` when it has no thread
+    /// for that session.
+    pub(super) fn session_participant_label(
+        &self,
+        session_id: &acp_v2::SessionId,
+        cx: &App,
+    ) -> Option<SharedString> {
+        let server_view = self.server_view.upgrade()?;
+        let thread_view = server_view.read(cx).thread_view(session_id)?;
+        let thread = thread_view.read(cx).thread.read(cx);
+        Some(if thread.parent_session_id().is_none() {
+            "Main Agent".into()
+        } else {
+            subagent_label(thread)
+        })
     }
 
     fn render_collapsible_command(
