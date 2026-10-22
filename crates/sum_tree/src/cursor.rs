@@ -213,6 +213,10 @@ where
         None
     }
 
+    /// Moves the cursor to the previous item.
+    ///
+    /// If the cursor has not been positioned (or if it has been reset), it
+    /// moves to the last item in the tree instead.
     #[track_caller]
     #[instrument(skip_all)]
     pub fn prev(&mut self) {
