@@ -28,7 +28,7 @@ mod window;
 mod window_appearance;
 
 use objc2::{
-    Encode, Encoding, RefEncode,
+    Encode, Encoding, MainThreadMarker, RefEncode,
     rc::Retained,
     runtime::{AnyObject, Bool},
 };
@@ -43,6 +43,13 @@ pub(crate) use platform::*;
 pub(crate) use window::*;
 
 pub use platform::MacPlatform;
+
+fn main_thread_marker() -> Option<MainThreadMarker> {
+    thread_local! {
+        static MAIN_THREAD_MARKER: Option<MainThreadMarker> = MainThreadMarker::new();
+    }
+    MAIN_THREAD_MARKER.with(|marker| *marker)
+}
 
 trait BoolExt {
     fn to_objc(self) -> Bool;
@@ -123,4 +130,19 @@ unsafe impl RefEncode for NSRange {
 
 fn ns_string(string: &str) -> *mut AnyObject {
     Retained::autorelease_ptr(NSString::from_str(string)).cast()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::main_thread_marker;
+
+    #[test]
+    fn main_thread_marker_rejects_background_threads() {
+        std::thread::spawn(|| {
+            assert_eq!(main_thread_marker(), None);
+            assert_eq!(main_thread_marker(), None);
+        })
+        .join()
+        .expect("background thread panicked");
+    }
 }
