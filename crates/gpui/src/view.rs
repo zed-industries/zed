@@ -324,6 +324,8 @@ struct ViewElementState {
     prepaint_range: Range<PrepaintStateIndex>,
     paint_range: Range<PaintIndex>,
     cache_key: ViewElementCacheKey,
+    /// The entities the view accessed while it was last drawn, in any phase,
+    /// restored when its prepaint is reused so the window stays subscribed.
     accessed_entities: FxHashSet<EntityId>,
 }
 
@@ -624,7 +626,9 @@ fn paint_view(
 
                     if let Some(element) = element {
                         let refreshing = mem::replace(&mut window.refreshing, true);
-                        element.paint(window, cx);
+                        let ((), accessed_entities) =
+                            cx.detect_accessed_entities(|cx| element.paint(window, cx));
+                        element_state.accessed_entities.extend(accessed_entities);
                         window.refreshing = refreshing;
                     } else {
                         window.reuse_paint(element_state.paint_range.clone());

@@ -109,48 +109,29 @@ mod tests {
         output: Rc<Cell<usize>>,
     }
 
-    impl Render for SubscriptionLeaf {
-        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-            self.output.set(self.value);
-            div().size(px(50.))
-        }
-    }
-
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    enum SubscriptionPhase {
-        Render,
-        Paint,
-    }
-
     struct SubscriptionPanel {
         leaf: Entity<SubscriptionLeaf>,
-        phase: SubscriptionPhase,
+        deferred_child: bool,
         renders: Rc<Cell<usize>>,
     }
 
     impl Render for SubscriptionPanel {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             self.renders.set(self.renders.get() + 1);
-            let child = match self.phase {
-                SubscriptionPhase::Render => self
-                    .leaf
-                    .clone()
-                    .cached(StyleRefinement::default().size(px(50.)))
-                    .into_any_element(),
-                SubscriptionPhase::Paint => {
-                    let leaf = self.leaf.clone();
-                    crate::canvas(
-                        |_, _, _| {},
-                        move |_, _, _, cx| {
-                            let leaf = leaf.read(cx);
-                            leaf.output.set(leaf.value);
-                        },
-                    )
-                    .size(px(50.))
-                    .into_any_element()
-                }
-            };
-            deferred(child)
+            let leaf = self.leaf.clone();
+            let child = crate::canvas(
+                |_, _, _| {},
+                move |_, _, _, cx| {
+                    let leaf = leaf.read(cx);
+                    leaf.output.set(leaf.value);
+                },
+            )
+            .size(px(50.));
+            if self.deferred_child {
+                deferred(child).into_any_element()
+            } else {
+                child.into_any_element()
+            }
         }
     }
 
@@ -176,8 +157,8 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_deferred_reuse_keeps_entity_subscriptions(cx: &mut TestAppContext) {
-        for phase in [SubscriptionPhase::Render, SubscriptionPhase::Paint] {
+    fn test_cached_reuse_keeps_entity_subscriptions(cx: &mut TestAppContext) {
+        for deferred_child in [true, false] {
             for deferred_panel in [false, true] {
                 let output = Rc::new(Cell::new(0));
                 let renders = Rc::new(Cell::new(0));
@@ -188,7 +169,7 @@ mod tests {
                 });
                 let panel = cx.new(|_| SubscriptionPanel {
                     leaf: leaf.clone(),
-                    phase,
+                    deferred_child,
                     renders: renders.clone(),
                 });
                 let window = cx.open_window(size(px(800.), px(600.)), |_, _| SubscriptionRoot {
@@ -217,19 +198,18 @@ mod tests {
                     cx.notify();
                 });
                 cx.run_until_parked();
-                let context = format!("phase {phase:?}, deferred panel {deferred_panel}");
+                let context =
+                    format!("deferred child {deferred_child}, deferred panel {deferred_panel}");
                 assert!(
                     root_renders.get() > renders_before_notify,
                     "leaf notification should redraw: {context}"
                 );
-                if phase == SubscriptionPhase::Paint {
-                    // A plain entity read has no dispatch-tree path to invalidate the
-                    // cached panel, so refresh to run the paint callback again.
-                    window
-                        .update(cx, |_, window, _| window.refresh())
-                        .expect("refresh canvas");
-                    cx.run_until_parked();
-                }
+                // A plain entity read has no dispatch-tree path to invalidate the
+                // cached panel, so refresh to run the paint callback again.
+                window
+                    .update(cx, |_, window, _| window.refresh())
+                    .expect("refresh canvas");
+                cx.run_until_parked();
                 assert_eq!(output.get(), 2, "{context}");
             }
         }
