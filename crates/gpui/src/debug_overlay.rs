@@ -116,7 +116,7 @@ impl DebugFrameOverlay {
             },
         };
 
-        scene.insert_primitive(solid_quad(
+        scene.record_primitive(solid_quad(
             scaled_bounds(panel_left, panel_top, panel_width, panel_height),
             &content_mask,
             panel_color(),
@@ -144,7 +144,7 @@ impl DebugFrameOverlay {
                         while column < GLYPH_WIDTH && row & (1 << (GLYPH_WIDTH - 1 - column)) != 0 {
                             column += 1;
                         }
-                        scene.insert_primitive(solid_quad(
+                        scene.record_primitive(solid_quad(
                             scaled_bounds(
                                 glyph_left + cell * run_start as f32,
                                 row_top,

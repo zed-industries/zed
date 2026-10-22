@@ -323,13 +323,18 @@ impl Scene {
         self.paint_operations.push(PaintOperation::EndLayer);
     }
 
-    pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
+    pub(crate) fn record_primitive(&mut self, primitive: impl Into<Primitive>) {
         // Materializing the enum before this branch prevents specialization of
         // the flat path for concrete primitive types.
         if self.runs.is_some() {
             self.insert_in_run(primitive.into());
             return;
         }
+        self.insert_primitive(primitive);
+    }
+
+    pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
+        debug_assert!(self.runs.is_none(), "segmented scenes use record_primitive");
         let ordering_index = self.primitive_bounds.len();
         if let Some(operation) = self.prepare_primitive(primitive.into(), None) {
             self.ordering_indices.push(ordering_index);
@@ -2075,12 +2080,12 @@ mod tests {
     fn segmented_runs_keep_closed_layers_paths_and_surfaces() {
         fn paint(scene: &mut Scene) {
             scene.push_layer(quad().bounds);
-            scene.insert_primitive(path());
+            scene.record_primitive(path());
             scene.push_layer(quad().bounds);
-            scene.insert_primitive(quad());
+            scene.record_primitive(quad());
             scene.pop_layer();
             #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-            scene.insert_primitive(PaintSurface {
+            scene.record_primitive(PaintSurface {
                 order: 0,
                 bounds: quad().bounds,
                 content_mask: quad().content_mask,
@@ -2097,7 +2102,7 @@ mod tests {
 
         let mut target = Scene::default();
         target.enable_segments();
-        target.insert_primitive(path());
+        target.record_primitive(path());
         target.replay_segment(
             start..end,
             &mut source,
@@ -2130,11 +2135,11 @@ mod tests {
         let mut source = Scene::default();
         source.enable_segments();
         let start = source.index();
-        source.insert_primitive(quad());
+        source.record_primitive(quad());
         let prefix_end = source.index();
         source.push_layer(quad().bounds);
         let inside_start = source.index();
-        source.insert_primitive(path());
+        source.record_primitive(path());
         let inside_end = source.index();
         source.pop_layer();
         source.finish();
@@ -2168,11 +2173,11 @@ mod tests {
         let mut source = Scene::default();
         source.enable_segments();
         let start = source.index();
-        source.insert_primitive(quad());
+        source.record_primitive(quad());
         let prefix_end = source.index();
-        source.insert_primitive(path());
+        source.record_primitive(path());
         let suffix_start = source.index();
-        source.insert_primitive(quad());
+        source.record_primitive(quad());
         let end = source.index();
         source.finish();
         let suffix_order = source.quads[1].order;
@@ -2181,9 +2186,9 @@ mod tests {
         target.enable_segments();
         let mut stats = crate::ViewReuseStats::default();
         target.replay_segment(start..prefix_end, &mut source, &mut stats);
-        target.insert_primitive(path());
+        target.record_primitive(path());
         target.index();
-        target.insert_primitive(path());
+        target.record_primitive(path());
         target.replay_segment(suffix_start..end, &mut source, &mut stats);
         target.finish();
         assert_eq!(target.quads[1].order, suffix_order);
@@ -2207,9 +2212,9 @@ mod tests {
         let mut source = Scene::default();
         source.enable_segments();
         let start = source.index();
-        source.insert_primitive(quad());
+        source.record_primitive(quad());
         let middle = source.index();
-        source.insert_primitive(path());
+        source.record_primitive(path());
         let end = source.index();
         source.finish();
 

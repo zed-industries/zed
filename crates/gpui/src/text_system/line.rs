@@ -1205,7 +1205,7 @@ mod tests {
                         window
                             .next_frame
                             .scene
-                            .insert_primitive(crate::MonochromeSprite {
+                            .record_primitive(crate::MonochromeSprite {
                                 order: 0,
                                 pad: 0,
                                 bounds,
