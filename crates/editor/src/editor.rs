@@ -17,6 +17,7 @@ mod bracket_colorization;
 mod clangd_ext;
 pub mod code_context_menus;
 mod code_lens;
+mod debugger_hover;
 pub mod display_map;
 mod document_colors;
 mod document_links;
@@ -1752,37 +1753,40 @@ struct GutterButtonTooltip {
 }
 
 impl GutterButtonTooltip {
-    fn active_intent(&self, modifiers: Modifiers) -> GutterButtonIntent {
-        if modifiers.secondary() {
+    fn active_intent(&self, modifiers: Modifiers, cx: &App) -> GutterButtonIntent {
+        if modifiers.secondary(cx) {
             self.secondary
         } else {
             self.primary
         }
     }
 
-    fn meta_text(&self) -> String {
+    fn meta_text(&self, cx: &App) -> String {
         const RIGHT_CLICK_HINT: &str = "right-click for more options";
 
         if self.primary == self.secondary {
             return RIGHT_CLICK_HINT.to_string();
         }
         let modifier_as_text = gpui::Keystroke {
-            modifiers: Modifiers::secondary_key(),
+            modifiers: Modifiers::secondary_key(cx),
             ..Default::default()
         };
         let secondary = match self.secondary {
             GutterButtonIntent::SetBookmark => "bookmark",
             GutterButtonIntent::SetBreakpoint => "breakpoint",
         };
-        format!("{modifier_as_text}-click to add a {secondary}\n{RIGHT_CLICK_HINT}")
+        format!(
+            "{}-click to add a {secondary}\n{RIGHT_CLICK_HINT}",
+            modifier_as_text.display(cx.platform_info().os)
+        )
     }
 }
 
 impl Render for GutterButtonTooltip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let intent = self.active_intent(window.modifiers());
+        let intent = self.active_intent(window.modifiers(), cx);
         let key_binding = KeyBinding::for_action_in(intent.action(), &self.focus_handle, cx);
-        let meta_text = self.meta_text();
+        let meta_text = self.meta_text(cx);
 
         #[cfg(test)]
         if let Some(on_render) = &self.on_render {
@@ -2786,7 +2790,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut App,
     ) -> KeyContext {
-        let mut key_context = KeyContext::new_with_defaults();
+        let mut key_context = KeyContext::new_with_defaults(cx.platform_info().os);
         key_context.add("Editor");
         let mode = match self.mode {
             EditorMode::SingleLine => "single_line",
@@ -2837,6 +2841,10 @@ impl Editor {
 
         if self.signature_help_state.has_multiple_signatures() {
             key_context.add("showing_signature_help");
+        }
+
+        if self.hover_state.keyboard_debugger_hover_active() {
+            key_context.add("DebuggerHover");
         }
 
         // Disable vim contexts when a sub-editor (e.g. rename/inline assistant) is focused.
@@ -4186,7 +4194,7 @@ impl Editor {
 
     fn is_cmd_or_ctrl_pressed(modifiers: &Modifiers, cx: &mut Context<Self>) -> bool {
         match EditorSettings::get_global(cx).multi_cursor_modifier {
-            MultiCursorModifier::Alt => modifiers.secondary(),
+            MultiCursorModifier::Alt => modifiers.secondary(cx),
             MultiCursorModifier::CmdOrCtrl => modifiers.alt,
         }
     }
@@ -4194,7 +4202,7 @@ impl Editor {
     fn is_alt_pressed(modifiers: &Modifiers, cx: &mut Context<Self>) -> bool {
         match EditorSettings::get_global(cx).multi_cursor_modifier {
             MultiCursorModifier::Alt => modifiers.alt,
-            MultiCursorModifier::CmdOrCtrl => modifiers.secondary(),
+            MultiCursorModifier::CmdOrCtrl => modifiers.secondary(cx),
         }
     }
 
@@ -4732,7 +4740,7 @@ impl Editor {
         let breakpoint = Arc::from(breakpoint.clone());
 
         let alt_as_text = gpui::Keystroke {
-            modifiers: Modifiers::secondary_key(),
+            modifiers: Modifiers::secondary_key(cx),
             ..Default::default()
         };
         let primary_action_text = "Unset breakpoint";
@@ -4743,7 +4751,8 @@ impl Editor {
             SharedString::from("No executable code is associated with this line.")
         } else if !breakpoint.is_disabled() {
             SharedString::from(format!(
-                "{alt_as_text}-click to disable\nright-click for more options"
+                "{}-click to disable\nright-click for more options",
+                alt_as_text.display(cx.platform_info().os)
             ))
         } else {
             SharedString::from("Right-click for more options")
@@ -4813,7 +4822,7 @@ impl Editor {
             }
         };
 
-        let intent = if window.modifiers().secondary() {
+        let intent = if window.modifiers().secondary(cx) {
             secondary
         } else {
             primary
@@ -4829,7 +4838,7 @@ impl Editor {
             .on_click(cx.listener({
                 move |editor, _: &ClickEvent, window, cx| {
                     window.focus(&editor.focus_handle(cx), cx);
-                    let intent = if window.modifiers().secondary() {
+                    let intent = if window.modifiers().secondary(cx) {
                         secondary
                     } else {
                         primary
@@ -11550,7 +11559,7 @@ impl Editor {
             inlay_hints_style: make_inlay_hints_style(cx),
             edit_prediction_styles: make_suggestion_styles(cx),
             unnecessary_code_fade: settings.unnecessary_code_fade,
-            show_underlines: self.diagnostics_enabled(),
+            show_underlines: !self.mode.is_minimap(),
         }
     }
 
@@ -11864,6 +11873,15 @@ pub trait SemanticsProvider {
         cx: &mut App,
     ) -> Option<Task<Option<Vec<project::Hover>>>>;
 
+    fn debugger_hover(
+        &self,
+        _buffer: &Entity<Buffer>,
+        _position: text::Anchor,
+        _cx: &mut App,
+    ) -> Option<Task<Option<project::DebuggerHover>>> {
+        None
+    }
+
     fn inline_values(
         &self,
         buffer_handle: Entity<Buffer>,
@@ -11940,6 +11958,18 @@ impl SemanticsProvider for WeakEntity<Project> {
     ) -> Option<Task<Option<Vec<project::Hover>>>> {
         self.update(cx, |project, cx| project.hover(buffer, position, cx))
             .ok()
+    }
+
+    fn debugger_hover(
+        &self,
+        buffer: &Entity<Buffer>,
+        position: text::Anchor,
+        cx: &mut App,
+    ) -> Option<Task<Option<project::DebuggerHover>>> {
+        self.update(cx, |project, cx| {
+            project.debugger_hover(buffer, position, cx)
+        })
+        .ok()
     }
 
     fn document_highlights(

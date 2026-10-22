@@ -909,7 +909,6 @@ pub enum ThreadEvent {
         outcome: acp_thread::SelectedPermissionOutcome,
     },
     Elicitation(ElicitationRequest),
-    SubagentSpawned(acp_v2::SessionId),
     Retry(acp_thread::RetryStatus),
     ContextCompaction(acp_thread::ContextCompaction),
     ContextCompactionUpdate(acp_thread::ContextCompactionUpdate),
@@ -4407,7 +4406,8 @@ impl Thread {
             // Models that can't run with thinking disabled ignore the
             // toggle state, which may be stale from a previously selected
             // model that could.
-            thinking_allowed: self.thinking_enabled || !model.supports_disabling_thinking(),
+            thinking_allowed: self.thinking_enabled
+                || !model.supports_disabling_thinking_at_effort(self.thinking_effort.as_deref()),
             thinking_effort: self.thinking_effort.clone(),
             speed: self.speed(),
             compact_at_tokens: None,
@@ -6010,13 +6010,6 @@ impl ToolCallEventStream {
                 }
                 .into(),
             )))
-            .ok();
-    }
-
-    pub fn subagent_spawned(&self, id: acp_v2::SessionId) {
-        self.stream
-            .sender
-            .unbounded_send(Ok(ThreadEvent::SubagentSpawned(id)))
             .ok();
     }
 

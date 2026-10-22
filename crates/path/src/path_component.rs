@@ -132,6 +132,18 @@ pub(crate) enum Component<'a> {
     Normal(&'a OsStr),
 }
 
+impl<'a> Component<'a> {
+    pub fn as_os_str(&self, path_style: PathStyle) -> &'a OsStr {
+        match self {
+            Component::Prefix(p) => p.raw,
+            Component::RootDir => OsStr::new(path_style.primary_separator()),
+            Component::CurDir => OsStr::new("."),
+            Component::ParentDir => OsStr::new(".."),
+            Component::Normal(path) => path,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct Components<'a> {
     path_style: PathStyle,

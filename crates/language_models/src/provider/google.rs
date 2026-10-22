@@ -246,7 +246,10 @@ impl GoogleLanguageModelProvider {
     ) -> BoxFuture<
         'static,
         Result<
-            futures::stream::BoxStream<'static, Result<GenerateContentResponse>>,
+            futures::stream::BoxStream<
+                'static,
+                Result<GenerateContentResponse, LanguageModelCompletionError>,
+            >,
             LanguageModelCompletionError,
         >,
     > {
@@ -406,6 +409,7 @@ fn language_model(model: &google_ai::Model) -> LanguageModel {
                 name: level.name().into(),
                 value: level.value().into(),
                 is_default: Some(*level) == model.default_thinking_level,
+                supports_disabling_thinking: None,
             })
             .collect(),
         tool_choice_support: LanguageModelToolChoiceSupport::ALL,

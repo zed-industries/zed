@@ -573,6 +573,39 @@ async fn test_thinking_allowed_when_model_cannot_disable_thinking(cx: &mut TestA
             .unwrap();
         assert!(request.thinking_allowed);
     });
+
+    // A model-level capability can be overridden by the selected effort.
+    fake.update_model("fake", |model| {
+        model.supported_effort_levels = [
+            language_model::LanguageModelEffortLevel {
+                name: "High".into(),
+                value: "high".into(),
+                is_default: true,
+                supports_disabling_thinking: Some(true),
+            },
+            language_model::LanguageModelEffortLevel {
+                name: "Max".into(),
+                value: "max".into(),
+                is_default: false,
+                supports_disabling_thinking: None,
+            },
+        ]
+        .into();
+    });
+    thread.update(cx, |thread, cx| {
+        thread.refresh_model(&model.provider_id, cx);
+        thread.set_thinking_effort(Some("high".to_string()), cx);
+        let request = thread
+            .build_completion_request(CompletionIntent::UserPrompt, cx)
+            .unwrap();
+        assert!(!request.thinking_allowed);
+
+        thread.set_thinking_effort(Some("max".to_string()), cx);
+        let request = thread
+            .build_completion_request(CompletionIntent::UserPrompt, cx)
+            .unwrap();
+        assert!(request.thinking_allowed);
+    });
 }
 
 #[gpui::test]
@@ -4496,7 +4529,8 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     });
 
     // Test cancel
-    cx.update(|cx| connection.cancel(&session_id, cx));
+    cx.update(|cx| connection.cancel(&session_id, cx))
+        .expect("cancellation succeeds");
     request.await.expect("prompt should fail gracefully");
 
     // Explicitly close the session and drop the ACP thread.
@@ -6100,6 +6134,13 @@ async fn test_subagent_tool_call_end_to_end(cx: &mut TestAppContext) {
             .upgrade()
             .expect("subagent thread should be alive")
     });
+    acp_thread.read_with(cx, |parent, _| {
+        assert_eq!(
+            parent.subagent(&subagent_session_id),
+            Some(&subagent_thread),
+            "the parent thread owns the spawned subagent"
+        );
+    });
 
     let request = fake.pending_completions_for(&model).pop().unwrap();
     fake.send_text(&model, &request, "subagent task response");
@@ -6406,7 +6447,10 @@ async fn test_subagent_tool_call_cancellation_during_task_prompt(cx: &mut TestAp
 
     // cx.run_until_parked();
 
-    acp_thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+    acp_thread
+        .update(cx, |thread, cx| thread.cancel(cx))
+        .await
+        .expect("cancellation succeeds");
 
     cx.run_until_parked();
 
@@ -6596,6 +6640,13 @@ async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
         let running = thread.running_subagent_ids(cx);
         assert_eq!(running.len(), 1, "subagent should be running");
         assert_eq!(running[0], subagent_session_id, "should be same session");
+    });
+    acp_thread.read_with(cx, |parent, _| {
+        assert_eq!(
+            parent.subagents().collect::<Vec<_>>(),
+            [&subagent_acp_thread],
+            "resuming keeps the one registered subagent"
+        );
     });
 
     // Subagent responds to follow-up

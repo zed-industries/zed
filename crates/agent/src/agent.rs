@@ -232,7 +232,6 @@ struct Session {
     acp_thread: WeakEntity<acp_thread::AcpThread>,
     execution: Option<NativeExecution>,
     pending_cancellation: watch::Sender<()>,
-    subagents: Vec<Entity<acp_thread::AcpThread>>,
     project_id: EntityId,
     /// Latest snapshot to persist. Overwritten in place on every save request;
     /// the single save worker drains it, coalescing bursts into one write.
@@ -1071,7 +1070,6 @@ impl NativeAgent {
                 acp_thread: acp_thread.downgrade(),
                 execution: None,
                 pending_cancellation: watch::channel(()).0,
-                subagents: Vec::new(),
                 project_id,
                 pending_save,
                 last_streaming_save_key: None,
@@ -2937,11 +2935,6 @@ impl NativeAgentConnection {
                                     thread.update_tool_call(update, cx)
                                 })??;
                             }
-                            ThreadEvent::SubagentSpawned(session_id) => {
-                                acp_thread.update(cx, |thread, cx| {
-                                    thread.subagent_spawned(session_id, cx);
-                                })?;
-                            }
                             ThreadEvent::Retry(status) => {
                                 if acp_thread::refusal_fallback_model_from_meta(&status.meta)
                                     .is_some()
@@ -3401,11 +3394,12 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             .try_for_each(UserMessageContent::validate_content_block)
     }
 
-    fn cancel(&self, session_id: &acp_v2::SessionId, cx: &mut App) {
+    fn cancel(&self, session_id: &acp_v2::SessionId, cx: &mut App) -> Result<()> {
         log::info!("Cancelling on session: {}", session_id);
         self.0.update(cx, |agent, _cx| {
             agent.cancel_session(session_id);
         });
+        Ok(())
     }
 
     fn truncate(
@@ -3660,7 +3654,7 @@ impl acp_thread::AgentSessionTruncate for NativeAgentSessionTruncate {
         let acp_thread = self.acp_thread.clone();
         cx.spawn(async move |cx| {
             // Preparation is session-owned and may precede the model turn.
-            cancellation.await;
+            cancellation.await?;
             let usage = thread.update(cx, |thread, cx| {
                 thread.truncate(client_user_message_id, cx)?;
                 anyhow::Ok(thread.latest_token_usage())
@@ -3741,14 +3735,13 @@ impl NativeThreadEnvironment {
                     .get(&parent_session_id)
                     .map(|s| s.project_id)
                     .context("parent session not found")?;
-                let acp_thread = agent.register_session(subagent_thread.clone(), project_id, cx);
-                let parent_session = agent
-                    .sessions
-                    .get_mut(&parent_session_id)
-                    .context("parent session not found")?;
-                parent_session.subagents.push(acp_thread.clone());
-                Ok(acp_thread)
+                Ok(agent.register_session(subagent_thread.clone(), project_id, cx))
             })??;
+        self.acp_thread
+            .update(cx, |parent, cx| {
+                parent.register_subagent(acp_thread.clone(), cx)
+            })
+            .context("Parent thread no longer exists")?;
 
         let depth = current_depth + 1;
 
@@ -4835,7 +4828,8 @@ mod internal_tests {
                 );
             });
 
-            cx.update(|cx| connection.cancel(&session_id, cx));
+            cx.update(|cx| connection.cancel(&session_id, cx))
+                .expect("cancellation succeeds");
             cx.run_until_parked();
             assert_eq!(
                 completion
@@ -4978,7 +4972,7 @@ mod internal_tests {
         });
         let submission_id = submission.id;
         cx.run_until_parked();
-        cancellation.await;
+        cancellation.await.expect("cancellation succeeds");
         assert!(
             submission
                 .await
@@ -5017,7 +5011,7 @@ mod internal_tests {
         cx.run_until_parked();
         assert_eq!(fake.pending_completions_for(&model).len(), 1);
         let cancellation = acp_thread.update(cx, |thread, cx| thread.cancel(cx));
-        cancellation.await;
+        cancellation.await.expect("cancellation succeeds");
         assert_eq!(
             accepted.await.expect("accepted execution cancelled"),
             acp_v2::StopReason::Cancelled
@@ -5120,7 +5114,7 @@ mod internal_tests {
         acp_thread.read_with(cx, |thread, _| {
             assert!(matches!(
                 thread.foreground_state(),
-                acp_v2::StateUpdate::Running(_)
+                Some(acp_v2::StateUpdate::Running(_))
             ));
         });
         drop(completion);
@@ -5142,7 +5136,7 @@ mod internal_tests {
         cx.run_until_parked();
         acp_thread.read_with(cx, |thread, _| {
             assert!(
-                matches!(thread.foreground_state(), acp_v2::StateUpdate::Idle(idle)
+                matches!(thread.foreground_state(), Some(acp_v2::StateUpdate::Idle(idle))
                 if idle.stop_reason == Some(acp_v2::StopReason::EndTurn))
             );
         });
@@ -5176,7 +5170,8 @@ mod internal_tests {
         );
         assert!(second_completion.peek().is_none());
         cx.run_until_parked();
-        cx.update(|cx| connection.cancel(&session_id, cx));
+        cx.update(|cx| connection.cancel(&session_id, cx))
+            .expect("cancellation succeeds");
         assert_eq!(
             second_completion
                 .await
@@ -5214,7 +5209,7 @@ mod internal_tests {
         cx.run_until_parked();
         acp_thread.read_with(cx, |thread, cx| {
             assert!(
-                matches!(thread.foreground_state(), acp_v2::StateUpdate::Idle(idle)
+                matches!(thread.foreground_state(), Some(acp_v2::StateUpdate::Idle(idle))
                 if idle.stop_reason == Some(acp_v2::StopReason::EndTurn))
             );
             assert!(thread.to_markdown(cx).contains("retried"));
@@ -5398,7 +5393,8 @@ mod internal_tests {
                     .any(|text| text.contains(command)),
                 "reload retry must not send an unprepared command to the model"
             );
-            cx.update(|cx| connection.cancel(&session_id, cx));
+            cx.update(|cx| connection.cancel(&session_id, cx))
+                .expect("cancellation succeeds");
             completion
                 .await
                 .expect("retry driver completed")
@@ -5731,7 +5727,8 @@ mod internal_tests {
                 .any(|text| text.contains("restored instructions") && text.contains("do work"))
         );
         assert!(!texts.iter().any(|text| text.contains("/:retry-skill")));
-        cx.update(|cx| connection.cancel(&session_id, cx));
+        cx.update(|cx| connection.cancel(&session_id, cx))
+            .expect("cancellation succeeds");
         assert_eq!(
             completion
                 .await
@@ -5815,7 +5812,8 @@ mod internal_tests {
             request.intent,
             Some(CompletionIntent::ThreadContextSummarization)
         );
-        cx.update(|cx| connection.cancel(&session_id, cx));
+        cx.update(|cx| connection.cancel(&session_id, cx))
+            .expect("cancellation succeeds");
         assert_eq!(
             completion
                 .await
@@ -9516,6 +9514,58 @@ mod internal_tests {
     }
 
     #[gpui::test]
+    async fn test_only_created_subagents_are_registered_with_the_parent(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({ "a": {} })).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = cx
+            .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
+        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+        let new_session = |cx: &mut TestAppContext| {
+            cx.update(|cx| {
+                connection
+                    .clone()
+                    .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
+            })
+        };
+        let parent = new_session(cx).await.unwrap();
+        let unrelated = new_session(cx).await.unwrap();
+        let parent_session_id = parent.read_with(cx, |thread, _| thread.session_id().clone());
+        let unrelated_session_id = unrelated.read_with(cx, |thread, _| thread.session_id().clone());
+        let environment = NativeThreadEnvironment {
+            agent: agent.downgrade(),
+            thread: cx
+                .update(|cx| native_thread_for_session(&agent, &parent_session_id, cx))
+                .downgrade(),
+            acp_thread: parent.downgrade(),
+        };
+
+        let child = cx
+            .update(|cx| environment.create_subagent_thread("child".to_string(), None, cx))
+            .unwrap();
+        cx.update(|cx| environment.resume_subagent_thread(child.id(), cx))
+            .expect("resume the child");
+        // Resuming a session the parent did not create, including itself, must not make
+        // the parent own it: that would be a reference cycle or a self-update.
+        cx.update(|cx| environment.resume_subagent_thread(unrelated_session_id, cx))
+            .expect("resume an unrelated live session");
+        cx.update(|cx| environment.resume_subagent_thread(parent_session_id, cx))
+            .expect("resume the parent's own session");
+
+        parent.read_with(cx, |parent, cx| {
+            assert_eq!(
+                parent
+                    .subagents()
+                    .map(|subagent| subagent.read(cx).session_id().clone())
+                    .collect::<Vec<_>>(),
+                [child.id()]
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_save_burst_preserves_in_flight_write(cx: &mut TestAppContext) {
         let fake = init_test(cx);
         let fs = FakeFs::new(cx.executor());
@@ -9674,7 +9724,8 @@ mod internal_tests {
         cx.run_until_parked();
         turn.acp_thread
             .update(cx, |thread, cx| thread.cancel(cx))
-            .await;
+            .await
+            .expect("cancellation succeeds");
         send.await.unwrap();
         cx.run_until_parked();
         assert_eq!(
@@ -9801,7 +9852,8 @@ mod internal_tests {
 
         turn.acp_thread
             .update(cx, |thread, cx| thread.cancel(cx))
-            .await;
+            .await
+            .expect("cancellation succeeds");
         send.await.unwrap();
         cx.run_until_parked();
         assert_eq!(
