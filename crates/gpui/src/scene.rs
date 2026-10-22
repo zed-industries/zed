@@ -330,15 +330,11 @@ impl Scene {
     ) {
         // Materializing the enum before this branch prevents specialization of
         // the flat path for concrete primitive types.
-        let scene = if RETAINED && self.runs.is_some() {
-            self.runs
-                .as_mut()
-                .expect("segmented primitive recording")
-                .recording_scene()
+        if RETAINED && let Some(runs) = self.runs.as_mut() {
+            runs.recording_scene().insert_primitive(primitive);
         } else {
-            self
-        };
-        scene.insert_primitive(primitive);
+            self.insert_primitive(primitive);
+        }
     }
 
     pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
