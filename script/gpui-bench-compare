@@ -158,12 +158,29 @@ def prepare(root, cache, revision, features, timeout, environment):
             binaries[name] = destination
     if set(binaries) != set(TARGETS):
         raise RuntimeError(f"missing benchmark executable; see {artifacts / 'build.log'}")
+    binary_hashes = {}
+    for target, binary in binaries.items():
+        with binary.open("rb") as executable:
+            binary_hashes[target] = hashlib.file_digest(executable, "sha256").hexdigest()
     return {
         "revision": revision, "commit": commit, "build_seconds": elapsed,
+        "gpui_tree": git(root, "rev-parse", f"{commit}:crates/gpui"),
+        "binary_sha256": binary_hashes,
         "benchmark_sha256": digest.hexdigest(),
         "lockfile_sha256": hashlib.sha256((source / "Cargo.lock").read_bytes()).hexdigest(),
         "source": str(source), "binaries": binaries,
     }
+
+
+def verify_distinct_artifacts(revisions):
+    baseline, candidate = revisions
+    if baseline["gpui_tree"] != candidate["gpui_tree"]:
+        for target in TARGETS:
+            if baseline["binary_sha256"][target] == candidate["binary_sha256"][target]:
+                raise RuntimeError(
+                    f"{target} binaries are byte-identical despite different crates/gpui trees; "
+                    "refusing a potentially contaminated benchmark comparison"
+                )
 
 
 def measure(binary, identifier, directory, environment, timeout, slow):
@@ -250,6 +267,7 @@ def main():
     for revision in [args.baseline, args.candidate]:
         print(f"Building {revision} (once)...", flush=True)
         revisions.append(prepare(root, cache, revision, args.features, args.timeout, environment))
+    verify_distinct_artifacts(revisions)
     if revisions[0]["lockfile_sha256"] != revisions[1]["lockfile_sha256"]:
         print("NOTE: revisions have different Cargo.lock files; dependency changes may affect results.")
     cases = {}
