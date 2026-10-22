@@ -401,17 +401,14 @@ impl Interactivity {
     /// The imperative API equivalent to [`InteractiveElement::on_scroll`].
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
-    pub fn on_scroll(
-        &mut self,
-        listener: impl Fn(&ScrollEvent, &mut Window, &mut App) + 'static,
-    ) {
-        self.cold_mut().scroll_listeners.push(Box::new(
-            move |event, phase, hitbox, window, cx| {
+    pub fn on_scroll(&mut self, listener: impl Fn(&ScrollEvent, &mut Window, &mut App) + 'static) {
+        self.cold_mut()
+            .scroll_listeners
+            .push(Box::new(move |event, phase, hitbox, window, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
                     (listener)(event, window, cx);
                 }
-            },
-        ));
+            }));
     }
 
     /// The former name of [`Interactivity::on_scroll`].
@@ -444,14 +441,15 @@ impl Interactivity {
         &mut self,
         listener: impl Fn(&BackGestureEvent, &mut Window, &mut App) + 'static,
     ) {
-        self.cold_mut().back_gesture_listeners
-            .push(Box::new(move |event, phase, hitbox, window, cx| {
+        self.cold_mut().back_gesture_listeners.push(Box::new(
+            move |event, phase, hitbox, window, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
                     (listener)(event, window, cx);
                     window.prevent_default();
                     cx.stop_propagation();
                 }
-            }));
+            },
+        ));
     }
 
     /// Bind the given callback to pinch gesture events during the capture phase.

@@ -539,15 +539,15 @@ impl Scene {
             report!(underlines, |primitive| primitive.order);
             report!(monochrome_sprites, |primitive| (
                 primitive.order,
-                primitive.tile.tile_id
+                primitive.tile.texture_id.index
             ));
             report!(subpixel_sprites, |primitive| (
                 primitive.order,
-                primitive.tile.tile_id
+                primitive.tile.texture_id.index
             ));
             report!(polychrome_sprites, |primitive| (
                 primitive.order,
-                primitive.tile.tile_id
+                primitive.tile.texture_id.index
             ));
             report!(surfaces, |primitive| primitive.order);
         }
@@ -602,19 +602,19 @@ impl Scene {
             &mut self.monochrome_sprites,
             &mut self.sprite_sort_keys,
             &mut self.sprite_sort_counts,
-            |sprite| (sprite.order, sprite.tile.tile_id.0),
+            |sprite| (sprite.order, sprite.tile.texture_id.index),
         );
         sort_sprites(
             &mut self.subpixel_sprites,
             &mut self.sprite_sort_keys,
             &mut self.sprite_sort_counts,
-            |sprite| (sprite.order, sprite.tile.tile_id.0),
+            |sprite| (sprite.order, sprite.tile.texture_id.index),
         );
         sort_sprites(
             &mut self.polychrome_sprites,
             &mut self.sprite_sort_keys,
             &mut self.sprite_sort_counts,
-            |sprite| (sprite.order, sprite.tile.tile_id.0),
+            |sprite| (sprite.order, sprite.tile.texture_id.index),
         );
         if !self.surfaces.is_empty() {
             let mut surfaces: Vec<_> = self.surfaces.drain(..).enumerate().collect();
@@ -1095,15 +1095,15 @@ mod sort_tests {
                 stable_sort!(underlines, |primitive| primitive.order);
                 stable_sort!(monochrome_sprites, |primitive| (
                     primitive.order,
-                    primitive.tile.tile_id
+                    primitive.tile.texture_id.index
                 ));
                 stable_sort!(subpixel_sprites, |primitive| (
                     primitive.order,
-                    primitive.tile.tile_id
+                    primitive.tile.texture_id.index
                 ));
                 stable_sort!(polychrome_sprites, |primitive| (
                     primitive.order,
-                    primitive.tile.tile_id
+                    primitive.tile.texture_id.index
                 ));
                 stable_sort!(surfaces, |primitive| primitive.order);
                 scene.finish();

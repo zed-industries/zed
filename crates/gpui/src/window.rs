@@ -4405,6 +4405,14 @@ impl Window {
         // cached paint_range indices in reuse_paint find the handler at the
         // expected position.
         if let Some(input_handler) = self.platform_window.take_input_handler() {
+            // A platform may return a handler from before the focused field changed.
+            // Replaying a retained paint range must not reinstall that stale handler.
+            if input_handler
+                .focus_id()
+                .is_some_and(|focus| Some(focus) != self.focus)
+            {
+                self.refreshing = true;
+            }
             if let Some(slot) = self
                 .rendered_frame
                 .input_handlers
