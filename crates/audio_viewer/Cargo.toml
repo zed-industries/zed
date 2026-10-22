@@ -37,4 +37,5 @@ workspace.workspace = true
 worktree.workspace = true
 
 [dev-dependencies]
+db = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
