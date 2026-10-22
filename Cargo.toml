@@ -10,6 +10,7 @@ members = [
     "crates/agent_settings",
     "crates/agent_skills",
     "crates/agent_ui",
+    "crates/agent_ui_benchmarks",
     "crates/ai_onboarding",
     "crates/anthropic",
     "crates/askpass",
@@ -94,6 +95,7 @@ members = [
     "crates/google_ai",
     "crates/gpui",
     "crates/gpui_apple",
+    "crates/gpui_ios",
     "crates/gpui_linux",
     "crates/gpui_macos",
     "crates/gpui_macros",
@@ -366,6 +368,7 @@ go_to_line = { path = "crates/go_to_line" }
 google_ai = { path = "crates/google_ai" }
 gpui = { path = "crates/gpui", default-features = false }
 gpui_apple = { path = "crates/gpui_apple" }
+gpui_ios = { path = "crates/gpui_ios" }
 gpui_linux = { path = "crates/gpui_linux", default-features = false }
 gpui_macos = { path = "crates/gpui_macos", default-features = false }
 gpui_macros = { path = "crates/gpui_macros" }
@@ -373,7 +376,7 @@ gpui_platform = { path = "crates/gpui_platform", default-features = false }
 gpui_shared_string = { path = "crates/gpui_shared_string" }
 gpui_tokio = { path = "crates/gpui_tokio" }
 gpui_util = { path = "crates/gpui_util" }
-gpui_web = { path = "crates/gpui_web" }
+gpui_web = { path = "crates/gpui_web", default-features = false }
 gpui_wgpu = { path = "crates/gpui_wgpu" }
 gpui_windows = { path = "crates/gpui_windows", default-features = false }
 grammars = { path = "crates/grammars" }
@@ -452,7 +455,7 @@ remote_connection = { path = "crates/remote_connection" }
 remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
 reqwest_client = { path = "crates/reqwest_client" }
-rodio = { git = "https://github.com/RustAudio/rodio", rev = "e50e726ddd0292f6ef9de0dda6b90af4ed1fb66a", default-features = false, features = ["wav", "playback", "wav_output", "recording"] }
+rodio = { git = "https://github.com/RustAudio/rodio", rev = "3ee9745862279ce1d18db593155016e7ce024aeb", default-features = false, features = ["wav", "playback", "wav_output", "recording"] }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 sandbox = { path = "crates/sandbox" }
@@ -527,7 +530,7 @@ accesskit = { version = "0.24.0", features = ["enumn"] }
 accesskit_macos = "0.26.0"
 accesskit_unix = "0.22"
 accesskit_windows = "0.34"
-agent-client-protocol = { version = "=2.2.0", features = ["unstable", "unstable_protocol_v2"] }
+agent-client-protocol = { version = "=3.5.0", features = ["schemars", "unstable", "unstable_protocol_v2"] }
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "4c129667ce56611becdc82de6e28218c80e2e88f" }
 any_vec = "0.14"
@@ -592,7 +595,6 @@ ciborium = "0.2"
 clap = { version = "4.4", features = ["derive", "wrap_help"] }
 clap_complete = "4.4"
 clap_complete_nushell = "4.4"
-cocoa = "=0.26.0"
 console = "0.16"
 console_error_panic_hook = "0.1.7"
 const_format = "0.2"
@@ -602,9 +604,8 @@ core-foundation-sys = "0.8.6"
 core-graphics = "0.24"
 core-services = "1"
 core-text = "21"
-core-video = { version = "0.5", default-features = false, features = ["link"] }
 coreaudio-rs = { version = "0.12", default-features = false }
-cpal = "0.17"
+cpal = { git = "https://github.com/RustAudio/cpal", rev = "e1612d5d98152f8dc2a62e1b51ef7cbf4f7f26b7" }
 crash-handler = "0.8"
 criterion = { version = "0.8.2", features = ["html_reports"] }
 perf-event = { package = "perf-event2", version = "0.7.4" }
@@ -686,7 +687,7 @@ linkify = "0.10.0"
 livekit = { version = "0.7.32", features = ["tokio", "rustls-tls-native-roots"] }
 log = { version = "0.4", default-features = false, features = ["std"] }
 lru = "0.16"
-lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "f1783e63a7f4eb4397bf51d4148b4895a1f7ab16" }
+lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "82d7fc66ebdfabcfeb26ba16bbed9f3d26211fc3" }
 mach2 = "0.6"
 markup5ever_rcdom = "0.39"
 mdbook = { version = "=0.4.40", default-features = false, features = ["search"] }
@@ -700,24 +701,69 @@ nbformat = "1.2.0"
 nix = "0.30"
 notify-rust = "4"
 nucleo = { package = "nucleo-matcher", version = "0.3" }
-objc = "0.2"
 objc2 = "0.6"
+objc2-ui-kit = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "block2",
+    "objc2-quartz-core",
+    "objc2-core-foundation",
+    "NSText",
+    "UIApplication",
+    "UICommand",
+    "UICornerConfiguration",
+    "UICornerRadius",
+    "UIEvent",
+    "UIGeometry",
+    "UIGestureRecognizer",
+    "UIPanGestureRecognizer",
+    "UIScreenEdgePanGestureRecognizer",
+    "UIInterface",
+    "UIOpenURLContext",
+    "UIPasteboard",
+    "UIResponder",
+    "UIScene",
+    "UISceneConfiguration",
+    "UISceneDefinitions",
+    "UISceneOptions",
+    "UISceneSession",
+    "UIScreen",
+    "UITextInput",
+    "UITextInputTraits",
+    "UITouch",
+    "UITraitCollection",
+    "UIView",
+    "UIViewController",
+    "UIWindow",
+    "UIWindowScene",
+] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "NSAlert",
+    "NSAppearance",
     "NSApplication",
     "NSButton",
+    "NSCell",
+    "NSColor",
     "NSControl",
+    "NSCursor",
+    "NSDocumentController",
+    "NSDragging",
     "NSDraggingItem",
+    "NSEvent",
     "NSGraphics",
     "NSImage",
+    "NSMenu",
+    "NSMenuItem",
     "NSOpenPanel",
     "NSPanel",
     "NSPasteboard",
     "NSResponder",
+    "NSRunningApplication",
     "NSSavePanel",
     "NSScreen",
+    "NSScroller",
     "NSTrackingArea",
     "NSView",
+    "NSVisualEffectView",
     "NSWindow",
     "NSWorkspace",
     "block2",
@@ -726,10 +772,12 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
 objc2-core-foundation = { version = "=0.3.2", default-features = false }
 objc2-core-graphics = { version = "=0.3.2", default-features = false, features = ["CGDirectDisplay"] }
 objc2-core-media = { version = "=0.3.2", default-features = false, features = ["CMSampleBuffer", "objc2-core-video"] }
+objc2-core-text = { version = "0.3.2", default-features = false, features = ["std", "CTFont", "CTFontDescriptor"] }
 objc2-core-video = { version = "=0.3.2", default-features = false, features = ["CVBuffer", "CVImageBuffer"] }
 objc2-foundation = { version = "=0.3.2", default-features = false, features = [
     "NSArray",
     "NSAttributedString",
+    "NSBundle",
     "NSCoder",
     "NSData",
     "NSDate",
@@ -750,6 +798,7 @@ objc2-foundation = { version = "=0.3.2", default-features = false, features = [
     "objc2-core-foundation",
     "std",
 ] }
+objc2-security = { version = "0.3.2", default-features = false, features = ["std", "SecBase", "SecItem"] }
 objc2-quartz-core = { version = "=0.3.2", default-features = false, features = ["std", "CALayer", "CAMetalLayer"] }
 objc2-screen-capture-kit = { version = "=0.3.2", default-features = false, features = [
     "block2",
@@ -798,7 +847,7 @@ proc-macro2 = "1.0.93"
 profiling = "1"
 # replace this with main when #635 is merged
 pollster = "0.4.0"
-proptest = { git = "https://github.com/proptest-rs/proptest", rev = "3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b", features = ["attr-macro"] }
+proptest = { version = "1.12.0", features = ["attr-macro"] }
 proptest-derive = "0.8.0"
 prost = "0.14"
 prost-build = { version = "0.14", default-features = false }
@@ -870,7 +919,7 @@ swash = "0.2.6"
 syn = { version = "2.0", default-features = false, features = ["proc-macro"] }
 sys-locale = "0.3.1"
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
-taffy = { version = "=0.13.0", default-features = false }
+taffy = { version = "=0.15.0", default-features = false }
 tempfile = "3.20.0"
 tendril = "0.5"
 thiserror = "2.0.12"
@@ -932,7 +981,7 @@ wasm-encoder = "0.254"
 # the wasm-bindgen init function with the positional arguments deprecated in 0.2.93.
 wasm_thread = { git = "https://github.com/zed-industries/wasm_thread", rev = "0cf96c7708dfb97ccf3da50347e25edcf75d6937", version = "0.3", features = ["es_modules"] }
 wasmparser = "0.254"
-wasmtime = { version = "48", default-features = false, features = [
+wasmtime = { version = "48.0.7", default-features = false, features = [
     "anyhow",
     "async",
     "demangle",
@@ -944,13 +993,14 @@ wasmtime = { version = "48", default-features = false, features = [
 ] }
 wasm-bindgen = "0.2.120"
 wasm-bindgen-futures = "0.4"
-wasmtime-wasi = { version = "48", default-features = false, features = ["p2"] }
+wasmtime-wasi = { version = "48.0.7", default-features = false, features = ["p2"] }
 wax = { version = "0.7", default-features = false }
 web-sys = "0.3"
 web-time = "1.1.0"
-webpki-roots = "1.0.8"
+webpki-roots = "1.0.10"
 webrtc-sys = "0.3.23"
-wgpu = { version = "29.0", default-features = false }
+# 30.0.1 lacks the Vulkan surface-drop panic fix: https://github.com/gfx-rs/wgpu/pull/10230.
+wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "3b3506ea31154edc04de64debda0e780cba2639c", default-features = false }
 which = "8"
 windows-core = "0.62"
 windows-registry = "0.6.0"
@@ -981,12 +1031,13 @@ features = [
 ]
 
 [patch.crates-io]
+cpal = { git = "https://github.com/RustAudio/cpal", rev = "e1612d5d98152f8dc2a62e1b51ef7cbf4f7f26b7" }
 # Unify `tree_sitter_language::LanguageFn` between crates.io grammar crates and
 # the git tree-sitter above; two instances of the crate would make grammar
 # constants type-incompatible with `tree_sitter::Language`.
 tree-sitter-language = { git = "https://github.com/tree-sitter/tree-sitter", rev = "43623ec9bf0eaaf7113285c46e8a09018f181b18" }
 async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
-async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }
+async-task = { git = "https://github.com/zed-industries/async-task.git", rev = "015845a19fc31752c02367567d3b8900a406f9da" }
 windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
 calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee14c40066d64777e2a36b6ffcc22590" }
 livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "0a1c519cfce9b365229026b55de9b9dbdb6fed3c" }
@@ -994,6 +1045,9 @@ libwebrtc = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev =
 notify = { git = "https://github.com/zed-industries/notify", rev = "d842f16b2716bd60f09caf3ae3a894237ab38f54" }
 notify-types = { git = "https://github.com/zed-industries/notify", rev = "d842f16b2716bd60f09caf3ae3a894237ab38f54" }
 webrtc-sys = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "0a1c519cfce9b365229026b55de9b9dbdb6fed3c" }
+# Avoid panicking when a failed EGL call reports EGL_SUCCESS.
+# https://github.com/timothee-haudebourg/khronos-egl/pull/37
+khronos-egl = { git = "https://github.com/zed-industries/khronos-egl", rev = "42214b36347b108fd9630ca6254b96dde59e04fe" }
 
 # corgi runs build.rs/proc-macros in a sandbox with no write access outside the
 # action's own OUT_DIR. Upstream `scratch` bakes its build-time OUT_DIR in via

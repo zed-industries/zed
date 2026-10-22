@@ -11,6 +11,7 @@ homepage = "https://gpui.rs"
 readme = "README.md"
 keywords = ["desktop", "gui", "immediate"]
 categories = ["gui"]
+autobenches = false
 
 
 [lints]
@@ -42,12 +43,17 @@ x11 = [
 ]
 screen-capture = [
     "scap",
-    "dep:objc2-core-foundation",
-    "dep:objc2-core-video",
 ]
 windows-manifest = ["dep:embed-resource"]
 profiler = ["dep:hdrhistogram"]
 stacker = ["dep:stacksafe"]
+hot-reload = [
+    "dep:async-tungstenite",
+    "dep:dioxus-cli-config",
+    "dep:dioxus-devtools-types",
+    "dep:smol",
+    "dep:subsecond",
+]
 
 [lib]
 path = "src/gpui.rs"
@@ -128,17 +134,23 @@ async-channel = { workspace = true, features = ["std"] }
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 pollster.workspace = true
 
+[target.'cfg(any(target_os = "macos", target_os = "linux", target_os = "windows", target_os = "ios"))'.dependencies]
+async-tungstenite = { workspace = true, optional = true }
+dioxus-cli-config = { version = "=0.7.10", optional = true }
+dioxus-devtools-types = { version = "=0.7.10", optional = true }
+smol = { workspace = true, optional = true }
+subsecond = { version = "=0.7.10", optional = true }
+
 [target.'cfg(target_family = "wasm")'.dependencies]
 getrandom = { version = "0.3.4", features = ["wasm_js"] }
 uuid = { workspace = true, features = ["js"] }
 
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
-core-video.workspace = true
+objc2-core-foundation.workspace = true
+objc2-core-video = { workspace = true, features = ["CVPixelBuffer"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2-core-foundation = { workspace = true, optional = true }
-objc2-core-video = { workspace = true, optional = true }
 log.workspace = true
 objc2 = { workspace = true, optional = true }
 objc2-metal = { version = "0.3", optional = true }
@@ -192,7 +204,7 @@ ignored = [
     "objc2",
     "objc2-metal",
 ]
-ignored-paths = ["src/_ownership_and_data_flow.rs"]
+ignored-paths = ["src/_ownership_and_data_flow.rs", "benches/focus_cleanup.rs"]
 
 [[example]]
 name = "hello_world"

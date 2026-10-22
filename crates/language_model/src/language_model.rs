@@ -280,6 +280,24 @@ impl LanguageModel {
         self.supports_disabling_thinking
     }
 
+    /// Whether thinking can be turned off at the selected effort level.
+    pub fn supports_disabling_thinking_at_effort(&self, effort: Option<&str>) -> bool {
+        let effort_level = match effort {
+            Some(effort) => self
+                .supported_effort_levels
+                .iter()
+                .find(|effort_level| effort_level.value.as_ref() == effort),
+            None => self
+                .supported_effort_levels
+                .iter()
+                .find(|effort_level| effort_level.is_default),
+        };
+
+        effort_level
+            .and_then(|effort_level| effort_level.supports_disabling_thinking)
+            .unwrap_or(self.supports_disabling_thinking)
+    }
+
     pub fn supports_fast_mode(&self) -> bool {
         self.supports_fast_mode
     }

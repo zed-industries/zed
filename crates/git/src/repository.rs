@@ -909,9 +909,14 @@ pub trait GitRepository: Send + Sync {
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>>;
 
+    /// Restores `paths` in the working tree.
+    ///
+    /// With `Some(commit)`, both the index and the working tree are reset to the
+    /// commit's version, discarding staged and unstaged changes. With `None`, only
+    /// the working tree is restored from the index, so staged changes are kept.
     fn checkout_files(
         &self,
-        commit: String,
+        commit: Option<String>,
         paths: Vec<RepoPath>,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>>;
@@ -1601,7 +1606,7 @@ impl GitRepository for RealGitRepository {
 
     fn checkout_files(
         &self,
-        commit: String,
+        commit: Option<String>,
         paths: Vec<RepoPath>,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
@@ -1612,8 +1617,12 @@ impl GitRepository for RealGitRepository {
                 return Ok(());
             }
 
+            let mut args = vec!["checkout"];
+            args.extend(commit.as_deref());
+            args.push("--");
+
             let output = git
-                .build_command(&["checkout", &commit, "--"])
+                .build_command(&args)
                 .envs(env.iter())
                 .args(paths.iter().map(|path| path.as_unix_str()))
                 .output()
@@ -4536,6 +4545,51 @@ mod tests {
                     TreeDiffStatus::Modified { old: base_oid },
                 )]),
             }
+        );
+    }
+
+    #[gpui::test]
+    async fn test_checkout_files_from_index_keeps_staged_changes(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        let file_path = repo_dir.path().join("file.txt");
+        fs::write(&file_path, "head\n").unwrap();
+        git_command(repo_dir.path(), ["add", "file.txt"]);
+        git_command(repo_dir.path(), ["commit", "-m", "head"]);
+        fs::write(&file_path, "staged\n").unwrap();
+        git_command(repo_dir.path(), ["add", "file.txt"]);
+        fs::write(&file_path, "unstaged\n").unwrap();
+
+        let repository = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        let paths = vec![RepoPath::new("file.txt").unwrap()];
+
+        repository
+            .checkout_files(None, paths.clone(), Arc::default())
+            .await
+            .unwrap();
+        assert_eq!(fs::read_to_string(&file_path).unwrap(), "staged\n");
+        assert_eq!(
+            git_command_output(repo_dir.path(), ["show", ":file.txt"]),
+            "staged"
+        );
+
+        repository
+            .checkout_files(Some("HEAD".into()), paths, Arc::default())
+            .await
+            .unwrap();
+        assert_eq!(fs::read_to_string(&file_path).unwrap(), "head\n");
+        assert_eq!(
+            git_command_output(repo_dir.path(), ["show", ":file.txt"]),
+            "head"
         );
     }
 

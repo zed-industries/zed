@@ -11,7 +11,7 @@ use crate::{
 };
 use acp_thread::MentionUri;
 use agent::ThreadStore;
-use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
+use agent_client_protocol::schema::v2 as acp_v2;
 use anyhow::{Result, anyhow};
 use base64::Engine as _;
 use editor::{
@@ -47,15 +47,15 @@ use zed_actions::agent::{Chat, PasteRaw};
 
 #[derive(Default)]
 pub struct SessionCapabilities {
-    prompt_capabilities: acp_v1::PromptCapabilities,
-    available_commands: Vec<acp_v1::AvailableCommand>,
+    prompt_capabilities: acp_v2::PromptCapabilities,
+    available_commands: Vec<acp_v2::AvailableCommand>,
     available_skills: Vec<AvailableSkill>,
 }
 
 impl SessionCapabilities {
     pub fn new(
-        prompt_capabilities: acp_v1::PromptCapabilities,
-        available_commands: Vec<acp_v1::AvailableCommand>,
+        prompt_capabilities: acp_v2::PromptCapabilities,
+        available_commands: Vec<acp_v2::AvailableCommand>,
         available_skills: Vec<AvailableSkill>,
     ) -> Self {
         Self {
@@ -66,21 +66,25 @@ impl SessionCapabilities {
     }
 
     pub fn from_acp_commands(
-        prompt_capabilities: acp_v1::PromptCapabilities,
-        available_commands: Vec<acp_v1::AvailableCommand>,
+        prompt_capabilities: acp_v2::PromptCapabilities,
+        available_commands: Vec<acp_v2::AvailableCommand>,
     ) -> Self {
         Self::new(prompt_capabilities, available_commands, Vec::new())
     }
 
+    pub fn prompt_capabilities(&self) -> &acp_v2::PromptCapabilities {
+        &self.prompt_capabilities
+    }
+
     pub fn supports_images(&self) -> bool {
-        self.prompt_capabilities.image
+        self.prompt_capabilities.image.is_some()
     }
 
     pub fn supports_embedded_context(&self) -> bool {
-        self.prompt_capabilities.embedded_context
+        self.prompt_capabilities.embedded_context.is_some()
     }
 
-    pub fn available_commands(&self) -> &[acp_v1::AvailableCommand] {
+    pub fn available_commands(&self) -> &[acp_v2::AvailableCommand] {
         &self.available_commands
     }
 
@@ -94,7 +98,7 @@ impl SessionCapabilities {
 
     fn supported_modes(&self, has_thread_store: bool) -> Vec<PromptContextType> {
         let mut supported = vec![PromptContextType::File, PromptContextType::Symbol];
-        if self.prompt_capabilities.embedded_context {
+        if self.supports_embedded_context() {
             if has_thread_store {
                 supported.push(PromptContextType::Thread);
             }
@@ -114,7 +118,10 @@ impl SessionCapabilities {
             .map(|command| AvailableCommand {
                 name: command.name.clone().into(),
                 description: command.description.clone().into(),
-                requires_argument: command.input.is_some(),
+                requires_argument: matches!(
+                    command.input,
+                    Some(acp_v2::AvailableCommandInput::Text(_))
+                ),
                 source: None,
                 category: acp_thread::command_category_from_meta(&command.meta),
             })
@@ -125,11 +132,11 @@ impl SessionCapabilities {
         self.available_skills.clone()
     }
 
-    pub fn set_prompt_capabilities(&mut self, prompt_capabilities: acp_v1::PromptCapabilities) {
+    pub fn set_prompt_capabilities(&mut self, prompt_capabilities: acp_v2::PromptCapabilities) {
         self.prompt_capabilities = prompt_capabilities;
     }
 
-    pub fn set_available_commands(&mut self, available_commands: Vec<acp_v1::AvailableCommand>) {
+    pub fn set_available_commands(&mut self, available_commands: Vec<acp_v2::AvailableCommand>) {
         self.available_commands = available_commands;
     }
 
@@ -321,6 +328,11 @@ async fn resolve_pasted_context_items(
     let mut items = Vec::new();
     let mut added_worktrees = Vec::new();
     let default_image_name: SharedString = "Image".into();
+    // A bitmap and image files in the clipboard are usually the same image (e.g. a
+    // screenshot saved to a temporary file), so skip image files when there's a bitmap.
+    let has_clipboard_image = entries
+        .iter()
+        .any(|entry| matches!(entry, ClipboardEntry::Image(_)));
 
     for entry in entries {
         match entry {
@@ -348,7 +360,7 @@ async fn resolve_pasted_context_items(
                         })
                         .await
                     {
-                        if supports_images {
+                        if supports_images && !has_clipboard_image {
                             items.push(ResolvedPastedContextItem::Image(image, name));
                         }
                         continue;
@@ -644,13 +656,10 @@ impl MessageEditor {
             .iter()
             .find(|available_command| available_command.name == command_name)?;
 
-        let acp_v1::AvailableCommandInput::Unstructured(acp_v1::UnstructuredCommandInput {
-            mut hint,
-            ..
-        }) = available_command.input.clone()?
-        else {
+        let acp_v2::AvailableCommandInput::Text(input) = available_command.input.as_ref()? else {
             return None;
         };
+        let mut hint = input.hint.clone();
 
         let mut hint_pos = MultiBufferOffset(parsed_command.source_range.end) + 1usize;
         if hint_pos > snapshot.len() {
@@ -670,6 +679,7 @@ impl MessageEditor {
                 padding_left: false,
                 padding_right: false,
                 tooltip: None,
+                text_edits: None,
                 resolve_state: project::ResolveState::Resolved,
             },
         ))
@@ -677,7 +687,7 @@ impl MessageEditor {
 
     pub fn insert_thread_summary(
         &mut self,
-        session_id: acp_v1::SessionId,
+        session_id: acp_v2::SessionId,
         title: Option<SharedString>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -751,7 +761,7 @@ impl MessageEditor {
 
     fn validate_slash_commands(
         text: &str,
-        available_commands: &[acp_v1::AvailableCommand],
+        available_commands: &[acp_v2::AvailableCommand],
         available_skills: &[AvailableSkill],
         agent_id: &AgentId,
     ) -> Result<()> {
@@ -825,7 +835,7 @@ impl MessageEditor {
     /// when both a global and a project-local skill share a name.
     /// Globals carry an empty scope and so render as `/:<name>`.
     fn format_available_commands(
-        commands: &[acp_v1::AvailableCommand],
+        commands: &[acp_v2::AvailableCommand],
         skills: &[AvailableSkill],
     ) -> String {
         if commands.is_empty() && skills.is_empty() {
@@ -2294,7 +2304,7 @@ mod tests {
     use super::PromptLocalCommand;
     use acp_thread::MentionUri;
     use agent::{ThreadStore, outline};
-    use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
+    use agent_client_protocol::schema::v2 as acp_v2;
     use base64::Engine as _;
     use editor::{
         AnchorRangeExt as _, Editor, EditorMode, MultiBufferOffset, SelectionEffects,
@@ -2338,8 +2348,8 @@ mod tests {
             warning: None,
         };
         let session_capabilities = SessionCapabilities::new(
-            acp_v1::PromptCapabilities::default(),
-            vec![acp_v1::AvailableCommand::new("help", "Get help")],
+            acp_v2::PromptCapabilities::default(),
+            vec![acp_v2::AvailableCommand::new("help", "Get help")],
             vec![skill],
         );
 
@@ -2353,17 +2363,17 @@ mod tests {
     #[test]
     fn test_completion_commands_derive_category_from_meta() {
         let session_capabilities = SessionCapabilities::new(
-            acp_v1::PromptCapabilities::default(),
+            acp_v2::PromptCapabilities::default(),
             vec![
-                acp_v1::AvailableCommand::new("compact", "Built-in").meta(
+                acp_v2::AvailableCommand::new("compact", "Built-in").meta(
                     acp_thread::meta_with_command_category(acp_thread::CommandCategory::Native),
                 ),
-                acp_v1::AvailableCommand::new("deploy", "MCP").meta(
+                acp_v2::AvailableCommand::new("deploy", "MCP").meta(
                     acp_thread::meta_with_command_category(acp_thread::CommandCategory::Mcp),
                 ),
                 // No category meta: this is how external ACP agents' commands
                 // arrive, and they should group on their own.
-                acp_v1::AvailableCommand::new("help", "External"),
+                acp_v2::AvailableCommand::new("help", "External"),
             ],
             Vec::new(),
         );
@@ -2399,7 +2409,7 @@ mod tests {
         // `/:<name>`); project-local skills carry their worktree root
         // name. The empty-scope encoding means a worktree literally
         // named `global` no longer collides with the global source.
-        let commands = vec![acp_v1::AvailableCommand::new("help", "Get help")];
+        let commands = vec![acp_v2::AvailableCommand::new("help", "Get help")];
         let skills = vec![make_skill("deploy", ""), make_skill("deploy", "zed")];
         let no_skills = Vec::new();
 
@@ -2681,7 +2691,7 @@ mod tests {
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
         let thread_store = None;
         let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::from_acp_commands(
-            acp_v1::PromptCapabilities::default(),
+            acp_v2::PromptCapabilities::default(),
             vec![],
         )));
 
@@ -2727,7 +2737,7 @@ mod tests {
         // Now simulate Claude providing its list of available commands (which doesn't include file)
         session_capabilities
             .write()
-            .set_available_commands(vec![acp_v1::AvailableCommand::new("help", "Get help")]);
+            .set_available_commands(vec![acp_v2::AvailableCommand::new("help", "Get help")]);
 
         // Test that unsupported slash commands trigger an error when we have a list of available commands
         editor.update_in(cx, |editor, window, cx| {
@@ -2842,13 +2852,11 @@ mod tests {
 
         let thread_store = None;
         let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::from_acp_commands(
-            acp_v1::PromptCapabilities::default(),
+            acp_v2::PromptCapabilities::default(),
             vec![
-                acp_v1::AvailableCommand::new("quick-math", "2 + 2 = 4 - 1 = 3"),
-                acp_v1::AvailableCommand::new("say-hello", "Say hello to whoever you want").input(
-                    acp_v1::AvailableCommandInput::Unstructured(
-                        acp_v1::UnstructuredCommandInput::new("<name>"),
-                    ),
+                acp_v2::AvailableCommand::new("quick-math", "2 + 2 = 4 - 1 = 3"),
+                acp_v2::AvailableCommand::new("say-hello", "Say hello to whoever you want").input(
+                    acp_v2::AvailableCommandInput::Text(acp_v2::TextCommandInput::new("<name>")),
                 ),
             ],
         )));
@@ -3013,7 +3021,7 @@ mod tests {
         let mut cx = VisualTestContext::from_window(window.into(), cx);
 
         let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::from_acp_commands(
-            acp_v1::PromptCapabilities::default(),
+            acp_v2::PromptCapabilities::default(),
             Vec::new(),
         )));
 
@@ -3127,8 +3135,8 @@ mod tests {
         let mut cx = VisualTestContext::from_window(window.into(), cx);
 
         let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::from_acp_commands(
-            acp_v1::PromptCapabilities::default(),
-            vec![acp_v1::AvailableCommand::new("hello", "Say hello")],
+            acp_v2::PromptCapabilities::default(),
+            vec![acp_v2::AvailableCommand::new("hello", "Say hello")],
         )));
 
         // Track every event emitted by the message editor across the
@@ -3281,7 +3289,7 @@ mod tests {
 
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::from_acp_commands(
-            acp_v1::PromptCapabilities::default(),
+            acp_v2::PromptCapabilities::default(),
             vec![],
         )));
 
@@ -3340,10 +3348,10 @@ mod tests {
 
         message_editor.update(&mut cx, |editor, _cx| {
             editor.session_capabilities.write().set_prompt_capabilities(
-                acp_v1::PromptCapabilities::new()
-                    .image(true)
-                    .audio(true)
-                    .embedded_context(true),
+                acp_v2::PromptCapabilities::new()
+                    .image(acp_v2::PromptImageCapabilities::new())
+                    .audio(acp_v2::PromptAudioCapabilities::new())
+                    .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
             );
         });
 
@@ -3796,7 +3804,8 @@ mod tests {
                 );
                 // Enable embedded context so files are actually included
                 editor.session_capabilities.write().set_prompt_capabilities(
-                    acp_v1::PromptCapabilities::new().embedded_context(true),
+                    acp_v2::PromptCapabilities::new()
+                        .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
                 );
                 editor
             })
@@ -3874,7 +3883,7 @@ mod tests {
 
         let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
 
-        let session_id = acp_v1::SessionId::new("thread-123");
+        let session_id = acp_v2::SessionId::new("thread-123");
         let title = Some("Previous Conversation".into());
 
         let message_editor = cx.update(|window, cx| {
@@ -3962,7 +3971,7 @@ mod tests {
                     cx,
                 );
                 editor.insert_thread_summary(
-                    acp_v1::SessionId::new("thread-123"),
+                    acp_v2::SessionId::new("thread-123"),
                     Some("Previous Conversation".into()),
                     window,
                     cx,
@@ -4017,10 +4026,10 @@ mod tests {
         });
 
         message_editor.update(cx, |editor, _cx| {
-            editor
-                .session_capabilities
-                .write()
-                .set_prompt_capabilities(acp_v1::PromptCapabilities::new().embedded_context(true));
+            editor.session_capabilities.write().set_prompt_capabilities(
+                acp_v2::PromptCapabilities::new()
+                    .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
+            );
         });
 
         let supported_modes = {
@@ -4073,10 +4082,10 @@ mod tests {
         });
 
         message_editor.update(cx, |editor, _cx| {
-            editor
-                .session_capabilities
-                .write()
-                .set_prompt_capabilities(acp_v1::PromptCapabilities::new().embedded_context(true));
+            editor.session_capabilities.write().set_prompt_capabilities(
+                acp_v2::PromptCapabilities::new()
+                    .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
+            );
         });
 
         let supported_modes = {
@@ -4236,10 +4245,10 @@ mod tests {
         );
 
         message_editor.update(cx, |editor, _cx| {
-            editor
-                .session_capabilities
-                .write()
-                .set_prompt_capabilities(acp_v1::PromptCapabilities::new().embedded_context(true))
+            editor.session_capabilities.write().set_prompt_capabilities(
+                acp_v2::PromptCapabilities::new()
+                    .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
+            )
         });
 
         let content = message_editor
@@ -4935,10 +4944,10 @@ mod tests {
         let (fixture, mut cx) = setup_selection_mention_fixture(cx).await;
 
         let blocks = fixture.message_editor.update(&mut cx, |editor, cx| {
-            editor
-                .session_capabilities
-                .write()
-                .set_prompt_capabilities(acp_v1::PromptCapabilities::new().embedded_context(true));
+            editor.session_capabilities.write().set_prompt_capabilities(
+                acp_v2::PromptCapabilities::new()
+                    .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
+            );
             editor.draft_content_blocks_snapshot(cx)
         });
 
@@ -5200,6 +5209,40 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_paste_external_file_path_with_line_breaks_in_name(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (message_editor, editor, mut cx) =
+            setup_paste_test_message_editor(json!({"a\r\nb.txt": "content"}), cx).await;
+        paste_external_paths(
+            &message_editor,
+            vec![PathBuf::from(path!("/project/a\r\nb.txt"))],
+            &mut cx,
+        );
+
+        let expected_uri = MentionUri::File {
+            abs_path: path!("/project/a\r\nb.txt").into(),
+        }
+        .to_uri()
+        .to_string();
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(editor.text(cx), format!("[@a\nb.txt]({expected_uri}) "));
+        });
+
+        let contents = mention_contents(&message_editor, &mut cx).await;
+        let [(uri, Mention::Text { content, .. })] = contents.as_slice() else {
+            panic!("Unexpected mentions");
+        };
+        assert_eq!(content, "content");
+        assert_eq!(
+            uri,
+            &MentionUri::File {
+                abs_path: path!("/project/a\r\nb.txt").into(),
+            }
+        );
+    }
+
+    #[gpui::test]
     async fn test_paste_external_directory_path_inserts_directory_mention(cx: &mut TestAppContext) {
         init_test(cx);
         let (message_editor, editor, mut cx) = setup_paste_test_message_editor(
@@ -5367,7 +5410,9 @@ mod tests {
             message_editor
                 .session_capabilities
                 .write()
-                .set_prompt_capabilities(acp_v1::PromptCapabilities::new().image(true));
+                .set_prompt_capabilities(
+                    acp_v2::PromptCapabilities::new().image(acp_v2::PromptImageCapabilities::new()),
+                );
         });
 
         let temporary_image_path = write_test_png_file(None);
@@ -5422,6 +5467,171 @@ mod tests {
                 } if content == "content"
             )
         }));
+    }
+
+    #[gpui::test]
+    async fn test_paste_raw_image_takes_priority_over_image_files(cx: &mut TestAppContext) {
+        init_test(cx);
+        let directory = tempfile::tempdir().expect("create image directory");
+        let (image, raw_image) = paste_test_image();
+        let paths = ["first.png", "second.png"].map(|name| directory.path().join(name));
+        for path in &paths {
+            image
+                .save_with_format(path, image::ImageFormat::Png)
+                .expect("write png");
+        }
+
+        for inline in [false, true] {
+            for raw_first in [false, true] {
+                for image_count in [1, 2] {
+                    let (message_editor, editor, mut cx) =
+                        setup_paste_test_message_editor(json!({"file.txt": "content"}), cx).await;
+                    let image_paths = paths.iter().take(image_count).cloned().collect();
+                    let mut entries = vec![
+                        ClipboardEntry::ExternalPaths(ExternalPaths(image_paths)),
+                        ClipboardEntry::Image(raw_image.clone()),
+                    ];
+                    if raw_first {
+                        entries.reverse();
+                    }
+                    paste_image_context(&message_editor, entries, inline, &mut cx);
+
+                    let image_uri = MentionUri::PastedImage {
+                        name: "Image".into(),
+                    };
+                    editor.update(&mut cx, |editor, cx| {
+                        assert_eq!(editor.text(cx), format!("{} ", image_uri.as_link()));
+                    });
+                    let contents = mention_contents(&message_editor, &mut cx).await;
+                    assert_eq!(contents.len(), 1);
+                    assert!(matches!(
+                        contents.first(),
+                        Some((uri, Mention::Image(_))) if uri == &image_uri
+                    ));
+                }
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_paste_raw_image_keeps_non_image_files(cx: &mut TestAppContext) {
+        init_test(cx);
+        let directory = tempfile::tempdir().expect("create clipboard directory");
+        std::fs::write(directory.path().join("notes.txt"), "plain text")
+            .expect("write non-image file");
+        let (image, raw_image) = paste_test_image();
+
+        let path = directory.path().join("notes.txt");
+
+        for inline in [false, true] {
+            let (message_editor, editor, mut cx) =
+                setup_paste_test_message_editor(json!({"file.txt": "content"}), cx).await;
+            let fs = message_editor.read_with(&cx, |message_editor, cx| {
+                message_editor
+                    .workspace
+                    .upgrade()
+                    .expect("workspace")
+                    .read(cx)
+                    .project()
+                    .read(cx)
+                    .fs()
+                    .clone()
+            });
+            fs.as_fake()
+                .insert_tree(directory.path(), json!({"notes.txt": "plain text"}))
+                .await;
+            paste_image_context(
+                &message_editor,
+                vec![
+                    ClipboardEntry::ExternalPaths(ExternalPaths(vec![path.clone()].into())),
+                    ClipboardEntry::Image(raw_image.clone()),
+                ],
+                inline,
+                &mut cx,
+            );
+
+            let image_uri = MentionUri::PastedImage {
+                name: "Image".into(),
+            };
+            let contents = mention_contents(&message_editor, &mut cx).await;
+            let Some((_, Mention::Image(pasted_image))) =
+                contents.iter().find(|(uri, _)| uri == &image_uri)
+            else {
+                panic!("Expected raw image");
+            };
+            let bytes = base64::prelude::BASE64_STANDARD
+                .decode(pasted_image.data.as_ref())
+                .expect("decode pasted image");
+            assert_eq!(
+                image::load_from_memory(&bytes)
+                    .expect("load pasted image")
+                    .to_rgb8(),
+                image.to_rgb8(),
+            );
+
+            // The inline prompt only handles images, so it ignores other files.
+            let mut expected_text = String::new();
+            if !inline {
+                let file_uri = MentionUri::File {
+                    abs_path: path.clone(),
+                };
+                expected_text.push_str(&format!("{} ", file_uri.as_link()));
+                assert!(contents.iter().any(|(uri, mention)| {
+                    uri == &file_uri
+                        && matches!(mention, Mention::Text { content, .. } if content == "plain text")
+                }));
+            }
+            expected_text.push_str(&format!("{} ", image_uri.as_link()));
+            assert_eq!(contents.len(), if inline { 1 } else { 2 });
+            editor.update(&mut cx, |editor, cx| {
+                assert_eq!(editor.text(cx), expected_text);
+            });
+        }
+    }
+
+    fn paste_test_image() -> (image::DynamicImage, gpui::Image) {
+        let image = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            2,
+            2,
+            image::Rgb([32, 96, 160]),
+        ));
+        let mut bitmap = std::io::Cursor::new(Vec::new());
+        image
+            .write_to(&mut bitmap, image::ImageFormat::Bmp)
+            .expect("encode clipboard bitmap");
+        let raw_image = gpui::Image::from_bytes(gpui::ImageFormat::Bmp, bitmap.into_inner());
+        (image, raw_image)
+    }
+
+    fn paste_image_context(
+        message_editor: &Entity<MessageEditor>,
+        entries: Vec<ClipboardEntry>,
+        inline: bool,
+        cx: &mut VisualTestContext,
+    ) {
+        cx.write_to_clipboard(ClipboardItem { entries });
+        message_editor.update_in(cx, |message_editor, window, cx| {
+            message_editor
+                .session_capabilities
+                .write()
+                .set_prompt_capabilities(
+                    acp_v2::PromptCapabilities::new().image(acp_v2::PromptImageCapabilities::new()),
+                );
+            if inline {
+                crate::mention_set::paste_images_as_context(
+                    message_editor.editor().clone(),
+                    message_editor.mention_set().clone(),
+                    message_editor.workspace.clone(),
+                    window,
+                    cx,
+                )
+                .expect("handle image clipboard")
+                .detach();
+            } else {
+                message_editor.paste(&Paste, window, cx);
+            }
+        });
+        cx.run_until_parked();
     }
 
     async fn setup_paste_test_message_editor(

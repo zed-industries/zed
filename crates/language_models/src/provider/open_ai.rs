@@ -201,8 +201,15 @@ impl OpenAiLanguageModelProvider {
         request_limiter: &RateLimiter,
         request: ResponseRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponsesStreamEvent>>>>
-    {
+    ) -> BoxFuture<
+        'static,
+        Result<
+            futures::stream::BoxStream<
+                'static,
+                Result<ResponsesStreamEvent, open_ai::RequestError>,
+            >,
+        >,
+    > {
         let http_client = self.http_client.clone();
 
         let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
@@ -608,6 +615,7 @@ fn supported_thinking_effort_levels(model: &open_ai::Model) -> Vec<LanguageModel
                 name: effort.label().into(),
                 value: effort.value().into(),
                 is_default: Some(effort) == default_effort,
+                supports_disabling_thinking: None,
             })
         })
         .collect()
