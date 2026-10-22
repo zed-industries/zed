@@ -2595,16 +2595,20 @@ mod tests {
         );
         assert!(missing.is_none());
 
-        let outside_workspace = resolve_preview_image(
-            "//tmp/outside.svg",
-            Some(&base_directory),
-            Some(workspace_directory),
-            None,
-            None,
-            PathStyle::local(),
-            cx,
-        );
-        assert!(outside_workspace.is_none());
+        let outside_tree = TempTree::new(json!({ "outside.svg": "mock data" }));
+        let outside_image = outside_tree.path().join("outside.svg");
+        for workspace_root_prefix in ["/", "\\"] {
+            let outside_workspace = resolve_preview_image(
+                &format!("{workspace_root_prefix}{}", outside_image.display()),
+                Some(&base_directory),
+                Some(workspace_directory),
+                None,
+                None,
+                PathStyle::local(),
+                cx,
+            );
+            assert!(outside_workspace.is_none());
+        }
     }
 
     #[gpui::test]
