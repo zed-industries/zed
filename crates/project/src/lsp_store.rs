@@ -3599,7 +3599,6 @@ impl LocalLspStore {
     fn close_buffer_in_server(
         &mut self,
         buffer: &mut Buffer,
-        adapter: &CachedLspAdapter,
         server: &LanguageServer,
         uri: &lsp::Uri,
         cx: &mut Context<Buffer>,
@@ -3615,19 +3614,12 @@ impl LocalLspStore {
             return false;
         }
 
-        let opened_by_registrations = self
-            .buffers_opened_by_registrations
-            .get_mut(&buffer_id)
-            .is_some_and(|server_ids| server_ids.remove(&server_id));
-        // A document opened through registrations is only closed through registrations: the
-        // static options of the server only cover the languages it serves.
-        let notify_close = !opened_by_registrations || {
-            let context = document_selector_context_for_uri(buffer, adapter, uri);
-            self.text_document_registrations_select(server_id, "textDocument/didClose", &context)
-        };
-        if notify_close {
-            server.unregister_buffer(uri.clone());
+        if let Some(server_ids) = self.buffers_opened_by_registrations.get_mut(&buffer_id) {
+            server_ids.remove(&server_id);
         }
+        // Every document opened in the server is closed in it, also without a `didClose`
+        // registration selecting it, as opening it again requires the notifications to balance.
+        server.unregister_buffer(uri.clone());
 
         buffer.set_completion_triggers(server_id, Default::default(), cx);
         if let Some(server_ids) = self.buffers_opened_in_servers.get_mut(&buffer_id) {
@@ -3651,17 +3643,16 @@ impl LocalLspStore {
         server_id: LanguageServerId,
         cx: &mut App,
     ) -> Option<PathBuf> {
-        let Some(LanguageServerState::Running {
-            adapter, server, ..
-        }) = self.language_servers.get(&server_id)
+        let Some(LanguageServerState::Running { server, .. }) =
+            self.language_servers.get(&server_id)
         else {
             return None;
         };
-        let (adapter, server) = (adapter.clone(), server.clone());
+        let server = server.clone();
         buffer_handle.update(cx, |buffer, cx| {
             let abs_path = File::from_dyn(buffer.file())?.abs_path(cx);
             let uri = file_path_to_lsp_url(&abs_path).log_err()?;
-            self.close_buffer_in_server(buffer, &adapter, &server, &uri, cx)
+            self.close_buffer_in_server(buffer, &server, &uri, cx)
                 .then_some(abs_path)
         })
     }
@@ -3757,14 +3748,12 @@ impl LocalLspStore {
         buffer.update(cx, |buffer, cx| {
             let servers = self
                 .language_servers_for_buffer(buffer, cx)
-                .map(|(adapter, server)| (adapter.clone(), server.clone()))
+                .map(|(_, server)| server.clone())
                 .collect::<Vec<_>>();
             let detached_servers = servers
                 .into_iter()
-                .filter(|(adapter, server)| {
-                    self.close_buffer_in_server(buffer, adapter, server, file_url, cx)
-                })
-                .map(|(_, server)| server.server_id())
+                .filter(|server| self.close_buffer_in_server(buffer, server, file_url, cx))
+                .map(|server| server.server_id())
                 .collect();
             self.buffer_snapshots.remove(&buffer.remote_id());
             detached_servers
@@ -15445,24 +15434,6 @@ fn document_selector_context_for_buffer(
             .map(|language| adapter.language_id(&language.name())),
         scheme: "file",
         path,
-    }
-}
-
-fn document_selector_context_for_uri(
-    buffer: &Buffer,
-    adapter: &CachedLspAdapter,
-    uri: &lsp::Uri,
-) -> DocumentSelectorContext {
-    DocumentSelectorContext {
-        language_id: buffer
-            .language()
-            .map(|language| adapter.language_id(&language.name())),
-        scheme: "file",
-        path: uri
-            .to_file_path()
-            .map_or(DocumentSelectorPath::Absent, |path| {
-                DocumentSelectorPath::present(&path.to_string_lossy(), PathStyle::local())
-            }),
     }
 }
 

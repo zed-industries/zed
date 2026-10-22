@@ -261,8 +261,9 @@ impl LspStore {
         self.mirror_dynamic_text_document_sync(server, cx)
     }
 
-    /// `didOpen` and `didClose` registrations carry no options besides their selectors, which
-    /// decide the documents that are synchronized with the server beyond the languages it serves.
+    /// `didOpen` and `didClose` registrations carry no options besides their selectors. Those of
+    /// `didOpen` registrations decide the documents that are synchronized with the server beyond
+    /// the languages it serves, which are all closed in it, regardless of `didClose` registrations.
     fn register_dynamic_text_document_open_close(
         &mut self,
         server: &LanguageServer,

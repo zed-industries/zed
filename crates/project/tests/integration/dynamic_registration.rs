@@ -3984,63 +3984,94 @@ async fn test_did_open_registration_respects_language_server_settings(
 }
 
 #[gpui::test]
-async fn test_documents_opened_by_registrations_close_only_when_registered(
+async fn test_documents_opened_by_registrations_balance_opens_and_closes(
     cx: &mut gpui::TestAppContext,
 ) {
     init_test(cx);
-    let (project, mut fake_server) =
+    let (project, fake_server) =
         setup_dynamic_registration_test(cx, lsp::ServerCapabilities::default()).await;
     let fs = project.read_with(cx, |project, _| project.fs().as_fake());
-    fs.insert_tree(
-        path!("/the-root"),
-        json!({ "package.json": "{}", "b.rs": "" }),
-    )
-    .await;
+    fs.insert_tree(path!("/the-root"), json!({ "package.json": "{}" }))
+        .await;
     project.read_with(cx, |project, _| project.languages().add(json_lang()));
     cx.executor().run_until_parked();
 
+    let notifications = Arc::new(Mutex::new(Vec::new()));
+    fake_server.handle_notification::<lsp::notification::DidOpenTextDocument, _>({
+        let notifications = notifications.clone();
+        move |params, _| {
+            notifications
+                .lock()
+                .push(format!("open {}", params.text_document.uri))
+        }
+    });
+    fake_server.handle_notification::<lsp::notification::DidCloseTextDocument, _>({
+        let notifications = notifications.clone();
+        move |params, _| {
+            notifications
+                .lock()
+                .push(format!("close {}", params.text_document.uri))
+        }
+    });
+    let take_notifications = || std::mem::take(&mut *notifications.lock());
+    let manifest_uri = lsp::Uri::from_file_path(path!("/the-root/package.json")).unwrap();
+    let opened = vec![format!("open {manifest_uri}")];
+    let closed = vec![format!("close {manifest_uri}")];
+    let selector = json!({ "documentSelector": [{ "language": "json" }] });
+
+    register_capability(
+        &fake_server,
+        "textDocument/didClose",
+        "close-manifests",
+        Some(selector.clone()),
+    )
+    .await;
     register_capability(
         &fake_server,
         "textDocument/didOpen",
         "open-manifests",
-        Some(json!({ "documentSelector": [{ "language": "json" }] })),
+        Some(selector.clone()),
     )
     .await;
-    let (manifest_buffer, manifest_handle) = project
+    let (_manifest_buffer, manifest_handle) = project
         .update(cx, |project, cx| {
             project.open_local_buffer_with_lsp(path!("/the-root/package.json"), cx)
         })
         .await
         .unwrap();
     cx.executor().run_until_parked();
-    assert!(buffer_opened_in_server(
-        &project,
-        &manifest_buffer,
-        fake_server.server.server_id(),
-        cx
-    ));
+    assert_eq!(take_notifications(), opened);
 
-    // Without a `didClose` registration, closing the manifest notifies nothing, so the next
-    // close notification is the one for the Rust buffer, which the server serves.
-    cx.update(|_| drop(manifest_handle));
-    cx.executor().run_until_parked();
-    let (_rust_buffer, rust_handle) = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp(path!("/the-root/b.rs"), cx)
-        })
-        .await
-        .unwrap();
-    cx.executor().run_until_parked();
-    cx.update(|_| drop(rust_handle));
+    // The close registration goes away before the open one, which closes the document.
+    unregister_capabilities(&fake_server, "textDocument/didClose", &["close-manifests"]).await;
+    unregister_capabilities(&fake_server, "textDocument/didOpen", &["open-manifests"]).await;
     cx.executor().run_until_parked();
     assert_eq!(
-        fake_server
-            .receive_notification::<lsp::notification::DidCloseTextDocument>()
-            .await
-            .text_document
-            .uri,
-        lsp::Uri::from_file_path(path!("/the-root/b.rs")).unwrap(),
-        "expected no close notification without a `didClose` registration selecting the document",
+        take_notifications(),
+        closed,
+        "expected the document to be closed without a `didClose` registration selecting it",
+    );
+
+    register_capability(
+        &fake_server,
+        "textDocument/didOpen",
+        "open-manifests",
+        Some(selector),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        take_notifications(),
+        opened,
+        "expected opening the document again to follow its close",
+    );
+
+    cx.update(|_| drop(manifest_handle));
+    cx.executor().run_until_parked();
+    assert_eq!(
+        take_notifications(),
+        closed,
+        "expected closing the buffer to close the document opened by the registration",
     );
 }
 
