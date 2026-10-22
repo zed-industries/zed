@@ -1215,6 +1215,76 @@ mod tests {
 
     struct ImplicitCachedRoot(Entity<ImplicitLeaf>);
 
+    struct OffsetRoot(Entity<ImplicitBranch>);
+
+    impl Render for OffsetRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let mut child = self
+                .0
+                .clone()
+                .cached(StyleRefinement::default().size(px(100.)))
+                .into_any_element();
+            crate::canvas(
+                move |bounds, window, cx| {
+                    child.layout_as_root(bounds.size.into(), window, cx);
+                    child.prepaint_at(crate::point(px(10.), px(28.)), window, cx);
+                    child
+                },
+                |_, mut child, window, cx| child.paint(window, cx),
+            )
+            .size(px(100.))
+        }
+    }
+
+    #[crate::test]
+    fn reconstructed_implicit_view_preserves_absolute_element_offset(cx: &mut TestAppContext) {
+        let fixtures = [false, true].map(|forced| {
+            let leaf = cx.new(|_| ImplicitLeaf {
+                renders: Rc::new(Cell::new(0)),
+                width: px(30.),
+                margin: px(0.),
+                color: 0xff0000,
+                intrinsic: false,
+            });
+            let branch = cx.new(|_| ImplicitBranch {
+                renders: Rc::new(Cell::new(0)),
+                children: vec![leaf.clone()],
+            });
+            let window = cx.add_window(|window, _| {
+                window.set_force_view_reconstruction(forced);
+                window.set_view_retention(!forced);
+                OffsetRoot(branch.clone())
+            });
+            (window, leaf, branch)
+        });
+        for frame in 0..3 {
+            let snapshots = fixtures.each_ref().map(|(handle, leaf, branch)| {
+                if frame > 0 {
+                    leaf.update(cx, |leaf, cx| {
+                        leaf.color ^= 0xffffff;
+                        cx.notify();
+                    });
+                }
+                cx.update_window((*handle).into(), |_, window, cx| {
+                    window.draw(cx).clear(cx);
+                    window.view_reuse_snapshot(|id| {
+                        if id == leaf.entity_id() {
+                            "leaf".into()
+                        } else if id == branch.entity_id() {
+                            "branch".into()
+                        } else {
+                            "root".into()
+                        }
+                    })
+                })
+                .expect("offset window")
+            });
+            snapshots[0]
+                .compare(&snapshots[1], frame)
+                .expect("absolute offset differential output");
+        }
+    }
+
     impl Render for ImplicitCachedRoot {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
             div().child(

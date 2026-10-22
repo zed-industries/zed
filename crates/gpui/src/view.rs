@@ -733,7 +733,13 @@ fn prepaint_view(
                 element
             } else if implicit {
                 let (element, layout) = window.reconstruct_implicit_view(occurrence, cx, render);
-                reconstructed_origin = Some(window.layout_bounds(layout).origin);
+                // layout_bounds includes the current element offset, but prepaint_at
+                // replaces that offset rather than adding to it.
+                reconstructed_origin = Some(
+                    window.with_absolute_element_offset(crate::Point::default(), |window| {
+                        window.layout_bounds(layout).origin
+                    }),
+                );
                 element
             } else {
                 let mut element = render(window, cx);
