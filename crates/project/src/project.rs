@@ -5178,7 +5178,7 @@ impl Project {
 
     pub fn abs_paths_for_file_link(&self, path: &Path, cx: &App) -> Vec<PathBuf> {
         let path_style = self.path_style(cx);
-        if path_style.is_absolute(path) || path.starts_with("~") {
+        if path_style.is_absolute(path) {
             return vec![path.to_path_buf()];
         }
         if path_style.has_root(path) {
@@ -5192,7 +5192,9 @@ impl Project {
             }
             return paths;
         }
-        self.visible_worktrees(cx)
+        let home_path = path.starts_with("~").then(|| path.to_path_buf());
+        let worktree_paths = self
+            .visible_worktrees(cx)
             .filter(|worktree| !worktree.read(cx).is_single_file())
             .flat_map(|worktree| {
                 let worktree = worktree.read(cx);
@@ -5208,8 +5210,8 @@ impl Project {
                         .ok()
                 })
                 .collect::<Vec<_>>()
-            })
-            .collect()
+            });
+        home_path.into_iter().chain(worktree_paths).collect()
     }
 
     pub fn resolve_abs_file_link(

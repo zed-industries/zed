@@ -1273,7 +1273,10 @@ mod tests {
             ),
             (path!("/outside/shot.png"), vec![path!("/outside/shot.png")]),
             (&outside_url, vec![path!("/outside/shot.png")]),
-            ("~/shot.png", vec!["~/shot.png"]),
+            (
+                "~/shot.png",
+                vec!["~/shot.png", path!("/project/~/shot.png")],
+            ),
         ] {
             assert_eq!(
                 disk_paths(lookup(dest_url, &project, cx)),
