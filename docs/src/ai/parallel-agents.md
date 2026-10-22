@@ -25,6 +25,8 @@ Drag the divider to resize the sidebar. Changing the default width updates even 
 
 The “Threads Sidebar Auto Open” setting controls whether opening a folder in an existing window opens the sidebar. Its JSON key is `agent.threads_sidebar.auto_open`.
 
+To list the threads of each git worktree under their own heading, set [`agent.threads_sidebar.group_by`](../reference/all-settings.md#agent-threads-sidebar-group-by) to `"worktree"`.
+
 ### Switching Threads {#switching-threads}
 
 Click any thread in the sidebar to switch to it. The Agent Panel updates to show that thread's conversation.

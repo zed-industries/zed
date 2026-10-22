@@ -36,6 +36,31 @@ pub enum SidebarDockPosition {
     Right,
 }
 
+/// How the threads sidebar groups threads.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ThreadsSidebarGroupBy {
+    /// Show the threads of a repository and all of its git worktrees in one group.
+    #[default]
+    Project,
+    /// Show the threads of each git worktree under their own heading within the
+    /// repository's group.
+    Worktree,
+}
+
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
 pub struct ThreadsSidebarSettingsContent {
@@ -57,6 +82,10 @@ pub struct ThreadsSidebarSettingsContent {
     /// Default: 300
     #[schemars(range(min = 200, max = 800))]
     pub default_width: Option<crate::PixelSetting>,
+    /// How to group threads in the threads sidebar.
+    ///
+    /// Default: project
+    pub group_by: Option<ThreadsSidebarGroupBy>,
 }
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -428,6 +457,10 @@ impl AgentSettingsContent {
     ) {
         self.threads_sidebar_default_width = None;
         self.threads_sidebar.get_or_insert_default().default_width = default_width;
+    }
+
+    pub fn set_threads_sidebar_group_by(&mut self, group_by: Option<ThreadsSidebarGroupBy>) {
+        self.threads_sidebar.get_or_insert_default().group_by = group_by;
     }
 
     pub fn set_threads_sidebar_auto_open(&mut self, auto_open: Option<bool>) {

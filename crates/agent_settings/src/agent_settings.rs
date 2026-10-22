@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 use settings::{
     DockPosition, DockSide, IntoGpui, LanguageModelParameters, LanguageModelSelection,
     NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, RegisterSetting, Settings, SettingsContent,
-    SettingsStore, SidebarDockPosition, SidebarSide, ThinkingBlockDisplay, ToolPermissionMode,
-    update_settings_file, update_settings_file_with_completion,
+    SettingsStore, SidebarDockPosition, SidebarSide, ThinkingBlockDisplay, ThreadsSidebarGroupBy,
+    ToolPermissionMode, update_settings_file, update_settings_file_with_completion,
 };
 use util::ResultExt as _;
 
@@ -257,6 +257,7 @@ pub struct ThreadsSidebarSettings {
     pub auto_open: bool,
     pub position: SidebarDockPosition,
     pub default_width: Pixels,
+    pub group_by: ThreadsSidebarGroupBy,
 }
 
 impl AgentSettings {
@@ -785,6 +786,7 @@ impl Settings for AgentSettings {
                     .unwrap()
                     .into_gpui()
                     .clamp(THREADS_LIST_MIN_WIDTH, THREADS_LIST_MAX_WIDTH),
+                group_by: threads_sidebar.group_by.unwrap(),
             },
             default_width: agent.default_width.unwrap().into_gpui(),
             default_height: agent.default_height.unwrap().into_gpui(),

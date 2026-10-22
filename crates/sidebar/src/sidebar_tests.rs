@@ -215,6 +215,9 @@ fn assert_remote_project_integration_sidebar_state(
                     terminal.metadata.title
                 );
             }
+            ListEntry::WorktreeHeader { label, .. } => {
+                panic!("unexpected sidebar worktree header: `{label}`");
+            }
         }
     }
 
@@ -315,6 +318,17 @@ fn set_threads_sidebar_default_width(width: f32, cx: &mut App) {
         store
             .set_user_settings(
                 &format!(r#"{{"agent": {{"threads_sidebar": {{"default_width": {width}}}}}}}"#),
+                cx,
+            )
+            .unwrap();
+    });
+}
+
+fn set_threads_sidebar_group_by(group_by: &str, cx: &mut App) {
+    SettingsStore::update_global(cx, |store, cx| {
+        store
+            .set_user_settings(
+                &format!(r#"{{"agent": {{"threads_sidebar": {{"group_by": "{group_by}"}}}}}}"#),
                 cx,
             )
             .unwrap();
@@ -673,9 +687,20 @@ fn visible_entries_as_strings(
                         };
                         format!("{} [{}]{}", icon, label, selected)
                     }
+                    ListEntry::WorktreeHeader { label, branch, .. } => {
+                        let branch = branch
+                            .as_ref()
+                            .map(|branch| format!(" ({branch})"))
+                            .unwrap_or_default();
+                        format!("  @ {label}{branch}{selected}")
+                    }
                     ListEntry::Thread(thread) => {
                         let title = thread.metadata.display_title();
-                        let worktree = format_linked_worktree_chips(&thread.worktrees);
+                        let worktree = if sidebar.is_under_worktree_header(ix) {
+                            String::new()
+                        } else {
+                            format_linked_worktree_chips(&thread.worktrees)
+                        };
 
                         {
                             let live = if thread.is_live { " *" } else { "" };
@@ -698,7 +723,11 @@ fn visible_entries_as_strings(
                     }
                     ListEntry::Terminal(terminal) => {
                         let title = terminal.metadata.display_title();
-                        let worktree = format_linked_worktree_chips(&terminal.worktrees);
+                        let worktree = if sidebar.is_under_worktree_header(ix) {
+                            String::new()
+                        } else {
+                            format_linked_worktree_chips(&terminal.worktrees)
+                        };
                         format!("  {title}{worktree}{selected}")
                     }
                 }
@@ -5879,7 +5908,9 @@ async fn test_rename_thread_from_sidebar_updates_title_override(cx: &mut TestApp
                     thread.metadata.thread_id,
                     thread.metadata.display_title(),
                 )),
-                ListEntry::ProjectHeader { .. } | ListEntry::Terminal(_) => None,
+                ListEntry::ProjectHeader { .. }
+                | ListEntry::WorktreeHeader { .. }
+                | ListEntry::Terminal(_) => None,
             })
             .expect("sidebar should have a thread entry")
     });
@@ -5965,7 +5996,9 @@ async fn test_rename_thread_from_sidebar_updates_title_override(cx: &mut TestApp
             .iter()
             .find_map(|entry| match entry {
                 ListEntry::Thread(thread) => Some(thread),
-                ListEntry::ProjectHeader { .. } | ListEntry::Terminal(_) => None,
+                ListEntry::ProjectHeader { .. }
+                | ListEntry::WorktreeHeader { .. }
+                | ListEntry::Terminal(_) => None,
             })
             .expect("renamed thread should match the search");
         let title = thread.metadata.display_title();
@@ -6004,7 +6037,9 @@ async fn test_rename_selected_thread_action_renames_selected_thread(cx: &mut Tes
             .enumerate()
             .find_map(|(ix, entry)| match entry {
                 ListEntry::Thread(thread) => Some((ix, thread.metadata.thread_id)),
-                ListEntry::ProjectHeader { .. } | ListEntry::Terminal(_) => None,
+                ListEntry::ProjectHeader { .. }
+                | ListEntry::WorktreeHeader { .. }
+                | ListEntry::Terminal(_) => None,
             })
             .expect("sidebar should have a thread entry")
     });
@@ -8106,6 +8141,9 @@ async fn test_clicking_worktree_thread_does_not_briefly_render_as_separate_proje
                         "unexpected sidebar terminal while opening linked worktree thread: title=`{}`",
                         terminal.metadata.title
                     );
+                }
+                ListEntry::WorktreeHeader { label, .. } => {
+                    panic!("unexpected sidebar worktree header: `{label}`");
                 }
             }
         }
@@ -16026,4 +16064,481 @@ fn sidebar_painted_background_at(position: Point<Pixels>, cx: &mut VisualTestCon
             .expect("solid background at pointer");
         u32::from(Rgba::from(color))
     })
+}
+
+fn thread_time(hour: u32) -> DateTime<Utc> {
+    chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap()
+}
+
+#[gpui::test]
+async fn test_group_by_worktree_splits_threads_by_worktree(cx: &mut TestAppContext) {
+    let (project, fs) = init_test_project_with_git("/project", cx).await;
+    fs.as_fake()
+        .add_linked_worktree_for_repo(
+            Path::new("/project/.git"),
+            false,
+            git::repository::Worktree {
+                path: PathBuf::from("/wt/oak"),
+                ref_name: Some("refs/heads/oak-branch".into()),
+                sha: "abc".into(),
+                is_main: false,
+                is_bare: false,
+            },
+        )
+        .await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    let main_paths = PathList::new(&[PathBuf::from("/project")]);
+    save_thread_metadata_with_main_paths(
+        "main-thread",
+        "Main Thread",
+        main_paths.clone(),
+        main_paths.clone(),
+        thread_time(1),
+        cx,
+    );
+    save_thread_metadata_with_main_paths(
+        "rosewood-thread",
+        "Rosewood Thread",
+        PathList::new(&[PathBuf::from("/wt/rosewood")]),
+        main_paths.clone(),
+        thread_time(2),
+        cx,
+    );
+    save_thread_metadata_with_main_paths(
+        "oak-thread",
+        "Oak Thread",
+        PathList::new(&[PathBuf::from("/wt/oak")]),
+        main_paths.clone(),
+        thread_time(3),
+        cx,
+    );
+    save_thread_metadata_with_main_paths(
+        "older-oak-thread",
+        "Older Oak Thread",
+        PathList::new(&[PathBuf::from("/wt/oak")]),
+        main_paths,
+        thread_time(0),
+        cx,
+    );
+    multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+    cx.run_until_parked();
+
+    let grouped_by_project = vec![
+        //
+        "v [project]",
+        "  Oak Thread {oak}",
+        "  Rosewood Thread {rosewood}",
+        "  Main Thread",
+        "  Older Oak Thread {oak}",
+    ];
+    assert_eq!(visible_entries_as_strings(&sidebar, cx), grouped_by_project);
+
+    cx.update(|_window, cx| set_threads_sidebar_group_by("worktree", cx));
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            //
+            "v [project]",
+            "  @ project",
+            "  Main Thread",
+            "  @ oak (oak-branch)",
+            "  Oak Thread",
+            "  Older Oak Thread",
+            "  @ rosewood",
+            "  Rosewood Thread",
+        ]
+    );
+
+    focus_sidebar(&sidebar, cx);
+    sidebar.update_in(cx, |sidebar, _window, _cx| {
+        sidebar.selection = Some(3);
+    });
+    cx.dispatch_action(SelectParent);
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["> [project]  <== selected"]
+    );
+
+    cx.dispatch_action(editor::actions::ToggleFold);
+    cx.run_until_parked();
+    sidebar.update_in(cx, |sidebar, _window, _cx| {
+        sidebar.selection = Some(3);
+    });
+    cx.dispatch_action(editor::actions::ToggleFold);
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["> [project]  <== selected"]
+    );
+
+    cx.dispatch_action(editor::actions::ToggleFold);
+    cx.run_until_parked();
+    sidebar.update_in(cx, |sidebar, _window, _cx| {
+        sidebar.selection = None;
+    });
+    cx.update(|_window, cx| set_threads_sidebar_group_by("project", cx));
+    cx.run_until_parked();
+    assert_eq!(visible_entries_as_strings(&sidebar, cx), grouped_by_project);
+}
+
+#[gpui::test]
+async fn test_group_by_worktree_puts_terminals_under_their_worktree(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+    cx.update(|_window, cx| set_threads_sidebar_group_by("worktree", cx));
+    cx.run_until_parked();
+
+    let terminal_id = panel
+        .update_in(cx, |panel, window, cx| {
+            panel.insert_test_terminal("Feature Terminal", true, window, cx)
+        })
+        .expect("test terminal should be inserted");
+    panel.update_in(cx, |panel, window, cx| {
+        panel.close_terminal(terminal_id, window, cx);
+    });
+
+    let main_paths = PathList::new(&[PathBuf::from("/project")]);
+    save_thread_metadata_with_main_paths(
+        "main-thread",
+        "Main Thread",
+        main_paths.clone(),
+        main_paths.clone(),
+        thread_time(1),
+        cx,
+    );
+    let metadata = TerminalThreadMetadata {
+        terminal_id,
+        title: "Feature Terminal".into(),
+        custom_title: None,
+        created_at: thread_time(2),
+        worktree_paths: WorktreePaths::from_path_lists(
+            main_paths,
+            PathList::new(&[PathBuf::from("/project-feature")]),
+        )
+        .unwrap(),
+        remote_connection: None,
+        working_directory: None,
+    };
+    cx.update(|_, cx| {
+        TerminalThreadMetadataStore::global(cx).update(cx, |store, cx| {
+            store.save(metadata, cx);
+        });
+    });
+    sidebar.update(cx, |sidebar, cx| sidebar.update_entries(cx));
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            //
+            "v [project]",
+            "  @ project",
+            "  New Zed Agent Thread",
+            "  Main Thread",
+            "  @ project-feature",
+            "  Feature Terminal",
+        ]
+    );
+}
+
+#[gpui::test]
+async fn test_group_by_worktree_without_linked_worktrees_has_no_sub_headers(
+    cx: &mut TestAppContext,
+) {
+    let project = init_test_project("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    cx.update(|_window, cx| set_threads_sidebar_group_by("worktree", cx));
+    cx.run_until_parked();
+
+    let paths = PathList::new(&[PathBuf::from("/my-project")]);
+    save_thread_metadata_with_main_paths(
+        "first",
+        "First Thread",
+        paths.clone(),
+        paths.clone(),
+        thread_time(1),
+        cx,
+    );
+    save_thread_metadata_with_main_paths(
+        "second",
+        "Second Thread",
+        paths.clone(),
+        paths,
+        thread_time(2),
+        cx,
+    );
+    multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            //
+            "v [my-project]",
+            "  Second Thread",
+            "  First Thread",
+        ]
+    );
+}
+
+#[gpui::test]
+async fn test_group_by_worktree_search_only_shows_matching_worktrees(cx: &mut TestAppContext) {
+    let (project, _fs) = init_test_project_with_git("/project", cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    cx.update(|_window, cx| set_threads_sidebar_group_by("worktree", cx));
+    cx.run_until_parked();
+
+    let main_paths = PathList::new(&[PathBuf::from("/project")]);
+    save_thread_metadata_with_main_paths(
+        "main-thread",
+        "Fix Parser",
+        main_paths.clone(),
+        main_paths.clone(),
+        thread_time(1),
+        cx,
+    );
+    save_thread_metadata_with_main_paths(
+        "rosewood-thread",
+        "Fix Renderer",
+        PathList::new(&[PathBuf::from("/wt/rosewood")]),
+        main_paths.clone(),
+        thread_time(2),
+        cx,
+    );
+    save_thread_metadata_with_main_paths(
+        "oak-thread",
+        "Add Docs",
+        PathList::new(&[PathBuf::from("/wt/oak")]),
+        main_paths,
+        thread_time(3),
+        cx,
+    );
+    multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+    cx.run_until_parked();
+
+    type_in_search(&sidebar, "fix", cx);
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            //
+            "v [project]",
+            "  @ project",
+            "  Fix Parser  <== selected",
+            "  @ rosewood",
+            "  Fix Renderer",
+        ]
+    );
+
+    type_in_search(&sidebar, "docs", cx);
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            //
+            "v [project]",
+            "  Add Docs {oak}  <== selected",
+        ]
+    );
+}
+
+#[gpui::test]
+async fn test_group_by_worktree_bare_checkout_headers_open_their_worktree(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/repo/.bare",
+        serde_json::json!({
+            "worktrees": {
+                "a": {
+                    "commondir": "../..",
+                    "HEAD": "ref: refs/heads/a",
+                },
+                "b": {
+                    "commondir": "../..",
+                    "HEAD": "ref: refs/heads/b",
+                },
+            },
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        "/repo/a",
+        serde_json::json!({
+            ".git": "gitdir: /repo/.bare/worktrees/a",
+            "src": {},
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        "/repo/b",
+        serde_json::json!({
+            ".git": "gitdir: /repo/.bare/worktrees/b",
+            "src": {},
+        }),
+    )
+    .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let project = project::Project::test(fs, [Path::new("/repo/a")], cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    cx.update(|_window, cx| set_threads_sidebar_group_by("worktree", cx));
+    cx.run_until_parked();
+
+    let main_paths = project.read_with(cx, |project, cx| {
+        project.project_group_key(cx).path_list().clone()
+    });
+    assert_ne!(main_paths, PathList::new(&[PathBuf::from("/repo/a")]));
+
+    save_thread_metadata_with_main_paths(
+        "a-thread",
+        "Thread A",
+        PathList::new(&[PathBuf::from("/repo/a")]),
+        main_paths.clone(),
+        thread_time(1),
+        cx,
+    );
+    save_thread_metadata_with_main_paths(
+        "b-thread",
+        "Thread B",
+        PathList::new(&[PathBuf::from("/repo/b")]),
+        main_paths,
+        thread_time(2),
+        cx,
+    );
+    multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            //
+            "v [repo]",
+            "  @ b",
+            "  Thread B",
+            "  @ a",
+            "  Thread A",
+        ]
+    );
+
+    let active_paths = |cx: &mut VisualTestContext| {
+        multi_workspace.read_with(cx, |multi_workspace, cx| {
+            PathList::new(&multi_workspace.workspace().read(cx).root_paths(cx))
+        })
+    };
+
+    focus_sidebar(&sidebar, cx);
+    sidebar.update_in(cx, |sidebar, _window, _cx| {
+        sidebar.selection = Some(1);
+    });
+    cx.dispatch_action(Confirm);
+    cx.run_until_parked();
+    assert_eq!(active_paths(cx), PathList::new(&[PathBuf::from("/repo/b")]));
+
+    focus_sidebar(&sidebar, cx);
+    sidebar.update_in(cx, |sidebar, _window, _cx| {
+        sidebar.selection = Some(3);
+    });
+    cx.dispatch_action(Confirm);
+    cx.run_until_parked();
+    assert_eq!(active_paths(cx), PathList::new(&[PathBuf::from("/repo/a")]));
+    multi_workspace.read_with(cx, |multi_workspace, _cx| {
+        assert_eq!(multi_workspace.workspaces().count(), 2);
+    });
+}
+
+#[test]
+fn test_group_by_worktree_sorts_empty_draft_worktree_first() {
+    let main_paths = PathList::new(&[PathBuf::from("/project")]);
+    let project_group_key = ProjectGroupKey::new(None, main_paths.clone());
+    let thread = |name: &str, folder: &str, hour: u32, draft: Option<DraftKind>| {
+        let folder_paths = PathList::new(&[PathBuf::from(folder)]);
+        Arc::new(ThreadEntry {
+            metadata: ThreadMetadata {
+                thread_id: ThreadId::new(),
+                session_id: Some(acp::SessionId::new(Arc::from(name))),
+                agent_id: AgentId::new("zed-agent"),
+                worktree_paths: WorktreePaths::from_path_lists(
+                    main_paths.clone(),
+                    folder_paths.clone(),
+                )
+                .expect("worktree paths are valid"),
+                title: Some(name.to_string().into()),
+                title_override: None,
+                updated_at: thread_time(hour),
+                created_at: Some(thread_time(hour)),
+                interacted_at: None,
+                archived: false,
+                remote_connection: None,
+            },
+            icon: IconName::ZedAgent,
+            icon_from_external_svg: None,
+            status: AgentThreadStatus::Completed,
+            workspace: ThreadEntryWorkspace::Closed {
+                folder_paths,
+                project_group_key: project_group_key.clone(),
+            },
+            is_live: false,
+            is_background: false,
+            is_title_generating: false,
+            draft,
+            highlight_positions: Vec::new(),
+            worktrees: Vec::new(),
+            diff_stats: DiffStats::default(),
+        })
+    };
+
+    let mut entries = Vec::new();
+    Sidebar::push_group_entries(
+        &mut entries,
+        Vec::new(),
+        vec![
+            thread("rosewood", "/wt/rosewood", 2, None),
+            thread("oak", "/wt/oak", 1, Some(DraftKind::Empty)),
+        ],
+        ThreadsSidebarGroupBy::Worktree,
+        &project_group_key,
+        &"project".into(),
+        None,
+        &mut HashSet::default(),
+        &mut HashSet::default(),
+    );
+
+    let header_paths = entries
+        .iter()
+        .filter_map(|entry| match entry {
+            ListEntry::WorktreeHeader { folder_paths, .. } => Some(folder_paths.clone()),
+            ListEntry::ProjectHeader { .. } | ListEntry::Thread(_) | ListEntry::Terminal(_) => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        header_paths,
+        vec![
+            PathList::new(&[PathBuf::from("/wt/oak")]),
+            PathList::new(&[PathBuf::from("/wt/rosewood")]),
+        ]
+    );
 }
