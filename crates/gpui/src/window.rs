@@ -5590,11 +5590,7 @@ impl Window {
         };
 
         if !quad.background.is_transparent() {
-            if RETAINED {
-                self.next_frame.scene.record_primitive(quad);
-            } else {
-                self.next_frame.scene.insert_primitive(quad);
-            }
+            self.next_frame.scene.record_primitive_for::<RETAINED>(quad);
             return;
         }
 
@@ -5604,11 +5600,7 @@ impl Window {
         let inner_bounds = Self::largest_border_interior(&quad);
 
         if inner_bounds.is_empty() {
-            if RETAINED {
-                self.next_frame.scene.record_primitive(quad);
-            } else {
-                self.next_frame.scene.insert_primitive(quad);
-            }
+            self.next_frame.scene.record_primitive_for::<RETAINED>(quad);
             return;
         }
 
@@ -5638,17 +5630,14 @@ impl Window {
         for strip in strips {
             let content_mask_bounds = quad.content_mask.bounds.intersect(&strip);
             if !content_mask_bounds.is_empty() {
-                let quad = Quad {
-                    content_mask: ContentMask {
-                        bounds: content_mask_bounds,
-                    },
-                    ..quad
-                };
-                if RETAINED {
-                    self.next_frame.scene.record_primitive(quad);
-                } else {
-                    self.next_frame.scene.insert_primitive(quad);
-                }
+                self.next_frame
+                    .scene
+                    .record_primitive_for::<RETAINED>(Quad {
+                        content_mask: ContentMask {
+                            bounds: content_mask_bounds,
+                        },
+                        ..quad
+                    });
             }
         }
     }
