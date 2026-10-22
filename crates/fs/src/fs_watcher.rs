@@ -805,7 +805,7 @@ struct WatcherRegistrationState {
 
 struct PathRegistrationState {
     path: Arc<SanitizedPath>,
-    /// Empty while a failed promotion requires retaining this path's backend watch.
+    /// Can be empty when promotion or unwatch failed and the backend watch is retained.
     watcher_ids: Vec<WatcherRegistrationId>,
     has_os_watcher: bool,
     stale: bool,
