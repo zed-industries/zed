@@ -244,6 +244,7 @@ fn measure_in_window(
         mutate(tree, window, cx);
         frames += 1;
     });
+    window.update(|window, _| report_scene_stats(group, input.family, window));
     assert!(
         frames_that_rendered * 2 >= frames,
         "the notified root or entity re-rendered in {frames_that_rendered} of {frames} frames"
@@ -252,6 +253,19 @@ fn measure_in_window(
     Measured {
         frames,
         entity_renders,
+    }
+}
+
+fn report_scene_stats(group: &str, input: &str, window: &Window) {
+    if std::env::var("GPUI_BENCH_SCENE_STATS").as_deref() == Ok("1") {
+        let scene = window.rendered_scene();
+        eprintln!(
+            "scene stats {group}/{input}: batches={}, paths={}, surfaces={}, work={:?}",
+            scene.batches().count(),
+            scene.paths.len(),
+            scene.surfaces.len(),
+            window.view_reuse_stats(),
+        );
     }
 }
 
@@ -1001,19 +1015,18 @@ fn measure_text_panel_updates(
         }
         updates += 1;
     });
+    window.update(|window, _| report_scene_stats("TextPanels", &panel_count.to_string(), window));
     assert!(updates > 0);
     assert!(
         panel_renders.get() > initial_panel_renders,
         "updated panels must render"
     );
-    let incremental = window.update(|window, _| snapshot_glyphs(window));
+    let incremental = window.update(|window, _| snapshot_output(window));
     window.update(|window, _| window.refresh());
     cx.run_until_idle();
-    assert_eq!(
-        incremental,
-        window.update(|window, _| snapshot_glyphs(window)),
-        "updated glyph output must match a full redraw of the final model"
-    );
+    incremental
+        .compare(&window.update(|window, _| snapshot_output(window)), 0)
+        .expect("updated output must match a full redraw of the final model");
 }
 
 fn assert_layout_cache_mode(window: &Window) {
@@ -1025,59 +1038,15 @@ fn assert_layout_cache_mode(window: &Window) {
     );
 }
 
-#[derive(Debug, PartialEq)]
-enum GlyphAppearance {
-    Monochrome(gpui::Hsla, gpui::TransformationMatrix),
-    Subpixel(gpui::Hsla, gpui::TransformationMatrix),
-    Polychrome(gpui::PaddedBool32, f32, gpui::Corners<gpui::ScaledPixels>),
-}
-
-#[derive(Debug, PartialEq)]
-struct GlyphSnapshot {
-    order: gpui::DrawOrder,
-    pad: u32,
-    bounds: gpui::Bounds<gpui::ScaledPixels>,
-    content_mask: gpui::ContentMask<gpui::ScaledPixels>,
-    tile: gpui::AtlasTile,
-    appearance: GlyphAppearance,
-}
-
-fn snapshot_glyphs(window: &Window) -> Vec<GlyphSnapshot> {
+fn snapshot_output(window: &Window) -> gpui::ViewReuseSnapshot {
     let scene = window.rendered_scene();
-    // Compare the same fields as the former Debug-string snapshots without formatting
-    // thousands of floats and allocating one string per glyph after every sample.
-    scene
-        .monochrome_sprites
-        .iter()
-        .map(|sprite| GlyphSnapshot {
-            order: sprite.order,
-            pad: sprite.pad,
-            bounds: sprite.bounds,
-            content_mask: sprite.content_mask,
-            tile: sprite.tile,
-            appearance: GlyphAppearance::Monochrome(sprite.color, sprite.transformation),
-        })
-        .chain(scene.subpixel_sprites.iter().map(|sprite| GlyphSnapshot {
-            order: sprite.order,
-            pad: sprite.pad,
-            bounds: sprite.bounds,
-            content_mask: sprite.content_mask,
-            tile: sprite.tile,
-            appearance: GlyphAppearance::Subpixel(sprite.color, sprite.transformation),
-        }))
-        .chain(scene.polychrome_sprites.iter().map(|sprite| GlyphSnapshot {
-            order: sprite.order,
-            pad: sprite.pad,
-            bounds: sprite.bounds,
-            content_mask: sprite.content_mask,
-            tile: sprite.tile,
-            appearance: GlyphAppearance::Polychrome(
-                sprite.grayscale,
-                sprite.opacity,
-                sprite.corner_radii,
-            ),
-        }))
-        .collect()
+    assert!(
+        scene.monochrome_sprites.len()
+            + scene.subpixel_sprites.len()
+            + scene.polychrome_sprites.len()
+            > 0
+    );
+    window.view_reuse_snapshot(|id| format!("{id:?}"))
 }
 
 struct FirstPopulatedFrame {
@@ -1238,17 +1207,15 @@ fn first_populated_text_panels(panel_count: &usize, cx: &mut BenchAppContext) {
             ),
             None => eprintln!("first populated setup live heap: allocator statistics unavailable"),
         }
-        let initial = window.update(|window, _| snapshot_glyphs(window));
+        let initial = window.update(|window, _| snapshot_output(window));
         window.update(|window, _| window.refresh());
         cx.run_until_idle();
         populated.expected_frames = 2;
         assert_eq!(populated.root_renders.get(), 2);
         assert_eq!(populated.panel_renders.get(), panel_count * 2);
-        assert_eq!(
-            initial,
-            window.update(|window, _| snapshot_glyphs(window)),
-            "first populated glyph output must match a full redraw"
-        );
+        initial
+            .compare(&window.update(|window, _| snapshot_output(window)), 0)
+            .expect("first populated output must match a full redraw");
         drop(populated);
         cx.run_until_idle();
     }
@@ -1490,7 +1457,7 @@ fn layout_churn(workload: &Churn, cx: &mut BenchAppContext) {
         window.update(|window, cx| {
             assert_layout_cache_mode(window);
             root.read(cx).validate();
-            assert!(!snapshot_glyphs(window).is_empty());
+            snapshot_output(window);
         });
         for (frame, stats) in checkpoints {
             match before_window.zip(stats) {
@@ -1516,14 +1483,12 @@ fn layout_churn(workload: &Churn, cx: &mut BenchAppContext) {
         root.read(cx).validate();
         assert!(root.read(cx).frame > 0);
     });
-    let incremental = window.update(|window, _| snapshot_glyphs(window));
+    let incremental = window.update(|window, _| snapshot_output(window));
     window.update(|window, _| window.refresh());
     cx.run_until_idle();
-    assert!(!incremental.is_empty());
-    assert_eq!(
-        incremental,
-        window.update(|window, _| snapshot_glyphs(window))
-    );
+    incremental
+        .compare(&window.update(|window, _| snapshot_output(window)), 0)
+        .expect("churn output must match a full redraw");
     window.update(|window, _| window.remove_window());
 }
 

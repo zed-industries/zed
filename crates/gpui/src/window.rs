@@ -1320,6 +1320,7 @@ pub struct ViewReuseStats {
     pub prepaint_reuse_calls: usize,
     pub scene_bulk_segments: usize,
     pub index_fixups: usize,
+    pub scene_segments: crate::scene::SceneSegmentStats,
 }
 
 /// Canonical CPU output for differential runs of a deterministic fixture.
@@ -1332,6 +1333,8 @@ pub struct ViewReuseStats {
 pub struct ViewReuseSnapshot {
     pub scene: Vec<String>,
     pub rendered_primitives: Vec<String>,
+    visual_scene: crate::scene::SceneEquivalence,
+    retained_scene: bool,
     pub hitboxes: Vec<String>,
     pub dispatch: Vec<String>,
     pub cursor_styles: Vec<String>,
@@ -1344,6 +1347,17 @@ pub struct ViewReuseSnapshot {
 impl ViewReuseSnapshot {
     /// Report the first CPU-output mismatch with its frame and logical dispatch identities.
     pub fn compare(&self, reconstructed: &Self, frame: usize) -> anyhow::Result<()> {
+        if self.retained_scene || reconstructed.retained_scene {
+            self.visual_scene
+                .compare(&reconstructed.visual_scene)
+                .with_context(|| format!("visual scene mismatch in frame {frame}"))?;
+        } else {
+            anyhow::ensure!(
+                self.scene == reconstructed.scene
+                    && self.rendered_primitives == reconstructed.rendered_primitives,
+                "exact scene mismatch in frame {frame}"
+            );
+        }
         anyhow::ensure!(
             self.focused_node == reconstructed.focused_node,
             "view reuse mismatch in frame {frame}, focus: reused={:?}, reconstructed={:?}",
@@ -1351,12 +1365,6 @@ impl ViewReuseSnapshot {
             reconstructed.focused_node,
         );
         for (name, reused, fresh) in [
-            ("scene", &self.scene, &reconstructed.scene),
-            (
-                "rendered primitives",
-                &self.rendered_primitives,
-                &reconstructed.rendered_primitives,
-            ),
             ("hitboxes", &self.hitboxes, &reconstructed.hitboxes),
             ("dispatch", &self.dispatch, &reconstructed.dispatch),
             (
@@ -2808,6 +2816,8 @@ impl Window {
         ViewReuseSnapshot {
             scene: frame.scene.reuse_snapshot(),
             rendered_primitives: frame.scene.rendered_snapshot(),
+            visual_scene: frame.scene.equivalence_snapshot(),
+            retained_scene: self.view_splicing,
             accessed_element_states,
             focused_node: self
                 .focus
@@ -4092,6 +4102,10 @@ impl Window {
         // This ensures that multiple test Apps have isolated arenas.
         let arena_scope = ElementArenaScope::enter(&cx.element_arena);
 
+        if self.view_splicing {
+            self.next_frame.scene.enable_segments();
+        }
+
         if self.platform_window.prepare_frame() {
             self.refresh();
         }
@@ -4198,6 +4212,12 @@ impl Window {
         self.layout_engine.as_mut().unwrap().clear();
         self.text_system().finish_frame();
         self.next_frame.finish(&mut self.rendered_frame);
+        #[cfg(any(test, feature = "bench-support"))]
+        if self.view_splicing {
+            self.view_reuse_stats
+                .scene_segments
+                .accumulate(&self.next_frame.scene.segment_stats);
+        }
         for &(handle, _) in &self.next_frame.accessed_element_states {
             self.element_id_interner.mark_used(handle);
         }

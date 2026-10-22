@@ -140,6 +140,13 @@ impl<T> Default for FramePosition<T> {
 }
 
 impl<T> FramePosition<T> {
+    pub(crate) fn from_offset(offset: usize) -> Self {
+        Self {
+            offset,
+            marker: PhantomData,
+        }
+    }
+
     pub(crate) fn offset(self) -> usize {
         self.offset
     }

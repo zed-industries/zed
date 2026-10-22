@@ -18,6 +18,15 @@ use std::{
     slice,
 };
 
+mod segments;
+#[cfg(any(test, feature = "bench-support"))]
+pub use segments::SceneSegmentStats;
+use segments::{SceneRuns, SegmentFallback};
+#[cfg(any(test, feature = "bench-support"))]
+mod equivalence;
+#[cfg(any(test, feature = "bench-support"))]
+pub(crate) use equivalence::SceneEquivalence;
+
 #[allow(non_camel_case_types, unused)]
 #[expect(missing_docs)]
 pub type PathVertex_ScaledPixels = PathVertex<ScaledPixels>;
@@ -78,6 +87,9 @@ impl From<bool> for PaddedBool32 {
 #[derive(Default)]
 #[expect(missing_docs)]
 pub struct Scene {
+    runs: Option<SceneRuns>,
+    #[cfg(any(test, feature = "bench-support"))]
+    pub(crate) segment_stats: SceneSegmentStats,
     pub(crate) paint_operations: FrameArray<PaintOperation>,
     primitive_bounds: BoundsTree<ScaledPixels>,
     ordering_indices: Vec<usize>,
@@ -104,6 +116,11 @@ pub struct Scene {
 #[expect(missing_docs)]
 impl Scene {
     pub fn clear(&mut self) {
+        self.runs = None;
+        #[cfg(any(test, feature = "bench-support"))]
+        {
+            self.segment_stats = SceneSegmentStats::default();
+        }
         self.replay_arrays.ready = false;
         self.paint_operations.clear();
         self.primitive_bounds.clear();
@@ -124,10 +141,16 @@ impl Scene {
     }
 
     pub fn len(&self) -> usize {
+        if let Some(runs) = &self.runs {
+            return runs.index().operations.offset();
+        }
         self.paint_operations.len()
     }
 
     pub(crate) fn index(&self) -> SceneIndex {
+        if let Some(runs) = &self.runs {
+            return runs.checkpoint();
+        }
         SceneIndex {
             operations: self.paint_operations.position(),
             ordering: self.primitive_bounds.len(),
@@ -186,6 +209,40 @@ impl Scene {
         previous: &mut Self,
         #[cfg(any(test, feature = "bench-support"))] stats: &mut crate::ViewReuseStats,
     ) {
+        if self.runs.is_some() {
+            let result = if let (Some(runs), Some(previous_runs)) =
+                (self.runs.as_mut(), previous.runs.as_mut())
+            {
+                runs.reuse(range.clone(), previous_runs)
+            } else {
+                Err(SegmentFallback::SourceFlat)
+            };
+            match result {
+                Ok(count) => {
+                    #[cfg(any(test, feature = "bench-support"))]
+                    {
+                        stats.scene_bulk_segments += 1;
+                        self.segment_stats.reused_runs += count;
+                    }
+                    #[cfg(not(any(test, feature = "bench-support")))]
+                    let _ = count;
+                    return;
+                }
+                Err(reason) => self.record_segment_fallback(reason),
+            }
+            previous.flatten_runs();
+            let runs = self.runs.as_mut().expect("segmented recording");
+            let added = runs.record(|scene| {
+                scene.replay(
+                    range.start.operations.range_to(range.end.operations),
+                    previous,
+                );
+            });
+            runs.checkpoint();
+            self.record_new_run(added);
+            return;
+        }
+        previous.flatten_runs();
         let bulk = range.start.layer_depth == 0
             && range.end.layer_depth == 0
             && self.layer_stack.is_empty()
@@ -243,6 +300,11 @@ impl Scene {
     }
 
     pub fn push_layer(&mut self, bounds: Bounds<ScaledPixels>) {
+        if let Some(runs) = self.runs.as_mut() {
+            let added = runs.record(|scene| scene.push_layer(bounds));
+            self.record_new_run(added);
+            return;
+        }
         self.ordering_indices.push(self.primitive_bounds.len());
         let order = self.primitive_bounds.insert(bounds);
         self.layer_stack.push(order);
@@ -251,14 +313,25 @@ impl Scene {
     }
 
     pub fn pop_layer(&mut self) {
+        if let Some(runs) = self.runs.as_mut() {
+            let added = runs.record(Scene::pop_layer);
+            self.record_new_run(added);
+            return;
+        }
         self.ordering_indices.push(self.primitive_bounds.len());
         self.layer_stack.pop();
         self.paint_operations.push(PaintOperation::EndLayer);
     }
 
     pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
+        let primitive = primitive.into();
+        if let Some(runs) = self.runs.as_mut() {
+            let added = runs.record(|scene| scene.insert_primitive(primitive));
+            self.record_new_run(added);
+            return;
+        }
         let ordering_index = self.primitive_bounds.len();
-        if let Some(operation) = self.prepare_primitive(primitive.into(), None) {
+        if let Some(operation) = self.prepare_primitive(primitive, None) {
             self.ordering_indices.push(ordering_index);
             self.paint_operations.push(operation);
         }
@@ -342,6 +415,8 @@ impl Scene {
     }
 
     pub fn replay(&mut self, range: Range<usize>, prev_scene: &mut Scene) {
+        self.flatten_runs();
+        prev_scene.flatten_runs();
         #[cfg(debug_assertions)]
         if !range.is_empty() {
             debug_assert!(
@@ -475,6 +550,9 @@ impl Scene {
 
     #[cfg(any(test, feature = "bench-support"))]
     pub(crate) fn reuse_snapshot(&self) -> Vec<String> {
+        if let Some(runs) = &self.runs {
+            return runs.canonical_operations();
+        }
         self.paint_operations
             .iter()
             .map(|operation| match operation {
@@ -497,6 +575,21 @@ impl Scene {
     }
 
     pub fn finish(&mut self) {
+        if let Some(mut runs) = self.runs.take() {
+            match runs.finish(self) {
+                Ok(()) => {
+                    self.runs = Some(runs);
+                    #[cfg(any(test, feature = "bench-support"))]
+                    {
+                        self.segment_stats.segmented_frames += 1;
+                    }
+                    return;
+                }
+                Err(reason) => self.record_segment_fallback(reason),
+            }
+            self.runs = Some(runs);
+            self.flatten_runs();
+        }
         let primitive_count = self
             .shadows
             .len()
@@ -603,6 +696,76 @@ impl Scene {
             polychrome_sprites_iter: self.polychrome_sprites.iter().peekable(),
             surfaces_start: 0,
             surfaces_iter: self.surfaces.iter().peekable(),
+        }
+    }
+}
+
+impl Scene {
+    fn record_new_run(&mut self, _added: bool) {
+        #[cfg(any(test, feature = "bench-support"))]
+        {
+            self.segment_stats.recorded_runs += usize::from(_added);
+        }
+    }
+
+    fn record_segment_fallback(&mut self, _reason: SegmentFallback) {
+        #[cfg(any(test, feature = "bench-support"))]
+        self.segment_stats.fallback(_reason);
+    }
+
+    pub(crate) fn enable_segments(&mut self) {
+        if self.runs.is_none() && self.paint_operations.is_empty() {
+            self.runs = Some(SceneRuns::default());
+        }
+    }
+
+    fn flatten_runs(&mut self) {
+        let Some(runs) = self.runs.take() else {
+            return;
+        };
+        #[cfg(debug_assertions)]
+        let consumed = runs.consumed_ranges();
+        #[cfg(any(test, feature = "bench-support"))]
+        let stats = std::mem::take(&mut self.segment_stats);
+        self.clear();
+        #[cfg(any(test, feature = "bench-support"))]
+        {
+            self.segment_stats = stats;
+        }
+        for scene in runs.into_scenes() {
+            for operation in &scene.paint_operations {
+                match *operation {
+                    PaintOperation::StartLayer(bounds) => self.push_layer(bounds),
+                    PaintOperation::EndLayer => self.pop_layer(),
+                    PaintOperation::Primitive(primitive) => {
+                        let primitive = match primitive {
+                            RecordedPrimitive::Shadow(value) => Primitive::Shadow(value),
+                            RecordedPrimitive::Quad(value) => Primitive::Quad(value),
+                            RecordedPrimitive::Underline(value) => Primitive::Underline(value),
+                            RecordedPrimitive::MonochromeSprite(value) => {
+                                Primitive::MonochromeSprite(value)
+                            }
+                            RecordedPrimitive::SubpixelSprite(value) => {
+                                Primitive::SubpixelSprite(value)
+                            }
+                            RecordedPrimitive::PolychromeSprite(value) => {
+                                Primitive::PolychromeSprite(value)
+                            }
+                            RecordedPrimitive::Path { id, .. } => {
+                                Primitive::Path(scene.paths[scene.path_index(id)].clone())
+                            }
+                            RecordedPrimitive::Surface { index, .. } => {
+                                Primitive::Surface(scene.surface(index).clone())
+                            }
+                        };
+                        self.insert_primitive(primitive);
+                    }
+                }
+            }
+        }
+        #[cfg(debug_assertions)]
+        {
+            self.consumed_segments = consumed;
         }
     }
 }
@@ -1899,6 +2062,189 @@ mod tests {
             bounds: Bounds::new(point(px(0.), px(0.)), size(px(20.), px(20.))),
         };
         path.scale(1.)
+    }
+
+    #[test]
+    fn segmented_runs_keep_closed_layers_paths_and_surfaces() {
+        fn paint(scene: &mut Scene) {
+            scene.push_layer(quad().bounds);
+            scene.insert_primitive(path());
+            scene.push_layer(quad().bounds);
+            scene.insert_primitive(quad());
+            scene.pop_layer();
+            #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+            scene.insert_primitive(PaintSurface {
+                order: 0,
+                bounds: quad().bounds,
+                content_mask: quad().content_mask,
+            });
+            scene.pop_layer();
+        }
+        let mut source = Scene::default();
+        source.enable_segments();
+        let start = source.index();
+        paint(&mut source);
+        let end = source.index();
+        source.finish();
+        assert_eq!(source.segment_stats.segmented_frames, 1);
+
+        let mut target = Scene::default();
+        target.enable_segments();
+        target.insert_primitive(path());
+        target.replay_segment(
+            start..end,
+            &mut source,
+            &mut crate::ViewReuseStats::default(),
+        );
+        target.finish();
+        let mut fresh = Scene::default();
+        fresh.insert_primitive(path());
+        paint(&mut fresh);
+        fresh.finish();
+        target
+            .equivalence_snapshot()
+            .compare(&fresh.equivalence_snapshot())
+            .expect("closed layer run matches fresh");
+        assert_eq!(target.segment_stats.reused_runs, 1);
+        assert_eq!(target.segment_stats.recorded_runs, 1);
+        assert_eq!(target.segment_stats.segmented_frames, 1);
+        assert_eq!(
+            target
+                .paths
+                .iter()
+                .map(|path| path.id.0)
+                .collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+    }
+
+    #[test]
+    fn cross_layer_fallback_preserves_already_reused_runs() {
+        let mut source = Scene::default();
+        source.enable_segments();
+        let start = source.index();
+        source.insert_primitive(quad());
+        let prefix_end = source.index();
+        source.push_layer(quad().bounds);
+        let inside_start = source.index();
+        source.insert_primitive(path());
+        let inside_end = source.index();
+        source.pop_layer();
+        source.finish();
+
+        let mut target = Scene::default();
+        target.enable_segments();
+        let mut stats = crate::ViewReuseStats::default();
+        target.replay_segment(start..prefix_end, &mut source, &mut stats);
+        target.push_layer(quad().bounds);
+        target.replay_segment(inside_start..inside_end, &mut source, &mut stats);
+        target.pop_layer();
+        target.finish();
+
+        let mut fresh = Scene::default();
+        fresh.insert_primitive(quad());
+        fresh.push_layer(quad().bounds);
+        fresh.insert_primitive(path());
+        fresh.pop_layer();
+        fresh.finish();
+        target
+            .equivalence_snapshot()
+            .compare(&fresh.equivalence_snapshot())
+            .expect("cross-layer fallback matches fresh");
+        assert_eq!(target.segment_stats.reused_runs, 1);
+        assert_eq!(target.segment_stats.fallback_cross_layer, 1);
+        assert_eq!(target.segment_stats.segmented_frames, 1);
+    }
+
+    #[test]
+    fn replacing_a_run_keeps_later_bands() {
+        let mut source = Scene::default();
+        source.enable_segments();
+        let start = source.index();
+        source.insert_primitive(quad());
+        let prefix_end = source.index();
+        source.insert_primitive(path());
+        let suffix_start = source.index();
+        source.insert_primitive(quad());
+        let end = source.index();
+        source.finish();
+        let suffix_order = source.quads[1].order;
+
+        let mut target = Scene::default();
+        target.enable_segments();
+        let mut stats = crate::ViewReuseStats::default();
+        target.replay_segment(start..prefix_end, &mut source, &mut stats);
+        target.insert_primitive(path());
+        target.index();
+        target.insert_primitive(path());
+        target.replay_segment(suffix_start..end, &mut source, &mut stats);
+        target.finish();
+        assert_eq!(target.quads[1].order, suffix_order);
+        assert_eq!(target.segment_stats.reused_runs, 2);
+        assert_eq!(target.segment_stats.recorded_runs, 2);
+        assert_eq!(target.segment_stats.segmented_frames, 1);
+        let mut fresh = Scene::default();
+        fresh.insert_primitive(quad());
+        fresh.insert_primitive(path());
+        fresh.insert_primitive(path());
+        fresh.insert_primitive(quad());
+        fresh.finish();
+        target
+            .equivalence_snapshot()
+            .compare(&fresh.equivalence_snapshot())
+            .expect("replaced run matches fresh");
+    }
+
+    #[test]
+    fn reordered_clean_runs_fall_back_without_losing_primitives() {
+        let mut source = Scene::default();
+        source.enable_segments();
+        let start = source.index();
+        source.insert_primitive(quad());
+        let middle = source.index();
+        source.insert_primitive(path());
+        let end = source.index();
+        source.finish();
+
+        let mut target = Scene::default();
+        target.enable_segments();
+        let mut stats = crate::ViewReuseStats::default();
+        target.replay_segment(middle..end, &mut source, &mut stats);
+        target.replay_segment(start..middle, &mut source, &mut stats);
+        target.finish();
+        assert_eq!(target.segment_stats.fallback_bands, 1);
+        let mut fresh = Scene::default();
+        fresh.insert_primitive(path());
+        fresh.insert_primitive(quad());
+        fresh.finish();
+        target
+            .equivalence_snapshot()
+            .compare(&fresh.equivalence_snapshot())
+            .expect("reordered runs match fresh");
+    }
+
+    #[test]
+    fn flat_sources_are_imported_without_disabling_segments() {
+        let mut source = Scene::default();
+        let start = source.index();
+        source.insert_primitive(path());
+        let end = source.index();
+        source.finish();
+        let expected = source.equivalence_snapshot();
+        let mut target = Scene::default();
+        target.enable_segments();
+        target.replay_segment(
+            start..end,
+            &mut source,
+            &mut crate::ViewReuseStats::default(),
+        );
+        target.finish();
+        target
+            .equivalence_snapshot()
+            .compare(&expected)
+            .expect("imported flat source matches fresh");
+        assert_eq!(target.segment_stats.fallback_source_flat, 1);
+        assert_eq!(target.segment_stats.segmented_frames, 1);
     }
 
     #[test]

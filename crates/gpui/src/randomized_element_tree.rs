@@ -1628,10 +1628,8 @@ fn random_opacity(rng: &mut StdRng) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        AnyWindowHandle, Background, BorderStyle, Bounds, ContentMask, Corners, Edges, Pixels,
-        ScaledPixels, Size, TestAppContext, size,
-    };
+    use crate::{AnyWindowHandle, Bounds, Pixels, Size, TestAppContext, size};
+    use anyhow::Context as _;
     use proptest::prelude::*;
     use std::collections::BTreeSet;
 
@@ -2796,6 +2794,24 @@ mod tests {
             let stats = cx
                 .update_window(reused.into(), |_, window, _| window.take_view_reuse_stats())
                 .expect("reused window exists");
+            if std::env::var("GPUI_BENCH_SCENE_STATS").as_deref() == Ok("1") {
+                let (batches, paths) = cx
+                    .update_window(reused.into(), |_, window, _| {
+                        (
+                            window.rendered_frame.scene.batches().count(),
+                            window.rendered_frame.scene.paths.len(),
+                        )
+                    })
+                    .expect("reused window exists");
+                let fresh_batches = cx
+                    .update_window(reconstructed.into(), |_, window, _| {
+                        window.rendered_frame.scene.batches().count()
+                    })
+                    .expect("reconstructed window exists");
+                eprintln!(
+                    "random scene stats topology={topology:?} cached={cached} mutations={all_mutations} scroll={scroll}: batches={batches} fresh_batches={fresh_batches} paths={paths} work={stats:?}"
+                );
+            }
             if cached
                 || cx
                     .update_window(reused.into(), |_, window, _| window.layout_cache_enabled())
@@ -2816,20 +2832,17 @@ mod tests {
 
     #[derive(Debug, PartialEq)]
     struct SceneSnapshot {
-        quads: Vec<QuadSnapshot>,
+        scene: crate::scene::SceneEquivalence,
+        exact: Option<Vec<String>>,
         element_ids: BTreeSet<u64>,
     }
 
     impl SceneSnapshot {
         fn from_window(window: &Window) -> Self {
             Self {
-                quads: window
-                    .rendered_frame
-                    .scene
-                    .quads
-                    .iter()
-                    .map(QuadSnapshot::from)
-                    .collect(),
+                scene: window.rendered_frame.scene.equivalence_snapshot(),
+                exact: (!window.view_splicing)
+                    .then(|| window.rendered_frame.scene.rendered_snapshot()),
                 element_ids: window
                     .rendered_frame
                     .element_states
@@ -2842,33 +2855,6 @@ mod tests {
                         (name.as_ref() == "randomized-element").then_some(*element_id)
                     })
                     .collect(),
-            }
-        }
-    }
-
-    #[derive(Debug, PartialEq)]
-    struct QuadSnapshot {
-        order: u32,
-        border_style: BorderStyle,
-        bounds: Bounds<ScaledPixels>,
-        content_mask: ContentMask<ScaledPixels>,
-        background: Background,
-        border_color: Hsla,
-        corner_radii: Corners<ScaledPixels>,
-        border_widths: Edges<ScaledPixels>,
-    }
-
-    impl From<&crate::Quad> for QuadSnapshot {
-        fn from(quad: &crate::Quad) -> Self {
-            Self {
-                order: quad.order,
-                border_style: quad.border_style,
-                bounds: quad.bounds,
-                content_mask: quad.content_mask,
-                background: quad.background,
-                border_color: quad.border_color,
-                corner_radii: quad.corner_radii,
-                border_widths: quad.border_widths,
             }
         }
     }
@@ -3111,10 +3097,25 @@ mod tests {
         );
         let reference_scene = draw_fresh_reference(snapshot, cx);
 
-        assert_eq!(
-            persistent_scene, reference_scene,
-            "rendered scene diverged for config {config:?}, after mutation {mutation:?}"
-        );
+        assert_eq!(persistent_scene.element_ids, reference_scene.element_ids);
+        if let (Some(persistent), Some(reference)) =
+            (&persistent_scene.exact, &reference_scene.exact)
+        {
+            assert_eq!(
+                persistent, reference,
+                "rendered scene diverged for config {config:?}, after mutation {mutation:?}"
+            );
+        } else {
+            persistent_scene
+                .scene
+                .compare(&reference_scene.scene)
+                .with_context(|| {
+                    format!(
+                        "rendered scene diverged for config {config:?}, after mutation {mutation:?}"
+                    )
+                })
+                .expect("visual scene equivalence");
+        }
     }
 
     fn draw_fresh_reference(

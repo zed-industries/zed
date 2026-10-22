@@ -175,6 +175,15 @@ fn measure_closed_inspector<V: Render + 'static>(
     });
     let frames_after = window.update(|window, cx| {
         assert!(!window.is_inspector_picking(cx));
+        if std::env::var("GPUI_BENCH_SCENE_STATS").as_deref() == Ok("1") {
+            eprintln!(
+                "scene stats inspector/{}/{}: batches={}, work={:?}",
+                std::any::type_name::<V>(),
+                input.scale,
+                window.rendered_scene().batches().count(),
+                window.view_reuse_stats(),
+            );
+        }
         window.frame_duration_snapshot()
     });
 
