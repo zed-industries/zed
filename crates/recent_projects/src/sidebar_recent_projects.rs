@@ -46,7 +46,6 @@ impl SidebarRecentProjects {
                 workspaces: Vec::new(),
                 filtered_workspaces: Vec::new(),
                 selected_index: 0,
-                has_any_non_local_projects: false,
                 focus_handle: cx.focus_handle(),
             };
 
@@ -117,15 +116,11 @@ pub struct SidebarRecentProjectsDelegate {
     workspaces: Vec<RecentWorkspace>,
     filtered_workspaces: Vec<StringMatch>,
     selected_index: usize,
-    has_any_non_local_projects: bool,
     focus_handle: FocusHandle,
 }
 
 impl SidebarRecentProjectsDelegate {
     pub fn set_workspaces(&mut self, workspaces: Vec<RecentWorkspace>) {
-        self.has_any_non_local_projects = workspaces
-            .iter()
-            .any(|workspace| !matches!(workspace.location, SerializedWorkspaceLocation::Local));
         self.workspaces = workspaces;
     }
 }
@@ -345,10 +340,14 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
             active: false,
         };
 
-        let icon = icon_for_remote_connection(match &workspace.location {
+        let icon = match &workspace.location {
             SerializedWorkspaceLocation::Local => None,
-            SerializedWorkspaceLocation::Remote(options) => Some(options),
-        });
+            SerializedWorkspaceLocation::Remote(options) => Some(
+                Icon::new(icon_for_remote_connection(Some(options)))
+                    .size(IconSize::XSmall)
+                    .color(Color::Muted),
+            ),
+        };
 
         Some(
             ListItem::new(ix)
@@ -361,10 +360,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                         .min_w_0()
                         .gap_3()
                         .flex_grow_1()
-                        .when(self.has_any_non_local_projects, |this| {
-                            this.child(Icon::new(icon).color(Color::Muted))
-                        })
-                        .child(highlighted_match.render(window, cx)),
+                        .child(highlighted_match.render_with_trailing_icon(icon, window, cx)),
                 )
                 .tooltip(move |_, cx| {
                     Tooltip::with_meta(

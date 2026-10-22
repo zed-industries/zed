@@ -895,12 +895,6 @@ impl RecentProjectsDelegate {
         self.workspaces = workspaces;
     }
 
-    fn filtered_entries_include_remote_project(&self) -> bool {
-        self.filtered_entries
-            .iter()
-            .any(|entry| self.entry_is_remote_project(entry))
-    }
-
     fn entry_is_remote_project(&self, entry: &ProjectPickerEntry) -> bool {
         match entry {
             ProjectPickerEntry::Header(_) => false,
@@ -1231,7 +1225,9 @@ impl PickerDelegate for RecentProjectsDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        match self.filtered_entries.get(ix)? {
+        let entry = self.filtered_entries.get(ix)?;
+        let is_remote = self.entry_is_remote_project(entry);
+        match entry {
             ProjectPickerEntry::Header(title) => Some(
                 v_flex()
                     .w_full()
@@ -1278,7 +1274,6 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .into_any_element();
 
                 let icon = icon_for_remote_connection(folder.connection_options.as_ref());
-                let show_icon = self.filtered_entries_include_remote_project();
 
                 let tooltip_path: SharedString = path.to_string_lossy().to_string().into();
                 let tooltip_branch = branch.clone();
@@ -1294,19 +1289,28 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 .w_full()
                                 .min_w_0()
                                 .gap_2p5()
-                                .when(show_icon, |this| {
-                                    this.child(Icon::new(icon).color(Color::Muted))
-                                })
                                 .child(
                                     v_flex()
                                         .min_w_0()
                                         .child(
                                             h_flex()
+                                                .min_w_0()
                                                 .gap_1()
-                                                .child(HighlightedLabel::new(
-                                                    name.to_string(),
-                                                    positions,
-                                                ))
+                                                .child(
+                                                    HighlightedLabel::new(
+                                                        name.to_string(),
+                                                        positions,
+                                                    )
+                                                    .single_line()
+                                                    .truncate(),
+                                                )
+                                                .when(is_remote, |this| {
+                                                    this.child(
+                                                        Icon::new(icon)
+                                                            .size(IconSize::XSmall)
+                                                            .color(Color::Muted),
+                                                    )
+                                                })
                                                 .when_some(branch, |this, branch| {
                                                     this.child(
                                                         Label::new(branch)
@@ -1360,7 +1364,6 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .collect();
                 let tooltip_path: SharedString = ordered_paths.join("\n").into();
                 let icon = icon_for_project_group(key);
-                let show_icon = self.filtered_entries_include_remote_project();
 
                 let mut path_start_offset = 0;
                 let (match_labels, path_highlights): (Vec<_>, Vec<_>) = paths
@@ -1457,15 +1460,20 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 .w_full()
                                 .min_w_0()
                                 .gap_2p5()
-                                .when(show_icon, |this| {
-                                    this.child(Icon::new(icon).color(Color::Muted))
-                                })
                                 .child({
                                     let mut highlighted = highlighted_match;
                                     if !self.render_paths {
                                         highlighted.paths.clear();
                                     }
-                                    highlighted.render(window, cx)
+                                    highlighted.render_with_trailing_icon(
+                                        is_remote.then(|| {
+                                            Icon::new(icon)
+                                                .size(IconSize::XSmall)
+                                                .color(Color::Muted)
+                                        }),
+                                        window,
+                                        cx,
+                                    )
                                 })
                                 .tooltip(Tooltip::text(tooltip_path)),
                         )
@@ -1624,7 +1632,6 @@ impl PickerDelegate for RecentProjectsDelegate {
                     SerializedWorkspaceLocation::Local => None,
                     SerializedWorkspaceLocation::Remote(options) => Some(options),
                 });
-                let show_icon = self.filtered_entries_include_remote_project();
 
                 Some(
                     ListItem::new(ix)
@@ -1638,15 +1645,20 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 .min_w_0()
                                 .gap_2p5()
                                 .flex_grow_1()
-                                .when(show_icon, |this| {
-                                    this.child(Icon::new(icon).color(Color::Muted))
-                                })
                                 .child({
                                     let mut highlighted = highlighted_match;
                                     if !self.render_paths {
                                         highlighted.paths.clear();
                                     }
-                                    highlighted.render(window, cx)
+                                    highlighted.render_with_trailing_icon(
+                                        is_remote.then(|| {
+                                            Icon::new(icon)
+                                                .size(IconSize::XSmall)
+                                                .color(Color::Muted)
+                                        }),
+                                        window,
+                                        cx,
+                                    )
                                 })
                                 .tooltip(move |_, cx| {
                                     Tooltip::with_meta(
@@ -2697,7 +2709,6 @@ mod tests {
 
         assert!(!delegate.entry_is_remote_project(&delegate.filtered_entries[0]));
         assert!(delegate.entry_is_remote_project(&delegate.filtered_entries[1]));
-        assert!(delegate.filtered_entries_include_remote_project());
         assert_eq!(
             icon_for_project_group(&delegate.window_project_groups[0]),
             IconName::Screen

@@ -73,16 +73,21 @@ impl HighlightedMatchWithPaths {
         self.active = active;
         self
     }
-}
 
-impl RenderOnce for HighlightedMatchWithPaths {
-    fn render(mut self, _window: &mut Window, _: &mut App) -> impl IntoElement {
+    pub fn render_with_trailing_icon(
+        mut self,
+        icon: Option<Icon>,
+        _window: &mut Window,
+        _: &mut App,
+    ) -> impl IntoElement {
         v_flex()
             .min_w_0()
             .child(
                 h_flex()
+                    .min_w_0()
                     .gap_1()
                     .child(self.match_label.clone())
+                    .children(icon)
                     .when_some(self.prefix.as_ref(), |this, prefix| {
                         this.child(Label::new(format!("({})", prefix)).color(Color::Muted))
                     })
@@ -97,6 +102,12 @@ impl RenderOnce for HighlightedMatchWithPaths {
             .when(!self.paths.is_empty(), |this| {
                 self.render_paths_children(this)
             })
+    }
+}
+
+impl RenderOnce for HighlightedMatchWithPaths {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        self.render_with_trailing_icon(None, window, cx)
     }
 }
 
