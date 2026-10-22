@@ -5562,6 +5562,17 @@ impl Window {
     /// where the circular arcs meet. This will not display well when combined with dashed borders.
     /// Use `Corners::clamp_radii_for_quad_size` if the radii should fit within the bounds.
     pub fn paint_quad(&mut self, quad: PaintQuad) {
+        // Dispatch before computing fields so the flat body doesn't spill them
+        // around retained recording calls.
+        if self.view_splicing {
+            self.paint_quad_impl::<true>(quad);
+        } else {
+            self.paint_quad_impl::<false>(quad);
+        }
+    }
+
+    #[inline(never)]
+    fn paint_quad_impl<const RETAINED: bool>(&mut self, quad: PaintQuad) {
         self.invalidator.debug_assert_paint();
 
         let opacity = self.element_opacity();
@@ -5579,7 +5590,7 @@ impl Window {
         };
 
         if !quad.background.is_transparent() {
-            self.next_frame.scene.record_primitive(quad);
+            self.next_frame.scene.record_primitive_for::<RETAINED>(quad);
             return;
         }
 
@@ -5589,7 +5600,7 @@ impl Window {
         let inner_bounds = Self::largest_border_interior(&quad);
 
         if inner_bounds.is_empty() {
-            self.next_frame.scene.record_primitive(quad);
+            self.next_frame.scene.record_primitive_for::<RETAINED>(quad);
             return;
         }
 
@@ -5619,12 +5630,14 @@ impl Window {
         for strip in strips {
             let content_mask_bounds = quad.content_mask.bounds.intersect(&strip);
             if !content_mask_bounds.is_empty() {
-                self.next_frame.scene.record_primitive(Quad {
-                    content_mask: ContentMask {
-                        bounds: content_mask_bounds,
-                    },
-                    ..quad
-                });
+                self.next_frame
+                    .scene
+                    .record_primitive_for::<RETAINED>(Quad {
+                        content_mask: ContentMask {
+                            bounds: content_mask_bounds,
+                        },
+                        ..quad
+                    });
             }
         }
     }
