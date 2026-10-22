@@ -1979,7 +1979,7 @@ mod tests {
                             crate::ScrollStrategy::Center,
                             crate::ScrollStrategy::Bottom,
                             crate::ScrollStrategy::Nearest,
-                        ][frame % 4],
+                        ][(frame / 4) % 4],
                     ),
                     2 | 6 => root.variable.scroll_to(crate::ListOffset {
                         item_ix: index,
@@ -1996,6 +1996,7 @@ mod tests {
                         root.variable.reset(root.rows.read(cx).len());
                     }
                     4 => {
+                        let previous_count = root.rows.read(cx).len();
                         root.rows.update(cx, |rows, cx| {
                             rows.push(DependencyValue {
                                 color,
@@ -2003,7 +2004,7 @@ mod tests {
                             });
                             cx.notify();
                         });
-                        root.variable.splice(64..64, 1);
+                        root.variable.splice(previous_count..previous_count, 1);
                     }
                     _ => {}
                 });
