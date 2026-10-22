@@ -424,7 +424,9 @@ impl AcpV2Connection {
                 return Err(anyhow!(mismatch).context(UnsupportedVersion));
             }
             Ok(outcome) => {
-                return Err(anyhow!("Unexpected ACP initialization outcome: {outcome:?}"));
+                return Err(anyhow!(
+                    "Unexpected ACP initialization outcome: {outcome:?}"
+                ));
             }
             Err(error) if super::v1_only_mismatch(&error) => {
                 return Err(anyhow!(error).context(UnsupportedVersion));
