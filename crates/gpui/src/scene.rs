@@ -232,14 +232,11 @@ impl Scene {
             }
             previous.flatten_runs();
             let runs = self.runs.as_mut().expect("segmented recording");
-            let added = runs.record(|scene| {
-                scene.replay(
-                    range.start.operations.range_to(range.end.operations),
-                    previous,
-                );
-            });
+            runs.recording_scene().replay(
+                range.start.operations.range_to(range.end.operations),
+                previous,
+            );
             runs.checkpoint();
-            self.record_new_run(added);
             return;
         }
         previous.flatten_runs();
@@ -301,8 +298,7 @@ impl Scene {
 
     pub fn push_layer(&mut self, bounds: Bounds<ScaledPixels>) {
         if let Some(runs) = self.runs.as_mut() {
-            let added = runs.record(|scene| scene.push_layer(bounds));
-            self.record_new_run(added);
+            runs.recording_scene().push_layer(bounds);
             return;
         }
         self.ordering_indices.push(self.primitive_bounds.len());
@@ -314,8 +310,7 @@ impl Scene {
 
     pub fn pop_layer(&mut self) {
         if let Some(runs) = self.runs.as_mut() {
-            let added = runs.record(Scene::pop_layer);
-            self.record_new_run(added);
+            runs.recording_scene().pop_layer();
             return;
         }
         self.ordering_indices.push(self.primitive_bounds.len());
@@ -327,11 +322,15 @@ impl Scene {
     pub(crate) fn record_primitive(&mut self, primitive: impl Into<Primitive>) {
         // Materializing the enum before this branch prevents specialization of
         // the flat path for concrete primitive types.
-        if self.runs.is_some() {
-            self.insert_in_run(primitive.into());
-            return;
-        }
-        self.insert_primitive(primitive);
+        let scene = if self.runs.is_some() {
+            self.runs
+                .as_mut()
+                .expect("segmented primitive recording")
+                .recording_scene()
+        } else {
+            self
+        };
+        scene.insert_primitive(primitive);
     }
 
     pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
@@ -341,13 +340,6 @@ impl Scene {
             self.ordering_indices.push(ordering_index);
             self.paint_operations.push(operation);
         }
-    }
-
-    #[inline(never)]
-    fn insert_in_run(&mut self, primitive: Primitive) {
-        let runs = self.runs.as_mut().expect("segmented primitive recording");
-        let added = runs.record(|scene| scene.insert_primitive(primitive));
-        self.record_new_run(added);
     }
 
     fn prepare_primitive(
@@ -589,6 +581,10 @@ impl Scene {
 
     pub fn finish(&mut self) {
         if let Some(mut runs) = self.runs.take() {
+            #[cfg(any(test, feature = "bench-support"))]
+            {
+                self.segment_stats.recorded_runs += runs.recorded_count();
+            }
             match runs.finish(self) {
                 Ok(()) => {
                     self.runs = Some(runs);
@@ -714,13 +710,6 @@ impl Scene {
 }
 
 impl Scene {
-    fn record_new_run(&mut self, _added: bool) {
-        #[cfg(any(test, feature = "bench-support"))]
-        {
-            self.segment_stats.recorded_runs += usize::from(_added);
-        }
-    }
-
     fn record_segment_fallback(&mut self, _reason: SegmentFallback) {
         #[cfg(any(test, feature = "bench-support"))]
         self.segment_stats.fallback(_reason);

@@ -62,10 +62,37 @@ impl SceneSegmentStats {
 
 struct Run {
     range: Range<usize>,
-    scene: Arc<Scene>,
+    scene: RunScene,
     band: Option<u32>,
-    dirty: bool,
     consumed: bool,
+}
+
+pub(super) enum RunScene {
+    Recording(Box<Scene>),
+    Kept(Arc<Scene>),
+}
+
+impl std::ops::Deref for RunScene {
+    type Target = Scene;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Recording(scene) => scene,
+            Self::Kept(scene) => scene,
+        }
+    }
+}
+
+impl RunScene {
+    fn finish(self) -> Self {
+        match self {
+            Self::Recording(mut scene) => {
+                scene.finish();
+                Self::Kept(Arc::from(scene))
+            }
+            Self::Kept(scene) => Self::Kept(scene),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -77,52 +104,41 @@ pub(super) struct SceneRuns {
 
 impl SceneRuns {
     pub(super) fn index(&self) -> SceneIndex {
-        self.index
+        match self.runs.last().map(|run| &run.scene) {
+            Some(RunScene::Recording(scene)) => {
+                scene.index().rebase(SceneIndex::default(), self.index)
+            }
+            _ => self.index,
+        }
     }
 
     pub(super) fn checkpoint(&self) -> SceneIndex {
         // A layer reserves one order for all of its contents. Splitting it would
         // change interleaving between primitive kinds at that order.
-        if self.index.layer_depth == 0 {
+        let index = self.index();
+        if index.layer_depth == 0 {
             self.sealed.store(true, Ordering::Relaxed);
         }
-        self.index
+        index
     }
 
-    fn advance(&mut self, start: SceneIndex, end: SceneIndex) {
-        self.index.operations = FramePosition::from_offset(
-            self.index.operations.offset() + end.operations.offset() - start.operations.offset(),
-        );
-        self.index.ordering += end.ordering - start.ordering;
-        for index in 0..self.index.primitives.len() {
-            self.index.primitives[index] += end.primitives[index] - start.primitives[index];
-        }
-        self.index.paths += end.paths - start.paths;
-        self.index.surfaces += end.surfaces - start.surfaces;
-        self.index.layer_depth = end.layer_depth;
-    }
-
-    pub(super) fn record(&mut self, record: impl FnOnce(&mut Scene)) -> bool {
+    pub(super) fn recording_scene(&mut self) -> &mut Scene {
         let sealed = std::mem::take(self.sealed.get_mut());
-        let added = self.runs.is_empty() || sealed;
-        if added {
+        if self.runs.is_empty() || sealed {
+            self.index = self.index();
             let offset = self.index.operations.offset();
             self.runs.push(Run {
                 range: offset..offset,
-                scene: Arc::default(),
+                scene: RunScene::Recording(Box::default()),
                 band: None,
-                dirty: true,
                 consumed: false,
             });
         }
         let run = self.runs.last_mut().expect("recording run");
-        let scene = Arc::get_mut(&mut run.scene).expect("exclusive recording run");
-        let start = scene.index();
-        record(scene);
-        let end = scene.index();
-        run.range.end += end.operations.offset() - start.operations.offset();
-        self.advance(start, end);
-        added
+        match &mut run.scene {
+            RunScene::Recording(scene) => scene,
+            RunScene::Kept(_) => unreachable!("kept runs are sealed"),
+        }
     }
 
     pub(super) fn reuse(
@@ -130,8 +146,8 @@ impl SceneRuns {
         range: Range<SceneIndex>,
         previous: &mut Self,
     ) -> Result<usize, SegmentFallback> {
-        if range.start.layer_depth != 0 || range.end.layer_depth != 0 || self.index.layer_depth != 0
-        {
+        let current = self.index();
+        if range.start.layer_depth != 0 || range.end.layer_depth != 0 || current.layer_depth != 0 {
             return Err(SegmentFallback::CrossLayer);
         }
         let operations = range.start.operations.range_to(range.end.operations);
@@ -153,6 +169,9 @@ impl SceneRuns {
             || runs
                 .last()
                 .is_none_or(|run| run.range.end != operations.end)
+            || runs
+                .iter()
+                .any(|run| matches!(run.scene, RunScene::Recording(_)))
         {
             return Err(SegmentFallback::Range);
         }
@@ -161,6 +180,7 @@ impl SceneRuns {
             "scene segment consumed twice"
         );
         let count = runs.len();
+        self.index = current;
         for run in runs {
             let offset = self.index.operations.offset();
             let count = run.range.len();
@@ -168,9 +188,11 @@ impl SceneRuns {
                 range: offset..offset + count,
                 // Keep the old operation stream available if a later splice
                 // crosses a layer and has to replay part of this frame.
-                scene: run.scene.clone(),
+                scene: match &run.scene {
+                    RunScene::Kept(scene) => RunScene::Kept(scene.clone()),
+                    RunScene::Recording(_) => unreachable!("source runs were checked"),
+                },
                 band: run.band,
-                dirty: false,
                 consumed: false,
             });
             run.consumed = true;
@@ -223,6 +245,10 @@ impl SceneRuns {
     }
 
     pub(super) fn finish(&mut self, output: &mut Scene) -> Result<(), SegmentFallback> {
+        self.index = self.index();
+        for run in &mut self.runs {
+            run.range.end = run.range.start + run.scene.len();
+        }
         self.runs.retain(|run| !run.range.is_empty());
         if self.index.layer_depth != 0 {
             return Err(SegmentFallback::CrossLayer);
@@ -230,12 +256,14 @@ impl SceneRuns {
         if !self.assign_bands() {
             return Err(SegmentFallback::Bands);
         }
-        for run in &mut self.runs {
-            if run.dirty {
-                let scene = Arc::get_mut(&mut run.scene).expect("exclusive dirty run");
-                scene.finish();
-                run.dirty = false;
-            }
+        self.runs = std::mem::take(&mut self.runs)
+            .into_iter()
+            .map(|mut run| {
+                run.scene = run.scene.finish();
+                run
+            })
+            .collect();
+        for run in &self.runs {
             let scene = &run.scene;
             macro_rules! check {
                 ($($field:ident),*) => {
@@ -288,11 +316,20 @@ impl SceneRuns {
         for (index, path) in output.paths.iter().enumerate() {
             output.path_indices[path.id.0] = index;
         }
+        self.sealed.store(true, Ordering::Relaxed);
         Ok(())
     }
 
-    pub(super) fn into_scenes(self) -> impl Iterator<Item = Arc<Scene>> {
+    pub(super) fn into_scenes(self) -> impl Iterator<Item = RunScene> {
         self.runs.into_iter().map(|run| run.scene)
+    }
+
+    #[cfg(any(test, feature = "bench-support"))]
+    pub(super) fn recorded_count(&self) -> usize {
+        self.runs
+            .iter()
+            .filter(|run| matches!(run.scene, RunScene::Recording(_)))
+            .count()
     }
 
     #[cfg(debug_assertions)]
