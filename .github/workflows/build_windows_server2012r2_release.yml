@@ -3,15 +3,11 @@ name: build-windows-server2012r2-release
 on:
   workflow_dispatch:
     inputs:
-      tag:
-        description: Tag to build, e.g. v0.199.0
+      branch:
+        description: Branch to build
         required: true
         type: string
-      create_release:
-        description: Create or update a GitHub Release after build
-        required: false
-        type: boolean
-        default: true
+        default: main
 
 permissions:
   contents: write
@@ -29,22 +25,28 @@ jobs:
       RUSTFLAGS: -C link-arg=/SUBSYSTEM:WINDOWS,6.03
 
     steps:
-      - name: Determine tag
+      - name: Validate branch exists
         shell: pwsh
         run: |
-          $tag = "${{ github.event.inputs.tag || github.ref_name }}"
-          if ([string]::IsNullOrWhiteSpace($tag)) {
-            throw "No tag provided."
+          $branch = "${{ github.event.inputs.branch || github.ref_name }}"
+          if ([string]::IsNullOrWhiteSpace($branch)) {
+            throw "Branch input is required."
           }
-          if ($tag -notmatch '^v\d+\.\d+\.\d+') {
-            throw "Tag must look like vMAJOR.MINOR.PATCH, got: $tag"
+
+          $branches = git ls-remote --heads origin | ForEach-Object {
+            $_.Split(" ")[1] -replace "^refs/heads/", ""
           }
-          "TAG_NAME=$tag" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          if ($branches -notcontains $branch) {
+            throw "Branch '$branch' not found in origin. Available branches: $($branches | Sort-Object | Select-Object -First 20 -join ', ')"
+          }
+
+          "BUILD_BRANCH=$branch" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Check out repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.TAG_NAME }}
+          ref: ${{ env.BUILD_BRANCH }}
           fetch-depth: 0
           clean: false
 
@@ -96,38 +98,3 @@ jobs:
             target/Zed-x86_64.exe
             target/zed-remote-server-windows-x86_64.zip
           if-no-files-found: error
-
-      - name: Create or update GitHub Release
-        if: ${{ inputs.create_release == true }}
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $tag = "${{ env.TAG_NAME }}"
-          $repo = "${{ github.repository }}"
-          $exists = gh release view $tag --repo $repo --json name 2>$null
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "Release not found, creating draft release: $tag"
-            gh release create $tag `
-              --repo $repo `
-              --title $tag `
-              --target ${{ github.sha }} `
-              --draft `
-              --generate-notes
-          } else {
-            Write-Host "Release exists, reusing it: $tag"
-          }
-
-      - name: Upload release assets
-        if: ${{ inputs.create_release == true }}
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $tag = "${{ env.TAG_NAME }}"
-          $repo = "${{ github.repository }}"
-          gh release upload $tag `
-            --repo $repo `
-            target/Zed-x86_64.exe `
-            target/zed-remote-server-windows-x86_64.zip `
-            --clobber
