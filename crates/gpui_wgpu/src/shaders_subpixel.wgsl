@@ -46,11 +46,17 @@ fn fs_subpixel_sprite(input: SubpixelSpriteOutput) -> SubpixelSpriteFragmentOutp
 
     // Alpha clip after using the derivatives.
     if (any(input.clip_distances < vec4<f32>(0.0))) {
-        return SubpixelSpriteFragmentOutput(vec4<f32>(0.0), vec4<f32>(0.0));
+        return rounded_clip_subpixel(SubpixelSpriteFragmentOutput(vec4<f32>(0.0), vec4<f32>(0.0)), input.position.xy);
     }
 
     var out = SubpixelSpriteFragmentOutput();
     out.foreground = vec4<f32>(input.color.rgb, 1.0);
     out.alpha = vec4<f32>(input.color.a * alpha_corrected, 1.0);
+    return rounded_clip_subpixel(out, input.position.xy);
+}
+
+fn rounded_clip_subpixel(color: SubpixelSpriteFragmentOutput, position: vec2<f32>) -> SubpixelSpriteFragmentOutput {
+    var out = color;
+    out.alpha *= rounded_clip_coverage(position);
     return out;
 }
