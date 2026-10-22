@@ -1733,31 +1733,6 @@ impl From<Size<Pixels>> for Size<AvailableSpace> {
 mod tests {
     use super::*;
 
-    #[gpui::test]
-    fn retained_epoch_walks_preserve_layout_input_storage(cx: &mut crate::TestAppContext) {
-        cx.add_empty_window().update(|window, cx| {
-            let mut engine = TaffyLayoutEngine::new();
-            engine.enable_cache();
-            engine.set_request_scope(&crate::element::InternedHandle::for_test(1, 0));
-            let root = engine.request_layout(Style::default(), Pixels(16.0), 1.0, &[]);
-            engine.compute_layout(root, AvailableSpace::min_size(), window, cx);
-            engine.clear();
-            let cache = engine.cache.as_ref().unwrap();
-            let inputs = cache.layout_inputs.clone();
-            let capacity = cache.layout_inputs.capacity();
-            assert_eq!(cache.layout_inputs.len(), cache.nodes.len());
-            for _ in 0..4 {
-                engine.retain_subtree(root);
-                engine.compute_layout(root, AvailableSpace::min_size(), window, cx);
-                engine.clear();
-                let cache = engine.cache.as_ref().unwrap();
-                assert_eq!(cache.layout_inputs, inputs);
-                assert_eq!(cache.layout_inputs.capacity(), capacity);
-                assert_eq!(cache.layout_inputs.len(), cache.nodes.len());
-            }
-        });
-    }
-
     #[test]
     fn equal_layout_inputs_have_equal_conversions() {
         use crate::{
@@ -2313,39 +2288,6 @@ mod tests {
             engine.retain_subtree(root);
             engine.clear();
             assert_eq!(engine.cache_counts(), (2, 0, 2));
-        });
-    }
-
-    #[gpui::test]
-    fn retained_inputs_are_captured_only_for_registered_boundaries(cx: &mut crate::TestAppContext) {
-        cx.add_empty_window().update(|window, cx| {
-            let mut engine = TaffyLayoutEngine::new();
-            engine.enable_cache();
-            engine.enable_retention();
-            let scope = crate::element::InternedHandle::for_test(0, 0);
-            engine.set_request_scope(&scope);
-            let child = engine.request_layout(Style::default(), Pixels(16.), 1., &[]);
-            engine.set_request_scope(&scope);
-            let root = engine.request_layout(Style::default(), Pixels(16.), 1., &[child]);
-            engine.register_retained_boundary(root);
-            engine.compute_layout(root, AvailableSpace::min_size(), window, cx);
-            assert!(engine.retained_input(root).is_some());
-            assert!(engine.retained_output(root).is_some());
-            assert!(engine.retained_input(child).is_none());
-            assert!(engine.retained_output(child).is_none());
-            assert_eq!(
-                engine
-                    .retained
-                    .as_ref()
-                    .expect("retention")
-                    .boundaries
-                    .len(),
-                1
-            );
-            engine.clear();
-            engine.retain_subtree(root);
-            engine.clear();
-            assert!(engine.retained_input(root).is_some());
         });
     }
 

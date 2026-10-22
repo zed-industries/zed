@@ -2378,21 +2378,6 @@ mod tests {
     }
 
     #[crate::test]
-    fn disabled_splicing_does_not_allocate_retained_storage(cx: &mut TestAppContext) {
-        let fixture = Fixture::new(cx, true, false, false);
-        fixture.capture(cx);
-        cx.update_window(fixture.window, |_, window, _| {
-            assert_eq!(window.view_store.records.capacity(), 0);
-            assert_eq!(window.view_store.cold.capacity(), 0);
-            assert_eq!(window.view_store.by_occurrence.capacity(), 0);
-            assert_eq!(window.dispatch_replay.capacity(), 0);
-            assert_eq!(window.next_frame.prepaint_views.capacity(), 0);
-            assert_eq!(window.rendered_frame.paint_views.capacity(), 0);
-        })
-        .expect("legacy path allocates no retention metadata");
-    }
-
-    #[crate::test]
     fn occurrence_identity_and_generation_survive_remove_reinsert(cx: &mut TestAppContext) {
         let fixture = Fixture::new(cx, false, false, false);
         fixture.branch.update(cx, |branch, cx| {

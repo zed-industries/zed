@@ -1979,54 +1979,41 @@ mod tests {
 
     #[test]
     fn test_cursor_preserves_shaping_metadata_across_runs() {
+        let runs = [
+            (
+                3,
+                &[
+                    (11, 0.0, 1.0, 0, true),
+                    (12, 17.0, 1.0, 1, false),
+                    (13, 19.0, -1.0, 1, false),
+                ][..],
+            ),
+            (
+                8,
+                &[(21, 25.0, 1.0, 5, true), (22, 41.0, 1.0, 7, false)][..],
+            ),
+        ]
+        .into_iter()
+        .map(|(font, glyphs)| ShapedRun {
+            font_id: FontId(font),
+            glyphs: glyphs
+                .iter()
+                .map(|&(id, x, y, index, is_emoji)| ShapedGlyph {
+                    id: GlyphId(id),
+                    position: point(px(x), px(y)),
+                    index,
+                    is_emoji,
+                })
+                .collect(),
+        })
+        .collect();
         let line = ShapedLine {
             layout: Arc::new(LineLayout {
                 font_size: px(16.0),
                 width: px(50.0),
                 ascent: px(12.0),
                 descent: px(4.0),
-                runs: vec![
-                    ShapedRun {
-                        font_id: FontId(3),
-                        glyphs: vec![
-                            ShapedGlyph {
-                                id: GlyphId(11),
-                                position: point(px(0.0), px(1.0)),
-                                index: 0,
-                                is_emoji: true,
-                            },
-                            ShapedGlyph {
-                                id: GlyphId(12),
-                                position: point(px(17.0), px(1.0)),
-                                index: 1,
-                                is_emoji: false,
-                            },
-                            ShapedGlyph {
-                                id: GlyphId(13),
-                                position: point(px(19.0), px(-1.0)),
-                                index: 1,
-                                is_emoji: false,
-                            },
-                        ],
-                    },
-                    ShapedRun {
-                        font_id: FontId(8),
-                        glyphs: vec![
-                            ShapedGlyph {
-                                id: GlyphId(21),
-                                position: point(px(25.0), px(1.0)),
-                                index: 5,
-                                is_emoji: true,
-                            },
-                            ShapedGlyph {
-                                id: GlyphId(22),
-                                position: point(px(41.0), px(1.0)),
-                                index: 7,
-                                is_emoji: false,
-                            },
-                        ],
-                    },
-                ],
+                runs,
                 len: 10,
             }),
             text: "a😀bcdef".into(),
@@ -2064,30 +2051,50 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_cursor_preserves_existing_visual_order_splitting() {
-        let line = make_shaped_line("abc", &[(0, 0.0), (2, 10.0), (1, 20.0)], 30.0, &[]);
+    fn assert_cursor_matches_splits(
+        line: &ShapedLine,
+        boundaries: impl IntoIterator<Item = usize>,
+    ) {
         let mut cursor = line.cursor();
         let mut remainder = line.clone();
         let mut previous_boundary = 0;
-        for boundary in [0, 1, 2, 3] {
+        let mut text = String::new();
+        let mut width = px(0.0);
+        for boundary in boundaries {
             let (expected, rest) = remainder.split_at(boundary - previous_boundary);
             let actual = cursor.take_until(boundary);
             assert_eq!(actual.text, expected.text);
+            assert_eq!(actual.len(), expected.len());
             assert_eq!(actual.width(), expected.width());
-            assert_eq!(actual.runs.len(), expected.runs.len());
-            for (actual, expected) in actual.runs.iter().zip(&expected.runs) {
-                assert_eq!(actual.font_id, expected.font_id);
-                assert_eq!(actual.glyphs.len(), expected.glyphs.len());
-                for (actual, expected) in actual.glyphs.iter().zip(&expected.glyphs) {
-                    assert_eq!(actual.id, expected.id);
-                    assert_eq!(actual.index, expected.index);
-                    assert_eq!(actual.position, expected.position);
-                }
-            }
+            assert_eq!(format!("{:?}", actual.runs), format!("{:?}", expected.runs));
+            assert_eq!(
+                format!("{:?}", actual.decoration_runs),
+                format!("{:?}", expected.decoration_runs)
+            );
             assert_eq!(cursor.x_offset(), line.x_for_index(boundary));
+            text.push_str(&actual.text);
+            width += actual.width();
             remainder = rest;
             previous_boundary = boundary;
+        }
+        assert_eq!(text, line.text.as_ref());
+        assert_eq!(width, line.width());
+    }
+
+    #[test]
+    fn test_cursor_visual_order_empty_chunks_and_repeated_boundaries() {
+        for (line, boundaries) in [
+            (
+                make_shaped_line("abc", &[(0, 0.0), (2, 10.0), (1, 20.0)], 30.0, &[]),
+                vec![0, 1, 2, 3],
+            ),
+            (
+                make_shaped_line("ab", &[(0, 5.0), (1, 15.0)], 20.0, &[]),
+                vec![0, 0, 1, 2, 2],
+            ),
+            (make_shaped_line("", &[], 0.0, &[]), vec![0]),
+        ] {
+            assert_cursor_matches_splits(&line, boundaries);
         }
     }
 
@@ -2148,60 +2155,9 @@ mod tests {
         );
         for first in 0..=line.len() {
             for second in first..=line.len() {
-                let mut cursor = line.cursor();
-                let mut remainder = line.clone();
-                let mut previous_boundary = 0;
-                let mut total_width = px(0.0);
-                let mut text = String::new();
-                for boundary in [first, second, line.len(), line.len()] {
-                    let (expected, rest) = remainder.split_at(boundary - previous_boundary);
-                    let actual = cursor.take_until(boundary);
-                    assert_eq!(actual.text, expected.text);
-                    assert_eq!(actual.len(), expected.len());
-                    assert_eq!(actual.width(), expected.width());
-                    assert_eq!(actual.runs.len(), expected.runs.len());
-                    for (actual, expected) in actual.runs.iter().zip(&expected.runs) {
-                        assert_eq!(actual.font_id, expected.font_id);
-                        assert_eq!(actual.glyphs.len(), expected.glyphs.len());
-                        for (actual, expected) in actual.glyphs.iter().zip(&expected.glyphs) {
-                            assert_eq!(actual.id, expected.id);
-                            assert_eq!(actual.index, expected.index);
-                            assert_eq!(actual.position, expected.position);
-                        }
-                    }
-                    assert_eq!(actual.decoration_runs.len(), expected.decoration_runs.len());
-                    for (actual, expected) in
-                        actual.decoration_runs.iter().zip(&expected.decoration_runs)
-                    {
-                        assert_eq!(actual.len, expected.len);
-                        assert_eq!(actual.color, expected.color);
-                        assert_eq!(actual.background_color, expected.background_color);
-                    }
-                    total_width += actual.width();
-                    text.push_str(&actual.text);
-                    remainder = rest;
-                    previous_boundary = boundary;
-                }
-                assert_eq!(total_width, line.width());
-                assert_eq!(text, line.text.as_ref());
+                assert_cursor_matches_splits(&line, [first, second, line.len(), line.len()]);
             }
         }
-    }
-
-    #[test]
-    fn test_cursor_empty_chunks_and_repeated_boundaries() {
-        let line = make_shaped_line("ab", &[(0, 5.0), (1, 15.0)], 20.0, &[]);
-        let mut cursor = line.cursor();
-        assert_eq!(cursor.take_until(0).text.as_ref(), "");
-        assert_eq!(cursor.take_until(0).text.as_ref(), "");
-        assert_eq!(cursor.take_until(1).text.as_ref(), "a");
-        assert_eq!(cursor.take_until(2).text.as_ref(), "b");
-        assert_eq!(cursor.take_until(2).text.as_ref(), "");
-        let empty = make_shaped_line("", &[], 0.0, &[]);
-        let piece = empty.cursor().take_until(0);
-        assert!(piece.text.is_empty());
-        assert!(piece.runs.is_empty());
-        assert_eq!(piece.width(), px(0.0));
     }
 
     #[test]
