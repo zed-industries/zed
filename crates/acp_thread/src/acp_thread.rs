@@ -4427,7 +4427,10 @@ impl AcpThread {
                         error.is::<SubmissionDisconnected>()
                             || error
                                 .downcast_ref::<agent_client_protocol::Error>()
-                                .is_some_and(agent_client_protocol::is_incoming_transport_closed)
+                                .is_some_and(|error| {
+                                    agent_client_protocol::is_incoming_transport_closed(error)
+                                        || agent_client_protocol::is_connection_terminated(error)
+                                })
                     })
                 {
                     this.handle_connection_lost(cx);
