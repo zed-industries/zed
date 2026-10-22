@@ -108,11 +108,16 @@ pub struct MermaidTheme {
 }
 
 impl MermaidTheme {
+    /// The same family is used for measuring and for the SVG, because the SVG renderer cannot
+    /// resolve `.SystemUIFont` and would otherwise draw labels in a different font than the one
+    /// they were measured with.
+    fn concrete_family(&self) -> &str {
+        gpui::font_name_with_fallbacks(self.font.family.as_ref(), "IBM Plex Sans")
+    }
+
     fn measurement_font(&self) -> Font {
         let mut font = self.font.clone();
-        font.family = gpui::font_name_with_fallbacks(font.family.as_ref(), "IBM Plex Sans")
-            .to_string()
-            .into();
+        font.family = self.concrete_family().to_string().into();
         font.features = Default::default();
         font.fallbacks = None;
         font.weight = gpui::FontWeight::NORMAL;
@@ -121,7 +126,7 @@ impl MermaidTheme {
     }
 
     fn svg_font_family(&self) -> String {
-        let family = gpui::font_name_with_fallbacks(self.font.family.as_ref(), "system-ui");
+        let family = self.concrete_family();
         if family
             .split(',')
             .any(|family| family.trim().eq_ignore_ascii_case("sans-serif"))
@@ -236,7 +241,11 @@ mod tests {
                 "IBM Plex Sans, sans-serif",
             ),
             (".ZedMono", "Lilex", "Lilex, sans-serif"),
-            (".SystemUIFont", "IBM Plex Sans", "system-ui, sans-serif"),
+            (
+                ".SystemUIFont",
+                "IBM Plex Sans",
+                "IBM Plex Sans, sans-serif",
+            ),
             ("Custom Font", "Custom Font", "Custom Font, sans-serif"),
         ] {
             let mut theme = MermaidTheme::default();
