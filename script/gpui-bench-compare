@@ -1,0 +1,314 @@
+#!/usr/bin/env python3
+"""Build two revisions once, then alternate bounded GPUI benchmark runs.
+
+Usage: script/gpui-bench-compare BASELINE CANDIDATE
+       script/gpui-bench-compare BASELINE CANDIDATE --filter 'TextPanels/'
+       GPUI_RETAIN_VIEWS=1 script/gpui-bench-compare BASELINE CANDIDATE
+
+The invoking checkout's three benchmark files are used for BOTH revisions.
+Their GPUI benchmark APIs must be compatible. Sources, build artifacts, binaries,
+raw logs, Criterion samples and summary.json persist under target/gpui-bench-compare.
+Nothing switches the invoking checkout or publishes a branch.
+
+The default core suite keeps five full-refresh tree shapes, leaf style, cached
+leaf style, warm installed-font text, text first frame, six bounds patterns and
+two inspector workloads. --full selects every variant; --slow restores the old
+settings (including inspector's five-second measurement). --repetitions controls
+independent runs, not random seeds. Use --seed to compare another fixed tree.
+
+Foreground instructions are primary: perf access is required on Linux. Wall time
+is secondary and includes GPU submission where the platform supports it. Its
+reported median includes calibration samples; raw logs retain frame metrics.
+Spread is the full range of independent run medians divided by their median,
+not a confidence interval. Do not run competing benchmarks on the same machine.
+GPUI_BENCH_HEAP=1 explicitly enables the separate 3000-frame churn heap diagnostic.
+Both revisions inherit the same rendering mode: unset GPUI_LAYOUT_CACHE and
+GPUI_RETAIN_VIEWS for the default path, set GPUI_LAYOUT_CACHE=1 for cache-only,
+or GPUI_RETAIN_VIEWS=1 for retention (which implicitly enables the layout cache).
+Requires Python 3.12+ on Linux or macOS.
+"""
+
+import argparse
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import statistics
+import subprocess
+import sys
+import tarfile
+import time
+
+
+TARGETS = ("randomized_element_tree", "bounds_ordering", "inspector_render")
+CORE = {
+    "randomized_element_tree": (
+        r"^(RandomizedTree/full refresh/tree/|"
+        r"RandomizedTree/leaf style/tree/mixed/|"
+        r"CachedTree/leaf style/tree/mixed/|"
+        r"TextPanels/installed font two updates/panels/32$|"
+        r"TextPanels/first populated installed font/panels/32$)"
+    ),
+    # Overlapping paint cases primarily stress GPU overdraw, not bounds ordering;
+    # their asynchronous driver teardown can dwarf measured CPU frame time.
+    "bounds_ordering": r"^BoundsOrdering/(scene/[^/]+-1024|paint/case/grid-1024)$",
+    "inspector_render": (
+        r"^closed_inspector_(grid/case/1000-nodes|panel/case/500-rows)-0-cycles$"
+    ),
+}
+FAST = [
+    "--warm-up-time", "0.05",
+    "--measurement-time", "0.3",
+    "--sample-size", "10",
+    "--nresamples", "1000",
+]
+
+
+def run(command, *, cwd, environment, log, timeout):
+    started = time.monotonic()
+    with log.open("w") as output:
+        try:
+            subprocess.run(
+                command, cwd=cwd, env=environment, stdout=output,
+                stderr=subprocess.STDOUT, check=True, timeout=timeout,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+            raise RuntimeError(f"{error}; see {log}") from error
+    return time.monotonic() - started
+
+
+def git(root, *arguments):
+    return subprocess.check_output(["git", "-C", str(root), *arguments], text=True).strip()
+
+
+def prepare(root, cache, revision, features, timeout, environment):
+    commit = git(root, "rev-parse", "--verify", f"{revision}^{{commit}}")
+    source = cache / "sources" / commit
+    source.mkdir(parents=True, exist_ok=True)
+    if not (source / ".archive-complete").exists():
+        archive = cache / f"{commit}.tar"
+        with archive.open("wb") as output:
+            subprocess.run(["git", "-C", str(root), "archive", commit],
+                           stdout=output, check=True, timeout=timeout)
+        with tarfile.open(archive) as contents:
+            contents.extractall(source, filter="data")
+        (source / ".archive-complete").touch()
+    digest = hashlib.sha256()
+    for target in TARGETS:
+        relative = Path("crates/gpui_platform/benches") / f"{target}.rs"
+        content = (root / relative).read_bytes()
+        digest.update(content)
+        destination = source / relative
+        if not destination.exists() or destination.read_bytes() != content:
+            destination.write_bytes(content)
+    build_key = hashlib.sha256(
+        (commit + digest.hexdigest() + features).encode()
+    ).hexdigest()[:20]
+    artifacts = cache / "binaries" / build_key
+    artifacts.mkdir(parents=True, exist_ok=True)
+    environment = dict(environment, CARGO_TARGET_DIR=str(cache / "build"))
+    feature_log = artifacts / "features.log"
+    run(
+        ["cargo", "tree", "--locked", "-p", "gpui_platform", "--features", features,
+         "-e", "normal,build,dev,features"],
+        cwd=source, environment=environment, log=feature_log, timeout=timeout,
+    )
+    if 'feature "test-support"' in feature_log.read_text():
+        raise RuntimeError(f"benchmark graph enables test-support: {feature_log}")
+    command = [
+        "cargo", "bench", "--locked", "-p", "gpui_platform", "--features", features,
+        "--profile", "release-fast", "--no-run", "--message-format=json",
+    ]
+    for target in TARGETS:
+        command += ["--bench", target]
+    elapsed = run(command, cwd=source, environment=environment,
+                  log=artifacts / "build.log", timeout=timeout)
+    binaries = {}
+    for line in (artifacts / "build.log").read_text().splitlines():
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if message.get("reason") != "compiler-artifact" or not message.get("executable"):
+            continue
+        name = message["target"]["name"]
+        if name in TARGETS:
+            # Cargo may overwrite these paths on the next revision's build.
+            destination = artifacts / name
+            shutil.copy2(message["executable"], destination)
+            binaries[name] = destination
+    if set(binaries) != set(TARGETS):
+        raise RuntimeError(f"missing benchmark executable; see {artifacts / 'build.log'}")
+    return {
+        "revision": revision, "commit": commit, "build_seconds": elapsed,
+        "benchmark_sha256": digest.hexdigest(),
+        "lockfile_sha256": hashlib.sha256((source / "Cargo.lock").read_bytes()).hexdigest(),
+        "source": str(source), "binaries": binaries,
+    }
+
+
+def measure(binary, identifier, directory, environment, timeout, slow):
+    directory.mkdir(parents=True, exist_ok=True)
+    environment = dict(environment, CRITERION_HOME=str(directory / "criterion"))
+    command = [str(binary), "--bench", "^" + re.escape(identifier) + "$", "--noplot"]
+    if not slow:
+        command += FAST
+    elapsed = run(command, cwd=directory, environment=environment,
+                  log=directory / "run.log", timeout=timeout)
+    samples = list((directory / "criterion").glob("**/new/sample.json"))
+    if len(samples) != 1:
+        raise RuntimeError(f"expected one measured case, got {len(samples)}: {directory}")
+    sample = json.loads(samples[0].read_text())
+    counts = [total / count for total, count in zip(sample["times"], sample["iters"])]
+    wall = re.search(
+        r"wall time per iteration: median ([\d.]+) (\S+) \(min ([\d.]+), max ([\d.]+)",
+        (directory / "run.log").read_text(),
+    )
+    if wall is None:
+        raise RuntimeError(f"missing wall-time secondary: {directory / 'run.log'}")
+    units = {"ns": 1e-9, "µs": 1e-6, "us": 1e-6, "ms": 1e-3, "s": 1}
+    return {
+        "instructions": statistics.median(counts),
+        "sample_min": min(counts), "sample_max": max(counts),
+        "wall_seconds": float(wall[1]) * units[wall[2]],
+        "elapsed_seconds": elapsed, "iterations": sum(sample["iters"]),
+    }
+
+
+def spread(values):
+    return (max(values) - min(values)) / statistics.median(values) * 100
+
+
+def main():
+    started = time.monotonic()
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("baseline")
+    parser.add_argument("candidate")
+    parser.add_argument("--filter", help="Criterion regex, applied to all three binaries")
+    parser.add_argument("--full", action="store_true")
+    parser.add_argument("--slow", action="store_true")
+    parser.add_argument("--repetitions", type=int, default=3)
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--features", default="bench-support,x11" if sys.platform == "linux"
+                        else "bench-support")
+    parser.add_argument("--timeout", type=int, default=300,
+                        help="hard timeout for EACH build/run, at most 300 seconds")
+    parser.add_argument("--cache", type=Path)
+    args = parser.parse_args()
+    if not 1 <= args.timeout <= 300 or args.repetitions < 1 or args.seed < 0:
+        parser.error("timeout must be 1..300, repetitions positive and seed nonnegative")
+    if args.filter and args.full:
+        parser.error("--filter and --full are mutually exclusive")
+    if "bench-support" not in args.features.split(",") or "test-support" in args.features:
+        parser.error("features must include bench-support and must not include test-support")
+    root = Path(git(Path(__file__).resolve().parent, "rev-parse", "--show-toplevel"))
+    cache = (args.cache or root / "target/gpui-bench-compare").resolve()
+    cache.mkdir(parents=True, exist_ok=True)
+    lock = (cache / "compare.lock").open("w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as error:
+        raise RuntimeError(f"another comparison is using {cache}") from error
+    output = cache / "runs" / time.strftime("%Y%m%d-%H%M%S")
+    output.mkdir(parents=True, exist_ok=False)
+    environment = dict(os.environ, BENCH_MEASUREMENT="foreground-instructions",
+                       SEED=str(args.seed), ITERATIONS="1")
+    if environment.get("GPUI_BENCH_HEAP") == "1":
+        raise RuntimeError("unset GPUI_BENCH_HEAP: heap diagnostics are not frame comparisons")
+    environment["PATH"] = str(Path.home() / ".cargo/bin") + os.pathsep + environment["PATH"]
+    revisions = []
+    for revision in [args.baseline, args.candidate]:
+        print(f"Building {revision} (once)...", flush=True)
+        revisions.append(prepare(root, cache, revision, args.features, args.timeout, environment))
+    if revisions[0]["lockfile_sha256"] != revisions[1]["lockfile_sha256"]:
+        print("NOTE: revisions have different Cargo.lock files; dependency changes may affect results.")
+    cases = {}
+    for target in TARGETS:
+        listings = []
+        pattern = args.filter if args.filter else "" if args.full else CORE[target]
+        for index, revision in enumerate(revisions):
+            log = output / f"list-{index}-{target}.log"
+            run([str(revision["binaries"][target]), "--list", pattern],
+                cwd=output, environment=environment, log=log, timeout=args.timeout)
+            listings.append([line.removesuffix(": benchmark") for line in log.read_text().splitlines()
+                             if line.endswith(": benchmark")])
+        if listings[0] != listings[1]:
+            raise RuntimeError(f"benchmark IDs differ for {target}")
+        cases[target] = listings[0]
+    if not any(cases.values()):
+        raise RuntimeError("filter selected no benchmarks")
+    # Verify all selected paths once; exercise Criterion's quick path before sampling.
+    for index, revision in enumerate(revisions):
+        for target, identifiers in cases.items():
+            if not identifiers:
+                continue
+            binary = revision["binaries"][target]
+            pattern = "^(" + "|".join(re.escape(value) for value in identifiers) + ")$"
+            for mode, selection in [("--test", pattern),
+                                    ("--quick", "^" + re.escape(identifiers[0]) + "$")]:
+                run([str(binary), "--bench", selection, mode, "--noplot",
+                     "--measurement-time", "0.3"], cwd=output, environment=environment,
+                    log=output / f"smoke-{index}-{target}{mode}.log", timeout=args.timeout)
+    results = {}
+    print("Measuring sequentially; instructions are foreground retired instructions per frame/operation.",
+          flush=True)
+    print(f"{'benchmark':76} {'base M':>9} {'new M':>9} {'change':>9} "
+          f"{'spread B/N':>14} {'wall ms B/N':>17} {'run s B/N':>13}", flush=True)
+    for target, identifiers in cases.items():
+        for identifier in identifiers:
+            pair = [[], []]
+            case_number = len(results)
+            for repetition in range(args.repetitions):
+                for index in ([0, 1] if repetition % 2 == 0 else [1, 0]):
+                    revision = revisions[index]
+                    directory = output / f"{case_number:03}-{repetition}-{index}"
+                    pair[index].append(measure(revision["binaries"][target], identifier, directory,
+                                               environment, args.timeout, args.slow))
+            results[identifier] = pair
+            instruction_runs = [[value["instructions"] for value in side] for side in pair]
+            baseline, candidate = map(statistics.median, instruction_runs)
+            walls = [statistics.median(value["wall_seconds"] for value in side) * 1000 for side in pair]
+            durations = [statistics.median(value["elapsed_seconds"] for value in side) for side in pair]
+            noise = (f"{spread(instruction_runs[0]):5.2f}/{spread(instruction_runs[1]):5.2f}%"
+                     if args.repetitions > 1 else "           n/a")
+            print(f"{identifier:76} {baseline / 1e6:9.3f} {candidate / 1e6:9.3f} "
+                  f"{(candidate / baseline - 1) * 100:+8.2f}% "
+                  f"{noise} "
+                  f"{walls[0]:7.3f}/{walls[1]:7.3f} "
+                  f"{durations[0]:5.2f}/{durations[1]:5.2f}", flush=True)
+            if args.repetitions > 1 and any(spread(values) > 1 for values in instruction_runs):
+                print("  NOTE: >1% instruction spread; confirm this case with --slow before judging a change.",
+                      flush=True)
+            summary = {
+                "configuration": vars(args) | {"cache": str(cache)},
+                "revisions": [{key: value for key, value in revision.items() if key != "binaries"}
+                              for revision in revisions],
+                "results": results,
+                "cases": cases,
+                "environment": {name: value for name, value in environment.items()
+                                if name in ("BENCH_MEASUREMENT", "GPUI_LAYOUT_CACHE",
+                                            "GPUI_RETAIN_VIEWS", "GPUI_VERIFY_REUSE_DIFFERENTIAL",
+                                            "SEED", "ITERATIONS", "RUSTFLAGS")},
+            }
+            (output / "summary.json").write_text(json.dumps(summary, indent=2, default=str) + "\n")
+    for index, revision in enumerate(revisions):
+        seconds = sum(value["elapsed_seconds"] for pair in results.values() for value in pair[index])
+        print(f"{revision['commit'][:12]}: build {revision['build_seconds']:.2f}s, "
+              f"measured processes {seconds:.2f}s ({args.repetitions} runs/case)")
+        for target, identifiers in cases.items():
+            seconds = sum(value["elapsed_seconds"] for identifier in identifiers
+                          for value in results[identifier][index])
+            print(f"  {target}: {seconds:.2f}s")
+    print(f"Total including builds, discovery, smoke and quick checks: {time.monotonic() - started:.2f}s")
+    print(f"Raw samples, frame reports and summary: {output}")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (RuntimeError, subprocess.CalledProcessError) as error:
+        sys.exit(str(error))
