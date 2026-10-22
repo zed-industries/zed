@@ -1,8 +1,5 @@
 use super::*;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::{cell::Cell, rc::Rc};
 
 const BAND_WIDTH: u32 = 1 << 16;
 // BatchIterator uses u32::MAX as the empty-stream sentinel.
@@ -69,7 +66,7 @@ struct Run {
 
 pub(super) enum RunScene {
     Recording(Box<Scene>),
-    Kept(Arc<Scene>),
+    Kept(Rc<Scene>),
 }
 
 impl std::ops::Deref for RunScene {
@@ -88,7 +85,7 @@ impl RunScene {
         match self {
             Self::Recording(mut scene) => {
                 scene.finish();
-                Self::Kept(Arc::from(scene))
+                Self::Kept(Rc::from(scene))
             }
             Self::Kept(scene) => Self::Kept(scene),
         }
@@ -99,7 +96,7 @@ impl RunScene {
 pub(super) struct SceneRuns {
     runs: Vec<Run>,
     index: SceneIndex,
-    sealed: AtomicBool,
+    sealed: Cell<bool>,
 }
 
 impl SceneRuns {
@@ -117,7 +114,7 @@ impl SceneRuns {
         // change interleaving between primitive kinds at that order.
         let index = self.index();
         if index.layer_depth == 0 {
-            self.sealed.store(true, Ordering::Relaxed);
+            self.sealed.set(true);
         }
         index
     }
@@ -205,7 +202,7 @@ impl SceneRuns {
         }
         self.index.paths += range.end.paths - range.start.paths;
         self.index.surfaces += range.end.surfaces - range.start.surfaces;
-        self.sealed.store(true, Ordering::Relaxed);
+        self.sealed.set(true);
         Ok(count)
     }
 
@@ -316,7 +313,7 @@ impl SceneRuns {
         for (index, path) in output.paths.iter().enumerate() {
             output.path_indices[path.id.0] = index;
         }
-        self.sealed.store(true, Ordering::Relaxed);
+        self.sealed.set(true);
         Ok(())
     }
 
