@@ -262,6 +262,8 @@ fn paint_rectangles(case: &Case, cx: &mut BenchAppContext) {
         })
     });
     cx.run_until_idle();
+    window.update(|window, _| window.refresh());
+    cx.run_until_idle();
     window.update(|window, _| validate(window, &rectangles, case));
     let before = renders.get();
     let mut updates = 0usize;

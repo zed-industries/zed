@@ -959,6 +959,8 @@ fn measure_text_panel_updates(
         })
     });
     cx.run_until_idle();
+    window.update(|window, _| window.refresh());
+    cx.run_until_idle();
     window.update(|window, _| {
         assert_layout_cache_mode(window);
         let scene = window.rendered_scene();

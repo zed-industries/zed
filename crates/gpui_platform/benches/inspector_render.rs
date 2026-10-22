@@ -147,6 +147,8 @@ fn measure_closed_inspector<V: Render + 'static>(
         window
     });
     cx.run_until_idle();
+    window.update(|window, _| window.refresh());
+    cx.run_until_idle();
     let other_frames_before = other_window.as_mut().map(|window| {
         window.update(|window, _| {
             window
