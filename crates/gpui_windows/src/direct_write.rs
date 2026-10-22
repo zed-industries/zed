@@ -2015,6 +2015,44 @@ mod tests {
     }
 
     #[test]
+    fn font_lookup_refreshes_stale_system_font_collection() -> Result<()> {
+        let text_system = DirectWriteTextSystem::new(None)?;
+
+        // The system font collection is fetched without checking for updates, so it can
+        // be missing fonts installed since the last refresh. Simulate that with a
+        // collection that has no fonts at all.
+        let empty_font_set = unsafe { text_system.components.builder.CreateFontSet()? };
+        let empty_collection = unsafe {
+            text_system
+                .components
+                .factory
+                .CreateFontCollectionFromFontSet(&empty_font_set)?
+        };
+        text_system.state.write().system_font_collection = empty_collection;
+        assert!(
+            !text_system
+                .all_font_names()
+                .iter()
+                .any(|name| name == "Segoe UI")
+        );
+
+        let font = Font {
+            family: "Segoe UI".into(),
+            ..Default::default()
+        };
+        text_system.font_id(&font)?;
+
+        // The failed lookup must have swapped in a refreshed collection.
+        assert!(
+            text_system
+                .all_font_names()
+                .iter()
+                .any(|name| name == "Segoe UI")
+        );
+        Ok(())
+    }
+
+    #[test]
     fn color_emoji_rasterization_is_stable_across_batches() -> Result<()> {
         let devices = DirectXDevices::new()?;
         let text_system = DirectWriteTextSystem::new(Some(&devices))?;
