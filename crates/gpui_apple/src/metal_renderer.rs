@@ -72,7 +72,7 @@ impl Default for InstanceBufferPool {
     }
 }
 
-pub(crate) struct InstanceBuffer {
+struct InstanceBuffer {
     metal_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
     size: usize,
 }
@@ -86,7 +86,7 @@ impl InstanceBufferPool {
         self.buffers.clear();
     }
 
-    pub(crate) fn acquire(
+    fn acquire(
         &mut self,
         device: &ProtocolObject<dyn MTLDevice>,
         unified_memory: bool,
@@ -111,7 +111,7 @@ impl InstanceBufferPool {
         })
     }
 
-    pub(crate) fn release(&mut self, buffer: InstanceBuffer) {
+    fn release(&mut self, buffer: InstanceBuffer) {
         if buffer.size == self.buffer_size {
             self.buffers.push(buffer)
         }
@@ -232,6 +232,9 @@ impl MetalRenderer {
 
     #[cfg(target_os = "macos")]
     fn create_device() -> Result<Retained<ProtocolObject<dyn MTLDevice>>> {
+        // Prefer low‐power integrated GPUs on Intel Mac. On Apple
+        // Silicon, there is only ever one GPU, so this is equivalent to
+        // `metal::Device::system_default()`.
         if let Some(device) = MTLCopyAllDevices()
             .iter()
             .min_by_key(|device| (device.isRemovable(), !device.isLowPower()))
