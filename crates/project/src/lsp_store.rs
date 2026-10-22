@@ -6171,12 +6171,13 @@ impl LspStore {
             .into_iter()
             .map(|lsp_adapter| lsp_adapter.name())
             .collect::<HashSet<_>>();
+        let buffer = buffer.read(cx);
         self.language_server_statuses
             .iter()
             .filter_map(|(server_id, server_status)| {
-                registered_language_servers
-                    .contains(&server_status.name)
-                    .then_some(*server_id)
+                (registered_language_servers.contains(&server_status.name)
+                    || self.remote_buffer_opened_by_registrations(buffer, *server_id, cx))
+                .then_some(*server_id)
             })
             .collect()
     }
@@ -6345,12 +6346,12 @@ impl LspStore {
         let language = language?;
         let server_name = &self.language_server_statuses.get(&server_id)?.name;
         // Without the host's adapter we cannot compute its language id. Callers that the host
-        // re-filters may fail open, while consumers of synced metadata must fail closed.
+        // re-filters may fail open, while consumers of synced metadata must fail closed. The
+        // adapter is looked up by name, as the server may also have opened documents of
+        // languages it does not serve through its `didOpen` registrations.
         let language_id = self
             .languages
-            .lsp_adapters(language)
-            .iter()
-            .find(|adapter| &adapter.name() == server_name)
+            .adapter_for_name(server_name)
             .map(|adapter| adapter.language_id(language))?;
         Some(DocumentSelectorContext {
             language_id: Some(language_id),
@@ -6374,6 +6375,8 @@ impl LspStore {
             DocumentSelectorPath::for_file(file, cx)
         });
         let context = self.remote_document_selector_context(server_id, language.as_ref(), path);
+        let opened_by_registrations =
+            self.remote_buffer_opened_by_registrations(buffer, server_id, cx);
         remote_text_document_capabilities_match(
             self.lsp_server_initial_capabilities.get(&server_id),
             self.lsp_server_capabilities.get(&server_id),
@@ -6381,8 +6384,56 @@ impl LspStore {
                 .get(&server_id)
                 .and_then(|registrations| registrations.get(registration_method)),
             context.as_ref(),
+            opened_by_registrations,
             check,
         )
+    }
+
+    /// Returns whether the host's `didOpen` registrations of the server, which does not serve the
+    /// buffer's language, opened the buffer in it, as `LocalLspStore::registrations_open_buffer_in_server`
+    /// decides on the host. Guests cannot see the host's settings, which the host re-checks.
+    fn remote_buffer_opened_by_registrations(
+        &self,
+        buffer: &Buffer,
+        server_id: LanguageServerId,
+        cx: &App,
+    ) -> bool {
+        let Some(language) = buffer.language() else {
+            return false;
+        };
+        let Some(file) = File::from_dyn(buffer.file()) else {
+            return false;
+        };
+        let Some(server_name) = self
+            .language_server_statuses
+            .get(&server_id)
+            .map(|status| &status.name)
+        else {
+            return false;
+        };
+        let language_name = language.name();
+        if self.language_server_serves_language(server_name, &language_name) {
+            return false;
+        }
+        let Some(context) = self.remote_document_selector_context(
+            server_id,
+            Some(&language_name),
+            DocumentSelectorPath::for_file(file, cx),
+        ) else {
+            return false;
+        };
+        self.lsp_server_text_document_registrations
+            .get(&server_id)
+            .and_then(|registrations| registrations.get("textDocument/didOpen"))
+            .is_some_and(|registrations| {
+                registrations.values().any(|registration| {
+                    registration.document_selector.is_some()
+                        && document_selector_matches(
+                            registration.document_selector.as_ref(),
+                            &context,
+                        )
+                })
+            })
     }
 
     pub(crate) fn text_document_capability_matches_for_server(
@@ -15875,34 +15926,41 @@ fn remote_text_document_capabilities_match(
         &collections::IndexMap<String, dynamic_registration::DynamicTextDocumentRegistration>,
     >,
     context: Option<&DocumentSelectorContext>,
+    opened_by_registrations: bool,
     mut check: impl FnMut(AdapterServerCapabilities<'_>) -> bool,
 ) -> bool {
-    let Some(initial_capabilities) = initial_capabilities else {
-        return merged_capabilities.is_some_and(|server_capabilities| {
-            check(AdapterServerCapabilities {
-                server_capabilities,
-                code_action_kinds: None,
-            })
-        });
-    };
+    // As on the host, static capabilities and registrations without a selector do not apply to
+    // documents opened by `didOpen` registrations.
+    if !opened_by_registrations {
+        let Some(initial_capabilities) = initial_capabilities else {
+            return merged_capabilities.is_some_and(|server_capabilities| {
+                check(AdapterServerCapabilities {
+                    server_capabilities,
+                    code_action_kinds: None,
+                })
+            });
+        };
 
-    if check(AdapterServerCapabilities {
-        server_capabilities: initial_capabilities,
-        code_action_kinds: None,
-    }) {
-        return true;
+        if check(AdapterServerCapabilities {
+            server_capabilities: initial_capabilities,
+            code_action_kinds: None,
+        }) {
+            return true;
+        }
     }
 
     let Some(registrations) = registrations else {
         return false;
     };
     registrations.values().any(|registration| {
-        context.is_none_or(|context| {
-            document_selector_matches(registration.document_selector.as_ref(), context)
-        }) && check(AdapterServerCapabilities {
-            server_capabilities: &registration.server_capabilities,
-            code_action_kinds: None,
-        })
+        (registration.document_selector.is_some() || !opened_by_registrations)
+            && context.is_none_or(|context| {
+                document_selector_matches(registration.document_selector.as_ref(), context)
+            })
+            && check(AdapterServerCapabilities {
+                server_capabilities: &registration.server_capabilities,
+                code_action_kinds: None,
+            })
     })
 }
 
@@ -18424,6 +18482,7 @@ mod tests {
                 Some(&merged_capabilities),
                 None,
                 Some(&context),
+                false,
                 rename_capability_check,
             ),
             "old hosts send only merged capabilities, which must be consulted",
@@ -18442,6 +18501,7 @@ mod tests {
                 Some(&merged_capabilities),
                 Some(&registrations),
                 Some(&context),
+                false,
                 rename_capability_check,
             ),
             "a registration scoped to another language must not match",
@@ -18459,6 +18519,7 @@ mod tests {
                 Some(&merged_capabilities),
                 Some(&registrations),
                 None,
+                false,
                 rename_capability_check,
             ),
             "without a selector context the guest must fail open and let the host re-filter",
@@ -18477,9 +18538,53 @@ mod tests {
                 Some(&merged_capabilities),
                 Some(&registrations),
                 Some(&context),
+                false,
                 rename_capability_check,
             ),
             "initial capabilities without the capability and no registrations must not match",
+        );
+    }
+
+    #[test]
+    fn remote_capability_check_for_documents_opened_by_registrations_needs_selectors() {
+        let toml_context = toml_file_context(DocumentSelectorPath::Unknown);
+        let registration = |document_selector: Option<lsp::DocumentSelector>| {
+            dynamic_registration::DynamicTextDocumentRegistration {
+                document_selector: document_selector.map(compiled_selector),
+                server_capabilities: rename_capabilities(),
+            }
+        };
+        let without_selector =
+            collections::IndexMap::from_iter([("all".to_string(), registration(None))]);
+        assert!(
+            !remote_text_document_capabilities_match(
+                Some(&rename_capabilities()),
+                Some(&rename_capabilities()),
+                Some(&without_selector),
+                Some(&toml_context),
+                true,
+                rename_capability_check,
+            ),
+            "static capabilities and registrations without a selector cover the languages the server serves",
+        );
+
+        let toml_selector = Some(vec![lsp::DocumentFilter {
+            language: Some("toml".to_string()),
+            scheme: None,
+            pattern: None,
+        }]);
+        let with_selector =
+            collections::IndexMap::from_iter([("toml".to_string(), registration(toml_selector))]);
+        assert!(
+            remote_text_document_capabilities_match(
+                Some(&lsp::ServerCapabilities::default()),
+                None,
+                Some(&with_selector),
+                Some(&toml_context),
+                true,
+                rename_capability_check,
+            ),
+            "a registration selecting the document applies to it",
         );
     }
 
