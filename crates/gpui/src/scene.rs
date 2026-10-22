@@ -324,17 +324,24 @@ impl Scene {
     }
 
     pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
-        let primitive = primitive.into();
-        if let Some(runs) = self.runs.as_mut() {
-            let added = runs.record(|scene| scene.insert_primitive(primitive));
-            self.record_new_run(added);
+        // Materializing the enum before this branch prevents specialization of
+        // the flat path for concrete primitive types.
+        if self.runs.is_some() {
+            self.insert_in_run(primitive.into());
             return;
         }
         let ordering_index = self.primitive_bounds.len();
-        if let Some(operation) = self.prepare_primitive(primitive, None) {
+        if let Some(operation) = self.prepare_primitive(primitive.into(), None) {
             self.ordering_indices.push(ordering_index);
             self.paint_operations.push(operation);
         }
+    }
+
+    #[inline(never)]
+    fn insert_in_run(&mut self, primitive: Primitive) {
+        let runs = self.runs.as_mut().expect("segmented primitive recording");
+        let added = runs.record(|scene| scene.insert_primitive(primitive));
+        self.record_new_run(added);
     }
 
     fn prepare_primitive(
