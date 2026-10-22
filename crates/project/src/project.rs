@@ -5181,10 +5181,19 @@ impl Project {
         if path_style.is_absolute(path) {
             return vec![path.to_path_buf()];
         }
+        // A native join keeps non-UTF-8 bytes of local worktree roots and applies verbatim
+        // (`\\?\`) prefix rules; remote joins follow the remote host's path style.
+        let is_local = self.is_local();
         if path_style.has_root(path) {
             let mut paths = Vec::new();
             for worktree in self.visible_worktrees(cx) {
-                if let Some(path) = path_style.join_rooted(worktree.read(cx).abs_path(), path)
+                let root = worktree.read(cx).abs_path();
+                let joined = if is_local {
+                    Some(root.join(path))
+                } else {
+                    path_style.join_rooted(root, path)
+                };
+                if let Some(path) = joined
                     && !paths.contains(&path)
                 {
                     paths.push(path);
@@ -5193,8 +5202,6 @@ impl Project {
             return paths;
         }
         let home_path = path.starts_with("~").then(|| path.to_path_buf());
-        // A native join keeps non-UTF-8 bytes of local worktree roots.
-        let is_local = self.is_local();
         let worktree_paths = self
             .visible_worktrees(cx)
             .filter(|worktree| !worktree.read(cx).is_single_file())

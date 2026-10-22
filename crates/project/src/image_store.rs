@@ -14,6 +14,7 @@ pub use image::ImageFormat;
 use image::{ExtendedColorType, GenericImageView, ImageReader};
 use language::{DiskState, File};
 use rpc::{AnyProtoClient, ErrorExt as _, TypedEnvelope, proto};
+use std::ffi::OsString;
 use std::future::Future;
 use std::mem;
 use std::num::NonZeroU64;
@@ -199,6 +200,15 @@ async fn resolve_image_location(
         }
     }
     None
+}
+
+// `Path` equality treats some spellings as equal (e.g. a trailing `/.`) that the filesystem
+// does not, so cached lookups are keyed by the exact bytes.
+fn image_location_key(paths: &[PathBuf]) -> Vec<OsString> {
+    paths
+        .iter()
+        .map(|path| path.as_os_str().to_owned())
+        .collect()
 }
 
 pub fn use_image_location(
@@ -411,7 +421,7 @@ pub struct ImageStore {
         ProjectPath,
         postage::watch::Receiver<Option<Result<Entity<ImageItem>, Arc<anyhow::Error>>>>,
     >,
-    image_locations: HashMap<Vec<PathBuf>, ImageLocationEntry>,
+    image_locations: HashMap<Vec<OsString>, ImageLocationEntry>,
 }
 
 impl ImageStore {
@@ -593,11 +603,12 @@ impl ImageStore {
         cx: &mut Context<Self>,
     ) -> Option<ImageLocation> {
         let now = cx.background_executor().now();
-        if !self.image_locations.contains_key(&paths) {
+        let key = image_location_key(&paths);
+        if !self.image_locations.contains_key(&key) {
             let lookup =
                 Self::check_image_location(project.clone(), paths.clone(), log::Level::Warn, cx);
             self.image_locations.insert(
-                paths.clone(),
+                key.clone(),
                 ImageLocationEntry {
                     state: ImageLocationState::Pending {
                         views: HashSet::default(),
@@ -608,7 +619,7 @@ impl ImageStore {
                 },
             );
         }
-        let entry = self.image_locations.get_mut(&paths)?;
+        let entry = self.image_locations.get_mut(&key)?;
         entry.last_used = now;
         entry.windows.insert(window.window_handle());
         match &mut entry.state {
@@ -660,12 +671,18 @@ impl ImageStore {
         cx: &mut Context<Self>,
     ) {
         let now = cx.background_executor().now();
-        // A pending lookup still owes its views a notification, however long it takes.
+        // A lookup or recheck in flight still owes its views a result, however long it takes.
         self.image_locations.retain(|_, entry| {
-            matches!(entry.state, ImageLocationState::Pending { .. })
-                || now.saturating_duration_since(entry.last_used) <= UNUSED_IMAGE_LOCATION_RETENTION
+            matches!(
+                entry.state,
+                ImageLocationState::Pending { .. }
+                    | ImageLocationState::Resolved {
+                        recheck: Some(_),
+                        ..
+                    }
+            ) || now.saturating_duration_since(entry.last_used) <= UNUSED_IMAGE_LOCATION_RETENTION
         });
-        let Some(entry) = self.image_locations.get_mut(paths) else {
+        let Some(entry) = self.image_locations.get_mut(&image_location_key(paths)) else {
             return;
         };
         match &mut entry.state {
@@ -710,7 +727,7 @@ impl ImageStore {
     #[cfg(any(test, feature = "test-support"))]
     pub fn image_location_window_count(&self, paths: &[PathBuf]) -> Option<usize> {
         self.image_locations
-            .get(paths)
+            .get(&image_location_key(paths))
             .map(|entry| entry.windows.len())
     }
 

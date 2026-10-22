@@ -443,3 +443,38 @@ async fn test_use_image_location_recheck_skips_closed_windows(cx: &mut TestAppCo
     );
     assert_eq!(window_count(cx), Some(1));
 }
+
+#[cfg(unix)]
+#[gpui::test]
+async fn test_use_image_location_keeps_path_spellings_apart(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+    let directory = util::test::TempTree::new(json!({"shot.svg": "<svg/>"}));
+    let good = directory.path().join("shot.svg");
+    let bad = good.join(".");
+    assert_eq!(bad, good, "`Path` equality ignores the trailing `.`");
+    let project = Project::test(fs::RealFs::new(None, cx.executor()), [], cx).await;
+    let new_view = |path: &PathBuf| ImageLocationTestView {
+        project: project.downgrade(),
+        paths: vec![path.clone()],
+        location: None,
+        renders: 0,
+    };
+
+    let bad_window = cx.add_window(|_, _| new_view(&bad));
+    cx.run_until_parked();
+    let good_window = cx.add_window(|_, _| new_view(&good));
+    cx.run_until_parked();
+
+    let location = |window: &gpui::WindowHandle<ImageLocationTestView>, cx: &mut TestAppContext| {
+        window
+            .root(cx)
+            .unwrap()
+            .read_with(cx, |view, _| view.location.clone())
+    };
+    assert_eq!(location(&bad_window, cx), None);
+    assert_eq!(
+        location(&good_window, cx),
+        Some(ImageLocation::Local(good.as_path().into()))
+    );
+}
