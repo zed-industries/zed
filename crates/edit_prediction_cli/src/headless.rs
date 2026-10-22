@@ -109,7 +109,7 @@ pub fn init(cx: &mut App) -> EpAppState {
     language_extension::init(LspAccess::Noop, extension_host_proxy, languages.clone());
     language_model::init(cx);
     RefreshLlmTokenListener::register(client.clone(), user_store.clone(), cx);
-    language_models::init(user_store.clone(), client.clone(), cx);
+    language_models::init(user_store.clone(), client.clone(), None, cx);
     languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
     prompt_store::init(cx);
     terminal_view::init(cx);
