@@ -166,6 +166,17 @@ impl LanguageServerTree {
         self.init_with_adapters(manifest_location, language_name, adapters, cx)
     }
 
+    /// Like [`Self::walk`], for a root that servers were already started for.
+    pub(crate) fn walk_root<'a>(
+        &'a mut self,
+        root_path: ProjectPath,
+        language_name: LanguageName,
+        cx: &'a mut App,
+    ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
+        let adapters = self.adapters_for_language(&root_path, &language_name, cx);
+        self.init_with_adapters(root_path, language_name, adapters, cx)
+    }
+
     fn init_with_adapters<'a>(
         &'a mut self,
         root_path: ProjectPath,

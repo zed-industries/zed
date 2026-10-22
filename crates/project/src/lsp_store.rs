@@ -3296,42 +3296,15 @@ impl LocalLspStore {
         let servers_and_adapters = servers
             .into_iter()
             .filter_map(|server_node| {
-                if !only_register_servers.is_empty() {
-                    if let Some(server_id) = server_node.server_id()
-                        && !only_register_servers.contains(&LanguageServerSelector::Id(server_id))
-                    {
-                        return None;
-                    }
-                    if let Some(name) = server_node.name()
-                        && !only_register_servers.contains(&LanguageServerSelector::Name(name))
-                    {
-                        return None;
-                    }
-                }
-
-                let server_id = server_node.server_id_or_init(|disposition| {
-                    let path = &disposition.path;
-
-                    {
-                        let workspace_folder = workspace_folder_uri(worktree.read(cx), &path.path);
-
-                        let server_id = self.get_or_insert_language_server(
-                            &worktree,
-                            delegate.clone(),
-                            disposition,
-                            &language_name,
-                            start_mode,
-                            cx,
-                        )?;
-
-                        if let Some(state) = self.language_servers.get(&server_id)
-                            && let Some(workspace_folder) = workspace_folder
-                        {
-                            state.add_workspace_folder(workspace_folder);
-                        };
-                        Some(server_id)
-                    }
-                })?;
+                let server_id = self.get_or_start_language_server_for_node(
+                    &server_node,
+                    &worktree,
+                    &delegate,
+                    &language_name,
+                    &only_register_servers,
+                    start_mode,
+                    cx,
+                )?;
                 let server_state = self.language_servers.get(&server_id)?;
                 if let LanguageServerState::Running {
                     server, adapter, ..
@@ -3655,6 +3628,88 @@ impl LocalLspStore {
             self.close_buffer_in_server(buffer, &server, &uri, cx)
                 .then_some(abs_path)
         })
+    }
+
+    /// Returns the server of the tree node, starting it if needed, unless `only_register_servers`
+    /// excludes it.
+    fn get_or_start_language_server_for_node(
+        &mut self,
+        server_node: &LanguageServerTreeNode,
+        worktree: &Entity<Worktree>,
+        delegate: &Arc<LocalLspAdapterDelegate>,
+        language_name: &LanguageName,
+        only_register_servers: &HashSet<LanguageServerSelector>,
+        start_mode: LanguageServerStartMode,
+        cx: &mut App,
+    ) -> Option<LanguageServerId> {
+        if !only_register_servers.is_empty() {
+            if let Some(server_id) = server_node.server_id()
+                && !only_register_servers.contains(&LanguageServerSelector::Id(server_id))
+            {
+                return None;
+            }
+            if let Some(name) = server_node.name()
+                && !only_register_servers.contains(&LanguageServerSelector::Name(name))
+            {
+                return None;
+            }
+        }
+
+        server_node.server_id_or_init(|disposition| {
+            let path = &disposition.path;
+            let workspace_folder = workspace_folder_uri(worktree.read(cx), &path.path);
+
+            let server_id = self.get_or_insert_language_server(
+                worktree,
+                delegate.clone(),
+                disposition,
+                language_name,
+                start_mode,
+                cx,
+            )?;
+
+            if let Some(state) = self.language_servers.get(&server_id)
+                && let Some(workspace_folder) = workspace_folder
+            {
+                state.add_workspace_folder(workspace_folder);
+            };
+            Some(server_id)
+        })
+    }
+
+    /// Starts the servers of the language again at a root they were started for, which does not
+    /// need a buffer of the language, unless `only_register_servers` excludes them.
+    fn start_language_servers_at_root(
+        &mut self,
+        root_path: ProjectPath,
+        language_name: LanguageName,
+        only_register_servers: &HashSet<LanguageServerSelector>,
+        start_mode: LanguageServerStartMode,
+        cx: &mut App,
+    ) {
+        let Some(worktree) = self
+            .worktree_store
+            .read(cx)
+            .worktree_for_id(root_path.worktree_id, cx)
+        else {
+            return;
+        };
+        let delegate = LocalLspAdapterDelegate::from_local_lsp(self, &worktree, cx);
+        let server_nodes = self
+            .lsp_tree
+            .walk_root(root_path, language_name.clone(), cx)
+            .collect::<Vec<_>>();
+        for server_node in server_nodes {
+            self.get_or_start_language_server_for_node(
+                &server_node,
+                &worktree,
+                &delegate,
+                &language_name,
+                only_register_servers,
+                start_mode,
+                cx,
+            );
+        }
     }
 
     fn reuse_existing_language_server<'lang_name>(
@@ -13609,12 +13664,11 @@ impl LspStore {
         local
             .language_server_restart_tasks
             .retain(|task| !task.is_ready());
-        let (stopped_names, buffers_served_by_stopped_servers, stop_task) =
-            if only_restart_servers.is_empty() {
-                self.stop_local_language_servers_for_buffers(&buffers, HashSet::default(), cx)
-            } else {
-                self.stop_local_language_servers_for_buffers(&[], only_restart_servers.clone(), cx)
-            };
+        let (stopped_names, stopped_server_roots, stop_task) = if only_restart_servers.is_empty() {
+            self.stop_local_language_servers_for_buffers(&buffers, HashSet::default(), cx)
+        } else {
+            self.stop_local_language_servers_for_buffers(&[], only_restart_servers.clone(), cx)
+        };
         let stop_task = stop_task.shared();
         cx.background_spawn(stop_task.clone()).detach();
         let task = cx.spawn(async move |lsp_store, cx| {
@@ -13638,21 +13692,18 @@ impl LspStore {
                         }
                     }
                     // A buffer that registrations opened a server in cannot start it, as it is
-                    // not of a language the server serves, so the server is started again with
-                    // the buffers of its languages.
+                    // not of a language the server serves, and no buffer of such a language may
+                    // be open, so the servers are also started again where they were before.
                     let stopped_servers = stopped_names
                         .into_iter()
                         .map(LanguageServerSelector::Name)
                         .collect::<HashSet<_>>();
-                    for buffer in buffers_served_by_stopped_servers {
-                        if !stopped_servers.is_empty()
-                            && local
-                                .registered_buffers
-                                .contains_key(&buffer.read(cx).remote_id())
-                        {
-                            local.register_buffer_with_language_servers(
-                                &buffer,
-                                stopped_servers.clone(),
+                    if !stopped_servers.is_empty() {
+                        for (root_path, language_name) in stopped_server_roots {
+                            local.start_language_servers_at_root(
+                                root_path,
+                                language_name,
+                                &stopped_servers,
                                 start_mode,
                                 cx,
                             );
@@ -13666,15 +13717,18 @@ impl LspStore {
         }
     }
 
-    /// Returns the names of the stopped servers and the buffers they were opened with for the
-    /// languages they serve, which can start them again.
+    /// Returns the names of the stopped servers and the roots they were started for, along with a
+    /// language they serve there, which can start them again.
     fn stop_local_language_servers_for_buffers(
         &mut self,
         buffers: &[Entity<Buffer>],
         also_stop_servers: HashSet<LanguageServerSelector>,
         cx: &mut Context<Self>,
-    ) -> (HashSet<LanguageServerName>, Vec<Entity<Buffer>>, Task<()>) {
-        let buffer_store = self.buffer_store.clone();
+    ) -> (
+        HashSet<LanguageServerName>,
+        Vec<(ProjectPath, LanguageName)>,
+        Task<()>,
+    ) {
         let Some(local) = self.as_local_mut() else {
             return (HashSet::default(), Vec::new(), Task::ready(()));
         };
@@ -13728,25 +13782,26 @@ impl LspStore {
                     .map(|(seed, _)| seed.name.clone())
             })
             .collect();
-        let buffers_served_by_stopped_servers = buffer_store
-            .read(cx)
-            .buffers()
-            .filter(|buffer| {
-                let buffer_id = buffer.read(cx).remote_id();
-                local
-                    .buffers_opened_in_servers
-                    .get(&buffer_id)
-                    .is_some_and(|server_ids| {
-                        let opened_by_registrations =
-                            local.buffers_opened_by_registrations.get(&buffer_id);
-                        server_ids.iter().any(|server_id| {
-                            language_servers_to_stop.contains(server_id)
-                                && !opened_by_registrations
-                                    .is_some_and(|server_ids| server_ids.contains(server_id))
-                        })
-                    })
-            })
-            .collect::<Vec<_>>();
+        let mut stopped_server_roots = Vec::new();
+        for (worktree_id, servers) in &local.lsp_tree.instances {
+            for (path, server_nodes) in &servers.roots {
+                for (server_node, languages) in server_nodes.values() {
+                    if server_node
+                        .id()
+                        .is_some_and(|server_id| language_servers_to_stop.contains(&server_id))
+                        && let Some(language_name) = languages.first()
+                    {
+                        stopped_server_roots.push((
+                            ProjectPath {
+                                worktree_id: *worktree_id,
+                                path: path.clone(),
+                            },
+                            language_name.clone(),
+                        ));
+                    }
+                }
+            }
+        }
 
         local.lsp_tree.remove_nodes(&language_servers_to_stop);
         let tasks = language_servers_to_stop
@@ -13756,7 +13811,7 @@ impl LspStore {
 
         (
             stopped_names,
-            buffers_served_by_stopped_servers,
+            stopped_server_roots,
             cx.background_spawn(futures::future::join_all(tasks).map(|_| ())),
         )
     }

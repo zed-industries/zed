@@ -3860,7 +3860,7 @@ async fn test_restarting_server_from_document_opened_by_registrations(
     );
     cx.executor().run_until_parked();
 
-    let (rust_buffer, _rust_handle) = project
+    let (_rust_buffer, rust_handle) = project
         .update(cx, |project, cx| {
             project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
         })
@@ -3874,11 +3874,12 @@ async fn test_restarting_server_from_document_opened_by_registrations(
         .await
         .unwrap();
     cx.executor().run_until_parked();
+    let open_manifests = Some(json!({ "documentSelector": [{ "language": "json" }] }));
     register_capability(
         &fake_server,
         "textDocument/didOpen",
         "open-manifests",
-        Some(json!({ "documentSelector": [{ "language": "json" }] })),
+        open_manifests.clone(),
     )
     .await;
     cx.executor().run_until_parked();
@@ -3888,8 +3889,11 @@ async fn test_restarting_server_from_document_opened_by_registrations(
         fake_server.server.server_id(),
         cx
     ));
+    cx.update(|_| drop(rust_handle));
+    cx.executor().run_until_parked();
 
-    // The manifest cannot start the server, which does not serve its language.
+    // Neither the manifest, of a language the server does not serve, nor a closed buffer of
+    // its language can start the server again.
     project.update(cx, |project, cx| {
         project.restart_language_servers_for_buffers(
             vec![manifest_buffer.clone()],
@@ -3902,14 +3906,22 @@ async fn test_restarting_server_from_document_opened_by_registrations(
         .try_recv()
         .expect("expected the server to be restarted");
     cx.executor().run_until_parked();
+    register_capability(
+        &restarted_server,
+        "textDocument/didOpen",
+        "open-manifests",
+        open_manifests,
+    )
+    .await;
+    cx.executor().run_until_parked();
     assert!(
         buffer_opened_in_server(
             &project,
-            &rust_buffer,
+            &manifest_buffer,
             restarted_server.server.server_id(),
             cx
         ),
-        "expected the restarted server to serve the documents of its languages again",
+        "expected the registrations of the restarted server to open the manifest again",
     );
 }
 
