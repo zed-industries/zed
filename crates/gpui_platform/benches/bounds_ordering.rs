@@ -159,18 +159,6 @@ fn validate(window: &Window, rectangles: &[Rectangle], case: &Case) {
 
 fn validate_scene(scene: &Scene, rectangles: &[Rectangle], case: &Case) {
     assert_eq!(scene.quads.len(), rectangles.len());
-    // This fixture is one run, so banding can only translate all orders by a constant.
-    let order_offset = if std::env::var("GPUI_RETAIN_VIEWS").as_deref() == Ok("1") {
-        scene
-            .quads
-            .iter()
-            .map(|quad| quad.order)
-            .min()
-            .unwrap_or(1)
-            .saturating_sub(1)
-    } else {
-        0
-    };
     let mut actual: Vec<Option<(Bounds<ScaledPixels>, u32)>> = vec![None; rectangles.len()];
     for quad in &scene.quads {
         // The hue encodes the input index, including when scene sorting reorders quads.
@@ -183,10 +171,7 @@ fn validate_scene(scene: &Scene, rectangles: &[Rectangle], case: &Case) {
         );
         let entry = actual.get_mut(index).expect("input color index");
         assert!(entry.is_none(), "no input quad may be painted twice");
-        *entry = Some((
-            quad.bounds.intersect(&quad.content_mask.bounds),
-            quad.order - order_offset,
-        ));
+        *entry = Some((quad.bounds.intersect(&quad.content_mask.bounds), quad.order));
     }
     // Geometry is fixed for a case. Solve the independent quadratic oracle once,
     // not twice for every Criterion warm-up and sample.

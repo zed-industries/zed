@@ -1320,7 +1320,6 @@ pub struct ViewReuseStats {
     pub prepaint_reuse_calls: usize,
     pub scene_bulk_segments: usize,
     pub index_fixups: usize,
-    pub scene_segments: crate::scene::SceneSegmentStats,
 }
 
 /// Canonical CPU output for differential runs of a deterministic fixture.
@@ -1333,8 +1332,6 @@ pub struct ViewReuseStats {
 pub struct ViewReuseSnapshot {
     pub scene: Vec<String>,
     pub rendered_primitives: Vec<String>,
-    visual_scene: crate::scene::SceneEquivalence,
-    retained_scene: bool,
     pub hitboxes: Vec<String>,
     pub dispatch: Vec<String>,
     pub cursor_styles: Vec<String>,
@@ -1347,17 +1344,6 @@ pub struct ViewReuseSnapshot {
 impl ViewReuseSnapshot {
     /// Report the first CPU-output mismatch with its frame and logical dispatch identities.
     pub fn compare(&self, reconstructed: &Self, frame: usize) -> anyhow::Result<()> {
-        if self.retained_scene || reconstructed.retained_scene {
-            self.visual_scene
-                .compare(&reconstructed.visual_scene)
-                .with_context(|| format!("visual scene mismatch in frame {frame}"))?;
-        } else {
-            anyhow::ensure!(
-                self.scene == reconstructed.scene
-                    && self.rendered_primitives == reconstructed.rendered_primitives,
-                "exact scene mismatch in frame {frame}"
-            );
-        }
         anyhow::ensure!(
             self.focused_node == reconstructed.focused_node,
             "view reuse mismatch in frame {frame}, focus: reused={:?}, reconstructed={:?}",
@@ -1365,6 +1351,12 @@ impl ViewReuseSnapshot {
             reconstructed.focused_node,
         );
         for (name, reused, fresh) in [
+            ("scene", &self.scene, &reconstructed.scene),
+            (
+                "rendered primitives",
+                &self.rendered_primitives,
+                &reconstructed.rendered_primitives,
+            ),
             ("hitboxes", &self.hitboxes, &reconstructed.hitboxes),
             ("dispatch", &self.dispatch, &reconstructed.dispatch),
             (
@@ -2816,8 +2808,6 @@ impl Window {
         ViewReuseSnapshot {
             scene: frame.scene.reuse_snapshot(),
             rendered_primitives: frame.scene.rendered_snapshot(),
-            visual_scene: frame.scene.equivalence_snapshot(),
-            retained_scene: self.view_splicing,
             accessed_element_states,
             focused_node: self
                 .focus
@@ -3889,7 +3879,7 @@ impl Window {
         self.invalidator.debug_assert_paint();
         let underline = self.underline(origin, width, style);
         if exclusions.is_empty() {
-            self.next_frame.scene.record_primitive(underline);
+            self.next_frame.scene.insert_primitive(underline);
             return;
         }
 
@@ -3907,13 +3897,13 @@ impl Window {
             })
             .collect::<SmallVec<[_; 4]>>();
         if exclusions.is_empty() {
-            self.next_frame.scene.record_primitive(underline);
+            self.next_frame.scene.insert_primitive(underline);
             return;
         }
         exclusions.sort_unstable_by_key(|span| span.start);
 
         let mut paint_span = |start, end| {
-            self.next_frame.scene.record_primitive(Underline {
+            self.next_frame.scene.insert_primitive(Underline {
                 content_mask: ContentMask {
                     bounds: Bounds::from_corners(
                         point(start, bounds.top()),
@@ -4102,10 +4092,6 @@ impl Window {
         // This ensures that multiple test Apps have isolated arenas.
         let arena_scope = ElementArenaScope::enter(&cx.element_arena);
 
-        if self.view_splicing {
-            self.next_frame.scene.enable_segments();
-        }
-
         if self.platform_window.prepare_frame() {
             self.refresh();
         }
@@ -4212,12 +4198,6 @@ impl Window {
         self.layout_engine.as_mut().unwrap().clear();
         self.text_system().finish_frame();
         self.next_frame.finish(&mut self.rendered_frame);
-        #[cfg(any(test, feature = "bench-support"))]
-        if self.view_splicing {
-            self.view_reuse_stats
-                .scene_segments
-                .accumulate(&self.next_frame.scene.segment_stats);
-        }
         for &(handle, _) in &self.next_frame.accessed_element_states {
             self.element_id_interner.mark_used(handle);
         }
@@ -5453,7 +5433,7 @@ impl Window {
                 continue;
             }
             let shadow_bounds = (bounds + shadow.offset).dilate(shadow.spread_radius);
-            self.next_frame.scene.record_primitive(Shadow {
+            self.next_frame.scene.insert_primitive(Shadow {
                 order: 0,
                 blur_radius: shadow.blur_radius.scale(scale_factor),
                 bounds: self.cover_bounds(shadow_bounds),
@@ -5498,7 +5478,7 @@ impl Window {
                 bottom_right: (corner_radii.bottom_right - shadow.spread_radius).max(zero),
                 bottom_left: (corner_radii.bottom_left - shadow.spread_radius).max(zero),
             };
-            self.next_frame.scene.record_primitive(Shadow {
+            self.next_frame.scene.insert_primitive(Shadow {
                 order: 0,
                 blur_radius: shadow.blur_radius.scale(scale_factor),
                 bounds: self.cover_bounds(hole),
@@ -5562,17 +5542,6 @@ impl Window {
     /// where the circular arcs meet. This will not display well when combined with dashed borders.
     /// Use `Corners::clamp_radii_for_quad_size` if the radii should fit within the bounds.
     pub fn paint_quad(&mut self, quad: PaintQuad) {
-        // Dispatch before computing fields so the flat body doesn't spill them
-        // around retained recording calls.
-        if self.view_splicing {
-            self.paint_quad_impl::<true>(quad);
-        } else {
-            self.paint_quad_impl::<false>(quad);
-        }
-    }
-
-    #[inline(never)]
-    fn paint_quad_impl<const RETAINED: bool>(&mut self, quad: PaintQuad) {
         self.invalidator.debug_assert_paint();
 
         let opacity = self.element_opacity();
@@ -5590,7 +5559,7 @@ impl Window {
         };
 
         if !quad.background.is_transparent() {
-            self.next_frame.scene.record_primitive_for::<RETAINED>(quad);
+            self.next_frame.scene.insert_primitive(quad);
             return;
         }
 
@@ -5600,7 +5569,7 @@ impl Window {
         let inner_bounds = Self::largest_border_interior(&quad);
 
         if inner_bounds.is_empty() {
-            self.next_frame.scene.record_primitive_for::<RETAINED>(quad);
+            self.next_frame.scene.insert_primitive(quad);
             return;
         }
 
@@ -5630,14 +5599,12 @@ impl Window {
         for strip in strips {
             let content_mask_bounds = quad.content_mask.bounds.intersect(&strip);
             if !content_mask_bounds.is_empty() {
-                self.next_frame
-                    .scene
-                    .record_primitive_for::<RETAINED>(Quad {
-                        content_mask: ContentMask {
-                            bounds: content_mask_bounds,
-                        },
-                        ..quad
-                    });
+                self.next_frame.scene.insert_primitive(Quad {
+                    content_mask: ContentMask {
+                        bounds: content_mask_bounds,
+                    },
+                    ..quad
+                });
             }
         }
     }
@@ -5656,7 +5623,7 @@ impl Window {
         path.color = color.opacity(opacity);
         self.next_frame
             .scene
-            .record_primitive(path.scale(scale_factor));
+            .insert_primitive(path.scale(scale_factor));
     }
 
     /// Paint an underline into the scene for the next frame at the current z-index.
@@ -5670,7 +5637,7 @@ impl Window {
     ) {
         self.invalidator.debug_assert_paint();
         let underline = self.underline(origin, width, style);
-        self.next_frame.scene.record_primitive(underline);
+        self.next_frame.scene.insert_primitive(underline);
     }
 
     /// Paint a strikethrough into the scene for the next frame at the current z-index.
@@ -5692,7 +5659,7 @@ impl Window {
         };
         let opacity = self.element_opacity();
 
-        self.next_frame.scene.record_primitive(Underline {
+        self.next_frame.scene.insert_primitive(Underline {
             order: 0,
             pad: 0,
             bounds,
@@ -5765,7 +5732,7 @@ impl Window {
             let content_mask = self.snapped_content_mask();
 
             if subpixel_rendering {
-                self.next_frame.scene.record_primitive(SubpixelSprite {
+                self.next_frame.scene.insert_primitive(SubpixelSprite {
                     order: 0,
                     pad: 0,
                     bounds,
@@ -5775,7 +5742,7 @@ impl Window {
                     transformation: TransformationMatrix::unit(),
                 });
             } else {
-                self.next_frame.scene.record_primitive(MonochromeSprite {
+                self.next_frame.scene.insert_primitive(MonochromeSprite {
                     order: 0,
                     pad: 0,
                     bounds,
@@ -5856,7 +5823,7 @@ impl Window {
             let content_mask = self.snapped_content_mask();
             let opacity = self.element_opacity();
 
-            self.next_frame.scene.record_primitive(PolychromeSprite {
+            self.next_frame.scene.insert_primitive(PolychromeSprite {
                 order: 0,
                 pad: 0,
                 grayscale: false.into(),
@@ -5922,7 +5889,7 @@ impl Window {
             .map_origin(|value| ScaledPixels(round_half_toward_zero(value.0)))
             .map_size(|size| size.ceil());
 
-        self.next_frame.scene.record_primitive(MonochromeSprite {
+        self.next_frame.scene.insert_primitive(MonochromeSprite {
             order: 0,
             pad: 0,
             bounds: final_bounds,
@@ -6028,7 +5995,7 @@ impl Window {
             .scale(self.scale_factor());
         let opacity = self.element_opacity();
 
-        self.next_frame.scene.record_primitive(PolychromeSprite {
+        self.next_frame.scene.insert_primitive(PolychromeSprite {
             order: 0,
             pad: 0,
             grayscale: grayscale.into(),
@@ -6056,7 +6023,7 @@ impl Window {
 
         let bounds = self.snap_bounds(bounds);
         let content_mask = self.snapped_content_mask();
-        self.next_frame.scene.record_primitive(PaintSurface {
+        self.next_frame.scene.insert_primitive(PaintSurface {
             order: 0,
             bounds,
             content_mask,
