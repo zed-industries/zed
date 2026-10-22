@@ -193,6 +193,10 @@ fn measure_in_window(
         })
     });
     cx.run_until_idle();
+    // Warm both frame buffers and their scratch allocations. A short sample can
+    // otherwise measure only the cheaper first buffer after mounting the tree.
+    window.update(|window, _| window.refresh());
+    cx.run_until_idle();
     describe_once(input, before_window, bench_metrics::allocation_stats());
 
     let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
@@ -402,9 +406,7 @@ fn leaf_style(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
     let input = &family.sample(&mut rng);
     let mut recolored = 0usize;
     let frames = measure("leaf style", input, cx, |tree, cx| {
-        if let RandomizedElementTreeMutation::ChildColor { .. } =
-            tree.apply_mutation(RandomizedElementTreeMutationKind::ChildColor, cx)
-        {
+        if tree.recolor_first_leaf(cx).is_some() {
             recolored += 1;
         }
     });
@@ -610,7 +612,8 @@ fn cached_full_refresh(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppCo
 fn cached_leaf_style(family: &TreeFamily, mut rng: StdRng, cx: &mut BenchAppContext) {
     let input = cached_input(family, &mut rng);
     let frames = measure("cached leaf style", &input, cx, |tree, cx| {
-        tree.apply_mutation(RandomizedElementTreeMutationKind::ChildColor, cx);
+        tree.recolor_first_leaf(cx)
+            .expect("nonempty benchmark tree");
     });
     assert!(frames > 0);
 }

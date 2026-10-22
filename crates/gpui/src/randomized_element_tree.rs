@@ -664,6 +664,31 @@ impl RandomizedElementTree {
         applied.mutation
     }
 
+    /// Alternates one fixed leaf between two colors without changing the tree's shape.
+    ///
+    /// Sampling a different descendant each frame changes which cached subtree renders,
+    /// so short and long benchmark samples otherwise measure different workload mixes.
+    pub fn recolor_first_leaf(&mut self, cx: &mut Context<Self>) -> Option<u64> {
+        let (element_id, owner) = {
+            let mut snapshot = self.snapshot.borrow_mut();
+            let path = node_paths(&snapshot.children).into_iter().find(|path| {
+                node_at_path(&snapshot.children, path).is_some_and(|node| node.children.is_empty())
+            })?;
+            let owner = nearest_entity_id(&snapshot.children, &path);
+            let node = node_at_path_mut(&mut snapshot.children, &path)?;
+            let first = crate::hsla(0., 1., 0.5, 1.);
+            let second = crate::hsla(0.5, 1., 0.5, 1.);
+            node.style.background = if node.style.background == first {
+                second
+            } else {
+                first
+            };
+            (node.id, owner)
+        };
+        self.notify_owner(owner, cx);
+        Some(element_id)
+    }
+
     /// Generates and inserts an element below a seeded random parent.
     ///
     /// This does not synchronize or notify persistent child entities. Entity-aware callers should
@@ -1578,6 +1603,41 @@ mod tests {
     const ELEMENT_COUNT: usize = 64;
     const MUTATION_COUNT: usize = 32;
     const WINDOW_SIZE: Size<Pixels> = size(px(1200.0), px(900.0));
+
+    #[gpui::test]
+    fn fixed_leaf_recolor_is_stationary(cx: &mut TestAppContext) {
+        for cached in [false, true] {
+            let config = RandomizedElementTreeConfig::new(0, ELEMENT_COUNT)
+                .with_cached_views(cached)
+                .with_topology(RandomizedElementTreeTopology::Mixed)
+                .with_entity_density(0.5);
+            let tree = cx.new(|cx| RandomizedElementTree::new_with_config(config, cx));
+            let target = tree.update(cx, |tree, cx| tree.recolor_first_leaf(cx));
+            assert!(target.is_some());
+            let first = tree.read_with(cx, |tree, _| tree.snapshot());
+            assert_eq!(first.descendant_count(), ELEMENT_COUNT);
+            assert_eq!(
+                target,
+                tree.update(cx, |tree, cx| tree.recolor_first_leaf(cx))
+            );
+            let second = tree.read_with(cx, |tree, _| tree.snapshot());
+            assert_ne!(first, second);
+            for frame in 0..1000 {
+                assert_eq!(
+                    target,
+                    tree.update(cx, |tree, cx| tree.recolor_first_leaf(cx))
+                );
+                assert_eq!(
+                    tree.read_with(cx, |tree, _| tree.snapshot()),
+                    if frame % 2 == 0 {
+                        first.clone()
+                    } else {
+                        second.clone()
+                    }
+                );
+            }
+        }
+    }
 
     #[gpui::test(iterations = 2)]
     fn cached_views_match_forced_reconstruction(rng: StdRng, cx: &mut TestAppContext) {
