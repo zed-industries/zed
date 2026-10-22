@@ -1182,6 +1182,7 @@ pub(crate) struct ViewExecutionScope {
     rem_override: Option<Pixels>,
     image_cache: Option<Rc<AnyImageCache>>,
     opacity: f32,
+    paint_suppressed: bool,
     rem_size: Pixels,
     scale_factor: f32,
     pub(crate) dispatch_node: Option<DispatchNodeId>,
@@ -1616,6 +1617,7 @@ pub struct Window {
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) element_opacity: f32,
+    pub(crate) element_paint_suppressed: bool,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) requested_autoscroll: Option<Bounds<Pixels>>,
     /// The [`TextInputConfiguration`] most recently forwarded to the platform
@@ -2565,6 +2567,7 @@ impl Window {
             element_offset_stack: Vec::new(),
             content_mask_stack: Vec::new(),
             element_opacity: 1.0,
+            element_paint_suppressed: false,
             requested_autoscroll: None,
             last_text_input_configuration: None,
             focused_text_input: None,
@@ -2854,6 +2857,7 @@ impl Window {
             rem_override: self.rem_size_override_stack.last().copied(),
             image_cache,
             opacity: self.element_opacity,
+            paint_suppressed: self.element_paint_suppressed,
             rem_size: self.rem_size,
             scale_factor: self.scale_factor,
             dispatch_node: self.next_frame.dispatch_tree.active_node_id(),
@@ -2917,6 +2921,7 @@ impl Window {
             rem_override,
             image_cache,
             opacity,
+            paint_suppressed: self.element_paint_suppressed,
             rem_size,
             scale_factor,
             dispatch_node,
@@ -2940,6 +2945,7 @@ impl Window {
             && old.image_cache.as_ref().map(|cache| cache.entity_id())
                 == new.image_cache.as_ref().map(|cache| cache.entity_id())
             && old.opacity == new.opacity
+            && old.paint_suppressed == new.paint_suppressed
             && old.content_mask == new.content_mask
     }
 
@@ -3000,6 +3006,10 @@ impl Window {
         );
         mem::swap(&mut self.element_opacity, &mut scope.opacity);
         mem::swap(
+            &mut self.element_paint_suppressed,
+            &mut scope.paint_suppressed,
+        );
+        mem::swap(
             &mut self.current_view_occurrence,
             &mut scope.parent_occurrence,
         );
@@ -3015,6 +3025,10 @@ impl Window {
         self.rem_size_override_stack = rem_overrides;
         self.image_cache_stack = image_caches;
         mem::swap(&mut self.element_opacity, &mut scope.opacity);
+        mem::swap(
+            &mut self.element_paint_suppressed,
+            &mut scope.paint_suppressed,
+        );
         mem::swap(
             &mut self.current_view_occurrence,
             &mut scope.parent_occurrence,
@@ -5466,6 +5480,19 @@ impl Window {
         self.element_offset_stack.push(offset);
         let result = f(self);
         self.element_offset_stack.pop();
+        result
+    }
+
+    pub(crate) fn with_element_paint_suppressed<R>(
+        &mut self,
+        suppressed: bool,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.invalidator.debug_assert_prepaint();
+        let previous = self.element_paint_suppressed;
+        self.element_paint_suppressed |= suppressed;
+        let result = f(self);
+        self.element_paint_suppressed = previous;
         result
     }
 

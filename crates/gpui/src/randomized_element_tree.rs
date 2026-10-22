@@ -1664,7 +1664,6 @@ mod tests {
         views_match_forced_reconstruction(rng, cx, false, false, false);
     }
 
-    #[ignore = "RootVisibility replays stale cached descendant dispatch (seed 0, frame 6)"]
     #[gpui::test(iterations = 2)]
     fn all_mutations_match_forced_reconstruction(rng: StdRng, cx: &mut TestAppContext) {
         views_match_forced_reconstruction(rng, cx, true, true, false);
@@ -1675,10 +1674,11 @@ mod tests {
         views_match_forced_reconstruction(rng, cx, true, false, true);
     }
 
-    #[ignore = "invisible ancestor leaves cached descendant key contexts and actions active"]
     #[gpui::test]
     fn cached_descendants_inherit_changed_visibility(cx: &mut TestAppContext) {
-        inherited_scope_regression(cx, false, true);
+        for retention in [false, true] {
+            inherited_scope_regression(cx, false, retention);
+        }
     }
 
     #[gpui::test]
@@ -1717,7 +1717,7 @@ mod tests {
             })
         });
         let roots = windows.map(|window| window.root(cx).expect("scope root"));
-        for frame in 0..2 {
+        for frame in 0..4 {
             let mut snapshots = Vec::new();
             for (window, root) in windows.iter().zip(&roots) {
                 if frame > 0 {
@@ -1729,7 +1729,7 @@ mod tests {
                                 .expect("scroll handle mounted")
                                 .set_offset(crate::point(px(-10.0), px(-10.0)));
                         } else {
-                            tree.snapshot.borrow_mut().root.visible = false;
+                            tree.snapshot.borrow_mut().root.visible = frame % 2 == 0;
                             cx.notify();
                         }
                     });

@@ -365,9 +365,32 @@ pub(crate) fn is_view_element_state(state_type: std::any::TypeId) -> bool {
 
 struct ViewElementCacheKey {
     bounds: Bounds<Pixels>,
+    inherited: InheritedViewScope,
+}
+
+#[derive(Clone, PartialEq)]
+struct InheritedViewScope {
     content_mask: ContentMask<Pixels>,
-    text_style: TextStyle,
+    text_style: Rc<TextStyle>,
     opacity: f32,
+    paint_suppressed: bool,
+    rem_size: Pixels,
+    scale_factor: f32,
+    offset: crate::Point<Pixels>,
+}
+
+impl InheritedViewScope {
+    fn capture(window: &Window) -> Self {
+        Self {
+            content_mask: window.content_mask(),
+            text_style: window.retained_text_style_handle(),
+            opacity: window.element_opacity(),
+            paint_suppressed: window.element_paint_suppressed,
+            rem_size: window.rem_size(),
+            scale_factor: window.scale_factor(),
+            offset: window.element_offset(),
+        }
+    }
 }
 
 #[cfg(not(gpui_hot_reload))]
@@ -397,9 +420,7 @@ struct RetainedViewState {
 #[derive(Clone)]
 struct RetainedViewCacheKey {
     bounds: Bounds<Pixels>,
-    content_mask: ContentMask<Pixels>,
-    text_style: Rc<TextStyle>,
-    opacity: f32,
+    inherited: InheritedViewScope,
 }
 
 impl<V: View> Element for ViewElement<V> {
@@ -665,9 +686,7 @@ fn prepaint_view(
         let implicit = window.is_implicit_view(occurrence);
         let mut prepaint = |window: &mut Window| {
             let constraints_unchanged = window.implicit_prepaint_layout(occurrence);
-            let content_mask = window.content_mask();
-            let text_style = window.retained_text_style_handle();
-            let opacity = window.element_opacity();
+            let inherited = InheritedViewScope::capture(window);
 
             let element_state = window.view_store.state(occurrence);
             #[cfg(any(test, feature = "bench-support"))]
@@ -680,17 +699,15 @@ fn prepaint_view(
                 (
                     state.cache_key.bounds != bounds,
                     state.cache_key.bounds.size != bounds.size,
-                    state.cache_key.content_mask != content_mask,
-                    state.cache_key.text_style != text_style,
+                    state.cache_key.inherited.content_mask != inherited.content_mask,
+                    state.cache_key.inherited.text_style != inherited.text_style,
                 )
             });
             if element.is_none()
                 && let Some(element_state) = element_state
                 && (!window.is_implicit_view(occurrence) || window.view_store.has_paint(occurrence))
                 && element_state.cache_key.bounds == bounds
-                && element_state.cache_key.content_mask == content_mask
-                && element_state.cache_key.text_style == text_style
-                && element_state.cache_key.opacity == opacity
+                && element_state.cache_key.inherited == inherited
                 && !window.view_store.is_own_dirty(occurrence)
                 && (!window.dirty_views.contains(&entity_id)
                     || (window.view_splicing && window.view_store.is_descendant_dirty(occurrence)))
@@ -797,12 +814,7 @@ fn prepaint_view(
                 RetainedViewState {
                     prepaint_range: prepaint_start..prepaint_end,
                     paint_range: PaintIndex::default()..PaintIndex::default(),
-                    cache_key: RetainedViewCacheKey {
-                        bounds,
-                        content_mask,
-                        text_style,
-                        opacity,
-                    },
+                    cache_key: RetainedViewCacheKey { bounds, inherited },
                 },
                 scope.take().expect("cached views have a scope"),
             );
@@ -918,9 +930,7 @@ fn prepaint_legacy_view(
             return Some(element);
         }
         window.with_element_state::<ViewElementState, _>(global_id.unwrap(), |state, window| {
-            let content_mask = window.content_mask();
-            let text_style = window.text_style();
-            let opacity = window.element_opacity();
+            let inherited = InheritedViewScope::capture(window);
             #[cfg(any(test, feature = "bench-support"))]
             let first_mount = state.is_none();
             #[cfg(any(test, feature = "bench-support"))]
@@ -932,12 +942,14 @@ fn prepaint_legacy_view(
                 let stats = &mut window.view_reuse_stats;
                 if let Some(state) = state.as_ref() {
                     let bounds_changed = state.cache_key.bounds != bounds;
-                    let mask_changed = state.cache_key.content_mask != content_mask;
-                    let text_changed = state.cache_key.text_style != text_style;
+                    let mask_changed =
+                        state.cache_key.inherited.content_mask != inherited.content_mask;
+                    let text_changed = state.cache_key.inherited.text_style != inherited.text_style;
                     let dirty = window.dirty_views.contains(&entity_id);
                     if bounds_changed
                         || mask_changed
                         || text_changed
+                        || state.cache_key.inherited != inherited
                         || dirty
                         || window.refreshing
                         || forced
@@ -966,9 +978,7 @@ fn prepaint_legacy_view(
             }
             if let Some(mut state) = state
                 && state.cache_key.bounds == bounds
-                && state.cache_key.content_mask == content_mask
-                && state.cache_key.text_style == text_style
-                && state.cache_key.opacity == opacity
+                && state.cache_key.inherited == inherited
                 && !window.dirty_views.contains(&entity_id)
                 && !window.refreshing
                 && !forced
@@ -1009,12 +1019,7 @@ fn prepaint_legacy_view(
                 ViewElementState {
                     prepaint_range: start..end,
                     paint_range: PaintIndex::default()..PaintIndex::default(),
-                    cache_key: ViewElementCacheKey {
-                        bounds,
-                        content_mask,
-                        text_style,
-                        opacity,
-                    },
+                    cache_key: ViewElementCacheKey { bounds, inherited },
                     accessed_entities,
                 },
             )

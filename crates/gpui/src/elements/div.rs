@@ -2510,7 +2510,12 @@ impl Interactivity {
                                 window.record_state_version_read(&handle.0.borrow().version);
                             }
                             let result = window.with_element_opacity(style.opacity, |window| {
-                                f(&style, scroll_offset, hitbox, window, cx)
+                                // Hidden ancestors still prepaint descendants, but skip their
+                                // paint phase, where dispatch listeners would otherwise refresh.
+                                window.with_element_paint_suppressed(
+                                    style.visibility == Visibility::Hidden,
+                                    |window| f(&style, scroll_offset, hitbox, window, cx),
+                                )
                             });
                             (result, element_state)
                         },
