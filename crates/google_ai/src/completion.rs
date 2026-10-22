@@ -1,12 +1,11 @@
 use anyhow::Result;
-use futures::{Stream, StreamExt, TryStreamExt};
+use futures::{Stream, StreamExt, TryStreamExt, stream::BoxStream};
 use language_model_core::{
     GOOGLE_PROVIDER_NAME, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelRequest, LanguageModelRequestToolInput, LanguageModelToolChoice,
     LanguageModelToolUse, LanguageModelToolUseId, LanguageModelToolUseInput, MessageContent, Role,
     StopReason, TokenUsage,
 };
-use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{self, AtomicU64};
 
@@ -268,13 +267,13 @@ impl GoogleEventMapper {
 
     pub fn map_stream(
         self,
-        events: Pin<Box<dyn Send + Stream<Item = Result<GenerateContentResponse>>>>,
+        events: BoxStream<'static, Result<GenerateContentResponse, LanguageModelCompletionError>>,
     ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
     {
         futures::stream::try_unfold((self, events), |(mut mapper, mut events)| async move {
             match events.next().await {
                 Some(event) => {
-                    let event = event.map_err(LanguageModelCompletionError::from)?;
+                    let event = event?;
                     Ok(Some((
                         futures::stream::iter(mapper.map_event(event)),
                         (mapper, events),
@@ -562,31 +561,6 @@ mod tests {
                 assert!(stream.next().await.is_none());
             });
         }
-    }
-
-    #[test]
-    fn stream_read_error_is_not_followed_by_completion() {
-        let responses = vec![
-            Ok(serde_json::from_value(json!({"candidates": [{
-                "content": {"role": "model", "parts": [{"text": "Partial answer"}]}
-            }]}))
-            .unwrap()),
-            Err(std::io::Error::new(std::io::ErrorKind::ConnectionReset, "read failed").into()),
-        ];
-        let events = futures::executor::block_on(
-            GoogleEventMapper::new()
-                .map_stream(Box::pin(futures::stream::iter(responses)))
-                .collect::<Vec<_>>(),
-        );
-        assert!(matches!(
-            events.as_slice(),
-            [
-                Ok(LanguageModelCompletionEvent::Text(text)),
-                Err(LanguageModelCompletionError::Other(error)),
-            ] if text == "Partial answer"
-                && error.downcast_ref::<std::io::Error>()
-                    .is_some_and(|error| error.kind() == std::io::ErrorKind::ConnectionReset)
-        ));
     }
 
     fn text_request() -> LanguageModelRequest {

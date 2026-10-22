@@ -26,6 +26,7 @@ use util::{path, paths::PathStyle, rel_path::rel_path};
 use workspace::{
     AppState, ItemHandle, MultiWorkspace, Pane, Workspace,
     item::{Item, ProjectItem, test::TestItem},
+    notifications::simple_message_notification::MessageNotification,
     register_project_item,
 };
 
@@ -2528,6 +2529,160 @@ async fn test_open_svg_preview_for_single_file_worktree(cx: &mut gpui::TestAppCo
             "a file opened as its own worktree should open an SVG preview"
         );
     });
+}
+
+#[gpui::test]
+async fn test_duplicate_preserves_clipboards(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "cut.txt": "",
+            "destination": {},
+            "folder": {
+                "nested.txt": ""
+            }
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        path!("/external"),
+        json!({
+            "external.txt": ""
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    select_path(&panel, "root/cut.txt", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.cut(&Cut, window, cx);
+    });
+
+    let system_clipboard = ClipboardItem {
+        entries: vec![GpuiClipboardEntry::ExternalPaths(ExternalPaths(smallvec![
+            PathBuf::from(path!("/external/external.txt"))
+        ]))],
+    };
+    cx.write_to_clipboard(system_clipboard.clone());
+
+    select_path(&panel, "root/folder", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.duplicate(&Duplicate, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        cx.read_from_clipboard(),
+        Some(system_clipboard),
+        "Duplicate should not modify the system clipboard"
+    );
+    assert!(
+        find_project_entry(&panel, "root/folder copy", cx).is_some(),
+        "Duplicate should copy the selected project entry"
+    );
+    assert!(
+        find_project_entry(&panel, "root/folder copy/nested.txt", cx).is_some(),
+        "Duplicate should recursively copy directories"
+    );
+    assert!(
+        find_project_entry(&panel, "root/external.txt", cx).is_none(),
+        "Duplicate should not paste external clipboard entries"
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(panel.confirm_edit(true, window, cx).is_none());
+    });
+    // Paste prefers external paths on the system clipboard over the panel's pending cut.
+    cx.write_to_clipboard(ClipboardItem::new_string("unrelated".into()));
+
+    select_path(&panel, "root/destination", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.paste(&Paste, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert!(
+        find_project_entry(&panel, "root/destination/cut.txt", cx).is_some(),
+        "Duplicate should preserve entries cut within the project panel"
+    );
+    assert!(
+        find_project_entry(&panel, "root/cut.txt", cx).is_none(),
+        "Duplicate should preserve the pending cut operation"
+    );
+}
+
+#[gpui::test]
+async fn test_duplicate_with_only_root_selected_does_nothing(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "folder": {
+                "cut.txt": ""
+            }
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        path!("/external"),
+        json!({
+            "external.txt": ""
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    select_path(&panel, "root/folder/cut.txt", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.cut(&Cut, window, cx);
+    });
+
+    select_path(&panel, "root", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.duplicate(&Duplicate, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert!(
+        find_project_entry(&panel, "root/folder/cut.txt", cx).is_some(),
+        "Duplicate on a worktree root should not consume a pending cut"
+    );
+
+    cx.write_to_clipboard(ClipboardItem {
+        entries: vec![GpuiClipboardEntry::ExternalPaths(ExternalPaths(smallvec![
+            PathBuf::from(path!("/external/external.txt"))
+        ]))],
+    });
+    panel.update_in(cx, |panel, window, cx| {
+        panel.duplicate(&Duplicate, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert!(
+        find_project_entry(&panel, "root/external.txt", cx).is_none(),
+        "Duplicate on a worktree root should not paste external clipboard entries"
+    );
 }
 
 #[gpui::test]
@@ -5849,7 +6004,7 @@ async fn test_range_selection_drag_moves_entire_folded_directories(cx: &mut Test
     // directory, which the range selection must still widen to the whole row.
     for (range_selection, source_click_modifiers, copy, (source_path, target_path)) in iproduct!(
         [RangeSelection::ShiftClick, RangeSelection::ShiftArrows],
-        [Modifiers::none(), Modifiers::secondary_key()],
+        [Modifiers::none(), cx.read(Modifiers::secondary_key)],
         [false, true],
         [
             ("project/root/a", "project/root/other"),
@@ -6078,6 +6233,150 @@ async fn test_dragging_same_named_files_preserves_one_source_on_conflict(
     assert_eq!(
         remaining_sources, 1,
         "one conflicting source file should remain in place"
+    );
+}
+
+#[gpui::test]
+async fn test_drag_onto_existing_name_shows_clear_error(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                auto_fold_dirs: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "a": { "1.json": "from a" },
+            "1.json": "already here",
+            "x": { "y": { "file.txt": "from x" } },
+            "target": {
+                "x": { "file.txt": "existing directory" },
+                "other.txt": ""
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    for (source, active_ancestor, target, target_is_file, expected_message) in [
+        (
+            "root/a/1.json",
+            None,
+            "root",
+            false,
+            "Error: Failed to move `a/1.json` to `1.json`. A file or folder already exists there.",
+        ),
+        (
+            "root/a/1.json",
+            None,
+            "root/1.json",
+            true,
+            "Error: Failed to move `a/1.json` to `1.json`. A file or folder already exists there.",
+        ),
+        (
+            "root/x/y",
+            Some("root/x"),
+            "root/target",
+            false,
+            "Error: Failed to move `x` to `target/x`. A file or folder already exists there.",
+        ),
+    ] {
+        workspace.update(cx, |workspace, cx| {
+            for id in workspace.notification_ids() {
+                workspace.dismiss_notification(&id, cx);
+            }
+        });
+        if let Some(active_ancestor) = active_ancestor {
+            select_folded_path_with_mark(&panel, source, active_ancestor, cx);
+        }
+        drag_entries_onto(&panel, &[source], target, target_is_file, cx);
+
+        workspace.read_with(cx, |workspace, cx| {
+            let notifications = workspace.notification_views();
+            assert_eq!(notifications.len(), 1);
+            let notification = notifications
+                .into_iter()
+                .next()
+                .unwrap()
+                .downcast::<MessageNotification>()
+                .unwrap_or_else(|_| panic!("expected an error MessageNotification"));
+            let expected_message = if cfg!(windows) {
+                expected_message.replace('/', "\\")
+            } else {
+                expected_message.to_string()
+            };
+            assert_eq!(
+                notification
+                    .read(cx)
+                    .copied_text()
+                    .map(SharedString::as_ref),
+                Some(expected_message.as_str())
+            );
+        });
+    }
+
+    for (path, contents) in [
+        (path!("/root/a/1.json"), "from a"),
+        (path!("/root/1.json"), "already here"),
+        (path!("/root/x/y/file.txt"), "from x"),
+        (path!("/root/target/x/file.txt"), "existing directory"),
+    ] {
+        assert_eq!(fs.load(Path::new(path)).await.unwrap(), contents);
+    }
+}
+
+#[test]
+fn test_explain_move_error() {
+    let names = ("a/1.json".to_string(), "1.json".to_string());
+    let explained_message =
+        "Failed to move `a/1.json` to `1.json`. A file or folder already exists there.";
+
+    let local_collision =
+        anyhow::Error::from(std::io::Error::from(std::io::ErrorKind::AlreadyExists))
+            .context("renaming \"/root/a/1.json\" into \"/root/1.json\"");
+    assert_eq!(
+        explain_move_error(local_collision, Some(&names)).to_string(),
+        explained_message
+    );
+
+    let remote_collision = client::RpcError::from_proto(
+        &client::proto::Error {
+            message: "renaming \"/root/a/1.json\" into \"/root/1.json\": File exists (os error 17)"
+                .to_string(),
+            code: ErrorCode::AlreadyExists as i32,
+            tags: Vec::new(),
+        },
+        "RenameProjectEntry",
+    );
+    assert_eq!(
+        explain_move_error(remote_collision, Some(&names)).to_string(),
+        explained_message
+    );
+
+    let path_named_already_exists =
+        "renaming \"/root/already exists.txt\" into \"/root/b/already exists.txt\"";
+    let permission_denied =
+        anyhow::Error::from(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+            .context(path_named_already_exists);
+    assert_eq!(
+        explain_move_error(permission_denied, Some(&names)).to_string(),
+        path_named_already_exists
     );
 }
 
@@ -11615,6 +11914,57 @@ async fn test_sort_mode_mixed(cx: &mut gpui::TestAppContext) {
             "      Banana.rs",
             "    > carrot",
             "      Zebra.txt",
+        ]
+    );
+}
+
+#[gpui::test]
+async fn test_sort_order_extension(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "zebra.rs": "",
+            "carrot": {},
+            "banana.py": "",
+            "Makefile": "",
+            "apple.RS": "",
+            "aardvark.py": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+
+    cx.update(|_, cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().sort_order =
+                    Some(settings::ProjectPanelSortOrder::Extension);
+            });
+        });
+    });
+
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &[
+            "v root",
+            "    > carrot",
+            "      Makefile",
+            "      aardvark.py",
+            "      banana.py",
+            "      apple.RS",
+            "      zebra.rs",
         ]
     );
 }

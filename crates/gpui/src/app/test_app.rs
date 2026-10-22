@@ -382,7 +382,8 @@ impl<V: 'static + Render> TestAppWindow<V> {
 
     /// Simulate a keystroke.
     pub fn simulate_keystroke(&mut self, keystroke: &str) {
-        let keystroke = Keystroke::parse(keystroke).unwrap();
+        let os = self.app.borrow().platform_info().os;
+        let keystroke = Keystroke::parse_with_os(keystroke, os).unwrap();
         {
             let mut app = self.app.borrow_mut();
             let any_handle: AnyWindowHandle = self.handle.into();
@@ -444,13 +445,14 @@ impl<V: 'static + Render> TestAppWindow<V> {
         self.simulate_mouse_up(position, button);
     }
 
-    /// Simulate a scroll event.
+    /// Simulate a precise pointer scroll, as from a trackpad.
     pub fn simulate_scroll(&mut self, position: Point<Pixels>, delta: Point<Pixels>) {
-        self.simulate_event(crate::ScrollWheelEvent {
+        self.simulate_event(crate::ScrollEvent {
             position,
             delta: crate::ScrollDelta::Pixels(delta),
             modifiers: Default::default(),
             touch_phase: crate::TouchPhase::Moved,
+            source: crate::ScrollSource::Pointer,
         });
     }
 

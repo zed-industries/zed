@@ -1758,6 +1758,128 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
 }
 
 #[gpui::test]
+async fn test_save_as_notifies_language_servers_of_the_document_at_its_new_path(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "", "b.rs": "" }))
+        .await;
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                text_document_sync: Some(lsp::TextDocumentSyncCapability::Options(
+                    lsp::TextDocumentSyncOptions {
+                        save: Some(lsp::TextDocumentSyncSaveOptions::Supported(true)),
+                        ..lsp::TextDocumentSyncOptions::default()
+                    },
+                )),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let (_running_buffer, _running_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/b.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    let notifications = Arc::new(Mutex::new(Vec::new()));
+    let file_name = |uri: &lsp::Uri| {
+        uri.to_file_path()
+            .ok()
+            .and_then(|path| Some(path.file_name()?.to_string_lossy().into_owned()))
+            .unwrap_or_else(|| uri.to_string())
+    };
+    fake_server.handle_notification::<lsp::notification::DidOpenTextDocument, _>({
+        let notifications = notifications.clone();
+        move |params, _| {
+            notifications
+                .lock()
+                .push(format!("open {}", file_name(&params.text_document.uri)))
+        }
+    });
+    fake_server.handle_notification::<lsp::notification::DidSaveTextDocument, _>({
+        let notifications = notifications.clone();
+        move |params, _| {
+            notifications
+                .lock()
+                .push(format!("save {}", file_name(&params.text_document.uri)))
+        }
+    });
+    fake_server.handle_notification::<lsp::notification::DidCloseTextDocument, _>({
+        let notifications = notifications.clone();
+        move |params, _| {
+            notifications
+                .lock()
+                .push(format!("close {}", file_name(&params.text_document.uri)))
+        }
+    });
+
+    let worktree_id = project.read_with(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+    let save_as = async |buffer: &Entity<Buffer>, path: &str, cx: &mut gpui::TestAppContext| {
+        project
+            .update(cx, |project, cx| {
+                project.save_buffer_as(
+                    buffer.clone(),
+                    ProjectPath {
+                        worktree_id,
+                        path: rel_path(path).into(),
+                    },
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.executor().run_until_parked();
+        std::mem::take(&mut *notifications.lock())
+    };
+
+    // An untitled buffer only becomes a document of the server by being saved, so the server
+    // must learn about the document before its save.
+    let untitled_buffer = project.update(cx, |project, cx| {
+        project.create_local_buffer("fn main() {}", Some(rust_lang()), true, cx)
+    });
+    let _untitled_handle = project.update(cx, |project, cx| {
+        project.register_buffer_with_language_servers(&untitled_buffer, cx)
+    });
+    cx.executor().run_until_parked();
+    assert_eq!(
+        save_as(&untitled_buffer, "new.rs", cx).await,
+        vec!["open new.rs".to_string(), "save new.rs".to_string()],
+    );
+
+    let (renamed_buffer, _renamed_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+    notifications.lock().clear();
+    assert_eq!(
+        save_as(&renamed_buffer, "renamed.rs", cx).await,
+        vec![
+            "close a.rs".to_string(),
+            "open renamed.rs".to_string(),
+            "save renamed.rs".to_string(),
+        ],
+    );
+}
+
+#[gpui::test]
 async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -1980,19 +2102,20 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         )
     );
 
-    // Save notifications are reported to all servers.
-    project
-        .update(cx, |project, cx| project.save_buffer(toml_buffer, cx))
-        .await
-        .unwrap();
+    // Static save capabilities only cover the documents a server was opened with, so saving
+    // the TOML buffer notifies no server: the next save notifications are for their own buffers.
+    for buffer in [toml_buffer, rust_buffer2.clone(), json_buffer.clone()] {
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer, cx))
+            .await
+            .unwrap();
+    }
     assert_eq!(
         fake_rust_server
             .receive_notification::<lsp::notification::DidSaveTextDocument>()
             .await
             .text_document,
-        lsp::TextDocumentIdentifier::new(
-            lsp::Uri::from_file_path(path!("/dir/Cargo.toml")).unwrap()
-        )
+        lsp::TextDocumentIdentifier::new(lsp::Uri::from_file_path(path!("/dir/test2.rs")).unwrap())
     );
     assert_eq!(
         fake_json_server
@@ -2000,7 +2123,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .await
             .text_document,
         lsp::TextDocumentIdentifier::new(
-            lsp::Uri::from_file_path(path!("/dir/Cargo.toml")).unwrap()
+            lsp::Uri::from_file_path(path!("/dir/package.json")).unwrap()
         )
     );
 
@@ -11296,7 +11419,7 @@ async fn test_dynamic_formatting_registrations_honor_document_selectors(
 }
 
 #[gpui::test]
-async fn test_dynamic_formatting_registration_with_pattern_only_selector_fails_open(
+async fn test_dynamic_formatting_registration_with_pattern_only_selector(
     cx: &mut gpui::TestAppContext,
 ) {
     init_test(cx);
@@ -11343,40 +11466,55 @@ async fn test_dynamic_formatting_registration_with_pattern_only_selector_fails_o
         }
     });
 
-    fake_server
-        .request::<lsp::request::RegisterCapability>(
-            lsp::RegistrationParams {
-                registrations: vec![lsp::Registration {
-                    id: "pattern-only-formatting".to_string(),
-                    method: "textDocument/formatting".to_string(),
-                    register_options: Some(json!({
-                        "documentSelector": [{ "pattern": "**/*.nomatch" }],
-                    })),
-                }],
-            },
-            DEFAULT_LSP_REQUEST_TIMEOUT,
-        )
-        .await
-        .into_response()
-        .unwrap();
-    cx.executor().run_until_parked();
-
-    project
-        .update(cx, |project, cx| {
-            project.format(
-                HashSet::from_iter([buffer.clone()]),
-                project::lsp_store::LspFormatTarget::Buffers,
-                false,
-                project::lsp_store::FormatTrigger::Manual,
-                cx,
+    let register_formatting = async |id: &str, pattern: &str| {
+        fake_server
+            .request::<lsp::request::RegisterCapability>(
+                lsp::RegistrationParams {
+                    registrations: vec![lsp::Registration {
+                        id: id.to_string(),
+                        method: "textDocument/formatting".to_string(),
+                        register_options: Some(json!({
+                            "documentSelector": [{ "pattern": pattern }],
+                        })),
+                    }],
+                },
+                DEFAULT_LSP_REQUEST_TIMEOUT,
             )
-        })
-        .await
-        .unwrap();
+            .await
+            .into_response()
+            .unwrap();
+    };
+    let format = async |cx: &mut gpui::TestAppContext| {
+        project
+            .update(cx, |project, cx| {
+                project.format(
+                    HashSet::from_iter([buffer.clone()]),
+                    project::lsp_store::LspFormatTarget::Buffers,
+                    false,
+                    project::lsp_store::FormatTrigger::Manual,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+    };
+
+    register_formatting("pattern-only-formatting", "**/*.nomatch").await;
+    cx.executor().run_until_parked();
+    format(cx).await;
+    assert_eq!(
+        format_request_count.load(atomic::Ordering::SeqCst),
+        0,
+        "expected a pattern-only filter not matching the buffer's path not to route the formatting request",
+    );
+
+    register_formatting("matching-pattern-formatting", "**/*.rs").await;
+    cx.executor().run_until_parked();
+    format(cx).await;
     assert_eq!(
         format_request_count.load(atomic::Ordering::SeqCst),
         1,
-        "expected a pattern-only filter to fail open and route the formatting request",
+        "expected a pattern-only filter matching the buffer's path to route the formatting request",
     );
 }
 
