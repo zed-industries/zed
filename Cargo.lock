@@ -328,9 +328,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "3.4.0"
+version = "3.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72adac0ce6b0d0390df9b7a498392b24ebcf9c65c3451e5d618d936f50256289"
+checksum = "9bbe69c878aef64a3d92041e256e75acdb1bf2ea8e55ef3313e69dbb2f5bd75a"
 dependencies = [
  "agent-client-protocol-derive",
  "agent-client-protocol-schema",
@@ -346,9 +346,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol-derive"
-version = "3.4.0"
+version = "3.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "532fa6f1870bb7cb0bfe91fbcb5166393f7046e186bc590d1aa037d306d48716"
+checksum = "25b7ae92f0d1ba46ca61e7e03d4a9758e877d100b783aa1c62b140d5a9d59fb2"
 dependencies = [
  "quote",
  "syn 3.0.3",
@@ -18953,7 +18953,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2fb391ac70462b3097a755618fbf9c8f95ecc1eb379a414f7b46f202ed10db1f"
 dependencies = [
  "cc",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -20769,7 +20769,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "objc2-metal 0.3.2",
  "objc2-quartz-core 0.3.2",
- "ordered-float 4.6.0",
+ "ordered-float 5.5.0",
  "profiling",
  "range-alloc",
  "raw-window-handle",

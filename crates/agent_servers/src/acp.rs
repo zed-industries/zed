@@ -181,6 +181,11 @@ fn v1_only_mismatch(error: &agent_client_protocol::Error) -> bool {
 }
 
 fn initialization_error(error: anyhow::Error, debug_log: &AcpDebugLog) -> anyhow::Error {
+    // `connect` classifies the agent's answer in-band, but an agent that exits right after
+    // answering surfaces as a process exit, so its answer is recovered from the debug log.
+    if error.is::<UnsupportedVersion>() || error.is::<agent_client_protocol::Error>() {
+        return error;
+    }
     match debug_log.initialization_response() {
         Some(Ok(Some(value))) => {
             if serde_json::from_value::<acp::InitializeResponse>(value).is_ok_and(|response| {
@@ -193,11 +198,8 @@ fn initialization_error(error: anyhow::Error, debug_log: &AcpDebugLog) -> anyhow
         }
         Some(Err(protocol_error)) => {
             let retry_v1 = v1_only_mismatch(&protocol_error);
-            let error = if error.is::<agent_client_protocol::Error>() {
-                error
-            } else {
-                anyhow!(protocol_error).context(format!("ACP initialization failed: {error}"))
-            };
+            let error =
+                anyhow!(protocol_error).context(format!("ACP initialization failed: {error}"));
             if retry_v1 {
                 error.context(UnsupportedVersion)
             } else {
@@ -686,6 +688,15 @@ fn first_class_terminal_auth_task(
             .await?;
         Ok(terminal_auth_task(&command, &agent_id, &terminal))
     })
+}
+
+fn is_disconnect_error(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<agent_client_protocol::Error>()
+        .is_some_and(|error| {
+            agent_client_protocol::is_incoming_transport_closed(error)
+                || agent_client_protocol::is_connection_terminated(error)
+        })
 }
 
 fn map_acp_error(err: acp::Error) -> anyhow::Error {
