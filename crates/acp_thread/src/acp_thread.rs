@@ -6691,24 +6691,9 @@ impl AcpThread {
         Ok(())
     }
 
-    pub fn prepare_local_prompt(
-        &mut self,
-        id: ClientUserMessageId,
-        content: Vec<acp_v2::ContentBlock>,
-        cx: &mut Context<Self>,
-    ) -> Result<Task<()>> {
-        self.upsert_local_user_message(id, content, cx)?;
-        Ok(Task::ready(()))
-    }
-
-    pub fn finish_local_turn(
-        &mut self,
-        reason: acp_v2::StopReason,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
+    pub fn finish_local_turn(&mut self, reason: acp_v2::StopReason, cx: &mut Context<Self>) {
         self.flush_streaming_text(cx);
         self.cleanup_local_turn(&reason, true, cx);
-        Task::ready(Ok(()))
     }
 
     pub fn validate_prompt_content(&self, content: &[acp_v2::ContentBlock]) -> Result<()> {
@@ -11540,10 +11525,9 @@ mod tests {
         let source = vec!["local prompt".into()];
         thread
             .update(cx, |thread, cx| {
-                thread.prepare_local_prompt(id.clone(), vec!["initial".into()], cx)
+                thread.upsert_local_user_message(id.clone(), vec!["initial".into()], cx)
             })
-            .expect("synchronous local insertion")
-            .await;
+            .expect("synchronous local insertion");
         thread.update(cx, |thread, cx| {
             thread
                 .upsert_assistant_message(
@@ -11554,16 +11538,14 @@ mod tests {
         });
         thread
             .update(cx, |thread, cx| {
-                thread.prepare_local_prompt(ClientUserMessageId::new(), Vec::new(), cx)
+                thread.upsert_local_user_message(ClientUserMessageId::new(), Vec::new(), cx)
             })
-            .expect("empty command marker")
-            .await;
+            .expect("empty command marker");
         thread
             .update(cx, |thread, cx| {
-                thread.prepare_local_prompt(id.clone(), source.clone(), cx)
+                thread.upsert_local_user_message(id.clone(), source.clone(), cx)
             })
-            .expect("replace exact keyed local message")
-            .await;
+            .expect("replace exact keyed local message");
         let submission = thread.update(cx, |thread, cx| {
             thread.submit_receipt(
                 source.clone(),
@@ -11637,15 +11619,12 @@ mod tests {
                 .expect("generic permission before local failure")
         });
         let original_error = Arc::new(anyhow!(MaxOutputTokensError));
-        thread
-            .update(cx, |thread, cx| {
-                thread.finish_local_turn(
-                    acp_v2::StopReason::Error(acp_v2::ErrorStopReason::new()),
-                    cx,
-                )
-            })
-            .await
-            .expect("local cleanup");
+        thread.update(cx, |thread, cx| {
+            thread.finish_local_turn(
+                acp_v2::StopReason::Error(acp_v2::ErrorStopReason::new()),
+                cx,
+            )
+        });
         assert!(stops.borrow().is_empty());
         assert!(matches!(
             permission.await,
@@ -11786,7 +11765,7 @@ mod tests {
                 }
             })
         });
-        let finish = thread.update(cx, |thread, cx| {
+        thread.update(cx, |thread, cx| {
             thread
                 .upsert_local_user_message(ClientUserMessageId::new(), vec!["prompt".into()], cx)
                 .expect("accepted local message");
@@ -11798,7 +11777,6 @@ mod tests {
                 .expect("running");
             thread.finish_local_turn(acp_v2::StopReason::Refusal, cx)
         });
-        finish.await.expect("local cleanup");
         assert!(events.borrow().is_empty());
         thread.update(cx, |thread, cx| {
             assert!(thread.entries().is_empty());
@@ -24026,12 +24004,9 @@ mod tests {
                 }
                 turn.await.expect("turn settles");
             } else if matches!(lifecycle, "local refusal" | "local refusal after tool") {
-                thread
-                    .update(cx, |thread, cx| {
-                        thread.finish_local_turn(acp_v2::StopReason::Refusal, cx)
-                    })
-                    .await
-                    .expect("local refusal cleanup");
+                thread.update(cx, |thread, cx| {
+                    thread.finish_local_turn(acp_v2::StopReason::Refusal, cx)
+                });
                 thread.update(cx, |thread, cx| {
                     assert_eq!(thread.foreground_activity(), ForegroundActivity::Running);
                     thread
