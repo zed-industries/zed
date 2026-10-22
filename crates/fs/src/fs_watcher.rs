@@ -539,10 +539,8 @@ fn path_is_under(path: &SanitizedPath, root: &SanitizedPath, case_insensitive: b
 /// never be hit by a folded lookup (or vice versa); dispatch can therefore probe
 /// both forms of an event path without risking a cross-rule false match.
 ///
-/// NOTE: folding only normalizes case. macOS (APFS/HFS+) is also Unicode
-/// normalization-insensitive (NFC vs NFD); that normalization is intentionally
-/// centralized here so it can be added in one place later without touching the
-/// add/remove/dispatch call sites.
+/// Folded keys use path-component spelling so separators and `.` components
+/// agree with exact path equality. macOS also normalizes Unicode before folding.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum WatchKey {
     Exact(Arc<Path>),
@@ -555,7 +553,9 @@ impl WatchKey {
     }
 
     fn folded(path: &SanitizedPath) -> Self {
-        let lossy = path.as_path().to_string_lossy();
+        // Event ancestors omit trailing separators, even when registration paths include them.
+        let normalized_path = path.as_path().components().collect::<std::path::PathBuf>();
+        let lossy = normalized_path.to_string_lossy();
         // macOS (APFS/HFS+) compares names normalization-insensitively (NFC vs
         // NFD), and FSEvents can report NFD while a config/LSP supplies NFC, so
         // normalize before folding case. Windows (NTFS) and Linux are
@@ -1404,6 +1404,8 @@ pub fn poll_interval() -> Duration {
 mod tests {
     use super::*;
     use std::{collections::HashSet, path::PathBuf};
+
+    mod path_identity;
 
     fn rescan(path: &str) -> PathEvent {
         PathEvent {
