@@ -594,6 +594,8 @@ actions!(
         ScrollUp,
         /// Selects a commit half a page below the current selection.
         ScrollDown,
+        /// Selects the checked-out commit and scrolls it to the center of the view.
+        CenterOnHead,
         /// Toggles the selected commit's changed files between flat and tree views.
         ToggleChangedFilesView,
     ]
@@ -1892,10 +1894,10 @@ impl GitGraph {
         })
     }
 
-    /// Returns the index of the checked-out commit along with the background
-    /// used to highlight its row. This is resolved from the HEAD SHA rather
-    /// than from ref names so that a detached HEAD is highlighted as well.
-    fn head_row_highlight(&self, cx: &App) -> Option<(usize, Hsla)> {
+    /// Returns the index of the checked-out commit. This is resolved from the
+    /// HEAD SHA rather than from ref names so that a detached HEAD is found
+    /// as well.
+    fn head_entry_idx(&self, cx: &App) -> Option<usize> {
         let repository = self.get_repository(cx)?;
         let repository = repository.read(cx);
         let head_sha: Oid = repository.head_commit.as_ref()?.sha.parse().ok()?;
@@ -1903,6 +1905,13 @@ impl GitGraph {
             .get_graph_data(self.log_source.clone(), self.log_order)?
             .commit_oid_to_index
             .get(&head_sha)?;
+        (head_entry_idx < self.graph_data.commits.len()).then_some(head_entry_idx)
+    }
+
+    /// Returns the index of the checked-out commit along with the background
+    /// used to highlight its row.
+    fn head_row_highlight(&self, cx: &App) -> Option<(usize, Hsla)> {
+        let head_entry_idx = self.head_entry_idx(cx)?;
         let head_commit = self.graph_data.commits.get(head_entry_idx)?;
         let accent_color = cx
             .theme()
@@ -2270,6 +2279,25 @@ impl GitGraph {
             .min(last_entry_idx);
 
         self.select_entry(target_idx, ScrollStrategy::Nearest, cx);
+    }
+
+    fn center_on_head(&mut self, _: &CenterOnHead, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(head_entry_idx) = self.head_entry_idx(cx) else {
+            return;
+        };
+
+        // `select_entry` doesn't scroll when the entry is already selected, but
+        // HEAD may have been scrolled out of view since it was selected.
+        if self.selected_entry_idx == Some(head_entry_idx) {
+            self.table_interaction_state.update(cx, |state, cx| {
+                state
+                    .scroll_handle
+                    .scroll_to_item(head_entry_idx, ScrollStrategy::Center);
+                cx.notify();
+            });
+        } else {
+            self.select_entry(head_entry_idx, ScrollStrategy::Center, cx);
+        }
     }
 
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
@@ -4700,6 +4728,7 @@ impl Render for GitGraph {
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::scroll_up))
             .on_action(cx.listener(Self::scroll_down))
+            .on_action(cx.listener(Self::center_on_head))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::toggle_changed_files_view))
             .on_action(cx.listener(Self::focus_next_tab_stop))
@@ -7819,6 +7848,19 @@ mod tests {
             );
         });
 
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.focus_handle(cx).focus(window, cx);
+        });
+        cx.dispatch_action(CenterOnHead);
+        cx.run_until_parked();
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(
+                graph.selected_entry_idx,
+                Some(1),
+                "centering on a detached HEAD should select its commit"
+            );
+        });
+
         fs.set_head_for_repo(Path::new("/project/.git"), &[], third_sha.to_string());
         cx.run_until_parked();
 
@@ -7829,6 +7871,19 @@ mod tests {
                     .map(|(head_entry_idx, _)| head_entry_idx),
                 Some(0),
                 "the highlight should move when HEAD changes"
+            );
+        });
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.focus_handle(cx).focus(window, cx);
+        });
+        cx.dispatch_action(CenterOnHead);
+        cx.run_until_parked();
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(
+                graph.selected_entry_idx,
+                Some(0),
+                "centering should follow HEAD after it moves"
             );
         });
     }
