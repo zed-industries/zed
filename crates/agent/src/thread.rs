@@ -909,7 +909,6 @@ pub enum ThreadEvent {
         outcome: acp_thread::SelectedPermissionOutcome,
     },
     Elicitation(ElicitationRequest),
-    SubagentSpawned(acp_v2::SessionId),
     Retry(acp_thread::RetryStatus),
     ContextCompaction(acp_thread::ContextCompaction),
     ContextCompactionUpdate(acp_thread::ContextCompactionUpdate),
@@ -6011,13 +6010,6 @@ impl ToolCallEventStream {
                 }
                 .into(),
             )))
-            .ok();
-    }
-
-    pub fn subagent_spawned(&self, id: acp_v2::SessionId) {
-        self.stream
-            .sender
-            .unbounded_send(Ok(ThreadEvent::SubagentSpawned(id)))
             .ok();
     }
 

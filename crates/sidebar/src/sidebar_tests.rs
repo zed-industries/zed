@@ -4593,11 +4593,22 @@ async fn test_subagent_permission_request_marks_parent_sidebar_thread_waiting(
     save_test_thread_metadata(&parent_session_id, &project, cx).await;
 
     let subagent_session_id = acp::SessionId::new("subagent-session");
-    cx.update(|_, cx| {
-        let parent_thread = panel.read(cx).active_agent_thread(cx).unwrap();
-        parent_thread.update(cx, |thread: &mut AcpThread, cx| {
-            thread.subagent_spawned(subagent_session_id.clone(), cx);
-        });
+    let parent_thread = cx.update(|_, cx| panel.read(cx).active_agent_thread(cx).unwrap());
+    let subagent = cx
+        .update(|_, cx| {
+            let parent = parent_thread.read(cx);
+            parent.connection().clone().load_session(
+                subagent_session_id.clone(),
+                parent.project().clone(),
+                PathList::default(),
+                None,
+                cx,
+            )
+        })
+        .await
+        .expect("subagent session");
+    parent_thread.update(cx, |thread: &mut AcpThread, cx| {
+        thread.register_subagent(subagent, cx);
     });
     cx.run_until_parked();
 

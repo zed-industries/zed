@@ -6134,6 +6134,13 @@ async fn test_subagent_tool_call_end_to_end(cx: &mut TestAppContext) {
             .upgrade()
             .expect("subagent thread should be alive")
     });
+    acp_thread.read_with(cx, |parent, _| {
+        assert_eq!(
+            parent.subagent(&subagent_session_id),
+            Some(&subagent_thread),
+            "the parent thread owns the spawned subagent"
+        );
+    });
 
     let request = fake.pending_completions_for(&model).pop().unwrap();
     fake.send_text(&model, &request, "subagent task response");
@@ -6633,6 +6640,13 @@ async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
         let running = thread.running_subagent_ids(cx);
         assert_eq!(running.len(), 1, "subagent should be running");
         assert_eq!(running[0], subagent_session_id, "should be same session");
+    });
+    acp_thread.read_with(cx, |parent, _| {
+        assert_eq!(
+            parent.subagents().collect::<Vec<_>>(),
+            [&subagent_acp_thread],
+            "resuming keeps the one registered subagent"
+        );
     });
 
     // Subagent responds to follow-up

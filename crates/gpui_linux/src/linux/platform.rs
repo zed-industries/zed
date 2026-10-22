@@ -548,6 +548,17 @@ impl Drop for LinuxPlatform {
 }
 
 impl Platform for LinuxPlatform {
+    fn platform_info(&self) -> gpui::PlatformInfo {
+        gpui::PlatformInfo {
+            os: if cfg!(target_os = "freebsd") {
+                gpui::OperatingSystem::FreeBsd
+            } else {
+                gpui::OperatingSystem::Linux
+            },
+            target: gpui::PlatformTarget::Native,
+        }
+    }
+
     fn background_executor(&self) -> BackgroundExecutor {
         self.with_common(|common| common.background_executor.clone())
     }

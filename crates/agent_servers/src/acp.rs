@@ -12,10 +12,11 @@ use session_updates::{InboundSessionNotification, InboundSessionUpdate, PendingS
 pub use terminal_updates::{DecodedTerminalNotification, DecodedTerminalUpdate};
 #[cfg(any(test, feature = "test-support"))]
 pub use v1::test_support;
-pub use v1::{AcpConnection, AcpSessionList, GEMINI_TERMINAL_AUTH_METHOD_ID, connect};
+pub use v1::{AcpConnection, AcpSessionList, GEMINI_TERMINAL_AUTH_METHOD_ID};
 pub use v2::AcpV2Connection;
 
 use acp_thread::{AcpThread, AuthRequired, ElicitationStore, LoadError};
+use action_log::ActionLog;
 use agent_client_protocol::schema::{
     v1::{self as acp, ErrorCode},
     v2 as acp_v2,
@@ -26,8 +27,9 @@ use agent_client_protocol::{
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
+use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use futures::{Future, channel::mpsc};
-use gpui::{App, AsyncApp, Entity, SharedString, Subscription, Task, WeakEntity};
+use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString, Subscription, Task, WeakEntity};
 use project::agent_server_store::{AgentServerCommand, AgentServerStore};
 use project::context_server_store::ContextServerConfiguration;
 use project::{AgentId, Project};
@@ -102,6 +104,112 @@ async fn exited_load_error_after_drain(
 #[error("Unsupported version")]
 pub struct UnsupportedVersion;
 
+#[derive(Debug, Error)]
+#[error("ACP v1 fallback failed: {failure}; v2 negotiation: {negotiation:#}")]
+struct V1FallbackFailure {
+    failure: String,
+    negotiation: anyhow::Error,
+}
+
+fn fallback_failure(failure: anyhow::Error, negotiation: anyhow::Error) -> anyhow::Error {
+    let context = V1FallbackFailure {
+        failure: format!("{failure:#}"),
+        negotiation,
+    };
+    // The final attempt's typed error must remain authoritative for UI error classification.
+    failure.context(context)
+}
+
+pub async fn connect(
+    agent_id: AgentId,
+    project: Entity<Project>,
+    command: AgentServerCommand,
+    agent_server_store: WeakEntity<AgentServerStore>,
+    default_mode: Option<acp_v2::SessionConfigValueId>,
+    default_config_options: HashMap<String, settings::AgentConfigOptionValue>,
+    cx: &mut AsyncApp,
+) -> Result<Rc<dyn acp_thread::AgentConnection>> {
+    let negotiation_error = if cx.update(|cx| cx.has_flag::<AcpBetaFeatureFlag>()) {
+        match AcpV2Connection::stdio(
+            agent_id.clone(),
+            project.clone(),
+            command.clone(),
+            agent_server_store.clone(),
+            cx,
+        )
+        .await
+        {
+            Ok(connection) => return Ok(Rc::new(connection)),
+            Err(error) if error.is::<UnsupportedVersion>() => Some(error),
+            Err(error) => return Err(error),
+        }
+    } else {
+        None
+    };
+    v1::connect(
+        agent_id,
+        project,
+        command,
+        agent_server_store,
+        default_mode,
+        default_config_options,
+        cx,
+    )
+    .await
+    .map_err(|error| match negotiation_error {
+        Some(negotiation) => fallback_failure(error, negotiation),
+        None => error,
+    })
+}
+
+fn v1_only_mismatch(error: &agent_client_protocol::Error) -> bool {
+    if error.code != agent_client_protocol::Error::new(-32022, "").code {
+        return false;
+    }
+    let Some(data) = error.data.as_ref() else {
+        return false;
+    };
+    let Some(supported) = data.get("supported").and_then(serde_json::Value::as_array) else {
+        return false;
+    };
+    data.get("requested").and_then(serde_json::Value::as_u64) == Some(2)
+        && supported
+            .iter()
+            .all(|value| value.as_u64().is_some_and(|version| version > 0))
+        && supported.iter().any(|value| value.as_u64() == Some(1))
+        && !supported.iter().any(|value| value.as_u64() == Some(2))
+}
+
+fn initialization_error(error: anyhow::Error, debug_log: &AcpDebugLog) -> anyhow::Error {
+    // `connect` classifies the agent's answer in-band, but an agent that exits right after
+    // answering surfaces as a process exit, so its answer is recovered from the debug log.
+    if error.is::<UnsupportedVersion>() || error.is::<agent_client_protocol::Error>() {
+        return error;
+    }
+    match debug_log.initialization_response() {
+        Some(Ok(Some(value))) => {
+            if serde_json::from_value::<acp::InitializeResponse>(value).is_ok_and(|response| {
+                response.protocol_version == agent_client_protocol::schema::ProtocolVersion::V1
+            }) {
+                error.context(UnsupportedVersion)
+            } else {
+                error
+            }
+        }
+        Some(Err(protocol_error)) => {
+            let retry_v1 = v1_only_mismatch(&protocol_error);
+            let error =
+                anyhow!(protocol_error).context(format!("ACP initialization failed: {error}"));
+            if retry_v1 {
+                error.context(UnsupportedVersion)
+            } else {
+                error
+            }
+        }
+        _ => error,
+    }
+}
+
 /// Helper for flattening the nested `Result` shapes that come out of
 /// `entity.update(cx, |_, cx| fallible_op(cx))` into a single `Result<T,
 /// acp::Error>`.
@@ -141,6 +249,9 @@ struct ClientContext {
     request_elicitations: Entity<ElicitationStore>,
     // Legacy and ingress-only contexts do not track caller ownership of outgoing RPCs.
     active_request_scopes: Option<RefCell<HashSet<acp_v2::RequestId>>>,
+    /// A v1 agent may only send `subagent_update` after Zed advertises the `subagents`
+    /// client capability. v2 includes subagents in every session.
+    accepts_subagent_updates: bool,
 }
 
 fn dispatch_queue_closed_error() -> acp::Error {
@@ -579,6 +690,15 @@ fn first_class_terminal_auth_task(
     })
 }
 
+fn is_disconnect_error(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<agent_client_protocol::Error>()
+        .is_some_and(|error| {
+            agent_client_protocol::is_incoming_transport_closed(error)
+                || agent_client_protocol::is_connection_terminated(error)
+        })
+}
+
 fn map_acp_error(err: acp::Error) -> anyhow::Error {
     let error = anyhow!(err);
     match AuthRequired::from_error(&error) {
@@ -638,12 +758,115 @@ fn close_undelivered_session(
         .log_err();
 }
 
+/// Applies a `subagent_update` received on `parent`'s stream. The first update for a
+/// session announces it: Zed creates its thread, routes the session's traffic on this
+/// connection, and hands the thread to the parent. Later updates patch the association.
+/// The update's `state` is left to the caller, since only v1 uses it as the subagent's
+/// activity.
+fn apply_subagent_update(
+    parent: &Entity<AcpThread>,
+    update: &acp_v2::SubagentUpdate,
+    sessions: &Rc<RefCell<HashMap<acp_v2::SessionId, AcpSession>>>,
+    cx: &mut App,
+) -> Result<Entity<AcpThread>> {
+    let parent_session_id = parent.read(cx).session_id().clone();
+    let session_id = update.session_id.clone();
+    if let Some(subagent) = parent.read(cx).subagent(&session_id).cloned() {
+        subagent.update(cx, |subagent, cx| {
+            subagent.update_subagent_association(update, cx)
+        })?;
+        return Ok(subagent);
+    }
+    // Announcing any other session this connection routes, including the parent itself,
+    // would reparent it, so this also rules out cycles.
+    anyhow::ensure!(
+        !sessions.borrow().contains_key(&session_id),
+        "Session {session_id} cannot become a subagent of {parent_session_id}"
+    );
+
+    let (connection, project, parent_action_log) = {
+        let parent = parent.read(cx);
+        (
+            parent.connection().clone(),
+            parent.project().clone(),
+            parent.action_log().clone(),
+        )
+    };
+    let action_log =
+        cx.new(|_| ActionLog::new(project.clone()).with_linked_action_log(parent_action_log));
+    let subagent = cx.new(|cx| {
+        AcpThread::new(
+            Some(parent_session_id),
+            None,
+            None,
+            connection,
+            project,
+            action_log,
+            session_id.clone(),
+            watch::Receiver::constant(acp_v2::PromptCapabilities::default()),
+            cx,
+        )
+        .agent_owned()
+    });
+    subagent.update(cx, |subagent, cx| {
+        subagent.update_subagent_association(update, cx)
+    })?;
+    // Unlike a session Zed opened, releasing a subagent must not close it: the agent
+    // releases subagents when their parent closes.
+    let release_subscription = cx.observe_release(&subagent, {
+        let sessions = Rc::downgrade(sessions);
+        let session_id = session_id.clone();
+        let thread_id = subagent.entity_id();
+        move |_, _| {
+            let Some(sessions) = sessions.upgrade() else {
+                return;
+            };
+            let mut sessions = sessions.borrow_mut();
+            if sessions
+                .get(&session_id)
+                .is_some_and(|session| session.thread.entity_id() == thread_id)
+            {
+                sessions.remove(&session_id);
+            }
+        }
+    });
+    sessions.borrow_mut().insert(
+        session_id,
+        AcpSession {
+            thread: subagent.downgrade(),
+            suppress_abort_err: false,
+            session_modes: None,
+            config_options: None,
+            default_config_task: None,
+            _release_subscription: release_subscription,
+        },
+    );
+    parent.update(cx, |parent, cx| {
+        parent.register_subagent(subagent.clone(), cx)
+    });
+    Ok(subagent)
+}
+
 fn apply_v2_session_notification(
     notification: InboundSessionNotification,
     thread: &WeakEntity<AcpThread>,
-    sessions: &RefCell<HashMap<acp_v2::SessionId, AcpSession>>,
+    sessions: &Rc<RefCell<HashMap<acp_v2::SessionId, AcpSession>>>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
+    if let InboundSessionUpdate::Subagent(update) = &notification.update {
+        let parent = thread
+            .upgrade()
+            .context("Session was released before its subagent was announced")?;
+        let parent_session_id = parent.read_with(cx, |parent, _| parent.session_id().clone());
+        anyhow::ensure!(
+            parent_session_id == notification.session_id,
+            "Subagent update belongs to a different ACP session"
+        );
+        // In v2 the subagent's own `state_update` reports its activity; the parent's copy
+        // only mirrors it.
+        cx.update(|cx| apply_subagent_update(&parent, update, sessions, cx))?;
+        return Ok(());
+    }
     if let InboundSessionUpdate::ConfigOptions(update) = &notification.update {
         let config_options = {
             let mut sessions = sessions.borrow_mut();
@@ -886,4 +1109,339 @@ fn handle_v2_complete_elicitation(
     ctx.request_elicitations.update(cx, |store, cx| {
         store.complete_url_elicitation(&elicitation_id, cx);
     })
+}
+
+#[cfg(all(test, unix))]
+mod selection_tests {
+    use super::*;
+    use gpui::{TestAppContext, UpdateGlobal as _};
+    use serde_json::json;
+
+    fn set_beta(enabled: bool, cx: &mut App) {
+        cx.update_flags(
+            false,
+            if enabled {
+                vec!["acp-beta".into()]
+            } else {
+                vec![]
+            },
+        );
+        settings::SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .feature_flags
+                    .get_or_insert_default()
+                    .insert("acp-beta".into(), if enabled { "on" } else { "off" }.into());
+            });
+        });
+        assert_eq!(cx.has_flag::<AcpBetaFeatureFlag>(), enabled);
+    }
+
+    #[gpui::test]
+    async fn beta_selection_uses_fresh_v1_fallback_only_for_version_mismatch(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let mut store = settings::SettingsStore::test(cx);
+            store.register_setting::<feature_flags::FeatureFlagsSettings>();
+            cx.set_global(store);
+            release_channel::init("0.0.0".parse().expect("version"), cx);
+        });
+        cx.executor().allow_parking();
+        let directory = tempfile::tempdir().expect("working directory");
+        let project = Project::example([directory.path()], &mut cx.to_async()).await;
+        let v1 = r#""result":{"protocolVersion":1,"agentCapabilities":{},"agentInfo":{"name":"selected-v1","version":"1"}}"#;
+        let v2 = r#""result":{"protocolVersion":2,"info":{"name":"selected-v2","version":"1"},"capabilities":{"session":{}}}"#;
+        for (beta, response, exit_after_response, expected, requests) in [
+            (false, v2, false, Some(false), "1"),
+            (true, v2, false, Some(true), "2"),
+            (true, v1, false, Some(false), "2 1"),
+            (
+                true,
+                r#""error":{"code":-32022,"message":"Unsupported protocol version","data":{"requested":2,"supported":[1]}}"#,
+                false,
+                Some(false),
+                "2 1",
+            ),
+            (
+                true,
+                r#""error":{"code":-32022,"message":"Unsupported protocol version","data":{"requested":2,"supported":[1]}}"#,
+                true,
+                Some(false),
+                "2 1",
+            ),
+            (
+                true,
+                r#""error":{"code":-32022,"message":"Unsupported protocol version","data":{"requested":2,"supported":[3]}}"#,
+                true,
+                None,
+                "2",
+            ),
+            (
+                true,
+                r#""error":{"code":-32022,"message":"Unsupported protocol version","data":{"requested":2,"supported":[1,2]}}"#,
+                false,
+                None,
+                "2",
+            ),
+            (
+                true,
+                r#""error":{"code":-32602,"message":"Bad initialize parameters"}"#,
+                false,
+                None,
+                "2",
+            ),
+            (
+                true,
+                r#""result":{"protocolVersion":1},"error":{"code":-32022,"message":"Invalid envelope","data":{"requested":2,"supported":[1]}}"#,
+                true,
+                None,
+                "2",
+            ),
+            (
+                true,
+                r#""result":{"info":{"name":"malformed","version":"1"}}"#,
+                false,
+                None,
+                "2",
+            ),
+            (
+                true,
+                r#""result":{"protocolVersion":"malformed","agentCapabilities":{}}"#,
+                false,
+                None,
+                "2",
+            ),
+            (true, "", true, None, "2"),
+        ] {
+            cx.update(|cx| {
+                set_beta(beta, cx);
+            });
+            let trace = directory.path().join("connections");
+            std::fs::write(&trace, "").expect("clear trace");
+            let command = AgentServerCommand {
+                path: "/bin/sh".into(),
+                args: vec!["-c".into(), r#"
+printf 'start %s\n' "$$" >> "$ACP_SELECTION_TRACE"
+while IFS= read -r request; do
+    case "$request" in
+        *'"method":"initialize"'*)
+            id=${request#*\"id\":}; id=${id%%,*}
+            case "$request" in
+                *'"protocolVersion":2'*)
+                    printf 'initialize 2\n' >> "$ACP_SELECTION_TRACE"
+                    if [ -n "$ACP_SELECTION_RESPONSE" ]; then
+                        printf '{"jsonrpc":"2.0","id":%s,%s}\n' "$id" "$ACP_SELECTION_RESPONSE"
+                    fi
+                    if [ "$ACP_SELECTION_EXIT" = 1 ]; then exit 7; fi
+                    ;;
+                *)
+                    printf 'initialize 1\n' >> "$ACP_SELECTION_TRACE"
+                    printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{},"agentInfo":{"name":"selected-v1","version":"1"}}}\n' "$id"
+                    ;;
+            esac
+            ;;
+    esac
+done
+"#.into()],
+                env: Some(HashMap::from_iter([
+                    ("ACP_SELECTION_TRACE".into(), trace.to_string_lossy().into_owned()),
+                    ("ACP_SELECTION_RESPONSE".into(), response.into()),
+                    ("ACP_SELECTION_EXIT".into(), if exit_after_response { "1" } else { "0" }.into()),
+                ])),
+            };
+            let connecting = cx.spawn({
+                let project = project.clone();
+                async move |mut cx| {
+                    connect(
+                        AgentId::new("selection"),
+                        project,
+                        command,
+                        WeakEntity::new_invalid(),
+                        None,
+                        HashMap::default(),
+                        &mut cx,
+                    )
+                    .await
+                }
+            });
+            let timeout = cx
+                .background_executor
+                .timer(std::time::Duration::from_secs(10));
+            futures::pin_mut!(connecting, timeout);
+            let result = match futures::future::select(connecting, timeout).await {
+                futures::future::Either::Left((result, _)) => result,
+                _ => panic!("selection timed out: {response}"),
+            };
+            if let Some(v2) = expected {
+                let connection = result.expect("selected connection");
+                assert_eq!(
+                    connection.clone().downcast::<AcpV2Connection>().is_some(),
+                    v2
+                );
+                cx.update(|cx| set_beta(false, cx));
+                assert_eq!(
+                    connection.clone().downcast::<AcpV2Connection>().is_some(),
+                    v2
+                );
+                connection.shutdown();
+                drop(connection);
+            } else {
+                let error = result
+                    .err()
+                    .unwrap_or_else(|| panic!("unexpected successful selection for {response}"));
+                if response.starts_with(r#""error":{"code":-32022"#) {
+                    let protocol_error = error
+                        .downcast_ref::<agent_client_protocol::Error>()
+                        .expect("structured mismatch retained");
+                    assert_eq!(
+                        protocol_error.code,
+                        agent_client_protocol::Error::new(-32022, "").code
+                    );
+                    assert!(protocol_error.data.is_some());
+                }
+            }
+            let trace = std::fs::read_to_string(&trace).expect("connection trace");
+            let actual = trace
+                .lines()
+                .filter_map(|line| line.strip_prefix("initialize "))
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert_eq!(actual, requests, "{response}");
+            let processes = trace
+                .lines()
+                .filter_map(|line| line.strip_prefix("start "))
+                .collect::<Vec<_>>();
+            assert_eq!(processes.len(), requests.split_whitespace().count());
+            if let [first, second] = processes.as_slice() {
+                assert_ne!(first, second, "fallback must launch a fresh process");
+            }
+        }
+    }
+
+    #[test]
+    fn version_mismatch_requires_valid_v1_only_support() {
+        for data in [
+            json!({"requested": 1, "supported": [1]}),
+            json!({"requested": 2, "supported": [1, 2]}),
+            json!({"requested": 2, "supported": [0, 1]}),
+            json!({"requested": 2, "supported": [1, "2"]}),
+            json!({"requested": 2}),
+        ] {
+            assert!(!v1_only_mismatch(
+                &agent_client_protocol::Error::new(-32022, "").data(data)
+            ));
+        }
+        assert!(!v1_only_mismatch(
+            &agent_client_protocol::Error::invalid_params()
+                .data(json!({"requested": 2, "supported": [1]}))
+        ));
+    }
+
+    #[test]
+    fn fallback_failure_keeps_the_final_error_authoritative() {
+        let negotiation_data = json!({"requested": 2, "supported": [1]});
+        let final_data = json!({"attempt": "v1"});
+        let error = fallback_failure(
+            anyhow!(agent_client_protocol::Error::invalid_params().data(final_data.clone())),
+            anyhow!(
+                agent_client_protocol::Error::new(-32022, "Unsupported")
+                    .data(negotiation_data.clone())
+            )
+            .context(UnsupportedVersion),
+        );
+        let info = acp_thread::ProtocolErrorInfo::from_error(&error).expect("final protocol error");
+        assert_eq!(info.code, -32602);
+        assert_eq!(info.data, Some(&final_data));
+        assert!(!error.is::<UnsupportedVersion>());
+        let context = error
+            .downcast_ref::<V1FallbackFailure>()
+            .expect("negotiation context");
+        assert_eq!(
+            context
+                .negotiation
+                .downcast_ref::<agent_client_protocol::Error>()
+                .expect("original negotiation")
+                .data,
+            Some(negotiation_data)
+        );
+    }
+
+    #[gpui::test]
+    #[cfg_attr(not(feature = "e2e"), ignore)]
+    async fn claude_adapter_initialize_smoke(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let mut store = settings::SettingsStore::test(cx);
+            store.register_setting::<feature_flags::FeatureFlagsSettings>();
+            cx.set_global(store);
+            release_channel::init("0.0.0".parse().expect("version"), cx);
+        });
+        cx.executor().allow_parking();
+        let directory = tempfile::tempdir().expect("isolated working directory");
+        let config = directory.path().join("claude-config");
+        std::fs::create_dir(&config).expect("isolated Claude configuration");
+        let project = Project::example([directory.path()], &mut cx.to_async()).await;
+        for (beta, adapter_v2, expected_v2) in [
+            (false, true, false),
+            (true, true, true),
+            (true, false, false),
+        ] {
+            cx.update(|cx| set_beta(beta, cx));
+            let command = AgentServerCommand {
+                path: "npx".into(),
+                args: vec![
+                    "--yes".into(),
+                    "@agentclientprotocol/claude-agent-acp@0.94.0".into(),
+                ],
+                env: Some(HashMap::from_iter([
+                    (
+                        "CLAUDE_CONFIG_DIR".into(),
+                        config.to_string_lossy().into_owned(),
+                    ),
+                    (
+                        "CLAUDE_AGENT_ACP_EXPERIMENTAL_V2".into(),
+                        if adapter_v2 { "1" } else { "0" }.into(),
+                    ),
+                    ("ANTHROPIC_API_KEY".into(), "".into()),
+                    ("CLAUDE_CODE_OAUTH_TOKEN".into(), "".into()),
+                ])),
+            };
+            let connecting = cx.spawn({
+                let project = project.clone();
+                async move |mut cx| {
+                    connect(
+                        AgentId::new("claude-acp"),
+                        project,
+                        command,
+                        WeakEntity::new_invalid(),
+                        None,
+                        HashMap::default(),
+                        &mut cx,
+                    )
+                    .await
+                }
+            });
+            let timeout = cx
+                .background_executor
+                .timer(std::time::Duration::from_secs(30));
+            futures::pin_mut!(connecting, timeout);
+            let connection = match futures::future::select(connecting, timeout).await {
+                futures::future::Either::Left((result, _)) => {
+                    result.expect("Claude adapter handshake")
+                }
+                _ => panic!("Claude adapter handshake timed out"),
+            };
+            let actual_v2 = connection.clone().downcast::<AcpV2Connection>().is_some();
+            assert_eq!(
+                actual_v2, expected_v2,
+                "beta={beta} adapter_v2={adapter_v2}"
+            );
+            println!(
+                "Claude ACP 0.94.0: beta={beta}, adapter_v2={adapter_v2}, selected_v2={actual_v2}"
+            );
+            connection.shutdown();
+            drop(connection);
+            cx.run_until_parked();
+        }
+    }
 }
