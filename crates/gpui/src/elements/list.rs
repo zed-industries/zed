@@ -1083,6 +1083,7 @@ impl StateInner {
     ) -> LayoutItemsResponse {
         let old_items = self.items.clone();
         let mut measured_items = VecDeque::new();
+        let mut measured_probe = false;
         let mut item_layouts = VecDeque::new();
         let mut rendered_height = padding.top;
         let mut max_item_width = px(0.);
@@ -1128,6 +1129,7 @@ impl StateInner {
             {
                 (size, self.is_item_ready(item_index, cx))
             } else {
+                measured_probe |= visible_height >= available_height;
                 let mut element = render_item(item_index, window, cx);
                 let element_size = element.layout_as_root(available_item_space, window, cx);
                 let ready = self.is_item_ready(item_index, cx);
@@ -1239,6 +1241,7 @@ impl StateInner {
                     let size = if let ListItem::Measured { size, .. } = item {
                         *size
                     } else {
+                        measured_probe = true;
                         let mut element = render_item(cursor.start().0, window, cx);
                         element.layout_as_root(available_item_space, window, cx)
                     };
@@ -1262,6 +1265,11 @@ impl StateInner {
         cursor.seek(&Count(measured_range.end), Bias::Right);
         new_items.append(cursor.suffix(), ());
         self.items = new_items;
+        if measured_probe {
+            // The next layout skips these now-measured offscreen rows. Replaying
+            // this frame would keep their probe-only element state alive.
+            self.version.bump();
+        }
 
         // If follow_tail mode is on but the user scrolled away
         // (is_following is false), check whether the current scroll

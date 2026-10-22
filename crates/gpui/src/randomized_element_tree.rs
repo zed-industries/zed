@@ -1882,8 +1882,10 @@ mod tests {
 
     fn virtual_list_scroll_regression(cx: &mut TestAppContext, uniform: bool) {
         let windows = virtual_list_windows(cx);
-        for frame in 0..2 {
+        for frame in 0..4 {
             let snapshots = windows.map(|window| {
+                let test_window = cx.test_window(window.into());
+                let wakes = test_window.frame_wake_count();
                 if frame == 1 {
                     let root = window.root(cx).expect("virtual list root");
                     root.read_with(cx, |root, _| {
@@ -1897,11 +1899,20 @@ mod tests {
                         }
                     });
                 }
-                cx.update_window(window.into(), |_, window, cx| {
-                    window.draw(cx).clear(cx);
-                    window.view_reuse_snapshot(|_| "root".into())
-                })
-                .expect("virtual list window")
+                let snapshot = cx
+                    .update_window(window.into(), |_, window, cx| {
+                        window.draw(cx).clear(cx);
+                        window.view_reuse_snapshot(|_| "root".into())
+                    })
+                    .expect("virtual list window");
+                if frame > 0 {
+                    assert_eq!(
+                        test_window.frame_wake_count(),
+                        wakes,
+                        "scroll versions and probe reconciliation must not request frames"
+                    );
+                }
+                snapshot
             });
             snapshots[0]
                 .compare(&snapshots[1], frame)
@@ -1913,7 +1924,6 @@ mod tests {
         }
     }
 
-    #[ignore = "retained replay keeps layout-only overdraw probe element state alive"]
     #[gpui::test(iterations = 2)]
     fn randomized_virtual_lists_match_forced_reconstruction(
         mut rng: StdRng,
