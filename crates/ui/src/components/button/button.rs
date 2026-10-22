@@ -530,23 +530,23 @@ impl RenderOnce for Button {
 
         if let Some(key_binding) = wrapped_key_binding {
             let row_height = self.base.size.rems();
+            let content = content
+                .flex_none()
+                .min_h(row_height)
+                .when(self.truncate, |this| this.max_w_full());
+            let key_binding = h_flex().flex_none().min_h(row_height).child(key_binding);
+            // Wrapping follows child order even in a reversed row, so order the
+            // children instead to keep a `Start` keybinding on the first line.
             self.base.auto_height().child(
                 h_flex()
                     .w_full()
                     .flex_wrap()
                     .justify_center()
                     .gap_x(DynamicSpacing::Base06.rems(cx))
-                    .when(
-                        self.key_binding_position == KeybindingPosition::Start,
-                        |this| this.flex_row_reverse(),
-                    )
-                    .child(
-                        content
-                            .flex_none()
-                            .min_h(row_height)
-                            .when(self.truncate, |this| this.max_w_full()),
-                    )
-                    .child(h_flex().flex_none().min_h(row_height).child(key_binding)),
+                    .map(|this| match self.key_binding_position {
+                        KeybindingPosition::Start => this.child(key_binding).child(content),
+                        KeybindingPosition::End => this.child(content).child(key_binding),
+                    }),
             )
         } else {
             self.base.child(content)
