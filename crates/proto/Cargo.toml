@@ -19,7 +19,7 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 prost.workspace = true
-serde.workspace = true
+serde = { workspace = true, features = ["derive"] }
 
 [build-dependencies]
 prost-build.workspace = true

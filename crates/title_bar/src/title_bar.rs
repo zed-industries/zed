@@ -272,6 +272,7 @@ impl Render for TitleBar {
                     linked_worktree_short_name(
                         name_anchor_path,
                         repo.work_directory_abs_path.as_ref(),
+                        repo.path_style,
                     )
                 })
                 .or_else(|| {
@@ -1480,7 +1481,11 @@ mod tests {
 
         assert_eq!(
             name_anchor_path.and_then(|name_anchor_path| {
-                linked_worktree_short_name(name_anchor_path, work_directory_path)
+                linked_worktree_short_name(
+                    name_anchor_path,
+                    work_directory_path,
+                    PathStyle::local(),
+                )
             }),
             Some("plum-warbler".into())
         );
