@@ -1628,10 +1628,7 @@ fn random_opacity(rng: &mut StdRng) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        AnyWindowHandle, Background, BorderStyle, Bounds, ContentMask, Corners, Edges, Pixels,
-        ScaledPixels, Size, TestAppContext, size,
-    };
+    use crate::{AnyWindowHandle, Bounds, Pixels, Size, TestAppContext, size};
     use proptest::prelude::*;
     use std::collections::BTreeSet;
 
@@ -2816,20 +2813,14 @@ mod tests {
 
     #[derive(Debug, PartialEq)]
     struct SceneSnapshot {
-        quads: Vec<QuadSnapshot>,
+        primitives: Vec<String>,
         element_ids: BTreeSet<u64>,
     }
 
     impl SceneSnapshot {
         fn from_window(window: &Window) -> Self {
             Self {
-                quads: window
-                    .rendered_frame
-                    .scene
-                    .quads
-                    .iter()
-                    .map(QuadSnapshot::from)
-                    .collect(),
+                primitives: window.rendered_frame.scene.rendered_snapshot(),
                 element_ids: window
                     .rendered_frame
                     .element_states
@@ -2842,33 +2833,6 @@ mod tests {
                         (name.as_ref() == "randomized-element").then_some(*element_id)
                     })
                     .collect(),
-            }
-        }
-    }
-
-    #[derive(Debug, PartialEq)]
-    struct QuadSnapshot {
-        order: u32,
-        border_style: BorderStyle,
-        bounds: Bounds<ScaledPixels>,
-        content_mask: ContentMask<ScaledPixels>,
-        background: Background,
-        border_color: Hsla,
-        corner_radii: Corners<ScaledPixels>,
-        border_widths: Edges<ScaledPixels>,
-    }
-
-    impl From<&crate::Quad> for QuadSnapshot {
-        fn from(quad: &crate::Quad) -> Self {
-            Self {
-                order: quad.order,
-                border_style: quad.border_style,
-                bounds: quad.bounds,
-                content_mask: quad.content_mask,
-                background: quad.background,
-                border_color: quad.border_color,
-                corner_radii: quad.corner_radii,
-                border_widths: quad.border_widths,
             }
         }
     }

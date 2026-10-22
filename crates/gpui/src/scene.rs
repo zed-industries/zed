@@ -196,6 +196,10 @@ impl Scene {
                 range.start.ordering..range.end.ordering,
             );
         if !bulk {
+            #[cfg(any(test, feature = "bench-support"))]
+            {
+                stats.scene_replay_fallbacks += 1;
+            }
             self.replay(
                 range.start.operations.range_to(range.end.operations),
                 previous,
@@ -2059,10 +2063,16 @@ mod tests {
                     fresh.reuse_snapshot(),
                     "seed={seed} frame={iteration}"
                 );
+                assert_eq!(
+                    target.rendered_snapshot(),
+                    fresh.rendered_snapshot(),
+                    "seed={seed} frame={iteration}"
+                );
                 previous = target;
                 ranges = next_ranges;
             }
             assert!(stats.scene_bulk_segments > 0);
+            assert!(stats.scene_replay_fallbacks > 0);
         }
     }
 }

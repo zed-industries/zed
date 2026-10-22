@@ -244,6 +244,7 @@ fn measure_in_window(
         mutate(tree, window, cx);
         frames += 1;
     });
+    window.update(|window, _| report_scene_stats(group, input.family, window));
     assert!(
         frames_that_rendered * 2 >= frames,
         "the notified root or entity re-rendered in {frames_that_rendered} of {frames} frames"
@@ -252,6 +253,19 @@ fn measure_in_window(
     Measured {
         frames,
         entity_renders,
+    }
+}
+
+fn report_scene_stats(group: &str, input: &str, window: &Window) {
+    if std::env::var("GPUI_BENCH_SCENE_STATS").as_deref() == Ok("1") {
+        let scene = window.rendered_scene();
+        eprintln!(
+            "scene stats {group}/{input}: batches={}, paths={}, surfaces={}, work={:?}",
+            scene.batches().count(),
+            scene.paths.len(),
+            scene.surfaces.len(),
+            window.view_reuse_stats(),
+        );
     }
 }
 
@@ -1001,6 +1015,7 @@ fn measure_text_panel_updates(
         }
         updates += 1;
     });
+    window.update(|window, _| report_scene_stats("TextPanels", &panel_count.to_string(), window));
     assert!(updates > 0);
     assert!(
         panel_renders.get() > initial_panel_renders,

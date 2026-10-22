@@ -1319,6 +1319,7 @@ pub struct ViewReuseStats {
     pub cached_hits: usize,
     pub prepaint_reuse_calls: usize,
     pub scene_bulk_segments: usize,
+    pub scene_replay_fallbacks: usize,
     pub index_fixups: usize,
 }
 
