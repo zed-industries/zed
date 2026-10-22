@@ -1604,6 +1604,368 @@ mod tests {
     const MUTATION_COUNT: usize = 32;
     const WINDOW_SIZE: Size<Pixels> = size(px(1200.0), px(900.0));
 
+    #[derive(Clone, Copy)]
+    struct DependencyValue {
+        color: u32,
+        extent: f32,
+    }
+    impl crate::Global for DependencyValue {}
+
+    #[derive(Clone, Copy)]
+    enum DependencyPhase {
+        Render,
+        Prepaint,
+        Paint,
+    }
+
+    #[derive(Clone)]
+    struct DependencyLeaf {
+        models: [Entity<DependencyValue>; 2],
+        secondary: bool,
+        phase: DependencyPhase,
+        decoration: u8,
+        priority: usize,
+        anchor: crate::Point<Pixels>,
+    }
+
+    impl DependencyLeaf {
+        fn value(&self, cx: &crate::App) -> DependencyValue {
+            let model = self.models[usize::from(self.secondary)].read(cx);
+            let global = cx.global::<DependencyValue>();
+            DependencyValue {
+                color: model.color ^ global.color,
+                extent: (model.extent + global.extent) * 0.5,
+            }
+        }
+    }
+
+    impl Render for DependencyLeaf {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let initial = if matches!(self.phase, DependencyPhase::Render) {
+                self.value(cx)
+            } else {
+                DependencyValue {
+                    color: 0,
+                    extent: 0.0,
+                }
+            };
+            let prepaint = self.clone();
+            let paint = self.clone();
+            let body = div()
+                .w(px(120.0))
+                .h(px(90.0))
+                .child(
+                    crate::canvas(
+                        move |bounds, window, cx| {
+                            let value = if matches!(prepaint.phase, DependencyPhase::Prepaint) {
+                                prepaint.value(cx)
+                            } else {
+                                initial
+                            };
+                            if matches!(prepaint.phase, DependencyPhase::Prepaint) {
+                                window.insert_hitbox(
+                                    Bounds::new(bounds.origin, size(px(value.extent), px(30.0))),
+                                    crate::HitboxBehavior::Normal,
+                                );
+                            }
+                            value
+                        },
+                        move |bounds, value, window, cx| {
+                            let value = if matches!(paint.phase, DependencyPhase::Paint) {
+                                paint.value(cx)
+                            } else {
+                                value
+                            };
+                            window.paint_quad(crate::fill(
+                                Bounds::new(bounds.origin, size(px(value.extent), px(30.0))),
+                                crate::rgb(value.color),
+                            ));
+                        },
+                    )
+                    .size_full(),
+                )
+                .into_any_element();
+            match self.decoration {
+                1 => crate::deferred(body)
+                    .with_priority(self.priority)
+                    .into_any_element(),
+                2 => crate::anchored()
+                    .position(self.anchor)
+                    .child(body)
+                    .into_any_element(),
+                3 => crate::deferred(crate::anchored().position(self.anchor).child(body))
+                    .with_priority(self.priority)
+                    .into_any_element(),
+                4 => crate::deferred(
+                    div().child(crate::deferred(body).with_priority(5 - self.priority)),
+                )
+                .with_priority(self.priority)
+                .into_any_element(),
+                _ => body,
+            }
+        }
+    }
+
+    struct DependencyRoot {
+        leaves: Vec<Entity<DependencyLeaf>>,
+        hidden: Option<crate::EntityId>,
+    }
+
+    impl Render for DependencyRoot {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().flex().size_full().children((0..2).map(|parent| {
+                div()
+                    .id(("dependency-parent", parent))
+                    .flex()
+                    .flex_col()
+                    .w(px(400.0))
+                    .h(px(500.0))
+                    .children(self.leaves.iter().enumerate().filter_map(|(index, leaf)| {
+                        (index % 2 == parent && self.hidden != Some(leaf.entity_id()))
+                            .then(|| leaf.clone())
+                    }))
+            }))
+        }
+    }
+
+    struct DependencyFixture {
+        window: crate::WindowHandle<DependencyRoot>,
+        models: [Entity<DependencyValue>; 2],
+        leaves: Vec<Entity<DependencyLeaf>>,
+        identities: HashMap<crate::EntityId, String>,
+    }
+
+    impl DependencyFixture {
+        fn new(cx: &mut TestAppContext, retained: bool, fresh: bool) -> Self {
+            let models = [0, 1].map(|index| {
+                cx.new(|_| DependencyValue {
+                    color: 0xff00 + index,
+                    extent: 40.0,
+                })
+            });
+            let leaves = (0..6)
+                .map(|index| {
+                    cx.new(|_| DependencyLeaf {
+                        models: models.clone(),
+                        secondary: index % 2 == 1,
+                        phase: [
+                            DependencyPhase::Render,
+                            DependencyPhase::Prepaint,
+                            DependencyPhase::Paint,
+                        ][index % 3],
+                        decoration: 0,
+                        priority: index % 6,
+                        anchor: crate::point(px(index as f32 * 30.0), px(index as f32 * 20.0)),
+                    })
+                })
+                .collect::<Vec<_>>();
+            let mut identities = leaves
+                .iter()
+                .enumerate()
+                .map(|(index, leaf)| (leaf.entity_id(), format!("leaf-{index}")))
+                .collect::<HashMap<_, _>>();
+            let root_leaves = leaves.clone();
+            let window = cx.open_window(WINDOW_SIZE, move |window, _| {
+                window.set_view_retention(retained);
+                window.set_force_view_reconstruction(fresh);
+                if fresh {
+                    window.layout_engine = Some(crate::TaffyLayoutEngine::new());
+                }
+                DependencyRoot {
+                    leaves: root_leaves,
+                    hidden: None,
+                }
+            });
+            identities.insert(
+                window.root(cx).expect("dependency root").entity_id(),
+                "root".into(),
+            );
+            Self {
+                window,
+                models,
+                leaves,
+                identities,
+            }
+        }
+
+        fn capture(&self, cx: &mut TestAppContext) -> crate::ViewReuseSnapshot {
+            cx.update_window(self.window.into(), |_, window, cx| {
+                window.draw(cx).clear(cx);
+                window.view_reuse_snapshot(|id| {
+                    self.identities
+                        .get(&id)
+                        .cloned()
+                        .expect("dependency fixture view")
+                })
+            })
+            .expect("dependency window")
+        }
+    }
+
+    #[gpui::test]
+    fn unnotified_model_updates_under_notified_root(cx: &mut TestAppContext) {
+        cx.set_global(DependencyValue {
+            color: 0x00ff00,
+            extent: 40.0,
+        });
+        let reused = DependencyFixture::new(cx, true, false);
+        let fresh = DependencyFixture::new(cx, false, true);
+        for frame in 0..3 {
+            reused
+                .capture(cx)
+                .compare(&fresh.capture(cx), frame)
+                .expect("initial dependency frame");
+        }
+        cx.update_window(reused.window.into(), |_, window, _| {
+            assert!(
+                window.view_reuse_stats().cached_hits > 0,
+                "fixture must reuse views"
+            );
+        })
+        .expect("dependency stats");
+        let unchanged_scene = reused.capture(cx).scene;
+        for fixture in [&reused, &fresh] {
+            fixture.models[0].update(cx, |model, _| {
+                model.color = 0x123456;
+                model.extent = 100.0;
+            });
+        }
+        // Raw entity writes do not invalidate readers without a notified ancestor.
+        // The parity guarantee starts when the owning subtree requests a rebuild.
+        assert_eq!(reused.capture(cx).scene, unchanged_scene);
+        assert_ne!(fresh.capture(cx).scene, unchanged_scene);
+        for fixture in [&reused, &fresh] {
+            fixture
+                .window
+                .update(cx, |_, _, cx| cx.notify())
+                .expect("notify model owner");
+        }
+        reused
+            .capture(cx)
+            .compare(&fresh.capture(cx), 3)
+            .expect("notified ancestor reconstructs model readers");
+        for fixture in [reused, fresh] {
+            cx.update_window(fixture.window.into(), |_, window, _| window.remove_window())
+                .expect("dependency window");
+        }
+    }
+
+    #[gpui::test(iterations = 2)]
+    fn randomized_phase_dependencies_match_forced_reconstruction(
+        mut rng: StdRng,
+        cx: &mut TestAppContext,
+    ) {
+        for (retained, decorated) in [false, true]
+            .into_iter()
+            .flat_map(|retained| [false, true].map(|decorated| (retained, decorated)))
+        {
+            cx.set_global(DependencyValue {
+                color: 0x00ff00,
+                extent: 40.0,
+            });
+            let reused = DependencyFixture::new(cx, retained, false);
+            let fresh = DependencyFixture::new(cx, false, true);
+            if decorated {
+                for fixture in [&reused, &fresh] {
+                    for (index, leaf) in fixture.leaves.iter().enumerate() {
+                        leaf.update(cx, |leaf, cx| {
+                            leaf.decoration = (index % 5) as u8;
+                            cx.notify();
+                        });
+                    }
+                }
+            }
+            for frame in 0..48 {
+                let value = DependencyValue {
+                    color: rng.random_range(0..=0xffffff),
+                    extent: rng.random_range(0.0..120.0),
+                };
+                match frame % 12 {
+                    1 | 2 => {
+                        let model_index = frame % 2;
+                        for fixture in [&reused, &fresh] {
+                            fixture.models[model_index].update(cx, |model, cx| {
+                                *model = value;
+                                cx.notify();
+                            });
+                        }
+                    }
+                    3 => cx.set_global(value),
+                    4 => cx.update_global::<DependencyValue, _>(|global, _| *global = value),
+                    5 => {
+                        let leaf_index = rng.random_range(0..reused.leaves.len());
+                        for fixture in [&reused, &fresh] {
+                            fixture.leaves[leaf_index].update(cx, |leaf, cx| {
+                                leaf.secondary = !leaf.secondary;
+                                cx.notify();
+                            });
+                        }
+                    }
+                    6 => {
+                        for fixture in [&reused, &fresh] {
+                            fixture.models[0].update(cx, |model, _| *model = value);
+                            fixture
+                                .window
+                                .update(cx, |_, _, cx| cx.notify())
+                                .expect("notify model owner");
+                        }
+                    }
+                    7 => {
+                        for fixture in [&reused, &fresh] {
+                            fixture
+                                .window
+                                .update(cx, |root, _, cx| {
+                                    root.leaves.rotate_left(1);
+                                    cx.notify();
+                                })
+                                .expect("reparent dependency views");
+                        }
+                    }
+                    8 | 9 => {
+                        for fixture in [&reused, &fresh] {
+                            fixture
+                                .window
+                                .update(cx, |root, _, cx| {
+                                    root.hidden =
+                                        (frame % 12 == 8).then(|| fixture.leaves[0].entity_id());
+                                    cx.notify();
+                                })
+                                .expect("toggle dependency view");
+                        }
+                    }
+                    10 if decorated => {
+                        let index = rng.random_range(0..reused.leaves.len());
+                        let priority = rng.random_range(0..6);
+                        let anchor = crate::point(
+                            px(rng.random_range(-40.0..1250.0)),
+                            px(rng.random_range(-40.0..950.0)),
+                        );
+                        for fixture in [&reused, &fresh] {
+                            fixture.leaves[index].update(cx, |leaf, cx| {
+                                leaf.decoration = (leaf.decoration + 1) % 5;
+                                leaf.priority = priority;
+                                leaf.anchor = anchor;
+                                cx.notify();
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+                let reused_snapshot = reused.capture(cx);
+                let fresh_snapshot = fresh.capture(cx);
+                reused_snapshot
+                    .compare(&fresh_snapshot, frame)
+                    .unwrap_or_else(|error| panic!(
+                        "phase dependencies retained={retained} decorated={decorated} frame={frame}: {error}"
+                    ));
+            }
+            for fixture in [reused, fresh] {
+                cx.update_window(fixture.window.into(), |_, window, _| window.remove_window())
+                    .expect("dependency window");
+            }
+        }
+    }
+
     #[gpui::test]
     fn fixed_leaf_recolor_is_stationary(cx: &mut TestAppContext) {
         for cached in [false, true] {
