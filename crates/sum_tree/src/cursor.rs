@@ -408,7 +408,12 @@ where
     T: Item,
     D: Dimension<'a, T::Summary>,
 {
-    /// Returns whether we found the item you were seeking for.
+    /// Returns whether the target compares equal to the cursor's end position
+    /// for [`Bias::Left`], or its start position for [`Bias::Right`], after
+    /// seeking.
+    ///
+    /// In particular, note that the return value does **not** indicate whether
+    /// the cursor is attached to an item or not.
     #[track_caller]
     #[instrument(skip_all)]
     pub fn seek<Target>(&mut self, pos: &Target, bias: Bias) -> bool
@@ -419,11 +424,16 @@ where
         self.seek_internal(pos, bias, &mut ())
     }
 
-    /// Returns whether we found the item you were seeking for.
+    /// Returns whether the target compares equal to the cursor's end position
+    /// for [`Bias::Left`], or its start position for [`Bias::Right`], after
+    /// seeking.
+    ///
+    /// In particular, note that the return value does **not** indicate whether
+    /// the cursor is attached to an item or not.
     ///
     /// # Panics
     ///
-    /// If we did not seek before, use seek instead in that case.
+    /// If the target position compares less than the cursor's current position.
     #[track_caller]
     #[instrument(skip_all)]
     pub fn seek_forward<Target>(&mut self, pos: &Target, bias: Bias) -> bool
@@ -465,8 +475,12 @@ where
         summary.0
     }
 
-    // TODO: Rewrite this comment: see "test_seek_return_values".
-    /// Returns whether we found the item you were seeking for.
+    /// Note that the return value of this function is **not** related to
+    /// whether an item has been found, but is instead dependent on the target
+    /// position being exactly at an item boundary, and depends on bias.
+    ///
+    /// See `crate::tests::test_seek_return_values` for a survey of the return
+    /// value in different scenarios.
     #[track_caller]
     #[instrument(skip_all)]
     fn seek_internal(
