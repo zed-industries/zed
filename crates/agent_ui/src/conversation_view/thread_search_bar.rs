@@ -780,7 +780,7 @@ impl Render for ThreadSearchBar {
         let query_empty = self.query_editor.read(cx).text(cx).is_empty();
         let in_error_state = self.query_error || (!query_empty && !has_matches);
 
-        let mut key_context = KeyContext::new_with_defaults();
+        let mut key_context = KeyContext::new_with_defaults(cx.platform_info().os);
         key_context.add("AcpThreadSearchBar");
 
         let counter_text = self.active_match_text(cx).unwrap_or_default();

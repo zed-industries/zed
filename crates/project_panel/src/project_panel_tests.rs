@@ -5850,7 +5850,7 @@ async fn test_range_selection_drag_moves_entire_folded_directories(cx: &mut Test
     // directory, which the range selection must still widen to the whole row.
     for (range_selection, source_click_modifiers, copy, (source_path, target_path)) in iproduct!(
         [RangeSelection::ShiftClick, RangeSelection::ShiftArrows],
-        [Modifiers::none(), Modifiers::secondary_key()],
+        [Modifiers::none(), cx.read(Modifiers::secondary_key)],
         [false, true],
         [
             ("project/root/a", "project/root/other"),

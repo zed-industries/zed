@@ -1985,7 +1985,8 @@ mod test {
     }
 
     fn dispatch_native_printable_key(cx: &mut VimTestContext, key: char) -> DispatchEventResult {
-        let keystroke = Keystroke::parse(&key.to_string())
+        let os = cx.read(|cx| cx.platform_info().os);
+        let keystroke = Keystroke::parse_with_os(&key.to_string(), os)
             .expect("helix jump labels are valid keystrokes")
             .with_simulated_ime();
         let result = cx.update(|window, cx| {

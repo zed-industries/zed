@@ -2118,7 +2118,7 @@ impl GitPanel {
     }
 
     fn dispatch_context(&self, window: &mut Window, cx: &Context<Self>) -> KeyContext {
-        let mut dispatch_context = KeyContext::new_with_defaults();
+        let mut dispatch_context = KeyContext::new_with_defaults(cx.platform_info().os);
         dispatch_context.add("GitPanel");
 
         if self.commit_editor.read(cx).is_focused(window) {
@@ -9045,7 +9045,7 @@ impl GitPanel {
                         this.apply_range_gesture(anchor_ix, ix);
                         this.selected_entry = Some(ix);
                         cx.notify();
-                    } else if event.modifiers().secondary() {
+                    } else if event.modifiers().secondary(cx) {
                         this.toggle_mark(ix, cx);
                     } else {
                         this.clear_marks_and_select(ix, cx);
@@ -9244,7 +9244,7 @@ impl GitPanel {
                         this.apply_range_gesture(anchor_ix, ix);
                         this.selected_entry = Some(ix);
                         cx.notify();
-                    } else if event.modifiers().secondary() {
+                    } else if event.modifiers().secondary(cx) {
                         this.toggle_mark(ix, cx);
                     } else {
                         this.clear_marks();

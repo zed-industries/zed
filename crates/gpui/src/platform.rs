@@ -1,6 +1,7 @@
 mod app_menu;
 mod keyboard;
 mod keystroke;
+mod platform_info;
 
 #[cfg(all(target_os = "linux", feature = "wayland"))]
 #[expect(missing_docs)]
@@ -359,8 +360,13 @@ bitflags::bitflags! {
     }
 }
 
+pub use platform_info::{OperatingSystem, PlatformInfo, PlatformTarget};
+
 #[expect(missing_docs)]
 pub trait Platform: 'static {
+    /// Returns the host OS and application target reported by this backend.
+    fn platform_info(&self) -> PlatformInfo;
+
     fn background_executor(&self) -> BackgroundExecutor;
     fn foreground_executor(&self) -> ForegroundExecutor;
     fn text_system(&self) -> Arc<dyn PlatformTextSystem>;

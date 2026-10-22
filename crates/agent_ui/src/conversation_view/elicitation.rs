@@ -481,7 +481,8 @@ mod tests {
                 // Click handlers activate buttons on key release, not key press.
                 window.dispatch_event(
                     PlatformInput::KeyUp(KeyUpEvent {
-                        keystroke: Keystroke::parse(key).expect("valid test keystroke"),
+                        keystroke: Keystroke::parse_with_os(key, cx.platform_info().os)
+                            .expect("valid test keystroke"),
                     }),
                     cx,
                 );
