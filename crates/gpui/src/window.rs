@@ -1447,6 +1447,7 @@ pub struct Window {
     retained_input_changed: bool,
     pub(crate) view_store: crate::view::ViewStore,
     pub(crate) current_view_occurrence: Option<crate::view::ViewOccurrenceId>,
+    pub(crate) layout_element_state_owner: Option<crate::view::ViewOccurrenceId>,
     pub(crate) retained_scope_fallback: Option<crate::view::retained::SpliceFallback>,
     pub(crate) dispatch_replay: Vec<crate::ReusedSubtree>,
     pub(crate) cached_entity_access_stack: Vec<Option<FxHashSet<EntityId>>>,
@@ -2389,6 +2390,7 @@ impl Window {
             retained_input_changed: false,
             view_store: crate::view::ViewStore::default(),
             current_view_occurrence: None,
+            layout_element_state_owner: None,
             retained_scope_fallback: None,
             dispatch_replay: Vec::new(),
             cached_entity_access_stack: Vec::new(),
@@ -4151,6 +4153,13 @@ impl Window {
         self.group_hitboxes
             .finish_frame(self.next_frame.hitboxes.iter().map(|hitbox| hitbox.id));
         if self.view_splicing {
+            // Layout-time state access precedes prepaint replay ranges. Append these
+            // keys outside the ranges so replay neither drops state nor accumulates keys.
+            for &occurrence in &self.next_frame.prepaint_views {
+                for &key in self.view_store.layout_element_states(occurrence) {
+                    self.next_frame.accessed_element_states.push(key);
+                }
+            }
             self.view_store.finish_frame();
             self.scope_image_caches
                 .retain(|_, cache| cache.strong_count() > 0);
@@ -8239,6 +8248,9 @@ impl Window {
         state_type: TypeId,
     ) -> ((InternedHandle, TypeId), Option<ElementStateBox>) {
         let key = (self.element_id_interner.resolve(global_id), state_type);
+        if let Some(owner) = self.layout_element_state_owner {
+            self.view_store.record_layout_element_state(owner, key);
+        }
         self.next_frame.accessed_element_states.push(key);
         let state = self
             .next_frame

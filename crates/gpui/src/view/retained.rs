@@ -50,6 +50,7 @@ struct RetainedView {
     own_prepaint_entities: collections::FxHashSet<EntityId>,
     own_paint_entities: collections::FxHashSet<EntityId>,
     own_layout_entities: collections::FxHashSet<EntityId>,
+    layout_element_states: Vec<(InternedHandle, TypeId)>,
     own_globals: collections::FxHashSet<TypeId>,
     layout: Option<Box<ViewLayout>>,
     prepared: Option<(LayoutId, AnyElement)>,
@@ -76,6 +77,28 @@ pub(crate) struct ViewStore {
 }
 
 impl ViewStore {
+    pub(crate) fn record_layout_element_state(
+        &mut self,
+        id: ViewOccurrenceId,
+        key: (InternedHandle, TypeId),
+    ) {
+        let states = &mut self.retained_mut(id).layout_element_states;
+        if !states.contains(&key) {
+            states.push(key);
+        }
+    }
+
+    pub(crate) fn layout_element_states(
+        &self,
+        id: ViewOccurrenceId,
+    ) -> &[(InternedHandle, TypeId)] {
+        if self.record(id).painted {
+            &self.retained(id).layout_element_states
+        } else {
+            &[]
+        }
+    }
+
     pub(crate) fn take_access_set(&mut self) -> collections::FxHashSet<EntityId> {
         self.access_pool.pop().unwrap_or_default()
     }
@@ -174,6 +197,7 @@ impl ViewStore {
                 own_prepaint_entities: Default::default(),
                 own_paint_entities: Default::default(),
                 own_layout_entities: Default::default(),
+                layout_element_states: Vec::new(),
                 own_globals: Default::default(),
                 layout: None,
                 prepared: None,
@@ -360,6 +384,7 @@ impl ViewStore {
         retained.own_prepaint_entities.clear();
         retained.own_paint_entities.clear();
         retained.own_layout_entities.clear();
+        retained.layout_element_states.clear();
         retained.layout = None;
         retained.prepared = None;
         for entity in dependencies {
@@ -637,10 +662,12 @@ impl Window {
     ) -> R {
         let entity = self.view_store.retained(occurrence).entity;
         let parent = self.current_view_occurrence.replace(occurrence);
+        let state_owner = self.layout_element_state_owner.replace(occurrence);
         let previous = self.begin_view_entity_access(cx);
         let result = self.with_rendered_view(entity, |window| measure(window, cx));
         let (own, _) = self.end_cached_entity_access(previous, cx);
         self.view_store.append_layout_access(occurrence, own);
+        self.layout_element_state_owner = state_owner;
         self.current_view_occurrence = parent;
         result
     }
@@ -714,6 +741,11 @@ impl Window {
             return (layout, None);
         }
         self.view_store.clear_global_access(occurrence);
+        self.view_store
+            .retained_mut(occurrence)
+            .layout_element_states
+            .clear();
+        let state_owner = self.layout_element_state_owner.replace(occurrence);
         let previous_access = self.begin_view_entity_access(cx);
         let ancestor_dirty = self.implicit_ancestor_dirty;
         self.implicit_ancestor_dirty |= self.view_store.is_own_dirty(occurrence);
@@ -721,6 +753,7 @@ impl Window {
         let layout = self.with_rendered_view(entity, |window| element.request_layout(window, cx));
         self.implicit_ancestor_dirty = ancestor_dirty;
         let (own, _) = self.end_cached_entity_access(previous_access, cx);
+        self.layout_element_state_owner = state_owner;
         self.view_store.set_layout_access(occurrence, own);
         self.layout_engine
             .as_mut()
@@ -1214,6 +1247,67 @@ mod tests {
     }
 
     struct ImplicitCachedRoot(Entity<ImplicitLeaf>);
+
+    struct KeyedStateProbe {
+        initializations: Rc<Cell<usize>>,
+    }
+
+    impl Render for KeyedStateProbe {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let initializations = self.initializations.clone();
+            let state = window.use_keyed_state("render-state", cx, move |_, _| {
+                initializations.set(initializations.get() + 1);
+                42usize
+            });
+            div().size(px(*state.read(cx) as f32))
+        }
+    }
+
+    struct KeyedStateRoot(Entity<KeyedStateProbe>, bool);
+
+    impl Render for KeyedStateRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().when(self.1, |element| element.child(self.0.clone()))
+        }
+    }
+
+    #[crate::test]
+    fn implicit_render_keyed_state_survives_clean_replay(cx: &mut TestAppContext) {
+        for retention in [false, true] {
+            let initializations = Rc::new(Cell::new(0));
+            let probe = cx.new(|_| KeyedStateProbe {
+                initializations: initializations.clone(),
+            });
+            let window = cx.add_window(|window, _| {
+                window.set_view_retention(retention);
+                KeyedStateRoot(probe.clone(), true)
+            });
+            for _ in 0..3 {
+                cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+                    .expect("keyed state draw");
+            }
+            probe.update(cx, |_, cx| cx.notify());
+            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+                .expect("keyed state reconstruction");
+            assert_eq!(initializations.get(), 1, "retention={retention}");
+            let root = window.root(cx).expect("keyed state root");
+            root.update(cx, |root, cx| {
+                root.1 = false;
+                cx.notify();
+            });
+            for _ in 0..3 {
+                cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+                    .expect("hidden keyed state draw");
+            }
+            root.update(cx, |root, cx| {
+                root.1 = true;
+                cx.notify();
+            });
+            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+                .expect("remounted keyed state draw");
+            assert_eq!(initializations.get(), 2, "retention={retention}");
+        }
+    }
 
     struct OffsetRoot(Entity<ImplicitBranch>);
 
