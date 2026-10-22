@@ -1626,11 +1626,15 @@ fn resolve_preview_image(
 
     let path = if let (Some(stripped), Some(root)) = (workspace_relative_path, workspace_directory)
     {
-        client_path_style.join_path(root, stripped).ok()?
+        client_path_style
+            .join_path_preserving_components(root, stripped)
+            .ok()?
     } else if client_path_style.has_root(Path::new(&decoded)) {
         PathBuf::from(decoded)
     } else {
-        client_path_style.join_path(base_directory?, decoded).ok()?
+        client_path_style
+            .join_path_preserving_components(base_directory?, decoded)
+            .ok()?
     };
 
     path.exists()
@@ -3033,10 +3037,18 @@ mod tests {
         init_test(cx);
         cx.executor().allow_parking();
         let tree = TempTree::new(json!({
-            "project": {"assets": {"icons": {}, "shot.svg": "<svg/>"}},
+            "project": {
+                "assets": {"shot.svg": "<svg id=\"lexical\"/>"},
+                "real": {"sub": {}, "shot.svg": "<svg id=\"resolved\"/>"},
+            },
             "outside": {"readme.md": ""},
         }));
         let workspace_directory = tree.path().join("project");
+        std::os::unix::fs::symlink(
+            workspace_directory.join("real/sub"),
+            workspace_directory.join("assets/icons"),
+        )
+        .unwrap();
         let readme = tree.path().join("outside/readme.md");
         let project = Project::test(
             fs::RealFs::new(None, cx.executor()),
@@ -3070,7 +3082,13 @@ mod tests {
                 )
             }
         });
-        assert_resolved_preview_image_path(resolved, &workspace_directory.join("assets/shot.svg"));
+        match resolved {
+            Some(ImageSource::Resource(Resource::Path(path))) => assert_eq!(
+                std::fs::canonicalize(path.as_ref()).unwrap(),
+                std::fs::canonicalize(workspace_directory.join("real/shot.svg")).unwrap(),
+            ),
+            _ => panic!("Expected the image to resolve to a local path"),
+        }
     }
 
     #[gpui::test]
