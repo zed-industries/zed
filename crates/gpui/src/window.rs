@@ -52,7 +52,7 @@ use std::{
     hash::{Hash, Hasher},
     marker::PhantomData,
     mem,
-    ops::{DerefMut, Range},
+    ops::Range,
     rc::Rc,
     sync::{
         Arc, Weak,
@@ -3573,8 +3573,7 @@ impl Window {
     }
 
     fn record_entities_accessed(&mut self, cx: &mut App) {
-        let mut entities_ref = cx.entities.accessed_entities.get_mut();
-        let mut entities = mem::take(entities_ref.deref_mut());
+        let entities = cx.entities.take_accessed();
         let handle = self.handle;
         cx.record_entities_accessed(
             handle,
@@ -3582,8 +3581,7 @@ impl Window {
             self.invalidator.clone(),
             &entities,
         );
-        let mut entities_ref = cx.entities.accessed_entities.get_mut();
-        mem::swap(&mut entities, entities_ref.deref_mut());
+        cx.entities.restore_accessed(entities);
     }
 
     fn invalidate_entities(&mut self) {

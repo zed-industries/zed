@@ -11,6 +11,7 @@ use std::{
     fmt::{self, Display},
     hash::{Hash, Hasher},
     marker::PhantomData,
+    mem,
     num::NonZeroU64,
     sync::{
         Arc, Weak,
@@ -55,8 +56,27 @@ impl Display for EntityId {
 
 pub(crate) struct EntityMap {
     entities: SecondaryMap<EntityId, Box<dyn Any>>,
-    pub accessed_entities: RefCell<FxHashSet<EntityId>>,
+    accessed_entities: RefCell<AccessedEntities>,
     ref_counts: Arc<RwLock<EntityRefCounts>>,
+}
+
+/// The entities accessed during the current draw, as a stack of scopes. The
+/// first scope covers the whole draw. An access is recorded only in the
+/// innermost scope, and a scope's accesses are added to its parent when it
+/// ends, so each scope collects exactly what was accessed inside it, without
+/// copying what the draw accessed before it began.
+struct AccessedEntities {
+    scopes: Vec<FxHashSet<EntityId>>,
+}
+
+impl AccessedEntities {
+    fn innermost(&mut self) -> &mut FxHashSet<EntityId> {
+        if self.scopes.is_empty() {
+            self.scopes.push(FxHashSet::default());
+        }
+        let last = self.scopes.len() - 1;
+        &mut self.scopes[last]
+    }
 }
 
 #[doc(hidden)]
@@ -75,7 +95,9 @@ impl EntityMap {
     pub fn new() -> Self {
         Self {
             entities: SecondaryMap::new(),
-            accessed_entities: RefCell::new(FxHashSet::default()),
+            accessed_entities: RefCell::new(AccessedEntities {
+                scopes: vec![FxHashSet::default()],
+            }),
             ref_counts: Arc::new(RwLock::new(EntityRefCounts {
                 counts: SlotMap::with_key(),
                 dropped_entity_ids: Vec::new(),
@@ -125,8 +147,10 @@ impl EntityMap {
     where
         T: 'static,
     {
-        let mut accessed_entities = self.accessed_entities.get_mut();
-        accessed_entities.insert(slot.entity_id);
+        self.accessed_entities
+            .get_mut()
+            .innermost()
+            .insert(slot.entity_id);
 
         let handle = slot.0;
         self.entities.insert(handle.entity_id, Box::new(entity));
@@ -180,17 +204,67 @@ impl EntityMap {
     pub fn extend_accessed(&mut self, entities: &FxHashSet<EntityId>) {
         self.accessed_entities
             .get_mut()
+            .innermost()
             .extend(entities.iter().copied());
     }
 
+    /// Clears the accessed entities and ends any scope left open, for example
+    /// by a draw that panicked.
     pub fn clear_accessed(&mut self) {
-        self.accessed_entities.get_mut().clear();
+        let scopes = &mut self.accessed_entities.get_mut().scopes;
+        scopes.truncate(1);
+        for scope in scopes {
+            scope.clear();
+        }
+    }
+
+    pub fn push_access_scope(&mut self) {
+        self.accessed_entities
+            .get_mut()
+            .scopes
+            .push(FxHashSet::default());
+    }
+
+    /// Ends the innermost scope, adds its accessed entities to the scope
+    /// around it, and returns them.
+    pub fn pop_access_scope(&mut self) -> FxHashSet<EntityId> {
+        let accessed_entities = self.accessed_entities.get_mut();
+        debug_assert!(
+            accessed_entities.scopes.len() > 1,
+            "popped an access scope that wasn't pushed"
+        );
+        if accessed_entities.scopes.len() <= 1 {
+            return FxHashSet::default();
+        }
+        let scope = accessed_entities.scopes.pop().unwrap_or_default();
+        accessed_entities.innermost().extend(scope.iter().copied());
+        scope
+    }
+
+    /// Takes every entity accessed during the draw, to be handed back with
+    /// [`Self::restore_accessed`].
+    pub fn take_accessed(&mut self) -> FxHashSet<EntityId> {
+        let accessed_entities = self.accessed_entities.get_mut();
+        debug_assert_eq!(accessed_entities.scopes.len(), 1, "access scope left open");
+        accessed_entities
+            .scopes
+            .first_mut()
+            .map(mem::take)
+            .unwrap_or_default()
+    }
+
+    pub fn restore_accessed(&mut self, entities: FxHashSet<EntityId>) {
+        let accessed_entities = self.accessed_entities.get_mut();
+        match accessed_entities.scopes.first_mut() {
+            Some(scope) => *scope = entities,
+            None => accessed_entities.scopes.push(entities),
+        }
     }
 
     pub fn take_dropped(&mut self) -> Vec<(EntityId, Box<dyn Any>)> {
         let mut ref_counts = &mut *self.ref_counts.write();
         let dropped_entity_ids = ref_counts.dropped_entity_ids.drain(..);
-        let mut accessed_entities = self.accessed_entities.get_mut();
+        let accessed_scopes = &mut self.accessed_entities.get_mut().scopes;
 
         dropped_entity_ids
             .filter_map(|entity_id| {
@@ -200,7 +274,9 @@ impl EntityMap {
                     0,
                     "dropped an entity that was referenced"
                 );
-                accessed_entities.remove(&entity_id);
+                for scope in accessed_scopes.iter_mut() {
+                    scope.remove(&entity_id);
+                }
                 // If the EntityId was allocated with `Context::reserve`,
                 // the entity may not have been inserted.
                 Some((entity_id, self.entities.remove(entity_id)?))
@@ -210,14 +286,19 @@ impl EntityMap {
 
     #[inline(never)]
     fn read_inner(&self, entity_id: EntityId) -> Option<&dyn Any> {
-        let mut accessed_entities = self.accessed_entities.borrow_mut();
-        accessed_entities.insert(entity_id);
+        self.accessed_entities
+            .borrow_mut()
+            .innermost()
+            .insert(entity_id);
         self.entities.get(entity_id).map(Box::as_ref)
     }
 
     #[inline(never)]
     fn lease_inner(&mut self, entity_id: EntityId) -> Option<Box<dyn Any>> {
-        self.accessed_entities.get_mut().insert(entity_id);
+        self.accessed_entities
+            .get_mut()
+            .innermost()
+            .insert(entity_id);
         self.entities.remove(entity_id)
     }
 
@@ -1215,9 +1296,33 @@ impl fmt::Debug for BacktraceFormatter {
 #[cfg(test)]
 mod test {
     use crate::EntityMap;
+    use collections::FxHashSet;
 
     struct TestEntity {
         pub i: i32,
+    }
+
+    #[test]
+    fn test_access_scopes_record_entities_accessed_before_them() {
+        let mut entity_map = EntityMap::new();
+        let slot = entity_map.reserve::<TestEntity>();
+        let first = entity_map.insert(slot, TestEntity { i: 1 });
+        let slot = entity_map.reserve::<TestEntity>();
+        let second = entity_map.insert(slot, TestEntity { i: 2 });
+        entity_map.clear_accessed();
+
+        entity_map.read(&first);
+        entity_map.push_access_scope();
+        entity_map.read(&first);
+        entity_map.push_access_scope();
+        entity_map.read(&second);
+        let inner = entity_map.pop_access_scope();
+        let outer = entity_map.pop_access_scope();
+
+        assert_eq!(inner, FxHashSet::from_iter([second.entity_id()]));
+        let both = FxHashSet::from_iter([first.entity_id(), second.entity_id()]);
+        assert_eq!(outer, both);
+        assert_eq!(entity_map.take_accessed(), both);
     }
 
     #[test]
