@@ -151,7 +151,8 @@ impl Render for OrderingView {
 fn validate(window: &Window, rectangles: &[Rectangle], case: &Case) {
     assert_eq!(
         window.layout_cache_enabled(),
-        std::env::var("GPUI_LAYOUT_CACHE").is_ok_and(|value| value == "1")
+        std::env::var("GPUI_LAYOUT_CACHE").as_deref() == Ok("1")
+            || std::env::var("GPUI_RETAIN_VIEWS").as_deref() == Ok("1")
     );
     validate_scene(window.rendered_scene(), rectangles, case);
 }

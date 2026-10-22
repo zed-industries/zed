@@ -1014,7 +1014,8 @@ fn measure_text_panel_updates(
 fn assert_layout_cache_mode(window: &Window) {
     assert_eq!(
         window.layout_cache_enabled(),
-        std::env::var("GPUI_LAYOUT_CACHE").is_ok_and(|value| value == "1"),
+        std::env::var("GPUI_LAYOUT_CACHE").as_deref() == Ok("1")
+            || std::env::var("GPUI_RETAIN_VIEWS").as_deref() == Ok("1"),
         "the benchmark must exercise the requested layout-cache mode"
     );
 }
