@@ -4,8 +4,10 @@
 Usage: script/gpui-bench-compare BASELINE CANDIDATE
        script/gpui-bench-compare BASELINE CANDIDATE --filter 'TextPanels/'
        GPUI_RETAIN_VIEWS=1 script/gpui-bench-compare BASELINE CANDIDATE
+       script/gpui-bench-compare BASELINE CANDIDATE --renderer gpu
 
-The invoking checkout's three benchmark files are used for BOTH revisions.
+The invoking checkout's three benchmark files, randomized tree fixture and bench
+macro are used for BOTH revisions.
 Their GPUI benchmark APIs must be compatible. Sources, build artifacts, binaries,
 raw logs, Criterion samples and summary.json persist under target/gpui-bench-compare.
 Nothing switches the invoking checkout or publishes a branch.
@@ -16,11 +18,17 @@ two inspector workloads. --full selects every variant; --slow restores the old
 settings (including inspector's five-second measurement). --repetitions controls
 independent runs, not random seeds. Use --seed to compare another fixed tree.
 
-Foreground instructions are primary: perf access is required on Linux. Wall time
-is secondary and includes GPU submission where the platform supports it. Its
-reported median includes calibration samples; raw logs retain frame metrics.
+Foreground instructions are primary: perf access is required on Linux. CPU mode
+is the default: production layout, prepaint, paint, Scene::finish sorting/batching,
+platform text shaping and glyph rasterization, with a memory-only atlas instead
+of GPU upload/submission. --renderer gpu includes headless GPU submission where
+supported, but driver queue backpressure can cause instruction-count drift even
+on an unchanged binary. Wall-time medians include calibration samples; raw logs
+retain frame metrics. CPU and GPU results must not be compared to one another.
 Spread is the full range of independent run medians divided by their median,
-not a confidence interval. Do not run competing benchmarks on the same machine.
+not a confidence interval. Warnings also flag wide within-run sample ranges;
+even slow settings can drift, so inspect raw samples before judging small changes.
+Do not run competing benchmarks on the same machine.
 GPUI_BENCH_HEAP=1 explicitly enables the separate 3000-frame churn heap diagnostic.
 Both revisions inherit the same rendering mode: unset GPUI_LAYOUT_CACHE and
 GPUI_RETAIN_VIEWS for the default path, set GPUI_LAYOUT_CACHE=1 for cache-only,
@@ -44,6 +52,12 @@ import time
 
 
 TARGETS = ("randomized_element_tree", "bounds_ordering", "inspector_render")
+FIXTURE_FILES = tuple(
+    Path("crates/gpui_platform/benches") / f"{target}.rs" for target in TARGETS
+) + (
+    Path("crates/gpui_macros/src/bench.rs"),
+    Path("crates/gpui/src/randomized_element_tree.rs"),
+)
 CORE = {
     "randomized_element_tree": (
         r"^(RandomizedTree/full refresh/tree/|"
@@ -97,9 +111,9 @@ def prepare(root, cache, revision, features, timeout, environment):
             contents.extractall(source, filter="data")
         (source / ".archive-complete").touch()
     digest = hashlib.sha256()
-    for target in TARGETS:
-        relative = Path("crates/gpui_platform/benches") / f"{target}.rs"
+    for relative in FIXTURE_FILES:
         content = (root / relative).read_bytes()
+        digest.update(str(relative).encode())
         digest.update(content)
         destination = source / relative
         if not destination.exists() or destination.read_bytes() != content:
@@ -191,6 +205,7 @@ def main():
     parser.add_argument("--filter", help="Criterion regex, applied to all three binaries")
     parser.add_argument("--full", action="store_true")
     parser.add_argument("--slow", action="store_true")
+    parser.add_argument("--renderer", choices=("cpu", "gpu"), default="cpu")
     parser.add_argument("--repetitions", type=int, default=3)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--features", default="bench-support,x11" if sys.platform == "linux"
@@ -217,10 +232,19 @@ def main():
     output.mkdir(parents=True, exist_ok=False)
     environment = dict(os.environ, BENCH_MEASUREMENT="foreground-instructions",
                        SEED=str(args.seed), ITERATIONS="1")
+    environment["GPUI_BENCH_NO_GPU"] = "1" if args.renderer == "cpu" else "0"
     if environment.get("GPUI_BENCH_HEAP") == "1":
         raise RuntimeError("unset GPUI_BENCH_HEAP: heap diagnostics are not frame comparisons")
     environment["PATH"] = str(Path.home() / ".cargo/bin") + os.pathsep + environment["PATH"]
     revisions = []
+    if args.renderer == "cpu":
+        print("Renderer: CPU render pipeline through Scene::finish; real text shaping/rasterization; "
+              "memory-only atlas, no GPU upload/submission.", flush=True)
+    else:
+        print("Renderer: platform headless GPU renderer.", flush=True)
+        print("WARNING: GPU driver queue backpressure can cause instruction-count drift even "
+              "on an unchanged binary; do not interpret small differences as GPUI CPU regressions.",
+              flush=True)
     for revision in [args.baseline, args.candidate]:
         print(f"Building {revision} (once)...", flush=True)
         revisions.append(prepare(root, cache, revision, args.features, args.timeout, environment))
@@ -283,6 +307,15 @@ def main():
             if args.repetitions > 1 and any(spread(values) > 1 for values in instruction_runs):
                 print("  NOTE: >1% instruction spread; confirm this case with --slow before judging a change.",
                       flush=True)
+            sample_ranges = [
+                max((value["sample_max"] - value["sample_min"]) / value["instructions"] * 100
+                    for value in side)
+                for side in pair
+            ]
+            if any(value > 1 for value in sample_ranges):
+                print(f"  NOTE: within-run instruction sample range B/N "
+                      f"{sample_ranges[0]:.2f}/{sample_ranges[1]:.2f}%; "
+                      "inspect raw samples for drift/outliers before judging a change.", flush=True)
             summary = {
                 "configuration": vars(args) | {"cache": str(cache)},
                 "revisions": [{key: value for key, value in revision.items() if key != "binaries"}
@@ -292,7 +325,7 @@ def main():
                 "environment": {name: value for name, value in environment.items()
                                 if name in ("BENCH_MEASUREMENT", "GPUI_LAYOUT_CACHE",
                                             "GPUI_RETAIN_VIEWS", "GPUI_VERIFY_REUSE_DIFFERENTIAL",
-                                            "SEED", "ITERATIONS", "RUSTFLAGS")},
+                                            "GPUI_BENCH_NO_GPU", "SEED", "ITERATIONS", "RUSTFLAGS")},
             }
             (output / "summary.json").write_text(json.dumps(summary, indent=2, default=str) + "\n")
     for index, revision in enumerate(revisions):
