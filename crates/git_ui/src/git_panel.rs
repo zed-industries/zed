@@ -4400,6 +4400,7 @@ impl GitPanel {
         user_agents_md: Option<&str>,
         rules_content: Option<&str>,
         instructions: Option<&str>,
+        branch_name: Option<&str>,
         subject: &str,
         diff_text: &str,
     ) -> String {
@@ -4427,6 +4428,13 @@ impl GitPanel {
             _ => String::new(),
         };
 
+        let branch_section = match branch_name {
+            Some(branch_name) if !branch_name.trim().is_empty() => {
+                format!("\nHere is the current branch:\n{branch_name}")
+            }
+            _ => String::new(),
+        };
+
         let subject_section = if subject.trim().is_empty() {
             String::new()
         } else {
@@ -4434,7 +4442,7 @@ impl GitPanel {
         };
 
         format!(
-            "{prompt}{user_agents_md_section}{rules_section}{instructions_section}{subject_section}\nHere are the changes in this commit:\n{diff_text}"
+            "{prompt}{user_agents_md_section}{rules_section}{instructions_section}{branch_section}{subject_section}\nHere are the changes in this commit:\n{diff_text}"
         )
     }
 
@@ -4485,6 +4493,11 @@ impl GitPanel {
             .clone();
         let project = self.project.clone();
         let repo_work_dir = repo.read(cx).work_directory_abs_path.clone();
+        let branch_name = repo
+            .read(cx)
+            .branch
+            .as_ref()
+            .map(|branch| branch.name().to_owned());
 
         self.generate_commit_message_task = Some(cx.spawn(async move |this, mut cx| {
             async move {
@@ -4548,6 +4561,7 @@ impl GitPanel {
                     user_agents_md.as_deref(),
                     rules_content.as_deref(),
                     instructions.as_deref(),
+                    branch_name.as_deref(),
                     &subject,
                     &diff_text,
                 );
@@ -14036,6 +14050,7 @@ mod tests {
             Some("Use terse commit messages."),
             Some("Use the git_ui prefix."),
             Some("Follow the configured commit message format."),
+            None,
             "Update generated message",
             "diff --git a/file b/file",
         );
@@ -14060,11 +14075,52 @@ mod tests {
             None,
             None,
             Some("   \n  "),
+            None,
             "",
             "diff --git a/file b/file",
         );
 
         assert!(!prompt.contains("<commit_message_instructions>"));
+    }
+
+    #[test]
+    fn test_commit_message_prompt_includes_branch_name() {
+        let prompt = GitPanel::build_commit_message_prompt(
+            "Write a commit message.",
+            None,
+            None,
+            Some("Extract the ticket number from the current branch name."),
+            Some("feature/PD-125031-workspace-menu"),
+            "Update generated message",
+            "diff --git a/file b/file",
+        );
+
+        let instructions_index = prompt.find("<commit_message_instructions>").unwrap();
+        let branch_index = prompt
+            .find("Here is the current branch:\nfeature/PD-125031-workspace-menu")
+            .unwrap();
+        let subject_index = prompt.find("Here is the user's subject line:").unwrap();
+        let diff_index = prompt.find("diff --git a/file b/file").unwrap();
+        assert!(instructions_index < branch_index);
+        assert!(branch_index < subject_index);
+        assert!(subject_index < diff_index);
+    }
+
+    #[test]
+    fn test_commit_message_prompt_omits_missing_branch_name() {
+        for branch_name in [None, Some(""), Some("  ")] {
+            let prompt = GitPanel::build_commit_message_prompt(
+                "Write a commit message.",
+                None,
+                None,
+                None,
+                branch_name,
+                "",
+                "diff --git a/file b/file",
+            );
+
+            assert!(!prompt.contains("Here is the current branch:"));
+        }
     }
 
     #[gpui::test]
