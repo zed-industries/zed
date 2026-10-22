@@ -18590,6 +18590,89 @@ async fn test_snippets(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_insert_snippet_with_variables(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("let «valueˇ» = 1;");
+    cx.update_editor(|editor, window, cx| {
+        editor.insert_snippet_at_selections(
+            &InsertSnippet {
+                language: None,
+                name: None,
+                snippet: Some("dbg!(${TM_SELECTED_TEXT:$1})/* $TM_LINE_NUMBER */$0".to_string()),
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("let dbg!(value)/* 1 */ˇ = 1;");
+
+    cx.set_state("ˇ");
+    cx.update_editor(|editor, window, cx| {
+        editor.insert_snippet_at_selections(
+            &InsertSnippet {
+                language: None,
+                name: None,
+                snippet: Some("$UNKNOWN_VARIABLE $0".to_string()),
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("«UNKNOWN_VARIABLEˇ» ");
+
+    cx.set_state("first ˇ\nsecond ˇ\nthird «selected textˇ»");
+    cx.update_editor(|editor, window, cx| {
+        editor.insert_snippet_at_selections(
+            &InsertSnippet {
+                language: None,
+                name: None,
+                snippet: Some(
+                    "${TM_LINE_NUMBER}:${TM_LINE_INDEX}:${TM_CURRENT_LINE}$0".to_string(),
+                ),
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state(
+        "first 1:0:first ˇ\nsecond 2:1:second ˇ\nthird 3:2:third selected textˇ",
+    );
+}
+
+#[gpui::test]
+async fn test_snippet_current_line_includes_completion_trigger_word(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("fooˇ\nbarˇ");
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let insertions = editor
+            .selections
+            .all::<MultiBufferOffset>(&editor.display_snapshot(cx))
+            .into_iter()
+            .map(|selection| {
+                let range = selection.range();
+                let snippet = parse_snippet_at_selection(
+                    "<$TM_CURRENT_WORD|$TM_CURRENT_LINE>",
+                    &snapshot,
+                    range.clone(),
+                    cx,
+                )
+                .unwrap();
+                (range, snippet)
+            })
+            .collect::<Vec<_>>();
+        editor.insert_snippets(&insertions, window, cx).unwrap();
+    });
+    cx.assert_editor_state("foo<foo|foo>ˇ\nbar<bar|bar>ˇ");
+}
+
+#[gpui::test]
 async fn test_snippet_indentation(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

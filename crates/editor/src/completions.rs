@@ -895,6 +895,7 @@ impl Editor {
         let CompletionEdit {
             new_text,
             snippet,
+            snippet_source,
             replace_range,
         } = process_completion_for_edit(&completion, intent, &buffer_handle, &initial_position, cx);
 
@@ -936,6 +937,10 @@ impl Editor {
             .selections
             .all::<MultiBufferOffset>(&self.display_snapshot(cx));
         let mut ranges = Vec::new();
+        let selection_ranges = selections
+            .iter()
+            .map(|selection| selection.range())
+            .collect::<Vec<_>>();
         let mut all_commit_ranges = Vec::new();
         let mut linked_edits = LinkedEdits::new();
 
@@ -991,15 +996,27 @@ impl Editor {
         });
 
         let tx_id = self.transact(window, cx, |editor, window, cx| {
-            if let Some(mut snippet) = snippet {
-                snippet.text = new_text.to_string();
-                let offset_ranges = ranges
+            if let Some(snippet) = snippet {
+                let insertions = ranges
                     .iter()
-                    .map(|range| range.to_offset(&multibuffer_snapshot))
+                    .zip(selection_ranges)
+                    .map(|(range, selection_range)| {
+                        let caret_snippet = snippet_source
+                            .as_deref()
+                            .and_then(|source| {
+                                parse_snippet_at_selection(
+                                    source,
+                                    &multibuffer_snapshot,
+                                    selection_range,
+                                    &*cx,
+                                )
+                                .log_err()
+                            })
+                            .unwrap_or_else(|| snippet.clone());
+                        (range.to_offset(&multibuffer_snapshot), caret_snippet)
+                    })
                     .collect::<Vec<_>>();
-                editor
-                    .insert_snippet(&offset_ranges, snippet, window, cx)
-                    .log_err();
+                editor.insert_snippets(&insertions, window, cx).log_err();
             } else {
                 editor.buffer.update(cx, |multi_buffer, cx| {
                     let auto_indent = match completion.insert_text_mode {

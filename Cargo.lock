@@ -16961,7 +16961,11 @@ name = "snippet"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
+ "iana-time-zone",
+ "rand 0.9.4",
  "smallvec",
+ "uuid",
 ]
 
 [[package]]

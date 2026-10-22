@@ -2235,9 +2235,9 @@ impl Editor {
             .map(|selection| selection.range())
             .collect_vec();
 
-        let snippet = if let Some(snippet_body) = &action.snippet {
+        let snippet_source = if let Some(snippet_body) = &action.snippet {
             if action.language.is_none() && action.name.is_none() {
-                Snippet::parse(snippet_body)?
+                snippet_body.clone()
             } else {
                 bail!("`snippet` is mutually exclusive with `language` and `name`")
             }
@@ -2249,13 +2249,27 @@ impl Editor {
                 .into_iter()
                 .find(|snippet| snippet.name == *name)
                 .context("snippet not found")?;
-            Snippet::parse(&snippet.body)?
+            snippet.body.clone()
         } else {
             // todo(andrew): open modal to select snippet
             bail!("`name` or `snippet` is required")
         };
 
-        self.insert_snippet(&insertion_ranges, snippet, window, cx)
+        let multibuffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        let insertions = insertion_ranges
+            .into_iter()
+            .map(|range| {
+                let snippet = parse_snippet_at_selection(
+                    &snippet_source,
+                    &multibuffer_snapshot,
+                    range.clone(),
+                    cx,
+                )?;
+                Ok((range, snippet))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        self.insert_snippets(&insertions, window, cx)
     }
 }
 
