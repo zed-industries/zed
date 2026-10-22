@@ -61,3 +61,6 @@ windows = { workspace = true, features = [
     "Win32_Media_MediaFoundation",
 ] }
 windows-core.workspace = true
+
+[dev-dependencies]
+db = { workspace = true, features = ["test-support"] }
