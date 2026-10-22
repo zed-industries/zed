@@ -212,6 +212,8 @@ impl Button {
         self
     }
 
+    /// Lets the keybinding wrap onto its own line when the button is too narrow
+    /// to fit it next to the label, growing the button to fit both lines.
     pub fn wrap_key_binding(mut self, wrap: bool) -> Self {
         self.wrap_key_binding = wrap;
         self
