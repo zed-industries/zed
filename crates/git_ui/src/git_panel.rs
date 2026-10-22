@@ -4377,34 +4377,26 @@ impl GitPanel {
                 const MAX_DIFF_BYTES: usize = 20_000;
                 diff_text = Self::compress_commit_diff(&diff_text, MAX_DIFF_BYTES);
 
-                let recent_commit_messages = match recent_commit_tasks {
-                    Ok(tasks) => futures::future::join_all(tasks)
-                        .await
-                        .into_iter()
-                        .enumerate()
-                        .filter_map(|(index, result)| match result {
-                            Ok(Ok(commit)) => Some(commit.message.to_string()),
-                            Ok(Err(error)) => {
-                                if index == 0 {
-                                    log::debug!("failed to load recent commit messages: {error:?}");
-                                }
-                                None
+                let recent_commit_messages = futures::future::join_all(recent_commit_tasks)
+                    .await
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(index, result)| match result {
+                        Ok(Ok(commit)) => Some(commit.message.to_string()),
+                        Ok(Err(error)) => {
+                            if index == 0 {
+                                log::debug!("failed to load recent commit messages: {error:?}");
                             }
-                            Err(error) => {
-                                if index == 0 {
-                                    log::debug!(
-                                        "failed to receive recent commit message: {error:?}"
-                                    );
-                                }
-                                None
+                            None
+                        }
+                        Err(error) => {
+                            if index == 0 {
+                                log::debug!("failed to receive recent commit message: {error:?}");
                             }
-                        })
-                        .collect::<Vec<_>>(),
-                    Err(error) => {
-                        log::debug!("failed to request recent commit messages: {error:?}");
-                        Vec::new()
-                    }
-                };
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>();
 
                 let rules_content = if include_project_rules {
                     Self::load_project_rules(&project, &repo_work_dir, &mut cx).await
