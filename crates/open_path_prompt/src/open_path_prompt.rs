@@ -694,10 +694,12 @@ impl PickerDelegate for OpenPathDelegate {
                         if parent_path == &self.prompt_root && user_input.file.string.is_empty() {
                             PathBuf::from(&self.prompt_root)
                         } else {
-                            self.path_style.normalize_separators(self.path_style.join(
-                                Path::new(self.lister.resolve_tilde(parent_path, cx).as_ref()),
+                            self.path_style.join(
+                                self.path_style.normalize_separators(Path::new(
+                                    self.lister.resolve_tilde(parent_path, cx).as_ref(),
+                                )),
                                 &user_input.file.string,
-                            ))
+                            )
                         };
                     if user_input.exists {
                         self.should_dismiss = false;
