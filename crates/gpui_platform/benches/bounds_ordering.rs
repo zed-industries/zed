@@ -222,18 +222,24 @@ fn build_scene(scene: &mut Scene, rectangles: &[Rectangle]) {
 fn scene_ordering(criterion: &mut criterion::Criterion<gpui::BenchMeasurement>) {
     let mut group = criterion.benchmark_group("BoundsOrdering/scene");
     for case in cases() {
-        let rectangles = rectangles(&case, 512.);
-        let mut scene = Scene::default();
-        build_scene(&mut scene, &rectangles);
-        validate_scene(&scene, &rectangles, &case);
+        let mut fixture = None;
         let report = bench_metrics::MetricReport::new();
         group.bench_function(case.to_string(), |bencher| {
-            report.iter(bencher, || {
+            // Criterion invokes this closure only for selected cases. In particular,
+            // --list and a paint-only filter must not build and validate all 18 scenes.
+            let (rectangles, scene) = fixture.get_or_insert_with(|| {
+                let rectangles = rectangles(&case, 512.);
+                let mut scene = Scene::default();
                 build_scene(&mut scene, &rectangles);
-                std::hint::black_box(&scene);
+                validate_scene(&scene, &rectangles, &case);
+                (rectangles, scene)
             });
+            report.iter(bencher, || {
+                build_scene(scene, rectangles);
+                std::hint::black_box(&*scene);
+            });
+            validate_scene(scene, rectangles, &case);
         });
-        validate_scene(&scene, &rectangles, &case);
         report.print("  ");
     }
     group.finish();
