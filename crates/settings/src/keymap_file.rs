@@ -1826,7 +1826,7 @@ mod tests {
     }
 
     #[track_caller]
-    fn parse_keystrokes(keystrokes: &str) -> Vec<KeybindingKeystroke> {
+    fn parse_keystrokes(keystrokes: &'static str) -> Vec<KeybindingKeystroke> {
         keystrokes
             .split(' ')
             .map(|s| {

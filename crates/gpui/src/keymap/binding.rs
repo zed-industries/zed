@@ -29,10 +29,10 @@ impl Clone for KeyBinding {
 }
 
 impl KeyBinding {
-    /// Constructs a keybinding with explicit modifiers. Panics on parse error.
+    /// Constructs a static keybinding with explicit modifiers. Panics on parse error.
     ///
-    /// Use [`Self::load`] to resolve `secondary-` using the application's host OS.
-    pub fn new<A: Action>(keystrokes: &str, action: A, context: Option<&str>) -> Self {
+    /// Use [`Self::load`] for dynamic input or to resolve `secondary-` using the host OS.
+    pub fn new<A: Action>(keystrokes: &'static str, action: A, context: Option<&str>) -> Self {
         let context_predicate =
             context.map(|context| KeyBindingContextPredicate::parse(context).unwrap().into());
         Self::load_internal(
@@ -42,7 +42,7 @@ impl KeyBinding {
             false,
             None,
             &DummyKeyboardMapper,
-            None,
+            Keystroke::parse,
         )
         .unwrap()
     }
@@ -63,26 +63,23 @@ impl KeyBinding {
             use_key_equivalents,
             action_input,
             cx.keyboard_mapper().as_ref(),
-            Some(cx.platform_info().os),
+            |source| Keystroke::parse_with_os(source, cx.platform_info().os),
         )
     }
 
-    fn load_internal(
-        keystrokes: &str,
+    fn load_internal<'a>(
+        keystrokes: &'a str,
         action: Box<dyn Action>,
         context_predicate: Option<Rc<KeyBindingContextPredicate>>,
         use_key_equivalents: bool,
         action_input: Option<SharedString>,
         keyboard_mapper: &dyn PlatformKeyboardMapper,
-        os: Option<crate::OperatingSystem>,
+        parse_keystroke: impl Fn(&'a str) -> std::result::Result<Keystroke, InvalidKeystrokeError>,
     ) -> std::result::Result<Self, InvalidKeystrokeError> {
         let keystrokes: SmallVec<[KeybindingKeystroke; 2]> = keystrokes
             .split_whitespace()
             .map(|source| {
-                let keystroke = match os {
-                    Some(os) => Keystroke::parse_with_os(source, os),
-                    None => Keystroke::parse(source),
-                }?;
+                let keystroke = parse_keystroke(source)?;
                 Ok(KeybindingKeystroke::new_with_mapper(
                     keystroke,
                     use_key_equivalents,

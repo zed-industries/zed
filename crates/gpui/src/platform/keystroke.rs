@@ -112,12 +112,12 @@ impl Keystroke {
         target.inner.modifiers == self.modifiers && target.inner.key == self.key
     }
 
-    /// Parses a keystroke with explicit, platform-independent modifiers.
+    /// Parses a static keystroke with explicit, platform-independent modifiers.
     ///
     /// Syntax: `[ctrl-][alt-][shift-][cmd-][fn-]key[->key_char]`.
     /// The `key_char` suffix is used for generating test events.
-    /// Use [`Self::parse_with_os`] to resolve the `secondary-` alias.
-    pub fn parse(source: &str) -> std::result::Result<Self, InvalidKeystrokeError> {
+    /// Use [`Self::parse_with_os`] for dynamic input or the `secondary-` alias.
+    pub fn parse(source: &'static str) -> std::result::Result<Self, InvalidKeystrokeError> {
         Self::parse_internal(source, None)
     }
 

@@ -330,7 +330,8 @@ mod tests {
             .split_whitespace()
             .map(|keystroke| {
                 KeybindingKeystroke::from_keystroke(
-                    Keystroke::parse(keystroke).expect("valid test keystroke"),
+                    Keystroke::parse_with_os(keystroke, gpui::OperatingSystem::Mac)
+                        .expect("valid test keystroke"),
                 )
             })
             .collect()

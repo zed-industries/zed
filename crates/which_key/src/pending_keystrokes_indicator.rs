@@ -460,12 +460,12 @@ mod tests {
         ]
     }
 
-    fn binding(keystrokes: &str, action: impl gpui::Action) -> KeyBinding {
+    fn binding(keystrokes: &'static str, action: impl gpui::Action) -> KeyBinding {
         KeyBinding::new(keystrokes, action, Some("PendingKeystrokesIndicatorTest"))
     }
 
     /// Binds each keystroke sequence to the action the test view counts.
-    fn counted_bindings<const N: usize>(keystrokes: [&str; N]) -> [KeyBinding; N] {
+    fn counted_bindings<const N: usize>(keystrokes: [&'static str; N]) -> [KeyBinding; N] {
         keystrokes.map(|keystrokes| binding(keystrokes, zed_actions::dev::OpenKeyContextView))
     }
 

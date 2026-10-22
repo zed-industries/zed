@@ -5505,7 +5505,8 @@ mod tests {
     }
 
     fn key_down(cx: &mut TestAppContext, window: AnyWindowHandle, key: &str) {
-        let keystroke = Keystroke::parse(key).unwrap();
+        let os = cx.read(|cx| cx.platform_info().os);
+        let keystroke = Keystroke::parse_with_os(key, os).unwrap();
         cx.update_window(window, |_, window, cx| {
             window.dispatch_event(
                 KeyDownEvent {
@@ -5521,7 +5522,8 @@ mod tests {
     }
 
     fn key_up(cx: &mut TestAppContext, window: AnyWindowHandle, key: &str) {
-        let keystroke = Keystroke::parse(key).unwrap();
+        let os = cx.read(|cx| cx.platform_info().os);
+        let keystroke = Keystroke::parse_with_os(key, os).unwrap();
         cx.update_window(window, |_, window, cx| {
             window.dispatch_event(KeyUpEvent { keystroke }.to_platform_input(), cx);
         })

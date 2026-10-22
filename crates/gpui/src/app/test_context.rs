@@ -637,7 +637,12 @@ impl TestAppContext {
     /// will type abc into your current editor
     /// This will also run the background executor until it's parked.
     pub fn simulate_input(&mut self, window: AnyWindowHandle, input: &str) {
-        for keystroke in input.split("").map(Keystroke::parse).map(Result::unwrap) {
+        let os = self.read(|cx| cx.platform_info().os);
+        for keystroke in input
+            .split("")
+            .map(|source| Keystroke::parse_with_os(source, os))
+            .map(Result::unwrap)
+        {
             self.dispatch_keystroke(window, keystroke);
         }
 
