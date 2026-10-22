@@ -25,6 +25,15 @@ pub struct Command {
     pub env: EnvVars,
 }
 
+/// A command handled by Zed instead of being forwarded to the language server.
+#[derive(Debug, Clone)]
+pub enum ClientCommand {
+    /// Show a list of locations from the LSP command arguments.
+    ShowLocations,
+    /// Schedule a Zed task.
+    ScheduleTask(task::TaskTemplate),
+}
+
 impl std::fmt::Debug for Command {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let filtered_env = self
