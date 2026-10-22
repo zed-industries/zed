@@ -1696,7 +1696,7 @@ mod tests {
             .with_cached_views(true);
         let windows = [false, true].map(|fresh| {
             cx.open_window(WINDOW_SIZE, move |window, cx| {
-                window.set_view_splicing(true);
+                window.set_view_retention(true);
                 window.set_force_view_reconstruction(fresh);
                 let tree = RandomizedElementTree::new_with_config(config, cx);
                 {
@@ -1765,7 +1765,7 @@ mod tests {
                 .with_entity_density(1.0)
                 .with_cached_views(true);
             let window = cx.open_window(WINDOW_SIZE, move |window, cx| {
-                window.set_view_splicing(splice);
+                window.set_view_retention(splice);
                 let tree = RandomizedElementTree::new_with_config(config, cx);
                 {
                     let mut snapshot = tree.snapshot.borrow_mut();
