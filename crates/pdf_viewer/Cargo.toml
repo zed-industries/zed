@@ -34,3 +34,6 @@ unicode-normalization.workspace = true
 util.workspace = true
 workspace.workspace = true
 worktree.workspace = true
+
+[dev-dependencies]
+db = { workspace = true, features = ["test-support"] }

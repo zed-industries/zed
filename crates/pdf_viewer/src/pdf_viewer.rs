@@ -735,11 +735,7 @@ impl Render for PdfViewer {
                 .relative()
                 .w(layout.content_size.width)
                 .h(layout.content_size.height)
-                .children(
-                    visible
-                        .clone()
-                        .map(|page| self.render_page(page, layout.page_bounds[page])),
-                )
+                .children(visible.map(|page| self.render_page(page, layout.page_bounds[page])))
                 .into_any_element()
         } else {
             // The viewport size is known after the first layout; fit the pages to it then.
