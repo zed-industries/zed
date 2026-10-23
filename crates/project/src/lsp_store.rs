@@ -47,7 +47,7 @@ use crate::{
     },
     manifest_tree::{
         LanguageServerTree, LanguageServerTreeNode, LaunchDisposition, ManifestQueryDelegate,
-        ManifestTree,
+        ManifestTree, ServerTreeRebase,
     },
     prettier_store::{self, PrettierStore, PrettierStoreEvent},
     project_settings::{BinarySettings, LspSettings, ProjectSettings},
@@ -346,6 +346,44 @@ fn path_with_slashes(path: &str, path_style: PathStyle) -> String {
     }
 }
 
+/// How reconciling a buffer with the `didOpen` registrations of a server changed its document in
+/// the server.
+enum RegistrationAttachmentChange {
+    None,
+    Opened,
+    Closed(PathBuf),
+    /// The document stayed open, but the server now serves its language or no longer does, which
+    /// changes whether the registrations decide when it is closed.
+    Reclassified,
+}
+
+/// Where language servers run, to place them the same way in a rebuilt server tree independently
+/// of the buffers that remain open.
+#[derive(Default)]
+struct ServerPlacements {
+    /// The roots the servers were started for, with the languages each serves there.
+    launched: Vec<(ProjectPath, LanguageServerName, BTreeSet<LanguageName>)>,
+    /// The worktrees that reused the servers started for these roots, with the languages they
+    /// reused them for.
+    reused: Vec<(
+        ProjectPath,
+        LanguageServerName,
+        WorktreeId,
+        BTreeSet<LanguageName>,
+    )>,
+    /// Other worktrees the servers started for these roots ran for, like those of files outside
+    /// the project the servers navigated to, which have no tree entries.
+    seeded: Vec<(ProjectPath, LanguageServerName, WorktreeId)>,
+}
+
+/// The server tree that [`LocalLspStore::restore_server_placements`] places servers in.
+enum PlacementTree<'a> {
+    /// The tree of the store, after the servers were removed from it.
+    Current,
+    /// A tree rebuilt for new settings, which takes over the servers of the old tree.
+    Rebased(&'a mut ServerTreeRebase),
+}
+
 pub struct LocalLspStore {
     weak: WeakEntity<LspStore>,
     pub worktree_store: Entity<WorktreeStore>,
@@ -385,6 +423,10 @@ pub struct LocalLspStore {
     lsp_tree: LanguageServerTree,
     registered_buffers: HashMap<BufferId, usize>,
     buffers_opened_in_servers: HashMap<BufferId, HashSet<LanguageServerId>>,
+    /// The subset of `buffers_opened_in_servers` opened because `textDocument/didOpen`
+    /// registrations of the servers select them, rather than because the servers serve the
+    /// buffers' languages.
+    buffers_opened_by_registrations: HashMap<BufferId, HashSet<LanguageServerId>>,
     buffer_pull_diagnostics_result_ids: HashMap<
         LanguageServerId,
         HashMap<Option<SharedString>, HashMap<PathBuf, Option<SharedString>>>,
@@ -1511,10 +1553,46 @@ impl LocalLspStore {
                 .map(Arc::from)
                 .unwrap_or_else(|| file.path().clone());
             let worktree_path = ProjectPath { worktree_id, path };
-            self.language_server_ids_for_project_path(worktree_path, language, cx)
+            let mut server_ids =
+                self.language_server_ids_for_project_path(worktree_path, language, cx);
+            for server_id in self
+                .buffers_opened_by_registrations
+                .get(&buffer.remote_id())
+                .into_iter()
+                .flatten()
+            {
+                if !server_ids.contains(server_id) {
+                    server_ids.push(*server_id);
+                }
+            }
+            server_ids
         } else {
             Vec::new()
         }
+    }
+
+    /// Returns whether the server serves the buffer for its language, rather than only having
+    /// it opened by its registrations.
+    fn language_server_serves_buffer(
+        &self,
+        buffer: &Buffer,
+        server_id: LanguageServerId,
+        cx: &mut App,
+    ) -> bool {
+        let Some((file, language)) = File::from_dyn(buffer.file()).zip(buffer.language()) else {
+            return false;
+        };
+        let path: Arc<RelPath> = file
+            .path()
+            .parent()
+            .map(Arc::from)
+            .unwrap_or_else(|| file.path().clone());
+        let project_path = ProjectPath {
+            worktree_id: file.worktree_id(cx),
+            path,
+        };
+        self.language_server_ids_for_project_path(project_path, language, cx)
+            .contains(&server_id)
     }
 
     fn server_pulls_workspace_diagnostics(&self, server_id: LanguageServerId) -> bool {
@@ -3039,7 +3117,19 @@ impl LocalLspStore {
                 worktree_id: old_file.worktree_id(cx),
                 path: old_file.path.clone(),
             };
-            for server_id in self.language_server_ids_for_project_path(path, language, cx) {
+            let mut server_ids = self.language_server_ids_for_project_path(path, language, cx);
+            // Servers that registrations opened the buffer in are not found by its language, and
+            // the registrations may not select the new path.
+            server_ids.extend(
+                self.buffers_opened_by_registrations
+                    .get(&buffer.remote_id())
+                    .into_iter()
+                    .flatten()
+                    .filter(|server_id| !server_ids.contains(server_id))
+                    .copied()
+                    .collect::<Vec<_>>(),
+            );
+            for server_id in server_ids {
                 buffer.update_diagnostics(server_id, DiagnosticSet::new([], buffer), cx);
                 buffer.set_completion_triggers(server_id, Default::default(), cx);
             }
@@ -3203,7 +3293,6 @@ impl LocalLspStore {
         cx: &mut Context<LspStore>,
     ) {
         let buffer = buffer_handle.read(cx);
-        let buffer_id = buffer.remote_id();
 
         let Some(file) = File::from_dyn(buffer.file()) else {
             return;
@@ -3316,58 +3405,644 @@ impl LocalLspStore {
                 }
             })
             .collect::<Vec<_>>();
+        let uri_display = abs_path.to_string_lossy();
         for (server, adapter) in servers_and_adapters {
-            buffer_handle.update(cx, |buffer, cx| {
-                buffer.set_completion_triggers(
-                    server.server_id(),
-                    completion_trigger_characters_for_buffer(
-                        self,
-                        server.server_id(),
-                        &adapter,
-                        buffer,
-                        cx,
-                    ),
-                    cx,
+            // The server now serves the buffer's language, e.g. after the settings selected it,
+            // so the buffer stays open regardless of its registrations.
+            if let Some(server_ids) = self
+                .buffers_opened_by_registrations
+                .get_mut(&buffer_handle.read(cx).remote_id())
+            {
+                server_ids.remove(&server.server_id());
+            }
+            self.open_buffer_in_server(
+                buffer_handle,
+                &server,
+                &adapter,
+                &language,
+                &initial_snapshot,
+                &uri,
+                &uri_display,
+                cx,
+            );
+        }
+
+        let buffer_id = buffer_handle.read(cx).remote_id();
+        let mut server_ids_to_reconcile = self.server_ids_with_open_registrations();
+        server_ids_to_reconcile.extend(
+            self.buffers_opened_by_registrations
+                .get(&buffer_id)
+                .into_iter()
+                .flatten()
+                .filter(|server_id| !server_ids_to_reconcile.contains(server_id))
+                .copied()
+                .collect::<Vec<_>>(),
+        );
+        for server_id in server_ids_to_reconcile {
+            if !only_register_servers.is_empty()
+                && !only_register_servers.contains(&LanguageServerSelector::Id(server_id))
+                && !self
+                    .language_servers
+                    .get(&server_id)
+                    .and_then(|state| match state {
+                        LanguageServerState::Running { server, .. } => Some(server.name()),
+                        LanguageServerState::Starting { .. } => None,
+                    })
+                    .is_some_and(|name| {
+                        only_register_servers.contains(&LanguageServerSelector::Name(name))
+                    })
+            {
+                continue;
+            }
+            self.reconcile_buffer_with_registrations(buffer_handle, server_id, cx);
+        }
+    }
+
+    fn server_ids_with_open_registrations(&self) -> Vec<LanguageServerId> {
+        self.language_server_dynamic_registrations
+            .iter()
+            .filter(|(_, registrations)| {
+                registrations
+                    .text_documents
+                    .get("textDocument/didOpen")
+                    .is_some_and(|registrations| !registrations.is_empty())
+            })
+            .map(|(server_id, _)| *server_id)
+            .collect()
+    }
+
+    fn open_buffer_in_server(
+        &mut self,
+        buffer_handle: &Entity<Buffer>,
+        server: &Arc<LanguageServer>,
+        adapter: &Arc<CachedLspAdapter>,
+        language: &Language,
+        initial_snapshot: &TextBufferSnapshot,
+        uri: &lsp::Uri,
+        uri_display: &str,
+        cx: &mut Context<LspStore>,
+    ) {
+        let server_id = server.server_id();
+        let buffer_id = buffer_handle.update(cx, |buffer, cx| {
+            buffer.set_completion_triggers(
+                server_id,
+                completion_trigger_characters_for_buffer(self, server_id, adapter, buffer, cx),
+                cx,
+            );
+            buffer.remote_id()
+        });
+
+        let mut registered = false;
+        self.buffer_snapshots
+            .entry(buffer_id)
+            .or_default()
+            .entry(server_id)
+            .or_insert_with(|| {
+                registered = true;
+                server.register_buffer(
+                    uri.clone(),
+                    adapter.language_id(&language.name()),
+                    0,
+                    initial_snapshot.text_with_line_endings(),
                 );
+
+                vec![LspBufferSnapshot {
+                    version: 0,
+                    snapshot: initial_snapshot.clone(),
+                }]
             });
 
-            let snapshot = LspBufferSnapshot {
-                version: 0,
-                snapshot: initial_snapshot.clone(),
+        self.buffers_opened_in_servers
+            .entry(buffer_id)
+            .or_default()
+            .insert(server_id);
+        if registered {
+            cx.emit(LspStoreEvent::LanguageServerUpdate {
+                language_server_id: server_id,
+                name: None,
+                message: proto::update_language_server::Variant::RegisteredForBuffer(
+                    proto::RegisteredForBuffer {
+                        buffer_abs_path: uri_display.to_string(),
+                        buffer_id: buffer_id.to_proto(),
+                    },
+                ),
+            });
+        }
+    }
+
+    /// Returns whether the server's `didOpen` registrations opened the buffer in it, rather than
+    /// the server serving its language, so that the registrations decide when it is closed.
+    fn buffer_opened_by_registrations(
+        &self,
+        buffer_id: BufferId,
+        server_id: LanguageServerId,
+    ) -> bool {
+        self.buffers_opened_by_registrations
+            .get(&buffer_id)
+            .is_some_and(|server_ids| server_ids.contains(&server_id))
+    }
+
+    /// Returns whether the `method` registrations of the server select the document.
+    ///
+    /// Registrations without a selector stand for the documents of the languages the server
+    /// serves, which are opened in it regardless of registrations, so they select nothing else.
+    fn text_document_registrations_select(
+        &self,
+        server_id: LanguageServerId,
+        method: &str,
+        context: &DocumentSelectorContext,
+    ) -> bool {
+        self.language_server_dynamic_registrations
+            .get(&server_id)
+            .and_then(|registrations| registrations.text_documents.get(method))
+            .is_some_and(|registrations| {
+                registrations.values().any(|registration| {
+                    registration.document_selector.is_some()
+                        && document_selector_matches(
+                            registration.document_selector.as_ref(),
+                            context,
+                        )
+                })
+            })
+    }
+
+    /// Returns whether the buffer should be opened in the server because its
+    /// `textDocument/didOpen` registrations select it.
+    fn registrations_open_buffer_in_server(
+        &self,
+        buffer: &Buffer,
+        server_id: LanguageServerId,
+        cx: &App,
+    ) -> bool {
+        let Some(LanguageServerState::Running {
+            adapter, server, ..
+        }) = self.language_servers.get(&server_id)
+        else {
+            return false;
+        };
+        let server_name = server.name();
+        if !self.can_start_language_server(&server_name) {
+            return false;
+        }
+        let Some(language) = buffer.language() else {
+            return false;
+        };
+        let Some(file) = File::from_dyn(buffer.file()).filter(|file| file.is_local()) else {
+            return false;
+        };
+        let worktree_id = file.worktree_id(cx);
+        // Worktrees that reuse a server, like those of the dependencies it navigated to, only
+        // record it in the tree.
+        let server_runs_for_worktree = self
+            .language_server_ids
+            .iter()
+            .any(|(seed, state)| state.id == server_id && seed.worktree_id == worktree_id)
+            || self
+                .lsp_tree
+                .instances
+                .get(&worktree_id)
+                .is_some_and(|servers| {
+                    servers.roots.values().any(|server_nodes| {
+                        server_nodes
+                            .values()
+                            .any(|(server_node, _)| server_node.id() == Some(server_id))
+                    })
+                });
+        if !server_runs_for_worktree
+            || Self::language_server_line_length_limit_exceeded(buffer, cx).is_some()
+        {
+            return false;
+        }
+
+        // Users decide which servers handle a language, including servers that do not declare it.
+        let language_name = language.name();
+        let settings = LanguageSettings::resolve(Some(buffer), Some(&language_name), cx);
+        if !settings.enable_language_server {
+            return false;
+        }
+        let mut available_language_servers = self
+            .languages
+            .lsp_adapters(&language_name)
+            .iter()
+            .filter(|adapter| !adapter.is_opt_in_for(&language_name))
+            .map(|adapter| adapter.name.clone())
+            .collect::<Vec<_>>();
+        if !available_language_servers.contains(&server_name) {
+            available_language_servers.push(server_name.clone());
+        }
+        if !settings
+            .customized_language_servers(&available_language_servers)
+            .contains(&server_name)
+        {
+            return false;
+        }
+
+        let context = document_selector_context_for_buffer(buffer, adapter, cx);
+        self.text_document_registrations_select(server_id, "textDocument/didOpen", &context)
+    }
+
+    /// Opens the buffer in the server if its registrations select it, returning whether it was
+    /// opened.
+    fn open_buffer_by_registrations(
+        &mut self,
+        buffer_handle: &Entity<Buffer>,
+        server_id: LanguageServerId,
+        cx: &mut Context<LspStore>,
+    ) -> bool {
+        let buffer = buffer_handle.read(cx);
+        let buffer_id = buffer.remote_id();
+        if self
+            .buffers_opened_in_servers
+            .get(&buffer_id)
+            .is_some_and(|server_ids| server_ids.contains(&server_id))
+            || !self.registrations_open_buffer_in_server(buffer, server_id, cx)
+        {
+            return false;
+        }
+        let (Some(file), Some(language)) = (File::from_dyn(buffer.file()), buffer.language())
+        else {
+            return false;
+        };
+        let abs_path = file.abs_path(cx);
+        let Some(uri) = file_path_to_lsp_url(&abs_path).log_err() else {
+            return false;
+        };
+        let Some(LanguageServerState::Running {
+            adapter, server, ..
+        }) = self.language_servers.get(&server_id)
+        else {
+            return false;
+        };
+        let (adapter, server, language) = (adapter.clone(), server.clone(), language.clone());
+        let initial_snapshot = buffer.text_snapshot();
+
+        self.buffers_opened_by_registrations
+            .entry(buffer_id)
+            .or_default()
+            .insert(server_id);
+        self.open_buffer_in_server(
+            buffer_handle,
+            &server,
+            &adapter,
+            &language,
+            &initial_snapshot,
+            &uri,
+            &abs_path.to_string_lossy(),
+            cx,
+        );
+        true
+    }
+
+    /// Closes the document of the buffer in the server, returning whether it was open.
+    fn close_buffer_in_server(
+        &mut self,
+        buffer: &mut Buffer,
+        server: &LanguageServer,
+        uri: &lsp::Uri,
+        cx: &mut Context<Buffer>,
+    ) -> bool {
+        let buffer_id = buffer.remote_id();
+        let server_id = server.server_id();
+        if self
+            .buffer_snapshots
+            .get_mut(&buffer_id)
+            .and_then(|snapshots| snapshots.remove(&server_id))
+            .is_none()
+        {
+            return false;
+        }
+
+        if let Some(server_ids) = self.buffers_opened_by_registrations.get_mut(&buffer_id) {
+            server_ids.remove(&server_id);
+        }
+        // Every document opened in the server is closed in it, also without a `didClose`
+        // registration selecting it, as opening it again requires the notifications to balance.
+        server.unregister_buffer(uri.clone());
+
+        buffer.set_completion_triggers(server_id, Default::default(), cx);
+        if let Some(server_ids) = self.buffers_opened_in_servers.get_mut(&buffer_id) {
+            server_ids.remove(&server_id);
+        }
+        if let Ok(abs_path) = uri.to_file_path()
+            && let Some(result_ids) = self.buffer_pull_diagnostics_result_ids.get_mut(&server_id)
+        {
+            for result_ids in result_ids.values_mut() {
+                result_ids.remove(&abs_path);
+            }
+        }
+        true
+    }
+
+    /// Closes the buffer in the server if it was opened because of the server's registrations,
+    /// returning the path of the closed document.
+    fn close_buffer_opened_by_registrations(
+        &mut self,
+        buffer_handle: &Entity<Buffer>,
+        server_id: LanguageServerId,
+        cx: &mut App,
+    ) -> Option<PathBuf> {
+        let Some(LanguageServerState::Running { server, .. }) =
+            self.language_servers.get(&server_id)
+        else {
+            return None;
+        };
+        let server = server.clone();
+        buffer_handle.update(cx, |buffer, cx| {
+            let abs_path = File::from_dyn(buffer.file())?.abs_path(cx);
+            let uri = file_path_to_lsp_url(&abs_path).log_err()?;
+            self.close_buffer_in_server(buffer, &server, &uri, cx)
+                .then_some(abs_path)
+        })
+    }
+
+    /// Brings the buffer's document in the server in line with the server's `didOpen`
+    /// registrations, from whether the server serves the buffer's language, whether the
+    /// document is open in it and whether the registrations select it, so that it holds
+    /// regardless of the change that led here.
+    fn reconcile_buffer_with_registrations(
+        &mut self,
+        buffer_handle: &Entity<Buffer>,
+        server_id: LanguageServerId,
+        cx: &mut Context<LspStore>,
+    ) -> RegistrationAttachmentChange {
+        let buffer_id = buffer_handle.read(cx).remote_id();
+        let opened_by_registrations = self.buffer_opened_by_registrations(buffer_id, server_id);
+        if buffer_handle.update(cx, |buffer, cx| {
+            self.language_server_serves_buffer(buffer, server_id, cx)
+        }) {
+            if !opened_by_registrations {
+                return RegistrationAttachmentChange::None;
+            }
+            // E.g. the settings selected the server for the buffer's language.
+            if let Some(server_ids) = self.buffers_opened_by_registrations.get_mut(&buffer_id) {
+                server_ids.remove(&server_id);
+            }
+            self.update_completion_triggers(buffer_handle, server_id, cx);
+            return RegistrationAttachmentChange::Reclassified;
+        }
+
+        let opened_in_server = self
+            .buffer_snapshots
+            .get(&buffer_id)
+            .is_some_and(|snapshots| snapshots.contains_key(&server_id));
+        if !opened_in_server {
+            return if self.open_buffer_by_registrations(buffer_handle, server_id, cx) {
+                RegistrationAttachmentChange::Opened
+            } else {
+                RegistrationAttachmentChange::None
             };
+        }
+        if !self.registrations_open_buffer_in_server(buffer_handle.read(cx), server_id, cx) {
+            return match self.close_buffer_opened_by_registrations(buffer_handle, server_id, cx) {
+                Some(abs_path) => RegistrationAttachmentChange::Closed(abs_path),
+                None => RegistrationAttachmentChange::None,
+            };
+        }
+        if opened_by_registrations {
+            return RegistrationAttachmentChange::None;
+        }
+        // E.g. the settings no longer select the server for the buffer's language, while its
+        // registrations select the buffer, which is already open in it.
+        self.buffers_opened_by_registrations
+            .entry(buffer_id)
+            .or_default()
+            .insert(server_id);
+        self.update_completion_triggers(buffer_handle, server_id, cx);
+        RegistrationAttachmentChange::Reclassified
+    }
 
-            let mut registered = false;
-            self.buffer_snapshots
-                .entry(buffer_id)
-                .or_default()
-                .entry(server.server_id())
-                .or_insert_with(|| {
-                    registered = true;
-                    server.register_buffer(
-                        uri.clone(),
-                        adapter.language_id(&language.name()),
-                        0,
-                        initial_snapshot.text_with_line_endings(),
-                    );
+    fn update_completion_triggers(
+        &self,
+        buffer_handle: &Entity<Buffer>,
+        server_id: LanguageServerId,
+        cx: &mut App,
+    ) {
+        let Some(LanguageServerState::Running { adapter, .. }) =
+            self.language_servers.get(&server_id)
+        else {
+            return;
+        };
+        buffer_handle.update(cx, |buffer, cx| {
+            buffer.set_completion_triggers(
+                server_id,
+                completion_trigger_characters_for_buffer(self, server_id, adapter, buffer, cx),
+                cx,
+            );
+        });
+    }
 
-                    vec![snapshot]
-                });
+    /// Returns the server of a node of a rebuilt tree, starting a new one when the node did not
+    /// take over a running server.
+    fn get_or_start_rebuilt_server(
+        &mut self,
+        node: &LanguageServerTreeNode,
+        worktree: &Entity<Worktree>,
+        lsp_delegate: &Arc<LocalLspAdapterDelegate>,
+        language_name: &LanguageName,
+        start_mode: LanguageServerStartMode,
+        cx: &mut App,
+    ) -> Option<LanguageServerId> {
+        let worktree_id = worktree.read(cx).id();
+        node.server_id_or_init(|disposition| {
+            let path = &disposition.path;
+            let workspace_folder = workspace_folder_uri(worktree.read(cx), &path.path);
+            let key = LanguageServerSeed {
+                worktree_id,
+                name: disposition.server_name.clone(),
+                settings: LanguageServerSeedSettings {
+                    binary: disposition.settings.binary.clone(),
+                    initialization_options: disposition.settings.initialization_options.clone(),
+                },
+                toolchain: self.toolchain_store.read(cx).active_toolchain(
+                    path.worktree_id,
+                    &path.path,
+                    language_name.clone(),
+                ),
+            };
+            if self.can_start_language_server(&key.name) {
+                self.language_server_ids.remove(&key);
+            }
 
-            self.buffers_opened_in_servers
-                .entry(buffer_id)
-                .or_default()
-                .insert(server.server_id());
-            if registered {
-                cx.emit(LspStoreEvent::LanguageServerUpdate {
-                    language_server_id: server.server_id(),
-                    name: None,
-                    message: proto::update_language_server::Variant::RegisteredForBuffer(
-                        proto::RegisteredForBuffer {
-                            buffer_abs_path: abs_path.to_string_lossy().into_owned(),
-                            buffer_id: buffer_id.to_proto(),
-                        },
+            let server_id = self.get_or_insert_language_server(
+                worktree,
+                lsp_delegate.clone(),
+                disposition,
+                language_name,
+                start_mode,
+                cx,
+            )?;
+            if let Some(state) = self.language_servers.get(&server_id)
+                && let Some(workspace_folder) = workspace_folder
+            {
+                state.add_workspace_folder(workspace_folder);
+            };
+            Some(server_id)
+        })
+    }
+
+    /// Returns where the servers run, for those `is_placed` selects.
+    fn server_placements(
+        &self,
+        is_placed: impl Fn(LanguageServerId) -> bool,
+        cx: &App,
+    ) -> ServerPlacements {
+        let mut placements = ServerPlacements::default();
+        let mut launch_roots_by_server = HashMap::default();
+        for (worktree_id, servers) in &self.lsp_tree.instances {
+            for (path, server_nodes) in &servers.roots {
+                for (server_name, (server_node, languages)) in server_nodes {
+                    let Some(server_id) =
+                        server_node.id().filter(|server_id| is_placed(*server_id))
+                    else {
+                        continue;
+                    };
+                    let root_path = server_node.launch_path().clone();
+                    if root_path.worktree_id == *worktree_id && &root_path.path == path {
+                        launch_roots_by_server
+                            .insert(server_id, (root_path.clone(), server_name.clone()));
+                        placements.launched.push((
+                            root_path,
+                            server_name.clone(),
+                            languages.clone(),
+                        ));
+                    } else {
+                        placements.reused.push((
+                            root_path,
+                            server_name.clone(),
+                            *worktree_id,
+                            languages.clone(),
+                        ));
+                    }
+                }
+            }
+        }
+        let worktree_store = self.worktree_store.read(cx);
+        for (seed, state) in &self.language_server_ids {
+            let Some((root_path, server_name)) = launch_roots_by_server.get(&state.id) else {
+                continue;
+            };
+            let has_tree_entry = root_path.worktree_id == seed.worktree_id
+                || placements
+                    .reused
+                    .iter()
+                    .any(|(_, reused_server_name, worktree_id, _)| {
+                        reused_server_name == server_name && *worktree_id == seed.worktree_id
+                    });
+            let is_invisible = worktree_store
+                .worktree_for_id(seed.worktree_id, cx)
+                .is_some_and(|worktree| !worktree.read(cx).is_visible());
+            if !has_tree_entry && is_invisible {
+                placements
+                    .seeded
+                    .push((root_path.clone(), server_name.clone(), seed.worktree_id));
+            }
+        }
+        placements
+    }
+
+    /// Places the servers in the tree where they were, starting them if needed, as long as the
+    /// settings still select them there.
+    ///
+    /// Servers may only be used by documents their registrations opened, which are not of the
+    /// languages the servers serve and so cannot lead to them, and no buffer of such a language
+    /// may be open. This precedes placing servers for the open buffers, which take the placed
+    /// servers over or reuse them instead of starting servers of their own.
+    fn restore_server_placements(
+        &mut self,
+        placements: ServerPlacements,
+        mut tree: PlacementTree,
+        start_mode: LanguageServerStartMode,
+        cx: &mut App,
+    ) {
+        for (root_path, server_name, languages) in &placements.launched {
+            let Some(worktree) = self
+                .worktree_store
+                .read(cx)
+                .worktree_for_id(root_path.worktree_id, cx)
+            else {
+                continue;
+            };
+            let delegate = LocalLspAdapterDelegate::from_local_lsp(self, &worktree, cx);
+            // The settings may no longer select the server for some of its languages, while it
+            // is kept for all the others they still do.
+            let mut placed_node = None;
+            for language_name in languages {
+                let node = match &mut tree {
+                    PlacementTree::Current => self.lsp_tree.walk_root_for_server(
+                        root_path.clone(),
+                        language_name.clone(),
+                        server_name,
+                        cx,
                     ),
-                });
+                    PlacementTree::Rebased(rebase) => rebase.walk_root_for_server(
+                        root_path.clone(),
+                        language_name.clone(),
+                        server_name,
+                        cx,
+                    ),
+                };
+                let Some(node) = node else {
+                    continue;
+                };
+                // A server whose settings changed in a way that requires a restart is replaced
+                // here, as no buffer of its languages may start the replacement.
+                if self
+                    .get_or_start_rebuilt_server(
+                        &node,
+                        &worktree,
+                        &delegate,
+                        language_name,
+                        start_mode,
+                        cx,
+                    )
+                    .is_some()
+                {
+                    placed_node.get_or_insert(node);
+                }
+            }
+            let Some(placed_node) = placed_node else {
+                continue;
+            };
+            // Worktrees that reused the server, like those of the dependencies it navigated to,
+            // may have no buffer of its languages left to reuse it again.
+            let server_tree = match &mut tree {
+                PlacementTree::Current => &mut self.lsp_tree,
+                PlacementTree::Rebased(rebase) => rebase.server_tree(),
+            };
+            for (_, _, worktree_id, languages) in
+                placements
+                    .reused
+                    .iter()
+                    .filter(|(reused_root_path, reused_server_name, _, _)| {
+                        reused_root_path == root_path && reused_server_name == server_name
+                    })
+            {
+                for language_name in languages {
+                    server_tree.register_reused(
+                        *worktree_id,
+                        language_name.clone(),
+                        placed_node.clone(),
+                    );
+                }
+            }
+            let Some(server_id) = placed_node.server_id() else {
+                continue;
+            };
+            for (_, _, worktree_id) in
+                placements
+                    .seeded
+                    .iter()
+                    .filter(|(seeded_root_path, seeded_server_name, _)| {
+                        seeded_root_path == root_path && seeded_server_name == server_name
+                    })
+            {
+                if let Some(worktree) = self
+                    .worktree_store
+                    .read(cx)
+                    .worktree_for_id(*worktree_id, cx)
+                {
+                    self.register_language_server_for_invisible_worktree(&worktree, server_id, cx);
+                }
             }
         }
     }
@@ -3460,39 +4135,17 @@ impl LocalLspStore {
         file_url: &lsp::Uri,
         cx: &mut App,
     ) -> Vec<LanguageServerId> {
-        let abs_path = file_url.to_file_path().ok();
         buffer.update(cx, |buffer, cx| {
-            let buffer_id = buffer.remote_id();
-            let mut snapshots = self.buffer_snapshots.remove(&buffer_id);
-
-            let mut detached_servers = Vec::new();
-            for (_, language_server) in self.language_servers_for_buffer(buffer, cx) {
-                let server_id = language_server.server_id();
-                if snapshots
-                    .as_mut()
-                    .is_some_and(|map| map.remove(&server_id).is_some())
-                {
-                    language_server.unregister_buffer(file_url.clone());
-                    detached_servers.push(server_id);
-                }
-            }
-
-            for &server_id in &detached_servers {
-                buffer.set_completion_triggers(server_id, Default::default(), cx);
-                if let Some(opened_in_servers) = self.buffers_opened_in_servers.get_mut(&buffer_id)
-                {
-                    opened_in_servers.remove(&server_id);
-                }
-                if let Some(abs_path) = &abs_path
-                    && let Some(result_ids) =
-                        self.buffer_pull_diagnostics_result_ids.get_mut(&server_id)
-                {
-                    for result_ids in result_ids.values_mut() {
-                        result_ids.remove(abs_path);
-                    }
-                }
-            }
-
+            let servers = self
+                .language_servers_for_buffer(buffer, cx)
+                .map(|(_, server)| server.clone())
+                .collect::<Vec<_>>();
+            let detached_servers = servers
+                .into_iter()
+                .filter(|server| self.close_buffer_in_server(buffer, server, file_url, cx))
+                .map(|server| server.server_id())
+                .collect();
+            self.buffer_snapshots.remove(&buffer.remote_id());
             detached_servers
         })
     }
@@ -4139,6 +4792,9 @@ impl LocalLspStore {
             self.workspace_pull_diagnostics_result_ids
                 .remove(server_id_to_remove);
             for buffer_servers in self.buffers_opened_in_servers.values_mut() {
+                buffer_servers.remove(server_id_to_remove);
+            }
+            for buffer_servers in self.buffers_opened_by_registrations.values_mut() {
                 buffer_servers.remove(server_id_to_remove);
             }
             cx.emit(LspStoreEvent::LanguageServerRemoved(*server_id_to_remove));
@@ -5015,6 +5671,7 @@ impl LspStore {
                 toolchain_store,
                 registered_buffers: HashMap::default(),
                 buffers_opened_in_servers: HashMap::default(),
+                buffers_opened_by_registrations: HashMap::default(),
                 buffer_pull_diagnostics_result_ids: HashMap::default(),
                 workspace_pull_diagnostics_result_ids: HashMap::default(),
                 restricted_worktrees_tasks: HashMap::default(),
@@ -5125,13 +5782,15 @@ impl LspStore {
             }
             BufferStoreEvent::BufferChangedFilePath { buffer, old_file } => {
                 let buffer_id = buffer.read(cx).remote_id();
+                let mut detached_servers = Vec::new();
                 if let Some(local) = self.as_local_mut()
                     && let Some(old_file) = File::from_dyn(old_file.as_ref())
                 {
                     local.reset_buffer(buffer, old_file, cx);
 
                     if local.registered_buffers.contains_key(&buffer_id) {
-                        local.unregister_old_buffer_from_language_servers(buffer, old_file, cx);
+                        detached_servers =
+                            local.unregister_old_buffer_from_language_servers(buffer, old_file, cx);
                     }
                 }
 
@@ -5145,6 +5804,20 @@ impl LspStore {
                             LanguageServerStartMode::Automatic,
                             cx,
                         );
+                    }
+                }
+
+                // The buffer did not change, so clients keep returning what they fetched from the
+                // servers the document at the new path is no longer opened in, like those whose
+                // registrations do not select it.
+                let reattached_servers = self
+                    .as_local()
+                    .and_then(|local| local.buffers_opened_in_servers.get(&buffer_id))
+                    .cloned()
+                    .unwrap_or_default();
+                for server_id in detached_servers {
+                    if !reattached_servers.contains(&server_id) {
+                        self.refresh_lsp_data_of_server(server_id, cx);
                     }
                 }
             }
@@ -5454,6 +6127,11 @@ impl LspStore {
                             },
                             cx,
                         );
+                    }
+                    // Kept until the servers that registrations opened the buffer in have been
+                    // found to close it.
+                    if let Some(local) = lsp_store.as_local_mut() {
+                        local.buffers_opened_by_registrations.remove(&buffer_id);
                     }
                 }
             })
@@ -6008,6 +6686,24 @@ impl LspStore {
         }
     }
 
+    /// Refreshes the data fetched from the server for documents, also downstream, when documents
+    /// were opened or closed in it, or the way they are opened in it changed, without the buffers
+    /// changing, which would refresh it otherwise. Clients would otherwise keep returning
+    /// it, like nothing for documents just opened, or what the server said about the closed ones
+    /// when it was the only server they asked.
+    fn refresh_lsp_data_of_server(&mut self, server_id: LanguageServerId, cx: &mut Context<Self>) {
+        self.refresh_semantic_tokens(server_id, cx);
+        self.refresh_inlay_hints(server_id, cx);
+        self.refresh_code_lens(Some(server_id), cx);
+        self.refresh_document_colors(Some(server_id), cx);
+        self.refresh_folding_ranges(Some(server_id), cx);
+        self.refresh_document_links(Some(server_id), cx);
+        self.refresh_document_symbols(Some(server_id), cx);
+        // Editors only refresh highlights for servers relevant to their buffers, which those
+        // whose documents were closed no longer are.
+        self.refresh_document_highlights(None, cx);
+    }
+
     fn refresh_document_highlights(
         &mut self,
         for_server: Option<LanguageServerId>,
@@ -6471,8 +7167,37 @@ impl LspStore {
         };
 
         let mut messages_to_report = Vec::new();
+        // Servers may only be used by documents their registrations opened, which do not lead
+        // to the servers by their languages, so the servers are kept where they were started.
+        // This includes servers whose registrations may keep documents of languages the new
+        // settings no longer select them for.
+        let server_ids_with_open_registrations = local.server_ids_with_open_registrations();
+        let servers_with_documents_opened_by_registrations = local
+            .buffers_opened_by_registrations
+            .values()
+            .flatten()
+            .copied()
+            .chain(
+                local
+                    .buffers_opened_in_servers
+                    .values()
+                    .flatten()
+                    .copied()
+                    .filter(|server_id| server_ids_with_open_registrations.contains(server_id)),
+            )
+            .collect::<HashSet<_>>();
+        let placements = local.server_placements(
+            |server_id| servers_with_documents_opened_by_registrations.contains(&server_id),
+            cx,
+        );
         let (new_tree, to_stop) = {
             let mut rebase = local.lsp_tree.rebase();
+            local.restore_server_placements(
+                placements,
+                PlacementTree::Rebased(&mut rebase),
+                LanguageServerStartMode::Automatic,
+                cx,
+            );
             let buffers = buffer_store
                 .read(cx)
                 .buffers()
@@ -6530,46 +7255,14 @@ impl LspStore {
                         )
                         .collect::<Vec<_>>();
                     for node in nodes {
-                        let server_id = node.server_id_or_init(|disposition| {
-                            let path = &disposition.path;
-                            let workspace_folder =
-                                workspace_folder_uri(worktree.read(cx), &path.path);
-                            let key = LanguageServerSeed {
-                                worktree_id,
-                                name: disposition.server_name.clone(),
-                                settings: LanguageServerSeedSettings {
-                                    binary: disposition.settings.binary.clone(),
-                                    initialization_options: disposition
-                                        .settings
-                                        .initialization_options
-                                        .clone(),
-                                },
-                                toolchain: local.toolchain_store.read(cx).active_toolchain(
-                                    path.worktree_id,
-                                    &path.path,
-                                    language.name(),
-                                ),
-                            };
-                            if local.can_start_language_server(&key.name) {
-                                local.language_server_ids.remove(&key);
-                            }
-
-                            let server_id = local.get_or_insert_language_server(
-                                &worktree,
-                                lsp_delegate.clone(),
-                                disposition,
-                                &language.name(),
-                                LanguageServerStartMode::Automatic,
-                                cx,
-                            )?;
-                            if let Some(state) = local.language_servers.get(&server_id)
-                                && let Some(workspace_folder) = workspace_folder
-                            {
-                                state.add_workspace_folder(workspace_folder);
-                            };
-                            Some(server_id)
-                        });
-
+                        let server_id = local.get_or_start_rebuilt_server(
+                            &node,
+                            &worktree,
+                            &lsp_delegate,
+                            &language.name(),
+                            LanguageServerStartMode::Automatic,
+                            cx,
+                        );
                         if let Some(language_server_id) = server_id {
                             messages_to_report.push(LspStoreEvent::LanguageServerUpdate {
                                 language_server_id,
@@ -6598,6 +7291,23 @@ impl LspStore {
         local.lsp_tree = new_tree;
         for (id, _) in to_stop {
             self.stop_local_language_server(id, cx).detach();
+        }
+
+        // Settings also decide which servers the documents of other languages are opened in by
+        // `didOpen` registrations, and whether servers serve the languages of the documents
+        // their registrations opened, also for servers that keep running for their own languages.
+        let Some(local) = self.as_local() else {
+            return;
+        };
+        let mut server_ids_to_reconcile = local.server_ids_with_open_registrations();
+        server_ids_to_reconcile.extend(
+            servers_with_documents_opened_by_registrations
+                .into_iter()
+                .filter(|server_id| !server_ids_to_reconcile.contains(server_id))
+                .collect::<Vec<_>>(),
+        );
+        for server_id in server_ids_to_reconcile {
+            self.update_buffers_opened_by_registrations(server_id, cx);
         }
     }
 
@@ -13212,7 +13922,7 @@ impl LspStore {
                 Ok(())
             })
         } else {
-            let (stopped_names, task) =
+            let (stopped_names, _, task) =
                 self.stop_local_language_servers_for_buffers(&buffers, also_stop_servers, cx);
             if let Some(local) = self.as_local_mut() {
                 local
@@ -13239,7 +13949,7 @@ impl LspStore {
         local
             .language_server_restart_tasks
             .retain(|task| !task.is_ready());
-        let (_, stop_task) = if only_restart_servers.is_empty() {
+        let (_, stopped_server_placements, stop_task) = if only_restart_servers.is_empty() {
             self.stop_local_language_servers_for_buffers(&buffers, HashSet::default(), cx)
         } else {
             self.stop_local_language_servers_for_buffers(&[], only_restart_servers.clone(), cx)
@@ -13253,6 +13963,12 @@ impl LspStore {
                     let Some(local) = lsp_store.as_local_mut() else {
                         return;
                     };
+                    local.restore_server_placements(
+                        stopped_server_placements,
+                        PlacementTree::Current,
+                        start_mode,
+                        cx,
+                    );
                     for buffer in buffers {
                         if local
                             .registered_buffers
@@ -13274,14 +13990,19 @@ impl LspStore {
         }
     }
 
+    /// Returns the names of the stopped servers and where they ran, to start them there again.
     fn stop_local_language_servers_for_buffers(
         &mut self,
         buffers: &[Entity<Buffer>],
         also_stop_servers: HashSet<LanguageServerSelector>,
         cx: &mut Context<Self>,
-    ) -> (HashSet<LanguageServerName>, Task<()>) {
+    ) -> (HashSet<LanguageServerName>, ServerPlacements, Task<()>) {
         let Some(local) = self.as_local_mut() else {
-            return (HashSet::default(), Task::ready(()));
+            return (
+                HashSet::default(),
+                ServerPlacements::default(),
+                Task::ready(()),
+            );
         };
         let mut language_server_names_to_stop = BTreeSet::default();
         let mut language_servers_to_stop = also_stop_servers
@@ -13333,6 +14054,10 @@ impl LspStore {
                     .map(|(seed, _)| seed.name.clone())
             })
             .collect();
+        let stopped_server_placements = local.server_placements(
+            |server_id| language_servers_to_stop.contains(&server_id),
+            cx,
+        );
 
         local.lsp_tree.remove_nodes(&language_servers_to_stop);
         let tasks = language_servers_to_stop
@@ -13342,6 +14067,7 @@ impl LspStore {
 
         (
             stopped_names,
+            stopped_server_placements,
             cx.background_spawn(futures::future::join_all(tasks).map(|_| ())),
         )
     }
@@ -14334,6 +15060,9 @@ impl LspStore {
                 .workspace_pull_diagnostics_result_ids
                 .remove(&for_server);
             for buffer_servers in local.buffers_opened_in_servers.values_mut() {
+                buffer_servers.remove(&for_server);
+            }
+            for buffer_servers in local.buffers_opened_by_registrations.values_mut() {
                 buffer_servers.remove(&for_server);
             }
         }
