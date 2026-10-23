@@ -1196,6 +1196,48 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_branch_diff_surfaces_tree_diff_errors(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "a.txt": "contents\n",
+            }),
+        )
+        .await;
+        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
+            state.simulated_diff_tree_error = Some("simulated git failure".into());
+        })
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let diff = cx
+            .update(|window, cx| {
+                BranchDiff::new_with_default_branch(project.clone(), workspace, window, cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let error = cx.read(|cx| {
+            diff.read(cx)
+                .diff
+                .read(cx)
+                .branch_diff()
+                .read(cx)
+                .tree_diff_error()
+                .map(SharedString::to_string)
+        });
+        assert_eq!(error.as_deref(), Some("simulated git failure"));
+    }
+
+    #[gpui::test]
     async fn test_branch_diff_action_matches_existing_item_by_base_ref(cx: &mut TestAppContext) {
         init_test(cx);
 
