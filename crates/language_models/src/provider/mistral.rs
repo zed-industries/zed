@@ -362,6 +362,7 @@ fn supported_effort_levels(model: &mistral::Model) -> Arc<[LanguageModelEffortLe
                 name: effort.label().into(),
                 value: effort.value().into(),
                 is_default: Some(effort) == default_effort,
+                supports_disabling_thinking: None,
             })
             .collect::<Vec<_>>(),
     )
@@ -1002,6 +1003,7 @@ mod tests {
             // omitted when the toggle is off instead of sending an explicit
             // value.
             (mistral::Model::ZaiGlmLatest, false, None, None),
+            (mistral::Model::ZaiGlm53Flash, false, None, None),
             // Selected efforts are passed through when the model supports them.
             (
                 mistral::Model::ZaiGlmLatest,
@@ -1020,6 +1022,12 @@ mod tests {
                 true,
                 Some("max"),
                 Some(mistral::ReasoningEffort::Max),
+            ),
+            (
+                mistral::Model::ZaiGlm53Flash,
+                true,
+                Some("low"),
+                Some(mistral::ReasoningEffort::Low),
             ),
             // Efforts the model doesn't accept fall back to its default.
             (
@@ -1068,6 +1076,13 @@ mod tests {
                 .map(|level| level.value.as_ref()),
             Some("high")
         );
+
+        let flash_levels = supported_effort_levels(&mistral::Model::ZaiGlm53Flash);
+        let flash_values: Vec<_> = flash_levels
+            .iter()
+            .map(|level| level.value.as_ref())
+            .collect();
+        assert_eq!(flash_values, ["low", "high", "max"]);
 
         // mistral-medium and mistral-small only accept `none` and `high`, so
         // there is nothing to select beyond the thinking toggle.
