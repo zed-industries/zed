@@ -12,6 +12,7 @@
 use super::events::*;
 use super::text_input::TextInputView;
 use super::{CallbackSlot, IosDisplay, platform::IosPlatformState};
+use crate::scroll::IndirectScroll;
 use gpui::{
     AnyWindowHandle, BackGestureEvent, BackGesturePhase, Bounds, Capslock, Corners, DevicePixels,
     DispatchEventResult, DisplayId, Edges, GpuSpecs, Modifiers, Pixels, PlatformAtlas,
@@ -50,6 +51,7 @@ use std::{
     ptr::NonNull,
     rc::{Rc, Weak},
     sync::Arc,
+    time::Instant,
 };
 
 const KEYBOARD_DISMISS_DISTANCE: Pixels = px(24.);
@@ -187,7 +189,13 @@ define_class!(
         #[unsafe(method(handleScroll:))]
         fn handle_scroll(&self, recognizer: &UIPanGestureRecognizer) {
             self.ivars()
-                .with_window(|window| window.handle_scroll(recognizer));
+                .with_window(|window| window.handle_scroll(recognizer, true));
+        }
+
+        #[unsafe(method(handleWheelScroll:))]
+        fn handle_wheel_scroll(&self, recognizer: &UIPanGestureRecognizer) {
+            self.ivars()
+                .with_window(|window| window.handle_scroll(recognizer, false));
         }
 
         #[unsafe(method(handleBackGesture:))]
@@ -257,6 +265,7 @@ pub(crate) struct IosWindowState {
     force_next_frame: Cell<bool>,
     /// Callback for input events
     input_callback: CallbackSlot<Box<dyn FnMut(PlatformInput) -> DispatchEventResult>>,
+    indirect_scroll: RefCell<IndirectScroll>,
     /// Callback for active status changes
     active_status_callback: CallbackSlot<Box<dyn FnMut(bool)>>,
     visibility: Cell<WindowVisibility>,
@@ -345,23 +354,27 @@ impl IosWindow {
             ));
         }
 
-        // Trackpad and mouse-wheel scrolling reaches UIKit apps only through a
-        // pan recognizer that accepts scroll types. With no allowed touch types
-        // it never claims finger touches, so those keep reaching `touchesBegan`
-        // and GPUI's own recognizer.
+        // Separate continuous gestures from discrete wheel steps: only continuous
+        // scrolling should coast on release. Neither recognizer claims finger
+        // touches, which keep reaching GPUI's own touch recognizer.
         let scroll_target: &AnyObject = &view;
-        // SAFETY: `MetalView` implements `handleScroll:` and owns the recognizer.
-        let scroll_recognizer = unsafe {
-            UIPanGestureRecognizer::initWithTarget_action(
-                UIPanGestureRecognizer::alloc(main_thread),
-                Some(scroll_target),
-                Some(sel!(handleScroll:)),
-            )
-        };
-        scroll_recognizer.setAllowedScrollTypesMask(UIScrollTypeMask::All);
-        scroll_recognizer.setAllowedTouchTypes(&NSArray::new());
-        scroll_recognizer.setCancelsTouchesInView(false);
-        view.addGestureRecognizer(&scroll_recognizer);
+        for (scroll_types, action) in [
+            (UIScrollTypeMask::Continuous, sel!(handleScroll:)),
+            (UIScrollTypeMask::Discrete, sel!(handleWheelScroll:)),
+        ] {
+            // SAFETY: `MetalView` implements both actions and owns the recognizers.
+            let recognizer = unsafe {
+                UIPanGestureRecognizer::initWithTarget_action(
+                    UIPanGestureRecognizer::alloc(main_thread),
+                    Some(scroll_target),
+                    Some(action),
+                )
+            };
+            recognizer.setAllowedScrollTypesMask(scroll_types);
+            recognizer.setAllowedTouchTypes(&NSArray::new());
+            recognizer.setCancelsTouchesInView(false);
+            view.addGestureRecognizer(&recognizer);
+        }
 
         // The leading-edge swipe is iOS's back gesture. The delegate lets it
         // begin only when an element claims it; it then cancels the touches it
@@ -429,6 +442,7 @@ impl IosWindow {
             request_frame_callback: CallbackSlot::default(),
             force_next_frame: Cell::new(true),
             input_callback: CallbackSlot::default(),
+            indirect_scroll: RefCell::default(),
             active_status_callback: CallbackSlot::default(),
             visibility: Cell::new(WindowVisibility::Visible),
             visibility_callback: CallbackSlot::default(),
@@ -541,16 +555,30 @@ impl IosWindowState {
             predicted_position: None,
             force: touch_force(touch),
         };
+        if event.phase == TouchPhase::Started {
+            self.indirect_scroll.borrow_mut().cancel();
+        }
         self.handle_keyboard_dismiss_touch(&event);
         self.input_callback
             .with(|callback| callback(PlatformInput::Touch(event)));
     }
 
     /// Delivers one step of a trackpad or mouse-wheel scroll gesture.
-    fn handle_scroll(&self, recognizer: &UIPanGestureRecognizer) {
-        let Some(event) = scroll_event(recognizer, &self.view) else {
+    fn handle_scroll(&self, recognizer: &UIPanGestureRecognizer, continuous: bool) {
+        let Some(mut event) = scroll_event(recognizer, &self.view) else {
             return;
         };
+        // Unlike AppKit's scroll-wheel events, UIPanGestureRecognizer reports
+        // pan velocity but does not drive post-release deceleration.
+        let release_velocity = (continuous && event.touch_phase == TouchPhase::Ended).then(|| {
+            let velocity = recognizer.velocityInView(Some(&self.view));
+            Point::new(px(velocity.x as f32), px(velocity.y as f32))
+        });
+        self.indirect_scroll.borrow_mut().handle_event(
+            &mut event,
+            release_velocity,
+            Instant::now(),
+        );
         self.mouse_position.set(event.position);
         self.modifiers.set(event.modifiers);
         self.input_callback
@@ -636,6 +664,11 @@ impl IosWindowState {
     }
 
     pub(super) fn request_frame(&self) {
+        let scroll = self.indirect_scroll.borrow_mut().tick(Instant::now());
+        if let Some(scroll) = scroll {
+            self.input_callback
+                .with(|callback| callback(PlatformInput::Scroll(scroll)));
+        }
         self.request_frame_callback.with(|callback| {
             let force_render = self.force_next_frame.replace(false);
             callback(RequestFrameOptions {
@@ -730,6 +763,9 @@ impl IosWindowState {
     pub fn notify_active_status_change(&self, is_active: bool) {
         log::info!("GPUI iOS: Window active status changed to: {}", is_active);
 
+        if !is_active {
+            self.indirect_scroll.borrow_mut().cancel();
+        }
         self.active_status_callback
             .with(|callback| callback(is_active));
     }
