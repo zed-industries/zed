@@ -1,5 +1,7 @@
 use acp_thread::PermissionPattern;
-use shell_command_parser::{extract_commands, extract_terminal_command_prefix};
+use shell_command_parser::{
+    TerminalCommandPrefix, extract_command_prefixes, extract_terminal_command_prefix,
+};
 use std::path::{Path, PathBuf};
 use url::Url;
 
@@ -40,8 +42,10 @@ struct CommandPrefix {
 /// syntax correctly. Returns `None` if parsing fails or if the command name
 /// contains path separators (for security reasons).
 fn extract_command_prefix(command: &str) -> Option<CommandPrefix> {
-    let prefix = extract_terminal_command_prefix(command)?;
+    command_prefix(extract_terminal_command_prefix(command)?)
+}
 
+fn command_prefix(prefix: TerminalCommandPrefix) -> Option<CommandPrefix> {
     if !is_plain_command_token(&prefix.command) {
         return None;
     }
@@ -69,9 +73,11 @@ pub fn extract_terminal_permission_pattern(command: &str) -> Option<PermissionPa
 
 pub fn extract_terminal_pattern(command: &str) -> Option<String> {
     let prefix = extract_command_prefix(command)?;
-    let tokens = prefix.normalized_tokens;
+    pattern_from_tokens(&prefix.normalized_tokens)
+}
 
-    match tokens.as_slice() {
+fn pattern_from_tokens(tokens: &[String]) -> Option<String> {
+    match tokens {
         [] => None,
         [single] => Some(format!("^{}\\b", escape_for_pattern(single))),
         [rest @ .., last] => Some(format!(
@@ -97,16 +103,23 @@ pub fn extract_terminal_pattern_display(command: &str) -> Option<String> {
 /// filtered out, and duplicate command names are deduplicated while preserving
 /// order.
 pub fn extract_all_terminal_patterns(command: &str) -> Vec<PermissionPattern> {
-    let commands = match extract_commands(command) {
-        Some(commands) => commands,
+    let prefixes = match extract_command_prefixes(command) {
+        Some(prefixes) => prefixes,
         None => return Vec::new(),
     };
 
     let mut results = Vec::new();
 
-    for cmd in &commands {
-        let Some(permission_pattern) = extract_terminal_permission_pattern(cmd) else {
+    for prefix in prefixes {
+        let Some(prefix) = command_prefix(prefix) else {
             continue;
+        };
+        let Some(pattern) = pattern_from_tokens(&prefix.normalized_tokens) else {
+            continue;
+        };
+        let permission_pattern = PermissionPattern {
+            pattern,
+            display_name: prefix.display,
         };
 
         if results.contains(&permission_pattern) {
@@ -352,6 +365,42 @@ mod tests {
     #[test]
     fn test_extract_all_terminal_patterns_all_paths() {
         assert_eq!(extract_all_terminal_patterns("./a.sh | /usr/bin/b"), vec![]);
+    }
+
+    #[test]
+    fn test_extract_all_terminal_patterns_with_quoted_parentheses() {
+        assert_eq!(
+            extract_all_terminal_patterns(
+                "git for-each-ref --format='%(refname:short)' refs/ | head -5"
+            ),
+            vec![
+                PermissionPattern {
+                    pattern: "^git\\s+for-each-ref(\\s|$)".to_string(),
+                    display_name: "git for-each-ref".to_string(),
+                },
+                PermissionPattern {
+                    pattern: "^head\\b".to_string(),
+                    display_name: "head".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_extract_all_terminal_patterns_with_apostrophe_in_double_quotes() {
+        assert_eq!(
+            extract_all_terminal_patterns(r#"git commit -m "don't panic" && git push"#),
+            vec![
+                PermissionPattern {
+                    pattern: "^git\\s+commit(\\s|$)".to_string(),
+                    display_name: "git commit".to_string(),
+                },
+                PermissionPattern {
+                    pattern: "^git\\s+push(\\s|$)".to_string(),
+                    display_name: "git push".to_string(),
+                },
+            ]
+        );
     }
 
     #[test]
