@@ -2491,6 +2491,11 @@ mod tests {
                 )),
             );
         };
+        let cancelled = || {
+            acp::StateUpdate::Idle(
+                acp::IdleStateUpdate::new().stop_reason(acp::StopReason::Cancelled),
+            )
+        };
         for replay_history in [true, false] {
             let loading = harness.reopen(replay_history, cx);
             let (_, responder) = bounded(harness.resume_requests.recv(), cx)
@@ -2498,13 +2503,36 @@ mod tests {
                 .expect("resume");
             harness.resume_state(acp::StateUpdate::Idle(acp::IdleStateUpdate::new()));
             announce_running_child();
+            // A subagent whose replayed history ends, as claude-agent-acp replays each one.
+            harness.send_update(
+                "saved",
+                acp::SessionUpdate::SubagentUpdate(acp::SubagentUpdate::new("finished")),
+            );
+            for state in [
+                acp::StateUpdate::Running(acp::RunningStateUpdate::new()),
+                cancelled(),
+            ] {
+                harness.send_update("finished", acp::SessionUpdate::StateUpdate(state));
+            }
             responder
                 .respond(acp::ResumeSessionResponse::new())
                 .expect("resumed");
             let parent = bounded(loading, cx).await.expect("resumed parent");
-            let child = parent
-                .read_with(cx, |parent, _| parent.subagent(&"child".into()).cloned())
-                .expect("the subagent was announced before the response");
+            let (child, finished) = parent.read_with(cx, |parent, _| {
+                (
+                    parent.subagent(&"child".into()).cloned(),
+                    parent.subagent(&"finished".into()).cloned(),
+                )
+            });
+            let child = child.expect("the subagent was announced before the response");
+            let finished = finished.expect("the subagent was announced before the response");
+            finished.read_with(cx, |finished, _| {
+                assert_eq!(
+                    finished.foreground_state(),
+                    Some(&cancelled()),
+                    "a replayed outcome confirms no activity, so it stays"
+                );
+            });
             child.read_with(cx, |child, _| {
                 let association = child.subagent_association().expect("subagent");
                 assert_eq!(association.title.as_deref(), Some("Investigator"));
@@ -2536,7 +2564,7 @@ mod tests {
                     );
                 });
             }
-            drop((parent, child));
+            drop((parent, child, finished));
             cx.run_until_parked();
         }
     }

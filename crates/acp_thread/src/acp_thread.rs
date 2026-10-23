@@ -3980,9 +3980,10 @@ impl AcpThread {
     }
 
     /// Ends a history replay into this session, after a successful load or resume. The
-    /// subagents RFD treats what the replay reported about subagents' work state and
-    /// capabilities as history: it stays visible, but confirms no current activity and
-    /// allows no cancelling until the agent reports them again.
+    /// subagents RFD treats what the replay reported about subagents as history: it may
+    /// stay visible, but must not allow cancelling or confirm current activity until the
+    /// agent reports it again. A replayed outcome, such as a completed or failed
+    /// subagent, stays, since it confirms no activity.
     pub fn invalidate_replayed_subagent_state(&mut self, cx: &mut Context<Self>) {
         for subagent in self.subagents.values() {
             subagent.update(cx, |subagent, cx| {
@@ -3990,7 +3991,9 @@ impl AcpThread {
                     association.can_cancel = false;
                     cx.notify();
                 }
-                subagent.clear_session_state(cx).log_err();
+                if subagent.foreground_activity().is_active() {
+                    subagent.clear_session_state(cx).log_err();
+                }
                 subagent.invalidate_replayed_subagent_state(cx);
             });
         }
