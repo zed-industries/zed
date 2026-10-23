@@ -680,6 +680,20 @@ fn load_all_actions() -> ActionManifest {
     }
 }
 
+fn replace_docs_channel_badge(contents: &str, docs_channel: &str) -> String {
+    let badge = match docs_channel {
+        "nightly" => {
+            r#"<span class="docs-channel-badge" title="You’re viewing the Nightly docs for Zed">Nightly</span>"#
+        }
+        "preview" => {
+            r#"<span class="docs-channel-badge" title="You’re viewing the Preview docs for Zed">Preview</span>"#
+        }
+        _ => "",
+    };
+
+    contents.replace("#docs-channel-badge#", badge)
+}
+
 fn handle_postprocessing() -> Result<()> {
     let logger = zlog::scoped!("render");
     let mut ctx = mdbook::renderer::RenderContext::from_json(io::stdin())?;
@@ -807,6 +821,7 @@ fn handle_postprocessing() -> Result<()> {
         let contents = contents.replace("#amplitude_key#", &amplitude_key);
         let contents = contents.replace("#consent_io_instance#", &consent_io_instance);
         let contents = contents.replace("#noindex#", noindex);
+        let contents = replace_docs_channel_badge(&contents, &docs_channel);
         let contents = rewrite_docs_links(&contents, &site_url);
         let contents = add_markdown_alternate_link(&contents, file, &root_dir, &site_url);
         let contents = title_regex()
