@@ -324,12 +324,15 @@ enum ShowBehavior {
 }
 
 impl ShowBehavior {
-    fn from_setting(setting: ShowScrollbar, cx: &mut App) -> Self {
+    fn from_setting(setting: ShowScrollbar, cx: &App) -> Self {
         match setting {
             ShowScrollbar::Never => Self::Never,
             ShowScrollbar::Auto => Self::Autohide,
             ShowScrollbar::System => {
-                if cx.default_global::<ScrollbarAutoHide>().should_hide() {
+                if cx
+                    .try_global::<ScrollbarAutoHide>()
+                    .is_some_and(ScrollbarAutoHide::should_hide)
+                {
                     Self::Autohide
                 } else {
                     Self::Always
@@ -678,6 +681,8 @@ impl gpui::Global for ScrollbarSettingsChanged {}
 
 pub fn observe_scrollbar_settings<T: gpui::Global>(cx: &mut App) {
     cx.observe_global::<T>(|cx| cx.set_global(ScrollbarSettingsChanged))
+        .detach();
+    cx.observe_global::<ScrollbarAutoHide>(|cx| cx.set_global(ScrollbarSettingsChanged))
         .detach();
 }
 
@@ -1801,6 +1806,19 @@ mod tests {
         cx.executor().advance_clock(SCROLLBAR_HIDE_DELAY_INTERVAL);
         state.read_with(cx, |state, _| {
             assert_eq!(state.show_state, VisibilityState::Visible);
+        });
+    }
+
+    #[gpui::test]
+    fn test_auto_hide_change_updates_system_scrollbar(cx: &mut TestAppContext) {
+        let state = new_scrollbar_state(ShowScrollbar::System, cx);
+        state.read_with(cx, |state, _| {
+            assert!(state.show_behavior == ShowBehavior::Always);
+        });
+
+        cx.update(|cx| cx.set_global(ScrollbarAutoHide(true)));
+        state.read_with(cx, |state, _| {
+            assert!(state.show_behavior == ShowBehavior::Autohide);
         });
     }
 
