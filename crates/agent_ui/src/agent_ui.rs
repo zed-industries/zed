@@ -147,13 +147,17 @@ fn agent_image_lookup(
         .flat_map(|candidate| project.abs_paths_for_file_link(Path::new(candidate), cx))
         .collect();
 
-    // Only an absolute first candidate may skip the disk walk: an indexed later candidate must
-    // not win over an earlier one that exists on disk but isn't indexed (e.g. gitignored), and
-    // an unexpanded `~` path is not worktree-relative. It also needs a file entry, since an open
-    // buffer outlives its deleted file.
+    // Only the first candidate may skip the ordered disk lookup, and only as an absolute, plain
+    // path with a file entry; otherwise the index can pick a different file than the filesystem
+    // (gitignored or deleted files, `~`, a `.` segment or a trailing separator).
     let first_path = paths.first()?;
-    let Some(project_path) = path_style
-        .is_absolute(first_path)
+    let is_plain_path = first_path.to_str().is_some_and(|path| {
+        !path.ends_with(path_style.separators_ch())
+            && !path
+                .split(path_style.separators_ch())
+                .any(|component| component == ".")
+    });
+    let Some(project_path) = (path_style.is_absolute(first_path) && is_plain_path)
         .then(|| project.project_path_for_file_link(first_path, cx))
         .flatten()
         .filter(|project_path| {
@@ -1206,6 +1210,27 @@ mod tests {
                 PathBuf::from(path!("/project/~/shot.png")),
             ])
         );
+    }
+
+    #[gpui::test]
+    async fn test_agent_image_lookup_defers_paths_the_index_would_rewrite(cx: &mut TestAppContext) {
+        crate::test_support::init_test(cx);
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/one"), json!({"shot.svg": "<svg/>"}))
+            .await;
+        fs.insert_tree(path!("/two"), json!({"shot.svg": {"%2e": "<svg/>"}}))
+            .await;
+        let project = Project::test(fs, [path!("/one").as_ref(), path!("/two").as_ref()], cx).await;
+
+        for dest_url in ["shot.svg/%2e", "shot.svg/."] {
+            assert!(
+                matches!(
+                    lookup(dest_url, &project, cx),
+                    Some(AgentImageLookup::Disk(_))
+                ),
+                "{dest_url}"
+            );
+        }
     }
 
     #[gpui::test]
