@@ -630,14 +630,14 @@ impl Vim {
     }
 
     pub fn visual_delete(&mut self, line_mode: bool, window: &mut Window, cx: &mut Context<Self>) -> Option<TransactionId> {
-        self.visual_delete_with_optional_yank(true, line_mode, window, cx)
+        self.visual_delete_with_optional_yank(line_mode, window, cx, true)
     }
 
     pub fn visual_delete_no_yank(&mut self, line_mode: bool, window: &mut Window, cx: &mut Context<Self>) -> Option<TransactionId> {
-        self.visual_delete_with_optional_yank(false, line_mode, window, cx)
+        self.visual_delete_with_optional_yank(line_mode, window, cx, false)
     }
 
-    pub fn visual_delete_with_optional_yank(&mut self, yank: bool, line_mode: bool, window: &mut Window, cx: &mut Context<Self>) -> Option<TransactionId> {
+    pub fn visual_delete_with_optional_yank(&mut self, line_mode: bool, window: &mut Window, cx: &mut Context<Self>, yank: bool) -> Option<TransactionId> {
         self.store_visual_marks(window, cx);
         let transaction_id = self.update_editor(cx, |vim, editor, cx| {
             let mut original_columns: HashMap<_, _> = Default::default();

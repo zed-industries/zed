@@ -159,7 +159,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 })
             })
         });
-        let transaction_id = vim.visual_delete_with_optional_yank(with_yank, false, window, cx);
+        let transaction_id = vim.visual_delete_with_optional_yank(false, window, cx, with_yank);
         if let (Some(original_selections), Some(transaction_id)) =
             (original_selections, transaction_id)
             && !original_selections.is_empty()

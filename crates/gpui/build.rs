@@ -18,6 +18,16 @@ fn main() {
 
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
 
+    // Hot reloading is limited to debug builds so the feature can't ship in release binaries,
+    // and to the platforms whose patch transport is implemented.
+    println!("cargo::rustc-check-cfg=cfg(gpui_hot_reload)");
+    if std::env::var_os("CARGO_FEATURE_HOT_RELOAD").is_some()
+        && std::env::var_os("CARGO_CFG_DEBUG_ASSERTIONS").is_some()
+        && matches!(target_os.as_str(), "macos" | "linux" | "windows" | "ios")
+    {
+        println!("cargo::rustc-cfg=gpui_hot_reload");
+    }
+
     if target_os == "windows" {
         #[cfg(feature = "windows-manifest")]
         embed_resource();

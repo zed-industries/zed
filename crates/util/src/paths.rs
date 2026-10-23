@@ -210,6 +210,36 @@ pub fn strip_path_suffix<'a>(base: &'a Path, suffix: &Path) -> Option<&'a Path> 
     None
 }
 
+/// Normalizes a path by resolving `.` and `..` components without
+/// requiring the path to exist on disk (unlike `canonicalize`).
+pub fn normalize_path(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut components = path.components().peekable();
+    let mut ret = if let Some(c @ Component::Prefix(..)) = components.peek().cloned() {
+        components.next();
+        PathBuf::from(c.as_os_str())
+    } else {
+        PathBuf::new()
+    };
+
+    for component in components {
+        match component {
+            Component::Prefix(..) => unreachable!(),
+            Component::RootDir => {
+                ret.push(component.as_os_str());
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                ret.pop();
+            }
+            Component::Normal(c) => {
+                ret.push(c);
+            }
+        }
+    }
+    ret
+}
+
 /// In memory, this is identical to `Path`. On non-Windows conversions to this type are no-ops. On
 /// windows, these conversions sanitize UNC paths by removing the `\\\\?\\` prefix.
 #[derive(Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -362,19 +392,6 @@ impl Display for RemotePathBuf {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.string)
     }
-}
-
-pub fn is_absolute(path_like: &str, path_style: PathStyle) -> bool {
-    path_like.starts_with('/')
-        || path_style == PathStyle::Windows
-            && (path_like.starts_with('\\')
-                || path_like
-                    .chars()
-                    .next()
-                    .is_some_and(|c| c.is_ascii_alphabetic())
-                    && path_like[1..]
-                        .strip_prefix(':')
-                        .is_some_and(|path| path.starts_with('/') || path.starts_with('\\')))
 }
 
 #[derive(Debug, PartialEq)]
@@ -1061,6 +1078,11 @@ pub enum SortOrder {
     /// Pure Unicode codepoint comparison. No case folding, no natural number sorting.
     /// Uppercase ASCII sorts before lowercase. Accented characters sort after ASCII.
     Unicode,
+    /// Files are grouped by their last extension (case-insensitive) in ascending order,
+    /// with extensionless files, including dotfiles such as `.gitignore`, first.
+    /// Dotfiles with a further suffix, such as `.config.json`, keep that extension.
+    /// Within a group, names use the same natural sort as `Default`.
+    Extension,
 }
 
 /// Controls how files and directories are ordered relative to each other.
@@ -1159,6 +1181,17 @@ pub fn compare_rel_paths_by(
                 let (b_stem, b_ext) = b_leaf_file
                     .then(|| stem_and_extension(component_b))
                     .unwrap_or_default();
+                if order == SortOrder::Extension {
+                    // Directories have no extension and must take part in this comparison too,
+                    // otherwise mixed mode would produce an inconsistent (non-transitive) ordering.
+                    let extension_ordering = a_ext
+                        .unwrap_or_default()
+                        .to_lowercase()
+                        .cmp(&b_ext.unwrap_or_default().to_lowercase());
+                    if !extension_ordering.is_eq() {
+                        return extension_ordering;
+                    }
+                }
                 let a_key = if a_leaf_file {
                     a_stem
                 } else {
@@ -1414,7 +1447,7 @@ impl UrlExt for url::Url {
 
             let path = String::from_utf8(bytes).map_err(|_| ())?;
             debug_assert!(
-                PathStyle::Unix.is_absolute(&path),
+                PathStyle::Unix.is_absolute(Path::new(&path)),
                 "to_file_path() failed to produce an absolute Path"
             );
 
@@ -1485,7 +1518,7 @@ impl UrlExt for url::Url {
                 );
             }
             debug_assert!(
-                PathStyle::Windows.is_absolute(&string),
+                PathStyle::Windows.is_absolute(Path::new(&string)),
                 "to_file_path() failed to produce an absolute Path"
             );
             let path = PathBuf::from(string);
@@ -1953,6 +1986,86 @@ mod tests {
                 (RelPath::from_unix_str("README.md").unwrap(), true),
                 (RelPath::from_unix_str(".github").unwrap(), false),
                 (RelPath::from_unix_str("src").unwrap(), false),
+            ]
+        );
+    }
+
+    #[perf]
+    fn compare_rel_paths_extension_groups_files() {
+        let mut paths = vec![
+            (RelPath::from_unix_str("b.rs").unwrap(), true),
+            (RelPath::from_unix_str("a.py").unwrap(), true),
+            (RelPath::from_unix_str("a.RS").unwrap(), true),
+            (RelPath::from_unix_str("file10.rs").unwrap(), true),
+            (RelPath::from_unix_str("file2.rs").unwrap(), true),
+            (RelPath::from_unix_str("Makefile").unwrap(), true),
+            (RelPath::from_unix_str(".gitignore").unwrap(), true),
+            (RelPath::from_unix_str(".config.json").unwrap(), true),
+            (RelPath::from_unix_str(".env.local").unwrap(), true),
+            (RelPath::from_unix_str("a.css").unwrap(), true),
+            (RelPath::from_unix_str("archive.tar.gz").unwrap(), true),
+            (RelPath::from_unix_str("src").unwrap(), false),
+        ];
+        paths.sort_by(|&a, &b| {
+            compare_rel_paths_by(a, b, SortMode::DirectoriesFirst, SortOrder::Extension)
+        });
+        assert_eq!(
+            paths,
+            vec![
+                (RelPath::from_unix_str("src").unwrap(), false),
+                (RelPath::from_unix_str(".gitignore").unwrap(), true),
+                (RelPath::from_unix_str("Makefile").unwrap(), true),
+                (RelPath::from_unix_str("a.css").unwrap(), true),
+                (RelPath::from_unix_str("archive.tar.gz").unwrap(), true),
+                (RelPath::from_unix_str(".config.json").unwrap(), true),
+                (RelPath::from_unix_str(".env.local").unwrap(), true),
+                (RelPath::from_unix_str("a.py").unwrap(), true),
+                (RelPath::from_unix_str("a.RS").unwrap(), true),
+                (RelPath::from_unix_str("b.rs").unwrap(), true),
+                (RelPath::from_unix_str("file2.rs").unwrap(), true),
+                (RelPath::from_unix_str("file10.rs").unwrap(), true),
+            ]
+        );
+    }
+
+    #[perf]
+    fn compare_rel_paths_extension_with_files_first() {
+        let mut paths = vec![
+            (RelPath::from_unix_str("z.rs").unwrap(), true),
+            (RelPath::from_unix_str("a.txt").unwrap(), true),
+            (RelPath::from_unix_str("m").unwrap(), false),
+            (RelPath::from_unix_str("b.py").unwrap(), true),
+        ];
+        paths.sort_by(|&a, &b| {
+            compare_rel_paths_by(a, b, SortMode::FilesFirst, SortOrder::Extension)
+        });
+        assert_eq!(
+            paths,
+            vec![
+                (RelPath::from_unix_str("b.py").unwrap(), true),
+                (RelPath::from_unix_str("z.rs").unwrap(), true),
+                (RelPath::from_unix_str("a.txt").unwrap(), true),
+                (RelPath::from_unix_str("m").unwrap(), false),
+            ]
+        );
+    }
+
+    #[perf]
+    fn compare_rel_paths_extension_mixed_is_consistent() {
+        let mut paths = vec![
+            (RelPath::from_unix_str("z.rs").unwrap(), true),
+            (RelPath::from_unix_str("a.txt").unwrap(), true),
+            (RelPath::from_unix_str("m").unwrap(), false),
+            (RelPath::from_unix_str("b").unwrap(), true),
+        ];
+        paths.sort_by(|&a, &b| compare_rel_paths_by(a, b, SortMode::Mixed, SortOrder::Extension));
+        assert_eq!(
+            paths,
+            vec![
+                (RelPath::from_unix_str("b").unwrap(), true),
+                (RelPath::from_unix_str("m").unwrap(), false),
+                (RelPath::from_unix_str("z.rs").unwrap(), true),
+                (RelPath::from_unix_str("a.txt").unwrap(), true),
             ]
         );
     }

@@ -1985,7 +1985,8 @@ mod test {
     }
 
     fn dispatch_native_printable_key(cx: &mut VimTestContext, key: char) -> DispatchEventResult {
-        let keystroke = Keystroke::parse(&key.to_string())
+        let os = cx.read(|cx| cx.platform_info().os);
+        let keystroke = Keystroke::parse_with_os(&key.to_string(), os)
             .expect("helix jump labels are valid keystrokes")
             .with_simulated_ime();
         let result = cx.update(|window, cx| {
@@ -2939,7 +2940,7 @@ mod test {
 
         // Test shift-r paste on selection from Helix Select Mode returns to Helix Normal Mode
         cx.set_state("foo «barˇ» baz fizz", Mode::HelixSelect);
-        cx.simulate_keystrokes("e"); // if we're in Select Mode, the selection should be extended to inlcude ` baz`
+        cx.simulate_keystrokes("e"); // if we're in Select Mode, the selection should be extended to include ` baz`
         cx.simulate_keystrokes("shift-r");
 
         cx.assert_state("foo hello worldˇ fizz", Mode::HelixNormal);

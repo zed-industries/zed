@@ -22175,28 +22175,28 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut TestAppContext) {
     cx.lsp
         .set_request_handler::<lsp::request::Formatting, _, _>({
             move |_, _| {
+                assert_eq!(
+                    buffer_changes.lock().get(1..),
+                    Some(
+                        [
+                            (
+                                lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 4)),
+                                String::new(),
+                            ),
+                            (
+                                lsp::Range::new(lsp::Position::new(2, 5), lsp::Position::new(2, 6)),
+                                String::new(),
+                            ),
+                            (
+                                lsp::Range::new(lsp::Position::new(3, 4), lsp::Position::new(3, 4)),
+                                language::LineEnding::default().as_str().to_owned(),
+                            ),
+                        ]
+                        .as_slice(),
+                    ),
+                );
                 // Insert blank lines between each line of the buffer.
                 async move {
-                    // TODO: this assertion is not reliably true. Currently nothing guarantees that we deliver
-                    // DidChangedTextDocument to the LSP before sending the formatting request.
-                    // assert_eq!(
-                    //     &buffer_changes.lock()[1..],
-                    //     &[
-                    //         (
-                    //             lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 4)),
-                    //             "".into()
-                    //         ),
-                    //         (
-                    //             lsp::Range::new(lsp::Position::new(2, 5), lsp::Position::new(2, 6)),
-                    //             "".into()
-                    //         ),
-                    //         (
-                    //             lsp::Range::new(lsp::Position::new(3, 4), lsp::Position::new(3, 4)),
-                    //             "\n".into()
-                    //         ),
-                    //     ]
-                    // );
-
                     Ok(Some(vec![
                         lsp::TextEdit {
                             range: lsp::Range::new(
@@ -28775,6 +28775,47 @@ async fn test_on_type_formatting_is_applied_after_autoindent(cx: &mut TestAppCon
 }
 
 #[gpui::test]
+async fn test_on_type_formatting_position_stays_after_trigger_while_autoindent_is_pending(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
+                first_trigger_character: "=".to_string(),
+                more_trigger_character: None,
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state("fn f() {\n    let n ˇ1\n}\n");
+    cx.update_buffer(|buffer, _| buffer.set_sync_parse_timeout(None));
+
+    let mut request =
+        cx.set_request_handler::<lsp::request::OnTypeFormatting, _, _>(|_, params, _| async move {
+            assert_eq!(params.ch, "=");
+            assert_eq!(
+                params.text_document_position.position,
+                lsp::Position::new(1, 11)
+            );
+            Ok(Some(vec![]))
+        });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("=", window, cx);
+        editor.handle_input("2", window, cx);
+    });
+    cx.run_until_parked();
+
+    cx.assert_editor_state("fn f() {\n    let n =2ˇ1\n}\n");
+    assert!(request.next().await.is_some());
+}
+
+#[gpui::test]
 async fn test_on_type_formatting_not_scheduled_without_server_support(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -28867,6 +28908,230 @@ async fn test_on_type_formatting_does_not_rewind_over_intervening_edits(cx: &mut
     cx.run_until_parked();
 
     cx.assert_editor_state("let a = b.cxˇ;\n");
+}
+
+#[gpui::test]
+async fn test_on_type_formatting_after_newline_uses_autoindented_position(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    for async_autoindent in [false, true] {
+        let mut cx = EditorLspTestContext::new_typescript(
+            lsp::ServerCapabilities {
+                document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
+                    first_trigger_character: "\n".to_string(),
+                    more_trigger_character: None,
+                }),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state("function foo() {ˇ}\n");
+        if async_autoindent {
+            cx.update_buffer(|buffer, _| buffer.set_sync_parse_timeout(None));
+        }
+
+        // Mirrors Ruby LSP closing a block: a newline and the closing keyword inserted at the cursor.
+        let mut request = cx.set_request_handler::<lsp::request::OnTypeFormatting, _, _>(
+            |_, params, _| async move {
+                let position = params.text_document_position.position;
+                assert_eq!(position, lsp::Position::new(1, 4));
+                Ok(Some(vec![
+                    lsp::TextEdit {
+                        range: lsp::Range::new(position, position),
+                        new_text: "\n".to_string(),
+                    },
+                    lsp::TextEdit {
+                        range: lsp::Range::new(position, position),
+                        new_text: "end".to_string(),
+                    },
+                ]))
+            },
+        );
+
+        cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+        cx.run_until_parked();
+
+        cx.assert_editor_state("function foo() {\n    ˇ\nend\n}\n");
+        assert!(request.next().await.is_some());
+    }
+}
+
+#[gpui::test]
+async fn test_on_type_formatting_after_newline_keeps_whitespace_after_cursor(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |settings| {
+        settings.defaults.auto_indent = Some(settings::AutoIndentMode::None)
+    });
+    for whitespace in ["    ", "\t\t", " \t "] {
+        assert_on_type_formatting_request_position(
+            false,
+            "\n",
+            &format!("function f() {{ˇ{whitespace}let n = 1;\n}}\n"),
+            |editor, window, cx| editor.newline(&Newline, window, cx),
+            lsp::Position::new(1, 0),
+            &format!("function f() {{\nˇ{whitespace}let n = 1;\n}}\n"),
+            cx,
+        )
+        .await;
+    }
+}
+
+#[gpui::test]
+async fn test_on_type_formatting_after_newline_ignores_subsequent_input(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.auto_indent = Some(settings::AutoIndentMode::None)
+    });
+    assert_on_type_formatting_request_position(
+        false,
+        "\n",
+        "function f() {}ˇ",
+        |editor, window, cx| {
+            editor.newline(&Newline, window, cx);
+            editor.handle_input("function g() {}\nfunction h() {}", window, cx);
+        },
+        lsp::Position::new(1, 0),
+        "function f() {}\nfunction g() {}\nfunction h() {}ˇ",
+        cx,
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn test_on_type_formatting_after_newline_with_existing_indent(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    for async_autoindent in [false, true] {
+        for (whitespace, expected_whitespace, expected_column) in [
+            ("    ", "ˇ    ", 0),
+            ("        ", "ˇ    ", 0),
+            ("\t", "    ˇ", 4),
+        ] {
+            assert_on_type_formatting_request_position(
+                async_autoindent,
+                "\n",
+                &format!("function f() {{ˇ{whitespace}let n = 1;\n}}\n"),
+                |editor, window, cx| editor.newline(&Newline, window, cx),
+                lsp::Position::new(1, expected_column),
+                &format!("function f() {{\n{expected_whitespace}let n = 1;\n}}\n"),
+                cx,
+            )
+            .await;
+        }
+    }
+}
+
+#[gpui::test]
+async fn test_on_type_formatting_after_newline_ignores_input_while_autoindent_is_pending(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+    for (previous_line, input, expected_line, expected_column) in [
+        ("    let n = 1;", "n", "    nˇ", 4),
+        ("    let n = 1;", "n;\nn", "    n;\n    nˇ", 4),
+        ("    let n = 1;", " n", "    nˇ", 3),
+        ("", " n", "    nˇ", 3),
+        ("    let n = 1;", "\tn", "   \tnˇ", 3),
+    ] {
+        assert_on_type_formatting_request_position(
+            true,
+            "\n",
+            &format!("function f() {{\n{previous_line}ˇ\n}}\n"),
+            |editor, window, cx| {
+                editor.newline(&Newline, window, cx);
+                editor.handle_input(input, window, cx);
+            },
+            lsp::Position::new(2, expected_column),
+            &format!("function f() {{\n{previous_line}\n{expected_line}\n}}\n"),
+            cx,
+        )
+        .await;
+    }
+}
+
+#[gpui::test]
+async fn test_on_type_formatting_after_outdenting_trigger(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    for async_autoindent in [false, true] {
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
+                    first_trigger_character: "}".to_string(),
+                    more_trigger_character: None,
+                }),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state("fn f() {\n    let n = 1;\n    ˇ\n");
+        if async_autoindent {
+            cx.update_buffer(|buffer, _| buffer.set_sync_parse_timeout(None));
+        }
+
+        let mut request = cx.set_request_handler::<lsp::request::OnTypeFormatting, _, _>(
+            |_, params, _| async move {
+                assert_eq!(
+                    params.text_document_position.position,
+                    lsp::Position::new(2, 1)
+                );
+                Ok(Some(vec![]))
+            },
+        );
+
+        cx.update_editor(|editor, window, cx| editor.handle_input("}", window, cx));
+        cx.run_until_parked();
+
+        cx.assert_editor_state("fn f() {\n    let n = 1;\n}ˇ\n");
+        assert!(request.next().await.is_some());
+    }
+}
+
+#[gpui::test]
+async fn test_on_type_formatting_does_not_pin_cursor_moved_while_autoindent_is_pending(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_typescript(
+        lsp::ServerCapabilities {
+            document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
+                first_trigger_character: ";".to_string(),
+                more_trigger_character: None,
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state("function f() {\n    let a=1ˇ\n}\n");
+    cx.update_buffer(|buffer, _| buffer.set_sync_parse_timeout(None));
+
+    let mut request =
+        cx.set_request_handler::<lsp::request::OnTypeFormatting, _, _>(|_, _, _| async move {
+            Ok(Some(vec![
+                lsp::TextEdit {
+                    range: lsp::Range::new(lsp::Position::new(1, 9), lsp::Position::new(1, 9)),
+                    new_text: " ".to_string(),
+                },
+                lsp::TextEdit {
+                    range: lsp::Range::new(lsp::Position::new(1, 10), lsp::Position::new(1, 10)),
+                    new_text: " ".to_string(),
+                },
+            ]))
+        });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input(";", window, cx);
+        editor.move_left(&MoveLeft, window, cx);
+        editor.move_left(&MoveLeft, window, cx);
+    });
+    cx.run_until_parked();
+
+    cx.assert_editor_state("function f() {\n    let a = ˇ1;\n}\n");
+    assert!(request.next().await.is_some());
 }
 
 #[gpui::test]
@@ -31761,6 +32026,187 @@ async fn test_row_highlights_for_empty_conflict_side_after_edit(
             }
         }
     });
+}
+
+#[gpui::test]
+async fn test_jumps_unfold_enclosing_sections(cx: &mut TestAppContext) {
+    use workspace::item::Item;
+
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("ˇfirst\nouter\ninner\ntarget\nend\nunrelated\nend\nlast");
+
+    let outer = Point::new(1, 0)..Point::new(4, 0);
+    let inner = Point::new(2, 0)..Point::new(3, 6);
+    let unrelated = Point::new(5, 0)..Point::new(6, 3);
+    let target = Point::new(3, 2);
+
+    for use_history in [false, true] {
+        for already_selected in [false, true] {
+            cx.update_editor(|editor, window, cx| {
+                editor.unfold_ranges(&[Point::zero()..Point::new(7, 4)], false, false, cx);
+                let initial = if already_selected {
+                    target
+                } else {
+                    Point::zero()
+                };
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                    selections.select_ranges([initial..initial]);
+                });
+                editor.fold_ranges(
+                    vec![outer.clone(), inner.clone(), unrelated.clone()],
+                    false,
+                    window,
+                    cx,
+                );
+                let snapshot = editor.display_snapshot(cx);
+                assert_eq!(
+                    snapshot
+                        .folds_in_range(Point::zero()..Point::new(7, 4))
+                        .count(),
+                    3
+                );
+
+                if use_history {
+                    let snapshot = editor.buffer.read(cx).snapshot(cx);
+                    assert!(editor.navigate(
+                        Arc::new(NavigationData {
+                            cursor_anchor: snapshot.anchor_before(target),
+                            cursor_position: target,
+                            scroll_anchor: ScrollAnchor {
+                                anchor: snapshot.anchor_before(Point::zero()),
+                                offset: Default::default(),
+                            },
+                            scroll_top_row: 0,
+                        }),
+                        window,
+                        cx,
+                    ));
+                } else {
+                    editor.go_to_singleton_buffer_point(target, window, cx);
+                }
+
+                let snapshot = editor.display_snapshot(cx);
+                assert_eq!(editor.selections.newest::<Point>(&snapshot).head(), target);
+                let remaining_folds = snapshot
+                    .folds_in_range(Point::zero()..Point::new(7, 4))
+                    .map(|fold| {
+                        fold.range.start.to_point(snapshot.buffer_snapshot())
+                            ..fold.range.end.to_point(snapshot.buffer_snapshot())
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(remaining_folds, vec![unrelated.clone()]);
+            });
+        }
+    }
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_ranges(vec![outer.clone(), inner.clone()], false, window, cx);
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([target..target]);
+        });
+        let snapshot = editor.display_snapshot(cx);
+        assert_eq!(
+            snapshot
+                .folds_in_range(Point::zero()..Point::new(7, 4))
+                .count(),
+            3
+        );
+        editor.go_to_singleton_buffer_point(outer.start, window, cx);
+        let snapshot = editor.display_snapshot(cx);
+        assert_eq!(
+            snapshot
+                .folds_in_range(Point::zero()..Point::new(7, 4))
+                .count(),
+            3
+        );
+        editor.go_to_singleton_buffer_point(outer.end, window, cx);
+        let snapshot = editor.display_snapshot(cx);
+        assert_eq!(
+            snapshot
+                .folds_in_range(Point::zero()..Point::new(7, 4))
+                .count(),
+            3
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_selection_effects_unfold_opt_in(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("ˇfirst\nouter\ninner\ntarget\nend\nunrelated\nend\nlast");
+    let target = Point::new(3, 2);
+    let unrelated = Point::new(5, 0)..Point::new(6, 3);
+    let folds = vec![
+        Point::new(1, 0)..Point::new(4, 0),
+        Point::new(2, 0)..Point::new(3, 6),
+        unrelated.clone(),
+    ];
+
+    for deferred in [false, true] {
+        cx.update_editor(|editor, window, cx| {
+            editor.unfold_ranges(&[Point::zero()..Point::new(7, 4)], false, false, cx);
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges([target..target]);
+            });
+            editor.fold_ranges(folds.clone(), false, window, cx);
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |_| {});
+            assert_eq!(
+                editor
+                    .display_snapshot(cx)
+                    .folds_in_range(target..target)
+                    .count(),
+                2
+            );
+
+            if deferred {
+                editor.with_selection_effects_deferred(window, cx, |editor, window, cx| {
+                    editor.change_selections(
+                        SelectionEffects::no_scroll().unfold(),
+                        window,
+                        cx,
+                        |selections| selections.select_ranges([Point::zero()..Point::zero()]),
+                    );
+                    editor.change_selections(
+                        SelectionEffects::no_scroll(),
+                        window,
+                        cx,
+                        |selections| {
+                            let snapshot = selections.display_snapshot();
+                            let anchor = snapshot.buffer_snapshot().anchor_before(target);
+                            selections.select_anchor_ranges([anchor..anchor]);
+                        },
+                    );
+                    assert_eq!(
+                        editor
+                            .display_snapshot(cx)
+                            .folds_in_range(target..target)
+                            .count(),
+                        2
+                    );
+                });
+            } else {
+                editor.change_selections(
+                    SelectionEffects::no_scroll().unfold(),
+                    window,
+                    cx,
+                    |_| {},
+                );
+            }
+
+            let snapshot = editor.display_snapshot(cx);
+            let remaining_folds = snapshot
+                .folds_in_range(Point::zero()..Point::new(7, 4))
+                .map(|fold| {
+                    fold.range.start.to_point(snapshot.buffer_snapshot())
+                        ..fold.range.end.to_point(snapshot.buffer_snapshot())
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(remaining_folds, vec![unrelated.clone()]);
+            assert_eq!(editor.selections.newest::<Point>(&snapshot).head(), target);
+        });
+    }
 }
 
 #[gpui::test]
@@ -36348,17 +36794,17 @@ fn test_gutter_button_tooltip_updates_intent_with_secondary_modifier(cx: &mut Te
         on_render: None,
     };
 
-    let primary_intent = tooltip.active_intent(Modifiers::none());
+    let primary_intent = cx.read(|cx| tooltip.active_intent(Modifiers::none(), cx));
     assert_eq!(primary_intent, GutterButtonIntent::SetBreakpoint);
     assert!(primary_intent.action().as_any().is::<ToggleBreakpoint>());
 
-    let secondary_intent = tooltip.active_intent(Modifiers::secondary_key());
+    let secondary_intent = cx.read(|cx| tooltip.active_intent(Modifiers::secondary_key(cx), cx));
     assert_eq!(secondary_intent, GutterButtonIntent::SetBookmark);
     assert!(secondary_intent.action().as_any().is::<ToggleBookmark>());
 
     // When both features are enabled, the meta text advertises the
     // modifier-click alternative.
-    let meta = tooltip.meta_text();
+    let meta = cx.read(|cx| tooltip.meta_text(cx));
     assert!(meta.contains("-click to add a bookmark"), "got: {meta}");
     assert!(!meta.contains("-click to add a breakpoint"), "got: {meta}");
     assert!(meta.contains("right-click for more options"));
@@ -36372,7 +36818,7 @@ fn test_gutter_button_tooltip_updates_intent_with_secondary_modifier(cx: &mut Te
         focus_handle: tooltip.focus_handle,
         on_render: None,
     };
-    let meta = single_feature_tooltip.meta_text();
+    let meta = cx.read(|cx| single_feature_tooltip.meta_text(cx));
     assert_eq!(meta, "right-click for more options");
 }
 
@@ -36401,7 +36847,7 @@ fn test_gutter_button_tooltip_renders_modifier_transitions(cx: &mut TestAppConte
 
     assert_render("Set Breakpoint");
 
-    cx.simulate_modifiers_change(Modifiers::secondary_key());
+    cx.simulate_modifiers_change(cx.read(Modifiers::secondary_key));
     tooltip.update_in(cx, |_, _window, cx| cx.notify());
     cx.run_until_parked();
     assert_render("Set Bookmark");
@@ -39071,6 +39517,79 @@ async fn test_dynamic_document_highlight_registration_refreshes_editor(cx: &mut 
         0,
         "expected stale document highlights to be cleared after the server is stopped",
     );
+}
+
+#[gpui::test]
+async fn test_restart_language_server_action_after_stop(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+    cx.set_state("fn main() {}ˇ");
+    let project = cx.update_editor(|editor, _, _| editor.project.clone().unwrap());
+    let lsp_store = cx.read(|cx| project.read(cx).lsp_store());
+    let server_name = cx.lsp.server.name();
+    let mut server_id = cx.lsp.server.server_id();
+    let (shutdown_sender, mut shutdown_receiver) = mpsc::unbounded();
+    let mut fake_servers = cx.read(|cx| {
+        project.read(cx).languages().register_fake_lsp_server(
+            server_name,
+            lsp::ServerCapabilities::default(),
+            Some(Box::new(move |fake_server| {
+                let shutdown_sender = shutdown_sender.clone();
+                fake_server.set_request_handler::<lsp::request::Shutdown, _, _>(move |_, _| {
+                    let (reply_sender, reply_receiver) = oneshot::channel::<()>();
+                    shutdown_sender.unbounded_send(reply_sender).unwrap();
+                    async move {
+                        reply_receiver.await?;
+                        Ok(())
+                    }
+                });
+            })),
+        )
+    });
+
+    for stop_all in [false, true] {
+        if stop_all {
+            cx.update(|_, cx| {
+                lsp_store.update(cx, |lsp_store, cx| lsp_store.stop_all_language_servers(cx));
+            });
+            shutdown_receiver.next().await.unwrap().send(()).unwrap();
+        } else {
+            cx.dispatch_action(StopLanguageServer);
+        }
+        cx.run_until_parked();
+        cx.read(|cx| assert_eq!(lsp_store.read(cx).language_server_statuses().count(), 0));
+
+        cx.dispatch_action(RestartLanguageServer);
+        cx.run_until_parked();
+        cx.read(|cx| assert_eq!(lsp_store.read(cx).language_server_statuses().count(), 1));
+        let mut restarted_server = fake_servers.next().await.unwrap();
+        assert_ne!(restarted_server.server.server_id(), server_id);
+        server_id = restarted_server.server.server_id();
+        let document = restarted_server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await
+            .text_document;
+        assert_eq!(document.uri, cx.buffer_lsp_url);
+        assert_eq!(document.text, "fn main() {}");
+    }
+
+    let mut events = cx.events(&project);
+    cx.dispatch_action(RestartLanguageServer);
+    let reply_sender = shutdown_receiver.next().await.unwrap();
+    cx.update(|_, cx| {
+        lsp_store.update(cx, |lsp_store, cx| lsp_store.stop_all_language_servers(cx));
+    });
+    reply_sender.send(()).unwrap();
+    cx.run_until_parked();
+    cx.read(|cx| assert_eq!(lsp_store.read(cx).language_server_statuses().count(), 0));
+    assert!(fake_servers.next().now_or_never().is_none());
+    let removed_servers = std::iter::from_fn(|| events.next().now_or_never().flatten())
+        .filter_map(|event| match event {
+            project::Event::LanguageServerRemoved(id) => Some(id),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(removed_servers, vec![server_id]);
 }
 
 #[gpui::test]
@@ -50482,4 +51001,45 @@ async fn test_soft_wrap_indent_updated_on_file_move_between_directories(
         .update(cx, |editor, window, cx| editor.snapshot(window, cx))
         .unwrap();
     assert_eq!(snapshot.soft_wrap_indent(DisplayRow(0)), Some(0));
+}
+
+async fn assert_on_type_formatting_request_position(
+    async_autoindent: bool,
+    trigger: &'static str,
+    initial_state: &str,
+    edit: impl FnOnce(&mut Editor, &mut Window, &mut Context<Editor>),
+    expected_position: lsp::Position,
+    expected_state: &str,
+    cx: &mut TestAppContext,
+) {
+    let mut cx = EditorLspTestContext::new_typescript(
+        lsp::ServerCapabilities {
+            document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
+                first_trigger_character: trigger.to_string(),
+                more_trigger_character: None,
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state(initial_state);
+    if async_autoindent {
+        cx.update_buffer(|buffer, _| buffer.set_sync_parse_timeout(None));
+    }
+
+    let mut request = cx.set_request_handler::<lsp::request::OnTypeFormatting, _, _>(
+        move |_, params, _| async move {
+            assert_eq!(params.ch, trigger);
+            assert_eq!(params.text_document_position.position, expected_position);
+            Ok(Some(vec![]))
+        },
+    );
+
+    cx.update_editor(edit);
+    cx.run_until_parked();
+
+    cx.assert_editor_state(expected_state);
+    assert!(request.next().await.is_some());
 }

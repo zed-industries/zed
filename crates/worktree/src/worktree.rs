@@ -5436,6 +5436,26 @@ impl BackgroundScanner {
             Some(job.abs_path.clone())
         };
 
+        if let Some(watched_abs_path) = watched_abs_path {
+            // Deletion cleanup needs the canonical path even if enumeration fails.
+            let mut state = self.state.lock().await;
+            if job.is_external {
+                state
+                    .snapshot
+                    .external_canonical_to_relative
+                    .insert(watched_abs_path.clone(), job.path.clone());
+            }
+            if let Some(entry_id) = state
+                .snapshot
+                .entry_for_path(&job.path)
+                .map(|entry| entry.id)
+            {
+                state
+                    .watched_dir_abs_paths_by_entry_id
+                    .insert(entry_id, watched_abs_path);
+            }
+        }
+
         let mut child_paths = self
             .fs
             .read_dir(&job.abs_path)
@@ -5652,23 +5672,6 @@ impl BackgroundScanner {
         }
 
         state.populate_dir(job.path.clone(), new_entries, new_ignore);
-        if let Some(watched_abs_path) = &watched_abs_path {
-            if job.is_external {
-                state
-                    .snapshot
-                    .external_canonical_to_relative
-                    .insert(watched_abs_path.clone(), job.path.clone());
-            }
-            if let Some(entry_id) = state
-                .snapshot
-                .entry_for_path(&job.path)
-                .map(|entry| entry.id)
-            {
-                state
-                    .watched_dir_abs_paths_by_entry_id
-                    .insert(entry_id, watched_abs_path.clone());
-            }
-        }
 
         for new_job in new_jobs.into_iter().flatten() {
             job.scan_queue
