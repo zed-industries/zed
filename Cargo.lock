@@ -12276,6 +12276,7 @@ dependencies = [
  "futures 0.3.34",
  "fuzzy",
  "gpui",
+ "menu",
  "picker",
  "project",
  "serde",
