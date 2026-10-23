@@ -346,6 +346,22 @@ fn path_with_slashes(path: &str, path_style: PathStyle) -> String {
     }
 }
 
+/// Where stopped language servers were started, to start them again independently of the
+/// buffers that remain open.
+#[derive(Default)]
+struct StoppedServerRoots {
+    /// The roots the servers were started for, with a language each serves there.
+    launched: Vec<(ProjectPath, LanguageServerName, LanguageName)>,
+    /// The worktrees that reused the servers started for these roots, with the languages they
+    /// reused them for.
+    reused: Vec<(
+        ProjectPath,
+        LanguageServerName,
+        WorktreeId,
+        BTreeSet<LanguageName>,
+    )>,
+}
+
 pub struct LocalLspStore {
     weak: WeakEntity<LspStore>,
     pub worktree_store: Entity<WorktreeStore>,
@@ -3678,7 +3694,8 @@ impl LocalLspStore {
     }
 
     /// Starts the servers of the language again at a root they were started for, which does not
-    /// need a buffer of the language, unless `only_register_servers` excludes them.
+    /// need a buffer of the language, unless `only_register_servers` excludes them, returning
+    /// the tree nodes of the servers at the root.
     fn start_language_servers_at_root(
         &mut self,
         root_path: ProjectPath,
@@ -3686,22 +3703,22 @@ impl LocalLspStore {
         only_register_servers: &HashSet<LanguageServerSelector>,
         start_mode: LanguageServerStartMode,
         cx: &mut App,
-    ) {
+    ) -> Vec<LanguageServerTreeNode> {
         let Some(worktree) = self
             .worktree_store
             .read(cx)
             .worktree_for_id(root_path.worktree_id, cx)
         else {
-            return;
+            return Vec::new();
         };
         let delegate = LocalLspAdapterDelegate::from_local_lsp(self, &worktree, cx);
         let server_nodes = self
             .lsp_tree
             .walk_root(root_path, language_name.clone(), cx)
             .collect::<Vec<_>>();
-        for server_node in server_nodes {
+        for server_node in &server_nodes {
             self.get_or_start_language_server_for_node(
-                &server_node,
+                server_node,
                 &worktree,
                 &delegate,
                 &language_name,
@@ -3710,6 +3727,7 @@ impl LocalLspStore {
                 cx,
             );
         }
+        server_nodes
     }
 
     fn reuse_existing_language_server<'lang_name>(
@@ -13712,14 +13730,40 @@ impl LspStore {
                         .map(LanguageServerSelector::Name)
                         .collect::<HashSet<_>>();
                     if !stopped_servers.is_empty() {
-                        for (root_path, language_name) in stopped_server_roots {
-                            local.start_language_servers_at_root(
-                                root_path,
+                        for (root_path, server_name, language_name) in stopped_server_roots.launched
+                        {
+                            let server_nodes = local.start_language_servers_at_root(
+                                root_path.clone(),
                                 language_name,
                                 &stopped_servers,
                                 start_mode,
                                 cx,
                             );
+                            let Some(server_node) = server_nodes
+                                .into_iter()
+                                .find(|node| node.name().as_ref() == Some(&server_name))
+                            else {
+                                continue;
+                            };
+                            // Worktrees reusing the server, like those of the dependencies it
+                            // navigated to, reuse the restarted one, which then opens their
+                            // buffers once it runs.
+                            for (_, _, worktree_id, languages) in stopped_server_roots
+                                .reused
+                                .iter()
+                                .filter(|(reused_root_path, reused_server_name, _, _)| {
+                                    reused_root_path == &root_path
+                                        && reused_server_name == &server_name
+                                })
+                            {
+                                for language_name in languages {
+                                    local.lsp_tree.register_reused(
+                                        *worktree_id,
+                                        language_name.clone(),
+                                        server_node.clone(),
+                                    );
+                                }
+                            }
                         }
                     }
                 })
@@ -13730,20 +13774,20 @@ impl LspStore {
         }
     }
 
-    /// Returns the names of the stopped servers and the roots they were started for, along with a
-    /// language they serve there, which can start them again.
+    /// Returns the names of the stopped servers and where they were started, which can start
+    /// them again.
     fn stop_local_language_servers_for_buffers(
         &mut self,
         buffers: &[Entity<Buffer>],
         also_stop_servers: HashSet<LanguageServerSelector>,
         cx: &mut Context<Self>,
-    ) -> (
-        HashSet<LanguageServerName>,
-        Vec<(ProjectPath, LanguageName)>,
-        Task<()>,
-    ) {
+    ) -> (HashSet<LanguageServerName>, StoppedServerRoots, Task<()>) {
         let Some(local) = self.as_local_mut() else {
-            return (HashSet::default(), Vec::new(), Task::ready(()));
+            return (
+                HashSet::default(),
+                StoppedServerRoots::default(),
+                Task::ready(()),
+            );
         };
         let mut language_server_names_to_stop = BTreeSet::default();
         let mut language_servers_to_stop = also_stop_servers
@@ -13795,21 +13839,31 @@ impl LspStore {
                     .map(|(seed, _)| seed.name.clone())
             })
             .collect();
-        let mut stopped_server_roots = Vec::new();
+        let mut stopped_server_roots = StoppedServerRoots::default();
         for (worktree_id, servers) in &local.lsp_tree.instances {
             for (path, server_nodes) in &servers.roots {
-                for (server_node, languages) in server_nodes.values() {
-                    if server_node
+                for (server_name, (server_node, languages)) in server_nodes {
+                    if !server_node
                         .id()
                         .is_some_and(|server_id| language_servers_to_stop.contains(&server_id))
-                        && let Some(language_name) = languages.first()
                     {
-                        stopped_server_roots.push((
-                            ProjectPath {
-                                worktree_id: *worktree_id,
-                                path: path.clone(),
-                            },
-                            language_name.clone(),
+                        continue;
+                    }
+                    let root_path = server_node.launch_path().clone();
+                    if root_path.worktree_id == *worktree_id && &root_path.path == path {
+                        if let Some(language_name) = languages.first() {
+                            stopped_server_roots.launched.push((
+                                root_path,
+                                server_name.clone(),
+                                language_name.clone(),
+                            ));
+                        }
+                    } else {
+                        stopped_server_roots.reused.push((
+                            root_path,
+                            server_name.clone(),
+                            *worktree_id,
+                            languages.clone(),
                         ));
                     }
                 }

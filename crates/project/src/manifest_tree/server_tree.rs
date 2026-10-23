@@ -122,6 +122,12 @@ impl InnerTreeNode {
     pub(crate) fn id(&self) -> Option<LanguageServerId> {
         self.id.get().copied()
     }
+
+    /// The root the server was started for, which differs from the root it is recorded under
+    /// in worktrees that reused it.
+    pub(crate) fn launch_path(&self) -> &ProjectPath {
+        &self.disposition.path
+    }
 }
 
 impl LanguageServerTree {

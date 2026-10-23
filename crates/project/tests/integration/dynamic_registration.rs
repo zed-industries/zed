@@ -3837,6 +3837,79 @@ async fn test_did_open_registration_follows_language_server_setting_changes(
 }
 
 #[gpui::test]
+async fn test_restarting_server_reused_by_invisible_worktree(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/the-root"), json!({ "a.rs": "" }))
+        .await;
+    fs.insert_tree(path!("/dependency"), json!({ "lib.rs": "" }))
+        .await;
+    let project = Project::test(fs, [path!("/the-root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "the-language-server",
+            ..FakeLspAdapter::default()
+        },
+    );
+    cx.executor().run_until_parked();
+
+    let (rust_buffer, _rust_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let fake_server = fake_servers.next().await.unwrap();
+    // Like a dependency navigated to through the server, which reuses it.
+    let (dependency_worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/dependency"), false, cx)
+        })
+        .await
+        .unwrap();
+    let dependency_worktree_id = dependency_worktree.read_with(cx, |worktree, _| worktree.id());
+    let (dependency_buffer, _dependency_handle) = project
+        .update(cx, |project, cx| {
+            project.open_buffer_with_lsp((dependency_worktree_id, rel_path("lib.rs")), cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+    assert!(buffer_opened_in_server(
+        &project,
+        &dependency_buffer,
+        fake_server.server.server_id(),
+        cx
+    ));
+
+    project.update(cx, |project, cx| {
+        project.restart_language_servers_for_buffers(
+            vec![rust_buffer.clone()],
+            HashSet::default(),
+            cx,
+        )
+    });
+    cx.executor().run_until_parked();
+    let restarted_server = fake_servers
+        .try_recv()
+        .expect("expected the server to be restarted");
+    assert!(
+        fake_servers.try_recv().is_err(),
+        "expected the worktree reusing the server not to start another one",
+    );
+    cx.executor().run_until_parked();
+    for buffer in [&rust_buffer, &dependency_buffer] {
+        assert!(
+            buffer_opened_in_server(&project, buffer, restarted_server.server.server_id(), cx),
+            "expected the restarted server to be reused like the stopped one",
+        );
+    }
+}
+
+#[gpui::test]
 async fn test_restarting_server_from_document_opened_by_registrations(
     cx: &mut gpui::TestAppContext,
 ) {
