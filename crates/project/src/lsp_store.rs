@@ -16014,6 +16014,10 @@ fn text_document_registration_method(method: &str) -> &str {
         "textDocument/semanticTokens/full"
         | "textDocument/semanticTokens/full/delta"
         | "textDocument/semanticTokens/range" => "textDocument/semanticTokens",
+        // Follow-ups of the items a server prepared are supported wherever preparing them is.
+        "callHierarchy/incomingCalls" | "callHierarchy/outgoingCalls" => {
+            "textDocument/prepareCallHierarchy"
+        }
         _ => method,
     }
 }

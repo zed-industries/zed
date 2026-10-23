@@ -4088,6 +4088,101 @@ async fn test_documents_opened_by_registrations_balance_opens_and_closes(
 }
 
 #[gpui::test]
+async fn test_call_hierarchy_follow_ups_of_documents_opened_by_registrations(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let (project, fake_server) =
+        setup_dynamic_registration_test(cx, lsp::ServerCapabilities::default()).await;
+    let fs = project.read_with(cx, |project, _| project.fs().as_fake());
+    fs.insert_tree(path!("/the-root"), json!({ "package.json": "{}" }))
+        .await;
+    project.read_with(cx, |project, _| project.languages().add(json_lang()));
+    cx.executor().run_until_parked();
+
+    let (manifest_buffer, _manifest_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/package.json"), cx)
+        })
+        .await
+        .unwrap();
+    let selector = Some(json!({ "documentSelector": [{ "language": "json" }] }));
+    register_capability(
+        &fake_server,
+        "textDocument/didOpen",
+        "open-manifests",
+        selector.clone(),
+    )
+    .await;
+    register_capability(
+        &fake_server,
+        "textDocument/prepareCallHierarchy",
+        "call-hierarchy-for-manifests",
+        selector,
+    )
+    .await;
+    cx.executor().run_until_parked();
+
+    let item = lsp::CallHierarchyItem {
+        name: "dependencies".to_string(),
+        kind: lsp::SymbolKind::FIELD,
+        tags: None,
+        detail: None,
+        uri: lsp::Uri::from_file_path(path!("/the-root/package.json")).unwrap(),
+        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 2)),
+        selection_range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 2)),
+        data: None,
+    };
+    let _prepare_requests = fake_server
+        .set_request_handler::<lsp::request::CallHierarchyPrepare, _, _>({
+            let item = item.clone();
+            move |_, _| {
+                let item = item.clone();
+                async move { Ok(Some(vec![item])) }
+            }
+        });
+    let follow_up_requests = Arc::new(Mutex::new(Vec::new()));
+    let _incoming_requests = fake_server
+        .set_request_handler::<lsp::request::CallHierarchyIncomingCalls, _, _>({
+            let follow_up_requests = follow_up_requests.clone();
+            move |_, _| {
+                follow_up_requests.lock().push("incoming");
+                async move { Ok(None) }
+            }
+        });
+    let _outgoing_requests = fake_server
+        .set_request_handler::<lsp::request::CallHierarchyOutgoingCalls, _, _>({
+            let follow_up_requests = follow_up_requests.clone();
+            move |_, _| {
+                follow_up_requests.lock().push("outgoing");
+                async move { Ok(None) }
+            }
+        });
+
+    let items = project
+        .update(cx, |project, cx| {
+            project.prepare_call_hierarchy(&manifest_buffer, 0, cx)
+        })
+        .await
+        .unwrap()
+        .expect("expected the registration to prepare the item");
+    let item = items.into_iter().next().expect("expected a prepared item");
+    project
+        .update(cx, |project, cx| project.incoming_calls(item.clone(), cx))
+        .await
+        .unwrap();
+    project
+        .update(cx, |project, cx| project.outgoing_calls(item, cx))
+        .await
+        .unwrap();
+    assert_eq!(
+        *follow_up_requests.lock(),
+        ["incoming", "outgoing"],
+        "expected the follow-ups of a prepared item to reach the server that prepared it",
+    );
+}
+
+#[gpui::test]
 async fn test_documents_opened_by_registrations_only_use_selecting_registrations(
     cx: &mut gpui::TestAppContext,
 ) {
