@@ -1701,7 +1701,6 @@ impl WorkspaceDb {
         this: &Connection,
         options: &RemoteConnectionOptions,
     ) -> Result<RemoteConnectionId> {
-        let identity = RemoteConnectionIdentity::from(options);
         let kind;
         let user: Option<Cow<'_, str>>;
         let mut host = None;
@@ -1712,45 +1711,32 @@ impl WorkspaceDb {
         let mut use_podman = None;
         let mut remote_env = None;
 
-        match identity {
-            RemoteConnectionIdentity::Ssh {
-                host: identity_host,
-                username,
-                port: identity_port,
-            } => {
+        match options {
+            RemoteConnectionOptions::Ssh(options) => {
                 kind = RemoteConnectionKind::Ssh;
-                host = Some(identity_host);
-                port = identity_port;
-                user = username;
+                host = Some(options.host.to_cow());
+                port = options.port;
+                user = options.username.as_deref().map(Cow::Borrowed);
             }
-            RemoteConnectionIdentity::Wsl {
-                distro_name,
-                user: identity_user,
-            } => {
+            RemoteConnectionOptions::Wsl(options) => {
                 kind = RemoteConnectionKind::Wsl;
-                distro = Some(distro_name);
-                user = identity_user;
+                distro = Some(options.distro_name.as_str());
+                user = options.user.as_deref().map(Cow::Borrowed);
             }
-            RemoteConnectionIdentity::Docker {
-                container_id: identity_container_id,
-                remote_user,
-            } => {
+            RemoteConnectionOptions::Docker(options) => {
                 kind = RemoteConnectionKind::Docker;
-                container_id = Some(identity_container_id);
-                user = Some(remote_user);
+                container_id = Some(options.container_id.as_str());
+                user = Some(Cow::Borrowed(options.remote_user.as_str()));
+                name = Some(options.name.as_str());
+                use_podman = Some(options.use_podman);
+                remote_env = serde_json::to_string(&options.remote_env).ok();
             }
             #[cfg(any(test, feature = "test-support"))]
-            RemoteConnectionIdentity::Mock { id } => {
+            RemoteConnectionOptions::Mock(options) => {
                 kind = RemoteConnectionKind::Ssh;
-                host = Some(format!("mock-{}", id).into());
-                user = Some(format!("mock-user-{}", id).into());
+                host = Some(format!("mock-{}", options.id).into());
+                user = Some(format!("mock-user-{}", options.id).into());
             }
-        }
-
-        if let RemoteConnectionOptions::Docker(options) = options {
-            name = Some(options.name.as_str());
-            use_podman = Some(options.use_podman);
-            remote_env = serde_json::to_string(&options.remote_env).ok();
         }
 
         Self::get_or_create_remote_connection_query(
@@ -1759,9 +1745,9 @@ impl WorkspaceDb {
             host.as_deref(),
             port,
             user.as_deref(),
-            distro.as_deref(),
+            distro,
             name,
-            container_id.as_deref(),
+            container_id,
             use_podman,
             remote_env.as_deref(),
         )

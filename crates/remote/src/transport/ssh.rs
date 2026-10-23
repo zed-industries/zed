@@ -21,6 +21,7 @@ use semver::Version;
 pub use settings_content::SshPortForwardOption;
 use smol::fs;
 use std::{
+    borrow::Cow,
     fmt::Write as _,
     net::IpAddr,
     path::{Path, PathBuf},
@@ -74,9 +75,13 @@ impl SshConnectionHost {
     }
 
     pub fn to_string(&self) -> String {
+        self.to_cow().into_owned()
+    }
+
+    pub fn to_cow(&self) -> Cow<'_, str> {
         match self {
-            Self::IpAddr(ip) => ip.to_string(),
-            Self::Hostname(hostname) => hostname.clone(),
+            Self::IpAddr(ip) => Cow::Owned(ip.to_string()),
+            Self::Hostname(hostname) => Cow::Borrowed(hostname),
         }
     }
 }

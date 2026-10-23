@@ -10929,32 +10929,32 @@ pub struct WorkspaceOpenTarget {
 fn matches_requested_host(project: &Project, requested: &ProjectHost<'_>, cx: &App) -> bool {
     match requested {
         ProjectHost::Local => project.is_local(),
-        ProjectHost::Remote(requested) => project
-            .remote_connection_options(cx)
-            .is_some_and(|options| matches_requested_connection(options, requested)),
-    }
-}
+        ProjectHost::Remote(requested) => {
+            let Some(connection) = project.remote_connection_options(cx) else {
+                return false;
+            };
 
-fn matches_requested_connection(
-    options: &RemoteConnectionOptions,
-    requested: &RemoteConnectionOptions,
-) -> bool {
-    match (options, requested) {
-        (RemoteConnectionOptions::Wsl(options), RemoteConnectionOptions::Wsl(requested)) => {
-            // WSL entry points do not consistently specify the user.
-            options.distro_name == requested.distro_name
+            match (connection, *requested) {
+                (
+                    RemoteConnectionOptions::Wsl(options),
+                    RemoteConnectionOptions::Wsl(requested),
+                ) => {
+                    // WSL entry points do not consistently specify the user.
+                    options.distro_name == requested.distro_name
+                }
+                (
+                    RemoteConnectionOptions::Ssh(options),
+                    RemoteConnectionOptions::Ssh(requested_options),
+                ) => {
+                    // SSH arguments can override the host and user.
+                    // Normalize the args to make None == Some(vec![]) for comparison.
+                    connection.identity() == requested.identity()
+                        && options.args.as_deref().unwrap_or_default()
+                            == requested_options.args.as_deref().unwrap_or_default()
+                }
+                _ => connection.identity() == requested.identity(),
+            }
         }
-        (
-            RemoteConnectionOptions::Ssh(ssh_options),
-            RemoteConnectionOptions::Ssh(requested_options),
-        ) => {
-            // SSH arguments can override the host and user.
-            // Normalize the args to make None == Some("") for comparison.
-            options.identity() == requested.identity()
-                && ssh_options.args.as_deref().unwrap_or_default()
-                    == requested_options.args.as_deref().unwrap_or_default()
-        }
-        _ => options.identity() == requested.identity(),
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::{RemoteConnectionOptions, transport::ssh::SshConnectionHost};
+use crate::RemoteConnectionOptions;
 use std::borrow::Cow;
 
 /// Identifies a remote host for project and workspace matching.
@@ -54,10 +54,7 @@ impl<'a> From<&'a RemoteConnectionOptions> for RemoteConnectionIdentity<'a> {
     fn from(options: &'a RemoteConnectionOptions) -> Self {
         match options {
             RemoteConnectionOptions::Ssh(options) => Self::Ssh {
-                host: match &options.host {
-                    SshConnectionHost::Hostname(hostname) => Cow::Borrowed(hostname),
-                    SshConnectionHost::IpAddr(address) => Cow::Owned(address.to_string()),
-                },
+                host: options.host.to_cow(),
                 username: options.username.as_deref().map(Cow::Borrowed),
                 port: options.port,
             },
