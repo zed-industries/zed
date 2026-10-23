@@ -843,6 +843,10 @@ impl PathMatcher {
         self.sources.iter().map(|(source, ..)| source.as_str())
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.glob.is_empty()
+    }
+
     pub fn is_match<P: AsRef<RelPath>>(&self, other: P) -> bool {
         let other = other.as_ref();
         if self
