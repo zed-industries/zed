@@ -16,6 +16,8 @@ pub enum KeychainOperation {
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum KeychainError {
+    #[error("Keychain access was cancelled.")]
+    UserCanceled { operation: KeychainOperation },
     #[error("keychain {operation:?} failed with OSStatus {status}")]
     Security {
         operation: KeychainOperation,
@@ -67,6 +69,7 @@ pub fn write_credentials(
     check_status(operation, status)
 }
 
+/// Reads credentials by server, returning `None` when no item exists.
 pub fn read_credentials(server: &str) -> Result<Option<(String, Vec<u8>)>, KeychainError> {
     let server = CFString::from_str(server);
     // SAFETY: Reading immutable constants exported by Core Foundation and Security.
@@ -148,7 +151,7 @@ pub fn delete_credentials(server: &str) -> Result<(), KeychainError> {
 }
 
 fn read_status(status: i32) -> Result<bool, KeychainError> {
-    if status == errSecItemNotFound || status == errSecUserCanceled {
+    if status == errSecItemNotFound {
         Ok(false)
     } else {
         check_status(KeychainOperation::Read, status)?;
@@ -159,6 +162,8 @@ fn read_status(status: i32) -> Result<bool, KeychainError> {
 fn check_status(operation: KeychainOperation, status: i32) -> Result<(), KeychainError> {
     if status == errSecSuccess {
         Ok(())
+    } else if status == errSecUserCanceled {
+        Err(KeychainError::UserCanceled { operation })
     } else {
         Err(KeychainError::Security { operation, status })
     }
@@ -173,7 +178,12 @@ mod tests {
     fn read_distinguishes_absence_and_cancellation_from_errors() {
         assert!(read_status(errSecSuccess).unwrap());
         assert!(!read_status(errSecItemNotFound).unwrap());
-        assert!(!read_status(errSecUserCanceled).unwrap());
+        assert_eq!(
+            read_status(errSecUserCanceled),
+            Err(KeychainError::UserCanceled {
+                operation: KeychainOperation::Read,
+            })
+        );
         assert_eq!(
             read_status(errSecAuthFailed),
             Err(KeychainError::Security {
@@ -203,7 +213,7 @@ mod tests {
             check_status(KeychainOperation::Delete, errSecSuccess),
             Ok(())
         );
-        for status in [errSecItemNotFound, errSecUserCanceled, errSecAuthFailed] {
+        for status in [errSecItemNotFound, errSecAuthFailed] {
             assert_eq!(
                 check_status(KeychainOperation::Delete, status),
                 Err(KeychainError::Security {
@@ -212,5 +222,11 @@ mod tests {
                 })
             );
         }
+        assert_eq!(
+            check_status(KeychainOperation::Delete, errSecUserCanceled),
+            Err(KeychainError::UserCanceled {
+                operation: KeychainOperation::Delete,
+            })
+        );
     }
 }
