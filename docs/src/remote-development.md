@@ -117,6 +117,12 @@ To open a local folder inside a WSL container, use the {#action projects::OpenFo
 
 To open a folder that's already located inside of a WSL container, use the {#action projects::OpenWsl} action and select the WSL distribution. The distribution will be added to the `Remote Projects` window where you will be able to open the folder.
 
+### Opening a folder from a WSL terminal {#opening-a-folder-from-a-wsl-terminal}
+
+Run `zed .` from an external WSL terminal to open the current folder in Windows Zed using the current WSL distribution and user. Use the `bin/zed` launcher included with the Windows installation; you do not need to install Zed in WSL.
+
+For PATH setup, see [WSL terminal troubleshooting](./windows.md#zed-is-not-found-in-a-wsl-terminal). CLI support inside Zed's integrated remote terminals is covered by the [known limitations](#known-limitations).
+
 ## Port forwarding
 
 If you'd like to be able to connect to ports on your remote server from your local machine, you can configure port forwarding in your settings file. This is particularly useful for developing websites so you can load the site in your browser while working.
@@ -272,7 +278,7 @@ Note that we deliberately disallow some options (for example `-t` or `-T`) that 
 
 ## Known Limitations
 
-- You can't open files from the remote Terminal by typing the `zed` command.
+- Zed does not provide a `zed` command in its integrated remote terminals to open files in the connected editor. This is separate from [launching the Windows editor from an external WSL terminal](#opening-a-folder-from-a-wsl-terminal).
 
 ## See also
 
