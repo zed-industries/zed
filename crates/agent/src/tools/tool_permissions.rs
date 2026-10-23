@@ -11,7 +11,7 @@ use project::{Project, ProjectPath};
 use settings::Settings;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-use util::{normalize_path, paths::component_matches_ignore_ascii_case};
+use util::{paths::component_matches_ignore_ascii_case, paths::normalize_path};
 
 pub enum SensitiveSettingsKind {
     Local,

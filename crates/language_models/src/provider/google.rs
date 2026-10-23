@@ -246,7 +246,10 @@ impl GoogleLanguageModelProvider {
     ) -> BoxFuture<
         'static,
         Result<
-            futures::stream::BoxStream<'static, Result<GenerateContentResponse>>,
+            futures::stream::BoxStream<
+                'static,
+                Result<GenerateContentResponse, LanguageModelCompletionError>,
+            >,
             LanguageModelCompletionError,
         >,
     > {
@@ -336,6 +339,11 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
+    fn refresh_models(&self, cx: &mut App) {
+        self.state
+            .update(cx, |state, cx| state.restart_fetch_models_task(cx));
+    }
+
     fn settings_view(&self, cx: &mut App) -> Option<ProviderSettingsView> {
         let state = self.state.read(cx);
         Some(ProviderSettingsView::ApiKey(ApiKeyConfiguration::new(
@@ -406,6 +414,7 @@ fn language_model(model: &google_ai::Model) -> LanguageModel {
                 name: level.name().into(),
                 value: level.value().into(),
                 is_default: Some(*level) == model.default_thinking_level,
+                supports_disabling_thinking: None,
             })
             .collect(),
         tool_choice_support: LanguageModelToolChoiceSupport::ALL,

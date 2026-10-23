@@ -570,7 +570,7 @@ impl Render for NewProcessModal {
 
         v_flex()
             .key_context({
-                let mut key_context = KeyContext::new_with_defaults();
+                let mut key_context = KeyContext::new_with_defaults(cx.platform_info().os);
                 key_context.add("Pane");
                 key_context.add("RunModal");
                 key_context
