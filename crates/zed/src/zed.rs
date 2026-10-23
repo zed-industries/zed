@@ -6469,6 +6469,8 @@ mod tests {
         cx.update(move |cx| {
             env_logger::builder().is_test(true).try_init().ok();
 
+            cx.set_global(db::AppDatabase::test_new());
+
             let state = Arc::get_mut(&mut app_state).unwrap();
             state.build_window_options = build_window_options;
             app_state.languages.add(markdown_lang());
