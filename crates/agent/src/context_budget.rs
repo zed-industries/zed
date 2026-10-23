@@ -1,23 +1,18 @@
-//! Budget helpers for keeping model requests inside the context window:
-//! conservative local token estimation and text truncation for oversized
-//! tool results.
-
+use language_model::LanguageModelToolResultContent;
 use std::borrow::Cow;
 
 pub(crate) const TOOL_RESULT_TEXT_BYTE_BUDGET: usize = 16 * 1024;
 
 pub(crate) const IMAGE_TOKEN_ESTIMATE: u64 = 1_500;
 
-/// Estimates tokens from byte length at roughly 3 bytes per token, which
-/// overestimates typical text and code so that budget checks err toward
-/// compacting too early rather than overflowing the window.
+// Tokenizers vary by model and content. This favors early compaction for
+// typical text and code; provider overflow recovery covers underestimates.
 pub(crate) fn estimate_tokens(byte_len: usize) -> u64 {
     (byte_len as u64).div_ceil(3)
 }
 
-/// Truncates `text` to at most `budget` bytes of content by keeping the
-/// head quarter and the tail three quarters and marking the elided gap.
-/// Cuts land on char boundaries so multi-byte text cannot panic.
+// Keep more of the tail because recent tool output usually contains the
+// outcome of the operation; the head preserves identifying context.
 pub(crate) fn truncate_text_to_budget(text: &str, budget: usize) -> Cow<'_, str> {
     if text.len() <= budget {
         return Cow::Borrowed(text);
@@ -27,13 +22,13 @@ pub(crate) fn truncate_text_to_budget(text: &str, budget: usize) -> Cow<'_, str>
     while !text.is_char_boundary(head_len) {
         head_len -= 1;
     }
-    let mut tail_start = text.len() - budget * 3 / 4;
+    let mut tail_start = text.len() - (budget - budget / 4);
     while !text.is_char_boundary(tail_start) {
         tail_start += 1;
     }
 
     let kept_bytes = head_len + (text.len() - tail_start);
-    let marker = format!("\n… [{} chars elided] …\n", text.len() - kept_bytes);
+    let marker = format!("\n… [{} bytes elided] …\n", text.len() - kept_bytes);
     let mut truncated = String::with_capacity(kept_bytes + marker.len());
     truncated.push_str(&text[..head_len]);
     truncated.push_str(&marker);
@@ -41,12 +36,58 @@ pub(crate) fn truncate_text_to_budget(text: &str, budget: usize) -> Cow<'_, str>
     Cow::Owned(truncated)
 }
 
+pub(crate) fn truncate_tool_result(
+    content: &mut Vec<LanguageModelToolResultContent>,
+    budget: usize,
+) {
+    let text_bytes = content
+        .iter()
+        .map(|part| match part {
+            LanguageModelToolResultContent::Text(text) => text.len(),
+            LanguageModelToolResultContent::Image(_) => 0,
+        })
+        .sum::<usize>();
+    if text_bytes <= budget {
+        return;
+    }
+
+    let head_end = budget / 4;
+    let tail_start = text_bytes - (budget - head_end);
+    let mut offset = 0;
+    let mut gap_marked = false;
+    content.retain_mut(|part| {
+        let LanguageModelToolResultContent::Text(text) = part else {
+            return true;
+        };
+        let mut head_length = head_end.saturating_sub(offset).min(text.len());
+        while !text.is_char_boundary(head_length) {
+            head_length -= 1;
+        }
+        let mut tail_offset = tail_start.saturating_sub(offset).min(text.len());
+        while !text.is_char_boundary(tail_offset) {
+            tail_offset += 1;
+        }
+        offset += text.len();
+        if head_length == text.len() || tail_offset == 0 {
+            return true;
+        }
+        let mut kept = text[..head_length].to_string();
+        if !gap_marked {
+            kept.push_str("\n… [tool result text elided] …\n");
+            gap_marked = true;
+        }
+        kept.push_str(&text[tail_offset..]);
+        *text = kept.into();
+        !text.is_empty()
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn estimate_tokens_is_conservative() {
+    fn estimate_tokens_rounds_up() {
         assert_eq!(estimate_tokens(0), 0);
         assert_eq!(estimate_tokens(1), 1);
         assert_eq!(estimate_tokens(3), 1);
@@ -69,7 +110,7 @@ mod tests {
 
         assert!(truncated.starts_with("aaa"));
         assert!(truncated.ends_with("bbb"));
-        assert!(truncated.contains("chars elided"));
+        assert!(truncated.contains("bytes elided"));
         assert!(truncated.len() <= 1_000 + 40);
     }
 
@@ -81,6 +122,60 @@ mod tests {
 
         assert!(truncated.starts_with('ж'));
         assert!(truncated.ends_with('ж'));
-        assert!(truncated.contains("chars elided"));
+        assert!(truncated.contains("bytes elided"));
+    }
+
+    #[test]
+    fn truncate_tiny_and_unlimited_budgets() {
+        let text = "🙂жa";
+        for budget in 0..=text.len() {
+            let truncated = truncate_text_to_budget(text, budget);
+            assert!(truncated.len() <= budget + 40);
+        }
+        assert!(matches!(
+            truncate_text_to_budget(text, usize::MAX),
+            Cow::Borrowed(_)
+        ));
+    }
+
+    #[test]
+    fn multipart_truncation_preserves_images_and_order() {
+        use language_model::{
+            LanguageModelImage,
+            LanguageModelToolResultContent::{Image, Text},
+        };
+        let first_image = LanguageModelImage {
+            source: "first".into(),
+        };
+        let last_image = LanguageModelImage {
+            source: "last".into(),
+        };
+        for budget in 0..=20 {
+            let mut content = vec![
+                Text("🙂".repeat(10).into()),
+                Image(first_image.clone()),
+                Text("ж".repeat(10).into()),
+                Image(last_image.clone()),
+                Text("z".repeat(10).into()),
+            ];
+            truncate_tool_result(&mut content, budget);
+            let images = content
+                .iter()
+                .filter_map(|part| match part {
+                    Image(image) => Some(image),
+                    Text(_) => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(images, [&first_image, &last_image]);
+            let text = content
+                .iter()
+                .filter_map(|part| match part {
+                    Text(text) => Some(text.as_ref()),
+                    Image(_) => None,
+                })
+                .collect::<String>();
+            assert!(text.len() <= budget + 40);
+            assert_eq!(text.matches("elided").count(), 1);
+        }
     }
 }
