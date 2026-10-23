@@ -340,9 +340,11 @@ impl CommitView {
 
         let repository_clone = repository.clone();
         let project_clone = project.clone();
+        // A single-file view shows the file the user picked, so it stays expanded even when generated.
+        let fold_generated_files = file_filter.is_none();
 
         let load_diff_task = cx.spawn_in(window, async move |this, cx| {
-            let mut binary_buffer_ids: HashSet<language::BufferId> = HashSet::default();
+            let mut buffers_to_fold: HashSet<language::BufferId> = HashSet::default();
             let mut file_statuses: HashMap<language::BufferId, FileStatus> = HashMap::default();
 
             for file in commit_diff.files {
@@ -352,6 +354,7 @@ impl CommitView {
                 let raw_old_text = file.old_text;
 
                 let is_binary = file.is_binary;
+                let starts_folded = is_binary || (fold_generated_files && file.is_generated);
 
                 let new_text = if is_binary {
                     "(binary file not shown)".to_string()
@@ -405,8 +408,8 @@ impl CommitView {
                     }),
                 );
 
-                if is_binary {
-                    binary_buffer_ids.insert(buffer_id);
+                if starts_folded {
+                    buffers_to_fold.insert(buffer_id);
                 }
 
                 let buffer_diff = if is_binary {
@@ -486,10 +489,10 @@ impl CommitView {
                         });
                     });
                 });
-                if !binary_buffer_ids.is_empty() {
+                if !buffers_to_fold.is_empty() {
                     this.editor.update(cx, |editor, cx| {
                         editor.rhs_editor().update(cx, |editor, cx| {
-                            editor.fold_buffers(binary_buffer_ids, cx);
+                            editor.fold_buffers(buffers_to_fold, cx);
                         });
                     });
                 }
@@ -1652,6 +1655,95 @@ mod tests {
                 Some("JSONC"),
             ]
         );
+    }
+
+    #[gpui::test]
+    async fn test_generated_files_start_folded(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            language_model::init(cx);
+            crate::init(cx);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            serde_json::json!({ ".git": {}, "file.txt": "content" }),
+        )
+        .await;
+        let project = Project::test(fs, [std::path::Path::new("/project")], cx).await;
+        cx.run_until_parked();
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace = multi_workspace.read_with(&*cx, |multi, _| multi.workspace().clone());
+
+        let commit_file = |path: &str, is_generated| project::git_store::CommitFile {
+            path: RepoPath::new(path).expect("valid repository path"),
+            old_text: Some("old\n".into()),
+            new_text: Some("new\n".into()),
+            is_binary: false,
+            is_generated,
+        };
+        for (file_filter, expected_folded_paths) in [
+            (None, vec!["generated.txt"]),
+            (
+                Some(RepoPath::new("generated.txt").expect("valid repository path")),
+                vec![],
+            ),
+        ] {
+            let commit_diff = CommitDiff {
+                files: vec![
+                    commit_file("generated.txt", true),
+                    commit_file("plain.txt", false),
+                ],
+                is_shallow_boundary: false,
+            };
+            let commit = CommitDetails {
+                sha: "1234567890123456789012345678901234567890".into(),
+                message: "commit".into(),
+                commit_timestamp: 0,
+                author_email: "test@zed.dev".into(),
+                author_name: "test".into(),
+            };
+            let commit_view = cx.new_window_entity(|window, cx| {
+                CommitView::new(
+                    commit,
+                    commit_diff,
+                    repository.clone(),
+                    project.clone(),
+                    workspace.clone(),
+                    workspace.downgrade(),
+                    None,
+                    file_filter,
+                    window,
+                    cx,
+                )
+            });
+            cx.run_until_parked();
+
+            let folded_paths = commit_view.read_with(cx, |commit_view, cx| {
+                let editor = commit_view.editor.read(cx).rhs_editor().read(cx);
+                commit_view
+                    .multibuffer
+                    .read(cx)
+                    .all_buffers()
+                    .into_iter()
+                    .filter(|buffer| editor.is_buffer_folded(buffer.read(cx).remote_id(), cx))
+                    .filter_map(|buffer| {
+                        Some(buffer.read(cx).file()?.path().as_unix_str().to_string())
+                    })
+                    .collect::<Vec<_>>()
+            });
+            assert_eq!(folded_paths, expected_folded_paths);
+        }
     }
 
     fn markdown_inline_lang() -> Language {
