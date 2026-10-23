@@ -594,13 +594,29 @@ impl ThreadsDatabase {
         self.executor.spawn(async move {
             let connection = connection.lock();
 
-            let mut select = connection
-                .select_bound::<(), (Arc<str>, Option<Arc<str>>, Option<String>, Option<String>, String, String, Option<String>)>(LIST_THREADS_QUERY)?;
+            let mut select = connection.select_bound::<(), (
+                Arc<str>,
+                Option<Arc<str>>,
+                Option<String>,
+                Option<String>,
+                String,
+                String,
+                Option<String>,
+            )>(LIST_THREADS_QUERY)?;
 
             let rows = select(())?;
             let mut threads = Vec::new();
 
-            for (id, parent_id, folder_paths, folder_paths_order, summary, updated_at, created_at) in rows {
+            for (
+                id,
+                parent_id,
+                folder_paths,
+                folder_paths_order,
+                summary,
+                updated_at,
+                created_at,
+            ) in rows
+            {
                 let folder_paths = folder_paths
                     .map(|paths| {
                         PathList::deserialize(&util::path_list::SerializedPathList {
