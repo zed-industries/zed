@@ -2946,6 +2946,8 @@ impl Thread {
         let mut intent = CompletionIntent::UserPrompt;
         // Set when a refusal fallback occurs so subsequent iterations use the fallback model.
         let mut refusal_fallback_model: Option<LanguageModel> = None;
+        // PromptTooLarge triggers at most one forced compaction and retry per turn.
+        let mut overflow_recovery_attempted = false;
         loop {
             if *cancellation_rx.borrow() {
                 return Ok(());
@@ -3292,6 +3294,33 @@ impl Thread {
             }
 
             if let Some(error) = error {
+                if let LanguageModelCompletionError::ProviderRejection {
+                    category: ProviderErrorCategory::PromptTooLarge { tokens },
+                    ..
+                } = &error
+                    && !overflow_recovery_attempted
+                {
+                    overflow_recovery_attempted = true;
+                    this.update(cx, |this, cx| {
+                        this.mark_token_limit_exceeded(*tokens, cx);
+                    })?;
+                    match Self::perform_forced_compaction(
+                        this,
+                        event_stream,
+                        cancellation_rx.clone(),
+                        cx,
+                    )
+                    .await
+                    {
+                        Ok(ControlFlow::Continue(())) => continue,
+                        Ok(ControlFlow::Break(())) => return Ok(()),
+                        Err(recovery_error) => {
+                            return Err(anyhow!(error).context(format!(
+                                "Recovery compaction failed: {recovery_error:#}"
+                            )));
+                        }
+                    }
+                }
                 attempt += 1;
                 match Self::retry_completion_error(
                     this,
@@ -3378,6 +3407,41 @@ impl Thread {
             if this.pending_compaction_telemetry.is_none() {
                 this.pending_compaction_telemetry =
                     this.build_compaction_telemetry("auto", &model, cx);
+            }
+            Some((model, request, insertion_ix))
+        })?
+        else {
+            return Ok(ControlFlow::Continue(()));
+        };
+
+        Self::stream_compaction(
+            this,
+            event_stream,
+            cancellation_rx,
+            model,
+            request,
+            CompactionInsertion::Auto { insertion_ix },
+            cx,
+        )
+        .await
+    }
+
+    /// Compacts regardless of the auto-compaction threshold, as last-resort
+    /// recovery after a request overflowed the model's context window.
+    async fn perform_forced_compaction(
+        this: &WeakEntity<Self>,
+        event_stream: &ThreadEventStream,
+        cancellation_rx: watch::Receiver<bool>,
+        cx: &mut AsyncApp,
+    ) -> Result<ControlFlow<()>> {
+        let Some((model, request, insertion_ix)) = this.update(cx, |this, cx| {
+            let insertion_ix = this.forced_compaction_target_ix()?;
+            let model = this.compaction_model(cx)?;
+            let request = this.build_compaction_request(insertion_ix, &model, cx);
+            this.current_request_token_usage = TokenUsage::default();
+            if this.pending_compaction_telemetry.is_none() {
+                this.pending_compaction_telemetry =
+                    this.build_compaction_telemetry("overflow", &model, cx);
             }
             Some((model, request, insertion_ix))
         })?
