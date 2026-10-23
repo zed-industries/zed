@@ -4069,6 +4069,52 @@ async fn test_did_open_registration_respects_language_server_settings(
 }
 
 #[gpui::test]
+async fn test_documents_closed_by_registrations_refresh_document_highlights(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let (project, fake_server) =
+        setup_dynamic_registration_test(cx, lsp::ServerCapabilities::default()).await;
+    let fs = project.read_with(cx, |project, _| project.fs().as_fake());
+    fs.insert_tree(path!("/the-root"), json!({ "package.json": "{}" }))
+        .await;
+    project.read_with(cx, |project, _| project.languages().add(json_lang()));
+    cx.executor().run_until_parked();
+
+    let (_manifest_buffer, _manifest_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/package.json"), cx)
+        })
+        .await
+        .unwrap();
+    register_capability(
+        &fake_server,
+        "textDocument/didOpen",
+        "open-manifests",
+        Some(json!({ "documentSelector": [{ "language": "json" }] })),
+    )
+    .await;
+    cx.executor().run_until_parked();
+
+    let mut events = cx.events(&project);
+    unregister_capabilities(&fake_server, "textDocument/didOpen", &["open-manifests"]).await;
+    cx.executor().run_until_parked();
+    let mut highlight_refreshes = Vec::new();
+    while let Ok(event) = events.try_recv() {
+        if let Event::RefreshDocumentHighlights { server_id } = event {
+            highlight_refreshes.push(server_id);
+        }
+    }
+    // Editors skip refreshes for servers no longer relevant to their buffers, as the server
+    // is once the document is closed in it.
+    assert_eq!(
+        highlight_refreshes,
+        [None],
+        "expected closing the document to refresh highlights regardless of servers",
+    );
+}
+
+#[gpui::test]
 async fn test_documents_opened_by_registrations_balance_opens_and_closes(
     cx: &mut gpui::TestAppContext,
 ) {

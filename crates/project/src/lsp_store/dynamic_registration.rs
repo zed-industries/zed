@@ -394,6 +394,9 @@ impl LspStore {
             self.refresh_folding_ranges(Some(server_id), cx);
             self.refresh_document_links(Some(server_id), cx);
             self.refresh_document_symbols(Some(server_id), cx);
+            // Editors only refresh highlights for servers relevant to their buffers, which those
+            // whose documents were closed no longer are.
+            self.refresh_document_highlights(None, cx);
         }
     }
 
