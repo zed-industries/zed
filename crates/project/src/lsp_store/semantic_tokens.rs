@@ -601,6 +601,11 @@ impl LspStore {
                 // Token indices are only meaningful with the provider's legend, so do not
                 // guess when the guest cannot reconstruct the host's selector context.
                 for registration in registrations.values().rev() {
+                    // As on the host, only the registrations selecting a document opened by
+                    // registrations apply to it.
+                    if opened_by_registrations && registration.document_selector.is_none() {
+                        continue;
+                    }
                     let matches = match context.as_ref() {
                         Some(context) => document_selector_matches(
                             registration.document_selector.as_ref(),
@@ -620,6 +625,9 @@ impl LspStore {
                 }
             }
 
+            if opened_by_registrations {
+                return None;
+            }
             let provider = initial_capabilities.semantic_tokens_provider.as_ref()?;
             return Some(semantic_tokens_provider_legend(provider));
         }

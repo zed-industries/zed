@@ -427,6 +427,9 @@ pub struct LocalLspStore {
     /// registrations of the servers select them, rather than because the servers serve the
     /// buffers' languages.
     buffers_opened_by_registrations: HashMap<BufferId, HashSet<LanguageServerId>>,
+    /// The servers whose `buffers_opened_by_registrations` changed since remote clients last
+    /// learned them.
+    servers_to_sync_buffers_opened_by_registrations: HashSet<LanguageServerId>,
     buffer_pull_diagnostics_result_ids: HashMap<
         LanguageServerId,
         HashMap<Option<SharedString>, HashMap<PathBuf, Option<SharedString>>>,
@@ -3410,12 +3413,12 @@ impl LocalLspStore {
             // The server now serves the buffer's language, e.g. after the settings selected it,
             // so its static capabilities apply, and the buffer stays open regardless of its
             // registrations.
-            if let Some(server_ids) = self
-                .buffers_opened_by_registrations
-                .get_mut(&buffer_handle.read(cx).remote_id())
-            {
-                server_ids.remove(&server.server_id());
-            }
+            self.set_buffer_opened_by_registrations(
+                buffer_handle.read(cx).remote_id(),
+                server.server_id(),
+                false,
+                cx,
+            );
             self.open_buffer_in_server(
                 buffer_handle,
                 &server,
@@ -3527,6 +3530,46 @@ impl LocalLspStore {
                         buffer_id: buffer_id.to_proto(),
                     },
                 ),
+            });
+        }
+    }
+
+    /// Records whether the server's `didOpen` registrations opened the buffer in it, letting
+    /// remote clients know once the current update is done, as they cannot tell it from the
+    /// languages the server serves.
+    fn set_buffer_opened_by_registrations(
+        &mut self,
+        buffer_id: BufferId,
+        server_id: LanguageServerId,
+        opened_by_registrations: bool,
+        cx: &mut App,
+    ) {
+        let changed = if opened_by_registrations {
+            self.buffers_opened_by_registrations
+                .entry(buffer_id)
+                .or_default()
+                .insert(server_id)
+        } else {
+            self.buffers_opened_by_registrations
+                .get_mut(&buffer_id)
+                .is_some_and(|server_ids| server_ids.remove(&server_id))
+        };
+        if !changed {
+            return;
+        }
+        let sync_scheduled = !self
+            .servers_to_sync_buffers_opened_by_registrations
+            .is_empty();
+        self.servers_to_sync_buffers_opened_by_registrations
+            .insert(server_id);
+        if !sync_scheduled {
+            let lsp_store = self.weak.clone();
+            cx.defer(move |cx| {
+                lsp_store
+                    .update(cx, |lsp_store, cx| {
+                        lsp_store.sync_buffers_opened_by_registrations(cx)
+                    })
+                    .ok();
             });
         }
     }
@@ -3678,10 +3721,7 @@ impl LocalLspStore {
         let (adapter, server, language) = (adapter.clone(), server.clone(), language.clone());
         let initial_snapshot = buffer.text_snapshot();
 
-        self.buffers_opened_by_registrations
-            .entry(buffer_id)
-            .or_default()
-            .insert(server_id);
+        self.set_buffer_opened_by_registrations(buffer_id, server_id, true, cx);
         self.open_buffer_in_server(
             buffer_handle,
             &server,
@@ -3714,9 +3754,7 @@ impl LocalLspStore {
             return false;
         }
 
-        if let Some(server_ids) = self.buffers_opened_by_registrations.get_mut(&buffer_id) {
-            server_ids.remove(&server_id);
-        }
+        self.set_buffer_opened_by_registrations(buffer_id, server_id, false, cx);
         // Every document opened in the server is closed in it, also without a `didClose`
         // registration selecting it, as opening it again requires the notifications to balance.
         server.unregister_buffer(uri.clone());
@@ -3776,9 +3814,7 @@ impl LocalLspStore {
                 return RegistrationAttachmentChange::None;
             }
             // E.g. the settings selected the server for the buffer's language.
-            if let Some(server_ids) = self.buffers_opened_by_registrations.get_mut(&buffer_id) {
-                server_ids.remove(&server_id);
-            }
+            self.set_buffer_opened_by_registrations(buffer_id, server_id, false, cx);
             self.update_completion_triggers(buffer_handle, server_id, cx);
             return RegistrationAttachmentChange::Reclassified;
         }
@@ -3805,10 +3841,7 @@ impl LocalLspStore {
         }
         // E.g. the settings no longer select the server for the buffer's language, while its
         // registrations select the buffer, which is already open in it.
-        self.buffers_opened_by_registrations
-            .entry(buffer_id)
-            .or_default()
-            .insert(server_id);
+        self.set_buffer_opened_by_registrations(buffer_id, server_id, true, cx);
         self.update_completion_triggers(buffer_handle, server_id, cx);
         RegistrationAttachmentChange::Reclassified
     }
@@ -5244,6 +5277,14 @@ struct SyncedServerCapabilities {
         skip_serializing_if = "Option::is_none"
     )]
     text_document_registrations: Option<dynamic_registration::TextDocumentRegistrations>,
+    /// Clients cannot tell the buffers a server's `didOpen` registrations opened, which depend
+    /// on the host's settings and adapters, from the languages the server serves.
+    #[serde(
+        rename = "zedBuffersOpenedByRegistrations",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    buffers_opened_by_registrations: Option<Vec<u64>>,
 }
 
 #[derive(Debug)]
@@ -5288,6 +5329,8 @@ pub struct LspStore {
     lsp_server_initial_capabilities: HashMap<LanguageServerId, lsp::ServerCapabilities>,
     lsp_server_text_document_registrations:
         HashMap<LanguageServerId, dynamic_registration::TextDocumentRegistrations>,
+    /// The buffers the host's servers have opened by their `didOpen` registrations, on clients.
+    lsp_server_buffers_opened_by_registrations: HashMap<LanguageServerId, HashSet<BufferId>>,
     semantic_token_config: SemanticTokenConfig,
     lsp_data: HashMap<BufferId, BufferLspData>,
     buffer_reload_tasks: HashMap<BufferId, Task<anyhow::Result<()>>>,
@@ -5674,6 +5717,7 @@ impl LspStore {
                 registered_buffers: HashMap::default(),
                 buffers_opened_in_servers: HashMap::default(),
                 buffers_opened_by_registrations: HashMap::default(),
+                servers_to_sync_buffers_opened_by_registrations: HashSet::default(),
                 buffer_pull_diagnostics_result_ids: HashMap::default(),
                 workspace_pull_diagnostics_result_ids: HashMap::default(),
                 restricted_worktrees_tasks: HashMap::default(),
@@ -5694,6 +5738,7 @@ impl LspStore {
             lsp_server_capabilities: HashMap::default(),
             lsp_server_initial_capabilities: HashMap::default(),
             lsp_server_text_document_registrations: HashMap::default(),
+            lsp_server_buffers_opened_by_registrations: HashMap::default(),
             semantic_token_config: SemanticTokenConfig::new(cx),
             lsp_data: HashMap::default(),
             buffer_reload_tasks: HashMap::default(),
@@ -5761,6 +5806,7 @@ impl LspStore {
             lsp_server_capabilities: HashMap::default(),
             lsp_server_initial_capabilities: HashMap::default(),
             lsp_server_text_document_registrations: HashMap::default(),
+            lsp_server_buffers_opened_by_registrations: HashMap::default(),
             semantic_token_config: SemanticTokenConfig::new(cx),
             next_hint_id: Arc::default(),
             lsp_data: HashMap::default(),
@@ -6572,8 +6618,16 @@ impl LspStore {
                 .collect();
         }
 
+        // The host tells which servers opened the buffer by their registrations, which the
+        // languages they serve do not tell.
+        let mut server_ids = self
+            .lsp_server_buffers_opened_by_registrations
+            .iter()
+            .filter(|(_, buffer_ids)| buffer_ids.contains(&buffer_id))
+            .map(|(server_id, _)| *server_id)
+            .collect::<HashSet<_>>();
         let Some(language) = buffer.read(cx).language().cloned() else {
-            return HashSet::default();
+            return server_ids;
         };
         let registered_language_servers = self
             .languages
@@ -6581,14 +6635,14 @@ impl LspStore {
             .into_iter()
             .map(|lsp_adapter| lsp_adapter.name())
             .collect::<HashSet<_>>();
-        self.language_server_statuses
-            .iter()
-            .filter_map(|(server_id, server_status)| {
+        server_ids.extend(self.language_server_statuses.iter().filter_map(
+            |(server_id, server_status)| {
                 registered_language_servers
                     .contains(&server_status.name)
                     .then_some(*server_id)
-            })
-            .collect()
+            },
+        ));
+        server_ids
     }
 
     fn synced_server_capabilities(&self, server: &LanguageServer) -> SyncedServerCapabilities {
@@ -6614,10 +6668,23 @@ impl LspStore {
                 (initial_server_capabilities, text_document_registrations)
             })
             .unwrap_or_default();
+        let buffers_opened_by_registrations = self
+            .as_local()
+            .map(|local| {
+                local
+                    .buffers_opened_by_registrations
+                    .iter()
+                    .filter(|(_, server_ids)| server_ids.contains(&server.server_id()))
+                    .map(|(buffer_id, _)| buffer_id.to_proto())
+                    .sorted()
+                    .collect::<Vec<_>>()
+            })
+            .filter(|buffer_ids| !buffer_ids.is_empty());
         SyncedServerCapabilities {
             server_capabilities: server.capabilities(),
             initial_server_capabilities,
             text_document_registrations,
+            buffers_opened_by_registrations,
         }
     }
 
@@ -6673,6 +6740,7 @@ impl LspStore {
         &mut self,
         server_id: LanguageServerId,
         capabilities_json: &str,
+        cx: &mut Context<Self>,
     ) {
         if let Some(capabilities) =
             serde_json::from_str::<SyncedServerCapabilities>(capabilities_json).log_err()
@@ -6697,6 +6765,28 @@ impl LspStore {
                     self.lsp_server_text_document_registrations
                         .remove(&server_id);
                 }
+            }
+            let buffers_opened_by_registrations = capabilities
+                .buffers_opened_by_registrations
+                .into_iter()
+                .flatten()
+                .filter_map(|buffer_id| BufferId::new(buffer_id).log_err())
+                .collect::<HashSet<_>>();
+            let previous_buffers_opened_by_registrations =
+                if buffers_opened_by_registrations.is_empty() {
+                    self.lsp_server_buffers_opened_by_registrations
+                        .remove(&server_id)
+                } else {
+                    self.lsp_server_buffers_opened_by_registrations
+                        .insert(server_id, buffers_opened_by_registrations.clone())
+                };
+            // The host refreshes the data of documents its registrations open or close, which
+            // this client misses while disconnected, and then only learns from the synced state.
+            if self.as_local().is_none()
+                && previous_buffers_opened_by_registrations.unwrap_or_default()
+                    != buffers_opened_by_registrations
+            {
+                self.refresh_lsp_data_of_server(server_id, cx);
             }
         }
     }
@@ -6758,8 +6848,27 @@ impl LspStore {
         buffer_id: BufferId,
         server_id: LanguageServerId,
     ) -> bool {
-        self.as_local()
-            .is_some_and(|local| local.buffer_opened_by_registrations(buffer_id, server_id))
+        match self.as_local() {
+            Some(local) => local.buffer_opened_by_registrations(buffer_id, server_id),
+            None => self
+                .lsp_server_buffers_opened_by_registrations
+                .get(&server_id)
+                .is_some_and(|buffer_ids| buffer_ids.contains(&buffer_id)),
+        }
+    }
+
+    /// Lets remote clients know which buffers the servers' `didOpen` registrations opened, for
+    /// the servers where that changed.
+    fn sync_buffers_opened_by_registrations(&mut self, cx: &mut Context<Self>) {
+        let Some(local) = self.as_local_mut() else {
+            return;
+        };
+        let server_ids = mem::take(&mut local.servers_to_sync_buffers_opened_by_registrations);
+        for server_id in server_ids {
+            if let Some(server) = self.language_server_for_id(server_id) {
+                self.notify_server_capabilities_updated(&server, cx);
+            }
+        }
     }
 
     fn remote_document_selector_context(
@@ -6771,12 +6880,12 @@ impl LspStore {
         let language = language?;
         let server_name = &self.language_server_statuses.get(&server_id)?.name;
         // Without the host's adapter we cannot compute its language id. Callers that the host
-        // re-filters may fail open, while consumers of synced metadata must fail closed.
+        // re-filters may fail open, while consumers of synced metadata must fail closed. The
+        // adapter is looked up by name, as the server may also have opened documents of
+        // languages it does not serve through its `didOpen` registrations.
         let language_id = self
             .languages
-            .lsp_adapters(language)
-            .iter()
-            .find(|adapter| &adapter.name() == server_name)
+            .adapter_for_name(server_name)
             .map(|adapter| adapter.language_id(language))?;
         Some(DocumentSelectorContext {
             language_id: Some(language_id),
@@ -6807,6 +6916,7 @@ impl LspStore {
                 .get(&server_id)
                 .and_then(|registrations| registrations.get(registration_method)),
             context.as_ref(),
+            self.buffer_opened_by_registrations(buffer.remote_id(), server_id),
             check,
         )
     }
@@ -10895,7 +11005,7 @@ impl LspStore {
             .zip(server_capabilities)
             .map(|(server, server_capabilities)| {
                 let server_id = LanguageServerId(server.id as usize);
-                self.insert_synced_server_capabilities(server_id, &server_capabilities);
+                self.insert_synced_server_capabilities(server_id, &server_capabilities, cx);
 
                 let name = LanguageServerName::from_proto(server.name);
                 let worktree = server.worktree_id.map(WorktreeId::from_proto);
@@ -12271,7 +12381,11 @@ impl LspStore {
             let server_id = LanguageServerId(server.id as usize);
             let server_name = LanguageServerName::from_proto(server.name.clone());
             let language_name = server.language_name.map(LanguageName::from_proto);
-            lsp_store.insert_synced_server_capabilities(server_id, &envelope.payload.capabilities);
+            lsp_store.insert_synced_server_capabilities(
+                server_id,
+                &envelope.payload.capabilities,
+                cx,
+            );
 
             if let Some(ref lang_name) = language_name {
                 lsp_store.try_register_remote_adapter_locally(&server_name, lang_name);
@@ -15092,6 +15206,8 @@ impl LspStore {
         self.lsp_server_initial_capabilities.remove(&for_server);
         self.lsp_server_text_document_registrations
             .remove(&for_server);
+        self.lsp_server_buffers_opened_by_registrations
+            .remove(&for_server);
         self.semantic_token_config.remove_server_data(for_server);
         for lsp_data in self.lsp_data.values_mut() {
             lsp_data.remove_server_data(for_server);
@@ -16250,34 +16366,41 @@ fn remote_text_document_capabilities_match(
         &collections::IndexMap<String, dynamic_registration::DynamicTextDocumentRegistration>,
     >,
     context: Option<&DocumentSelectorContext>,
+    opened_by_registrations: bool,
     mut check: impl FnMut(AdapterServerCapabilities<'_>) -> bool,
 ) -> bool {
-    let Some(initial_capabilities) = initial_capabilities else {
-        return merged_capabilities.is_some_and(|server_capabilities| {
-            check(AdapterServerCapabilities {
-                server_capabilities,
-                code_action_kinds: None,
-            })
-        });
-    };
+    // As on the host, static capabilities and registrations without a selector do not apply to
+    // documents opened by `didOpen` registrations.
+    if !opened_by_registrations {
+        let Some(initial_capabilities) = initial_capabilities else {
+            return merged_capabilities.is_some_and(|server_capabilities| {
+                check(AdapterServerCapabilities {
+                    server_capabilities,
+                    code_action_kinds: None,
+                })
+            });
+        };
 
-    if check(AdapterServerCapabilities {
-        server_capabilities: initial_capabilities,
-        code_action_kinds: None,
-    }) {
-        return true;
+        if check(AdapterServerCapabilities {
+            server_capabilities: initial_capabilities,
+            code_action_kinds: None,
+        }) {
+            return true;
+        }
     }
 
     let Some(registrations) = registrations else {
         return false;
     };
     registrations.values().any(|registration| {
-        context.is_none_or(|context| {
-            document_selector_matches(registration.document_selector.as_ref(), context)
-        }) && check(AdapterServerCapabilities {
-            server_capabilities: &registration.server_capabilities,
-            code_action_kinds: None,
-        })
+        (registration.document_selector.is_some() || !opened_by_registrations)
+            && context.is_none_or(|context| {
+                document_selector_matches(registration.document_selector.as_ref(), context)
+            })
+            && check(AdapterServerCapabilities {
+                server_capabilities: &registration.server_capabilities,
+                code_action_kinds: None,
+            })
     })
 }
 
@@ -18772,6 +18895,7 @@ mod tests {
             server_capabilities: server_capabilities.clone(),
             initial_server_capabilities: Some(initial_server_capabilities.clone()),
             text_document_registrations: Some(registrations.clone()),
+            buffers_opened_by_registrations: Some(vec![1, 2]),
         })
         .unwrap();
         let parsed_by_old_peer =
@@ -18787,6 +18911,7 @@ mod tests {
             Some(initial_server_capabilities)
         );
         assert_eq!(parsed.text_document_registrations, Some(registrations));
+        assert_eq!(parsed.buffers_opened_by_registrations, Some(vec![1, 2]));
 
         let plain_capabilities = serde_json::to_string(&server_capabilities).unwrap();
         let parsed_plain =
@@ -18797,6 +18922,7 @@ mod tests {
         );
         assert_eq!(parsed_plain.initial_server_capabilities, None);
         assert_eq!(parsed_plain.text_document_registrations, None);
+        assert_eq!(parsed_plain.buffers_opened_by_registrations, None);
     }
 
     #[test]
@@ -18809,6 +18935,7 @@ mod tests {
                 Some(&merged_capabilities),
                 None,
                 Some(&context),
+                false,
                 rename_capability_check,
             ),
             "old hosts send only merged capabilities, which must be consulted",
@@ -18827,6 +18954,7 @@ mod tests {
                 Some(&merged_capabilities),
                 Some(&registrations),
                 Some(&context),
+                false,
                 rename_capability_check,
             ),
             "a registration scoped to another language must not match",
@@ -18844,6 +18972,7 @@ mod tests {
                 Some(&merged_capabilities),
                 Some(&registrations),
                 None,
+                false,
                 rename_capability_check,
             ),
             "without a selector context the guest must fail open and let the host re-filter",
@@ -18862,9 +18991,53 @@ mod tests {
                 Some(&merged_capabilities),
                 Some(&registrations),
                 Some(&context),
+                false,
                 rename_capability_check,
             ),
             "initial capabilities without the capability and no registrations must not match",
+        );
+    }
+
+    #[test]
+    fn remote_capability_check_for_documents_opened_by_registrations_needs_selectors() {
+        let toml_context = toml_file_context(DocumentSelectorPath::Unknown);
+        let registration = |document_selector: Option<lsp::DocumentSelector>| {
+            dynamic_registration::DynamicTextDocumentRegistration {
+                document_selector: document_selector.map(compiled_selector),
+                server_capabilities: rename_capabilities(),
+            }
+        };
+        let without_selector =
+            collections::IndexMap::from_iter([("all".to_string(), registration(None))]);
+        assert!(
+            !remote_text_document_capabilities_match(
+                Some(&rename_capabilities()),
+                Some(&rename_capabilities()),
+                Some(&without_selector),
+                Some(&toml_context),
+                true,
+                rename_capability_check,
+            ),
+            "static capabilities and registrations without a selector cover the languages the server serves",
+        );
+
+        let toml_selector = Some(vec![lsp::DocumentFilter {
+            language: Some("toml".to_string()),
+            scheme: None,
+            pattern: None,
+        }]);
+        let with_selector =
+            collections::IndexMap::from_iter([("toml".to_string(), registration(toml_selector))]);
+        assert!(
+            remote_text_document_capabilities_match(
+                Some(&lsp::ServerCapabilities::default()),
+                None,
+                Some(&with_selector),
+                Some(&toml_context),
+                true,
+                rename_capability_check,
+            ),
+            "a registration selecting the document applies to it",
         );
     }
 

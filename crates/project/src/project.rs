@@ -3913,11 +3913,12 @@ impl Project {
 
                 match message {
                     proto::update_language_server::Variant::MetadataUpdated(update) => {
-                        self.lsp_store.update(cx, |lsp_store, _| {
+                        self.lsp_store.update(cx, |lsp_store, cx| {
                             if let Some(capabilities) = update.capabilities.as_ref() {
                                 lsp_store.insert_synced_server_capabilities(
                                     *language_server_id,
                                     capabilities,
+                                    cx,
                                 );
                             }
 

@@ -6776,6 +6776,162 @@ async fn test_mutual_editor_semantic_token_cache_update(
 }
 
 #[gpui::test]
+async fn test_guest_semantic_tokens_of_documents_closed_by_registrations_while_disconnected(
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(cx_a.executor()).await;
+    let executor = cx_a.executor();
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    let markdown = || {
+        Arc::new(Language::new(
+            LanguageConfig {
+                name: "Markdown".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["md".into()],
+                    ..LanguageMatcher::default()
+                }
+                .into(),
+                ..LanguageConfig::default()
+            },
+            None,
+        ))
+    };
+    client_a.language_registry().add(rust_lang());
+    client_a.language_registry().add(markdown());
+    let mut fake_language_servers = client_a
+        .language_registry()
+        .register_fake_lsp("Rust", FakeLspAdapter::default());
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().add(markdown());
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/a"),
+            json!({ "main.rs": "fn main() {}", "notes.md": "# notes" }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
+    let (_main_buffer_a, _main_handle_a) = project_a
+        .update(cx_a, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/a/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let fake_language_server = fake_language_servers.next().await.unwrap();
+    executor.run_until_parked();
+    let (_notes_buffer_a, _notes_handle_a) = project_a
+        .update(cx_a, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/a/notes.md"), cx)
+        })
+        .await
+        .unwrap();
+    fake_language_server.set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+        |_, _| async move {
+            Ok(Some(lsp::SemanticTokensResult::Tokens(
+                lsp::SemanticTokens {
+                    result_id: None,
+                    // A one character token of the first type.
+                    data: vec![0, 0, 1, 0, 0],
+                },
+            )))
+        },
+    );
+    for (id, method, options) in [
+        (
+            "open-notes",
+            "textDocument/didOpen",
+            json!({ "documentSelector": [{ "language": "markdown" }] }),
+        ),
+        (
+            "semantic-tokens-for-notes",
+            "textDocument/semanticTokens",
+            json!({
+                "documentSelector": [{ "language": "markdown" }],
+                "legend": { "tokenTypes": ["keyword"], "tokenModifiers": [] },
+                "full": true,
+            }),
+        ),
+    ] {
+        fake_language_server
+            .request::<lsp::request::RegisterCapability>(
+                lsp::RegistrationParams {
+                    registrations: vec![lsp::Registration {
+                        id: id.to_string(),
+                        method: method.to_string(),
+                        register_options: Some(options),
+                    }],
+                },
+                DEFAULT_LSP_REQUEST_TIMEOUT,
+            )
+            .await
+            .into_response()
+            .unwrap();
+    }
+    executor.run_until_parked();
+
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    let notes_buffer_b = project_b
+        .update(cx_b, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("notes.md")), cx)
+        })
+        .await
+        .unwrap();
+    executor.run_until_parked();
+    let lsp_store_b = project_b.read_with(cx_b, |project, _| project.lsp_store());
+    let token_server_count = async |cx: &mut TestAppContext| {
+        let tokens = lsp_store_b
+            .update(cx, |lsp_store, cx| {
+                lsp_store.semantic_tokens(notes_buffer_b.clone(), cx)
+            })
+            .await
+            .unwrap();
+        tokens.tokens.as_ref().map_or(0, |tokens| tokens.len())
+    };
+    assert_eq!(token_server_count(cx_b).await, 1);
+
+    // The guest misses the refresh the host sends when the registration closes the document,
+    // and only learns about it from the state it syncs once reconnected.
+    server.forbid_connections();
+    server.disconnect_client(client_b.peer_id().unwrap());
+    executor.advance_clock(RECEIVE_TIMEOUT);
+    fake_language_server
+        .request::<lsp::request::UnregisterCapability>(
+            lsp::UnregistrationParams {
+                unregisterations: vec![lsp::Unregistration {
+                    id: "open-notes".to_string(),
+                    method: "textDocument/didOpen".to_string(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    executor.run_until_parked();
+    server.allow_connections();
+    executor.advance_clock(RECEIVE_TIMEOUT);
+    executor.run_until_parked();
+    project_b.read_with(cx_b, |project, cx| assert!(!project.is_disconnected(cx)));
+    assert_eq!(
+        token_server_count(cx_b).await,
+        0,
+        "expected the guest to drop the tokens of the server the document was closed in",
+    );
+}
+
+#[gpui::test]
 async fn test_guest_semantic_tokens_honor_dynamic_document_selectors(
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
