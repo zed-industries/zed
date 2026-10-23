@@ -49275,6 +49275,8 @@ async fn test_columnar_selection_past_end_of_line(cx: &mut TestAppContext) {
 
     // Starting the drag past the EOL of the short row must anchor that edge
     // of the rectangle at the click position, not at the short row's EOL.
+    // Since the tail is at/past EOL, every row in the dragged range keeps
+    // a cursor: short rows collapse to an EOL cursor instead of being skipped.
     cx.update_editor(|editor, window, cx| {
         editor.select(
             SelectPhase::BeginColumnar {
@@ -49299,7 +49301,7 @@ async fn test_columnar_selection_past_end_of_line(cx: &mut TestAppContext) {
 
     cx.assert_editor_state(indoc! {"
         aaaaaaaaaa
-        bb
+        bbˇ
         cccc«ˇcccc»cc
     "});
 }
