@@ -102,12 +102,19 @@ impl MentionSet {
     }
 
     pub fn remove_invalid(&mut self, snapshot: &EditorSnapshot) {
-        for (crease_id, crease) in snapshot.crease_snapshot.creases() {
-            if !crease.range().start.is_valid(snapshot.buffer_snapshot()) {
-                self.mentions.remove(&crease_id);
-                self.crease_entities.remove(&crease_id);
-            }
-        }
+        let active_creases: HashMap<_, _> = snapshot.crease_snapshot.creases().collect();
+        let buffer_snapshot = snapshot.buffer_snapshot();
+
+        self.mentions.retain(|crease_id, _| {
+            active_creases
+                .get(crease_id)
+                .map_or(false, |crease| crease.range().start.is_valid(buffer_snapshot))
+        });
+        self.crease_entities.retain(|crease_id, _| {
+            active_creases
+                .get(crease_id)
+                .map_or(false, |crease| crease.range().start.is_valid(buffer_snapshot))
+        });
     }
 
     pub fn insert_mention(
