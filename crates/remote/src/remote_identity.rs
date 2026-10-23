@@ -85,45 +85,31 @@ mod tests {
     };
 
     #[test]
-    fn ssh_connection_matching() {
-        let left = |args| {
-            RemoteConnectionOptions::Ssh(SshConnectionOptions {
-                host: "example.com".into(),
-                username: Some("anth".to_string()),
-                port: Some(2222),
-                password: Some("secret".to_string()),
-                args,
-                connection_timeout: Some(30),
-                nickname: Some("work".to_string()),
-                upload_binary_over_ssh: true,
-                ..Default::default()
-            })
-        };
-        let right = |args| {
-            RemoteConnectionOptions::Ssh(SshConnectionOptions {
-                host: "example.com".into(),
-                username: Some("anth".to_string()),
-                port: Some(2222),
-                password: None,
-                args,
-                connection_timeout: None,
-                nickname: None,
-                upload_binary_over_ssh: false,
-                ..Default::default()
-            })
-        };
+    fn ssh_identity_ignores_non_persisted_runtime_fields() {
+        let left = RemoteConnectionOptions::Ssh(SshConnectionOptions {
+            host: "example.com".into(),
+            username: Some("anth".to_string()),
+            port: Some(2222),
+            password: Some("secret".to_string()),
+            args: Some(vec!["-v".to_string()]),
+            connection_timeout: Some(30),
+            nickname: Some("work".to_string()),
+            upload_binary_over_ssh: true,
+            ..Default::default()
+        });
+        let right = RemoteConnectionOptions::Ssh(SshConnectionOptions {
+            host: "example.com".into(),
+            username: Some("anth".to_string()),
+            port: Some(2222),
+            password: None,
+            args: None,
+            connection_timeout: None,
+            nickname: None,
+            upload_binary_over_ssh: false,
+            ..Default::default()
+        });
 
-        for (left_args, right_args, expected) in [
-            (Some(vec!["-v".into()]), Some(vec!["-v".into()]), true),
-            (Some(vec!["-v".into()]), Some(vec!["-q".into()]), false),
-            (None, Some(vec![]), true),
-        ] {
-            let left = left(left_args);
-            let right = right(right_args);
-
-            assert_eq!(left.identity(), right.identity());
-            assert_eq!(left.matches_project_connection(&right), expected);
-        }
+        assert_eq!(left.identity(), right.identity());
     }
 
     #[test]
@@ -142,7 +128,6 @@ mod tests {
         });
 
         assert_ne!(left.identity(), right.identity());
-        assert!(!left.matches_project_connection(&right));
     }
 
     #[test]

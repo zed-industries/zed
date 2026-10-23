@@ -41,8 +41,7 @@ use menu::{
 use notifications::status_toast::StatusToast;
 use platform_title_bar::apply_title_bar_insets;
 use project::{
-    AgentId, AgentRegistryStore, Event as ProjectEvent, ProjectHost, WorktreeId,
-    repo_identity_path_if_local,
+    AgentId, AgentRegistryStore, Event as ProjectEvent, WorktreeId, repo_identity_path_if_local,
 };
 use recent_projects::sidebar_recent_projects::SidebarRecentProjects;
 use remote::RemoteConnectionOptions;
@@ -569,11 +568,6 @@ fn find_workspace_for_thread(
     thread: &ThreadMetadata,
     cx: &App,
 ) -> Option<Entity<Workspace>> {
-    let requested_host = thread
-        .remote_connection
-        .as_ref()
-        .map_or(ProjectHost::Local, ProjectHost::Remote);
-
     multi_workspace
         .workspaces()
         .find(|workspace| {
@@ -581,11 +575,13 @@ fn find_workspace_for_thread(
                 return false;
             }
 
-            workspace
-                .read(cx)
-                .project()
-                .read(cx)
-                .matches_host(&requested_host, cx)
+            thread.matches_remote_connection(
+                workspace
+                    .read(cx)
+                    .project()
+                    .read(cx)
+                    .remote_connection_options(cx),
+            )
         })
         .cloned()
 }

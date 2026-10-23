@@ -113,7 +113,7 @@ pub use prettier_store::PrettierStore;
 use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent};
 #[cfg(target_os = "windows")]
 use remote::wsl_path_to_windows_path;
-use remote::{RemoteClient, RemoteConnectionOptions};
+use remote::{RemoteClient, RemoteConnectionIdentity, RemoteConnectionOptions};
 use rpc::{
     AnyProtoClient, ErrorCode,
     proto::{LanguageServerPromptResponse, REMOTE_SERVER_PROJECT_ID},
@@ -2428,13 +2428,11 @@ impl Project {
             .map(|remote| remote.read(cx).connection_options())
     }
 
-    pub fn matches_host(&self, requested: &ProjectHost<'_>, cx: &App) -> bool {
-        match requested {
-            ProjectHost::Local => self.is_local(),
-            ProjectHost::Remote(requested) => self
-                .remote_connection_options(cx)
-                .is_some_and(|connection| connection.matches_project_connection(requested)),
-        }
+    pub fn remote_connection_identity<'a>(
+        &self,
+        cx: &'a App,
+    ) -> Option<RemoteConnectionIdentity<'a>> {
+        self.remote_connection_options(cx).map(|o| o.identity())
     }
 
     /// Reveals the given path in the system file manager.

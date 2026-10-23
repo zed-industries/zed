@@ -10928,16 +10928,33 @@ pub struct WorkspaceOpenTarget {
 
 fn matches_requested_host(project: &Project, requested: &ProjectHost<'_>, cx: &App) -> bool {
     match requested {
-        ProjectHost::Remote(RemoteConnectionOptions::Wsl(requested)) => {
+        ProjectHost::Local => project.is_local(),
+        ProjectHost::Remote(requested) => project
+            .remote_connection_options(cx)
+            .is_some_and(|options| matches_requested_connection(options, requested)),
+    }
+}
+
+fn matches_requested_connection(
+    options: &RemoteConnectionOptions,
+    requested: &RemoteConnectionOptions,
+) -> bool {
+    match (options, requested) {
+        (RemoteConnectionOptions::Wsl(options), RemoteConnectionOptions::Wsl(requested)) => {
             // WSL entry points do not consistently specify the user.
-            match project.remote_connection_options(cx) {
-                Some(RemoteConnectionOptions::Wsl(options)) => {
-                    options.distro_name == requested.distro_name
-                }
-                _ => false,
-            }
+            options.distro_name == requested.distro_name
         }
-        _ => project.matches_host(requested, cx),
+        (
+            RemoteConnectionOptions::Ssh(ssh_options),
+            RemoteConnectionOptions::Ssh(requested_options),
+        ) => {
+            // SSH arguments can override the host and user.
+            // Normalize the args to make None == Some("") for comparison.
+            options.identity() == requested.identity()
+                && ssh_options.args.as_deref().unwrap_or_default()
+                    == requested_options.args.as_deref().unwrap_or_default()
+        }
+        _ => options.identity() == requested.identity(),
     }
 }
 

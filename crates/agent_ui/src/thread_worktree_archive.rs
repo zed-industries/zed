@@ -7,7 +7,7 @@ use std::{
 use anyhow::{Context as _, Result, anyhow};
 use gpui::{App, AsyncApp, Entity, Task};
 use project::{
-    LocalProjectFlags, Project, ProjectHost, WorktreeId,
+    LocalProjectFlags, Project, WorktreeId,
     git_store::{Repository, resolve_git_worktree_to_main_repo, worktrees_directory_for_repo},
     project_settings::ProjectSettings,
 };
@@ -117,13 +117,13 @@ pub fn build_root_plan(
 ) -> Option<RootPlan> {
     let path = path.to_path_buf();
 
-    let requested_host = remote_connection.map_or(ProjectHost::Local, ProjectHost::Remote);
-
     let affected_projects = workspaces
         .iter()
         .filter_map(|workspace| {
             let project = workspace.read(cx).project().clone();
-            if !project.read(cx).matches_host(&requested_host, cx) {
+            if project.read(cx).remote_connection_identity(cx)
+                != remote_connection.map(|o| o.identity())
+            {
                 return None;
             }
             let worktree = project
@@ -149,7 +149,8 @@ pub fn build_root_plan(
                 .read(cx)
                 .project()
                 .read(cx)
-                .matches_host(&requested_host, cx)
+                .remote_connection_identity(cx)
+                == remote_connection.map(|o| o.identity())
         })
         .flat_map(|workspace| {
             workspace
@@ -347,7 +348,7 @@ async fn remove_root_after_worktree_removal(
 /// a `Project::local`; for remote paths we build a `Project::remote` through
 /// the connection pool (reusing the existing SSH transport), which requires
 /// the caller to pass the matching `RemoteConnectionOptions` so we only match
-/// and fall back onto projects with a matching connection target. The
+/// and fall back onto projects that share the same remote identity. The
 /// caller keeps the returned `Entity<Project>` alive for the duration of the
 /// git operations, then drops it.
 ///
@@ -366,15 +367,13 @@ async fn find_or_create_repository(
     // remote connection matches (so a local `/project` and a remote
     // `/project` are not confused).
     let live_repo = cx.update(|cx| {
-        let requested_host = remote_connection_owned
-            .as_ref()
-            .map_or(ProjectHost::Local, ProjectHost::Remote);
-
         all_open_workspaces(cx)
             .into_iter()
             .filter_map(|workspace| {
                 let project = workspace.read(cx).project().clone();
-                if !project.read(cx).matches_host(&requested_host, cx) {
+                if project.read(cx).remote_connection_identity(cx)
+                    != remote_connection_owned.as_ref().map(|o| o.identity())
+                {
                     return None;
                 }
 
