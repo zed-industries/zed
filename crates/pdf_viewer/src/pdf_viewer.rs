@@ -1321,3 +1321,196 @@ mod persistence {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use fs::{FakeFs, Fs as _};
+    use gpui::{TestAppContext, VisualTestContext};
+    use settings::SettingsStore;
+    use util::{path, rel_path::rel_path};
+    use workspace::item::ItemHandle;
+
+    use super::*;
+    use crate::pdf_document::tests::build_pdf;
+
+    fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            cx.set_global(db::AppDatabase::test_new());
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            init(cx);
+        });
+        FakeFs::new(cx.executor())
+    }
+
+    async fn open_in_workspace<'a>(
+        fs: Arc<FakeFs>,
+        file_name: &str,
+        cx: &'a mut TestAppContext,
+    ) -> (Result<Box<dyn ItemHandle>>, &'a mut VisualTestContext) {
+        let project = Project::test(fs, [Path::new(path!("/root"))], cx).await;
+        let worktree_id = cx.update(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .expect("test project should contain a worktree")
+                .read(cx)
+                .id()
+        });
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let item = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path(file_name)), None, true, window, cx)
+            })
+            .await;
+        cx.run_until_parked();
+        (item, cx)
+    }
+
+    async fn insert_pdf(fs: &FakeFs, file_name: &str, lines: &[(f32, f32, &str)]) {
+        fs.create_dir(Path::new(path!("/root")))
+            .await
+            .expect("test root should be created");
+        fs.insert_file(Path::new(path!("/root")).join(file_name), build_pdf(lines))
+            .await;
+    }
+
+    fn page_text(pdf_viewer: &Entity<PdfViewer>, cx: &VisualTestContext) -> String {
+        cx.read(|cx| {
+            let text = pdf_viewer
+                .read(cx)
+                .document
+                .extract_text(0)
+                .expect("text extraction should succeed");
+            text.text_in_range(0..text.len())
+        })
+    }
+
+    fn draw_window(cx: &mut VisualTestContext) {
+        cx.update(|window, cx| {
+            window.refresh();
+            window.draw(cx).clear(cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_pdf_files_open_in_the_pdf_viewer(cx: &mut TestAppContext) {
+        let fs = init_test(cx);
+        insert_pdf(&fs, "Doc.PDF", &[(72.0, 720.0, "Hello")]).await;
+
+        let (item, cx) = open_in_workspace(fs, "Doc.PDF", cx).await;
+        let pdf_viewer = item
+            .expect("PDF should open")
+            .downcast::<PdfViewer>()
+            .expect("PDF should open in the PDF viewer");
+
+        pdf_viewer.read_with(cx, |pdf_viewer, cx| {
+            assert_eq!(pdf_viewer.tab_content_text(0, cx), "Doc.PDF");
+            assert_eq!(pdf_viewer.document.page_count(), 1);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_invalid_pdf_shows_the_error(cx: &mut TestAppContext) {
+        let fs = init_test(cx);
+        fs.create_dir(Path::new(path!("/root")))
+            .await
+            .expect("test root should be created");
+        fs.insert_file(path!("/root/broken.pdf"), b"not a pdf".to_vec())
+            .await;
+
+        let (item, _) = open_in_workspace(fs, "broken.pdf", cx).await;
+        let invalid_item_view = item
+            .expect("the error view should open")
+            .downcast::<InvalidItemView>()
+            .expect("an invalid PDF should open in the error view");
+
+        cx.read(|cx| {
+            assert_eq!(
+                invalid_item_view.read(cx).error,
+                "The file is not a valid PDF document"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_rebuilt_pdf_is_reloaded(cx: &mut TestAppContext) {
+        let fs = init_test(cx);
+        insert_pdf(&fs, "doc.pdf", &[(72.0, 720.0, "Draft")]).await;
+
+        let (item, cx) = open_in_workspace(fs.clone(), "doc.pdf", cx).await;
+        let pdf_viewer = item
+            .expect("PDF should open")
+            .downcast::<PdfViewer>()
+            .expect("PDF should open in the PDF viewer");
+        assert_eq!(page_text(&pdf_viewer, cx), "Draft");
+
+        fs.insert_file(path!("/root/doc.pdf"), build_pdf(&[(72.0, 720.0, "Final")]))
+            .await;
+        cx.run_until_parked();
+        assert_eq!(page_text(&pdf_viewer, cx), "Final");
+    }
+
+    #[gpui::test]
+    async fn test_visible_page_is_rendered(cx: &mut TestAppContext) {
+        let fs = init_test(cx);
+        insert_pdf(&fs, "doc.pdf", &[(72.0, 720.0, "Hello")]).await;
+
+        let (item, cx) = open_in_workspace(fs, "doc.pdf", cx).await;
+        let pdf_viewer = item
+            .expect("PDF should open")
+            .downcast::<PdfViewer>()
+            .expect("PDF should open in the PDF viewer");
+
+        // Pages render on the viewer's own thread.
+        cx.executor().allow_parking();
+        let mut rendered = false;
+        for _ in 0..500 {
+            draw_window(cx);
+            rendered = pdf_viewer.read_with(cx, |pdf_viewer, _| {
+                pdf_viewer.rendered_pages.contains_key(&0)
+            });
+            if rendered {
+                break;
+            }
+            cx.executor().timer(Duration::from_millis(10)).await;
+        }
+        assert!(rendered, "the first page should be rendered");
+    }
+
+    #[gpui::test]
+    async fn test_select_all_copies_the_document_text(cx: &mut TestAppContext) {
+        let fs = init_test(cx);
+        insert_pdf(
+            &fs,
+            "doc.pdf",
+            &[(72.0, 720.0, "Hello World"), (72.0, 700.0, "Second line")],
+        )
+        .await;
+
+        let (item, cx) = open_in_workspace(fs, "doc.pdf", cx).await;
+        let pdf_viewer = item
+            .expect("PDF should open")
+            .downcast::<PdfViewer>()
+            .expect("PDF should open in the PDF viewer");
+
+        // Text is extracted on the viewer's own thread.
+        cx.executor().allow_parking();
+        pdf_viewer.update_in(cx, |pdf_viewer, window, cx| {
+            pdf_viewer.select_all(&SelectAll, window, cx);
+            pdf_viewer.copy(&Copy, window, cx);
+        });
+        let mut copied = None;
+        for _ in 0..500 {
+            copied = cx.read_from_clipboard().and_then(|item| item.text());
+            if copied.is_some() {
+                break;
+            }
+            cx.executor().timer(Duration::from_millis(10)).await;
+        }
+        assert_eq!(copied.as_deref(), Some("Hello World\nSecond line"));
+    }
+}

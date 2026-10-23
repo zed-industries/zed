@@ -387,12 +387,12 @@ impl<'a> Device<'a> for TextCollector {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// Builds a one-page PDF that shows each `(x, y, text)` entry with Helvetica 12pt.
     /// Coordinates are PDF user space: origin at the bottom-left of a 612x792 page.
-    fn build_pdf(lines: &[(f32, f32, &str)]) -> Vec<u8> {
+    pub(crate) fn build_pdf(lines: &[(f32, f32, &str)]) -> Vec<u8> {
         let mut content = String::from("BT\n/F1 12 Tf\n");
         for (x, y, text) in lines {
             content.push_str(&format!("1 0 0 1 {x} {y} Tm\n({text}) Tj\n"));
