@@ -7,9 +7,6 @@
 #[cfg(target_os = "ios")]
 pub mod ios;
 
-#[cfg(any(target_os = "ios", test))]
-mod scroll;
-
 #[cfg(target_os = "ios")]
 pub use ios::{IosPlatform, current_platform};
 

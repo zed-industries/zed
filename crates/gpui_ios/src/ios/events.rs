@@ -84,7 +84,15 @@ pub fn touch_id(touch: &UITouch) -> TouchId {
 /// only the movement since the previous one. UIKit reports the translation in
 /// the direction the content should move, which matches GPUI's pixel deltas.
 /// Returns `None` for states that carry no scroll.
-pub fn scroll_event(recognizer: &UIPanGestureRecognizer, view: &UIView) -> Option<ScrollEvent> {
+///
+/// UIKit reports pan velocity but, unlike AppKit, does not deliver momentum
+/// after the fingers lift, so a `continuous` gesture's release carries its
+/// velocity for GPUI to decelerate. Discrete wheel steps never coast.
+pub fn scroll_event(
+    recognizer: &UIPanGestureRecognizer,
+    view: &UIView,
+    continuous: bool,
+) -> Option<ScrollEvent> {
     let touch_phase = match recognizer.state() {
         UIGestureRecognizerState::Began => TouchPhase::Started,
         UIGestureRecognizerState::Changed => TouchPhase::Moved,
@@ -97,6 +105,10 @@ pub fn scroll_event(recognizer: &UIPanGestureRecognizer, view: &UIView) -> Optio
     let translation = recognizer.translationInView(Some(view));
     recognizer.setTranslation_inView(CGPoint::ZERO, Some(view));
     let location = recognizer.locationInView(Some(view));
+    let release_velocity = (continuous && touch_phase == TouchPhase::Ended).then(|| {
+        let velocity = recognizer.velocityInView(Some(view));
+        Point::new(px(velocity.x as f32), px(velocity.y as f32))
+    });
     Some(ScrollEvent {
         position: Point::new(px(location.x as f32), px(location.y as f32)),
         delta: ScrollDelta::Pixels(Point::new(
@@ -106,6 +118,7 @@ pub fn scroll_event(recognizer: &UIPanGestureRecognizer, view: &UIView) -> Optio
         modifiers: modifiers(recognizer.modifierFlags()),
         touch_phase,
         source: ScrollSource::Pointer,
+        release_velocity,
     })
 }
 

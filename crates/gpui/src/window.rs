@@ -2014,6 +2014,9 @@ impl Window {
                 handle
                     .update(&mut cx, |_, window, cx| {
                         window.active.set(active);
+                        if !active {
+                            window.touch_gestures.cancel_momentum();
+                        }
                         window.modifiers = window.platform_window.modifiers();
                         window.capslock = window.platform_window.capslock();
                         window
@@ -5684,8 +5687,8 @@ impl Window {
                 PlatformInput::ModifiersChanged(modifiers_changed)
             }
             PlatformInput::Scroll(scroll_wheel) => {
-                // Native pointer scrolling replaces a finger fling, rather than
-                // letting two independent momentum streams move the same content.
+                // Platform pointer scrolling replaces a fling in progress, rather
+                // than letting two momentum streams move the same content.
                 if scroll_wheel.source == crate::ScrollSource::Pointer {
                     self.touch_gestures.cancel_momentum();
                 }
@@ -5775,6 +5778,17 @@ impl Window {
 
         if let Some(any_mouse_event) = event.mouse_event() {
             self.dispatch_mouse_event(any_mouse_event, cx);
+            // Launch only after listeners have seen the release, so the
+            // release's own interruption cannot cancel its fling.
+            if let PlatformInput::Scroll(scroll) = &event
+                && scroll.touch_phase == crate::TouchPhase::Ended
+                && scroll.release_velocity.is_some()
+            {
+                self.touch_gestures.start_scroll_momentum(scroll);
+                if self.touch_gestures.has_momentum() {
+                    self.schedule_touch_momentum_tick();
+                }
+            }
         } else if let Some(any_key_event) = event.keyboard_event() {
             self.dispatch_key_event(any_key_event, cx);
         } else if let Some(touch_event) = event.touch_event() {
@@ -9233,30 +9247,85 @@ mod tests {
     }
 
     #[gpui::test]
-    fn native_scroll_interrupts_touch_momentum(cx: &mut TestAppContext) {
-        let window = cx.add_window(|_, _| crate::Empty);
-        dispatch_touch(window, cx, TouchId(1), TouchPhase::Started, 0.);
-        cx.executor().advance_clock(Duration::from_millis(16));
-        dispatch_touch(window, cx, TouchId(1), TouchPhase::Moved, 30.);
-        cx.executor().advance_clock(Duration::from_millis(16));
-        dispatch_touch(window, cx, TouchId(1), TouchPhase::Moved, 60.);
-        dispatch_touch(window, cx, TouchId(1), TouchPhase::Ended, 60.);
-        window
-            .update(cx, |_, window, cx| {
-                assert!(window.touch_gestures.has_momentum());
-                window.dispatch_event(
-                    PlatformInput::Scroll(crate::ScrollEvent {
-                        position: Point::default(),
-                        delta: crate::ScrollDelta::Pixels(point(px(0.), px(-10.))),
-                        modifiers: crate::Modifiers::default(),
-                        touch_phase: TouchPhase::Started,
-                        source: crate::ScrollSource::Pointer,
-                    }),
-                    cx,
-                );
-                assert!(!window.touch_gestures.has_momentum());
+    fn scroll_release_velocity_coasts_until_interrupted(cx: &mut TestAppContext) {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let window = cx.add_window({
+            let events = events.clone();
+            move |_, _| ScrollRecorder { events }
+        });
+        cx.test_window(window.into())
+            .simulate_active_status_change(true);
+        let velocity = point(px(0.), px(-1000.));
+        let scroll = |touch_phase, release_velocity| {
+            PlatformInput::Scroll(crate::ScrollEvent {
+                position: point(px(10.), px(20.)),
+                delta: crate::ScrollDelta::Pixels(point(px(0.), px(-5.))),
+                modifiers: crate::Modifiers::default(),
+                touch_phase,
+                source: crate::ScrollSource::Pointer,
+                release_velocity,
             })
-            .unwrap();
+        };
+        let dispatch = |cx: &mut TestAppContext, input| {
+            window
+                .update(cx, |_, window, cx| {
+                    window.dispatch_event(input, cx);
+                    window.touch_gestures.has_momentum()
+                })
+                .unwrap()
+        };
+        let next_frame = |cx: &mut TestAppContext| {
+            cx.executor().advance_clock(Duration::from_millis(16));
+            cx.test_window(window.into())
+                .simulate_frame_request(RequestFrameOptions::default());
+        };
+
+        // Native momentum and wheel steps carry no velocity, so nothing coasts.
+        assert!(!dispatch(cx, scroll(TouchPhase::Ended, None)));
+        // Only a release launches, even when another phase carries a velocity.
+        assert!(!dispatch(cx, scroll(TouchPhase::Cancelled, Some(velocity))));
+
+        assert!(dispatch(cx, scroll(TouchPhase::Ended, Some(velocity))));
+        // Momentum steps are not new pointer input, so they keep coasting.
+        for expected_events in [4, 5] {
+            next_frame(cx);
+            let events = events.borrow();
+            assert_eq!(events.len(), expected_events);
+            assert_eq!(events[expected_events - 1].touch_phase, TouchPhase::Moved);
+        }
+
+        assert!(!dispatch(cx, scroll(TouchPhase::Started, None)));
+        next_frame(cx);
+        assert_eq!(events.borrow().len(), 6);
+
+        assert!(dispatch(cx, scroll(TouchPhase::Ended, Some(velocity))));
+        cx.test_window(window.into())
+            .simulate_active_status_change(false);
+        assert!(
+            !window
+                .update(cx, |_, window, _| window.touch_gestures.has_momentum())
+                .unwrap()
+        );
+    }
+
+    struct ScrollRecorder {
+        events: Rc<RefCell<Vec<crate::ScrollEvent>>>,
+    }
+
+    impl Render for ScrollRecorder {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let events = self.events.clone();
+            canvas(
+                |_, _, _| {},
+                move |_, _, window, _| {
+                    window.on_mouse_event(move |event: &crate::ScrollEvent, phase, _, _| {
+                        if phase == DispatchPhase::Bubble {
+                            events.borrow_mut().push(event.clone());
+                        }
+                    });
+                },
+            )
+        }
     }
 
     #[gpui::test]

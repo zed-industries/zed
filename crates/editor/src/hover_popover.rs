@@ -2334,6 +2334,7 @@ mod tests {
                 modifiers: Modifiers::none(),
                 touch_phase: gpui::TouchPhase::Moved,
                 source: gpui::ScrollSource::Pointer,
+                release_velocity: None,
             });
             editor_cx.run_until_parked();
             assert_eq!(handle.offset(), before + gpui::point(px(0.), px(-20.)));
