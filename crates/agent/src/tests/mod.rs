@@ -7286,7 +7286,7 @@ async fn test_subagent_auto_compaction(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_subagent_compaction_respects_settings_and_context_window(cx: &mut TestAppContext) {
     for (enabled, max_tokens, max_output_tokens, input_tokens) in [
-        (true, 1_000_000, None, 899_999),
+        (true, 1_000_000, None, 899_000),
         (false, 1_000_000, None, 799_999),
         (true, 79_999, None, 63_999),
         (true, 100_000, Some(20_001), 79_999),
