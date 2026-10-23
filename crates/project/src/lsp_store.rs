@@ -1549,6 +1549,30 @@ impl LocalLspStore {
         }
     }
 
+    /// Returns whether the server serves the buffer for its language, rather than only having
+    /// it opened by its registrations.
+    fn language_server_serves_buffer(
+        &self,
+        buffer: &Buffer,
+        server_id: LanguageServerId,
+        cx: &mut App,
+    ) -> bool {
+        let Some((file, language)) = File::from_dyn(buffer.file()).zip(buffer.language()) else {
+            return false;
+        };
+        let path: Arc<RelPath> = file
+            .path()
+            .parent()
+            .map(Arc::from)
+            .unwrap_or_else(|| file.path().clone());
+        let project_path = ProjectPath {
+            worktree_id: file.worktree_id(cx),
+            path,
+        };
+        self.language_server_ids_for_project_path(project_path, language, cx)
+            .contains(&server_id)
+    }
+
     fn server_pulls_workspace_diagnostics(&self, server_id: LanguageServerId) -> bool {
         match self.language_servers.get(&server_id) {
             Some(LanguageServerState::Running {
@@ -3334,6 +3358,15 @@ impl LocalLspStore {
             .collect::<Vec<_>>();
         let uri_display = abs_path.to_string_lossy();
         for (server, adapter) in servers_and_adapters {
+            // The server now serves the buffer's language, e.g. after the settings selected it,
+            // so its static capabilities apply, and the buffer stays open regardless of its
+            // registrations.
+            if let Some(server_ids) = self
+                .buffers_opened_by_registrations
+                .get_mut(&buffer_handle.read(cx).remote_id())
+            {
+                server_ids.remove(&server.server_id());
+            }
             self.open_buffer_in_server(
                 buffer_handle,
                 &server,

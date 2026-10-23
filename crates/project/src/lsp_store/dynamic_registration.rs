@@ -343,7 +343,7 @@ impl LspStore {
             })
             .collect::<Vec<_>>();
 
-        let mut opened_any_document = false;
+        let mut attached_any_document = false;
         let mut closed_documents = Vec::new();
         for buffer in buffers {
             let Some(local) = self.as_local_mut() else {
@@ -355,7 +355,31 @@ impl LspStore {
                 .get(&buffer_id)
                 .is_some_and(|server_ids| server_ids.contains(&server_id));
             if !opened_by_registrations {
-                opened_any_document |= local.open_buffer_by_registrations(&buffer, server_id, cx);
+                attached_any_document |= local.open_buffer_by_registrations(&buffer, server_id, cx);
+            } else if buffer.update(cx, |buffer, cx| {
+                local.language_server_serves_buffer(buffer, server_id, cx)
+            }) {
+                // The settings now select the server for the buffer's language, so the buffer is
+                // no longer opened by registrations, and the static capabilities apply to it.
+                if let Some(server_ids) = local.buffers_opened_by_registrations.get_mut(&buffer_id)
+                {
+                    server_ids.remove(&server_id);
+                }
+                if let Some(LanguageServerState::Running { adapter, .. }) =
+                    local.language_servers.get(&server_id)
+                {
+                    let adapter = adapter.clone();
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.set_completion_triggers(
+                            server_id,
+                            completion_trigger_characters_for_buffer(
+                                local, server_id, &adapter, buffer, cx,
+                            ),
+                            cx,
+                        );
+                    });
+                }
+                attached_any_document = true;
             } else if !local.registrations_open_buffer_in_server(buffer.read(cx), server_id, cx)
                 && let Some(abs_path) =
                     local.close_buffer_opened_by_registrations(&buffer, server_id, cx)
@@ -369,7 +393,7 @@ impl LspStore {
         let clear_diagnostics = self
             .as_local()
             .is_some_and(|local| !local.server_pulls_workspace_diagnostics(server_id));
-        let changed_any_document = opened_any_document || !closed_documents.is_empty();
+        let changed_any_document = attached_any_document || !closed_documents.is_empty();
         for (buffer_id, abs_path) in closed_documents {
             if let Some(lsp_data) = self.lsp_data.get_mut(&buffer_id) {
                 lsp_data.remove_server_data(server_id);
