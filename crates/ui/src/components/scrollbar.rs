@@ -7,7 +7,7 @@ use gpui::{
     Entity, EntityId, GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement,
     IntoElement, IsZero, LayoutId, ListState, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, ParentElement, Pixels, Point, Position, Render, ScrollEvent, ScrollHandle, Size,
-    Stateful, StatefulInteractiveElement, Style, StyleRefinement, Styled, Task,
+    Stateful, StatefulInteractiveElement, Style, StyleRefinement, Styled, Subscription, Task,
     UniformListDecoration, UniformListScrollHandle, Window, ease_in_out, fill,
     prelude::FluentBuilder as _, px, quad, relative, size,
 };
@@ -671,14 +671,14 @@ struct TrackColors {
     has_border: bool,
 }
 
-pub fn on_new_scrollbars<T: gpui::Global>(cx: &mut App) {
-    cx.observe_new::<ScrollbarState>(|_, window, cx| {
-        if let Some(window) = window {
-            cx.observe_global_in::<T>(window, |state, _, cx| state.settings_changed(cx))
-                .detach();
-        }
-    })
-    .detach();
+/// Lets scrollbars observe settings without `ui` depending on the settings crate.
+struct ScrollbarSettingsChanged;
+
+impl gpui::Global for ScrollbarSettingsChanged {}
+
+pub fn observe_scrollbar_settings<T: gpui::Global>(cx: &mut App) {
+    cx.observe_global::<T>(|cx| cx.set_global(ScrollbarSettingsChanged))
+        .detach();
 }
 
 /// This is used to ensure notifies within the state do not notify the parent
@@ -702,6 +702,7 @@ struct ScrollbarState<T: ScrollableHandle = ScrollHandle> {
     mouse_in_parent: bool,
     last_prepaint_state: Option<ScrollbarPrepaintState>,
     _auto_hide_task: Option<Task<()>>,
+    _settings_subscription: Subscription,
 }
 
 impl<T: ScrollableHandle> ScrollbarState<T> {
@@ -736,6 +737,8 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
             mouse_in_parent: true,
             last_prepaint_state: None,
             _auto_hide_task: None,
+            _settings_subscription: cx
+                .observe_global::<ScrollbarSettingsChanged>(Self::settings_changed),
         }
     }
 
@@ -1749,7 +1752,41 @@ impl<T: ScrollableHandle> IntoElement for ScrollbarElement<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::point;
+    use gpui::{TestAppContext, point};
+
+    struct TestScrollbarSetting(ShowScrollbar);
+
+    impl gpui::Global for TestScrollbarSetting {}
+
+    fn new_scrollbar_state(
+        setting: ShowScrollbar,
+        cx: &mut TestAppContext,
+    ) -> Entity<ScrollbarState<UniformListScrollHandle>> {
+        cx.update(|cx| {
+            cx.set_global(TestScrollbarSetting(setting));
+            observe_scrollbar_settings::<TestScrollbarSetting>(cx);
+        });
+        cx.new(|cx| {
+            ScrollbarState::new_from_config(
+                Scrollbars::new_with_setting(ScrollAxes::Both, |cx| {
+                    cx.global::<TestScrollbarSetting>().0
+                })
+                .tracked_scroll_handle(&UniformListScrollHandle::new()),
+                Corners::default(),
+                cx.entity_id(),
+                cx,
+            )
+        })
+    }
+
+    #[gpui::test]
+    fn test_settings_change_updates_scrollbar_with_custom_handle(cx: &mut TestAppContext) {
+        let state = new_scrollbar_state(ShowScrollbar::Always, cx);
+        cx.update(|cx| cx.set_global(TestScrollbarSetting(ShowScrollbar::Never)));
+        state.read_with(cx, |state, _| {
+            assert_eq!(state.show_state, VisibilityState::Disabled);
+        });
+    }
 
     #[test]
     fn default_reveal_policy_reveals_for_content_changes() {
