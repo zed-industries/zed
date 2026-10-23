@@ -1406,7 +1406,7 @@ impl ToolCall {
         terminals: ToolTerminalResolver<'_>,
         cx: &mut App,
     ) -> Result<Self> {
-        let content = patch
+        let content: Vec<_> = patch
             .content
             .take()
             .map(|content| content.prepare(terminals, cx))
@@ -1436,10 +1436,13 @@ impl ToolCall {
         let sandbox_fallback_authorization_details =
             sandbox_fallback_authorization_details_from_meta(&meta);
         let sandbox_not_applied = sandbox_not_applied_from_meta(&meta);
+        let locations = patch.locations.take().unwrap_or_default();
+        let paths = Self::edit_paths(&locations, &content, None, cx);
         let label = Self::new_label(
             title.as_ref().filter(|title| !title.trim().is_empty()),
             tool_name.as_ref(),
             kind.as_ref().unwrap_or(&acp_v2::ToolKind::Other),
+            &paths,
             language_registry.clone(),
             cx,
         );
@@ -1453,7 +1456,7 @@ impl ToolCall {
             reported_status: patch.status.take(),
             meta,
             structured_content: content,
-            locations: patch.locations.take().unwrap_or_default(),
+            locations,
             resolved_locations: Vec::default(),
             local_status: None,
             authorization: None,
@@ -1517,16 +1520,107 @@ impl ToolCall {
         self.title.as_ref().filter(|title| !title.trim().is_empty())
     }
 
+    fn edit_paths(
+        locations: &[ToolCallLocation],
+        content: &[ToolCallContent],
+        prepared: Option<&[PreparedToolCallContent]>,
+        cx: &App,
+    ) -> Vec<PathBuf> {
+        let mut paths = Vec::new();
+        let mut push = |path: PathBuf| {
+            if !path.as_os_str().is_empty() && !paths.contains(&path) {
+                paths.push(path);
+            }
+        };
+        if !locations.is_empty() {
+            for location in locations {
+                push(location.path.clone());
+            }
+        } else if let Some(prepared) = prepared {
+            for content in prepared {
+                match content {
+                    PreparedToolCallContent::LegacyDiff(source) => push(source.path.clone()),
+                    PreparedToolCallContent::DiffPatch(source) => {
+                        for change in &source.changes {
+                            if let Some(path) =
+                                diff::diff_change_paths(change).and_then(|(old, new)| new.or(old))
+                            {
+                                push(path.to_path_buf());
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        } else {
+            for content in content {
+                match content {
+                    ToolCallContent::LegacyDiff { source, .. } => push(source.path.clone()),
+                    ToolCallContent::Diff(diff) => {
+                        if let Some(path) = diff.read(cx).file_path(cx) {
+                            push(path.into());
+                        }
+                    }
+                    ToolCallContent::DiffPatch { source, .. } => {
+                        for change in &source.changes {
+                            if let Some(path) =
+                                diff::diff_change_paths(change).and_then(|(old, new)| new.or(old))
+                            {
+                                push(path.to_path_buf());
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        paths
+    }
+
     fn label_text(
         title: Option<&SharedString>,
         tool_name: Option<&SharedString>,
         kind: &acp_v2::ToolKind,
+        paths: &[PathBuf],
     ) -> SharedString {
+        let name = tool_name.filter(|name| !name.trim().is_empty());
+        if kind == &acp_v2::ToolKind::Edit
+            && !paths.is_empty()
+            && let Some(label) = title.or(name)
+            && !paths.iter().any(|path| {
+                title.is_some_and(|title| {
+                    title.contains(path.to_string_lossy().as_ref())
+                        || path
+                            .file_name()
+                            .is_some_and(|name| title.contains(name.to_string_lossy().as_ref()))
+                })
+            })
+        {
+            let mut suffix = paths
+                .iter()
+                .take(2)
+                .map(|path| {
+                    let path = path.to_string_lossy();
+                    if title.is_some() {
+                        MarkdownEscaped(&path).to_string()
+                    } else {
+                        path.into_owned()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            if paths.len() > 2 {
+                suffix.push_str(&format!(" +{} more", paths.len() - 2));
+            }
+            let label = if title.is_some() {
+                MarkdownEscaped(label).to_string()
+            } else {
+                label.to_string()
+            };
+            return format!("{label} ({suffix})").into();
+        }
         let Some(title) = title else {
-            return tool_name
-                .filter(|name| !name.trim().is_empty())
-                .cloned()
-                .unwrap_or_else(|| "Tool call".into());
+            return name.cloned().unwrap_or_else(|| "Tool call".into());
         };
 
         if kind == &acp_v2::ToolKind::Execute {
@@ -1544,10 +1638,11 @@ impl ToolCall {
         title: Option<&SharedString>,
         tool_name: Option<&SharedString>,
         kind: &acp_v2::ToolKind,
+        paths: &[PathBuf],
         language_registry: Arc<LanguageRegistry>,
         cx: &mut App,
     ) -> Entity<Markdown> {
-        let text = Self::label_text(title, tool_name, kind);
+        let text = Self::label_text(title, tool_name, kind, paths);
         cx.new(|cx| {
             if title.is_none() || kind == &acp_v2::ToolKind::Execute {
                 Markdown::new_text(text, cx)
@@ -1589,7 +1684,10 @@ impl ToolCall {
         };
         let was_plain_text =
             self.effective_title().is_none() || self.kind() == &acp_v2::ToolKind::Execute;
-        let mut label_changed = !title.is_undefined() || !kind.is_undefined();
+        let mut label_changed = !title.is_undefined()
+            || !kind.is_undefined()
+            || content.is_some()
+            || !locations.is_undefined();
         if !kind.is_undefined() {
             self.reported_kind = kind.take();
         }
@@ -1659,7 +1757,20 @@ impl ToolCall {
                 }
             }
         }
+        if !locations.is_undefined() {
+            let locations = locations.take().unwrap_or_default();
+            if self.locations != locations {
+                self.locations = locations;
+                self.resolved_locations.clear();
+            }
+        }
         if label_changed {
+            let paths = Self::edit_paths(
+                &self.locations,
+                &self.structured_content,
+                content.as_deref(),
+                cx,
+            );
             let is_plain_text =
                 self.effective_title().is_none() || self.kind() == &acp_v2::ToolKind::Execute;
             if was_plain_text != is_plain_text {
@@ -1667,12 +1778,17 @@ impl ToolCall {
                     self.effective_title(),
                     self.tool_name.as_ref(),
                     self.kind(),
+                    &paths,
                     language_registry.clone(),
                     cx,
                 );
             } else {
-                let text =
-                    Self::label_text(self.effective_title(), self.tool_name.as_ref(), self.kind());
+                let text = Self::label_text(
+                    self.effective_title(),
+                    self.tool_name.as_ref(),
+                    self.kind(),
+                    &paths,
+                );
                 if self.label.read(cx).source() != &text {
                     self.label.update(cx, |label, cx| label.replace(text, cx));
                 }
@@ -1694,14 +1810,6 @@ impl ToolCall {
                 ));
             }
             self.structured_content.truncate(new_content_len);
-        }
-
-        if !locations.is_undefined() {
-            let locations = locations.take().unwrap_or_default();
-            if self.locations != locations {
-                self.locations = locations;
-                self.resolved_locations.clear();
-            }
         }
 
         if !raw_input.is_undefined() {
@@ -16037,6 +16145,204 @@ mod tests {
                 assert_eq!(serde_json::to_value(info).expect("session metadata"), wire);
             }
         }
+    }
+
+    fn tool_call_edit_patch(paths: &[&str]) -> acp_v2::ToolCallContent {
+        serde_json::from_value(json!({
+            "type": "diff",
+            "changes": paths.iter().map(|path| json!({
+                "operation": "modify", "path": path
+            })).collect::<Vec<_>>(),
+            "patch": {
+                "format": "git_patch",
+                "text": paths.iter().map(|path| format!(
+                    "--- {path}\n+++ {path}\n@@ -1 +1 @@\n-before\n+after\n"
+                )).collect::<String>()
+            }
+        }))
+        .expect("diff patch")
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_label_codex_single_file(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            let id = acp_v2::ToolCallId::new("edit");
+            thread
+                .upsert_local_tool_call(
+                    acp_v2::ToolCallUpdate::new(id.clone())
+                        .title("Editing files")
+                        .kind(acp_v2::ToolKind::Edit)
+                        .content(vec![tool_call_edit_patch(&["/workspace/edit.ts"])]),
+                    cx,
+                )
+                .expect("tool call");
+            let (_, call) = thread.tool_call(&id).expect("tool call");
+            assert_eq!(
+                call.label.read(cx).source(),
+                "Editing files (/workspace/edit.ts)"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_label_codex_multiple_files(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            let id = acp_v2::ToolCallId::new("edit");
+            thread
+                .upsert_local_tool_call(
+                    acp_v2::ToolCallUpdate::new(id.clone())
+                        .title("Editing files")
+                        .kind(acp_v2::ToolKind::Edit)
+                        .content(vec![tool_call_edit_patch(&[
+                            "/workspace/a.ts",
+                            "/workspace/b.ts",
+                            "/workspace/c.ts",
+                        ])]),
+                    cx,
+                )
+                .expect("tool call");
+            let (_, call) = thread.tool_call(&id).expect("tool call");
+            assert_eq!(
+                call.label.read(cx).source(),
+                "Editing files (/workspace/a.ts, /workspace/b.ts +1 more)"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_label_claude_title(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            let id = acp_v2::ToolCallId::new("edit");
+            thread
+                .upsert_local_tool_call(
+                    acp_v2::ToolCallUpdate::new(id.clone())
+                        .title("Write /workspace/edit.ts")
+                        .kind(acp_v2::ToolKind::Edit)
+                        .content(vec![tool_call_edit_patch(&["/workspace/edit.ts"])])
+                        .locations(vec![acp_v2::ToolCallLocation::new(
+                            acp_v2::AbsolutePath::new("/workspace/edit.ts"),
+                        )]),
+                    cx,
+                )
+                .expect("tool call");
+            let (_, call) = thread.tool_call(&id).expect("tool call");
+            assert_eq!(call.label.read(cx).source(), "Write /workspace/edit.ts");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_label_edit_without_paths(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            let id = acp_v2::ToolCallId::new("edit");
+            thread
+                .upsert_local_tool_call(
+                    acp_v2::ToolCallUpdate::new(id.clone())
+                        .title("Editing files")
+                        .kind(acp_v2::ToolKind::Edit),
+                    cx,
+                )
+                .expect("tool call");
+            let (_, call) = thread.tool_call(&id).expect("tool call");
+            assert_eq!(call.label.read(cx).source(), "Editing files");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_label_read_with_diff(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            let id = acp_v2::ToolCallId::new("edit");
+            thread
+                .upsert_local_tool_call(
+                    acp_v2::ToolCallUpdate::new(id.clone())
+                        .title("Reading files")
+                        .kind(acp_v2::ToolKind::Read)
+                        .content(vec![tool_call_edit_patch(&["/workspace/edit.ts"])]),
+                    cx,
+                )
+                .expect("tool call");
+            let (_, call) = thread.tool_call(&id).expect("tool call");
+            assert_eq!(call.label.read(cx).source(), "Reading files");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_label_later_paths(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            let id = acp_v2::ToolCallId::new("edit");
+            thread
+                .upsert_local_tool_call(
+                    acp_v2::ToolCallUpdate::new(id.clone())
+                        .title("Editing files")
+                        .kind(acp_v2::ToolKind::Edit),
+                    cx,
+                )
+                .expect("tool call");
+            let (_, call) = thread.tool_call(&id).expect("tool call");
+            assert_eq!(call.label.read(cx).source(), "Editing files");
+            thread
+                .update_tool_call(
+                    acp_v2::ToolCallUpdate::new(id.clone())
+                        .content(vec![tool_call_edit_patch(&["/workspace/edit.ts"])]),
+                    cx,
+                )
+                .expect("later diff");
+            let (_, call) = thread.tool_call(&id).expect("tool call");
+            assert_eq!(
+                call.label.read(cx).source(),
+                "Editing files (/workspace/edit.ts)"
+            );
+            let label = call.label.clone();
+            thread
+                .update_tool_call(acp_v2::ToolCallUpdate::new(id.clone()), cx)
+                .expect("unrelated update");
+            let (_, call) = thread.tool_call(&id).expect("tool call");
+            assert_eq!(call.label, label);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_label_plain_diff(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            let id = acp_v2::ToolCallId::new("edit");
+            thread
+                .upsert_local_tool_call(
+                    acp_v2::ToolCallUpdate::new(id.clone())
+                        .title("Editing files")
+                        .kind(acp_v2::ToolKind::Edit),
+                    cx,
+                )
+                .expect("tool call");
+            thread
+                .update_tool_call(
+                    acp_v1::ToolCallUpdate::new(
+                        acp_v1::ToolCallId::new("edit"),
+                        acp_v1::ToolCallUpdateFields::new().content(vec![
+                            acp_v1::Diff::new("/workspace/edit.ts", "after").into(),
+                        ]),
+                    ),
+                    cx,
+                )
+                .expect("plain diff");
+            let (_, call) = thread.tool_call(&id).expect("tool call");
+            assert_eq!(
+                call.label.read(cx).source(),
+                "Editing files (/workspace/edit.ts)"
+            );
+        });
     }
 
     #[gpui::test]
