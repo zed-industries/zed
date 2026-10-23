@@ -535,6 +535,41 @@ impl WorktreePickerDelegate {
         cx.notify();
 
         cx.spawn_in(window, async move |picker, cx| {
+            // Closing projects rooted in the worktree discards unsaved buffers, so warn first.
+            let has_dirty_buffers = gpui::AsyncApp::update(cx, |cx| {
+                cx.windows().into_iter().any(|window_handle| {
+                    let Some(window_handle) = window_handle.downcast::<MultiWorkspace>() else {
+                        return false;
+                    };
+                    let Ok(multi_workspace) = window_handle.read(cx) else {
+                        return false;
+                    };
+                    multi_workspace.workspaces().any(|workspace| {
+                        is_rooted_in(workspace, &path, cx)
+                            && workspace.read(cx).items(cx).any(|item| item.is_dirty(cx))
+                    })
+                })
+            });
+            if has_dirty_buffers {
+                let answer = cx.update(|window, cx| {
+                    window.prompt(
+                        PromptLevel::Warning,
+                        "Unsaved changes in this worktree will be lost when it is deleted. Delete it anyway?",
+                        None,
+                        &["Delete", "Cancel"],
+                        cx,
+                    )
+                })?;
+                if answer.await != Ok(0) {
+                    picker.update_in(cx, |picker, _window, cx| {
+                        if picker.delegate.deleting_worktree_paths.remove(&path) {
+                            cx.notify();
+                        }
+                    })?;
+                    return Ok(());
+                }
+            }
+
             let initial_result = match repo
                 .update(cx, |repo, _| repo.remove_worktree(path.clone(), force))
                 .await
@@ -1698,7 +1733,8 @@ pub async fn open_remote_worktree(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fs::FakeFs;
+    use editor::Editor;
+    use fs::{FakeFs, Fs, RemoveOptions};
     use gpui::{AppContext, TestAppContext, VisualTestContext};
     use project::project_settings::ProjectSettings;
     use project::{Project, WorktreeSettings};
@@ -1707,6 +1743,7 @@ mod tests {
     use settings::SettingsStore;
     use util::path;
     use workspace::MultiWorkspace;
+    use workspace::item::Item;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -2015,6 +2052,103 @@ mod tests {
         assert!(weak_project.upgrade().is_some(), "project was closed");
         let still_present = repo_contains_worktree(&repository, &worktree_path, &mut cx).await;
         assert!(still_present, "worktree should still exist");
+    }
+
+    #[gpui::test]
+    async fn test_delete_worktree_with_unsaved_changes_prompts_before_deleting(
+        cx: &mut TestAppContext,
+    ) {
+        let (fs, worktree_picker, repository, worktree_path, mut cx) =
+            init_worktree_picker_test(cx).await;
+        let (window_handle, worktree_workspace, weak_project) =
+            open_worktree_workspace(fs, &worktree_picker, &worktree_path, &mut cx).await;
+        let editor = cx.update(|window, cx| cx.new(|cx| Editor::single_line(window, cx)));
+        worktree_workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.add_item(Box::new(editor.clone()), true, true, None, window, cx)
+            })
+        });
+        editor.update_in(&mut cx, |editor, window, cx| editor.insert("x", window, cx));
+        assert!(editor.read_with(&cx, |editor, cx| editor.is_dirty(cx)));
+
+        let index = worktree_index(&worktree_picker, &worktree_path, &mut cx);
+        worktree_picker.update_in(&mut cx, |worktree_picker, window, cx| {
+            worktree_picker.picker.update(cx, |picker, cx| {
+                picker.delegate.delete_worktree(index, false, window, cx);
+            })
+        });
+        cx.run_until_parked();
+        assert!(cx.has_pending_prompt());
+        cx.simulate_prompt_answer("Cancel");
+        cx.run_until_parked();
+
+        let still_present = repo_contains_worktree(&repository, &worktree_path, &mut cx).await;
+        assert!(still_present, "cancelled deletion removed the worktree");
+        let workspace_open = window_handle
+            .read_with(&cx, |multi_workspace, _| {
+                multi_workspace
+                    .workspaces()
+                    .any(|workspace| *workspace == worktree_workspace)
+            })
+            .expect("test window should remain open");
+        assert!(workspace_open, "cancelled deletion closed the workspace");
+        drop(worktree_workspace);
+        cx.run_until_parked();
+        assert!(weak_project.upgrade().is_some(), "project was closed");
+    }
+
+    #[gpui::test]
+    async fn test_failed_worktree_removal_keeps_rooted_project_open(cx: &mut TestAppContext) {
+        let (fs, worktree_picker, _repository, worktree_path, mut cx) =
+            init_worktree_picker_test(cx).await;
+        let (window_handle, worktree_workspace, weak_project) =
+            open_worktree_workspace(fs.clone(), &worktree_picker, &worktree_path, &mut cx).await;
+
+        // Keep metadata removal from independently refreshing the picker rows.
+        fs.pause_events();
+        fs.remove_file(&worktree_path.join(".git"), RemoveOptions::default())
+            .await
+            .expect("worktree .git file should be removed");
+        fs.remove_dir(
+            path!("/root/project/.git/worktrees/dirty-wt").as_ref(),
+            RemoveOptions {
+                recursive: true,
+                ignore_if_not_exists: true,
+            },
+        )
+        .await
+        .expect("worktree git entry should be removed");
+
+        let index = worktree_index(&worktree_picker, &worktree_path, &mut cx);
+        worktree_picker.update_in(&mut cx, |worktree_picker, window, cx| {
+            worktree_picker.picker.update(cx, |picker, cx| {
+                picker.delegate.delete_worktree(index, false, window, cx);
+            })
+        });
+        cx.run_until_parked();
+
+        assert!(
+            deleting_worktree_paths(&worktree_picker, &mut cx).is_empty(),
+            "pending state must be cleared"
+        );
+        assert!(
+            picker_contains_worktree(&worktree_picker, &worktree_path, &mut cx),
+            "row must be restored after failure"
+        );
+        let workspace_open = window_handle
+            .read_with(&cx, |multi_workspace, _| {
+                multi_workspace
+                    .workspaces()
+                    .any(|workspace| *workspace == worktree_workspace)
+            })
+            .expect("test window should remain open");
+        assert!(workspace_open, "failed delete must not close the workspace");
+        drop(worktree_workspace);
+        cx.run_until_parked();
+        assert!(
+            weak_project.upgrade().is_some(),
+            "failed delete must not close the project"
+        );
     }
 
     #[gpui::test]
