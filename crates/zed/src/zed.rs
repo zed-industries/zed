@@ -7858,6 +7858,116 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_opening_file_on_launch_restores_last_session(cx: &mut TestAppContext) {
+        use session::Session;
+        use workspace::{OpenMode, Workspace};
+
+        let app_state = init_test(cx);
+        cx.update(init);
+
+        let fs = app_state.fs.clone();
+        fs.as_fake()
+            .insert_tree(path!("/project"), json!({ "a.txt": "a", "b.txt": "b" }))
+            .await;
+        fs.as_fake()
+            .insert_tree(path!("/elsewhere"), json!({ "c.txt": "c" }))
+            .await;
+
+        let session_id = cx.read(|cx| app_state.session.read(cx).id().to_owned());
+
+        let workspace::OpenResult {
+            window, workspace, ..
+        } = cx
+            .update(|cx| {
+                Workspace::new_local(
+                    vec![path!("/project").into()],
+                    app_state.clone(),
+                    None,
+                    None,
+                    None,
+                    OpenMode::Activate,
+                    cx,
+                )
+            })
+            .await
+            .expect("failed to open workspace");
+
+        for path in [path!("/project/a.txt"), path!("/project/b.txt")] {
+            window
+                .update(cx, |_, window, cx| {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.open_abs_path(
+                            PathBuf::from(path),
+                            OpenOptions::default(),
+                            window,
+                            cx,
+                        )
+                    })
+                })
+                .unwrap()
+                .await
+                .expect("failed to open file");
+        }
+        cx.run_until_parked();
+        flush_workspace_serialization(&window, cx).await;
+
+        // Quit, then simulate a fresh launch of Zed with a file passed as an argument,
+        // as happens when opening a file from the OS file manager.
+        window
+            .update(cx, |_, window, _| window.remove_window())
+            .unwrap();
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            app_state.session.update(cx, |app_session, _cx| {
+                app_session
+                    .replace_session_for_test(Session::test_with_old_session(session_id.clone()));
+            });
+        });
+
+        let request = OpenRequest {
+            open_paths: vec![path!("/elsewhere/c.txt").to_string()],
+            ..Default::default()
+        };
+        let mut async_cx = cx.to_async();
+        crate::restore_session_and_handle_open_request(request, app_state.clone(), &mut async_cx)
+            .await;
+        cx.run_until_parked();
+
+        let windows: Vec<WindowHandle<MultiWorkspace>> = cx.read(|cx| {
+            cx.windows()
+                .into_iter()
+                .filter_map(|window| window.downcast::<MultiWorkspace>())
+                .collect()
+        });
+        assert_eq!(
+            windows.len(),
+            1,
+            "the file should be opened in the restored window"
+        );
+
+        let open_paths = windows[0]
+            .read_with(cx, |multi_workspace, cx| {
+                let workspace = multi_workspace.workspace().read(cx);
+                let project = workspace.project().read(cx);
+                workspace
+                    .items(cx)
+                    .filter_map(|item| project.absolute_path(&item.project_path(cx)?, cx))
+                    .collect::<HashSet<_>>()
+            })
+            .unwrap();
+        assert_eq!(
+            open_paths,
+            HashSet::from_iter([
+                PathBuf::from(path!("/project/a.txt")),
+                PathBuf::from(path!("/project/b.txt")),
+                PathBuf::from(path!("/elsewhere/c.txt")),
+            ]),
+            "previously open files should be restored alongside the opened file"
+        );
+    }
+
+    #[gpui::test]
     async fn test_quit_preserves_focused_workspace_for_restore(cx: &mut TestAppContext) {
         use session::Session;
         use workspace::{OpenMode, Workspace};
