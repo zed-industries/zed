@@ -5,7 +5,9 @@ use std::{path::PathBuf, sync::Arc};
 #[cfg(target_os = "windows")]
 use windows::Win32::{Foundation::HANDLE, System::Threading::GetProcessId};
 
-use sysinfo::{Pid, Process, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+use sysinfo::{
+    Pid, Process, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System, UpdateKind,
+};
 
 use crate::{Event, Terminal};
 
@@ -77,13 +79,19 @@ pub(crate) struct PtyProcessInfo {
     system: RwLock<System>,
     refresh_kind: ProcessRefreshKind,
     pid_getter: ProcessIdGetter,
+    /// Whether the spawned process is a wrapper that runs the shell as its
+    /// child, as macOS `login` does when no shell program is configured.
+    shell_is_wrapped: bool,
+    /// The shell's pid, once it has been looked up. The shell keeps its pid for
+    /// the lifetime of the terminal, so the lookup only has to happen once.
+    cached_shell_pid: Mutex<Option<Pid>>,
     last_foreground_pid: Mutex<Option<Pid>>,
     pub(crate) current: RwLock<Option<ProcessInfo>>,
     task: Mutex<Option<Task<()>>>,
 }
 
 impl PtyProcessInfo {
-    pub(crate) fn new(pid_getter: ProcessIdGetter) -> PtyProcessInfo {
+    pub(crate) fn new(pid_getter: ProcessIdGetter, shell_is_wrapped: bool) -> PtyProcessInfo {
         // Task enumeration is on by default and would retain a `Process` entry
         // per thread, each pinning an open `/proc/<pid>/task/<tid>/stat` handle
         // on Linux (#58651).
@@ -108,6 +116,8 @@ impl PtyProcessInfo {
             system: RwLock::new(system),
             refresh_kind: process_refresh_kind,
             pid_getter,
+            shell_is_wrapped,
+            cached_shell_pid: Mutex::new(None),
             last_foreground_pid: Mutex::new(None),
             current: RwLock::new(None),
             task: Mutex::new(None),
@@ -241,11 +251,131 @@ impl PtyProcessInfo {
     pub(crate) fn pid(&self) -> Option<Pid> {
         self.pid_getter.pid()
     }
+
+    /// Whether the shell has any child process running.
+    ///
+    /// Used to tell whether closing a terminal would terminate work in
+    /// progress. A foreground command and a background job both count.
+    pub(crate) fn has_child_processes(&self) -> bool {
+        let Some(shell_pid) = self.shell_pid() else {
+            // The shell cannot be identified yet; keep the terminal protected
+            // rather than risk terminating work it may be running.
+            return true;
+        };
+
+        // A throwaway `System`: the caller only needs the parent links, and
+        // retaining every process in `self.system` would defeat the bound on
+        // that map.
+        let mut system = System::new_with_specifics(RefreshKind::nothing());
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::nothing(),
+        );
+        let parent_links: Vec<(Pid, Option<Pid>)> = system
+            .processes()
+            .iter()
+            .map(|(pid, process)| (*pid, process.parent()))
+            .collect();
+
+        self::has_child_processes(shell_pid, &parent_links)
+    }
+
+    /// The pid of the shell running on the PTY.
+    fn shell_pid(&self) -> Option<Pid> {
+        if let Some(shell_pid) = *self.cached_shell_pid.lock() {
+            return Some(shell_pid);
+        }
+
+        let spawned_pid = self.pid_getter.fallback_pid();
+        let shell_pid = if self.shell_is_wrapped {
+            // The spawned process is a wrapper, so the shell is its child. The
+            // wrapper runs exactly one child and waits for it, so the first
+            // process parented to it is the shell.
+            let mut system = System::new_with_specifics(RefreshKind::nothing());
+            system.refresh_processes_specifics(
+                ProcessesToUpdate::All,
+                true,
+                ProcessRefreshKind::nothing(),
+            );
+            system
+                .processes()
+                .iter()
+                .find(|(_, process)| process.parent() == Some(spawned_pid))
+                .map(|(pid, _)| *pid)
+        } else {
+            Some(spawned_pid)
+        };
+
+        if let Some(shell_pid) = shell_pid {
+            *self.cached_shell_pid.lock() = Some(shell_pid);
+        }
+        shell_pid
+    }
+}
+
+/// Whether the shell has any child process running.
+///
+/// A remote (SSH) terminal runs its shell on another host, so that shell's
+/// children cannot be seen from here. The remote server answers through
+/// this function about its own process table, which keeps the meaning of
+/// running work identical on both hosts.
+pub fn has_child_processes(root: Pid, parent_links: &[(Pid, Option<Pid>)]) -> bool {
+    use std::collections::HashSet;
+
+    let mut tree = HashSet::from([root]);
+    loop {
+        let mut grew = false;
+        for (pid, parent) in parent_links {
+            if tree.contains(pid) {
+                continue;
+            }
+            if parent.is_some_and(|parent| tree.contains(&parent)) {
+                tree.insert(*pid);
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    tree.len() > 1
 }
 
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn has_child_processes_counts_direct_and_nested_children() {
+        let root = Pid::from_u32(10);
+
+        assert!(
+            has_child_processes(root, &[(root, None), (Pid::from_u32(11), Some(root))]),
+            "a direct child counts as running work"
+        );
+        assert!(
+            has_child_processes(
+                root,
+                &[
+                    (root, None),
+                    (Pid::from_u32(11), Some(root)),
+                    (Pid::from_u32(12), Some(Pid::from_u32(11))),
+                ]
+            ),
+            "a background job under another child counts as well"
+        );
+        assert!(
+            !has_child_processes(
+                root,
+                &[
+                    (root, None),
+                    (Pid::from_u32(11), Some(Pid::from_u32(99))),
+                ]
+            ),
+            "an unrelated process does not count"
+        );
+    }
 
     /// Regression test for <https://github.com/zed-industries/zed/issues/58651>:
     /// on Linux, sysinfo keeps an open `/proc/<pid>/stat` handle for every
@@ -259,7 +389,7 @@ mod tests {
         reason = "the test needs real short-lived child processes and may block"
     )]
     fn process_map_stays_bounded() {
-        let mut info = PtyProcessInfo::new(ProcessIdGetter::new(-1, std::process::id()));
+        let mut info = PtyProcessInfo::new(ProcessIdGetter::new(-1, std::process::id()), false);
         assert!(
             info.get_child().is_some(),
             "the spawned child must be inspectable for kill_child_process \

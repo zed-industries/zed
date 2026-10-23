@@ -36,7 +36,7 @@ use terminal::{
     Clear, Copy, Event, HoveredWord, MaybeNavigationTarget, Modes, MouseInputMode, Paste,
     PasteText, Point, Range, ScrollLineDown, ScrollLineUp, ScrollPageDown, ScrollPageUp,
     ScrollToBottom, ScrollToTop, Search, ShowCharacterPalette, TaskState, TaskStatus, Terminal,
-    TerminalBounds, ToggleViMode,
+    TerminalBounds, TerminalOrigin, ToggleViMode,
     terminal_settings::{CursorShape, TerminalSettings},
 };
 use terminal_element::TerminalElement;
@@ -1925,6 +1925,22 @@ impl Item for TerminalView {
         match self.terminal.read(cx).task() {
             Some(task) => task.status == TaskStatus::Running,
             None => self.has_bell(),
+        }
+    }
+
+    fn has_running_work(&self, cx: &App) -> Task<bool> {
+        if !TerminalSettings::get_global(cx).confirm_on_kill {
+            return Task::ready(false);
+        }
+        match self.terminal.read(cx).origin() {
+            TerminalOrigin::Local => Task::ready(self.terminal.read(cx).has_child_processes()),
+            TerminalOrigin::Remote { terminal_id } => self
+                .project
+                .read_with(cx, |project, cx| {
+                    project.remote_terminal_has_child_processes(terminal_id, cx)
+                })
+                .log_err()
+                .unwrap_or_else(|| Task::ready(false)),
         }
     }
 

@@ -1766,12 +1766,33 @@ impl Pane {
             return Task::ready(Ok(()));
         }
 
-        let clean_item_ids = self.clean_item_ids(cx);
+        let close_pinned = action.close_pinned;
         let pinned_item_ids = self.pinned_item_ids();
+        let candidates = self
+            .items()
+            .map(|item| item.boxed_clone())
+            .collect::<Vec<_>>();
+        cx.spawn_in(window, async move |pane, cx| {
+            // Ids of the items that `Close Clean` may close: the ones with
+            // nothing to lose, matching how it leaves items with unsaved
+            // changes alone. Deciding that for a terminal asks the SSH host in
+            // a remote project, so the answer only exists here.
+            let mut clean_item_ids = Vec::new();
+            for item in candidates {
+                let (is_dirty, running_work) =
+                    pane.update(cx, |_, cx| (item.is_dirty(cx), item.has_running_work(cx)))?;
+                if !is_dirty && !running_work.await {
+                    clean_item_ids.push(item.item_id());
+                }
+            }
 
-        self.close_items(window, cx, SaveIntent::Close, &move |item_id| {
-            clean_item_ids.contains(&item_id)
-                && (action.close_pinned || !pinned_item_ids.contains(&item_id))
+            pane.update_in(cx, |pane, window, cx| {
+                pane.close_items(window, cx, SaveIntent::Close, &move |item_id| {
+                    clean_item_ids.contains(&item_id)
+                        && (close_pinned || !pinned_item_ids.contains(&item_id))
+                })
+            })?
+            .await
         })
     }
 
@@ -1861,8 +1882,6 @@ impl Pane {
             return;
         };
 
-        let mut index_list = Vec::new();
-        let mut items_len = self.items_len();
         let mut indexes: HashMap<EntityId, usize> = HashMap::default();
         let active_ix = self.active_item_index();
 
@@ -1870,41 +1889,69 @@ impl Pane {
             indexes.insert(item.item_id(), index);
         }
 
-        // Close least recently used items to reach target count.
-        // The target count is allowed to be exceeded, as we protect pinned
-        // items, dirty items, and sometimes, the active item.
-        for entry in self.activation_history.iter() {
-            if items_len < target_count {
-                break;
-            }
-
-            let Some(&index) = indexes.get(&entry.entity_id) else {
-                continue;
-            };
-
-            if protect_active_item && index == active_ix {
-                continue;
-            }
-
-            if let Some(true) = self.items.get(index).map(|item| item.is_dirty(cx)) {
-                continue;
-            }
-
-            if self.is_tab_pinned(index) {
-                continue;
-            }
-
-            index_list.push(index);
-            items_len -= 1;
+        let items_len = self.items_len();
+        if items_len < target_count {
+            return;
         }
-        // The sort and reverse is necessary since we remove items
-        // using their index position, hence removing from the end
-        // of the list first to avoid changing indexes.
-        index_list.sort_unstable();
-        index_list
+        // One more than the difference is removed, because a newly opened item
+        // is inserted after this runs.
+        let to_remove = items_len - target_count + 1;
+
+        // Candidates in least-recently-used order, skipping pinned items and,
+        // when asked, the active item. An item holding running work is kept
+        // open the same way a dirty item is, but a remote terminal only answers
+        // that question from the SSH host, so the check happens in the task
+        // below. The target count is allowed to be exceeded in that case.
+        let candidates = self
+            .activation_history
             .iter()
-            .rev()
-            .for_each(|&index| self._remove_item(index, false, false, None, window, cx));
+            .filter_map(|entry| {
+                let index = *indexes.get(&entry.entity_id)?;
+                if protect_active_item && index == active_ix {
+                    return None;
+                }
+                if self.items.get(index)?.is_dirty(cx) {
+                    return None;
+                }
+                if self.is_tab_pinned(index) {
+                    return None;
+                }
+                Some((entry.entity_id, self.items[index].boxed_clone()))
+            })
+            .collect::<Vec<_>>();
+
+        if candidates.is_empty() {
+            return;
+        }
+
+        cx.spawn_in(window, async move |pane, cx| {
+            let mut removable_ids = Vec::new();
+            for (id, item) in candidates {
+                if removable_ids.len() == to_remove {
+                    break;
+                }
+                let running_work = pane.update(cx, |_, cx| item.has_running_work(cx))?;
+                if !running_work.await {
+                    removable_ids.push(id);
+                }
+            }
+
+            pane.update_in(cx, |pane, window, cx| {
+                // Positions are resolved again here: an item may have been
+                // closed in the meantime, and each removal shifts the ones
+                // after it, so remove from the end of the list first.
+                let mut index_list = removable_ids
+                    .iter()
+                    .filter_map(|id| pane.index_for_item_id(*id))
+                    .collect::<Vec<_>>();
+                index_list.sort_unstable();
+                index_list.iter().rev().for_each(|&index| {
+                    pane._remove_item(index, false, false, None, window, cx)
+                });
+            })?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     // Usually when you close an item that has unsaved changes, we prompt you to
@@ -1961,6 +2008,29 @@ impl Pane {
         }
     }
 
+    /// Names for a prompt listing the tab titles of items being closed.
+    pub(super) fn tab_names_for_prompt(
+        items: &mut dyn Iterator<Item = &Box<dyn ItemHandle>>,
+        cx: &App,
+    ) -> String {
+        let mut names = BTreeSet::default();
+        for item in items {
+            let name = item.tab_content_text(0, cx);
+            if !name.is_empty() {
+                names.insert(name);
+            }
+        }
+        if names.len() > 6 {
+            format!(
+                "{}\n.. and {} more",
+                names.iter().take(5).join("\n"),
+                names.len() - 5
+            )
+        } else {
+            names.into_iter().join("\n")
+        }
+    }
+
     pub fn close_items(
         &self,
         window: &mut Window,
@@ -1993,6 +2063,48 @@ impl Pane {
             return Task::ready(Ok(()));
         };
         cx.spawn_in(window, async move |pane, cx| {
+            // Ask before terminating anything, so that a cancelled close leaves
+            // every item untouched. `SaveIntent::Skip` is used by callers that
+            // have already decided to discard, such as Vim's `:qa!`.
+            if save_intent != SaveIntent::Skip {
+                // Every check is started before the first one is awaited, so a
+                // pane holding several remote terminals costs one round trip
+                // rather than one per terminal.
+                let checks = items_to_close
+                    .iter()
+                    .map(|item| {
+                        let item = item.boxed_clone();
+                        workspace.update(cx, |_, cx| {
+                            let running_work = item.has_running_work(cx);
+                            (item, running_work)
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                let mut running_work_items = Vec::new();
+                for (item, running_work) in checks {
+                    if running_work.await {
+                        running_work_items.push(item);
+                    }
+                }
+
+                if !running_work_items.is_empty() {
+                    let answer = pane.update_in(cx, |_, window, cx| {
+                        let detail = Self::tab_names_for_prompt(&mut running_work_items.iter(), cx);
+                        window.prompt(
+                            PromptLevel::Warning,
+                            "Do you want to terminate the running processes?",
+                            Some(&detail),
+                            &["Terminate", "Cancel"],
+                            cx,
+                        )
+                    })?;
+                    match answer.await {
+                        Ok(0) => {}
+                        _ => return Ok(()),
+                    }
+                }
+            }
+
             let dirty_items = workspace.update(cx, |workspace, cx| {
                 items_to_close
                     .iter()
@@ -3104,7 +3216,6 @@ impl Pane {
             .any(|item| item.buffer_kind(cx) == ItemBufferKind::Multibuffer);
         let has_items_to_left = ix > 0;
         let has_items_to_right = ix < total_items - 1;
-        let has_clean_items = self.items.iter().any(|item| !item.is_dirty(cx));
         let is_pinned = self.is_tab_pinned(ix);
 
         let pane = cx.entity().downgrade();
@@ -3118,6 +3229,12 @@ impl Pane {
                 let menu_context = menu_context.clone();
                 let extra_actions = item_handle.tab_extra_context_menu_actions(window, cx);
                 ContextMenu::build(window, cx, move |mut menu, window, cx| {
+                    // Whether an item also holds running work is decided while
+                    // the action runs, because a remote terminal has to be
+                    // asked. The menu therefore only rules out unsaved changes.
+                    let has_clean_items = pane.upgrade().is_some_and(|pane| {
+                        pane.read(cx).items.iter().any(|item| !item.is_dirty(cx))
+                    });
                     let close_active_item_action = CloseActiveItem {
                         save_intent: None,
                         close_pinned: true,
@@ -4274,18 +4391,6 @@ impl Pane {
             .collect()
     }
 
-    fn clean_item_ids(&self, cx: &mut Context<Pane>) -> Vec<EntityId> {
-        self.items()
-            .filter_map(|item| {
-                if !item.is_dirty(cx) {
-                    return Some(item.item_id());
-                }
-
-                None
-            })
-            .collect()
-    }
-
     fn to_the_side_item_ids(&self, item_id: EntityId, side: Side) -> Vec<EntityId> {
         match side {
             Side::Left => self
@@ -5252,6 +5357,31 @@ mod tests {
 
         set_max_tabs(cx, Some(2));
         assert_item_labels(&pane, ["C!", "D!", "Settings*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_max_tabs_keeps_items_with_running_work(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        add_labeled_item_with_running_work(&pane, "R1", cx);
+        add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item_with_running_work(&pane, "R2", cx);
+
+        set_max_tabs(cx, Some(2));
+        // "R1" holds running work, so the next least recently used item takes
+        // its place and the cap is still reached.
+        assert_item_labels(&pane, ["R1", "R2*"], cx);
+
+        set_max_tabs(cx, Some(1));
+        // Nothing is left to close, so the pane stays above the cap rather than
+        // ending work that is still running.
+        assert_item_labels(&pane, ["R1", "R2*"], cx);
     }
 
     #[gpui::test]
@@ -6361,6 +6491,9 @@ mod tests {
         });
 
         // E (unpinned) should be closed, leaving 3 pinned items
+        // Reaching the max tab count removes items in a task, since an item's
+        // running work may have to be asked for from a remote host.
+        cx.run_until_parked();
         assert_item_labels(&pane_a, ["B*!"], cx);
         assert_item_labels(&pane_b, ["A*!", "C!", "D!"], cx);
     }
@@ -8004,6 +8137,105 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_close_clean_items_leaves_running_work_alone(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item_with_running_work(&pane, "B", cx);
+        add_labeled_item(&pane, "C", false, cx);
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        // `Close Clean` leaves the item with work in progress alone, the same
+        // way it leaves an item with unsaved changes alone, and does not ask
+        // anything about it.
+        let close_task = pane.update_in(cx, |pane, window, cx| {
+            pane.close_clean_items(
+                &CloseCleanItems {
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        });
+        cx.executor().run_until_parked();
+        assert!(
+            !cx.has_pending_prompt(),
+            "Close Clean should not prompt about work it leaves alone"
+        );
+        close_task.await.unwrap();
+        assert_item_labels(&pane, ["B*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_close_items_with_running_work_asks_for_confirmation(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item_with_running_work(&pane, "B", cx);
+        assert_item_labels(&pane, ["A", "B*"], cx);
+
+        // Closing work in progress asks first, and cancelling keeps every item.
+        let close_task = pane.update_in(cx, |pane, window, cx| {
+            pane.close_all_items(
+                &CloseAllItems {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        });
+        cx.executor().run_until_parked();
+        cx.simulate_prompt_answer("Cancel");
+        close_task.await.unwrap();
+        assert_item_labels(&pane, ["A", "B*"], cx);
+
+        let close_task = pane.update_in(cx, |pane, window, cx| {
+            pane.close_all_items(
+                &CloseAllItems {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        });
+        cx.executor().run_until_parked();
+        cx.simulate_prompt_answer("Terminate");
+        close_task.await.unwrap();
+        assert_item_labels(&pane, [], cx);
+
+        // Closing only the active item asks for the same confirmation.
+        add_labeled_item_with_running_work(&pane, "A", cx);
+        let close_task = pane.update_in(cx, |pane, window, cx| {
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        });
+        cx.executor().run_until_parked();
+        cx.simulate_prompt_answer("Cancel");
+        close_task.await.unwrap();
+        assert_item_labels(&pane, ["A*"], cx);
+    }
+
+    #[gpui::test]
     async fn test_close_items_to_the_left(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
@@ -9183,6 +9415,9 @@ mod tests {
                 settings.workspace.max_tabs = value.map(|v| NonZero::new(v).unwrap())
             });
         });
+        // Reaching the cap removes items in a task, since an item's running
+        // work may have to be asked for from a remote host.
+        cx.run_until_parked();
     }
 
     fn set_pinned_tabs_separate_row(cx: &mut TestAppContext, enabled: bool) {
@@ -9202,12 +9437,35 @@ mod tests {
         is_dirty: bool,
         cx: &mut VisualTestContext,
     ) -> Box<Entity<TestItem>> {
-        pane.update_in(cx, |pane, window, cx| {
+        let labeled_item = pane.update_in(cx, |pane, window, cx| {
             let labeled_item =
                 Box::new(cx.new(|cx| TestItem::new(cx).with_label(label).with_dirty(is_dirty)));
             pane.add_item(labeled_item.clone(), false, false, None, window, cx);
             labeled_item
-        })
+        });
+        // Reaching the max tab count removes items in a task, since an item's
+        // running work may have to be asked for from a remote host.
+        cx.run_until_parked();
+        labeled_item
+    }
+
+    /// Adds an item that reports work in progress, as a terminal running a
+    /// process does, without reporting unsaved changes.
+    fn add_labeled_item_with_running_work(
+        pane: &Entity<Pane>,
+        label: &str,
+        cx: &mut VisualTestContext,
+    ) -> Box<Entity<TestItem>> {
+        let labeled_item = pane.update_in(cx, |pane, window, cx| {
+            let labeled_item =
+                Box::new(cx.new(|cx| TestItem::new(cx).with_label(label).with_running_work(true)));
+            pane.add_item(labeled_item.clone(), false, false, None, window, cx);
+            labeled_item
+        });
+        // Reaching the max tab count removes items in a task, since an item's
+        // running work may have to be asked for from a remote host.
+        cx.run_until_parked();
+        labeled_item
     }
 
     fn set_labeled_items<const COUNT: usize>(
