@@ -339,6 +339,11 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
+    fn refresh_models(&self, cx: &mut App) {
+        self.state
+            .update(cx, |state, cx| state.restart_fetch_models_task(cx));
+    }
+
     fn settings_view(&self, cx: &mut App) -> Option<ProviderSettingsView> {
         let state = self.state.read(cx);
         Some(ProviderSettingsView::ApiKey(ApiKeyConfiguration::new(
