@@ -3697,6 +3697,9 @@ pub enum OutputTokensUpdate {
 #[derive(Debug)]
 pub enum AcpThreadEvent {
     StatusChanged,
+    /// The parent's title, description, or capabilities for this subagent changed. Views that
+    /// read them from the parent's side, such as its subagent card, observe this event.
+    SubagentAssociationUpdated,
     /// Idle confirmed after unconfirmed or unknown activity, without completing
     /// foreground work.
     ActivityConfirmedIdle,
@@ -3865,6 +3868,7 @@ impl AcpThread {
                 | AcpThreadEvent::EntryUpdated(_)
                 | AcpThreadEvent::Retry(_)
                 | AcpThreadEvent::SubagentSpawned(_)
+                | AcpThreadEvent::SubagentAssociationUpdated
                 | AcpThreadEvent::Stopped { .. }
                 | AcpThreadEvent::Error
                 | AcpThreadEvent::ConnectionLost
@@ -3975,6 +3979,7 @@ impl AcpThread {
             .as_mut()
             .context("Session is not an ACP subagent")?;
         association.apply(update);
+        cx.emit(AcpThreadEvent::SubagentAssociationUpdated);
         cx.notify();
         Ok(())
     }
