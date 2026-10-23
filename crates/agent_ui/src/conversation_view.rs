@@ -115,6 +115,7 @@ mod message_queue;
 mod subagent_card;
 mod thread_search_bar;
 mod thread_view;
+mod tool_call_groups;
 pub use message_queue::*;
 pub use thread_view::*;
 
@@ -3924,9 +3925,7 @@ impl ConversationView {
     pub fn expand_tool_call(&mut self, tool_call_id: acp_v2::ToolCallId, cx: &mut Context<Self>) {
         if let Some(active) = self.active_thread() {
             active.update(cx, |active, cx| {
-                active.entry_view_state.update(cx, |state, _cx| {
-                    state.expand_tool_call(tool_call_id);
-                });
+                active.expand_tool_call_for_test(tool_call_id, cx);
             });
             cx.notify();
         }
@@ -15872,6 +15871,219 @@ pub(crate) mod tests {
             lower_terminal.update(cx, |terminal, _| terminal.take_input_log()),
             vec![b"a".to_vec()],
         );
+    }
+
+    #[gpui::test]
+    async fn test_tool_display_compact_expands_input_and_output(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            assert_eq!(
+                AgentSettings::get_global(cx).tool_call_display,
+                settings::ToolCallDisplay::Verbose,
+                "existing settings preserve the verbose default",
+            );
+            AgentSettings::override_global(
+                AgentSettings {
+                    tool_call_display: settings::ToolCallDisplay::Compact,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::ToolCall(
+            acp_v1::ToolCall::new("claude-bash", "```\ncat <<'EOF'\nhello\nEOF\n```")
+                .kind(acp_v1::ToolKind::Execute)
+                .status(acp_v1::ToolCallStatus::InProgress)
+                .content(vec!["first output".into()]),
+        )]);
+        let (conversation_view, cx) =
+            setup_full_size_conversation_and_send(connection, "Run a command", cx).await;
+        assert!(cx.debug_bounds("compact-tool-header-claude-bash").is_some());
+        assert!(
+            cx.debug_bounds("tool-call-claude-bash-standalone")
+                .is_none()
+        );
+        let header = cx
+            .debug_bounds("compact-tool-header-claude-bash")
+            .expect("compact header");
+        cx.simulate_click(header.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("tool-call-claude-bash-standalone")
+                .is_some()
+        );
+        assert!(cx.debug_bounds("tool-call-output-1-0").is_some());
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
+        thread
+            .update(cx, |thread, cx| {
+                thread.upsert_tool_call(
+                    acp_v1::ToolCall::new("claude-bash", "```\ncat <<'EOF'\nhello\nEOF\n```")
+                        .kind(acp_v1::ToolKind::Execute)
+                        .status(acp_v1::ToolCallStatus::Completed)
+                        .content(vec!["updated output".into()]),
+                    cx,
+                )
+            })
+            .expect("streamed tool update");
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("tool-call-output-1-0").is_some(),
+            "streaming must retain expansion"
+        );
+        let header = cx
+            .debug_bounds("compact-tool-header-claude-bash")
+            .expect("compact header");
+        cx.simulate_click(header.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("tool-call-claude-bash-standalone")
+                .is_none()
+        );
+        cx.update(|_, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    tool_call_display: settings::ToolCallDisplay::Verbose,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("compact-tool-header-claude-bash").is_none());
+        assert!(
+            cx.debug_bounds("tool-call-claude-bash-standalone")
+                .is_some()
+        );
+    }
+
+    #[gpui::test]
+    async fn test_tool_display_groups_preserve_search_and_growth(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    tool_call_display: settings::ToolCallDisplay::Grouped,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![
+            acp_v1::SessionUpdate::ToolCall(
+                acp_v1::ToolCall::new("bash-1", "printf first")
+                    .kind(acp_v1::ToolKind::Execute)
+                    .status(acp_v1::ToolCallStatus::Completed),
+            ),
+            acp_v1::SessionUpdate::ToolCall(
+                acp_v1::ToolCall::new("bash-2", "printf second")
+                    .kind(acp_v1::ToolKind::Execute)
+                    .status(acp_v1::ToolCallStatus::Completed),
+            ),
+        ]);
+        let (conversation_view, cx) =
+            setup_full_size_conversation_and_send(connection, "Run commands", cx).await;
+        assert!(cx.debug_bounds("tool-group-bash-1").is_some());
+        assert!(cx.debug_bounds("tool-group-bash-2").is_none());
+        assert!(cx.debug_bounds("compact-tool-header-bash-1").is_none());
+        let header = cx.debug_bounds("tool-group-bash-1").expect("group header");
+        cx.simulate_click(header.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("compact-tool-header-bash-1").is_some());
+        assert!(cx.debug_bounds("compact-tool-header-bash-2").is_some());
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        thread
+            .update(cx, |thread, cx| {
+                thread.upsert_tool_call(
+                    acp_v1::ToolCall::new("bash-3", "printf third")
+                        .kind(acp_v1::ToolKind::Execute)
+                        .status(acp_v1::ToolCallStatus::Completed),
+                    cx,
+                )
+            })
+            .expect("new call in existing group");
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("compact-tool-header-bash-3").is_some(),
+            "growing group retains expansion"
+        );
+        let header = cx.debug_bounds("tool-group-bash-1").expect("group header");
+        cx.simulate_click(header.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("compact-tool-header-bash-2").is_none());
+        thread_view.update_in(cx, |view, window, cx| {
+            view.toggle_search(&crate::ToggleSearch, window, cx)
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("tool-group-bash-1").is_none());
+        assert!(cx.debug_bounds("tool-call-bash-2-standalone").is_some());
+        let search_bar = thread_view
+            .read_with(cx, |view, _| view.thread_search_bar.clone())
+            .expect("search bar");
+        search_bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor
+                .update(cx, |editor, cx| editor.set_text("second", window, cx));
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(search_bar.read_with(cx, |bar, _| bar.match_count()), 1);
+        thread_view.update_in(cx, |view, window, cx| {
+            view.close_thread_search(window, cx);
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("tool-group-bash-1").is_some());
+        assert!(cx.debug_bounds("compact-tool-header-bash-2").is_none());
+        thread_view.read_with(cx, |view, cx| {
+            assert_thread_list_item_count_matches_entries(view, cx)
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_display_group_exposes_late_generic_permission(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    tool_call_display: settings::ToolCallDisplay::Grouped,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
+        upsert_permission_test_tool(&thread, "permission-tool", cx);
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("tool-group-permission-tool").is_some());
+        let request = generic_permission_prompt(
+            &thread,
+            Some(serde_json::json!({
+                "type": "tool_call", "toolCall": {"toolCallId": "permission-tool"}
+            })),
+            cx,
+        );
+        let (request_id, response) = request_test_generic_permission(&thread, request, cx);
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("tool-group-permission-tool").is_none());
+        assert!(
+            cx.debug_bounds("tool-call-permission-tool-standalone")
+                .is_some()
+        );
+        click_generic_permission(request_id, Some("custom"), cx);
+        assert_eq!(
+            response.await,
+            acp_v2::RequestPermissionOutcome::Selected(acp_v2::SelectedPermissionOutcome::new(
+                "custom"
+            ))
+        );
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("tool-group-permission-tool").is_some());
     }
 
     #[gpui::test]

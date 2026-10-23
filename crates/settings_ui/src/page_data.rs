@@ -9134,6 +9134,22 @@ fn ai_page(cx: &App) -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
+                title: "Tool Call Display",
+                description: "Show full tool cards (Verbose), expandable individual summaries (Compact), or consecutive tool groups with counts (Grouped). Compact and grouped summaries start collapsed. Permission requests remain visible.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent.tool_call_display"),
+                    pick: |settings_content| {
+                        settings_content.agent.as_ref()?.tool_call_display.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.agent.get_or_insert_default().tool_call_display = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "Terminal Thread Init Command",
                 description: "Command to automatically run when Zed creates a Terminal Thread shell in the agent panel. Runs in your configured shell.",
                 field: Box::new(SettingField {
