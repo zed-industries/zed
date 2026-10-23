@@ -674,7 +674,7 @@ struct TrackColors {
 pub fn on_new_scrollbars<T: gpui::Global>(cx: &mut App) {
     cx.observe_new::<ScrollbarState>(|_, window, cx| {
         if let Some(window) = window {
-            cx.observe_global_in::<T>(window, ScrollbarState::settings_changed)
+            cx.observe_global_in::<T>(window, |state, _, cx| state.settings_changed(cx))
                 .detach();
         }
     })
@@ -739,20 +739,19 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
         }
     }
 
-    fn settings_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn settings_changed(&mut self, cx: &mut Context<Self>) {
         self.set_show_behavior(
             ShowBehavior::from_setting((self.get_visibility)(cx), cx),
-            window,
             cx,
         );
     }
 
     /// Schedules a scrollbar auto hide if no auto hide is currently in progress yet.
-    fn schedule_auto_hide(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn schedule_auto_hide(&mut self, cx: &mut Context<Self>) {
         if self._auto_hide_task.is_none() {
             self._auto_hide_task = (self.visible() && self.show_behavior == ShowBehavior::Autohide)
                 .then(|| {
-                    cx.spawn_in(window, async move |scrollbar_state, cx| {
+                    cx.spawn(async move |scrollbar_state, cx| {
                         cx.background_executor()
                             .timer(SCROLLBAR_HIDE_DELAY_INTERVAL)
                             .await;
@@ -769,23 +768,18 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
         }
     }
 
-    fn show_scrollbars(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn show_scrollbars(&mut self, cx: &mut Context<Self>) {
         let visibility = self.show_state.toggle_visible(self.show_behavior);
         self.set_visibility(visibility, cx);
         self._auto_hide_task.take();
-        self.schedule_auto_hide(window, cx);
+        self.schedule_auto_hide(cx);
     }
 
-    fn set_show_behavior(
-        &mut self,
-        behavior: ShowBehavior,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn set_show_behavior(&mut self, behavior: ShowBehavior, cx: &mut Context<Self>) {
         if self.show_behavior != behavior {
             self.show_behavior = behavior;
             self.set_visibility(VisibilityState::from_behavior(behavior), cx);
-            self.schedule_auto_hide(window, cx);
+            self.schedule_auto_hide(cx);
             cx.notify();
         }
     }
@@ -840,14 +834,8 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
         self.thumb_state.is_dragging()
     }
 
-    fn set_dragging(
-        &mut self,
-        axis: ScrollbarAxis,
-        drag_offset: Pixels,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.set_thumb_state(ThumbState::Dragging(axis, drag_offset), window, cx);
+    fn set_dragging(&mut self, axis: ScrollbarAxis, drag_offset: Pixels, cx: &mut Context<Self>) {
+        self.set_thumb_state(ThumbState::Dragging(axis, drag_offset), cx);
         self.scroll_handle().drag_started();
     }
 
@@ -869,15 +857,14 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
             } else {
                 ThumbState::Inactive
             },
-            window,
             cx,
         );
     }
 
-    fn set_thumb_state(&mut self, state: ThumbState, window: &mut Window, cx: &mut Context<Self>) {
+    fn set_thumb_state(&mut self, state: ThumbState, cx: &mut Context<Self>) {
         if self.thumb_state != state {
             if state == ThumbState::Inactive {
-                self.schedule_auto_hide(window, cx);
+                self.schedule_auto_hide(cx);
             } else {
                 self.set_visibility(self.show_state.toggle_visible(self.show_behavior), cx);
                 self._auto_hide_task.take();
@@ -1391,8 +1378,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                 scrollbar_state.reveal_policy,
             )
         }) {
-            self.state
-                .update(cx, |state, cx| state.show_scrollbars(window, cx));
+            self.state.update(cx, |state, cx| state.show_scrollbars(cx));
         }
 
         prepaint_state.map(|state| {
@@ -1627,7 +1613,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
             window.on_mouse_event({
                 let state = self.state.clone();
 
-                move |event: &MouseDownEvent, phase, window, cx| {
+                move |event: &MouseDownEvent, phase, _, cx| {
                     state.update(cx, |state, cx| {
                         let Some(scrollbar_layout) = (phase == capture_phase
                             && event.button == MouseButton::Left)
@@ -1644,7 +1630,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                         if thumb_bounds.contains(&event.position) {
                             let offset =
                                 event.position.along(*axis) - thumb_bounds.origin.along(*axis);
-                            state.set_dragging(*axis, offset, window, cx);
+                            state.set_dragging(*axis, offset, cx);
                         } else {
                             let scroll_handle = state.scroll_handle();
                             let click_offset = scrollbar_layout.compute_click_offset(
@@ -1706,7 +1692,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                                     if event.pressed_button.is_none() =>
                                 {
                                     if matches!(hover, ParentHoverEvent::Entered) {
-                                        state.show_scrollbars(window, cx);
+                                        state.show_scrollbars(cx);
                                     }
                                     state.update_hovered_thumb(&event.position, window, cx);
                                     if state.thumb_state != ThumbState::Inactive {
@@ -1714,7 +1700,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                                     }
                                 }
                                 ParentHoverEvent::Exited => {
-                                    state.set_thumb_state(ThumbState::Inactive, window, cx);
+                                    state.set_thumb_state(ThumbState::Inactive, cx);
                                 }
                                 _ => {}
                             }
@@ -1736,7 +1722,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                         }
 
                         if !state.parent_hovered(window) {
-                            state.schedule_auto_hide(window, cx);
+                            state.schedule_auto_hide(cx);
                             return;
                         }
 
