@@ -15874,6 +15874,293 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_tool_display_message_navigation_uses_existing_keymap(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+                "keymaps/default-macos.json",
+                cx,
+            )
+            .expect("default macOS keymap");
+            cx.bind_keys(bindings);
+        });
+        let connection = StubAgentConnection::new();
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        for turn in 0..4 {
+            connection.set_next_prompt_updates(vec![
+                acp_v1::SessionUpdate::ToolCall(
+                    acp_v1::ToolCall::new(format!("{turn}-a"), "first command")
+                        .kind(acp_v1::ToolKind::Execute)
+                        .status(acp_v1::ToolCallStatus::Completed),
+                ),
+                acp_v1::SessionUpdate::ToolCall(
+                    acp_v1::ToolCall::new(format!("{turn}-b"), "second command")
+                        .kind(acp_v1::ToolKind::Execute)
+                        .status(acp_v1::ToolCallStatus::Completed),
+                ),
+                acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new(
+                    "Reply\n\n".repeat(40).into(),
+                )),
+            ]);
+            thread
+                .update(cx, |thread, cx| {
+                    thread.send_raw(&format!("Question {turn}"), cx)
+                })
+                .await
+                .unwrap();
+            cx.run_until_parked();
+        }
+        let targets = thread.read_with(cx, |thread, _| {
+            thread
+                .entries()
+                .iter()
+                .enumerate()
+                .filter_map(|(index, entry)| {
+                    thread
+                        .is_user_authored_scroll_target(entry)
+                        .then_some(index)
+                })
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(targets.len(), 4);
+        for mode in [
+            settings::ToolCallDisplay::Verbose,
+            settings::ToolCallDisplay::Compact,
+            settings::ToolCallDisplay::Grouped,
+        ] {
+            cx.update(|_, cx| {
+                AgentSettings::override_global(
+                    AgentSettings {
+                        tool_call_display: mode,
+                        ..AgentSettings::get_global(cx).clone()
+                    },
+                    cx,
+                )
+            });
+            thread_view.update_in(cx, |view, window, cx| {
+                view.scroll_to_top(cx);
+                view.focus_handle(cx).focus(window, cx);
+            });
+            cx.run_until_parked();
+            for &target in targets.iter().skip(1) {
+                cx.simulate_keystrokes("shift-pagedown");
+                cx.run_until_parked();
+                assert_eq!(
+                    thread_view
+                        .read_with(cx, |view, _| view.list_state.logical_scroll_top().item_ix),
+                    target,
+                    "next message in {mode:?}"
+                );
+            }
+            for &target in targets.iter().rev().skip(1) {
+                cx.simulate_keystrokes("shift-pageup");
+                cx.run_until_parked();
+                assert_eq!(
+                    thread_view
+                        .read_with(cx, |view, _| view.list_state.logical_scroll_top().item_ix),
+                    target,
+                    "previous message in {mode:?}"
+                );
+            }
+            let editor = thread_view.read_with(cx, |view, _| view.message_editor.clone());
+            cx.focus(&editor);
+            cx.simulate_keystrokes("ctrl-alt-pagedown");
+            cx.run_until_parked();
+            assert_eq!(
+                thread_view.read_with(cx, |view, _| view.list_state.logical_scroll_top().item_ix),
+                targets[1],
+                "editor navigation in {mode:?}"
+            );
+            cx.simulate_keystrokes("ctrl-alt-pageup");
+            cx.run_until_parked();
+            assert_eq!(
+                thread_view.read_with(cx, |view, _| view.list_state.logical_scroll_top().item_ix),
+                targets[0]
+            );
+            let (header_selector, content_selector) = match mode {
+                settings::ToolCallDisplay::Verbose => continue,
+                settings::ToolCallDisplay::Compact => {
+                    ("compact-tool-header-0-a", "tool-call-0-a-standalone")
+                }
+                settings::ToolCallDisplay::Grouped => ("tool-group-0-a", "compact-tool-header-0-a"),
+            };
+            for expanded in [true, false] {
+                let header = cx.debug_bounds(header_selector).expect("summary header");
+                cx.simulate_click(header.center(), gpui::Modifiers::default());
+                cx.run_until_parked();
+                assert_eq!(cx.debug_bounds(content_selector).is_some(), expanded);
+                cx.simulate_keystrokes("ctrl-alt-pagedown");
+                cx.run_until_parked();
+                cx.simulate_keystrokes("ctrl-alt-pageup");
+                cx.run_until_parked();
+                assert_eq!(
+                    thread_view
+                        .read_with(cx, |view, _| view.list_state.logical_scroll_top().item_ix),
+                    targets[0]
+                );
+                assert_eq!(
+                    cx.debug_bounds(content_selector).is_some(),
+                    expanded,
+                    "message navigation preserves expansion in {mode:?}"
+                );
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_tool_display_group_collapse_preserves_keyboard_context(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    tool_call_display: settings::ToolCallDisplay::Grouped,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+            let bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+                "keymaps/default-macos.json",
+                cx,
+            )
+            .unwrap();
+            cx.bind_keys(bindings);
+        });
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![
+            acp_v1::SessionUpdate::ToolCall(
+                acp_v1::ToolCall::new("one", "first command").kind(acp_v1::ToolKind::Execute),
+            ),
+            acp_v1::SessionUpdate::ToolCall(
+                acp_v1::ToolCall::new("two", "second command").kind(acp_v1::ToolKind::Execute),
+            ),
+        ]);
+        let (conversation_view, cx) =
+            setup_full_size_conversation_and_send(connection, "Run commands", cx).await;
+        let thread_view = active_thread(&conversation_view, cx);
+        let header = cx.debug_bounds("tool-group-one").expect("group header");
+        cx.simulate_click(header.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        let focus = thread_view.read_with(cx, |view, cx| {
+            view.entry_view_state
+                .read(cx)
+                .entry(2)
+                .and_then(|entry| entry.focus_handle(cx))
+                .expect("second command focus")
+        });
+        cx.update(|window, cx| focus.focus(window, cx));
+        cx.run_until_parked();
+        let header = cx
+            .debug_bounds("tool-group-one")
+            .expect("expanded group header");
+        cx.simulate_click(header.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("compact-tool-header-two").is_none());
+        cx.update(|window, cx| {
+            assert!(
+                thread_view
+                    .read(cx)
+                    .focus_handle(cx)
+                    .contains_focused(window, cx),
+                "collapsing focused content retains the conversation key context"
+            )
+        });
+        cx.simulate_keystrokes("cmd-f");
+        cx.run_until_parked();
+        assert!(thread_view.read_with(cx, |view, _| view.thread_search_visible));
+    }
+
+    #[gpui::test]
+    async fn test_tool_display_compact_collapse_preserves_terminal_keyboard_context(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    tool_call_display: settings::ToolCallDisplay::Compact,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+            let bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+                "keymaps/default-macos.json",
+                cx,
+            )
+            .unwrap();
+            cx.bind_keys(bindings);
+        });
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_display_terminal(
+                    "terminal".into(),
+                    acp_thread::DisplayTerminalPatch {
+                        command: agent_client_protocol::schema::MaybeUndefined::Value(
+                            "printf hello".into(),
+                        ),
+                        ..Default::default()
+                    },
+                    cx,
+                )
+                .unwrap();
+            thread
+                .upsert_wire_tool_call(
+                    acp_v2::ToolCallUpdate::new("tool")
+                        .title("printf hello")
+                        .kind(acp_v2::ToolKind::Execute)
+                        .content(vec![acp_v2::ToolCallContent::Terminal(
+                            acp_v2::Terminal::new("terminal"),
+                        )]),
+                    cx,
+                )
+                .unwrap();
+        });
+        cx.run_until_parked();
+        let header = cx
+            .debug_bounds("compact-tool-header-tool")
+            .expect("compact header");
+        cx.simulate_click(header.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        let terminal =
+            thread.read_with(cx, |thread, _| thread.terminal("terminal".into()).unwrap());
+        let terminal_view = thread_view.read_with(cx, |view, cx| {
+            view.entry_view_state
+                .read(cx)
+                .entry(0)
+                .and_then(|entry| entry.terminal(&terminal))
+                .unwrap()
+        });
+        cx.focus(&terminal_view);
+        cx.run_until_parked();
+        let header = cx
+            .debug_bounds("compact-tool-header-tool")
+            .expect("expanded compact header");
+        cx.simulate_click(header.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("tool-call-tool-standalone").is_none());
+        cx.update(|window, cx| {
+            assert!(
+                thread_view
+                    .read(cx)
+                    .focus_handle(cx)
+                    .contains_focused(window, cx),
+                "collapsing a focused terminal retains the conversation key context"
+            )
+        });
+        cx.simulate_keystrokes("cmd-f");
+        cx.run_until_parked();
+        assert!(thread_view.read_with(cx, |view, _| view.thread_search_visible));
+    }
+
+    #[gpui::test]
     async fn test_tool_display_timers_follow_terminal_lifecycle(cx: &mut TestAppContext) {
         use agent_client_protocol::schema::MaybeUndefined;
         init_test(cx);
