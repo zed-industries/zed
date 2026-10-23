@@ -3991,10 +3991,7 @@ async fn test_prompt_too_large_recovery_retries_only_once(cx: &mut TestAppContex
     // No second compaction request: recovery runs once per turn.
     assert!(fake.pending_completions().is_empty());
     let events: Vec<Result<ThreadEvent>> = events.collect().await;
-    let error_count = events
-        .iter()
-        .filter(|event| event.is_err())
-        .count();
+    let error_count = events.iter().filter(|event| event.is_err()).count();
     assert_eq!(error_count, 1);
 }
 
@@ -4092,6 +4089,10 @@ async fn test_prompt_too_large_recovery_reports_original_error_when_compaction_f
     assert_eq!(errors.len(), 1);
     assert!(errors[0].contains("Recovery compaction failed"));
     assert!(errors[0].contains("prompt too large"));
+    thread.read_with(cx, |thread, _| {
+        let usage = thread.latest_token_usage().unwrap();
+        assert_eq!(usage.ratio(), acp_thread::TokenUsageRatio::Exceeded);
+    });
 }
 
 #[gpui::test]

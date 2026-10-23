@@ -6,7 +6,10 @@ use crate::{
     ProjectSnapshot, ReadFileTool, RenameTool, SandboxedTerminalTool, SpawnAgentTool,
     SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision, WebSearchTool,
     WriteFileTool,
-    context_budget::{IMAGE_TOKEN_ESTIMATE, TOOL_RESULT_TEXT_BYTE_BUDGET, estimate_tokens, truncate_text_to_budget},
+    context_budget::{
+        IMAGE_TOKEN_ESTIMATE, TOOL_RESULT_TEXT_BYTE_BUDGET, estimate_tokens,
+        truncate_text_to_budget,
+    },
     decide_permission_from_settings,
 };
 use acp_thread::{AgentModelId, ClientUserMessageId, MentionUri, ProcessOutput};
@@ -244,7 +247,10 @@ impl Message {
         }
     }
 
-    pub fn to_request(&self, tool_result_text_budget: Option<usize>) -> Vec<LanguageModelRequestMessage> {
+    pub fn to_request(
+        &self,
+        tool_result_text_budget: Option<usize>,
+    ) -> Vec<LanguageModelRequestMessage> {
         match self {
             Message::User(message) => {
                 if message.content.is_empty() {
@@ -732,7 +738,8 @@ impl AgentMessage {
             if let Some(budget) = tool_result_text_budget {
                 for content in &mut tool_result.content {
                     if let language_model::LanguageModelToolResultContent::Text(text) = content {
-                        if let std::borrow::Cow::Owned(truncated) = truncate_text_to_budget(text, budget)
+                        if let std::borrow::Cow::Owned(truncated) =
+                            truncate_text_to_budget(text, budget)
                         {
                             *text = truncated.into();
                         }
@@ -3295,7 +3302,7 @@ impl Thread {
 
             if let Some(error) = error {
                 if let LanguageModelCompletionError::ProviderRejection {
-                    category: ProviderErrorCategory::PromptTooLarge { .. },
+                    category: ProviderErrorCategory::PromptTooLarge { tokens },
                     ..
                 } = &error
                     && !overflow_recovery_attempted
@@ -3310,11 +3317,27 @@ impl Thread {
                     .await
                     {
                         Ok(ControlFlow::Continue(())) => continue,
-                        Ok(ControlFlow::Break(())) => return Ok(()),
+                        Ok(ControlFlow::Break(())) => {
+                            this.update(cx, |this, _| {
+                                if &this.prompt_id == prompt_id {
+                                    this.emit_compaction_telemetry_outcome("canceled", None);
+                                }
+                            })?;
+                            return Ok(());
+                        }
                         Err(recovery_error) => {
-                            return Err(anyhow!(error).context(format!(
-                                "Recovery compaction failed: {recovery_error:#}"
-                            )));
+                            let error_message =
+                                format!("Recovery compaction failed: {recovery_error:#}");
+                            this.update(cx, |this, cx| {
+                                this.mark_token_limit_exceeded(*tokens, cx);
+                                if &this.prompt_id == prompt_id {
+                                    this.emit_compaction_telemetry_outcome(
+                                        "failed",
+                                        Some(error_message.clone()),
+                                    );
+                                }
+                            })?;
+                            return Err(anyhow!(error).context(error_message));
                         }
                     }
                 }
@@ -4796,19 +4819,26 @@ impl Thread {
     /// Estimates how many tokens the next request will occupy: provider-reported
     /// usage for the last accounted request plus a local estimate of everything
     /// added since, or a fully local estimate when the provider never reports
-    /// usage. The local estimate uses the request messages as they will be sent.
+    /// usage or a compaction happened after the last accounted request. The
+    /// local estimate uses the request messages as they will be sent.
     fn estimated_active_tokens(&self, cx: &App) -> Option<u64> {
         self.input_token_capacity()?;
 
+        let usage_snapshot = self.latest_usage_snapshot().filter(|(usage_ix, _)| {
+            !latest_compaction_message_ix_before(&self.messages, self.messages.len())
+                .is_some_and(|compaction_ix| compaction_ix > *usage_ix)
+        });
+
         let mut request_messages = Vec::new();
         let mut base_tokens = 0;
-        if let Some((usage_ix, usage)) = self.latest_usage_snapshot() {
+        if let Some((usage_ix, usage)) = usage_snapshot {
             base_tokens = total_input_tokens(usage).saturating_add(usage.output_tokens);
             for message in &self.messages[usage_ix + 1..] {
                 request_messages.extend(message.to_request(Some(TOOL_RESULT_TEXT_BYTE_BUDGET)));
             }
         } else {
-            request_messages = self.build_request_messages_until(Vec::new(), self.messages.len(), cx);
+            request_messages =
+                self.build_request_messages_until(Vec::new(), self.messages.len(), cx);
         }
         if let Some(pending_message) = self.pending_message.as_ref() {
             request_messages.extend(pending_message.to_request(Some(TOOL_RESULT_TEXT_BYTE_BUDGET)));
@@ -4824,22 +4854,12 @@ impl Thread {
 
         let auto_compact = AgentSettings::get_global(cx).auto_compact;
         let max_input_tokens = self.input_token_capacity()?;
-        match self.latest_usage_snapshot() {
-            Some((usage_ix, _)) => {
-                if latest_compaction_message_ix_before(&self.messages, self.messages.len())
-                    .is_some_and(|compaction_ix| compaction_ix > usage_ix)
-                {
-                    return None;
-                }
-            }
-            None => {
-                let first_uncompacted_ix =
-                    latest_compaction_message_ix_before(&self.messages, self.messages.len())
-                        .map_or(0, |compaction_ix| compaction_ix + 1);
-                if first_uncompacted_ix >= self.messages.len() && self.pending_message.is_none() {
-                    return None;
-                }
-            }
+        if let Some(compaction_ix) =
+            latest_compaction_message_ix_before(&self.messages, self.messages.len())
+            && compaction_ix + 1 >= self.messages.len()
+            && self.pending_message.is_none()
+        {
+            return None;
         }
 
         let active_tokens = self.estimated_active_tokens(cx)?;
@@ -5059,9 +5079,7 @@ fn request_token_estimate(messages: &[LanguageModelRequestMessage]) -> u64 {
                 language_model::MessageContent::ToolResult(tool_result) => {
                     for part in &tool_result.content {
                         match part {
-                            LanguageModelToolResultContent::Text(text) => {
-                                text_bytes += text.len()
-                            }
+                            LanguageModelToolResultContent::Text(text) => text_bytes += text.len(),
                             LanguageModelToolResultContent::Image(_) => image_count += 1,
                         }
                     }
@@ -8255,7 +8273,9 @@ mod tests {
                 // A tool round completed after the usage snapshot and added
                 // roughly 10k tokens of output. The snapshot alone is below the
                 // 90k threshold, but the request about to be sent is not.
-                thread.messages.push(tool_result_message("x".repeat(40_000)));
+                thread
+                    .messages
+                    .push(tool_result_message("x".repeat(40_000)));
 
                 assert!(thread.compaction_message_target_ix(cx).is_some());
             });
@@ -8270,9 +8290,10 @@ mod tests {
         cx.update(|cx| {
             thread.update(cx, |thread, cx| {
                 thread.set_model(model.clone(), cx);
-                thread
-                    .messages
-                    .push(user_text_message(ClientUserMessageId::new(), &"x".repeat(400_000)));
+                thread.messages.push(user_text_message(
+                    ClientUserMessageId::new(),
+                    &"x".repeat(400_000),
+                ));
 
                 // Providers that never report usage leave request_token_usage
                 // empty, so a purely usage-based threshold can never fire.
@@ -8373,7 +8394,8 @@ mod tests {
 
                 let _request = thread.build_request_messages(Vec::new(), cx);
 
-                let Some(Message::Agent(message)) = thread.messages.get(1).map(|message| &**message)
+                let Some(Message::Agent(message)) =
+                    thread.messages.get(1).map(|message| &**message)
                 else {
                     panic!("expected agent message");
                 };
@@ -8448,15 +8470,11 @@ mod tests {
 
                 assert_eq!(thread.compaction_message_target_ix(cx), None);
 
-                thread
-                    .messages
-                    .push(tool_result_message_with_contents(vec![
-                        LanguageModelToolResultContent::Image(
-                            language_model::LanguageModelImage {
-                                source: "iVBORw0KGgo=".repeat(100).into(),
-                            },
-                        ),
-                    ]));
+                thread.messages.push(tool_result_message_with_contents(vec![
+                    LanguageModelToolResultContent::Image(language_model::LanguageModelImage {
+                        source: "iVBORw0KGgo=".repeat(100).into(),
+                    }),
+                ]));
 
                 assert!(thread.compaction_message_target_ix(cx).is_some());
             });
@@ -8464,7 +8482,9 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_compaction_trigger_without_usage_counts_compacted_history(cx: &mut TestAppContext) {
+    async fn test_compaction_trigger_without_usage_counts_compacted_history(
+        cx: &mut TestAppContext,
+    ) {
         let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
         let model = fake.update_model("fake", |model| model.max_token_count = 100_000);
 
@@ -8513,6 +8533,43 @@ mod tests {
 
                 // The summary rides in every request, so it must count toward
                 // the trigger even when no provider usage was ever reported.
+                assert!(thread.compaction_message_target_ix(cx).is_some());
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_compaction_trigger_re_fires_after_midturn_compaction(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.update_model("fake", |model| model.max_token_count = 100_000);
+        let user_message_id = ClientUserMessageId::new();
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread
+                    .messages
+                    .push(user_text_message(user_message_id.clone(), "task"));
+                thread.request_token_usage.insert(
+                    user_message_id.clone(),
+                    language_model::TokenUsage {
+                        input_tokens: 85_000,
+                        ..Default::default()
+                    },
+                );
+                thread.messages.push(summary_compaction("summary"));
+
+                // Just compacted: nothing new has happened since.
+                assert_eq!(thread.compaction_message_target_ix(cx), None);
+
+                // Mid-turn tool output re-crosses the threshold after the
+                // compaction: the trigger must fire again in the same turn.
+                for _ in 0..20 {
+                    thread
+                        .messages
+                        .push(tool_result_message("x".repeat(400_000)));
+                }
+
                 assert!(thread.compaction_message_target_ix(cx).is_some());
             });
         });
