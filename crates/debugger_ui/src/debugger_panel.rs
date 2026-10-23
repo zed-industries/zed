@@ -1880,7 +1880,7 @@ impl Render for DebugPanel {
                                 .child(Label::new("Breakpoints").size(LabelSize::Small))
                                 .child(
                                     h_flex().visible_on_hover("base-breakpoint-list").child(
-                                        self.breakpoint_list.read(cx).render_control_strip(),
+                                        self.breakpoint_list.read(cx).render_control_strip(cx),
                                     ),
                                 ),
                         )
