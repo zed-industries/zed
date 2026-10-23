@@ -3996,7 +3996,7 @@ async fn test_prompt_too_large_recovery_retries_only_once(cx: &mut TestAppContex
 }
 
 #[gpui::test]
-async fn test_prompt_too_large_recovery_works_without_auto_compaction(cx: &mut TestAppContext) {
+async fn test_prompt_too_large_recovery_works_with_small_context_window(cx: &mut TestAppContext) {
     let ThreadTest {
         model: _,
         fake,
@@ -4006,7 +4006,7 @@ async fn test_prompt_too_large_recovery_works_without_auto_compaction(cx: &mut T
 
     cx.update(|cx| {
         let mut settings = AgentSettings::get_global(cx).clone();
-        settings.auto_compact.enabled = false;
+        settings.auto_compact.enabled = true;
         AgentSettings::override_global(settings, cx);
     });
     let model = fake.update_model("fake", |model| {
