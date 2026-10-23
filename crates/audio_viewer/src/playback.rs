@@ -97,11 +97,11 @@ impl Playback {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// Writes a mono 16-bit PCM WAV file with `sample_count` samples of silence.
-    fn write_wav(path: &Path, sample_rate: u32, sample_count: u32) {
+    pub(crate) fn write_wav(path: &Path, sample_rate: u32, sample_count: u32) {
         let data_len = sample_count * 2;
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"RIFF");

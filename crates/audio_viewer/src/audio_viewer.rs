@@ -985,7 +985,139 @@ mod persistence {
 
 #[cfg(test)]
 mod tests {
+    use fs::RealFs;
+    use gpui::{TestAppContext, VisualTestContext};
+    use settings::SettingsStore;
+    use util::rel_path::rel_path;
+    use workspace::item::ItemHandle;
+    use worktree::WorktreeId;
+
     use super::*;
+    use crate::playback::tests::write_wav;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            cx.set_global(db::AppDatabase::test_new());
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            init(cx);
+        });
+    }
+
+    /// Opens `file_name` from `directory` in a new workspace window. The player decodes files
+    /// from disk, so the project uses the real file system.
+    async fn open_in_workspace<'a>(
+        directory: &Path,
+        file_name: &str,
+        cx: &'a mut TestAppContext,
+    ) -> (Result<Box<dyn ItemHandle>>, &'a mut VisualTestContext) {
+        cx.executor().allow_parking();
+        let project = Project::test(RealFs::new(None, cx.executor()), [directory], cx).await;
+        let worktree_id = cx.update(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .expect("test project should contain a worktree")
+                .read(cx)
+                .id()
+        });
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let item = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path(file_name)), None, true, window, cx)
+            })
+            .await;
+        cx.run_until_parked();
+        (item, cx)
+    }
+
+    #[gpui::test]
+    async fn test_audio_files_open_in_the_audio_viewer(cx: &mut TestAppContext) {
+        init_test(cx);
+        let directory = tempfile::tempdir().expect("temp dir should be created");
+        write_wav(&directory.path().join("Song.WAV"), 8000, 16000);
+
+        let (item, cx) = open_in_workspace(directory.path(), "Song.WAV", cx).await;
+        let audio_viewer = item
+            .expect("audio file should open")
+            .downcast::<AudioViewer>()
+            .expect("audio file should open in the audio viewer");
+
+        audio_viewer.read_with(cx, |audio_viewer, cx| {
+            assert_eq!(audio_viewer.tab_content_text(0, cx), "Song.WAV");
+            let Track::Loaded { info, .. } = &audio_viewer.track else {
+                panic!("the track should be loaded");
+            };
+            assert_eq!(
+                *info,
+                TrackInfo {
+                    duration: Some(Duration::from_secs(2)),
+                    sample_rate: 8000,
+                    channels: 1,
+                }
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_undecodable_audio_file_shows_the_error(cx: &mut TestAppContext) {
+        init_test(cx);
+        let directory = tempfile::tempdir().expect("temp dir should be created");
+        std::fs::write(directory.path().join("broken.mp3"), b"this is not audio")
+            .expect("test file should be written");
+
+        let (item, cx) = open_in_workspace(directory.path(), "broken.mp3", cx).await;
+        let audio_viewer = item
+            .expect("audio file should open")
+            .downcast::<AudioViewer>()
+            .expect("audio file should open in the audio viewer");
+
+        audio_viewer.read_with(cx, |audio_viewer, _| {
+            let Track::Failed(error) = &audio_viewer.track else {
+                panic!("decoding should fail");
+            };
+            assert!(
+                error.starts_with("This audio file cannot be decoded"),
+                "unexpected error: {error}"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_seeking_stays_within_the_track(cx: &mut TestAppContext) {
+        init_test(cx);
+        let directory = tempfile::tempdir().expect("temp dir should be created");
+        write_wav(&directory.path().join("song.wav"), 8000, 16000);
+
+        let (item, cx) = open_in_workspace(directory.path(), "song.wav", cx).await;
+        let audio_viewer = item
+            .expect("audio file should open")
+            .downcast::<AudioViewer>()
+            .expect("audio file should open in the audio viewer");
+
+        // Seeking before the first playback needs no audio output device, which CI machines lack.
+        audio_viewer.update_in(cx, |audio_viewer, window, cx| {
+            audio_viewer.seek_forward(&SeekForward, window, cx);
+            assert_eq!(audio_viewer.position, Duration::from_secs(2));
+            audio_viewer.seek_backward(&SeekBackward, window, cx);
+            assert_eq!(audio_viewer.position, Duration::ZERO);
+        });
+    }
+
+    #[test]
+    fn test_is_audio_file() {
+        let project_path = |path| ProjectPath {
+            worktree_id: WorktreeId::from_usize(0),
+            path: rel_path(path).into(),
+        };
+        assert!(is_audio_file(&project_path("song.mp3")));
+        assert!(is_audio_file(&project_path("Song.FLAC")));
+        assert!(!is_audio_file(&project_path("voice.opus")));
+        assert!(!is_audio_file(&project_path("notes.txt")));
+    }
 
     #[test]
     fn test_format_time() {
