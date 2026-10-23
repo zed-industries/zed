@@ -3535,12 +3535,14 @@ impl LocalLspStore {
         self.text_document_registrations_select(server_id, "textDocument/didOpen", &context)
     }
 
+    /// Opens the buffer in the server if its registrations select it, returning whether it was
+    /// opened.
     fn open_buffer_by_registrations(
         &mut self,
         buffer_handle: &Entity<Buffer>,
         server_id: LanguageServerId,
         cx: &mut Context<LspStore>,
-    ) {
+    ) -> bool {
         let buffer = buffer_handle.read(cx);
         let buffer_id = buffer.remote_id();
         if self
@@ -3549,21 +3551,21 @@ impl LocalLspStore {
             .is_some_and(|server_ids| server_ids.contains(&server_id))
             || !self.registrations_open_buffer_in_server(buffer, server_id, cx)
         {
-            return;
+            return false;
         }
         let (Some(file), Some(language)) = (File::from_dyn(buffer.file()), buffer.language())
         else {
-            return;
+            return false;
         };
         let abs_path = file.abs_path(cx);
         let Some(uri) = file_path_to_lsp_url(&abs_path).log_err() else {
-            return;
+            return false;
         };
         let Some(LanguageServerState::Running {
             adapter, server, ..
         }) = self.language_servers.get(&server_id)
         else {
-            return;
+            return false;
         };
         let (adapter, server, language) = (adapter.clone(), server.clone(), language.clone());
         let initial_snapshot = buffer.text_snapshot();
@@ -3582,6 +3584,7 @@ impl LocalLspStore {
             &abs_path.to_string_lossy(),
             cx,
         );
+        true
     }
 
     /// Closes the document of the buffer in the server, returning whether it was open.
