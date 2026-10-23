@@ -6043,6 +6043,11 @@ impl LspStore {
         let buffer_id = buffer.remote_id();
         let mut detached_servers = Vec::new();
         let mut detached_abs_path = None;
+        let servers_opened_by_registrations = self
+            .as_local()
+            .and_then(|local| local.buffers_opened_by_registrations.get(&buffer_id))
+            .cloned()
+            .unwrap_or_default();
         if let Some(local_store) = self.as_local_mut()
             && local_store.registered_buffers.contains_key(&buffer_id)
             && let Some(abs_path) =
@@ -6101,9 +6106,17 @@ impl LspStore {
                 let reattached_servers = buffer_entity.update(cx, |buffer, cx| {
                     local.language_server_ids_for_buffer(buffer, cx)
                 });
+                // A server serving the new language instead of having the buffer opened by its
+                // registrations, or the other way around, applies other capabilities to it, so
+                // what it said under the previous ones no longer holds.
+                let reattached_alike = |server_id: &LanguageServerId| {
+                    reattached_servers.contains(server_id)
+                        && servers_opened_by_registrations.contains(server_id)
+                            == local.buffer_opened_by_registrations(buffer_id, *server_id)
+                };
                 detached_servers
                     .into_iter()
-                    .filter(|server_id| !reattached_servers.contains(server_id))
+                    .filter(|server_id| !reattached_alike(server_id))
                     .filter(|server_id| !local.server_pulls_workspace_diagnostics(*server_id))
                     .collect::<Vec<_>>()
             } else {

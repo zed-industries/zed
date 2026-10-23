@@ -4088,6 +4088,65 @@ async fn test_documents_opened_by_registrations_balance_opens_and_closes(
 }
 
 #[gpui::test]
+async fn test_language_change_to_document_opened_by_registrations_clears_previous_data(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let (project, fake_server) =
+        setup_dynamic_registration_test(cx, lsp::ServerCapabilities::default()).await;
+    let server_id = fake_server.server.server_id();
+    project.read_with(cx, |project, _| project.languages().add(json_lang()));
+    cx.executor().run_until_parked();
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    register_capability(
+        &fake_server,
+        "textDocument/didOpen",
+        "open-json",
+        Some(json!({ "documentSelector": [{ "language": "json" }] })),
+    )
+    .await;
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+        uri: lsp::Uri::from_file_path(path!("/the-root/a.rs")).unwrap(),
+        version: None,
+        diagnostics: vec![lsp::Diagnostic {
+            range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+            severity: Some(lsp::DiagnosticSeverity::ERROR),
+            message: lsp::DiagnosticMessage::from("a Rust error"),
+            ..lsp::Diagnostic::default()
+        }],
+    });
+    cx.executor().run_until_parked();
+    let diagnostic_count = |cx: &mut gpui::TestAppContext| {
+        buffer.read_with(cx, |buffer, _| {
+            buffer
+                .snapshot()
+                .diagnostics_in_range::<_, Point>(0..buffer.len(), false)
+                .count()
+        })
+    };
+    assert_eq!(diagnostic_count(cx), 1);
+
+    // The server stays attached through its registration, under which its static capabilities,
+    // and so what it said about the Rust document, no longer apply.
+    project.update(cx, |project, cx| {
+        project.set_language_for_buffer(&buffer, json_lang(), cx)
+    });
+    cx.executor().run_until_parked();
+    assert!(buffer_opened_in_server(&project, &buffer, server_id, cx));
+    assert_eq!(
+        diagnostic_count(cx),
+        0,
+        "expected the diagnostics of the server for the previous language to be cleared",
+    );
+}
+
+#[gpui::test]
 async fn test_call_hierarchy_follow_ups_of_documents_opened_by_registrations(
     cx: &mut gpui::TestAppContext,
 ) {
