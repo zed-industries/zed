@@ -3295,15 +3295,12 @@ impl Thread {
 
             if let Some(error) = error {
                 if let LanguageModelCompletionError::ProviderRejection {
-                    category: ProviderErrorCategory::PromptTooLarge { tokens },
+                    category: ProviderErrorCategory::PromptTooLarge { .. },
                     ..
                 } = &error
                     && !overflow_recovery_attempted
                 {
                     overflow_recovery_attempted = true;
-                    this.update(cx, |this, cx| {
-                        this.mark_token_limit_exceeded(*tokens, cx);
-                    })?;
                     match Self::perform_forced_compaction(
                         this,
                         event_stream,

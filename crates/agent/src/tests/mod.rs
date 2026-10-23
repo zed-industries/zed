@@ -3828,6 +3828,22 @@ async fn test_prompt_too_large_marks_token_usage_exceeded(cx: &mut TestAppContex
     fake.end_last(&model);
     cx.run_until_parked();
 
+    // Overflow recovery compacts and retries once; the retry overflows too.
+    fake.send_last_text(&model, "summary of the work");
+    fake.end_last(&model);
+    cx.run_until_parked();
+    fake.send_last_error(
+        &model,
+        LanguageModelCompletionError::from_http_status(
+            LanguageModelProviderName::new("test"),
+            http_client::StatusCode::PAYLOAD_TOO_LARGE,
+            "prompt too large".to_string(),
+            None,
+        ),
+    );
+    fake.end_last(&model);
+    cx.run_until_parked();
+
     thread.read_with(cx, |thread, _| {
         let usage = thread.latest_token_usage().unwrap();
         assert_eq!(usage.used_tokens, 1_000_000);
@@ -3852,6 +3868,22 @@ async fn test_prompt_too_large_uses_reported_token_count(cx: &mut TestAppContext
         .unwrap();
     cx.run_until_parked();
 
+    fake.send_last_error(
+        &model,
+        LanguageModelCompletionError::from_http_status(
+            LanguageModelProviderName::new("test"),
+            http_client::StatusCode::PAYLOAD_TOO_LARGE,
+            "prompt is too long: 1500000 tokens".to_string(),
+            None,
+        ),
+    );
+    fake.end_last(&model);
+    cx.run_until_parked();
+
+    // Overflow recovery compacts and retries once; the retry overflows too.
+    fake.send_last_text(&model, "summary of the work");
+    fake.end_last(&model);
+    cx.run_until_parked();
     fake.send_last_error(
         &model,
         LanguageModelCompletionError::from_http_status(
@@ -7814,6 +7846,32 @@ async fn test_subagent_error_propagation(cx: &mut TestAppContext) {
         ),
     );
     fake.end_stream(&model, &request);
+
+    cx.run_until_parked();
+
+    // Overflow recovery compacts the subagent and retries once.
+    let compaction_request = fake.pending_completions_for(&model).pop().unwrap();
+    assert_eq!(
+        compaction_request.intent,
+        Some(CompletionIntent::ThreadContextSummarization)
+    );
+    fake.send_text(&model, &compaction_request, "summary of the work");
+    fake.end_stream(&model, &compaction_request);
+    cx.run_until_parked();
+
+    // The retried request overflows again, so the error propagates.
+    let retry_request = fake.pending_completions_for(&model).pop().unwrap();
+    fake.send_error(
+        &model,
+        &retry_request,
+        LanguageModelCompletionError::from_http_status(
+            LanguageModelProviderName::new("test"),
+            http_client::StatusCode::PAYLOAD_TOO_LARGE,
+            "prompt too large".to_string(),
+            None,
+        ),
+    );
+    fake.end_stream(&model, &retry_request);
 
     cx.run_until_parked();
 
