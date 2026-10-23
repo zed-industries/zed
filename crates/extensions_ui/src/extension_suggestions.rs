@@ -512,6 +512,7 @@ mod tests {
             )
             .await
             .unwrap();
+        cx.run_until_parked();
         cx.executor().advance_clock(RELOAD_DEBOUNCE_DURATION);
         cx.run_until_parked();
         cx.update(|_, cx| {
@@ -571,7 +572,11 @@ mod tests {
                 store.install_latest_extension(Arc::from(EMMET_EXTENSION_ID), cx);
             });
         });
-        cx.run_until_parked();
+        let extension_store = cx.update(|cx| ExtensionStore::global(cx));
+        cx.condition(&extension_store, |store, _| {
+            store.outstanding_operations().is_empty()
+        })
+        .await;
         cx.update(|cx| {
             let store = ExtensionStore::global(cx);
             let store = store.read(cx);
