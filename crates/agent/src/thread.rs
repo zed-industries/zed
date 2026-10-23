@@ -7564,6 +7564,31 @@ mod tests {
         }))
     }
 
+    fn tool_result_message(text: String) -> Arc<Message> {
+        let tool_use = LanguageModelToolUse {
+            id: LanguageModelToolUseId::from("tool"),
+            name: Arc::from("read_file"),
+            raw_input: "{}".to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(json!({})),
+            is_input_complete: true,
+            thought_signature: None,
+        };
+        let tool_result = LanguageModelToolResult {
+            tool_use_id: tool_use.id.clone(),
+            tool_name: tool_use.name.clone(),
+            is_error: false,
+            content: vec![LanguageModelToolResultContent::Text(Arc::from(text))],
+            output: None,
+        };
+        Arc::new(Message::Agent(AgentMessage {
+            content: vec![AgentMessageContent::ToolUse(tool_use)],
+            tool_results: [(tool_result.tool_use_id.clone(), tool_result)]
+                .into_iter()
+                .collect(),
+            reasoning_details: None,
+        }))
+    }
+
     fn summary_compaction(summary: &str) -> Arc<Message> {
         Arc::new(Message::Compaction(CompactionInfo::Summary(summary.into())))
     }
@@ -8037,6 +8062,88 @@ mod tests {
                 );
 
                 assert_eq!(thread.compaction_message_target_ix(cx), Some(1));
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_compaction_threshold_accounts_for_pending_tool_results(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.update_model("fake", |model| model.max_token_count = 100_000);
+        let user_message_id = ClientUserMessageId::new();
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread
+                    .messages
+                    .push(user_text_message(user_message_id.clone(), "do the task"));
+                thread.request_token_usage.insert(
+                    user_message_id.clone(),
+                    language_model::TokenUsage {
+                        input_tokens: 85_000,
+                        ..Default::default()
+                    },
+                );
+
+                // A tool round completed after the usage snapshot and added
+                // roughly 10k tokens of output. The snapshot alone is below the
+                // 90k threshold, but the request about to be sent is not.
+                thread.messages.push(tool_result_message("x".repeat(40_000)));
+
+                assert!(thread.compaction_message_target_ix(cx).is_some());
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_compaction_threshold_without_reported_usage(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.update_model("fake", |model| model.max_token_count = 100_000);
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread
+                    .messages
+                    .push(user_text_message(ClientUserMessageId::new(), &"x".repeat(400_000)));
+
+                // Providers that never report usage leave request_token_usage
+                // empty, so a purely usage-based threshold can never fire.
+                assert!(thread.request_token_usage.is_empty());
+                assert!(thread.compaction_message_target_ix(cx).is_some());
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_compaction_request_fits_model_window(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.update_model("fake", |model| model.max_token_count = 100_000);
+        let user_message_id = ClientUserMessageId::new();
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread
+                    .messages
+                    .push(user_text_message(user_message_id.clone(), "do the task"));
+                thread
+                    .messages
+                    .push(tool_result_message("x".repeat(4_000_000)));
+
+                let request = thread.build_compaction_request(2, &model, cx);
+                let request_bytes: usize = request
+                    .messages
+                    .iter()
+                    .map(|message| message.string_contents().len())
+                    .sum();
+                // 1 token is about 4 bytes; the summarization request itself
+                // must fit the compaction model's window.
+                assert!(
+                    request_bytes <= 100_000 * 4,
+                    "compaction request is {request_bytes} bytes"
+                );
             });
         });
     }
