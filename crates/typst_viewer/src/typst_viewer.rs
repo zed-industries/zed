@@ -98,14 +98,31 @@ pub fn find_tinymist_server(
         })
 }
 
+/// Build the CLI-style argument list for `tinymist.doStartPreview`:
+/// - tinymist renders complete SVG server-side
+/// - unchanged glyph defs are stripped after the first frame (~200KB vs ~2MB)
+/// - `--refresh-style onSave` recompiles only when the file is saved, not on
+///   every keystroke (the preview shows the saved state, not the typing buffer)
+/// - the data plane binds to an OS-assigned port
+fn preview_launch_args(task_id: &str, entry_path: &str) -> Vec<String> {
+    vec![
+        "--server-svg".into(),
+        "--strip-svg-glyph-defs".into(),
+        // The flag and its value must be separate argv tokens: tinymist's
+        // clap parser rejects a single "--refresh-style onSave" string.
+        "--refresh-style".into(),
+        "on-save".into(),
+        "--data-plane-host=127.0.0.1:0".into(),
+        format!("--task-id={task_id}"),
+        entry_path.into(),
+    ]
+}
+
 /// Send `tinymist.doStartPreview` to the language server and return the
 /// WebSocket URL for the data plane.
 ///
-/// The command accepts CLI-style arguments as a JSON array of strings.
-/// We pass `["--server-svg", "--strip-svg-glyph-defs", "--data-plane-host=127.0.0.1:0"]` so that:
-/// - tinymist renders complete SVG server-side
-/// - unchanged glyph defs are stripped after the first frame (~200KB vs ~2MB)
-/// - the data plane binds to an OS-assigned port
+/// The command accepts CLI-style arguments as a JSON array of strings
+/// (see [`preview_launch_args`]).
 pub async fn start_preview_via_lsp(
     server: Arc<LanguageServer>,
     entry_path: &std::path::Path,
@@ -132,13 +149,7 @@ pub async fn start_preview_via_lsp(
         .request::<lsp::request::ExecuteCommand>(kill_params, request_timeout)
         .await;
 
-    let args: Vec<String> = vec![
-        "--server-svg".into(),
-        "--strip-svg-glyph-defs".into(),
-        "--data-plane-host=127.0.0.1:0".into(),
-        format!("--task-id={task_id}"),
-        entry_str.into(),
-    ];
+    let args = preview_launch_args(&task_id, entry_str);
 
     let params = lsp::ExecuteCommandParams {
         command: "tinymist.doStartPreview".into(),
@@ -166,4 +177,25 @@ pub async fn start_preview_via_lsp(
         .context("StartPreviewResponse missing data_plane_port")?;
 
     Ok(format!("ws://127.0.0.1:{port}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::preview_launch_args;
+
+    #[test]
+    fn preview_args_refresh_only_on_save() {
+        let args = preview_launch_args("docs/main.typ", "docs/main.typ");
+        let args = args.iter().map(String::as_str).collect::<Vec<_>>();
+        assert!(args.contains(&"--server-svg"));
+        assert!(args.contains(&"--strip-svg-glyph-defs"));
+        assert!(
+            args.windows(2)
+                .any(|pair| pair[0] == "--refresh-style" && pair[1] == "on-save"),
+            "expected --refresh-style onSave as adjacent argv tokens"
+        );
+        assert!(args.contains(&"--data-plane-host=127.0.0.1:0"));
+        assert!(args.contains(&"--task-id=docs/main.typ"));
+        assert_eq!(args.last(), Some(&"docs/main.typ"));
+    }
 }
