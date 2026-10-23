@@ -32,6 +32,8 @@ gpui.workspace = true
 
 [target.'cfg(target_os = "ios")'.dev-dependencies]
 gpui_platform.workspace = true
+theme.workspace = true
+ui.workspace = true
 objc2-ui-kit = { workspace = true, features = ["UIConversationContext"] }
 slotmap.workspace = true
 

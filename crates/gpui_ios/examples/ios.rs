@@ -6,13 +6,16 @@
 use gpui::{Context, Window, WindowOptions, div, prelude::*, px, rgb};
 
 #[cfg(target_os = "ios")]
+use ui::{ScrollAxes, Scrollbars, WithScrollbar};
+
+#[cfg(target_os = "ios")]
 struct IosExample {
     tap_count: usize,
 }
 
 #[cfg(target_os = "ios")]
 impl Render for IosExample {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .size_full()
             .flex()
@@ -43,12 +46,23 @@ impl Render for IosExample {
                     .text_center()
                     .child("Rust app, native UIKit loop, GPUI rendering"),
             )
+            .child(
+                div()
+                    .w(px(300.))
+                    .h(px(240.))
+                    .custom_scrollbars(Scrollbars::always_visible(ScrollAxes::Vertical), window, cx)
+                    .children(
+                        (0..100).map(|index| div().h(px(40.)).child(format!("Scroll row {index}"))),
+                    ),
+            )
     }
 }
 
 #[cfg(target_os = "ios")]
 fn main() {
     gpui_platform::application().run(|cx| {
+        theme::init(theme::LoadThemes::JustBase, cx);
+        ui::responsive::set_touch_input(true, cx);
         gpui_ios::ios::set_status_bar_style(gpui_ios::StatusBarContentStyle::Light);
         cx.open_window(WindowOptions::default(), |_, cx| {
             cx.new(|_| IosExample { tap_count: 0 })
