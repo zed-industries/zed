@@ -340,8 +340,9 @@ impl MultiBuffer {
                     ..buffer_snapshot.anchor_after(r.primary.end),
             })
             .collect::<Vec<_>>();
+        let buffer_snapshot = buffer.read(cx).snapshot();
         let inserted =
-            self.update_path_excerpts(path.clone(), buffer, buffer_snapshot, &anchor_ranges, cx);
+            self.update_path_excerpts(path.clone(), buffer, &buffer_snapshot, &anchor_ranges, cx);
         let path_key_index = self.get_or_create_path_key_index(&path);
         (inserted, path_key_index)
     }

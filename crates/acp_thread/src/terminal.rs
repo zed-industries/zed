@@ -400,7 +400,7 @@ pub(crate) async fn prepare_sandbox_wrap(
 }
 
 pub struct Terminal {
-    id: acp_v1::TerminalId,
+    id: acp_v2::TerminalId,
     command: Entity<Markdown>,
     working_dir: Option<PathBuf>,
     terminal: Entity<terminal::Terminal>,
@@ -420,7 +420,7 @@ pub struct Terminal {
 }
 
 enum TerminalExecution {
-    Process(Shared<Task<acp_v1::TerminalExitStatus>>),
+    Process(Shared<Task<acp_v2::TerminalExitStatus>>),
     Display(DisplayTerminalState),
 }
 
@@ -468,6 +468,29 @@ pub struct DisplayTerminalOutput {
     pub meta: Option<acp_v2::Meta>,
 }
 
+/// Process snapshots are separate from agent-reported display output and wire response envelopes.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProcessOutput {
+    pub output: String,
+    pub truncated: bool,
+    pub exit_status: Option<acp_v2::TerminalExitStatus>,
+}
+
+impl ProcessOutput {
+    pub fn new(output: impl Into<String>, truncated: bool) -> Self {
+        Self {
+            output: output.into(),
+            truncated,
+            exit_status: None,
+        }
+    }
+
+    pub fn exit_status(mut self, status: acp_v2::TerminalExitStatus) -> Self {
+        self.exit_status = Some(status);
+        self
+    }
+}
+
 pub struct TerminalOutput {
     pub ended_at: Instant,
     pub exit_status: acp_v2::TerminalExitStatus,
@@ -478,7 +501,7 @@ pub struct TerminalOutput {
 
 impl Terminal {
     pub fn new(
-        id: acp_v1::TerminalId,
+        id: acp_v2::TerminalId,
         command_label: &str,
         working_dir: Option<PathBuf>,
         output_byte_limit: Option<usize>,
@@ -521,16 +544,12 @@ impl Terminal {
             execution: TerminalExecution::Process(
                 cx.spawn(async move |this, cx| {
                     let exit_status = command_task.await.map(Self::transform_exit_status);
-                    let exit_status = acp_v1::TerminalExitStatus::new()
+                    let exit_status = acp_v2::TerminalExitStatus::new()
                         .exit_code(exit_status.as_ref().map(|status| status.0))
                         .signal(exit_status.and_then(|status| status.1));
 
                     this.update(cx, |this, cx| {
-                        this.cache_output(
-                            Self::exit_status_from_v1(exit_status.clone()),
-                            Instant::now(),
-                            cx,
-                        );
+                        this.cache_output(exit_status.clone(), Instant::now(), cx);
                         this.terminal.update(cx, |terminal, _cx| {
                             terminal.release_pty_resources();
                         });
@@ -555,7 +574,7 @@ impl Terminal {
     }
 
     pub fn new_display(
-        id: acp_v1::TerminalId,
+        id: acp_v2::TerminalId,
         command_label: Option<&str>,
         working_dir: Option<PathBuf>,
         output_byte_limit: Option<usize>,
@@ -589,7 +608,7 @@ impl Terminal {
         }
     }
 
-    pub fn id(&self) -> &acp_v1::TerminalId {
+    pub fn id(&self) -> &acp_v2::TerminalId {
         &self.id
     }
 
@@ -598,7 +617,7 @@ impl Terminal {
         matches!(self.execution, TerminalExecution::Process(_))
     }
 
-    pub fn wait_for_exit(&self) -> Result<Shared<Task<acp_v1::TerminalExitStatus>>> {
+    pub fn wait_for_exit(&self) -> Result<Shared<Task<acp_v2::TerminalExitStatus>>> {
         match &self.execution {
             TerminalExecution::Process(task) => Ok(task.clone()),
             TerminalExecution::Display(_) => {
@@ -631,22 +650,17 @@ impl Terminal {
         self.user_stopped.load(Ordering::SeqCst)
     }
 
-    pub fn current_output(&self, cx: &App) -> acp_v1::TerminalOutputResponse {
+    pub fn current_output(&self, cx: &App) -> ProcessOutput {
         if let Some(output) = self.output.as_ref() {
-            acp_v1::TerminalOutputResponse::new(
+            ProcessOutput::new(
                 output.content.clone(),
                 output.original_content_len > output.content.len(),
             )
-            .exit_status(
-                acp_v1::TerminalExitStatus::new()
-                    .exit_code(output.exit_status.exit_code)
-                    .signal(output.exit_status.signal.clone())
-                    .meta(output.exit_status.meta.clone()),
-            )
+            .exit_status(output.exit_status.clone())
         } else {
             let (current_content, original_len) = self.truncated_output(cx);
             let truncated = current_content.len() < original_len;
-            acp_v1::TerminalOutputResponse::new(current_content, truncated)
+            ProcessOutput::new(current_content, truncated)
         }
     }
 
@@ -777,9 +791,7 @@ impl Terminal {
                     );
                 });
             }
-            if !meta.is_undefined() {
-                state.meta = meta.take();
-            }
+            crate::MetadataUpdate::V2(meta).apply(&mut state.meta);
             if let Some(meta) = output_meta {
                 state.output_meta = meta;
             }

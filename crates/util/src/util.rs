@@ -42,7 +42,6 @@ use unicase::UniCase;
 
 pub use gpui_util::*;
 pub use path::PathExt;
-pub use path::normalize_path;
 pub use path::rel_path;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -52,12 +51,6 @@ pub use util_macros::{line_endings, path, uri};
 pub use self::shell::{
     get_default_system_shell, get_default_system_shell_preferring_bash, get_system_shell,
 };
-
-#[inline]
-pub const fn is_utf8_char_boundary(u8: u8) -> bool {
-    // This is bit magic equivalent to: b < 128 || b >= 192
-    (u8 as i8) >= -0x40
-}
 
 pub fn truncate(s: &str, max_chars: usize) -> &str {
     match s.char_indices().nth(max_chars) {
