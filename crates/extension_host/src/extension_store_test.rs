@@ -22,7 +22,10 @@ use extension::{
 };
 use fs::{FakeFs, Fs, RealFs, RemoveOptions};
 use futures::{AsyncReadExt, FutureExt, StreamExt, io::BufReader};
-use gpui::{AppContext as _, BackgroundExecutor, Entity, EntityId, TaskExt, TestAppContext};
+use gpui::{
+    AppContext as _, BackgroundExecutor, BorrowAppContext as _, Entity, EntityId, TaskExt,
+    TestAppContext,
+};
 use http_client::{FakeHttpClient, Response};
 use language::{
     BinaryStatus, LanguageConfig, LanguageMatcher, LanguageName, LanguageRegistry, QueryFiles,
@@ -1198,12 +1201,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
 
     // Start a new instance of the language server.
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(
-            vec![buffer.clone()],
-            HashSet::default(),
-            true,
-            cx,
-        )
+        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx)
     });
     cx.executor().run_until_parked();
 
@@ -1244,12 +1242,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     .await;
     cx.executor().run_until_parked();
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(
-            vec![buffer.clone()],
-            HashSet::default(),
-            true,
-            cx,
-        )
+        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx)
     });
 
     // The extension re-fetches the latest version of the language server.
@@ -3605,6 +3598,62 @@ async fn test_extension_reload_removes_dropped_semantic_token_rules(cx: &mut Tes
 }
 
 #[gpui::test]
+async fn test_rejected_readded_language_keeps_native_semantic_token_rules(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
+    let proxy = Arc::new(ExtensionHostProxy::new());
+    language_extension::init(LspAccess::Noop, proxy.clone(), language_registry.clone());
+
+    language_registry.register_test_language(LanguageConfig {
+        name: LanguageName::new("Shared"),
+        matcher: Arc::new(LanguageMatcher {
+            path_suffixes: vec!["builtin".into()],
+            ..LanguageMatcher::default()
+        }),
+        ..LanguageConfig::default()
+    });
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, _cx| {
+            store.set_language_semantic_token_rules(
+                "Shared".into(),
+                settings::SemanticTokenRules::default(),
+            );
+        });
+    });
+    insert_language_extension(&fs, "ext-a", "Shared", "shadowed-a").await;
+    insert_language_extension(&fs, "ext-b", "Shared", "shadowed-b").await;
+    let store = create_extension_store_with(fs.clone(), proxy, cx);
+
+    fs.remove_dir(
+        Path::new("/extensions/installed/ext-b"),
+        RemoveOptions {
+            recursive: true,
+            ignore_if_not_exists: false,
+        },
+    )
+    .await
+    .unwrap();
+    store.update(cx, |store, cx| drop(store.reload(None, cx)));
+    cx.executor().advance_clock(RELOAD_DEBOUNCE_DURATION);
+    cx.run_until_parked();
+
+    assert_eq!(
+        language_registry.language_name_for_extension("builtin"),
+        Some(LanguageName::new("Shared")),
+    );
+    cx.update(|cx| {
+        assert!(
+            cx.global::<SettingsStore>()
+                .language_semantic_token_rules("Shared")
+                .is_some(),
+            "re-adding a language that a native language shadows must keep the native rules"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_extension_cannot_shadow_language_registered_outside_extensions(
     cx: &mut TestAppContext,
 ) {
@@ -3618,7 +3667,7 @@ async fn test_extension_cannot_shadow_language_registered_outside_extensions(
     language_registry.register_test_language(LanguageConfig {
         name: LanguageName::new("Shared"),
         matcher: Arc::new(LanguageMatcher {
-            path_suffixes: vec!["builtin".to_string()],
+            path_suffixes: vec!["builtin".into()],
             ..LanguageMatcher::default()
         }),
         ..LanguageConfig::default()
@@ -3695,7 +3744,7 @@ languages = ["languages/shared"]
     language_registry.register_test_language(LanguageConfig {
         name: LanguageName::new("Shared"),
         matcher: Arc::new(LanguageMatcher {
-            path_suffixes: vec!["builtin".to_string()],
+            path_suffixes: vec!["builtin".into()],
             ..LanguageMatcher::default()
         }),
         ..LanguageConfig::default()

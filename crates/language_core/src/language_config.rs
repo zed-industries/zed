@@ -249,7 +249,7 @@ pub struct LanguageMatcher {
 /// is equal to the suffix or ends with `.` followed by the suffix.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PathSuffix {
-    suffix: String,
+    suffix: SharedString,
     /// `suffix` escaped into a glob pattern matching every path that ends with it.
     /// Computed once here so that rebuilding the language detection index does not
     /// need to re-escape every registered suffix.
@@ -257,7 +257,7 @@ pub struct PathSuffix {
 }
 
 impl PathSuffix {
-    pub fn new(suffix: impl Into<String>) -> Self {
+    pub fn new(suffix: impl Into<SharedString>) -> Self {
         let suffix = suffix.into();
         let mut glob_pattern = String::with_capacity(suffix.len() + 1);
         glob_pattern.push('*');
@@ -280,6 +280,10 @@ impl PathSuffix {
     }
 
     pub fn as_str(&self) -> &str {
+        &self.suffix
+    }
+
+    pub fn as_shared_string(&self) -> &SharedString {
         &self.suffix
     }
 
@@ -327,6 +331,12 @@ impl PartialEq<&str> for PathSuffix {
     }
 }
 
+impl PartialEq<String> for PathSuffix {
+    fn eq(&self, other: &String) -> bool {
+        self.suffix == *other
+    }
+}
+
 impl From<&str> for PathSuffix {
     fn from(suffix: &str) -> Self {
         Self::new(suffix)
@@ -339,6 +349,18 @@ impl From<String> for PathSuffix {
     }
 }
 
+impl From<SharedString> for PathSuffix {
+    fn from(suffix: SharedString) -> Self {
+        Self::new(suffix)
+    }
+}
+
+impl From<PathSuffix> for SharedString {
+    fn from(path_suffix: PathSuffix) -> Self {
+        path_suffix.suffix
+    }
+}
+
 impl Serialize for PathSuffix {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&self.suffix)
@@ -347,7 +369,7 @@ impl Serialize for PathSuffix {
 
 impl<'de> Deserialize<'de> for PathSuffix {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let path_suffix = Self::new(String::deserialize(deserializer)?);
+        let path_suffix = Self::new(SharedString::deserialize(deserializer)?);
         path_suffix.glob().map_err(|error| {
             de::Error::custom(format!(
                 "invalid path suffix {:?}: {error}",

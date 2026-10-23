@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use fs::Fs;
 use gpui::{App, EntityId, Global, ReadGlobal, SharedString, Task};
-use language::{BinaryStatus, LanguageName, LanguageRegistration};
+use language::{BinaryStatus, ExtensionLanguagesUpdateOutcome, LanguageName, LanguageRegistration};
 use lsp::LanguageServerName;
 use parking_lot::RwLock;
 
@@ -228,14 +228,16 @@ impl ExtensionGrammarProxy for ExtensionHostProxy {
 }
 
 pub trait ExtensionLanguageProxy: Send + Sync + 'static {
+    /// Applies the removals before the registrations, as a single update.
+    ///
+    /// The returned outcome contains exactly one status per registration, in the
+    /// order the registrations were passed.
     fn update_languages(
         &self,
         languages_to_remove: &[LanguageName],
         grammars_to_remove: &[Arc<str>],
         registrations: Vec<LanguageRegistration>,
-    ) -> Vec<bool>;
-
-    fn is_language_registered(&self, language: &LanguageName) -> bool;
+    ) -> ExtensionLanguagesUpdateOutcome;
 }
 
 impl ExtensionLanguageProxy for ExtensionHostProxy {
@@ -245,19 +247,11 @@ impl ExtensionLanguageProxy for ExtensionHostProxy {
         languages_to_remove: &[LanguageName],
         grammars_to_remove: &[Arc<str>],
         registrations: Vec<LanguageRegistration>,
-    ) -> Vec<bool> {
+    ) -> ExtensionLanguagesUpdateOutcome {
         let Some(proxy) = self.language_proxy.read().clone() else {
-            return vec![false; registrations.len()];
+            return ExtensionLanguagesUpdateOutcome::rejected(registrations.len());
         };
         proxy.update_languages(languages_to_remove, grammars_to_remove, registrations)
-    }
-
-    fn is_language_registered(&self, language: &LanguageName) -> bool {
-        let Some(proxy) = self.language_proxy.read().clone() else {
-            return false;
-        };
-
-        proxy.is_language_registered(language)
     }
 }
 

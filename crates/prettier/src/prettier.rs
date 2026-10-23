@@ -612,7 +612,7 @@ fn prettier_parser_name(
                 .matcher
                 .path_suffixes
                 .iter()
-                .any(|suffix| *suffix == *extension)
+                .any(|suffix| suffix.as_str() == extension)
         })
     {
         buffer_language.prettier_parser_name()

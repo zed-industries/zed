@@ -23,6 +23,7 @@ use gpui::{App, BackgroundExecutor, EntityId, Subscription};
 use lsp::LanguageServerId;
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
+use smallvec::SmallVec;
 
 use std::{
     ffi::OsStr,
@@ -41,12 +42,58 @@ pub struct LanguageRegistry {
     lsp_binary_status_tx: ServerStatusSender,
 }
 
+/// A language to register with [`LanguageRegistry::update_extension_languages`].
 pub struct LanguageRegistration {
     pub name: LanguageName,
     pub grammar_name: Option<Arc<str>>,
     pub matcher: Arc<LanguageMatcher>,
     pub hidden: bool,
     pub load: LanguageLoader,
+}
+
+/// Whether a [`LanguageRegistration`] passed to
+/// [`LanguageRegistry::update_extension_languages`] took effect.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LanguageRegistrationStatus {
+    Registered,
+    /// A language with the same name is registered outside of extensions.
+    Rejected,
+}
+
+impl LanguageRegistrationStatus {
+    pub fn is_registered(self) -> bool {
+        self == Self::Registered
+    }
+}
+
+/// The outcome of [`LanguageRegistry::update_extension_languages`].
+#[derive(Debug, Default)]
+pub struct ExtensionLanguagesUpdateOutcome {
+    removed: Vec<LanguageName>,
+    registrations: SmallVec<[LanguageRegistrationStatus; 8]>,
+}
+
+impl ExtensionLanguagesUpdateOutcome {
+    /// An outcome in which nothing was removed and every registration was rejected.
+    pub fn rejected(registration_count: usize) -> Self {
+        Self {
+            removed: Vec::new(),
+            registrations: SmallVec::from_elem(
+                LanguageRegistrationStatus::Rejected,
+                registration_count,
+            ),
+        }
+    }
+
+    /// The extension languages that were removed from the registry.
+    pub fn removed(&self) -> &[LanguageName] {
+        &self.removed
+    }
+
+    /// The status of each registration, in the order they were passed.
+    pub fn registrations(&self) -> &[LanguageRegistrationStatus] {
+        &self.registrations
+    }
 }
 
 struct LanguageRegistryState {
@@ -398,71 +445,32 @@ impl LanguageRegistry {
         _manifest_name: Option<ManifestName>,
         load: LanguageLoader,
     ) {
-        self.register_language_with_origin(
+        self.register_languages(vec![LanguageRegistration {
             name,
             grammar_name,
             matcher,
             hidden,
             load,
-            LanguageOrigin::Native,
-        );
+        }]);
     }
 
-    pub fn register_extension_language(
-        &self,
-        name: LanguageName,
-        grammar_name: Option<Arc<str>>,
-        matcher: Arc<LanguageMatcher>,
-        hidden: bool,
-        _manifest_name: Option<ManifestName>,
-        load: LanguageLoader,
-    ) -> bool {
-        self.register_language_with_origin(
-            name,
-            grammar_name,
-            matcher,
-            hidden,
-            load,
-            LanguageOrigin::Extension,
-        )
-    }
-
-    fn register_language_with_origin(
-        &self,
-        name: LanguageName,
-        grammar_name: Option<Arc<str>>,
-        matcher: Arc<LanguageMatcher>,
-        hidden: bool,
-        load: LanguageLoader,
-        origin: LanguageOrigin,
-    ) -> bool {
-        self.update_languages(
-            &[],
-            &[],
-            vec![LanguageRegistration {
-                name,
-                grammar_name,
-                matcher,
-                hidden,
-                load,
-            }],
-            origin,
-        )
-        .into_iter()
-        .next()
-        .unwrap_or(false)
-    }
-
+    /// Adds several languages to the registry as a single update, so that the
+    /// language detection index is only rebuilt once.
     pub fn register_languages(&self, registrations: Vec<LanguageRegistration>) {
         self.update_languages(&[], &[], registrations, LanguageOrigin::Native);
     }
 
+    /// Removes and registers extension languages and removes grammars as a single
+    /// update, so that observers are only notified once.
+    ///
+    /// A registration is rejected if a language with the same name is registered
+    /// outside of extensions.
     pub fn update_extension_languages(
         &self,
         languages_to_remove: &[LanguageName],
         grammars_to_remove: &[Arc<str>],
         registrations: Vec<LanguageRegistration>,
-    ) -> Vec<bool> {
+    ) -> ExtensionLanguagesUpdateOutcome {
         self.update_languages(
             languages_to_remove,
             grammars_to_remove,
@@ -477,7 +485,7 @@ impl LanguageRegistry {
         grammars_to_remove: &[Arc<str>],
         registrations: Vec<LanguageRegistration>,
         origin: LanguageOrigin,
-    ) -> Vec<bool> {
+    ) -> ExtensionLanguagesUpdateOutcome {
         let state = &mut *self.state.write();
         let registrations = registrations
             .into_iter()
@@ -492,24 +500,33 @@ impl LanguageRegistry {
                 origin,
             })
             .collect();
-        let (invalidated, registered) = state
+        let update = state
             .available_languages
             .update(languages_to_remove, registrations);
-        state
-            .languages
-            .retain(|language| !invalidated.contains(&language.name()));
-        state.grammars.retain(|name, grammar| {
-            !grammars_to_remove.contains(name) || matches!(grammar, AvailableGrammar::Native(_))
+
+        state.languages.retain(|language| {
+            let name = language.name();
+            !update.removed.contains(&name) && !update.reloaded.contains(&name)
         });
+        state.grammars.retain(|name, grammar| {
+            matches!(grammar, AvailableGrammar::Native(_)) || !grammars_to_remove.contains(name)
+        });
+
         let changed = !languages_to_remove.is_empty()
             || !grammars_to_remove.is_empty()
-            || registered.iter().any(|registered| *registered);
+            || update
+                .registrations
+                .iter()
+                .any(|status| status.is_registered());
         if changed {
             state.version += 1;
             state.reload_count += 1;
             *state.subscription.0.borrow_mut() = ();
         }
-        registered
+        ExtensionLanguagesUpdateOutcome {
+            removed: update.removed,
+            registrations: update.registrations,
+        }
     }
 
     /// Adds grammars to the registry. Language configurations reference a grammar by name. The
@@ -676,16 +693,42 @@ impl LanguageRegistry {
         cx: &App,
     ) -> Option<LanguageId> {
         let user_file_types = all_language_settings(Some(file), cx);
-
+        let filename = file
+            .path()
+            .file_name()
+            .unwrap_or_else(|| file.file_name(cx));
+        let paths = [Some(file.full_path(cx)), file.file_system_abs_path(cx)];
+        let path_style = file.path_style(cx);
+        let normalized_paths = paths.each_ref().map(|path| {
+            if path_style.is_windows()
+                && let Some(path) = path.as_deref().and_then(Path::to_str)
+                && path.contains('\\')
+            {
+                Some(PathBuf::from(path.replace('\\', "/")))
+            } else {
+                None
+            }
+        });
+        let paths = paths
+            .iter()
+            .filter_map(Option::as_deref)
+            .chain(normalized_paths.iter().filter_map(Option::as_deref))
+            .collect::<SmallVec<[_; 4]>>();
         self.language_for_file_internal(
-            &file.full_path(cx),
+            Some(filename),
+            &paths,
             content,
             Some(&user_file_types.file_types),
         )
     }
 
     pub fn language_for_file_path(self: &Arc<Self>, path: &Path) -> Option<LanguageId> {
-        self.language_for_file_internal(path, None, None)
+        self.language_for_file_internal(
+            path.file_name().and_then(|filename| filename.to_str()),
+            &[path],
+            None,
+            None,
+        )
     }
 
     #[ztracing::instrument(skip_all)]
@@ -707,14 +750,17 @@ impl LanguageRegistry {
 
     fn language_for_file_internal(
         self: &Arc<Self>,
-        path: &Path,
+        filename: Option<&str>,
+        paths: &[&Path],
         content: Option<&Rope>,
         user_file_types: Option<&FxHashMap<Arc<str>, (GlobSet, Vec<String>)>>,
     ) -> Option<LanguageId> {
-        self.state
-            .read()
-            .available_languages
-            .find_for_file(path, content, user_file_types)
+        self.state.read().available_languages.find_for_file(
+            filename,
+            paths,
+            content,
+            user_file_types,
+        )
     }
 
     #[ztracing::instrument(skip_all)]
@@ -1143,6 +1189,7 @@ impl ServerStatusSender {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::TestAppContext;
 
     #[test]
     fn dropping_server_status_subscription_unregisters_sender() {
@@ -1152,5 +1199,129 @@ mod tests {
 
         drop(subscription);
         assert!(sender.state.lock().txs.is_empty());
+    }
+
+    fn extension_language_registration(
+        name: &'static str,
+        path_suffix: &str,
+    ) -> LanguageRegistration {
+        let config = LanguageConfig {
+            name: LanguageName::new_static(name),
+            matcher: Arc::new(LanguageMatcher {
+                path_suffixes: vec![path_suffix.into()],
+                ..LanguageMatcher::default()
+            }),
+            ..LanguageConfig::default()
+        };
+        LanguageRegistration {
+            name: config.name.clone(),
+            grammar_name: None,
+            matcher: config.matcher.clone(),
+            hidden: false,
+            load: Arc::new(move || {
+                let config = config.clone();
+                async move {
+                    Ok(LoadedLanguage {
+                        config,
+                        queries: LanguageQueries::default(),
+                        context_provider: None,
+                        toolchain_provider: None,
+                        manifest_name: None,
+                    })
+                }
+                .boxed()
+            }),
+        }
+    }
+
+    #[gpui::test]
+    async fn test_update_extension_languages_replaces_loaded_language(cx: &mut TestAppContext) {
+        let registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        registry.update_extension_languages(
+            &[],
+            &[],
+            vec![extension_language_registration("TheLanguage", "old")],
+        );
+        let old_language = registry.language_for_name("TheLanguage").await.unwrap();
+
+        let update = registry.update_extension_languages(
+            &[LanguageName::new_static("TheLanguage")],
+            &[],
+            vec![extension_language_registration("TheLanguage", "new")],
+        );
+        assert_eq!(update.removed(), [LanguageName::new_static("TheLanguage")]);
+        assert_eq!(
+            update.registrations(),
+            [LanguageRegistrationStatus::Registered]
+        );
+
+        let new_language = registry.language_for_name("TheLanguage").await.unwrap();
+        assert!(!Arc::ptr_eq(&old_language, &new_language));
+        assert_eq!(
+            new_language.config.matcher.path_suffixes,
+            vec!["new".to_string()],
+            "removing and re-registering a loaded language in one update must evict the old one"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_update_extension_languages_rejects_native_names(cx: &mut TestAppContext) {
+        let registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        registry.register_test_language(LanguageConfig {
+            name: LanguageName::new_static("TheLanguage"),
+            matcher: Arc::new(LanguageMatcher {
+                path_suffixes: vec!["native".into()],
+                ..LanguageMatcher::default()
+            }),
+            ..LanguageConfig::default()
+        });
+        let version = registry.version();
+        let reload_count = registry.reload_count();
+
+        let update = registry.update_extension_languages(
+            &[],
+            &[],
+            vec![extension_language_registration("TheLanguage", "extension")],
+        );
+        assert!(update.removed().is_empty());
+        assert_eq!(
+            update.registrations(),
+            [LanguageRegistrationStatus::Rejected]
+        );
+        assert_eq!(registry.version(), version);
+        assert_eq!(registry.reload_count(), reload_count);
+
+        let language = registry.language_for_name("TheLanguage").await.unwrap();
+        assert_eq!(
+            language.config.matcher.path_suffixes,
+            vec!["native".to_string()]
+        );
+    }
+
+    #[gpui::test]
+    fn test_update_extension_languages_notifies_once(cx: &mut TestAppContext) {
+        let registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        let reload_count = registry.reload_count();
+
+        let update = registry.update_extension_languages(
+            &[],
+            &[],
+            vec![
+                extension_language_registration("First", "first"),
+                extension_language_registration("Second", "second"),
+                extension_language_registration("Third", "third"),
+            ],
+        );
+        assert_eq!(
+            update.registrations(),
+            [LanguageRegistrationStatus::Registered; 3]
+        );
+        assert_eq!(registry.reload_count(), reload_count + 1);
+
+        let version = registry.version();
+        let update = registry.update_extension_languages(&[], &[], Vec::new());
+        assert!(update.removed().is_empty() && update.registrations().is_empty());
+        assert_eq!(registry.version(), version);
+        assert_eq!(registry.reload_count(), reload_count + 1);
     }
 }

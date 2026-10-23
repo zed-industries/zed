@@ -1,4 +1,6 @@
-use crate::{LanguageId, LanguageLoader, LanguageMatcher, LanguageName};
+use crate::{
+    LanguageId, LanguageLoader, LanguageMatcher, LanguageName, LanguageRegistrationStatus,
+};
 use collections::FxHashMap;
 use globset::{GlobSet, GlobSetBuilder};
 use gpui::SharedString;
@@ -156,11 +158,13 @@ impl LanguageLookup {
     }
 
     /// Returns `(language, score)` pairs, sorted by language, for every language
-    /// with a path suffix matching one of the `candidates`.
+    /// with a path suffix matching one of the `candidates`, which are built from
+    /// `filename` and `paths`.
     fn suffix_scores(
         &self,
         languages: &[AvailableLanguage],
-        path: &Path,
+        filename: Option<&str>,
+        paths: &[&Path],
         candidates: &[(&str, globset::Candidate<'_>)],
     ) -> SmallVec<[(LanguageIndex, usize); 4]> {
         let score = |&(language_index, suffix_index): &(LanguageIndex, PathSuffixIndex)| {
@@ -175,22 +179,26 @@ impl LanguageLookup {
             (score > 0).then_some((language_index, score))
         };
 
-        // On ordinary paths all three legacy candidates end at the end of the full
-        // path. Non-UTF8 parents and trailing separators or `/.` need an exact scan:
-        // Path::file_name and globset do not agree about these paths' basenames.
-        let full_path_candidate = path
-            .to_str()
-            .zip(path.file_name().and_then(|name| name.to_str()))
-            .filter(|(path, filename)| path.ends_with(filename))
-            .and_then(|_| candidates.last());
         let mut scores: SmallVec<[(LanguageIndex, usize); 4]> =
-            match (&self.suffix_globs, full_path_candidate) {
-                (Some(globs), Some((_, candidate))) => globs
-                    .matches_candidate(candidate)
-                    .into_iter()
-                    .filter_map(|glob_index| self.suffixes.get(glob_index))
-                    .filter_map(score)
-                    .collect(),
+            match (&self.suffix_globs, Self::glob_targets(filename, paths)) {
+                (Some(globs), Some(targets)) => {
+                    let mut glob_indices = Vec::new();
+                    let mut target_matches = Vec::new();
+                    for target in &targets {
+                        globs.matches_candidate_into(
+                            &globset::Candidate::new(target),
+                            &mut target_matches,
+                        );
+                        glob_indices.append(&mut target_matches);
+                    }
+                    glob_indices.sort_unstable();
+                    glob_indices.dedup();
+                    glob_indices
+                        .into_iter()
+                        .filter_map(|glob_index| self.suffixes.get(glob_index))
+                        .filter_map(score)
+                        .collect()
+                }
                 _ => self.suffixes.iter().filter_map(score).collect(),
             };
         scores.sort_unstable_by(|(language_a, score_a), (language_b, score_b)| {
@@ -198,6 +206,40 @@ impl LanguageLookup {
         });
         scores.dedup_by_key(|(language_index, _)| *language_index);
         scores
+    }
+
+    /// Returns the texts to match the suffix globs against, such that every
+    /// candidate built from `filename` and `paths` is a suffix of one of them.
+    ///
+    /// Returns `None` if a path needs an exact scan instead: for non-UTF8 parents
+    /// and trailing separators or `/.`, `Path::file_name` and globset do not agree
+    /// about the path's basename.
+    fn glob_targets<'a>(
+        filename: Option<&'a str>,
+        paths: &[&'a Path],
+    ) -> Option<SmallVec<[&'a str; 4]>> {
+        let mut targets = SmallVec::<[&str; 4]>::new();
+        for path in paths {
+            let Some(path_text) = path.to_str() else {
+                continue;
+            };
+            let path_filename = path.file_name().and_then(|name| name.to_str())?;
+            if !path_text.ends_with(path_filename) {
+                return None;
+            }
+            targets.push(path_text);
+        }
+        // The extension is always a suffix of the filename, so covering the filename
+        // covers both of them.
+        if let Some(filename) = filename
+            && !targets.iter().any(|target| target.ends_with(filename))
+        {
+            if filename.is_empty() || filename.contains(['/', '\\']) {
+                return None;
+            }
+            targets.push(filename);
+        }
+        Some(targets)
     }
 
     fn first_line_matches(&self, content: &str) -> SmallVec<[LanguageIndex; 2]> {
@@ -233,27 +275,44 @@ enum LanguageMatchPrecedence {
     UserConfigured(usize),
 }
 
+/// The result of [`AvailableLanguages::update`].
+pub(super) struct AvailableLanguagesUpdate {
+    /// The extension languages that were removed.
+    pub(super) removed: Vec<LanguageName>,
+    /// The loaded languages that were replaced by a new registration.
+    pub(super) reloaded: SmallVec<[LanguageName; 4]>,
+    /// The status of each registration, in the order they were passed.
+    pub(super) registrations: SmallVec<[LanguageRegistrationStatus; 8]>,
+}
+
 impl AvailableLanguages {
+    /// Applies the removals before the registrations, rebuilding the lookup at most once.
+    ///
+    /// Only extension languages are removed, and an extension registration is
+    /// rejected if a language with the same name is registered natively.
     pub(super) fn update(
         &mut self,
         names_to_remove: &[LanguageName],
         registrations: Vec<AvailableLanguage>,
-    ) -> (Vec<LanguageName>, Vec<bool>) {
+    ) -> AvailableLanguagesUpdate {
+        let mut update = AvailableLanguagesUpdate {
+            removed: Vec::new(),
+            reloaded: SmallVec::new(),
+            registrations: SmallVec::with_capacity(registrations.len()),
+        };
         if names_to_remove.is_empty() && registrations.is_empty() {
-            return (Vec::new(), Vec::new());
+            return update;
         }
 
         let mut languages = self.languages.clone();
-        let mut invalidated = Vec::new();
         languages.retain(|language| {
             let remove = language.origin == LanguageOrigin::Extension
                 && names_to_remove.contains(&language.name);
             if remove {
-                invalidated.push(language.name.clone());
+                update.removed.push(language.name.clone());
             }
             !remove
         });
-        let mut registered = Vec::with_capacity(registrations.len());
         for registration in registrations {
             if let Some(existing) = languages
                 .iter_mut()
@@ -263,25 +322,35 @@ impl AvailableLanguages {
                     && existing.origin == LanguageOrigin::Native
                 {
                     log::warn!(
-                        "not registering extension language {}: a language with this name is already registered outside of extensions",
+                        "not registering extension language {}: \
+                        a language with this name is already registered outside of extensions",
                         registration.name
                     );
-                    registered.push(false);
+                    update
+                        .registrations
+                        .push(LanguageRegistrationStatus::Rejected);
                     continue;
                 }
                 if existing.loaded {
-                    invalidated.push(existing.name.clone());
+                    update.reloaded.push(existing.name.clone());
                 }
                 *existing = registration;
             } else {
                 languages.push(registration);
             }
-            registered.push(true);
+            update
+                .registrations
+                .push(LanguageRegistrationStatus::Registered);
         }
-        if !invalidated.is_empty() || registered.iter().any(|registered| *registered) {
+        if !update.removed.is_empty()
+            || update
+                .registrations
+                .iter()
+                .any(|status| status.is_registered())
+        {
             self.replace_languages(languages);
         }
-        (invalidated, registered)
+        update
     }
 
     pub(super) fn add(&mut self, language: AvailableLanguage) {
@@ -403,22 +472,23 @@ impl AvailableLanguages {
 
     pub(super) fn find_for_file(
         &self,
-        path: &Path,
+        filename: Option<&str>,
+        paths: &[&Path],
         content: Option<&Rope>,
         user_file_types: Option<&FxHashMap<Arc<str>, (GlobSet, Vec<String>)>>,
     ) -> Option<LanguageId> {
-        let filename = path.file_name().and_then(|filename| filename.to_str());
         // `Path.extension()` returns None for files with a leading '.'
         // and no other extension which is not the desired behavior here,
         // as we want `.zshrc` to result in extension being `Some("zshrc")`
         let extension = filename.and_then(|filename| filename.split('.').next_back());
-        let path_suffixes = [extension, filename, path.to_str()]
-            .iter()
+        let path_suffixes = [extension, filename]
+            .into_iter()
+            .chain(paths.iter().map(|path| path.to_str()))
             .filter_map(|suffix| suffix.map(|suffix| (suffix, globset::Candidate::new(suffix))))
-            .collect::<SmallVec<[_; 3]>>();
-        let default_scores = self
-            .lookup
-            .suffix_scores(&self.languages, path, &path_suffixes);
+            .collect::<SmallVec<[_; 6]>>();
+        let default_scores =
+            self.lookup
+                .suffix_scores(&self.languages, filename, paths, &path_suffixes);
         let custom_scores = user_file_types
             .into_iter()
             .flatten()
@@ -624,9 +694,22 @@ mod tests {
         }
     }
 
+    /// Mirrors how `LanguageRegistry::language_for_file_path` queries a single path.
+    fn find_for_path(
+        languages: &AvailableLanguages,
+        path: &Path,
+        content: Option<&Rope>,
+    ) -> Option<LanguageId> {
+        languages.find_for_file(
+            path.file_name().and_then(|filename| filename.to_str()),
+            &[path],
+            content,
+            None,
+        )
+    }
+
     fn detected(languages: &AvailableLanguages, path: &Path) -> Option<LanguageName> {
-        languages
-            .find_for_file(path, None, None)
+        find_for_path(languages, path, None)
             .and_then(|id| languages.get_language(id))
             .map(AvailableLanguage::name)
     }
@@ -738,18 +821,22 @@ mod tests {
         let old_id = old.id;
         languages.add(old);
         assert_eq!(
-            languages.find_for_file(Path::new("file.old"), None, None),
+            find_for_path(&languages, Path::new("file.old"), None),
             Some(old_id)
         );
         let replacement = language("Replace", &["new"]);
         let new_id = replacement.id;
         languages.mark_loaded(old_id);
-        let (invalidated, registered) = languages.update(&[], vec![replacement]);
-        assert_eq!(invalidated, vec![LanguageName::new("Replace")]);
-        assert_eq!(registered, vec![true]);
+        let update = languages.update(&[], vec![replacement]);
+        assert!(update.removed.is_empty());
+        assert_eq!(update.reloaded.as_slice(), [LanguageName::new("Replace")]);
+        assert_eq!(
+            update.registrations.as_slice(),
+            [LanguageRegistrationStatus::Registered]
+        );
         assert_ne!(new_id, old_id);
         assert_eq!(
-            languages.find_for_file(Path::new("file.new"), None, None),
+            find_for_path(&languages, Path::new("file.new"), None),
             Some(new_id),
         );
         assert_eq!(detected(&languages, Path::new("file.old")), None);
@@ -785,8 +872,7 @@ mod tests {
             ],
         );
         let detected_with_content = |path: &str, content: &str| {
-            languages
-                .find_for_file(Path::new(path), Some(&Rope::from(content)), None)
+            find_for_path(&languages, Path::new(path), Some(&Rope::from(content)))
                 .and_then(|id| languages.get_language(id))
                 .map(AvailableLanguage::name)
         };
@@ -836,6 +922,39 @@ mod tests {
         assert_eq!(modeline_language("Alpha_Grammar"), Some("Alpha".into()));
         assert_eq!(modeline_language("beta"), Some("Beta".into()));
         assert_eq!(modeline_language("missing"), None);
+    }
+
+    #[test]
+    fn suffixes_match_against_every_path() {
+        let mut languages = AvailableLanguages::default();
+        languages.update(
+            &[],
+            vec![
+                language("Text", &["txt"]),
+                language("Ssh Config", &["ssh/config"]),
+            ],
+        );
+        let detected_for = |filename: &str, paths: &[&str]| {
+            let paths = paths.iter().map(Path::new).collect::<Vec<_>>();
+            languages
+                .find_for_file(Some(filename), &paths, None, None)
+                .and_then(|id| languages.get_language(id))
+                .map(AvailableLanguage::name)
+        };
+
+        // A single-file worktree's full path is only the filename, while the absolute
+        // path carries the directories a suffix may need.
+        assert_eq!(
+            detected_for("config", &["config", "/home/user/.ssh/config"]),
+            Some("Ssh Config".into())
+        );
+        assert_eq!(detected_for("config", &["config"]), None);
+        // A filename that differs from every path's file name is matched, too.
+        assert_eq!(
+            detected_for("notes.txt", &["worktree"]),
+            Some("Text".into())
+        );
+        assert_eq!(detected_for("notes.txt", &[]), Some("Text".into()));
     }
 
     #[cfg(unix)]

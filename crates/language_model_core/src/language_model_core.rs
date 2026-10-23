@@ -8,7 +8,7 @@ pub mod util;
 
 use anyhow::{Context as _, Result, anyhow};
 use cloud_llm_client::CompletionRequestStatus;
-use http_client::{StatusCode, http};
+use http::StatusCode;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, Sub};
@@ -694,6 +694,7 @@ pub struct LanguageModelEffortLevel {
     pub name: SharedString,
     pub value: SharedString,
     pub is_default: bool,
+    pub supports_disabling_thinking: Option<bool>,
 }
 
 /// An error that occurred when trying to authenticate the language model provider.

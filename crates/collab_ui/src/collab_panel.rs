@@ -2440,7 +2440,7 @@ impl CollabPanel {
     }
 
     fn dispatch_context(&self, window: &Window, cx: &Context<Self>) -> KeyContext {
-        let mut dispatch_context = KeyContext::new_with_defaults();
+        let mut dispatch_context = KeyContext::new_with_defaults(cx.platform_info().os);
         dispatch_context.add("CollabPanel");
         dispatch_context.add("menu");
 
@@ -2732,14 +2732,15 @@ impl CollabPanel {
 
         v_flex()
             .p_4()
-            .gap_4()
+            .gap_1()
             .size_full()
             .text_center()
             .justify_center()
-            .child(Label::new(collab_blurb))
+            .items_center()
+            .child(Label::new(collab_blurb).color(Color::Muted))
             .child(
                 Button::new(button_id, button_label)
-                    .full_width()
+                    .label_size(LabelSize::Small)
                     .start_icon(Icon::new(button_icon).color(Color::Muted))
                     .style(ButtonStyle::Outlined)
                     .disabled(is_busy)
