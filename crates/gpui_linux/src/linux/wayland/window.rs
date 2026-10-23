@@ -1858,18 +1858,22 @@ impl PlatformWindow for WaylandWindow {
 
     fn activate(&self) {
         let state = self.borrow();
-        if let (Some(activation), Some(app_id), Some(context)) = (
-            &state.globals.activation,
-            state.app_id.clone(),
-            state.client.activation_context(),
-        ) {
+        if let (Some(activation), Some(app_id)) = (&state.globals.activation, state.app_id.clone())
+        {
             let token = activation.get_activation_token(
                 &state.globals.qh,
                 PendingActivation::Window(state.surface.id()),
             );
             token.set_app_id(app_id);
-            token.set_serial(context.serial.as_raw(), &state.globals.seat);
-            token.set_surface(&context.requesting_surface);
+            // Without a recent press the compositor won't grant focus, but still request a
+            // token: KWin and Mutter mark the window as demanding attention and end their
+            // launch feedback once the token is passed to `activate`.
+            if let Some(context) = state.client.activation_context() {
+                token.set_serial(context.serial.as_raw(), &state.globals.seat);
+                token.set_surface(&context.requesting_surface);
+            } else {
+                token.set_surface(&state.surface);
+            }
             token.commit();
         }
     }
