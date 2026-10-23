@@ -15,6 +15,10 @@ use crate::{
 pub(crate) struct DockerPs {
     #[serde(alias = "ID")]
     pub(crate) id: String,
+    #[serde(default, deserialize_with = "deserialize_container_names")]
+    pub(crate) names: Vec<String>,
+    #[serde(default)]
+    pub(crate) image: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
@@ -51,6 +55,8 @@ pub(crate) struct DockerInspectConfig {
     pub(crate) labels: DockerConfigLabels,
     #[serde(rename = "User")]
     pub(crate) image_user: Option<String>,
+    #[serde(default)]
+    pub(crate) working_dir: Option<String>,
     #[serde(default)]
     pub(crate) env: Vec<String>,
 }
@@ -265,6 +271,23 @@ impl Docker {
         command
     }
 
+    pub(crate) async fn list_running_containers(&self) -> Result<Vec<DockerPs>, DevContainerError> {
+        let mut command = Command::new(&self.docker_cli);
+        command.args(&["ps", "--format={{ json . }}"]);
+        let output = command.output().await.map_err(|e| {
+            log::error!("Error running command {:?}: {e}", command);
+            DevContainerError::CommandFailed(command.get_program().display().to_string())
+        })?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            log::error!("Non-success status from docker ps: {stderr}");
+            return Err(DevContainerError::CommandFailed(
+                command.get_program().display().to_string(),
+            ));
+        }
+        parse_docker_ps_lines(&String::from_utf8_lossy(&output.stdout))
+    }
+
     fn create_docker_inspect(&self, id: &str) -> Command {
         let mut command = Command::new(&self.docker_cli);
         command.args(&["inspect", "--format={{json . }}", id]);
@@ -466,15 +489,7 @@ impl DockerClient for Docker {
 /// spec expects identifying labels to be unique per project, so the caller
 /// can't silently pick one.
 fn parse_find_process_output(raw: &str) -> Result<Option<DockerPs>, DevContainerError> {
-    if raw.trim().is_empty() {
-        return Ok(None);
-    }
-    let containers: Vec<DockerPs> = serde_json_lenient::Deserializer::from_str(raw)
-        .into_iter::<DockerPs>()
-        .collect::<Result<_, _>>()
-        .map_err(|e| {
-            DevContainerError::CommandFailed(format!("failed to parse docker ps output: {e}"))
-        })?;
+    let containers = parse_docker_ps_lines(raw)?;
     match containers.len() {
         0 => Ok(None),
         1 => Ok(containers.into_iter().next()),
@@ -482,6 +497,41 @@ fn parse_find_process_output(raw: &str) -> Result<Option<DockerPs>, DevContainer
             containers.into_iter().map(|c| c.id).collect(),
         )),
     }
+}
+
+/// Parses output of `docker ps --format={{ json . }}`
+fn parse_docker_ps_lines(raw: &str) -> Result<Vec<DockerPs>, DevContainerError> {
+    serde_json_lenient::Deserializer::from_str(raw)
+        .into_iter::<DockerPs>()
+        .collect::<Result<_, _>>()
+        .map_err(|e| {
+            DevContainerError::CommandFailed(format!("failed to parse docker ps output: {e}"))
+        })
+}
+
+// Docker reports `Names` as a comma-separated string, while podman reports
+// an array of strings.
+fn deserialize_container_names<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Names {
+        Joined(String),
+        List(Vec<String>),
+    }
+
+    let names = match Option::<Names>::deserialize(deserializer)? {
+        Some(Names::Joined(joined)) => joined.split(',').map(str::to_string).collect(),
+        Some(Names::List(list)) => list,
+        None => Vec::new(),
+    };
+    Ok(names
+        .into_iter()
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+        .collect())
 }
 
 #[async_trait]
@@ -765,7 +815,7 @@ mod test {
         docker::{
             Docker, DockerClient, DockerComposeConfig, DockerComposeService,
             DockerComposeServicePort, DockerComposeVolume, DockerInspect, DockerPs,
-            parse_find_process_output,
+            parse_docker_ps_lines, parse_find_process_output,
         },
     };
     #[cfg(not(target_os = "windows"))]
@@ -797,6 +847,7 @@ mod test {
         let config = super::DockerInspectConfig {
             labels: super::DockerConfigLabels { metadata: None },
             image_user: None,
+            working_dir: None,
             env: vec!["KEY=value".to_string()],
         };
 
@@ -809,6 +860,7 @@ mod test {
         let config = super::DockerInspectConfig {
             labels: super::DockerConfigLabels { metadata: None },
             image_user: None,
+            working_dir: None,
             env: vec!["COMPLEX=key=val other>=1.0".to_string()],
         };
 
@@ -821,6 +873,7 @@ mod test {
         let config = super::DockerInspectConfig {
             labels: super::DockerConfigLabels { metadata: None },
             image_user: None,
+            working_dir: None,
             env: vec![
                 "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".to_string(),
                 "TEST_DATABASE_URL=postgres://postgres:postgres@db:5432/mydb?sslmode=disable"
@@ -840,6 +893,7 @@ mod test {
         let config = super::DockerInspectConfig {
             labels: super::DockerConfigLabels { metadata: None },
             image_user: None,
+            working_dir: None,
             env: vec![
                 "VALID_KEY=valid_value".to_string(),
                 "NO_EQUALS_VAR".to_string(),
@@ -1018,6 +1072,60 @@ mod test {
             }
             other => panic!("expected MultipleMatchingContainers, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parse_docker_ps_lines_empty() {
+        assert_eq!(parse_docker_ps_lines("").unwrap(), Vec::new());
+        assert_eq!(parse_docker_ps_lines("  \n\n").unwrap(), Vec::new());
+    }
+
+    #[test]
+    fn parse_docker_ps_lines_docker_format() {
+        let raw = concat!(
+            r#"{"Command":"\"sleep infinity\"","ID":"abc123","Image":"ubuntu:24.04","Names":"zed-attach","State":"running","Status":"Up 3 minutes"}"#,
+            "\n",
+            r#"{"ID":"def456","Image":"postgres:16","Names":"db,web/db"}"#,
+            "\n",
+        );
+        let containers = parse_docker_ps_lines(raw).unwrap();
+        assert_eq!(
+            containers,
+            vec![
+                DockerPs {
+                    id: "abc123".to_string(),
+                    names: vec!["zed-attach".to_string()],
+                    image: "ubuntu:24.04".to_string(),
+                },
+                DockerPs {
+                    id: "def456".to_string(),
+                    names: vec!["db".to_string(), "web/db".to_string()],
+                    image: "postgres:16".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_docker_ps_lines_podman_format() {
+        let raw = r#"{"Id":"abc123","Image":"docker.io/library/alpine:latest","Names":["zed-attach"],"State":"running"}"#;
+        let containers = parse_docker_ps_lines(raw).unwrap();
+        assert_eq!(
+            containers,
+            vec![DockerPs {
+                id: "abc123".to_string(),
+                names: vec!["zed-attach".to_string()],
+                image: "docker.io/library/alpine:latest".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn parse_docker_ps_lines_missing_names() {
+        let raw = r#"{"ID":"abc123","Names":null}"#;
+        let containers = parse_docker_ps_lines(raw).unwrap();
+        assert_eq!(containers[0].names, Vec::<String>::new());
+        assert_eq!(containers[0].image, "");
     }
 
     #[test]
@@ -1455,6 +1563,7 @@ mod test {
         let inspect: DockerInspect = serde_json_lenient::from_str(given_config).unwrap();
         assert!(inspect.config.labels.metadata.is_none());
         assert!(inspect.config.image_user.is_none());
+        assert_eq!(inspect.config.working_dir, Some("/".to_string()));
     }
 
     #[test]
