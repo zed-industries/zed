@@ -3,12 +3,13 @@ use crate::NoopTextSystem;
 #[cfg(any(test, feature = "test-support"))]
 use crate::PathPromptOptions;
 use crate::{
-    ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
-    DisplayId, DummyKeyboardMapper, ForegroundExecutor, Keymap, OwnedMenu, Platform,
-    PlatformDisplay, PlatformHeadlessRenderer, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformTextSystem, PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
-    SharedString, SourceMetadata, SystemNotification, SystemNotificationResponse, Task,
-    TestDisplay, TestWindow, ThermalState, WindowAppearance, WindowParams, size,
+    ActivityGuard, AnyWindowHandle, AppLifecyclePhase, BackgroundExecutor, ClipboardItem,
+    CursorStyle, DevicePixels, DisplayId, DummyKeyboardMapper, ForegroundExecutor, Keymap,
+    OwnedMenu, Platform, PlatformDisplay, PlatformHeadlessRenderer, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, PlatformTextSystem, PromptButton, ScreenCaptureFrame,
+    ScreenCaptureSource, ScreenCaptureStream, SharedString, SourceMetadata, SystemNotification,
+    SystemNotificationResponse, Task, TestDisplay, TestWindow, ThermalState, WindowAppearance,
+    WindowParams, size,
 };
 use anyhow::Result;
 #[cfg(any(test, feature = "test-support"))]
@@ -28,6 +29,7 @@ use std::{
 
 /// TestPlatform implements the Platform trait for use in tests.
 pub(crate) struct TestPlatform {
+    pub(crate) platform_info: Cell<crate::PlatformInfo>,
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
 
@@ -55,6 +57,8 @@ pub(crate) struct TestPlatform {
         Option<Box<dyn Fn() -> anyhow::Result<Option<Box<dyn PlatformHeadlessRenderer>>>>>,
     weak: Weak<Self>,
     menus: RefCell<Vec<OwnedMenu>>,
+    pub(crate) app_lifecycle_callback: RefCell<Option<Box<dyn FnMut(AppLifecyclePhase)>>>,
+    pub(crate) memory_warning_callback: RefCell<Option<Box<dyn FnMut()>>>,
 }
 
 #[derive(Clone)]
@@ -201,6 +205,33 @@ impl TestPlatform {
         >,
     ) -> Rc<Self> {
         Rc::new_cyclic(|weak| TestPlatform {
+            platform_info: Cell::new(crate::PlatformInfo {
+                os: std::cfg_select! {
+                    target_os = "macos" => { crate::OperatingSystem::Mac }
+                    target_os = "windows" => { crate::OperatingSystem::Windows }
+                    target_os = "linux" => { crate::OperatingSystem::Linux }
+                    target_os = "freebsd" => { crate::OperatingSystem::FreeBsd }
+                    target_os = "ios" => { crate::OperatingSystem::Ios }
+                    target_os = "android" => { crate::OperatingSystem::Android }
+                    target_family = "wasm" => {
+                        // Browser tests must supply the host OS with set_platform_info.
+                        crate::OperatingSystem::Unknown
+                    }
+                    _ => { compile_error!("unsupported test platform operating system") }
+                },
+                target: std::cfg_select! {
+                    target_family = "wasm" => { crate::PlatformTarget::Web }
+                    any(
+                        target_os = "macos",
+                        target_os = "windows",
+                        target_os = "linux",
+                        target_os = "freebsd",
+                        target_os = "ios",
+                        target_os = "android"
+                    ) => { crate::PlatformTarget::Native }
+                    _ => { compile_error!("unsupported test platform target") }
+                },
+            }),
             background_executor: executor,
             foreground_executor,
             #[cfg(any(test, feature = "test-support"))]
@@ -225,6 +256,8 @@ impl TestPlatform {
             text_system,
             headless_renderer_factory,
             menus: Default::default(),
+            app_lifecycle_callback: Default::default(),
+            memory_warning_callback: Default::default(),
         })
     }
 
@@ -428,6 +461,10 @@ impl TestPlatform {
 }
 
 impl Platform for TestPlatform {
+    fn platform_info(&self) -> crate::PlatformInfo {
+        self.platform_info.get()
+    }
+
     fn background_executor(&self) -> BackgroundExecutor {
         self.background_executor.clone()
     }
@@ -656,6 +693,14 @@ impl Platform for TestPlatform {
     fn on_system_sleep(&self, _callback: Box<dyn FnMut()>) {}
 
     fn on_system_wake(&self, _callback: Box<dyn FnMut()>) {}
+
+    fn on_app_lifecycle(&self, callback: Box<dyn FnMut(AppLifecyclePhase)>) {
+        *self.app_lifecycle_callback.borrow_mut() = Some(callback);
+    }
+
+    fn on_memory_warning(&self, callback: Box<dyn FnMut()>) {
+        *self.memory_warning_callback.borrow_mut() = Some(callback);
+    }
 
     fn set_app_identity(&self, identifier: &str, name: &str) {
         self.system_notifications.borrow_mut().app_identity =

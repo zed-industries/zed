@@ -90,7 +90,7 @@ use task::Shell;
 use text::{Bias, BufferId, OffsetRangeExt, Rope, ToOffset};
 use util::{
     ResultExt, debug_panic,
-    paths::{PathStyle, SanitizedPath},
+    paths::{PathStyle, SanitizedPath, normalize_path},
     post_inc,
     rel_path::RelPath,
 };
@@ -4644,10 +4644,11 @@ impl GitStore {
             .iter()
             .map(|s| RepoPath::from_proto(s))
             .collect::<Result<Vec<_>>>()?;
+        let commit = Some(envelope.payload.commit.as_str()).filter(|commit| !commit.is_empty());
 
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
-                repository_handle.checkout_files(&envelope.payload.commit, paths, cx)
+                repository_handle.checkout_files(commit, paths, cx)
             })
             .await?;
         Ok(proto::Ack {})
@@ -6410,7 +6411,10 @@ impl RepositorySnapshot {
         abs_path: &Path,
         path_style: PathStyle,
     ) -> Option<RepoPath> {
-        let rel_path = path_style.strip_prefix(abs_path, work_directory_abs_path)?;
+        let rel_path = path_style
+            .strip_prefix(abs_path, work_directory_abs_path)
+            .ok()
+            .and_then(|path| RelPath::new(path, path_style).ok())?;
         Some(RepoPath::from_rel_path(&rel_path))
     }
 
@@ -7129,60 +7133,70 @@ impl Repository {
         })
     }
 
+    /// Restores `paths` in the working tree.
+    ///
+    /// With `Some(commit)`, the index and working tree are reset to that commit,
+    /// discarding staged and unstaged changes. With `None`, only the working tree
+    /// is restored from the index, so staged changes are kept.
     pub fn checkout_files(
         &mut self,
-        commit: &str,
+        commit: Option<&str>,
         paths: Vec<RepoPath>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let commit = commit.to_string();
+        let commit = commit.map(str::to_string);
         let id = self.id;
+        let (git_status, description) = match &commit {
+            Some(commit) => (
+                pending_op::GitStatus::Reverted,
+                format!("git checkout {commit}"),
+            ),
+            None => (
+                pending_op::GitStatus::RevertedUnstaged,
+                "git checkout".to_string(),
+            ),
+        };
 
-        self.spawn_job_with_tracking(
-            paths.clone(),
-            pending_op::GitStatus::Reverted,
-            cx,
-            async move |this, cx| {
-                this.update(cx, |this, _cx| {
-                    this.send_job(
-                        "checkout_files",
-                        Some(format!("git checkout {}", commit).into()),
-                        move |git_repo, _| async move {
-                            match git_repo {
-                                RepositoryState::Local(LocalRepositoryState {
-                                    backend,
-                                    environment,
-                                    ..
-                                }) => {
-                                    backend
-                                        .checkout_files(commit, paths, environment.clone())
-                                        .await
-                                }
-                                RepositoryState::Remote(RemoteRepositoryState {
-                                    project_id,
-                                    client,
-                                }) => {
-                                    client
-                                        .request(proto::GitCheckoutFiles {
-                                            project_id: project_id.0,
-                                            repository_id: id.to_proto(),
-                                            commit,
-                                            paths: paths
-                                                .into_iter()
-                                                .map(|p| p.as_unix_str().to_owned())
-                                                .collect(),
-                                        })
-                                        .await?;
-
-                                    Ok(())
-                                }
+        self.spawn_job_with_tracking(paths.clone(), git_status, cx, async move |this, cx| {
+            this.update(cx, |this, _cx| {
+                this.send_job(
+                    "checkout_files",
+                    Some(description.into()),
+                    move |git_repo, _| async move {
+                        match git_repo {
+                            RepositoryState::Local(LocalRepositoryState {
+                                backend,
+                                environment,
+                                ..
+                            }) => {
+                                backend
+                                    .checkout_files(commit, paths, environment.clone())
+                                    .await
                             }
-                        },
-                    )
-                })?
-                .await?
-            },
-        )
+                            RepositoryState::Remote(RemoteRepositoryState {
+                                project_id,
+                                client,
+                            }) => {
+                                client
+                                    .request(proto::GitCheckoutFiles {
+                                        project_id: project_id.0,
+                                        repository_id: id.to_proto(),
+                                        commit: commit.unwrap_or_default(),
+                                        paths: paths
+                                            .into_iter()
+                                            .map(|p| p.as_unix_str().to_owned())
+                                            .collect(),
+                                    })
+                                    .await?;
+
+                                Ok(())
+                            }
+                        }
+                    },
+                )
+            })?
+            .await?
+        })
     }
 
     pub fn reset(
@@ -10846,12 +10860,8 @@ pub fn worktrees_directory_for_repo(
 ) -> Result<PathBuf> {
     // Check the original setting before trimming, since a path like "///"
     // is absolute but becomes "" after stripping trailing separators.
-    // Also check for leading `/` or `\` explicitly, because on Windows
-    // `Path::is_absolute()` requires a drive letter — so `/tmp/worktrees`
-    // would slip through even though it's clearly not a relative path.
-    if path_style.is_absolute(worktree_directory_setting)
-        || worktree_directory_setting.starts_with('\\')
-    {
+    // Use `has_root` here because `/tmp/worktrees` is also not a relative path
+    if path_style.has_root(Path::new(worktree_directory_setting)) {
         anyhow::bail!(
             "git.worktree_directory must be a relative path, got: {worktree_directory_setting:?}"
         );
@@ -10870,7 +10880,7 @@ pub fn worktrees_directory_for_repo(
     let resolved = if path_style.is_posix() {
         joined
     } else {
-        path::normalize_path(&joined)
+        normalize_path(&joined)
     };
     let resolved = if path_style.starts_with(resolved.as_path(), repository_anchor_path) {
         resolved
@@ -11489,7 +11499,7 @@ mod tests {
     use git::repository::{RepoPath, repo_path};
     use gpui::proptest::prelude::*;
     use gpui::{TestAppContext, UpdateGlobal};
-    use rand::{SeedableRng, rngs::StdRng};
+    use rand::{Rng as _, SeedableRng, rngs::StdRng};
     use serde_json::json;
     use settings::SettingsStore;
     use std::path::{Path, PathBuf};

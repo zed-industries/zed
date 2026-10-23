@@ -526,6 +526,9 @@ pub struct MarkdownOptions {
     pub render_mermaid_diagrams: bool,
     pub parse_heading_slugs: bool,
     pub render_metadata_blocks: bool,
+    /// Defers parsing until the first [`MarkdownElement`] layout or [`Markdown::ensure_parsed`].
+    /// After parsing starts, source updates parse eagerly even when off-screen.
+    pub defer_parsing: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -662,6 +665,24 @@ impl Markdown {
             language_registry,
             fallback_code_block_language,
             MarkdownOptions::default(),
+            cx,
+        )
+    }
+
+    /// Creates Markdown with [`MarkdownOptions::defer_parsing`] enabled.
+    pub fn new_deferred(
+        source: impl Into<SharedString>,
+        language_registry: Option<Arc<LanguageRegistry>>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new_with_options(
+            source.into(),
+            language_registry,
+            None,
+            MarkdownOptions {
+                defer_parsing: true,
+                ..MarkdownOptions::default()
+            },
             cx,
         )
     }
@@ -950,7 +971,7 @@ impl Markdown {
     }
 
     pub fn scroll_to_heading_when_parsed(&mut self, slug: SharedString, cx: &mut Context<Self>) {
-        if self.pending_parse.is_some() || self.source.is_empty() {
+        if self.pending_parse.is_some() || self.options.defer_parsing || self.source.is_empty() {
             self.pending_heading_scroll = Some(slug);
         } else {
             self.scroll_to_heading(&slug, cx);
@@ -1004,7 +1025,7 @@ impl Markdown {
         source_index: usize,
         cx: &mut Context<Self>,
     ) {
-        if self.pending_parse.is_some() {
+        if self.pending_parse.is_some() || self.options.defer_parsing {
             self.pending_autoscroll = Some(source_index);
         } else {
             self.autoscroll_request = Some(source_index);
@@ -1036,7 +1057,7 @@ impl Markdown {
 
     pub fn reset(&mut self, source: SharedString, cx: &mut Context<Self>) {
         if &source == self.source() {
-            if self.pending_parse.is_none() {
+            if self.pending_parse.is_none() && !self.options.defer_parsing {
                 if let Some(slug) = self.pending_heading_scroll.take() {
                     self.pending_autoscroll = None;
                     self.scroll_to_heading(&slug, cx);
@@ -1201,7 +1222,26 @@ impl Markdown {
         self.context_menu_selected_markdown.as_ref()
     }
 
+    /// Starts parsing if still deferred; does not wait for completion.
+    /// Called automatically by [`MarkdownElement`] during layout.
+    pub fn ensure_parsed(&mut self, cx: &mut Context<Self>) {
+        if self.options.defer_parsing {
+            self.options.defer_parsing = false;
+            self.parse(cx);
+        }
+    }
+
+    /// Returns whether Markdown parsing or Mermaid rendering is in progress.
+    /// Unstarted deferred parsing does not count as pending.
+    pub fn has_pending_render(&self) -> bool {
+        self.pending_parse.is_some() || self.mermaid_state.has_pending_render()
+    }
+
     fn parse(&mut self, cx: &mut Context<Self>) {
+        if self.options.defer_parsing {
+            return;
+        }
+
         if self.source.is_empty() {
             self.should_reparse = false;
             self.pending_parse.take();
@@ -1502,7 +1542,10 @@ pub struct ParsedMarkdown {
     pub(crate) code_block_highlights: Arc<CodeBlockHighlights>,
 }
 
-pub(crate) type CodeBlockHighlights = HashMap<usize, ResolvedHighlights>;
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct MarkdownEventIndex(usize);
+
+pub(crate) type CodeBlockHighlights = HashMap<MarkdownEventIndex, ResolvedHighlights>;
 
 impl ParsedMarkdown {
     pub fn source(&self) -> &SharedString {
@@ -1626,13 +1669,14 @@ impl ParsedMarkdown {
 
 struct PendingCodeBlock<'a> {
     language: Arc<Language>,
-    texts: Vec<(Range<usize>, &'a str)>,
+    texts: Vec<(MarkdownEventIndex, &'a str)>,
 }
 
 fn compute_code_block_highlights(parsed: &ParsedMarkdown) -> CodeBlockHighlights {
     let mut code_block_highlights = CodeBlockHighlights::default();
     let mut pending_block: Option<PendingCodeBlock> = None;
-    for (range, event) in parsed.events.iter() {
+    for (event_index, (range, event)) in parsed.events.iter().enumerate() {
+        let event_index = MarkdownEventIndex(event_index);
         match event {
             MarkdownEvent::Start(MarkdownTag::CodeBlock { kind, .. }) => {
                 if parsed.mermaid_diagrams.contains_key(&range.start) {
@@ -1655,12 +1699,12 @@ fn compute_code_block_highlights(parsed: &ParsedMarkdown) -> CodeBlockHighlights
                 if let Some(block) = &mut pending_block {
                     block
                         .texts
-                        .push((range.clone(), &parsed.source[range.clone()]));
+                        .push((event_index, &parsed.source[range.clone()]));
                 }
             }
             MarkdownEvent::SubstitutedText(text) => {
                 if let Some(block) = &mut pending_block {
-                    block.texts.push((range.clone(), text.as_str()));
+                    block.texts.push((event_index, text.as_str()));
                 }
             }
             _ => {}
@@ -1670,6 +1714,13 @@ fn compute_code_block_highlights(parsed: &ParsedMarkdown) -> CodeBlockHighlights
 }
 
 fn highlight_code_block(block: PendingCodeBlock, code_block_highlights: &mut CodeBlockHighlights) {
+    if let [(event_index, text)] = block.texts.as_slice() {
+        let resolved = block.language.highlight_text_resolved(*text, 0..text.len());
+        if !resolved.runs.is_empty() {
+            code_block_highlights.insert(*event_index, resolved);
+        }
+        return;
+    }
     let mut combined = String::new();
     let mut text_offsets = Vec::with_capacity(block.texts.len());
     for (_, text) in &block.texts {
@@ -1678,16 +1729,12 @@ fn highlight_code_block(block: PendingCodeBlock, code_block_highlights: &mut Cod
     }
     let resolved = block
         .language
-        .highlight_text_resolved(&Rope::from(combined.as_str()), 0..combined.len());
+        .highlight_text_resolved(combined.as_str(), 0..combined.len());
     if resolved.runs.is_empty() {
         return;
     }
-    if let [(source_range, _)] = block.texts.as_slice() {
-        code_block_highlights.insert(source_range.start, resolved);
-        return;
-    }
     let mut runs = resolved.runs.iter().peekable();
-    for ((source_range, text), text_offset) in block.texts.iter().zip(text_offsets) {
+    for ((event_index, text), text_offset) in block.texts.iter().zip(text_offsets) {
         let text_end = text_offset + text.len();
         let mut text_runs = Vec::new();
         while let Some((run_range, highlight_id)) = runs.peek() {
@@ -1706,7 +1753,7 @@ fn highlight_code_block(block: PendingCodeBlock, code_block_highlights: &mut Cod
         }
         if !text_runs.is_empty() {
             code_block_highlights.insert(
-                source_range.start,
+                *event_index,
                 ResolvedHighlights {
                     sources: resolved.sources.clone(),
                     runs: text_runs.into(),
@@ -2262,8 +2309,7 @@ impl MarkdownElement {
             range,
             markdown_end,
         );
-        // Without `w_0`, text doesn't wrap to the width of the container.
-        builder.push_div(div().flex_1().w_0(), range, markdown_end);
+        builder.push_div(div().flex_1().min_w_0(), range, markdown_end);
     }
 
     fn pop_markdown_list_item(&self, builder: &mut MarkdownElementBuilder) {
@@ -2509,9 +2555,14 @@ impl MarkdownElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<()> {
-        let autoscroll_index = self
-            .markdown
-            .update(cx, |markdown, _| markdown.autoscroll_request.take())?;
+        let autoscroll_index = self.markdown.update(cx, |markdown, _| {
+            let source_index = markdown.autoscroll_request?;
+            if markdown.has_pending_render() {
+                return None;
+            }
+            markdown.autoscroll_request = None;
+            Some(source_index)
+        })?;
         let (position, line_height) = rendered_text.position_for_source_index(autoscroll_index)?;
 
         match &self.autoscroll {
@@ -2592,6 +2643,9 @@ impl Element for MarkdownElement {
         window: &mut Window,
         cx: &mut App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
+        self.markdown
+            .update(cx, |markdown, cx| markdown.ensure_parsed(cx));
+
         let highlights = {
             let markdown = self.markdown.read(cx);
             let colors = cx.theme().colors();
@@ -2626,7 +2680,6 @@ impl Element for MarkdownElement {
             self.style.base_text_style.clone(),
             self.style.syntax.clone(),
             highlights,
-            parsed_markdown.code_block_highlights.clone(),
         );
         let markdown_end = if let Some(last) = parsed_markdown.events.last() {
             last.0.end
@@ -2641,6 +2694,7 @@ impl Element for MarkdownElement {
         let mut rendered_mermaid_block = false;
         let mut rendered_metadata_block = false;
         for (index, (range, event)) in parsed_markdown.events.iter().enumerate() {
+            let event_index = MarkdownEventIndex(index);
             // Skip alt text for images that rendered
             if let Some(current_img_block_range) = &current_img_block_range
                 && current_img_block_range.end > range.end
@@ -3262,13 +3316,21 @@ impl Element for MarkdownElement {
                     if let Some(current_code_block_text) = &mut current_code_block_text {
                         current_code_block_text.push_str(text);
                     }
-                    builder.push_text(text, range.clone());
+                    builder.push_highlighted_text(
+                        text,
+                        range.clone(),
+                        parsed_markdown.code_block_highlights.get(&event_index),
+                    );
                 }
                 MarkdownEvent::SubstitutedText(text) => {
                     if let Some(current_code_block_text) = &mut current_code_block_text {
                         current_code_block_text.push_str(text);
                     }
-                    builder.push_text(text, range.clone());
+                    builder.push_highlighted_text(
+                        text,
+                        range.clone(),
+                        parsed_markdown.code_block_highlights.get(&event_index),
+                    );
                 }
                 MarkdownEvent::Code => {
                     self.push_markdown_code_span(
@@ -3764,7 +3826,6 @@ struct MarkdownElementBuilder {
     base_text_style: TextStyle,
     text_style_stack: Vec<TextStyleRefinement>,
     code_block_stack: Vec<Option<Arc<Language>>>,
-    code_block_highlights: Arc<CodeBlockHighlights>,
     link_depth: usize,
     list_stack: Vec<ListStackEntry>,
     table: TableState,
@@ -3866,7 +3927,6 @@ impl MarkdownElementBuilder {
         base_text_style: TextStyle,
         syntax_theme: Arc<SyntaxTheme>,
         highlights: MarkdownHighlights,
-        code_block_highlights: Arc<CodeBlockHighlights>,
     ) -> Self {
         Self {
             div_stack: vec![{
@@ -3885,7 +3945,6 @@ impl MarkdownElementBuilder {
             base_text_style,
             text_style_stack: Vec::new(),
             code_block_stack: Vec::new(),
-            code_block_highlights,
             link_depth: 0,
             list_stack: Vec::new(),
             table: TableState::default(),
@@ -4135,6 +4194,15 @@ impl MarkdownElementBuilder {
     }
 
     fn push_text(&mut self, text: &str, source_range: Range<usize>) {
+        self.push_highlighted_text(text, source_range, None);
+    }
+
+    fn push_highlighted_text(
+        &mut self,
+        text: &str,
+        source_range: Range<usize>,
+        highlights: Option<&ResolvedHighlights>,
+    ) {
         self.pending_line.source_mappings.push(SourceMapping {
             rendered_index: self.pending_line.text.len(),
             source_index: source_range.start,
@@ -4146,14 +4214,12 @@ impl MarkdownElementBuilder {
         let text_style = self.text_style();
 
         if let Some(language) = self.code_block_stack.last().and_then(Option::as_ref)
-            && let Some(resolved) = self.code_block_highlights.get(&source_range.start)
+            && let Some(resolved) = highlights
         {
             let runs = if resolved.is_current() {
                 resolved.runs.clone()
             } else {
-                language
-                    .highlight_text_resolved(&Rope::from(text), 0..text.len())
-                    .runs
+                language.highlight_text_resolved(text, 0..text.len()).runs
             };
             let mut offset = 0;
             for (run_range, highlight_id) in runs.iter() {
@@ -5216,7 +5282,7 @@ mod tests {
     use gpui::{
         Background, DevicePixels, Font, FontId, FontMetrics, FontRun, GlyphId, LineLayout,
         Modifiers, NoopTextSystem, PlatformTextSystem, RenderGlyphParams, RenderImage, ScrollDelta,
-        ScrollWheelEvent, Size, TestAppContext, TestDispatcher, TextRenderingMode, TouchPhase,
+        ScrollEvent, Size, TestAppContext, TestDispatcher, TextRenderingMode, TouchPhase,
         UpdateGlobal, VisualTestContext, size,
     };
     use language::{Language, LanguageConfig, LanguageMatcher};
@@ -5226,6 +5292,65 @@ mod tests {
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     };
+
+    #[gpui::test]
+    fn test_deferred_parsing_preserves_updates_and_autoscroll(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let cx = cx.add_empty_window();
+
+        for (initial_source, parse_on_layout) in [("", false), ("obsolete", true)] {
+            let markdown = cx.new(|cx| Markdown::new_deferred(initial_source, None, cx));
+            markdown.update(cx, |markdown, cx| {
+                markdown.append("discarded", cx);
+                markdown.reset(SharedString::default(), cx);
+                markdown.append("héllo **world**", cx);
+                markdown.request_autoscroll_to_source_index(9, cx);
+                markdown.reset(markdown.source().clone(), cx);
+            });
+            cx.run_until_parked();
+            markdown.read_with(cx, |markdown, _| {
+                assert!(markdown.options.defer_parsing);
+                assert!(!markdown.has_pending_render());
+                assert!(markdown.parsed_markdown.events.is_empty());
+                assert_eq!(markdown.pending_autoscroll, Some(9));
+                assert_eq!(markdown.autoscroll_request, None);
+            });
+
+            if parse_on_layout {
+                cx.draw(Point::default(), size(px(600.0), px(600.0)), |_, _| {
+                    MarkdownElement::new(markdown.clone(), MarkdownStyle::default())
+                });
+            } else {
+                markdown.update(cx, |markdown, cx| markdown.ensure_parsed(cx));
+            }
+            markdown.update(cx, |markdown, cx| {
+                assert!(!markdown.options.defer_parsing);
+                markdown.ensure_parsed(cx);
+                assert!(markdown.has_pending_render());
+                assert!(!markdown.should_reparse);
+            });
+            cx.run_until_parked();
+            markdown.update(cx, |markdown, cx| {
+                assert!(!markdown.options.defer_parsing);
+                assert!(!markdown.has_pending_render());
+                assert_eq!(markdown.parsed_markdown.source.as_ref(), "héllo **world**");
+                assert_eq!(
+                    markdown
+                        .parsed_markdown
+                        .events
+                        .iter()
+                        .filter(|(_, event)| *event == MarkdownEvent::Text)
+                        .map(|(range, _)| range.clone())
+                        .collect::<Vec<_>>(),
+                    vec![0..7, 9..14]
+                );
+                assert_eq!(markdown.pending_autoscroll, None);
+                assert_eq!(markdown.autoscroll_request, Some(9));
+                markdown.ensure_parsed(cx);
+                assert!(!markdown.has_pending_render());
+            });
+        }
+    }
 
     #[gpui::test]
     fn test_code_block_controls_are_unique_across_markdown_entities(cx: &mut TestAppContext) {
@@ -5460,11 +5585,12 @@ mod tests {
             Some(visible_character_index),
         );
 
-        cx.simulate_event(ScrollWheelEvent {
+        cx.simulate_event(ScrollEvent {
             position: visible_position,
             delta: ScrollDelta::Pixels(point(px(-400.), px(0.))),
             modifiers: Modifiers::default(),
             touch_phase: TouchPhase::Moved,
+            source: gpui::ScrollSource::Pointer,
         });
         cx.run_until_parked();
         let rendered = rendered_text
@@ -5626,7 +5752,9 @@ mod tests {
         let code_text = "fn main() {}\n";
         let code_start = source.find(code_text).unwrap();
         let cached = cached_code_block_highlights(&markdown, code_start, cx);
-        let expected = language.highlight_text(&Rope::from(code_text), 0..code_text.len());
+        let expected = language
+            .highlight_text(&Rope::from(code_text), 0..code_text.len())
+            .collect::<Vec<_>>();
         assert_eq!(
             cached.runs.to_vec(),
             expected,
@@ -5641,6 +5769,45 @@ mod tests {
             !stale.is_current(),
             "a theme change must make parse-time highlights stale so rendering re-resolves them"
         );
+    }
+
+    #[gpui::test]
+    fn test_code_block_highlights_with_partial_tabs(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+
+        for (source, expected) in [
+            (" ```rust\n\tfn main() {}\n ```\n", "   fn main() {}"),
+            ("  ```rust\n\tfn café() {}\n  ```\n", "  fn café() {}"),
+            ("   ```rust\r\n\tfn 界() {}\r\n   ```\r\n", " fn 界() {}"),
+            ("- ```rust\n\tfn main() {}\n  ```\n", "  fn main() {}"),
+            (" ```rust\n\tfn main() {}", "   fn main() {}"),
+        ] {
+            let (language, markdown) = markdown_with_rust_language(source, cx);
+            for stale in [false, true] {
+                if stale {
+                    language.set_theme(&rust_test_theme());
+                }
+                let rendered = render_markdown_entity_in_view(
+                    markdown.clone(),
+                    MarkdownStyle {
+                        syntax: Arc::new(rust_test_theme()),
+                        ..MarkdownStyle::default()
+                    },
+                    None,
+                    None,
+                    cx,
+                );
+                assert_eq!(
+                    rendered
+                        .lines
+                        .iter()
+                        .map(|line| line.layout.text())
+                        .collect::<Vec<_>>(),
+                    vec![expected.to_owned()],
+                    "source: {source:?}, stale: {stale}"
+                );
+            }
+        }
     }
 
     #[gpui::test]
@@ -5794,14 +5961,11 @@ mod tests {
                 .as_ref()
                 .expect("the fallback language must be resolved for untagged code blocks");
             assert_eq!(fallback.name(), language.name());
-
-            let code_start = source.find("fn main").unwrap();
-            let cached = parsed
-                .code_block_highlights
-                .get(&code_start)
-                .expect("untagged code blocks must be highlighted with the fallback language");
-            assert!(!cached.runs.is_empty());
         });
+
+        let code_start = source.find("fn main").unwrap();
+        let cached = cached_code_block_highlights(&markdown, code_start, cx);
+        assert!(!cached.runs.is_empty());
     }
 
     #[gpui::test]
@@ -7825,11 +7989,12 @@ mod tests {
             (event_position, right_cell_bounds)
         };
 
-        cx.simulate_event(ScrollWheelEvent {
+        cx.simulate_event(ScrollEvent {
             position: event_position,
             delta: ScrollDelta::Pixels(point(px(-100.), px(0.))),
             modifiers: Modifiers::default(),
             touch_phase: TouchPhase::Moved,
+            source: gpui::ScrollSource::Pointer,
         });
         cx.run_until_parked();
 
@@ -7921,11 +8086,12 @@ mod tests {
         assert_eq!(visible_bounds.left(), quad_bounds.left());
         let event_position = visible_bounds.center();
 
-        cx.simulate_event(ScrollWheelEvent {
+        cx.simulate_event(ScrollEvent {
             position: event_position,
             delta: ScrollDelta::Pixels(point(px(-100.), px(0.))),
             modifiers: Modifiers::default(),
             touch_phase: TouchPhase::Moved,
+            source: gpui::ScrollSource::Pointer,
         });
         cx.run_until_parked();
 
@@ -9055,10 +9221,22 @@ mod tests {
         cx: &mut TestAppContext,
     ) -> ResolvedHighlights {
         markdown.read_with(cx, |markdown, _| {
-            markdown
-                .parsed_markdown()
+            let parsed = markdown.parsed_markdown();
+            let event_index = parsed
+                .events
+                .iter()
+                .position(|(range, event)| {
+                    range.start == code_start
+                        && matches!(
+                            event,
+                            MarkdownEvent::Text | MarkdownEvent::SubstitutedText(_)
+                        )
+                })
+                .map(MarkdownEventIndex)
+                .expect("code block text event must exist");
+            parsed
                 .code_block_highlights
-                .get(&code_start)
+                .get(&event_index)
                 .expect("code block highlights must be computed during parse")
                 .clone()
         })

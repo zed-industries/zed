@@ -1655,12 +1655,17 @@ impl EditPredictionStore {
                                 }
                             }
                         }),
-                        cx.observe_release(buffer, move |this, _buffer, _cx| {
-                            let Some(project_state) = this.projects.get_mut(&project_entity_id)
+                        cx.observe_release(buffer, move |ep_store, buffer, cx| {
+                            let Some(project_state) = ep_store.projects.get_mut(&project_entity_id)
                             else {
                                 return;
                             };
                             project_state.registered_buffers.remove(&buffer_id);
+                            if project_state.last_event.as_ref().is_some_and(|event| {
+                                event.new_snapshot.remote_id() == buffer.remote_id()
+                            }) {
+                                project_state.finalize_last_event(cx);
+                            }
                         }),
                     ],
                 })
@@ -1994,6 +1999,7 @@ impl EditPredictionStore {
                 for project_state in this.projects.values_mut() {
                     let ProjectState {
                         last_event,
+                        next_last_event_seq,
                         registered_buffers,
                         license_detection_watchers,
                         pending_prediction_captures,
@@ -2048,6 +2054,15 @@ impl EditPredictionStore {
                                     license_detection_watchers,
                                     cx,
                                 );
+                            } else if pending_capture
+                                .sample_data
+                                .as_ref()
+                                .and_then(|sample| sample.prompt_history_boundary.as_ref())
+                                .is_some_and(|boundary| {
+                                    boundary.first_event_seq != *next_last_event_seq
+                                })
+                            {
+                                pending_capture.sample_data = None;
                             }
                             ready_predictions.push((pending_capture, settled_editable_region));
                             continue;
@@ -2781,6 +2796,16 @@ impl EditPredictionStore {
             return Task::ready(Ok(None));
         }
 
+        // Cloud rejects these requests too; skipping them avoids futile round trips.
+        if is_cloud_zeta
+            && self
+                .user_store
+                .read(cx)
+                .current_organization_has_no_active_subscription()
+        {
+            return Task::ready(Ok(None));
+        }
+
         if is_cloud_zeta && self.request_backoff_active(cx) {
             log::debug!(
                 "Skipping Zeta edit prediction request while backing off after Cloud timeout"
@@ -3331,10 +3356,14 @@ impl EditPredictionStore {
                 .edit_preview
                 .as_unified_diff(prediction.snapshot.file(), &prediction.edits);
             async move {
+                let organization_id = organization
+                    .map(|organization| organization.id.clone())
+                    .context("no organization selected")?;
+
                 client
                     .cloud_client()
                     .submit_edit_prediction_feedback(SubmitEditPredictionFeedbackBody {
-                        organization_id: organization.map(|organization| organization.id.clone()),
+                        organization_id,
                         request_id: prediction_id,
                         rating: match rating {
                             EditPredictionRating::Positive => "positive".to_string(),

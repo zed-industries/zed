@@ -414,7 +414,7 @@ impl Render for BufferSearchBar {
                 .child(replace_actions)
         });
 
-        let mut key_context = KeyContext::new_with_defaults();
+        let mut key_context = KeyContext::new_with_defaults(cx.platform_info().os);
         key_context.add("BufferSearchBar");
         if in_replace {
             key_context.add("in_replace");

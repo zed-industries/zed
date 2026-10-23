@@ -6,7 +6,7 @@ use super::tool_permissions::resolve_creatable_global_skill_path;
 use crate::{Thread, ToolCallEventStream};
 use acp_thread::Diff;
 use action_log::ActionLog;
-use agent_client_protocol::schema::v1::{self as acp, ToolCallLocation, ToolCallUpdateFields};
+use agent_client_protocol::schema::v2 as acp;
 use anyhow::Result;
 use collections::HashSet;
 use futures::{FutureExt, channel::oneshot};
@@ -248,13 +248,12 @@ impl EditSessionContext {
                 new_text,
                 ..
             } => {
-                event_stream.update_diff(cx.new(|cx| {
+                event_stream.update_diff(cx.new(|_| {
                     Diff::finalized(
                         input_path.to_string_lossy().into_owned(),
                         Some(old_text.to_string()),
                         new_text,
                         self.language_registry.clone(),
-                        cx,
                     )
                 }));
                 Ok(())
@@ -301,9 +300,7 @@ pub(crate) async fn run_session(
                 .await;
             let (_new_text, diff) = session.compute_new_text_and_diff(cx).await;
             if diff.is_empty() {
-                event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
-                    acp::ToolCallContent::Content(acp::Content::new(error.clone())),
-                ]));
+                event_stream.update_fields(|update| update.content(vec![error.clone().into()]));
             }
             Err(EditSessionOutput::Error {
                 error,
@@ -315,9 +312,7 @@ pub(crate) async fn run_session(
             error,
             session: None,
         } => {
-            event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
-                acp::ToolCallContent::Content(acp::Content::new(error.clone())),
-            ]));
+            event_stream.update_fields(|update| update.content(vec![error.clone().into()]));
             Err(EditSessionOutput::Error {
                 error,
                 input_path: None,
@@ -532,10 +527,9 @@ impl EditPipeline {
                 let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
 
                 let line = snapshot.offset_to_point(range.start).row;
-                event_stream.update_fields(
-                    ToolCallUpdateFields::new()
-                        .locations(vec![ToolCallLocation::new(abs_path).line(Some(line))]),
-                );
+                event_stream.update_fields(|update| {
+                    update.locations(vec![acp::ToolCallLocation::new(abs_path).line(Some(line))])
+                });
 
                 let buffer_indent = snapshot.line_indent_for_row(line);
                 let query_lines = matcher.query_lines();
@@ -721,9 +715,9 @@ impl EditSession {
             project_path,
         } = target;
 
-        event_stream.update_fields(
-            ToolCallUpdateFields::new().locations(vec![ToolCallLocation::new(abs_path.clone())]),
-        );
+        event_stream.update_fields(|update| {
+            update.locations(vec![acp::ToolCallLocation::new(abs_path.clone())])
+        });
 
         cx.update(|cx| context.authorize(tool_name, &path, event_stream, cx))
             .await
@@ -1154,9 +1148,7 @@ async fn resolve_dirty_buffer(
              was cancelled. Ask the user how they'd like to proceed before \
              retrying."
                 .to_string();
-            event_stream.update_fields(
-                acp::ToolCallUpdateFields::new().content(vec![error.clone().into()]),
-            );
+            event_stream.update_fields(|update| update.content(vec![error.clone().into()]));
             return Err(error);
         }
     }

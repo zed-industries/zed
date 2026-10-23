@@ -1476,7 +1476,7 @@ impl Editor {
                                     let allow_new_preview = preview_tabs_settings
                                         .enable_preview_file_from_code_navigation;
 
-                                    let editor = workspace.open_project_item(
+                                    let editor: Entity<Self> = workspace.open_project_item(
                                         None,
                                         target_buffer.clone(),
                                         true,
@@ -1700,6 +1700,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(buffer_id) = position.buffer_id() {
+            self.unfold_buffer(buffer_id, cx);
+        }
+        self.unfold_ranges(&[position..position], false, false, cx);
         let snapshot = self.snapshot(window, cx).display_snapshot;
         let position = position.to_point(&snapshot.buffer_snapshot());
         let start = snapshot
@@ -1938,7 +1942,8 @@ impl Editor {
                                 editor.cursor_top_offset(cx),
                                 cx,
                             ))
-                            .record_navigation(RecordNavigation::Always),
+                            .record_navigation(RecordNavigation::Always)
+                            .unfold(),
                             window,
                             cx,
                             |s| s.select_anchor_ranges(target_ranges),
@@ -2030,7 +2035,8 @@ impl Editor {
                                         } else {
                                             RecordNavigation::Always
                                         },
-                                    ),
+                                    )
+                                    .unfold(),
                                     window,
                                     cx,
                                     |s| s.select_anchor_ranges(target_ranges),
@@ -2151,7 +2157,7 @@ impl Editor {
                 editor
                     .update(acx, |editor, ecx| {
                         editor.change_selections(
-                            SelectionEffects::scroll(Autoscroll::newest()),
+                            SelectionEffects::scroll(Autoscroll::newest()).unfold(),
                             window,
                             ecx,
                             |s| s.select_ranges(selection),
@@ -2284,7 +2290,7 @@ impl Editor {
             MultibufferSelectionMode::First => {
                 if let Some(first_range) = ranges.first() {
                     editor.change_selections(
-                        SelectionEffects::no_scroll(),
+                        SelectionEffects::no_scroll().unfold(),
                         window,
                         cx,
                         |selections| {
@@ -2301,10 +2307,15 @@ impl Editor {
                 );
             }
             MultibufferSelectionMode::All => {
-                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
-                    selections.clear_disjoint();
-                    selections.select_anchor_ranges(ranges);
-                });
+                editor.change_selections(
+                    SelectionEffects::no_scroll().unfold(),
+                    window,
+                    cx,
+                    |selections| {
+                        selections.clear_disjoint();
+                        selections.select_anchor_ranges(ranges);
+                    },
+                );
             }
         });
 
@@ -2501,7 +2512,8 @@ impl Editor {
                 self.cursor_top_offset(cx),
                 cx,
             ))
-            .record_navigation(record_navigation),
+            .record_navigation(record_navigation)
+            .unfold(),
             window,
             cx,
             |s| s.select_anchor_ranges([start..end]),
@@ -2608,6 +2620,7 @@ impl NavigableItem for Editor {
         } else {
             buffer.clip_point(data.cursor_position, Bias::Left)
         };
+        let destination_anchor = buffer.anchor_before(offset);
 
         let mut scroll_anchor = data.scroll_anchor;
         if !buffer.can_resolve(&scroll_anchor.anchor) {
@@ -2617,12 +2630,25 @@ impl NavigableItem for Editor {
 
         drop(buffer);
 
-        if newest_selection.head() == offset {
+        let was_folded = |cx: &mut Context<Self>| {
+            self.display_snapshot(cx)
+                .folds_in_range(offset..offset)
+                .next()
+                .is_some()
+        };
+        let buffer_was_folded = |cx: &Context<Self>| {
+            destination_anchor
+                .buffer_id()
+                .is_some_and(|buffer_id| self.is_buffer_folded(buffer_id, cx))
+        };
+        if newest_selection.head() == offset && !was_folded(cx) && !buffer_was_folded(cx) {
             false
         } else {
             self.set_scroll_anchor(scroll_anchor, window, cx);
             self.change_selections(
-                SelectionEffects::default().record_navigation(RecordNavigation::Never),
+                SelectionEffects::default()
+                    .record_navigation(RecordNavigation::Never)
+                    .unfold(),
                 window,
                 cx,
                 |s| s.select_ranges([offset..offset]),

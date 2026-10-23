@@ -3427,7 +3427,7 @@ The following settings can be overridden for each specific language:
 - [`soft_wrap`](#soft-wrap)
 - [`soft_wrap_indent`](#soft-wrap-indent)
 - [`tab_size`](#tab-size)
-- [`use_autoclose`](#use-autoclose)
+- [`use_autoclose`](#auto-close)
 - [`always_treat_brackets_as_autoclosed`](#always-treat-brackets-as-autoclosed)
 
 These values take in the same options as the root-level settings with the same name.
@@ -3563,6 +3563,16 @@ Positive `integer` values or `null` for unlimited tabs
 
 `boolean` values
 
+## Modeline Lines
+
+- Description: Number of lines to search for [modelines](../modelines.md) at the beginning and end of files
+- Setting: `modeline_lines`
+- Default: `5`
+
+**Options**
+
+Positive `integer` values, or `0` to disable modeline parsing
+
 ## Multi Cursor Modifier
 
 - Description: Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it does not conflict with the multicursor modifier.
@@ -3680,6 +3690,8 @@ If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` en
 - Setting: `on_new_window`
 - Default: `"launchpad"`
 
+In the Settings Editor, search for `On New Window` and choose an option.
+
 **Options**
 
 1. Show an empty untitled buffer:
@@ -3697,6 +3709,29 @@ If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` en
   "on_new_window": "launchpad"
 }
 ```
+
+3. Open a README when a new or reopened project has no open items:
+
+In the Settings Editor, set `On New Window` to `Readme`.
+
+Or add this to your settings.json:
+
+```json [settings]
+{
+  "on_new_window": "readme"
+}
+```
+
+Zed opens one README from the first project root with a match.
+Zed checks `README.md`, `readme.md`, `Readme.md`, `README`, `readme`, `Readme`, `README.txt`, `readme.txt`, and `Readme.txt`, in that order.
+These are direct root-level file checks, not a directory scan.
+Other spellings do not match, even on case-insensitive filesystems.
+File-index exclusions do not affect README discovery.
+Adding a folder to an already open project does not open a README.
+Files passed when opening the project and restored tabs take precedence.
+The README opens in a temporary [preview tab](#preview-tabs) when `preview_tabs.enabled` is `true`, or a regular tab otherwise.
+Zed uses your existing file opener settings, without forcing a rendered Markdown preview.
+If no matching README exists, Zed leaves the project's pane empty.
 
 ## Instrumentation
 
@@ -6014,6 +6049,16 @@ Available variables:
 }
 ```
 
+5. Files are grouped by their last extension (case-insensitive) in ascending order, with extensionless files, including dotfiles such as `.gitignore`, first. Dotfiles with a further suffix, such as `.config.json`, keep that extension. Files with the same extension are sorted by name using natural sort, and directories are placed according to `sort_mode`.
+
+```json [settings]
+{
+  "project_panel": {
+    "sort_order": "extension"
+  }
+}
+```
+
 ### Auto Open
 
 - Description: Control whether files are opened automatically after different creation flows in the project panel.
@@ -6051,6 +6096,11 @@ Visit [AI Quick Start](../ai/quick-start.md) under the AI section to learn more 
 **Options**
 
 `boolean` values
+
+### Subagent Model {#agent-subagent-model}
+
+- Description: The model, reasoning, and speed settings for new Zed Agent subagents. This setting does not configure external agents. See [Subagent Models](../ai/agent-settings.md#subagent-models).
+- Setting: `agent.subagent_model`
 
 ## Collaboration Panel
 
