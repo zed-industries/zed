@@ -359,6 +359,7 @@ pub enum MessageKind {
     User,
     Assistant,
     Thought,
+    Session,
 }
 
 #[derive(Debug)]
@@ -383,6 +384,32 @@ impl UserMessage {
         writeln!(markdown, "{}", self.content.to_markdown(cx)).unwrap();
         writeln!(markdown).unwrap();
         markdown
+    }
+}
+
+/// A message between this session and another, such as a parent and its subagent. The
+/// session that sent it is the outgoing view; the session that received it is the incoming
+/// view. Either participant may be unknown.
+#[derive(Debug)]
+pub struct SessionMessage {
+    pub identity: MessageIdentity,
+    pub sender_session_id: Option<acp_v2::SessionId>,
+    pub recipient_session_id: Option<acp_v2::SessionId>,
+    pub meta: Option<acp_v2::Meta>,
+    pub content: MessageContent,
+}
+
+impl SessionMessage {
+    fn to_markdown(&self, cx: &App) -> String {
+        let heading = match (&self.sender_session_id, &self.recipient_session_id) {
+            (Some(sender), Some(recipient)) => {
+                format!("## Message from `{sender}` to `{recipient}`")
+            }
+            (Some(sender), None) => format!("## Message from `{sender}`"),
+            (None, Some(recipient)) => format!("## Message to `{recipient}`"),
+            (None, None) => "## Session message".to_string(),
+        };
+        format!("{heading}\n\n{}\n\n", self.content.to_markdown(cx))
     }
 }
 
@@ -475,12 +502,17 @@ enum MessageLocation {
         entry_index: usize,
         chunk_index: usize,
     },
+    Session {
+        entry_index: usize,
+    },
 }
 
 impl MessageLocation {
     fn entry_index(self) -> usize {
         match self {
-            Self::User { entry_index } | Self::Assistant { entry_index, .. } => entry_index,
+            Self::User { entry_index }
+            | Self::Assistant { entry_index, .. }
+            | Self::Session { entry_index } => entry_index,
         }
     }
 
@@ -497,6 +529,9 @@ impl MessageLocation {
                     AssistantMessageChunk::Message { block, meta, .. }
                     | AssistantMessageChunk::Thought { block, meta, .. } => Some((block, meta)),
                 }
+            }
+            (Self::Session { .. }, AgentThreadEntry::SessionMessage(message)) => {
+                Some((&mut message.content, &mut message.meta))
             }
             _ => None,
         }
@@ -515,6 +550,7 @@ impl MessageLocation {
 pub enum AgentThreadEntry {
     UserMessage(UserMessage),
     AssistantMessage(AssistantMessage),
+    SessionMessage(SessionMessage),
     ToolCall(ToolCall),
     Elicitation(ElicitationEntryId),
     ContextCompaction(ContextCompaction),
@@ -978,6 +1014,7 @@ impl AgentThreadEntry {
         match self {
             Self::UserMessage(message) => message.indented,
             Self::AssistantMessage(message) => message.indented,
+            Self::SessionMessage(_) => false,
             Self::ToolCall(_) => false,
             Self::Elicitation(_) => false,
             Self::ContextCompaction(_) => false,
@@ -994,6 +1031,7 @@ impl AgentThreadEntry {
                 | AssistantMessageChunk::Thought { block, .. }) = chunk;
                 block.markdowns().any(has_pending_render)
             }),
+            Self::SessionMessage(message) => message.content.markdowns().any(has_pending_render),
             Self::ToolCall(call) => {
                 has_pending_render(&call.label)
                     || call
@@ -1018,6 +1056,7 @@ impl AgentThreadEntry {
         match self {
             Self::UserMessage(message) => message.to_markdown(cx),
             Self::AssistantMessage(message) => message.to_markdown(cx),
+            Self::SessionMessage(message) => message.to_markdown(cx),
             Self::ToolCall(tool_call) => tool_call.to_markdown(cx),
             Self::Elicitation(_) => "## Input Requested\n\n".to_string(),
             Self::ContextCompaction(compaction) => {
@@ -4253,6 +4292,7 @@ impl AcpThread {
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::Elicitation(_)
                 | AgentThreadEntry::AssistantMessage(_)
+                | AgentThreadEntry::SessionMessage(_)
                 | AgentThreadEntry::ContextCompaction(_) => {}
             }
         }
@@ -4618,6 +4658,7 @@ impl AcpThread {
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::Elicitation(_)
                 | AgentThreadEntry::AssistantMessage(_)
+                | AgentThreadEntry::SessionMessage(_)
                 | AgentThreadEntry::ContextCompaction(_) => {}
             }
         }
@@ -4640,6 +4681,7 @@ impl AcpThread {
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::Elicitation(_)
                 | AgentThreadEntry::AssistantMessage(_)
+                | AgentThreadEntry::SessionMessage(_)
                 | AgentThreadEntry::ContextCompaction(_) => {}
             }
         }
@@ -4652,6 +4694,7 @@ impl AcpThread {
             match entry {
                 AgentThreadEntry::UserMessage(..) => return false,
                 AgentThreadEntry::AssistantMessage(..)
+                | AgentThreadEntry::SessionMessage(_)
                 | AgentThreadEntry::ContextCompaction(_)
                 | AgentThreadEntry::Elicitation(_) => continue,
                 AgentThreadEntry::ToolCall(..) => return true,
@@ -4783,6 +4826,47 @@ impl AcpThread {
                     cx,
                 );
             }
+            acp_v1::SessionUpdate::SessionMessage(message) => {
+                let content = match message.content {
+                    MaybeUndefined::Undefined => MaybeUndefined::Undefined,
+                    MaybeUndefined::Null => MaybeUndefined::Null,
+                    MaybeUndefined::Value(blocks) => MaybeUndefined::Value(
+                        blocks
+                            .into_iter()
+                            .map(content::from_v1)
+                            .collect::<Result<Vec<_>>>()
+                            .map_err(acp_v1::Error::from)?,
+                    ),
+                };
+                self.upsert_session_message_inner(
+                    acp_v2::SessionMessage::new(message.message_id.0)
+                        .sender_session_id(
+                            message
+                                .sender_session_id
+                                .map(|id| acp_v2::SessionId::new(id.0)),
+                        )
+                        .recipient_session_id(
+                            message
+                                .recipient_session_id
+                                .map(|id| acp_v2::SessionId::new(id.0)),
+                        )
+                        .content(content)
+                        .meta(message.meta),
+                    MetadataUpdate::V1,
+                    cx,
+                )
+                .map_err(acp_v1::Error::from)?;
+            }
+            acp_v1::SessionUpdate::SessionMessageChunk(chunk) => {
+                self.append_session_message_chunk(
+                    acp_v2::SessionMessageChunk::new(
+                        chunk.message_id.0,
+                        content::from_v1(chunk.content).map_err(acp_v1::Error::from)?,
+                    ),
+                    cx,
+                )
+                .map_err(acp_v1::Error::from)?;
+            }
             _ => {}
         }
         Ok(())
@@ -4797,7 +4881,7 @@ impl AcpThread {
             MessageKind::User,
             update.message_id,
             update.content,
-            update.meta,
+            MetadataUpdate::V2(update.meta),
             cx,
         )
     }
@@ -4811,7 +4895,7 @@ impl AcpThread {
             MessageKind::Assistant,
             update.message_id,
             update.content,
-            update.meta,
+            MetadataUpdate::V2(update.meta),
             cx,
         )
     }
@@ -4825,9 +4909,90 @@ impl AcpThread {
             MessageKind::Thought,
             update.message_id,
             update.content,
-            update.meta,
+            MetadataUpdate::V2(update.meta),
             cx,
         )
+    }
+
+    pub fn upsert_session_message(
+        &mut self,
+        update: acp_v2::SessionMessage,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        self.upsert_session_message_inner(update, MetadataUpdate::V2, cx)
+    }
+
+    fn upsert_session_message_inner(
+        &mut self,
+        update: acp_v2::SessionMessage,
+        metadata: fn(MaybeUndefined<acp_v2::Meta>) -> MetadataUpdate,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let previous_entry_count = self.entries.len();
+        let location = self.session_message_location(
+            update.message_id,
+            update.sender_session_id,
+            update.recipient_session_id,
+            cx,
+        )?;
+        self.replace_message_content(
+            location,
+            MessageKind::Session,
+            update.content,
+            metadata(update.meta),
+            previous_entry_count,
+            cx,
+        )
+    }
+
+    pub fn append_session_message_chunk(
+        &mut self,
+        chunk: acp_v2::SessionMessageChunk,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        // A chunk carries only content: its metadata does not patch the message's, and the
+        // RFD keeps a message's participants on `session_message`, so the participant fields
+        // that this schema version still has on chunks are ignored.
+        let previous_entry_count = self.entries.len();
+        let location = self.keyed_message_location(MessageKind::Session, chunk.message_id, cx)?;
+        self.append_message_content(
+            location,
+            MessageKind::Session,
+            chunk.content,
+            previous_entry_count,
+            cx,
+        )
+    }
+
+    /// Participants that an update omits keep their earlier value, and a known participant
+    /// cannot change.
+    fn session_message_location(
+        &mut self,
+        id: acp_v2::MessageId,
+        sender: Option<acp_v2::SessionId>,
+        recipient: Option<acp_v2::SessionId>,
+        cx: &mut Context<Self>,
+    ) -> Result<MessageLocation> {
+        let location = self.keyed_message_location(MessageKind::Session, id, cx)?;
+        let Some(AgentThreadEntry::SessionMessage(message)) =
+            self.entries.get_mut(location.entry_index())
+        else {
+            anyhow::bail!("session message disappeared during update");
+        };
+        for (stored, reported) in [
+            (&mut message.sender_session_id, sender),
+            (&mut message.recipient_session_id, recipient),
+        ] {
+            let Some(reported) = reported else {
+                continue;
+            };
+            anyhow::ensure!(
+                stored.as_ref().is_none_or(|stored| stored == &reported),
+                "Session message participants cannot change"
+            );
+            *stored = Some(reported);
+        }
+        Ok(location)
     }
 
     fn update_keyed_message(
@@ -4835,11 +5000,23 @@ impl AcpThread {
         kind: MessageKind,
         id: acp_v2::MessageId,
         content: MaybeUndefined<Vec<acp_v2::ContentBlock>>,
-        meta: MaybeUndefined<acp_v2::Meta>,
+        meta: MetadataUpdate,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let previous_entry_count = self.entries.len();
         let location = self.keyed_message_location(kind, id, cx)?;
+        self.replace_message_content(location, kind, content, meta, previous_entry_count, cx)
+    }
+
+    fn replace_message_content(
+        &mut self,
+        location: MessageLocation,
+        kind: MessageKind,
+        content: MaybeUndefined<Vec<acp_v2::ContentBlock>>,
+        meta: MetadataUpdate,
+        previous_entry_count: usize,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
         if !content.is_undefined()
             && self
                 .streaming_text_buffer
@@ -4868,7 +5045,7 @@ impl AcpThread {
                 message_content.replace(replacement, &language_registry, path_style, cx);
             }
         }
-        MetadataUpdate::V2(meta).apply(message_meta);
+        meta.apply(message_meta);
         self.emit_message_update(location, previous_entry_count, cx);
         Ok(())
     }
@@ -4887,6 +5064,17 @@ impl AcpThread {
         } = chunk;
         let previous_entry_count = self.entries.len();
         let location = self.keyed_message_location(kind, message_id, cx)?;
+        self.append_message_content(location, kind, content, previous_entry_count, cx)
+    }
+
+    fn append_message_content(
+        &mut self,
+        location: MessageLocation,
+        kind: MessageKind,
+        content: acp_v2::ContentBlock,
+        previous_entry_count: usize,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
         let content = match content {
             acp_v2::ContentBlock::Text(text) => {
                 let (content, _) = location
@@ -4955,6 +5143,11 @@ impl AcpThread {
                 {
                     Some(MessageLocation::User { entry_index })
                 }
+                AgentThreadEntry::SessionMessage(message)
+                    if kind == MessageKind::Session && message.identity == identity =>
+                {
+                    Some(MessageLocation::Session { entry_index })
+                }
                 AgentThreadEntry::AssistantMessage(message) => message
                     .chunks
                     .iter()
@@ -4987,6 +5180,17 @@ impl AcpThread {
                         indented: false,
                     }));
                 Ok(MessageLocation::User { entry_index })
+            }
+            MessageKind::Session => {
+                self.entries
+                    .push(AgentThreadEntry::SessionMessage(SessionMessage {
+                        identity,
+                        sender_session_id: None,
+                        recipient_session_id: None,
+                        meta: None,
+                        content: MessageContent::default(),
+                    }));
+                Ok(MessageLocation::Session { entry_index })
             }
             MessageKind::Assistant | MessageKind::Thought => {
                 let chunk = if kind == MessageKind::Thought {
@@ -11318,6 +11522,9 @@ mod tests {
             AgentThreadEntry::UserMessage(message) => {
                 (&message.identity, &message.content, &message.meta)
             }
+            AgentThreadEntry::SessionMessage(message) => {
+                (&message.identity, &message.content, &message.meta)
+            }
             AgentThreadEntry::AssistantMessage(message) => {
                 let [chunk] = message.chunks.as_slice() else {
                     panic!("expected one assistant chunk");
@@ -11336,6 +11543,23 @@ mod tests {
                 }
             }
             _ => panic!("expected a message"),
+        }
+    }
+
+    /// Session messages take chunks through their own API, which also records participants.
+    fn append_keyed_chunk(
+        thread: &mut AcpThread,
+        kind: MessageKind,
+        chunk: acp_v2::ContentChunk,
+        cx: &mut Context<AcpThread>,
+    ) -> Result<()> {
+        if kind == MessageKind::Session {
+            thread.append_session_message_chunk(
+                acp_v2::SessionMessageChunk::new(chunk.message_id, chunk.content).meta(chunk.meta),
+                cx,
+            )
+        } else {
+            thread.append_message_chunk(kind, chunk, cx)
         }
     }
 
@@ -13454,6 +13678,7 @@ mod tests {
             MessageKind::User,
             MessageKind::Assistant,
             MessageKind::Thought,
+            MessageKind::Session,
         ] {
             let thread = new_test_thread(cx).await;
             let original = json!([{"type": "text", "text": "original", "_meta": {"block": true}}]);
@@ -13520,6 +13745,10 @@ mod tests {
                             serde_json::from_value(patch).expect("thought patch"),
                             cx,
                         ),
+                        MessageKind::Session => thread.upsert_session_message(
+                            serde_json::from_value(patch).expect("session message patch"),
+                            cx,
+                        ),
                     }
                     .expect("apply patch");
                     let (identity, content, meta) = only_keyed_message(thread);
@@ -13541,14 +13770,14 @@ mod tests {
                     acp_v2::TextContent::new("chunk")
                         .meta(acp_v2::Meta::from_iter([("block".into(), json!(true))])),
                 );
-                thread
-                    .append_message_chunk(
-                        kind,
-                        acp_v2::ContentChunk::new(block.clone(), "patch")
-                            .meta(acp_v2::Meta::from_iter([("envelope".into(), json!(true))])),
-                        cx,
-                    )
-                    .expect("append scoped metadata");
+                append_keyed_chunk(
+                    thread,
+                    kind,
+                    acp_v2::ContentChunk::new(block.clone(), "patch")
+                        .meta(acp_v2::Meta::from_iter([("envelope".into(), json!(true))])),
+                    cx,
+                )
+                .expect("append scoped metadata");
                 let (_, content, meta) = only_keyed_message(thread);
                 assert_eq!(content.source_blocks(), &[block]);
                 assert_eq!(
@@ -13560,6 +13789,108 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_session_messages_keep_participants_and_convert_from_v1(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            thread
+                .append_session_message_chunk(
+                    acp_v2::SessionMessageChunk::new("task", "Start by ".into()),
+                    cx,
+                )
+                .expect("a message can start with a chunk and no participants");
+            thread
+                .upsert_session_message(
+                    acp_v2::SessionMessage::new("task")
+                        .sender_session_id(acp_v2::SessionId::new("parent"))
+                        .recipient_session_id(acp_v2::SessionId::new("child")),
+                    cx,
+                )
+                .expect("participants can arrive later");
+            thread
+                .append_session_message_chunk(
+                    acp_v2::SessionMessageChunk::new("task", "reproducing".into())
+                        .sender_session_id(acp_v2::SessionId::new("other")),
+                    cx,
+                )
+                .expect("a chunk's participant fields are ignored");
+            let error = thread
+                .upsert_session_message(
+                    acp_v2::SessionMessage::new("task")
+                        .sender_session_id(acp_v2::SessionId::new("other")),
+                    cx,
+                )
+                .expect_err("a known participant cannot change");
+            assert!(error.to_string().contains("cannot change"), "{error}");
+            thread
+                .upsert_assistant_message(
+                    acp_v2::AgentMessage::new("task").content(vec!["answer".into()]),
+                    cx,
+                )
+                .expect("assistant messages have their own ID space");
+
+            let [
+                AgentThreadEntry::SessionMessage(message),
+                AgentThreadEntry::AssistantMessage(_),
+            ] = thread.entries()
+            else {
+                panic!("expected a session message, then an assistant message");
+            };
+            assert_eq!(message.identity, MessageIdentity::Keyed("task".into()));
+            assert_eq!(message.sender_session_id, Some("parent".into()));
+            assert_eq!(message.recipient_session_id, Some("child".into()));
+            assert_eq!(
+                message.content.source_blocks(),
+                &["Start by ".into(), "reproducing".into()]
+            );
+        });
+
+        // v1 replaces message metadata where v2 patches it by key.
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            for update in [
+                json!({
+                    "sessionUpdate": "session_message",
+                    "messageId": "reply",
+                    "senderSessionId": "child",
+                    "content": [{"type": "text", "text": "Done"}],
+                    "_meta": {"first": true},
+                }),
+                json!({
+                    "sessionUpdate": "session_message",
+                    "messageId": "reply",
+                    "recipientSessionId": "parent",
+                    "_meta": {"second": true},
+                }),
+                json!({
+                    "sessionUpdate": "session_message_chunk",
+                    "messageId": "reply",
+                    "senderSessionId": "other",
+                    "content": {"type": "text", "text": " now"},
+                    "_meta": {"chunk": true},
+                }),
+            ] {
+                thread
+                    .handle_session_update(serde_json::from_value(update).expect("v1 update"), cx)
+                    .expect("v1 session message");
+            }
+            let [AgentThreadEntry::SessionMessage(message)] = thread.entries() else {
+                panic!("expected one session message");
+            };
+            assert_eq!(message.sender_session_id, Some("child".into()));
+            assert_eq!(message.recipient_session_id, Some("parent".into()));
+            assert_eq!(
+                message.meta,
+                Some(acp_v2::Meta::from_iter([("second".into(), json!(true))]))
+            );
+            assert_eq!(
+                message.content.source_blocks(),
+                &["Done".into(), " now".into()]
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_v2_entity_metadata_patches_by_key(cx: &mut TestAppContext) {
         init_test(cx);
         let mut messages = Vec::new();
@@ -13567,6 +13898,7 @@ mod tests {
             MessageKind::User,
             MessageKind::Assistant,
             MessageKind::Thought,
+            MessageKind::Session,
         ] {
             messages.push((kind, new_test_thread(cx).await));
         }
@@ -13633,19 +13965,25 @@ mod tests {
                                 .meta(metadata.clone()),
                             cx,
                         ),
+                        MessageKind::Session => thread.upsert_session_message(
+                            acp_v2::SessionMessage::new("metadata")
+                                .content(vec![block.clone()])
+                                .meta(metadata.clone()),
+                            cx,
+                        ),
                     }
                     .expect("message upsert");
                     let (_, content, stored) = only_keyed_message(thread);
                     assert_eq!(stored, &expected, "{kind:?}");
                     assert_eq!(content.source_blocks(), std::slice::from_ref(&block));
-                    thread
-                        .append_message_chunk(
-                            *kind,
-                            acp_v2::ContentChunk::new("chunk".into(), "metadata")
-                                .meta(snapshot_meta.clone()),
-                            cx,
-                        )
-                        .expect("message chunk");
+                    append_keyed_chunk(
+                        thread,
+                        *kind,
+                        acp_v2::ContentChunk::new("chunk".into(), "metadata")
+                            .meta(snapshot_meta.clone()),
+                        cx,
+                    )
+                    .expect("message chunk");
                     assert_eq!(only_keyed_message(thread).2, &expected);
                 });
             }
