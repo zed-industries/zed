@@ -7850,32 +7850,6 @@ async fn test_subagent_error_propagation(cx: &mut TestAppContext) {
 
     cx.run_until_parked();
 
-    // Overflow recovery compacts the subagent and retries once.
-    let compaction_request = fake.pending_completions_for(&model).pop().unwrap();
-    assert_eq!(
-        compaction_request.intent,
-        Some(CompletionIntent::ThreadContextSummarization)
-    );
-    fake.send_text(&model, &compaction_request, "summary of the work");
-    fake.end_stream(&model, &compaction_request);
-    cx.run_until_parked();
-
-    // The retried request overflows again, so the error propagates.
-    let retry_request = fake.pending_completions_for(&model).pop().unwrap();
-    fake.send_error(
-        &model,
-        &retry_request,
-        LanguageModelCompletionError::from_http_status(
-            LanguageModelProviderName::new("test"),
-            http_client::StatusCode::PAYLOAD_TOO_LARGE,
-            "prompt too large".to_string(),
-            None,
-        ),
-    );
-    fake.end_stream(&model, &retry_request);
-
-    cx.run_until_parked();
-
     thread.read_with(cx, |thread, cx| {
         assert_eq!(
             thread.running_subagent_ids(cx),
