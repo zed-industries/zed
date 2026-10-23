@@ -3331,6 +3331,9 @@ impl Thread {
                     ..
                 } = &error
                     && !overflow_recovery_attempted
+                    && this.update(cx, |_, cx| {
+                        AgentSettings::get_global(cx).auto_compact.enabled
+                    })?
                 {
                     overflow_recovery_attempted = true;
                     match Self::perform_forced_compaction(
@@ -5159,16 +5162,22 @@ fn request_token_estimate(messages: &[LanguageModelRequestMessage]) -> u64 {
     let mut framing_tokens = 0u64;
     for message in messages {
         framing_tokens = framing_tokens.saturating_add(8);
+        if let Some(details) = &message.reasoning_details {
+            text_bytes = text_bytes.saturating_add(details.to_string().len());
+        }
         for content in &message.content {
             framing_tokens = framing_tokens.saturating_add(4);
             match content {
                 language_model::MessageContent::Text(text) => text_bytes += text.len(),
-                language_model::MessageContent::Thinking { text, .. } => text_bytes += text.len(),
+                language_model::MessageContent::Thinking { text, signature } => {
+                    text_bytes += text.len() + signature.as_ref().map_or(0, String::len);
+                }
                 language_model::MessageContent::RedactedThinking(data) => text_bytes += data.len(),
                 language_model::MessageContent::ToolUse(tool_use) => {
                     text_bytes += tool_use.raw_input.len()
                         + tool_use.name.len()
                         + tool_use.id.to_string().len()
+                        + tool_use.thought_signature.as_ref().map_or(0, String::len)
                 }
                 language_model::MessageContent::Image(_) => image_count += 1,
                 language_model::MessageContent::ToolResult(tool_result) => {
@@ -8419,6 +8428,53 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_compaction_overflow_respects_disabled_setting(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.model("fake");
+        cx.update(|cx| {
+            set_auto_compact_settings(
+                cx,
+                agent_settings::AutoCompactSettings {
+                    enabled: false,
+                    threshold: AutoCompactThreshold::Percentage(0.9),
+                },
+            );
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread
+                    .send(ClientUserMessageId::new(), ["task"], cx)
+                    .unwrap();
+            });
+        });
+        cx.run_until_parked();
+        fake.send_last_error(
+            &model,
+            LanguageModelCompletionError::from_http_status(
+                language_model::LanguageModelProviderName::new("test"),
+                http_client::StatusCode::PAYLOAD_TOO_LARGE,
+                "prompt too large".to_string(),
+                None,
+            ),
+        );
+        fake.end_last(&model);
+        cx.run_until_parked();
+        assert!(fake.pending_completions().is_empty());
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.is_turn_complete());
+            assert!(
+                !thread
+                    .messages
+                    .iter()
+                    .any(|message| matches!(message.as_ref(), Message::Compaction(_)))
+            );
+            assert_eq!(
+                thread.latest_token_usage().unwrap().ratio(),
+                acp_thread::TokenUsageRatio::Exceeded
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_compaction_bounded_overflow_recovery_lifecycle(cx: &mut TestAppContext) {
         for outcome in [
             "usage",
@@ -8827,6 +8883,105 @@ mod tests {
                 assert!(text.contains("elided"));
             });
         });
+    }
+
+    #[gpui::test]
+    async fn test_compaction_accounts_for_replayed_reasoning(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.update_model("fake", |model| {
+            model.max_token_count = 100_000;
+            model.max_input_tokens = 100_000;
+        });
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                let user_message_id = ClientUserMessageId::new();
+                thread
+                    .messages
+                    .push(user_text_message(user_message_id.clone(), "task"));
+                record_request_usage(
+                    thread,
+                    user_message_id,
+                    TokenUsage {
+                        input_tokens: 20_000,
+                        ..Default::default()
+                    },
+                    cx,
+                );
+                let mut message = agent_text_message("done");
+                let Message::Agent(agent_message) = Arc::get_mut(&mut message).unwrap() else {
+                    panic!("expected an agent message");
+                };
+                agent_message.reasoning_details = Some(Arc::new(json!({
+                    "reasoning_items": [{
+                        "type": "reasoning",
+                        "encrypted_content": "x".repeat(300_000),
+                    }],
+                })));
+                thread.messages.push(message);
+                assert!(thread.estimated_active_tokens(cx).unwrap() > 100_000);
+                assert_eq!(thread.compaction_message_target_ix(cx), Some(2));
+
+                let request = thread.build_compaction_request(2, &model, cx);
+                assert!(request_token_estimate(&request.messages) <= 90_000);
+                assert!(
+                    request
+                        .messages
+                        .iter()
+                        .all(|message| message.reasoning_details.is_none())
+                );
+                assert_eq!(
+                    request.messages.last().unwrap().string_contents(),
+                    COMPACTION_PROMPT
+                );
+                assert!(
+                    thread.messages[1]
+                        .as_agent_message()
+                        .unwrap()
+                        .reasoning_details
+                        .is_some()
+                );
+            });
+        });
+    }
+
+    #[test]
+    fn test_compaction_estimate_counts_signatures() {
+        let mut message = LanguageModelRequestMessage {
+            role: Role::Assistant,
+            content: vec![MessageContent::Thinking {
+                text: "thought".to_string(),
+                signature: None,
+            }],
+            cache: false,
+            reasoning_details: None,
+        };
+        let baseline = request_token_estimate(std::slice::from_ref(&message));
+        let MessageContent::Thinking { signature, .. } = &mut message.content[0] else {
+            panic!("expected thinking");
+        };
+        *signature = Some("x".repeat(30_000));
+        assert_eq!(request_token_estimate(&[message]), baseline + 10_000);
+
+        let mut message = LanguageModelRequestMessage {
+            role: Role::Assistant,
+            content: vec![MessageContent::ToolUse(LanguageModelToolUse {
+                id: "tool-use".into(),
+                name: "tool".into(),
+                raw_input: "{}".to_string(),
+                input: language_model::LanguageModelToolUseInput::Json(json!({})),
+                is_input_complete: true,
+                thought_signature: None,
+            })],
+            cache: false,
+            reasoning_details: None,
+        };
+        let baseline = request_token_estimate(std::slice::from_ref(&message));
+        let MessageContent::ToolUse(tool_use) = &mut message.content[0] else {
+            panic!("expected a tool use");
+        };
+        tool_use.thought_signature = Some("x".repeat(30_000));
+        assert_eq!(request_token_estimate(&[message]), baseline + 10_000);
     }
 
     #[gpui::test]
