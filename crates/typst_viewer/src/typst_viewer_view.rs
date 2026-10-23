@@ -29,6 +29,8 @@ enum PreviewState {
     Rendering { pages: Vec<Option<Arc<RenderImage>>> },
     Disconnected { reason: String },
     Error { message: String },
+    /// Compilation failed: show the reasons until a successful frame arrives.
+    CompileError { errors: Vec<String> },
 }
 
 pub struct TypstPreviewView {
@@ -220,6 +222,19 @@ impl TypstPreviewView {
         while let Some(msg_result) = ws.next().await {
             match msg_result {
                 Ok(Message::Text(text)) => {
+                    // Compile-failure frame from tinymist: enter the error
+                    // placeholder.  The next successful page frame switches
+                    // the state back to Rendering.
+                    if let Some(payload) = text.strip_prefix("error\n") {
+                        let errors = parse_error_frame(payload);
+                        log::info!("typst_viewer: compile error: {errors:?}");
+                        this.update(cx, |this, cx| {
+                            this.state = PreviewState::CompileError { errors };
+                            cx.notify();
+                        })?;
+                        continue;
+                    }
+
                     // --- Phase 1: Parse the triggering message ---
                     let Some((page_index, page_total, svg_bytes)) =
                         Self::parse_svg_message(&text)
@@ -599,6 +614,20 @@ impl Render for TypstPreviewView {
                 .justify_center()
                 .child(SharedString::from(format!("Error: {message}")))
                 .into_any_element(),
+
+            PreviewState::CompileError { errors } => {
+                let mut column = div()
+                    .size_full()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .child(SharedString::from("Compile error:"));
+                for error in errors {
+                    column = column.child(SharedString::from(error.clone()));
+                }
+                column.into_any_element()
+            }
         };
 
         div()
@@ -664,6 +693,27 @@ pub(crate) fn parse_page_header(text: &str) -> Option<(PageHeader, &str)> {
     let index: usize = index_str.parse().ok()?;
     let total: usize = total_str.parse().ok()?;
     Some((PageHeader { index, total }, svg))
+}
+
+/// Parse the payload of an `error\n` frame sent on compile failure.  Falls
+/// back to the raw payload when the JSON is malformed, so the reason is
+/// never silently lost.
+pub(crate) fn parse_error_frame(payload: &str) -> Vec<String> {
+    let fallback = || vec![payload.trim().to_string()];
+    match serde_json::from_str::<serde_json::Value>(payload) {
+        Ok(value) => value
+            .get("errors")
+            .and_then(|errors| errors.as_array())
+            .map(|errors| {
+                errors
+                    .iter()
+                    .filter_map(|error| error.as_str().map(str::to_string))
+                    .collect::<Vec<_>>()
+            })
+            .filter(|errors| !errors.is_empty())
+            .unwrap_or_else(fallback),
+        Err(_) => fallback(),
+    }
 }
 
 /// Insert cached glyph defs into an SVG that had them stripped by the server.
@@ -851,5 +901,31 @@ mod layout_tests {
             "Expected display height ~{expected_h}, got {}",
             bounds.size.height.as_f32(),
         );
+    }
+}
+
+#[cfg(test)]
+mod error_frame_tests {
+    use super::parse_error_frame;
+
+    #[test]
+    fn parse_error_frame_extracts_errors() {
+        let json = r#"{"kind":"compileError","errors":["expected expression, found keyword: hi","unknown variable: x"]}"#;
+        // The server terminates the frame with a newline, like page frames.
+        let errors = parse_error_frame(&format!("{json}\n"));
+        assert_eq!(
+            errors,
+            vec![
+                "expected expression, found keyword: hi",
+                "unknown variable: x",
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_error_frame_falls_back_to_raw_payload() {
+        assert_eq!(parse_error_frame("not json"), vec!["not json"]);
+        let empty = r#"{"kind":"compileError","errors":[]}"#;
+        assert_eq!(parse_error_frame(empty), vec![empty]);
     }
 }
