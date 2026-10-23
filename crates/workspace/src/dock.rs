@@ -883,7 +883,10 @@ impl Dock {
         if serialized.zoom
             && let Some(panel) = self.active_panel()
         {
-            panel.set_zoomed(true, window, cx)
+            panel.set_zoomed(true, window, cx);
+            if serialized.visible && !self.modal_layer.read(cx).has_active_modal() {
+                panel.panel_focus_handle(cx).focus(window, cx);
+            }
         }
         self.set_open_internal(serialized.visible, window, cx);
     }
