@@ -250,6 +250,7 @@ pub fn make_get_authenticated_user_response(
             is_staff: false,
             accepted_tos_at: None,
             has_connected_to_collab_once: false,
+            can_start_trial: false,
         },
         feature_flags: vec![],
         organizations: vec![],
