@@ -863,11 +863,21 @@ impl Platform for MacPlatform {
         &self,
         options: PathPromptOptions,
     ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>> {
-        let marker = self.1;
         let (done_tx, done_rx) = oneshot::channel();
         self.foreground_executor()
             .spawn(async move {
-                let panel = NSOpenPanel::openPanel(marker);
+                // AppKit can return nil despite the nonnull annotation used by objc2's
+                // generated binding. This runs on the main thread via the foreground executor.
+                // TODO: Switch back to NSOpenPanel::openPanel when objc2-app-kit 0.4
+                // is published and adopted; it fixes the return type to be nullable:
+                // https://github.com/madsmtm/objc2/commit/b92857df57aa85dc41e9887534b1ccfa3fe902e4
+                let panel: Option<Retained<NSOpenPanel>> =
+                    unsafe { msg_send![class!(NSOpenPanel), openPanel] };
+                let Some(panel) = panel else {
+                    // The receiver may have been dropped while the panel was being created.
+                    _ = done_tx.send(Err(anyhow!("macOS could not create the open dialog")));
+                    return;
+                };
                 panel.setCanChooseDirectories(options.directories);
                 panel.setCanChooseFiles(options.files);
                 panel.setAllowsMultipleSelection(options.multiple);
@@ -913,10 +923,20 @@ impl Platform for MacPlatform {
         let url = NSURL::from_directory_path(directory);
         let suggested_name = suggested_name.map(NSString::from_str);
         let (done_tx, done_rx) = oneshot::channel();
-        let marker = self.1;
         self.foreground_executor()
             .spawn(async move {
-                let panel = NSSavePanel::savePanel(marker);
+                // Like openPanel, savePanel may return nil despite its nonnull annotation.
+                // The foreground executor ensures this call runs on the main thread.
+                // TODO: Switch back to NSSavePanel::savePanel when objc2-app-kit 0.4
+                // is published and adopted; it fixes the return type to be nullable:
+                // https://github.com/madsmtm/objc2/commit/b92857df57aa85dc41e9887534b1ccfa3fe902e4
+                let panel: Option<Retained<NSSavePanel>> =
+                    unsafe { msg_send![class!(NSSavePanel), savePanel] };
+                let Some(panel) = panel else {
+                    // The receiver may have been dropped while the panel was being created.
+                    _ = done_tx.send(Err(anyhow!("macOS could not create the save dialog")));
+                    return;
+                };
                 panel.setDirectoryURL(url.as_deref());
 
                 if let Some(suggested_name) = suggested_name {
@@ -1197,6 +1217,22 @@ impl Platform for MacPlatform {
         let password = password.to_vec();
         self.background_executor()
             .spawn(async move { Ok(keychain::write_credentials(&url, &username, &password)?) })
+    }
+
+    fn write_credentials_if_not_exists(
+        &self,
+        url: &str,
+        username: &str,
+        password: &[u8],
+    ) -> Task<Result<bool>> {
+        let url = url.to_string();
+        let username = username.to_string();
+        let password = password.to_vec();
+        self.background_executor().spawn(async move {
+            Ok(keychain::write_credentials_if_not_exists(
+                &url, &username, &password,
+            )?)
+        })
     }
 
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {

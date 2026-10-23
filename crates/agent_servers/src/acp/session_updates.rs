@@ -154,6 +154,8 @@ pub enum InboundSessionUpdate {
     UserMessage(acp_v2::UserMessage),
     AgentMessage(acp_v2::AgentMessage),
     AgentThought(acp_v2::AgentThought),
+    SessionMessage(acp_v2::SessionMessage),
+    SessionMessageChunk(acp_v2::SessionMessageChunk),
     UserMessageChunk(acp_v2::ContentChunk),
     AgentMessageChunk(acp_v2::ContentChunk),
     AgentThoughtChunk(acp_v2::ContentChunk),
@@ -200,6 +202,12 @@ impl TryFrom<acp_v2::UpdateSessionNotification> for InboundSessionNotification {
             }
             acp_v2::SessionUpdate::AgentThought(thought) => {
                 InboundSessionUpdate::AgentThought(thought)
+            }
+            acp_v2::SessionUpdate::SessionMessage(message) => {
+                InboundSessionUpdate::SessionMessage(message)
+            }
+            acp_v2::SessionUpdate::SessionMessageChunk(chunk) => {
+                InboundSessionUpdate::SessionMessageChunk(chunk)
             }
             acp_v2::SessionUpdate::UserMessageChunk(chunk) => {
                 InboundSessionUpdate::UserMessageChunk(chunk)
@@ -280,6 +288,12 @@ impl InboundSessionNotification {
                 thread.upsert_assistant_message(message, cx)
             }
             InboundSessionUpdate::AgentThought(thought) => thread.upsert_thought(thought, cx),
+            InboundSessionUpdate::SessionMessage(message) => {
+                thread.upsert_session_message(message, cx)
+            }
+            InboundSessionUpdate::SessionMessageChunk(chunk) => {
+                thread.append_session_message_chunk(chunk, cx)
+            }
             InboundSessionUpdate::UserMessageChunk(chunk) => {
                 thread.append_message_chunk(MessageKind::User, chunk, cx)
             }

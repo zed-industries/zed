@@ -5,13 +5,14 @@ pub mod responses;
 #[cfg(test)]
 mod chat_completion_transport_tests;
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{
     AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
     StatusCode,
     http::{HeaderMap, HeaderValue},
 };
+use language_model_core::LanguageModelCompletionError;
 pub use language_model_core::ReasoningEffort;
 pub use language_model_core::chat_completion::{
     ChoiceDelta, FunctionChunk, PromptTokensDetails, ResponseMessageDelta, ResponseStreamError,
@@ -1221,7 +1222,10 @@ pub async fn stream_completion(
     api_key: &str,
     request: Request,
     extra_headers: &CustomHeaders,
-) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>, RequestError> {
+) -> Result<
+    BoxStream<'static, Result<ResponseStreamEvent, LanguageModelCompletionError>>,
+    RequestError,
+> {
     let events = stream_chat_completion(
         client,
         provider_name,
@@ -1240,7 +1244,7 @@ pub async fn stream_completion(
                 let value = match event {
                     Ok(ChatCompletionStreamEvent::Data(value)) => value,
                     Ok(ChatCompletionStreamEvent::Done) => return None,
-                    Err(error) => return Some(Err(anyhow!(error))),
+                    Err(error) => return Some(Err(error.into())),
                 };
                 match serde_json::from_str::<ResponseStreamResult>(value.get()) {
                     Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
@@ -1251,15 +1255,13 @@ pub async fn stream_completion(
                             None,
                             &error.message,
                         );
-                        Some(Err(anyhow!(
-                            language_model_core::LanguageModelCompletionError::from_provider_response(
-                                provider_name,
-                                None,
-                                error.code.or(error.error_type),
-                                error.message,
-                                None,
-                                category,
-                            )
+                        Some(Err(LanguageModelCompletionError::from_provider_response(
+                            provider_name,
+                            None,
+                            error.code.or(error.error_type),
+                            error.message,
+                            None,
+                            category,
                         )))
                     }
                     Err(error) => {
@@ -1269,7 +1271,10 @@ pub async fn stream_completion(
                             error,
                             value,
                         );
-                        Some(Err(anyhow!(error)))
+                        Some(Err(LanguageModelCompletionError::DeserializeResponse {
+                            provider: provider_name,
+                            error,
+                        }))
                     }
                 }
             }
