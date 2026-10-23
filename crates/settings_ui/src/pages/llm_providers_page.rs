@@ -567,6 +567,7 @@ struct ModelInput {
     supports_thinking: ToggleState,
     interleaved_reasoning: ToggleState,
     max_tokens_parameter: ToggleState,
+    supports_none_reasoning_effort: ToggleState,
 }
 
 impl ModelInput {
@@ -579,6 +580,7 @@ impl ModelInput {
             chat_completions,
             interleaved_reasoning,
             max_tokens_parameter,
+            supports_none_reasoning_effort,
         } = OpenAiCompatibleModelCapabilities::default();
 
         Self {
@@ -601,6 +603,7 @@ impl ModelInput {
             supports_thinking: ToggleState::Unselected,
             interleaved_reasoning: interleaved_reasoning.into(),
             max_tokens_parameter: max_tokens_parameter.into(),
+            supports_none_reasoning_effort: supports_none_reasoning_effort.into(),
         }
     }
 }
@@ -929,6 +932,14 @@ fn render_model_capabilities(
                     window,
                     cx,
                 ))
+                .child(render_capability_checkbox(
+                    "supports-none-reasoning-effort",
+                    index,
+                    "Supports reasoning_effort 'none'",
+                    model.supports_none_reasoning_effort,
+                    |model, state| model.supports_none_reasoning_effort = state,
+                    cx,
+                ))
                 .when(model.supports_chat_completions.selected(), |this| {
                     this.child(render_capability_checkbox(
                         "interleaved-reasoning",
@@ -1066,6 +1077,7 @@ struct ModelValues {
     supports_thinking: bool,
     interleaved_reasoning: bool,
     max_tokens_parameter: bool,
+    supports_none_reasoning_effort: bool,
 }
 
 enum ParsedModels {
@@ -1104,6 +1116,7 @@ fn save_llm_provider_form(
                     supports_thinking: model.supports_thinking.selected(),
                     interleaved_reasoning: model.interleaved_reasoning.selected(),
                     max_tokens_parameter: model.max_tokens_parameter.selected(),
+                    supports_none_reasoning_effort: model.supports_none_reasoning_effort.selected(),
                 })
                 .collect(),
         }
@@ -1292,6 +1305,8 @@ fn parse_open_ai_model(
                 && model.supports_chat_completions
                 && model.interleaved_reasoning,
             max_tokens_parameter: model.supports_chat_completions && model.max_tokens_parameter,
+            supports_none_reasoning_effort: model.supports_thinking
+                && model.supports_none_reasoning_effort,
         },
     })
 }
