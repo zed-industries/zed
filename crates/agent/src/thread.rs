@@ -4866,6 +4866,9 @@ impl Thread {
             DataRetentionConsentRequired { .. } => None,
             // Retrying won't help until the thread picks another model.
             ModelUnavailable { .. } => None,
+            // The provider produced a structurally invalid response; resending
+            // the same request would produce it again.
+            InvalidProviderOutput { .. } => None,
             // `Other` includes mid-stream mapping failures that can be caused by
             // a transient malformed or interrupted provider event.
             Other(..) => Some(RetryStrategy::FixedDelay {

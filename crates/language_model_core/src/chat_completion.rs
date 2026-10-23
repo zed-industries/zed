@@ -421,6 +421,12 @@ impl ToolCallAccumulator {
 /// LM Studio, llama.cpp, Bedrock/Mantle, and others), so its behavior must
 /// stay provider-neutral: any provider-specific interpretation belongs in the
 /// provider's own adapter before or after this mapping.
+///
+/// A `finish_reason` of `"tool_calls"`, and the flush when the response stream
+/// ends, both reject a tool call that still has an empty id or name with
+/// [`LanguageModelCompletionError::InvalidProviderOutput`]. An empty id is a
+/// legal intermediate chunk; inventing one can collide with an id the provider
+/// already issued.
 pub struct ChatCompletionEventMapper {
     tool_calls: ToolCallAccumulator,
     tool_call_accumulation_failed: bool,
@@ -437,18 +443,34 @@ impl ChatCompletionEventMapper {
     }
 
     pub fn map_stream<E>(
-        mut self,
+        self,
         events: Pin<Box<dyn Send + Stream<Item = Result<ResponseStreamEvent, E>>>>,
     ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
     where
         E: Into<LanguageModelCompletionError>,
     {
-        events.flat_map(move |event| {
-            futures::stream::iter(match event {
-                Ok(event) => self.map_event(event),
-                Err(error) => vec![Err(error.into())],
+        // `map_event` drains on `finish_reason == "tool_calls"`. When the
+        // stream ends without that chunk, the same drain still has to run.
+        futures::stream::unfold((Some(self), Some(events)), |(mapper, events)| async move {
+            let (mut mapper, mut events) = (mapper?, events?);
+            // The stream is already pinned and is not `Unpin`.
+            let next = std::future::poll_fn(|context| events.as_mut().poll_next(context)).await;
+            Some(match next {
+                Some(Ok(event)) => {
+                    let mapped = mapper.map_event(event);
+                    (futures::stream::iter(mapped), (Some(mapper), Some(events)))
+                }
+                Some(Err(error)) => (
+                    futures::stream::iter(vec![Err(error.into())]),
+                    (Some(mapper), Some(events)),
+                ),
+                None => {
+                    let drained = mapper.drain_finished_tool_calls();
+                    (futures::stream::iter(drained.events), (None, None))
+                }
             })
         })
+        .flatten()
     }
 
     pub fn map_event(
@@ -539,50 +561,12 @@ impl ChatCompletionEventMapper {
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
             }
             Some("tool_calls") => {
-                if !self.tool_call_accumulation_failed {
-                    for (position, tool_call) in self.tool_calls.drain().enumerate() {
-                        // The per-delta path withholds a call until its name arrives.
-                        // At finish that name will not arrive, and emitting the call
-                        // would persist a tool that cannot be executed or replayed.
-                        if tool_call.name.is_empty() {
-                            log::error!(
-                                "dropping streamed tool call with an empty name (index {index:?})",
-                                index = tool_call.index
-                            );
-                            continue;
-                        }
-
-                        // An empty id is rejected on the next request and wedges the
-                        // thread. Any stable non-empty id pairs this call with its result.
-                        let id = if tool_call.id.is_empty() {
-                            let index = tool_call.index.unwrap_or(position);
-                            format!("call_{index}")
-                        } else {
-                            tool_call.id
-                        };
-
-                        events.push(match parse_tool_arguments(&tool_call.arguments) {
-                            Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
-                                LanguageModelToolUse {
-                                    id: id.into(),
-                                    name: tool_call.name.as_str().into(),
-                                    is_input_complete: true,
-                                    input: LanguageModelToolUseInput::Json(input),
-                                    raw_input: tool_call.arguments.clone(),
-                                    thought_signature: tool_call.thought_signature.clone(),
-                                },
-                            )),
-                            Err(error) => Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
-                                id: id.into(),
-                                tool_name: tool_call.name.into(),
-                                raw_input: tool_call.arguments.clone().into(),
-                                json_parse_error: error.to_string(),
-                            }),
-                        });
-                    }
+                let drained = self.drain_finished_tool_calls();
+                let rejected = drained.rejected;
+                events.extend(drained.events);
+                if !rejected {
+                    events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
                 }
-
-                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
             }
             Some("length") => {
                 events.push(Ok(LanguageModelCompletionEvent::Stop(
@@ -597,6 +581,90 @@ impl ChatCompletionEventMapper {
         }
 
         events
+    }
+
+    /// Emits every accumulated tool call, in stream order.
+    ///
+    /// The per-delta path withholds a call until both its id and its name are
+    /// present, because either can arrive on a later chunk. Once the response
+    /// is finished that missing field will not arrive. An empty id cannot be
+    /// replaced with `call_{index}`: providers reuse indices and already issue
+    /// ids of that shape, and the synthesized id would be stored and replayed.
+    fn drain_finished_tool_calls(&mut self) -> DrainedToolCalls {
+        let mut events = Vec::new();
+        if self.tool_call_accumulation_failed {
+            return DrainedToolCalls {
+                events,
+                rejected: false,
+            };
+        }
+
+        let mut rejection = None;
+        for tool_call in self.tool_calls.drain() {
+            if let Some(message) = missing_tool_call_identity(&tool_call.id, &tool_call.name) {
+                log::error!(
+                    "provider returned a tool call with an empty id or name (id: {:?}, name: {:?})",
+                    tool_call.id,
+                    tool_call.name,
+                );
+                rejection.get_or_insert(message);
+                continue;
+            }
+
+            let id = tool_call.id;
+            let name = tool_call.name;
+            let arguments = tool_call.arguments;
+            let thought_signature = tool_call.thought_signature;
+            events.push(Ok(match parse_tool_arguments(&arguments) {
+                Ok(input) => LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                    id: id.into(),
+                    name: name.as_str().into(),
+                    is_input_complete: true,
+                    input: LanguageModelToolUseInput::Json(input),
+                    raw_input: arguments,
+                    thought_signature,
+                }),
+                Err(error) => LanguageModelCompletionEvent::ToolUseJsonParseError {
+                    id: id.into(),
+                    tool_name: name.into(),
+                    raw_input: arguments.into(),
+                    json_parse_error: error.to_string(),
+                },
+            }));
+        }
+
+        let rejected = if let Some(message) = rejection {
+            events.push(Err(LanguageModelCompletionError::InvalidProviderOutput {
+                message,
+            }));
+            true
+        } else {
+            false
+        };
+        DrainedToolCalls { events, rejected }
+    }
+}
+
+struct DrainedToolCalls {
+    events: Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+    rejected: bool,
+}
+
+/// Why a finished tool call cannot be emitted, or `None` when both an id and a
+/// name are present. This is the same gate as the per-delta emit.
+fn missing_tool_call_identity(id: &str, name: &str) -> Option<String> {
+    match (id.is_empty(), name.is_empty()) {
+        (false, false) => None,
+        (true, true) => Some(
+            "The provider returned a tool call with neither an id nor a name, so it cannot be replayed."
+                .to_string(),
+        ),
+        (true, false) => Some(format!(
+            "The provider returned a tool call ({name}) with no id, so it cannot be replayed."
+        )),
+        (false, true) => Some(format!(
+            "The provider returned a tool call ({id}) with no name, so it cannot be replayed."
+        )),
     }
 }
 
@@ -616,6 +684,7 @@ fn push_thinking_event(
 mod tests {
     use super::*;
     use crate::LanguageModelToolUse;
+    use futures::StreamExt;
     use pretty_assertions::assert_eq;
     use serde_json::json;
 
@@ -1654,128 +1723,280 @@ mod tests {
         assert_eq!(tool_uses[1].raw_input, r#"{"city":"Tokyo"}"#);
     }
 
-    #[test]
-    fn synthesizes_stable_ids_when_finished_tool_calls_omit_them() {
-        let mapped = map_completion_events(vec![
-            tool_call_chunk_event(vec![ToolCallChunk {
-                index: Some(0),
-                id: Some(String::new()),
-                function: Some(FunctionChunk {
-                    name: Some("terminal".into()),
-                    arguments: Some(r#"{"command":"ls"}"#.into()),
-                    thought_signature: None,
-                }),
-            }]),
-            tool_call_chunk_event(vec![ToolCallChunk {
-                index: Some(2),
-                id: None,
-                function: Some(FunctionChunk {
-                    name: Some("read_file".into()),
-                    arguments: Some(r#"{"path":"README.md"}"#.into()),
-                    thought_signature: None,
-                }),
-            }]),
-            finish_tool_calls_event(),
-        ]);
+    fn named_tool_call(
+        index: Option<usize>,
+        id: Option<&str>,
+        name: Option<&str>,
+        arguments: &str,
+    ) -> ToolCallChunk {
+        ToolCallChunk {
+            index,
+            id: id.map(str::to_string),
+            function: Some(FunctionChunk {
+                name: name.map(str::to_string),
+                arguments: Some(arguments.to_string()),
+                thought_signature: None,
+            }),
+        }
+    }
 
-        let tool_uses = completed_tool_calls(&mapped);
-        assert_eq!(tool_uses.len(), 2);
-        assert_eq!(tool_uses[0].id.to_string(), "call_0");
-        assert_eq!(tool_uses[0].name.as_ref(), "terminal");
-        assert_eq!(tool_uses[0].raw_input, r#"{"command":"ls"}"#);
-        assert_eq!(tool_uses[1].id.to_string(), "call_2");
-        assert_eq!(tool_uses[1].name.as_ref(), "read_file");
-        assert!(mapped.iter().all(|event| match event {
-            LanguageModelCompletionEvent::ToolUse(tool_use) => !tool_use.id.to_string().is_empty(),
-            _ => true,
-        }));
+    fn collect_mapped_stream(
+        events: Vec<ResponseStreamEvent>,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let stream = ChatCompletionEventMapper::new()
+            .map_stream(Box::pin(futures::stream::iter(
+                events
+                    .into_iter()
+                    .map(Ok::<_, LanguageModelCompletionError>),
+            )))
+            .boxed();
+        futures::executor::block_on(stream.collect())
+    }
+
+    fn assert_rejected_identity(
+        events: &[Result<LanguageModelCompletionEvent, LanguageModelCompletionError>],
+        expected: &str,
+    ) {
+        assert!(
+            !events.iter().any(|event| matches!(
+                event,
+                Ok(LanguageModelCompletionEvent::ToolUse(_))
+                    | Ok(LanguageModelCompletionEvent::ToolUseJsonParseError { .. })
+            )),
+            "a tool call with an empty id or name must not be emitted, got: {events:?}"
+        );
+        assert!(
+            !events.iter().any(|event| matches!(
+                event,
+                Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse))
+            )),
+            "a rejected response must not report a ToolUse stop, got: {events:?}"
+        );
+        match events.iter().find(|event| event.is_err()) {
+            Some(Err(error @ LanguageModelCompletionError::InvalidProviderOutput { message }))
+                if message == expected =>
+            {
+                assert!(!error.is_transient());
+            }
+            Some(other) => panic!("expected InvalidProviderOutput({expected:?}), got: {other:?}"),
+            None => panic!("expected InvalidProviderOutput({expected:?}), got: {events:?}"),
+        }
+    }
+
+    // The per-delta path withholds a call until both id and name are present.
+    // The finish drain and the end-of-stream flush must apply that same gate,
+    // and an omitted id must not become `call_{index}`.
+    #[test]
+    fn finish_drain_and_end_of_stream_reject_empty_tool_call_identity() {
+        for (id, name, expected) in [
+            (
+                Some(""),
+                Some(""),
+                "The provider returned a tool call with neither an id nor a name, so it cannot be replayed.",
+            ),
+            (
+                Some(""),
+                Some("list_directory"),
+                "The provider returned a tool call (list_directory) with no id, so it cannot be replayed.",
+            ),
+            (
+                Some("call_a"),
+                Some(""),
+                "The provider returned a tool call (call_a) with no name, so it cannot be replayed.",
+            ),
+            (
+                None,
+                Some("list_directory"),
+                "The provider returned a tool call (list_directory) with no id, so it cannot be replayed.",
+            ),
+            (
+                Some("call_a"),
+                None,
+                "The provider returned a tool call (call_a) with no name, so it cannot be replayed.",
+            ),
+            (
+                None,
+                None,
+                "The provider returned a tool call with neither an id nor a name, so it cannot be replayed.",
+            ),
+        ] {
+            let chunk = || {
+                tool_call_chunk_event(vec![named_tool_call(
+                    Some(0),
+                    id,
+                    name,
+                    r#"{"path":"src"}"#,
+                )])
+            };
+            let finished = collect_mapped_stream(vec![chunk(), finish_tool_calls_event()]);
+            let flushed = collect_mapped_stream(vec![chunk()]);
+            assert_rejected_identity(&finished, expected);
+            assert_rejected_identity(&flushed, expected);
+        }
     }
 
     #[test]
-    fn synthesizes_id_from_stream_position_when_tool_call_index_is_absent() {
-        let mapped = map_completion_events(vec![
-            tool_call_chunk_event(vec![ToolCallChunk {
-                index: None,
-                id: Some(String::new()),
-                function: Some(FunctionChunk {
-                    name: Some("list_directory".into()),
-                    arguments: Some(r#"{"path":"src"}"#.into()),
-                    thought_signature: None,
-                }),
-            }]),
-            finish_tool_calls_event(),
-        ]);
-
-        let tool_uses = completed_tool_calls(&mapped);
-        assert_eq!(tool_uses.len(), 1);
-        assert_eq!(tool_uses[0].id.to_string(), "call_0");
-        assert_eq!(tool_uses[0].name.as_ref(), "list_directory");
-        assert_eq!(tool_uses[0].raw_input, r#"{"path":"src"}"#);
+    fn rejects_missing_tool_call_id_instead_of_synthesizing_call_index() {
+        let chunk = || {
+            tool_call_chunk_event(vec![
+                named_tool_call(Some(0), Some(""), Some("terminal"), r#"{"command":"ls"}"#),
+                named_tool_call(
+                    Some(1),
+                    Some("call_0"),
+                    Some("read_file"),
+                    r#"{"path":"README.md"}"#,
+                ),
+            ])
+        };
+        for events in [
+            collect_mapped_stream(vec![chunk(), finish_tool_calls_event()]),
+            collect_mapped_stream(vec![chunk()]),
+        ] {
+            let tool_uses = events
+                .iter()
+                .filter_map(|event| match event {
+                    Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) => Some(tool_use),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(
+                tool_uses
+                    .iter()
+                    .all(|tool_use| tool_use.name.as_ref() == "read_file"
+                        && tool_use.id.to_string() == "call_0"),
+                "the empty id must not be rewritten to call_0, got: {tool_uses:?}"
+            );
+            assert_eq!(
+                tool_uses
+                    .iter()
+                    .filter(|tool_use| tool_use.is_input_complete)
+                    .count(),
+                1
+            );
+            let error_at = events
+                .iter()
+                .position(|event| {
+                    matches!(
+                        event,
+                        Err(LanguageModelCompletionError::InvalidProviderOutput { message })
+                            if message
+                                == "The provider returned a tool call (terminal) with no id, so it cannot be replayed."
+                    )
+                })
+                .expect("missing-id call should fail the response");
+            let sibling_at = events
+                .iter()
+                .position(|event| {
+                    matches!(
+                        event,
+                        Ok(LanguageModelCompletionEvent::ToolUse(tool_use))
+                            if tool_use.is_input_complete
+                    )
+                })
+                .expect("the provider-issued id should still be emitted");
+            assert!(sibling_at < error_at);
+            assert!(
+                !events.iter().any(|event| matches!(
+                    event,
+                    Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse))
+                )),
+                "got: {events:?}"
+            );
+        }
     }
 
     #[test]
-    fn drops_finished_tool_call_with_empty_name() {
-        let mut mapper = ChatCompletionEventMapper::new();
-        let partial_events = mapper.map_event(tool_call_chunk_event(vec![
-            ToolCallChunk {
-                index: Some(0),
-                id: Some("call_bad".into()),
-                function: Some(FunctionChunk {
-                    name: Some(String::new()),
-                    arguments: Some(r#"{"command":"ls"}"#.into()),
-                    thought_signature: None,
-                }),
-            },
-            ToolCallChunk {
-                index: Some(1),
-                id: Some("call_keep".into()),
-                function: Some(FunctionChunk {
-                    name: Some("read_file".into()),
-                    arguments: Some(r#"{"path":"README.md"}"#.into()),
-                    thought_signature: None,
-                }),
-            },
-        ]));
-        assert_eq!(partial_events.len(), 1);
-        assert!(matches!(
-            &partial_events[0],
-            Ok(LanguageModelCompletionEvent::ToolUse(tool_use))
-                if tool_use.name.as_ref() == "read_file" && !tool_use.is_input_complete
-        ));
-
-        let finish_events = mapper.map_event(finish_tool_calls_event());
-        assert!(finish_events.iter().all(|event| event.is_ok()));
-        let finish_ok_events = finish_events
-            .iter()
-            .filter_map(|event| event.as_ref().ok())
-            .cloned()
-            .collect::<Vec<_>>();
-        let tool_uses = completed_tool_calls(&finish_ok_events);
-        assert_eq!(tool_uses.len(), 1);
-        assert_eq!(tool_uses[0].id.to_string(), "call_keep");
-        assert_eq!(tool_uses[0].name.as_ref(), "read_file");
-        assert!(matches!(
-            finish_events.last(),
-            Some(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)))
-        ));
+    fn empty_tool_call_name_is_an_error_and_not_a_tool_use_stop() {
+        let chunk = || {
+            tool_call_chunk_event(vec![
+                named_tool_call(Some(0), Some("call_bad"), Some(""), r#"{"command":"ls"}"#),
+                named_tool_call(
+                    Some(1),
+                    Some("call_keep"),
+                    Some("read_file"),
+                    r#"{"path":"README.md"}"#,
+                ),
+            ])
+        };
+        for events in [
+            collect_mapped_stream(vec![chunk(), finish_tool_calls_event()]),
+            collect_mapped_stream(vec![chunk()]),
+        ] {
+            let tool_uses = events
+                .iter()
+                .filter_map(|event| match event {
+                    Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) => Some(tool_use),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(
+                tool_uses
+                    .iter()
+                    .all(|tool_use| tool_use.name.as_ref() == "read_file"
+                        && tool_use.id.to_string() == "call_keep"),
+                "an empty name must not be emitted as a tool call, got: {tool_uses:?}"
+            );
+            assert!(events.iter().any(|event| matches!(
+                event,
+                Err(LanguageModelCompletionError::InvalidProviderOutput { message })
+                    if message
+                        == "The provider returned a tool call (call_bad) with no name, so it cannot be replayed."
+            )));
+            assert!(
+                !events.iter().any(|event| matches!(
+                    event,
+                    Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse))
+                )),
+                "got: {events:?}"
+            );
+        }
     }
 
     #[test]
-    fn synthesizes_id_when_finished_tool_arguments_do_not_parse() {
+    fn unparsed_arguments_do_not_synthesize_a_tool_call_id() {
         let mut mapper = ChatCompletionEventMapper::new();
         assert!(
             mapper
-                .map_event(tool_call_chunk_event(vec![ToolCallChunk {
-                    index: Some(3),
-                    id: Some(String::new()),
-                    function: Some(FunctionChunk {
-                        name: Some("terminal".into()),
-                        arguments: Some("{".into()),
-                        thought_signature: None,
-                    }),
-                }]))
+                .map_event(tool_call_chunk_event(vec![named_tool_call(
+                    Some(3),
+                    Some(""),
+                    Some("terminal"),
+                    "{",
+                )]))
                 .is_empty()
         );
+
+        let events = mapper.map_event(finish_tool_calls_event());
+        match events.as_slice() {
+            [Err(LanguageModelCompletionError::InvalidProviderOutput { message })] => {
+                assert_eq!(
+                    message,
+                    "The provider returned a tool call (terminal) with no id, so it cannot be replayed."
+                );
+                assert!(
+                    !events
+                        .iter()
+                        .any(|event| format!("{event:?}").contains("call_3"))
+                );
+            }
+            events => panic!("expected a missing-id error, got: {events:?}"),
+        }
+    }
+
+    #[test]
+    fn finished_tool_call_with_unparsed_arguments_reports_the_provider_id() {
+        let mut mapper = ChatCompletionEventMapper::new();
+        let partial_events = mapper.map_event(tool_call_chunk_event(vec![named_tool_call(
+            Some(3),
+            Some("call_real"),
+            Some("terminal"),
+            "{",
+        )]));
+        assert!(partial_events.iter().all(|event| matches!(
+            event,
+            Ok(LanguageModelCompletionEvent::ToolUse(tool_use))
+                if !tool_use.is_input_complete && tool_use.id.to_string() == "call_real"
+        )));
 
         let events = mapper.map_event(finish_tool_calls_event());
         match events.as_slice() {
@@ -1783,10 +2004,48 @@ mod tests {
                 Ok(LanguageModelCompletionEvent::ToolUseJsonParseError { id, tool_name, .. }),
                 Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)),
             ] => {
-                assert_eq!(id.to_string(), "call_3");
+                assert_eq!(id.to_string(), "call_real");
                 assert_eq!(tool_name.as_ref(), "terminal");
             }
-            events => panic!("expected a parse error with a synthesized id, got: {events:?}"),
+            events => panic!("expected a parse error that keeps the provider id, got: {events:?}"),
         }
+    }
+
+    #[test]
+    fn end_of_stream_flush_completes_a_well_formed_tool_call_once() {
+        let chunk = || {
+            tool_call_chunk_event(vec![named_tool_call(
+                Some(0),
+                Some("call_a"),
+                Some("list_directory"),
+                r#"{"path":"src"}"#,
+            )])
+        };
+        let finished = collect_mapped_stream(vec![chunk(), finish_tool_calls_event()]);
+        let flushed = collect_mapped_stream(vec![chunk()]);
+
+        for events in [&finished, &flushed] {
+            let ok_events = events
+                .iter()
+                .filter_map(|event| event.as_ref().ok())
+                .cloned()
+                .collect::<Vec<_>>();
+            let tool_uses = completed_tool_calls(&ok_events);
+            assert_eq!(tool_uses.len(), 1);
+            assert_eq!(tool_uses[0].id.to_string(), "call_a");
+            assert_eq!(tool_uses[0].raw_input, r#"{"path":"src"}"#);
+            assert!(events.iter().all(|event| event.is_ok()));
+        }
+        assert!(finished.iter().any(|event| matches!(
+            event,
+            Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse))
+        )));
+        assert!(
+            !flushed.iter().any(|event| matches!(
+                event,
+                Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse))
+            )),
+            "ending the stream is not a provider finish_reason"
+        );
     }
 }
