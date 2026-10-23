@@ -1,8 +1,8 @@
 use objc2_core_foundation::{CFData, CFDictionary, CFRetained, CFString, CFType, kCFBooleanTrue};
 use objc2_security::{
-    SecItemAdd, SecItemCopyMatching, SecItemDelete, SecItemUpdate, errSecItemNotFound,
-    errSecSuccess, errSecUserCanceled, kSecAttrAccount, kSecAttrServer, kSecClass,
-    kSecClassInternetPassword, kSecReturnAttributes, kSecReturnData, kSecValueData,
+    SecItemAdd, SecItemCopyMatching, SecItemDelete, SecItemUpdate, errSecDuplicateItem,
+    errSecItemNotFound, errSecSuccess, errSecUserCanceled, kSecAttrAccount, kSecAttrServer,
+    kSecClass, kSecClassInternetPassword, kSecReturnAttributes, kSecReturnData, kSecValueData,
 };
 use std::ptr;
 
@@ -58,15 +58,44 @@ pub fn write_credentials(
     let mut status = unsafe { SecItemUpdate(query.as_opaque(), attributes.as_opaque()) };
     if status == errSecItemNotFound {
         operation = KeychainOperation::Create;
-        let attributes = CFDictionary::<CFString, CFType>::from_slices(
-            &[class_key, server_key, account_key, data_key],
-            &[internet_password, &server, &account, &password],
-        );
-        // SAFETY: The dictionary maps Security attribute keys to CF values, and a
-        // null result pointer asks Security not to return the new item.
-        status = unsafe { SecItemAdd(attributes.as_opaque(), ptr::null_mut()) };
+        status = add_credentials(&server, &account, &password);
     }
     check_status(operation, status)
+}
+
+/// Atomically adds a Keychain item unless one with this server and account exists.
+///
+/// Returns `false` if the item exists, leaving its secret unchanged. Items for the
+/// same server under a different account are not conflicts.
+pub fn write_credentials_if_not_exists(
+    server: &str,
+    account: &str,
+    password: &[u8],
+) -> Result<bool, KeychainError> {
+    let server = CFString::from_str(server);
+    let account = CFString::from_str(account);
+    let password = CFData::from_bytes(password);
+    create_status(add_credentials(&server, &account, &password))
+}
+
+fn add_credentials(server: &CFString, account: &CFString, password: &CFData) -> i32 {
+    // SAFETY: Reading immutable constants exported by the Security framework.
+    let (class_key, server_key, account_key, data_key, internet_password) = unsafe {
+        (
+            kSecClass,
+            kSecAttrServer,
+            kSecAttrAccount,
+            kSecValueData,
+            kSecClassInternetPassword,
+        )
+    };
+    let attributes = CFDictionary::<CFString, CFType>::from_slices(
+        &[class_key, server_key, account_key, data_key],
+        &[internet_password, server, account, password],
+    );
+    // SAFETY: The dictionary maps Security attribute keys to CF values, and a
+    // null result pointer asks Security not to return the new item.
+    unsafe { SecItemAdd(attributes.as_opaque(), ptr::null_mut()) }
 }
 
 /// Reads credentials by server, returning `None` when no item exists.
@@ -159,6 +188,15 @@ fn read_status(status: i32) -> Result<bool, KeychainError> {
     }
 }
 
+fn create_status(status: i32) -> Result<bool, KeychainError> {
+    if status == errSecDuplicateItem {
+        Ok(false)
+    } else {
+        check_status(KeychainOperation::Create, status)?;
+        Ok(true)
+    }
+}
+
 fn check_status(operation: KeychainOperation, status: i32) -> Result<(), KeychainError> {
     if status == errSecSuccess {
         Ok(())
@@ -226,6 +264,19 @@ mod tests {
             check_status(KeychainOperation::Delete, errSecUserCanceled),
             Err(KeychainError::UserCanceled {
                 operation: KeychainOperation::Delete,
+            })
+        );
+    }
+
+    #[test]
+    fn create_reports_existing_items_without_error() {
+        assert_eq!(create_status(errSecSuccess), Ok(true));
+        assert_eq!(create_status(errSecDuplicateItem), Ok(false));
+        assert_eq!(
+            create_status(errSecItemNotFound),
+            Err(KeychainError::Security {
+                operation: KeychainOperation::Create,
+                status: errSecItemNotFound,
             })
         );
     }

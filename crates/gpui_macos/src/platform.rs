@@ -1219,6 +1219,22 @@ impl Platform for MacPlatform {
             .spawn(async move { Ok(keychain::write_credentials(&url, &username, &password)?) })
     }
 
+    fn write_credentials_if_not_exists(
+        &self,
+        url: &str,
+        username: &str,
+        password: &[u8],
+    ) -> Task<Result<bool>> {
+        let url = url.to_string();
+        let username = username.to_string();
+        let password = password.to_vec();
+        self.background_executor().spawn(async move {
+            Ok(keychain::write_credentials_if_not_exists(
+                &url, &username, &password,
+            )?)
+        })
+    }
+
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
         let url = url.to_string();
         self.background_executor()
