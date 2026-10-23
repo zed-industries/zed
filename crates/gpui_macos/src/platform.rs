@@ -868,6 +868,9 @@ impl Platform for MacPlatform {
             .spawn(async move {
                 // AppKit can return nil despite the nonnull annotation used by objc2's
                 // generated binding. This runs on the main thread via the foreground executor.
+                // TODO: Switch back to NSOpenPanel::openPanel when objc2-app-kit 0.4
+                // is published and adopted; it fixes the return type to be nullable:
+                // https://github.com/madsmtm/objc2/commit/b92857df57aa85dc41e9887534b1ccfa3fe902e4
                 let panel: Option<Retained<NSOpenPanel>> =
                     unsafe { msg_send![class!(NSOpenPanel), openPanel] };
                 let Some(panel) = panel else {
@@ -924,6 +927,9 @@ impl Platform for MacPlatform {
             .spawn(async move {
                 // Like openPanel, savePanel may return nil despite its nonnull annotation.
                 // The foreground executor ensures this call runs on the main thread.
+                // TODO: Switch back to NSSavePanel::savePanel when objc2-app-kit 0.4
+                // is published and adopted; it fixes the return type to be nullable:
+                // https://github.com/madsmtm/objc2/commit/b92857df57aa85dc41e9887534b1ccfa3fe902e4
                 let panel: Option<Retained<NSSavePanel>> =
                     unsafe { msg_send![class!(NSSavePanel), savePanel] };
                 let Some(panel) = panel else {
