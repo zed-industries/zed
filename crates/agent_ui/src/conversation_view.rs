@@ -15874,6 +15874,98 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_tool_display_timers_follow_terminal_lifecycle(cx: &mut TestAppContext) {
+        use agent_client_protocol::schema::MaybeUndefined;
+        init_test(cx);
+        cx.update(|cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    tool_call_display: settings::ToolCallDisplay::Grouped,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
+        for id in ["first", "second"] {
+            thread.update(cx, |thread, cx| {
+                thread
+                    .upsert_wire_tool_call(
+                        acp_v2::ToolCallUpdate::new(id)
+                            .title("sleep 30")
+                            .kind(acp_v2::ToolKind::Execute)
+                            .status(acp_v2::ToolCallStatus::Pending)
+                            .content(vec![acp_v2::ToolCallContent::Terminal(
+                                acp_v2::Terminal::new(id),
+                            )]),
+                        cx,
+                    )
+                    .expect("pending command");
+            });
+            cx.run_until_parked();
+        }
+        // A reference without execution metadata is not a running command.
+        assert!(cx.debug_bounds("tool-group-timer-first").is_none());
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_display_terminal(
+                    "second".into(),
+                    acp_thread::DisplayTerminalPatch {
+                        command: MaybeUndefined::Value("sleep 30".into()),
+                        ..Default::default()
+                    },
+                    cx,
+                )
+                .expect("command starts without tool status update");
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("tool-group-timer-first").is_some());
+        cx.update(|_, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    tool_call_display: settings::ToolCallDisplay::Compact,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("compact-tool-timer-first").is_none());
+        assert!(cx.debug_bounds("compact-tool-timer-second").is_some());
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_display_terminal(
+                    "second".into(),
+                    acp_thread::DisplayTerminalPatch {
+                        exit_status: MaybeUndefined::Value(
+                            acp_v2::TerminalExitStatus::new().exit_code(0),
+                        ),
+                        ..Default::default()
+                    },
+                    cx,
+                )
+                .expect("command finishes without tool status update");
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("compact-tool-timer-second").is_none());
+        cx.update(|_, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    tool_call_display: settings::ToolCallDisplay::Grouped,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("tool-group-timer-first").is_none());
+    }
+
+    #[gpui::test]
     async fn test_tool_display_compact_expands_input_and_output(cx: &mut TestAppContext) {
         init_test(cx);
         cx.update(|cx| {

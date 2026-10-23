@@ -6,6 +6,20 @@ use util::time::duration_alt_display;
 
 const ELAPSED_DISPLAY_THRESHOLD: Duration = Duration::from_secs(10);
 
+pub(crate) fn terminal_elapsed_label(elapsed: Duration, cx: &App) -> Label {
+    Label::new(format!("({})", duration_alt_display(elapsed)))
+        .buffer_font(cx)
+        .color(Color::Muted)
+        .size(LabelSize::XSmall)
+}
+
+pub(crate) fn terminal_running_indicator() -> impl IntoElement {
+    Icon::new(IconName::LoadCircle)
+        .size(IconSize::Small)
+        .color(Color::Muted)
+        .with_rotate_animation(2)
+}
+
 type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
 pub struct TerminalSandboxWarning {
@@ -161,10 +175,7 @@ impl RenderOnce for TerminalToolHeader {
             .when(show_elapsed, |header| {
                 let elapsed = elapsed.unwrap_or_default();
                 header.child(
-                    Label::new(format!("({})", duration_alt_display(elapsed)))
-                        .buffer_font(cx)
-                        .color(Color::Muted)
-                        .size(LabelSize::XSmall)
+                    terminal_elapsed_label(elapsed, cx)
                         .mr_0p5()
                         .when(truncated_tooltip.is_some(), |s| s.mr_0()),
                 )
@@ -172,12 +183,7 @@ impl RenderOnce for TerminalToolHeader {
             .when(running, |header| {
                 header
                     .gap_1p5()
-                    .child(
-                        Icon::new(IconName::LoadCircle)
-                            .size(IconSize::Small)
-                            .color(Color::Muted)
-                            .with_rotate_animation(2),
-                    )
+                    .child(terminal_running_indicator())
                     .when_some(on_stop, |header, handler| {
                         header
                             .child(Divider::vertical().color(DividerColor::Border).ml_1())

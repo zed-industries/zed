@@ -27,7 +27,7 @@ use crate::completion_provider::{AvailableSkill, PromptLocalCommand, pluralize};
 use crate::message_editor::SharedSessionCapabilities;
 use crate::ui::{
     SandboxGroup, SandboxRow, SandboxSection, SandboxStatusTooltip, TerminalSandboxWarning,
-    TerminalToolHeader,
+    TerminalToolHeader, terminal_elapsed_label, terminal_running_indicator,
 };
 use crate::unicode_confusables;
 
@@ -761,6 +761,7 @@ pub struct ThreadView {
     expanded_tool_groups: HashSet<String>,
     tool_call_groups: ToolCallGroups,
     tool_groups_dirty: bool,
+    tool_timer_task: Option<Task<()>>,
     rendered_tool_display: ToolCallDisplay,
     rendered_search_visible: bool,
     collapsed_sandbox_authorization_details: HashSet<acp_v2::ToolCallId>,
@@ -1285,6 +1286,7 @@ impl ThreadView {
             expanded_tool_groups: HashSet::default(),
             tool_call_groups: ToolCallGroups::default(),
             tool_groups_dirty: true,
+            tool_timer_task: None,
             rendered_tool_display: AgentSettings::get_global(cx).tool_call_display,
             rendered_search_visible: false,
             collapsed_sandbox_authorization_details: HashSet::default(),
@@ -7196,6 +7198,23 @@ impl ThreadView {
             || self.rendered_search_visible != self.thread_search_visible
         {
             self.tool_groups_dirty = false;
+            let has_running_timer = display != ToolCallDisplay::Verbose
+                && self.thread.read(cx).entries().iter().any(|entry| {
+                    matches!(entry, AgentThreadEntry::ToolCall(call)
+                        if Self::tool_running_started_at(call, cx).is_some())
+                });
+            if has_running_timer && self.tool_timer_task.is_none() {
+                self.tool_timer_task = Some(cx.spawn(async move |this, cx| {
+                    loop {
+                        cx.background_executor().timer(Duration::from_secs(1)).await;
+                        if this.update(cx, |_, cx| cx.notify()).is_err() {
+                            break;
+                        }
+                    }
+                }));
+            } else if !has_running_timer {
+                self.tool_timer_task = None;
+            }
             let groups = if display == ToolCallDisplay::Grouped && !self.thread_search_visible {
                 let thread = self.thread.read(cx);
                 let permission_tools: HashSet<_> = thread
@@ -7318,6 +7337,13 @@ impl ThreadView {
 
     fn render_tool_group_header(&self, group: &ToolCallGroup, cx: &Context<Self>) -> AnyElement {
         let expanded = self.expanded_tool_groups.contains(&group.first_id);
+        let running_timer = group.running_command().and_then(|(id, _)| {
+            let (_, call) = self
+                .thread
+                .read(cx)
+                .tool_call(&acp_v2::ToolCallId::new(id))?;
+            Self::tool_running_started_at(call, cx)
+        });
         let group_id = group.first_id.clone();
         let entries = group.entries.clone();
         let color = if group.has_failure() {
@@ -7353,6 +7379,15 @@ impl ThreadView {
                     .color(color)
                     .truncate(),
             )
+            .when_some(running_timer, |header, started_at| {
+                header.child(
+                    h_flex()
+                        .debug_selector(|| format!("tool-group-timer-{}", group.first_id))
+                        .gap_1p5()
+                        .child(terminal_elapsed_label(started_at.elapsed(), cx))
+                        .child(terminal_running_indicator()),
+                )
+            })
             .on_click(cx.listener(move |this, _, _, cx| {
                 if !this.expanded_tool_groups.remove(&group_id) {
                     this.expanded_tool_groups.insert(group_id.clone());
@@ -9385,20 +9420,58 @@ impl ThreadView {
             })
     }
 
+    fn tool_running_started_at(tool_call: &ToolCall, cx: &App) -> Option<Instant> {
+        if !matches!(
+            tool_call.status(),
+            ToolCallStatus::Pending | ToolCallStatus::InProgress
+        ) {
+            return None;
+        }
+        tool_call
+            .terminals()
+            .filter_map(|terminal| {
+                let terminal = terminal.read(cx);
+                let started = terminal.is_process_backed()
+                    || terminal
+                        .display_state()
+                        .is_some_and(|state| state.command().is_some());
+                (started && terminal.output().is_none()).then(|| terminal.started_at())
+            })
+            .max()
+    }
+
     fn tool_display_status(tool_call: &ToolCall, cx: &App) -> ToolCallStatus {
         let status = tool_call.status();
-        if status == ToolCallStatus::Completed
-            && tool_call.terminals().any(|terminal| {
-                terminal.read(cx).output().is_some_and(|output| {
-                    output.exit_status.exit_code.is_some_and(|code| code != 0)
-                        || output.exit_status.signal.is_some()
-                })
-            })
-        {
-            ToolCallStatus::Failed
-        } else {
-            status
+        if matches!(
+            status,
+            ToolCallStatus::WaitingForConfirmation
+                | ToolCallStatus::Rejected
+                | ToolCallStatus::Canceled
+                | ToolCallStatus::Failed
+        ) {
+            return status;
         }
+        // ACP tool status can lag behind terminal lifecycle events. Use the same
+        // execution state and clock as the expanded terminal card.
+        if Self::tool_running_started_at(tool_call, cx).is_some() {
+            return ToolCallStatus::InProgress;
+        }
+        if tool_call.terminals().any(|terminal| {
+            terminal.read(cx).output().is_some_and(|output| {
+                output.exit_status.exit_code.is_some_and(|code| code != 0)
+                    || output.exit_status.signal.is_some()
+            })
+        }) {
+            return ToolCallStatus::Failed;
+        }
+        if tool_call.terminals().next().is_some()
+            && tool_call
+                .terminals()
+                .all(|terminal| terminal.read(cx).output().is_some())
+        {
+            return ToolCallStatus::Completed;
+        }
+        status
     }
 
     fn render_any_tool_call(
@@ -9435,6 +9508,7 @@ impl ThreadView {
         let expanded = self.expanded_compact_tool_calls.contains(&tool_call.id);
         let id = tool_call.id.clone();
         let display_status = Self::tool_display_status(tool_call, cx);
+        let running_timer = Self::tool_running_started_at(tool_call, cx);
         let status = match display_status {
             ToolCallStatus::Pending => "Pending",
             ToolCallStatus::InProgress => "Running",
@@ -9475,7 +9549,19 @@ impl ThreadView {
                     .min_w_0()
                     .child(Label::new(label).size(LabelSize::Small).truncate()),
             )
-            .child(Label::new(status).size(LabelSize::XSmall).color(color))
+            .map(|header| {
+                if let Some(started_at) = running_timer {
+                    header.child(
+                        h_flex()
+                            .debug_selector(|| format!("compact-tool-timer-{}", tool_call.id.0))
+                            .gap_1p5()
+                            .child(terminal_elapsed_label(started_at.elapsed(), cx))
+                            .child(terminal_running_indicator()),
+                    )
+                } else {
+                    header.child(Label::new(status).size(LabelSize::XSmall).color(color))
+                }
+            })
             .on_click(cx.listener(move |this, _, window, cx| {
                 if !this.expanded_compact_tool_calls.remove(&id) {
                     this.expanded_compact_tool_calls.insert(id.clone());

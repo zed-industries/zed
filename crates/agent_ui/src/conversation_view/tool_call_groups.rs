@@ -35,6 +35,7 @@ pub(super) struct ToolCallGroup {
     pub entries: Range<usize>,
     pub kind: ActivityKind,
     calls: BTreeMap<String, ToolActivity>,
+    call_order: Vec<String>,
 }
 
 impl ToolCallGroup {
@@ -48,6 +49,22 @@ impl ToolCallGroup {
         self.calls
             .values()
             .any(|call| call.status == ActivityStatus::Running)
+    }
+
+    pub fn running_command(&self) -> Option<(&str, usize)> {
+        if self.kind != ActivityKind::Execute {
+            return None;
+        }
+        self.call_order
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(index, id)| {
+                self.calls
+                    .get(id)
+                    .filter(|call| call.status == ActivityStatus::Running)
+                    .map(|_| (id.as_str(), index + 1))
+            })
     }
 
     pub fn label(&self) -> String {
@@ -159,6 +176,17 @@ impl ToolCallGroup {
         let mut label = format!("{verb} {count} {noun}{plural}")
             .trim_start()
             .to_string();
+        if let Some((_, ordinal)) = self.running_command() {
+            label = format!("Running Command {ordinal}");
+            let running_count = self
+                .calls
+                .values()
+                .filter(|call| call.status == ActivityStatus::Running)
+                .count();
+            if running_count > 1 {
+                label.push_str(&format!(" (+{} active)", running_count - 1));
+            }
+        }
         let statuses = [
             (ActivityStatus::Pending, "pending"),
             (ActivityStatus::Failed, "failed"),
@@ -204,12 +232,16 @@ impl ToolCallGroups {
                     entries: index..index + 1,
                     kind: activity.kind,
                     calls: BTreeMap::new(),
+                    call_order: Vec::new(),
                 });
             }
             previous_kind = Some(activity.kind);
             if let Some(group) = result.groups.last_mut() {
                 group.entries.end = index + 1;
                 // ACP updates replace a call's state; they are not new executions.
+                if !group.calls.contains_key(&activity.id) {
+                    group.call_order.push(activity.id.clone());
+                }
                 group.calls.insert(activity.id.clone(), activity);
             }
             result.by_entry.push(result.groups.len().checked_sub(1));
@@ -267,8 +299,36 @@ mod tests {
             call("bash-3", ActivityKind::Execute),
         ]);
         assert_eq!(groups.groups.len(), 1);
-        assert_eq!(groups.for_entry(3).unwrap().label(), "Running 3 commands");
+        assert_eq!(groups.for_entry(3).unwrap().label(), "Running Command 1");
         assert_eq!(groups.for_entry(0).unwrap().first_id, "bash-1");
+    }
+
+    #[test]
+    fn running_command_ordinal_tracks_chronology_not_ids_or_queued_calls() {
+        let mut running = call("a", ActivityKind::Execute).unwrap();
+        running.status = ActivityStatus::Running;
+        let mut pending = call("queued", ActivityKind::Execute).unwrap();
+        pending.status = ActivityStatus::Pending;
+        let groups = ToolCallGroups::new([
+            call("z", ActivityKind::Execute),
+            Some(running.clone()),
+            Some(running),
+            Some(pending),
+        ]);
+        let group = &groups.groups[0];
+        assert_eq!(group.running_command(), Some(("a", 2)));
+        assert_eq!(group.label(), "Running Command 2 (1 pending)");
+    }
+
+    #[test]
+    fn concurrent_commands_keep_individual_timers_and_report_other_active_calls() {
+        let mut first = call("z", ActivityKind::Execute).unwrap();
+        first.status = ActivityStatus::Running;
+        let mut second = call("a", ActivityKind::Execute).unwrap();
+        second.status = ActivityStatus::Running;
+        let groups = ToolCallGroups::new([Some(first), Some(second)]);
+        assert_eq!(groups.groups[0].running_command(), Some(("a", 2)));
+        assert_eq!(groups.groups[0].label(), "Running Command 2 (+1 active)");
     }
 
     #[test]

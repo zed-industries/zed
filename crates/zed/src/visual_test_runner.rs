@@ -2368,6 +2368,71 @@ fn run_agent_thread_view_test(
         cx.run_until_parked();
         run_visual_test(name, display_window.into(), cx, update_baseline)?;
     }
+    display_thread.update(cx, |thread, cx| {
+        thread.upsert_display_terminal(
+            "running-command".into(),
+            acp_thread::DisplayTerminalPatch {
+                command: agent_client_protocol::schema::MaybeUndefined::Value(
+                    "cargo test --locked && cargo fmt --check".into(),
+                ),
+                ..Default::default()
+            },
+            cx,
+        )?;
+        thread.upsert_wire_tool_call(
+            acp_v2::ToolCallUpdate::new("command-three")
+                .status(acp_v2::ToolCallStatus::Pending)
+                .content(vec![acp_v2::ToolCallContent::Terminal(
+                    acp_v2::Terminal::new("running-command"),
+                )]),
+            cx,
+        )
+    })?;
+    cx.run_until_parked();
+    for (mode, name) in [
+        (
+            settings::ToolCallDisplay::Grouped,
+            "agent_tools_grouped_running",
+        ),
+        (
+            settings::ToolCallDisplay::Compact,
+            "agent_tools_compact_running",
+        ),
+    ] {
+        cx.update(|cx| {
+            agent_settings::AgentSettings::override_global(
+                agent_settings::AgentSettings {
+                    tool_call_display: mode,
+                    ..original_settings.clone()
+                },
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        run_visual_test(name, display_window.into(), cx, update_baseline)?;
+    }
+    display_thread.update(cx, |thread, cx| {
+        thread.upsert_display_terminal(
+            "running-command".into(),
+            acp_thread::DisplayTerminalPatch {
+                exit_status: agent_client_protocol::schema::MaybeUndefined::Value(
+                    acp_v2::TerminalExitStatus::new().exit_code(0),
+                ),
+                ..Default::default()
+            },
+            cx,
+        )
+    })?;
+    cx.update(|cx| {
+        agent_settings::AgentSettings::override_global(
+            agent_settings::AgentSettings {
+                tool_call_display: settings::ToolCallDisplay::Grouped,
+                ..original_settings.clone()
+            },
+            cx,
+        )
+    });
+    cx.run_until_parked();
     display_view.update(cx, |view, cx| {
         view.expand_tool_call("command-one".into(), cx)
     });

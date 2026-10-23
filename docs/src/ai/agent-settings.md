@@ -137,7 +137,13 @@ Command counts refer to tool calls, not individual shell statements inside a
 pipeline or script. Reads show a unique file count when the agent supplies file
 locations; otherwise they show a count of read operations. Different tool kinds,
 messages, and subagent entries separate groups. Pending, failed, canceled, and
-rejected operations are indicated in the summary.
+rejected operations are indicated in the summary. While a command is executing,
+grouped mode shows "Running Command 5" with that command's elapsed time; compact
+mode shows the elapsed time beside the command. Both use the terminal card's
+rotating activity indicator and clock. The command number follows the order within
+the group, and an additional active count indicates concurrent commands. Elapsed
+time is shown when the agent supplies a running terminal; queued calls do not
+start a timer.
 
 Thread search temporarily shows individual tool cards so matches remain visible.
 Closing search restores your chosen presentation. These settings do not change
