@@ -458,6 +458,31 @@ impl ConfigOptions {
     }
 }
 
+struct ReadOnlyConfigOptions(ConfigOptions);
+
+impl acp_thread::AgentSessionConfigOptions for ReadOnlyConfigOptions {
+    fn config_options(&self) -> Vec<acp_v2::SessionConfigOption> {
+        self.0.config_options.borrow().clone()
+    }
+
+    fn is_read_only(&self) -> bool {
+        true
+    }
+
+    fn set_config_option(
+        &self,
+        _config_id: acp_v2::SessionConfigId,
+        _value: acp_v2::SessionConfigOptionValue,
+        _cx: &mut App,
+    ) -> Task<Result<Vec<acp_v2::SessionConfigOption>>> {
+        Task::ready(Err(anyhow!("Subagent configuration is read-only")))
+    }
+
+    fn watch(&self, _cx: &mut App) -> Option<watch::Receiver<()>> {
+        Some(self.0.rx.clone())
+    }
+}
+
 pub struct AcpSession {
     thread: WeakEntity<AcpThread>,
     suppress_abort_err: bool,
@@ -836,7 +861,7 @@ fn apply_subagent_update(
             thread: subagent.downgrade(),
             suppress_abort_err: false,
             session_modes: None,
-            config_options: None,
+            config_options: Some(ConfigOptions::new(Rc::new(RefCell::new(Vec::new())))),
             default_config_task: None,
             _release_subscription: release_subscription,
         },

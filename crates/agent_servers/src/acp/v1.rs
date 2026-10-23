@@ -1,7 +1,7 @@
 use super::{
     AcpDebugLog, AcpDebugMessage, AcpSession, ClientContext, ConfigOptions, FlattenAcpResult as _,
-    ForegroundWork, UnsupportedVersion, apply_subagent_update, drain_foreground_queue,
-    enqueue_notification, enqueue_request, first_class_terminal_auth_task,
+    ForegroundWork, ReadOnlyConfigOptions, UnsupportedVersion, apply_subagent_update,
+    drain_foreground_queue, enqueue_notification, enqueue_request, first_class_terminal_auth_task,
     handle_v2_complete_elicitation, handle_v2_create_elicitation, map_acp_error,
     mcp_configurations_for_project, respond_err, respond_result, runtime, session_thread,
     terminal_auth_task_id, transport, with_v2_client_ingress, work_dirs_from_session_info,
@@ -1665,12 +1665,21 @@ impl AgentConnection for AcpConnection {
     fn session_config_options(
         &self,
         session_id: &acp_v2::SessionId,
-        _cx: &App,
+        cx: &App,
     ) -> Option<Rc<dyn acp_thread::AgentSessionConfigOptions>> {
         let sessions = self.sessions.borrow();
         let session = sessions.get(session_id)?;
 
         let config_opts = session.config_options.as_ref()?;
+        if session
+            .thread
+            .upgrade()?
+            .read(cx)
+            .parent_session_id()
+            .is_some()
+        {
+            return Some(Rc::new(ReadOnlyConfigOptions(config_opts.clone())));
+        }
 
         Some(Rc::new(AcpSessionConfigOptions {
             session_id: session_id.clone(),
@@ -8088,6 +8097,49 @@ exit 7
         let child = parent
             .read_with(cx, |parent, _| parent.subagent(&"child".into()).cloned())
             .expect("the parent owns the announced subagent");
+        let options = ReadOnlyConfigOptions(
+            sessions
+                .borrow()
+                .get(&acp_v2::SessionId::new("child"))
+                .and_then(|session| session.config_options.clone())
+                .expect("child config exists at announcement"),
+        );
+        use acp_thread::AgentSessionConfigOptions as _;
+        assert!(options.is_read_only());
+        assert!(options.config_options().is_empty());
+        let mut config_updates = cx.update(|cx| options.watch(cx)).expect("config watcher");
+        for model in ["child-model", "fallback-model"] {
+            notify(
+                "child",
+                acp::SessionUpdate::ConfigOptionUpdate(acp::ConfigOptionUpdate::new(vec![
+                    acp::SessionConfigOption::select(
+                        "model",
+                        "Model",
+                        model,
+                        vec![acp::SessionConfigSelectOption::new(model, model)],
+                    ),
+                ])),
+                cx,
+            );
+            config_updates.recv().await.expect("config notification");
+            let reported = options.config_options();
+            assert_eq!(reported.len(), 1);
+            assert!(matches!(
+                &reported.first().expect("child model").kind,
+                acp_v2::SessionConfigKind::Select(select) if select.current_value.0.as_ref() == model
+            ));
+        }
+        let error = cx
+            .update(|cx| {
+                options.set_config_option(
+                    "model".into(),
+                    acp_v2::SessionConfigOptionValue::id("fallback-model"),
+                    cx,
+                )
+            })
+            .await
+            .expect_err("child config is read-only");
+        assert!(error.to_string().contains("read-only"));
         child.read_with(cx, |child, _| {
             assert_eq!(child.parent_session_id(), Some(&parent_session_id));
             assert_eq!(

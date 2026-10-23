@@ -5354,7 +5354,15 @@ impl ThreadView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         if self.is_subagent() {
-            return div().into_any_element();
+            return h_flex()
+                .px_2()
+                .py_1()
+                .children(
+                    self.config_options_view
+                        .clone()
+                        .filter(|view| view.read(cx).is_read_only()),
+                )
+                .into_any_element();
         }
 
         let focus_handle = self.message_editor.focus_handle(cx);
