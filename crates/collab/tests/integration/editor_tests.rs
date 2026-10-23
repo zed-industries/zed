@@ -7752,8 +7752,9 @@ async fn run_guest_semantic_tokens_document_selector_test(
         .expect("expected semantic tokens from one server");
     let token_type = lsp_store_b.update(cx_b, |lsp_store, cx| {
         let language = buffer_b.read(cx).language().map(|language| language.name());
+        let buffer_id = buffer_b.read(cx).remote_id();
         lsp_store
-            .get_or_create_token_stylizer(server_id, language.as_ref(), cx)
+            .get_or_create_token_stylizer(server_id, buffer_id, language.as_ref(), cx)
             .and_then(|stylizer| stylizer.token_type_name(TokenType(0)).cloned())
     });
     assert_eq!(

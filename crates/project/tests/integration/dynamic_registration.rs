@@ -252,8 +252,9 @@ async fn test_local_semantic_tokens_request_uses_matching_dynamic_registration(
     let stylizer_token_type = |cx: &mut gpui::TestAppContext| {
         lsp_store.update(cx, |lsp_store, cx| {
             let language = buffer.read(cx).language().map(|language| language.name());
+            let buffer_id = buffer.read(cx).remote_id();
             lsp_store
-                .get_or_create_token_stylizer(server_id, language.as_ref(), cx)
+                .get_or_create_token_stylizer(server_id, buffer_id, language.as_ref(), cx)
                 .and_then(|stylizer| stylizer.token_type_name(TokenType(0)).cloned())
         })
     };
@@ -371,8 +372,9 @@ async fn test_semantic_tokens_refresh_when_duplicate_removal_changes_provider_or
     let stylizer_token_type = |cx: &mut gpui::TestAppContext| {
         lsp_store.update(cx, |lsp_store, cx| {
             let language = buffer.read(cx).language().map(|language| language.name());
+            let buffer_id = buffer.read(cx).remote_id();
             lsp_store
-                .get_or_create_token_stylizer(server_id, language.as_ref(), cx)
+                .get_or_create_token_stylizer(server_id, buffer_id, language.as_ref(), cx)
                 .and_then(|stylizer| stylizer.token_type_name(TokenType(0)).cloned())
         })
     };
@@ -3692,6 +3694,138 @@ async fn test_renaming_document_out_of_did_open_registration_clears_its_diagnost
 }
 
 #[gpui::test]
+async fn test_semantic_token_legend_of_documents_opened_by_registrations(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    // Whether the server declares JSON or not, it does not serve JSON documents unless the
+    // settings select it, which they do not for the opted in JSON.
+    for opt_in_languages in [
+        HashSet::default(),
+        HashSet::from_iter([LanguageName::new_static("JSON")]),
+    ] {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/the-root"),
+            json!({ "a.rs": "", "package.json": "{}" }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/the-root").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang());
+        language_registry.add(json_lang());
+        let adapter = || FakeLspAdapter {
+            name: "the-language-server",
+            opt_in_languages: opt_in_languages.clone(),
+            ..FakeLspAdapter::default()
+        };
+        let mut fake_servers = language_registry.register_fake_lsp("Rust", adapter());
+        if !opt_in_languages.is_empty() {
+            language_registry.register_fake_lsp_adapter("JSON", adapter());
+        }
+        cx.executor().run_until_parked();
+
+        let (rust_buffer, _rust_handle) = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let fake_server = fake_servers.next().await.unwrap();
+        let server_id = fake_server.server.server_id();
+        cx.executor().run_until_parked();
+        let (manifest_buffer, _manifest_handle) = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer_with_lsp(path!("/the-root/package.json"), cx)
+            })
+            .await
+            .unwrap();
+
+        let method = "textDocument/semanticTokens";
+        let registration_options = |language: Option<&str>, token_type: &str| {
+            serde_json::to_value(lsp::SemanticTokensRegistrationOptions {
+                text_document_registration_options: lsp::TextDocumentRegistrationOptions {
+                    document_selector: language.map(|language| {
+                        vec![lsp::DocumentFilter {
+                            language: Some(language.to_string()),
+                            scheme: None,
+                            pattern: None,
+                        }]
+                    }),
+                },
+                semantic_tokens_options: lsp::SemanticTokensOptions {
+                    legend: lsp::SemanticTokensLegend {
+                        token_types: vec![token_type.to_string().into()],
+                        token_modifiers: Vec::new(),
+                    },
+                    full: Some(lsp::SemanticTokensFullOptions::Bool(true)),
+                    ..lsp::SemanticTokensOptions::default()
+                },
+                static_registration_options: lsp::StaticRegistrationOptions::default(),
+            })
+            .ok()
+        };
+        register_capability(
+            &fake_server,
+            "textDocument/didOpen",
+            "open-manifests",
+            Some(json!({ "documentSelector": [{ "language": "json" }] })),
+        )
+        .await;
+        register_capability(
+            &fake_server,
+            method,
+            "json-semantic-tokens",
+            registration_options(Some("json"), "string"),
+        )
+        .await;
+        // Stands for the documents of the languages the server serves, so it must not decide
+        // the legend of documents its `didOpen` registrations opened, despite being the latest.
+        register_capability(
+            &fake_server,
+            method,
+            "served-semantic-tokens",
+            registration_options(None, "type"),
+        )
+        .await;
+        cx.executor().run_until_parked();
+        assert!(buffer_opened_in_server(
+            &project,
+            &manifest_buffer,
+            server_id,
+            cx
+        ));
+
+        let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+        let token_type = |buffer: &Entity<Buffer>, cx: &mut gpui::TestAppContext| {
+            lsp_store.update(cx, |lsp_store, cx| {
+                let buffer = buffer.read(cx);
+                let language = buffer.language().map(|language| language.name());
+                lsp_store
+                    .get_or_create_token_stylizer(
+                        server_id,
+                        buffer.remote_id(),
+                        language.as_ref(),
+                        cx,
+                    )
+                    .and_then(|stylizer| stylizer.token_type_name(TokenType(0)).cloned())
+            })
+        };
+        assert_eq!(
+            token_type(&manifest_buffer, cx).as_deref(),
+            Some("string"),
+            "expected the legend of the registration selecting the document \
+             (opt-in languages: {opt_in_languages:?})",
+        );
+        assert_eq!(
+            token_type(&rust_buffer, cx).as_deref(),
+            Some("type"),
+            "expected the latest registration to decide the legend of a served document",
+        );
+    }
+}
+
+#[gpui::test]
 async fn test_did_open_registration_follows_language_server_setting_changes(
     cx: &mut gpui::TestAppContext,
 ) {
@@ -4917,6 +5051,135 @@ async fn test_did_open_registration_respects_language_server_settings(
 }
 
 #[gpui::test]
+async fn test_document_opened_by_registrations_becomes_served_by_settings(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/the-root"),
+        json!({ "a.rs": "", "package.json": "{}" }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/the-root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    language_registry.add(json_lang());
+    // The server also declares JSON, but only handles it when the settings select it.
+    let adapter = || FakeLspAdapter {
+        name: "the-language-server",
+        opt_in_languages: HashSet::from_iter([LanguageName::new_static("JSON")]),
+        capabilities: lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string()]),
+                ..lsp::CompletionOptions::default()
+            }),
+            ..lsp::ServerCapabilities::default()
+        },
+        ..FakeLspAdapter::default()
+    };
+    let mut fake_servers = language_registry.register_fake_lsp("Rust", adapter());
+    language_registry.register_fake_lsp_adapter("JSON", adapter());
+    cx.executor().run_until_parked();
+
+    let (_rust_buffer, _rust_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let mut fake_server = fake_servers.next().await.unwrap();
+    let server_id = fake_server.server.server_id();
+    // Once running, the server is not opened with documents of languages it is opted out of.
+    cx.executor().run_until_parked();
+    let (manifest_buffer, _manifest_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/package.json"), cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+    register_capability(
+        &fake_server,
+        "textDocument/didOpen",
+        "open-manifests",
+        Some(json!({ "documentSelector": [{ "language": "json" }] })),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    let manifest_triggers = |cx: &mut gpui::TestAppContext| {
+        manifest_buffer.read_with(cx, |buffer, _| buffer.completion_triggers().clone())
+    };
+    assert!(buffer_opened_in_server(
+        &project,
+        &manifest_buffer,
+        server_id,
+        cx
+    ));
+    assert_eq!(
+        manifest_triggers(cx),
+        BTreeSet::new(),
+        "expected the static capabilities not to apply to a document opened by registrations",
+    );
+
+    let select_server_for_json = |selected: bool, cx: &mut gpui::TestAppContext| {
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    let language_servers = selected.then(|| {
+                        vec![
+                            language::language_settings::ConfiguredLanguageServer::new(
+                                "the-language-server",
+                            ),
+                            language::language_settings::ConfiguredLanguageServer::new("..."),
+                        ]
+                    });
+                    settings.languages_mut().insert(
+                        "JSON".into(),
+                        LanguageSettingsContent {
+                            language_servers,
+                            ..LanguageSettingsContent::default()
+                        },
+                    );
+                });
+            })
+        });
+        cx.executor().run_until_parked();
+    };
+    select_server_for_json(true, cx);
+    assert_eq!(
+        manifest_triggers(cx),
+        BTreeSet::from([".".to_string()]),
+        "expected the static capabilities to apply once the settings select the server",
+    );
+
+    // Back to the defaults, the registration selects the document, which is already open.
+    select_server_for_json(false, cx);
+    assert!(
+        buffer_opened_in_server(&project, &manifest_buffer, server_id, cx),
+        "expected the registration to keep the document open in the server",
+    );
+    assert_eq!(
+        manifest_triggers(cx),
+        BTreeSet::new(),
+        "expected the static capabilities to stop applying once the settings do not select the server",
+    );
+
+    select_server_for_json(true, cx);
+    unregister_capabilities(&fake_server, "textDocument/didOpen", &["open-manifests"]).await;
+    cx.executor().run_until_parked();
+    assert!(
+        buffer_opened_in_server(&project, &manifest_buffer, server_id, cx),
+        "expected the document the server serves to stay open without the registration",
+    );
+    let (changed_uri, _) = edit_and_receive_change(&manifest_buffer, &mut fake_server, cx).await;
+    assert_eq!(
+        changed_uri,
+        lsp::Uri::from_file_path(path!("/the-root/package.json")).unwrap(),
+    );
+}
+
+#[gpui::test]
 async fn test_documents_closed_by_registrations_refresh_document_highlights(
     cx: &mut gpui::TestAppContext,
 ) {
@@ -5051,6 +5314,310 @@ async fn test_documents_opened_by_registrations_balance_opens_and_closes(
         take_notifications(),
         closed,
         "expected closing the buffer to close the document opened by the registration",
+    );
+}
+
+#[gpui::test]
+async fn test_language_change_to_document_opened_by_registrations_clears_previous_data(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let (project, fake_server) =
+        setup_dynamic_registration_test(cx, lsp::ServerCapabilities::default()).await;
+    let server_id = fake_server.server.server_id();
+    project.read_with(cx, |project, _| project.languages().add(json_lang()));
+    cx.executor().run_until_parked();
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    register_capability(
+        &fake_server,
+        "textDocument/didOpen",
+        "open-json",
+        Some(json!({ "documentSelector": [{ "language": "json" }] })),
+    )
+    .await;
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+        uri: lsp::Uri::from_file_path(path!("/the-root/a.rs")).unwrap(),
+        version: None,
+        diagnostics: vec![lsp::Diagnostic {
+            range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+            severity: Some(lsp::DiagnosticSeverity::ERROR),
+            message: lsp::DiagnosticMessage::from("a Rust error"),
+            ..lsp::Diagnostic::default()
+        }],
+    });
+    cx.executor().run_until_parked();
+    let diagnostic_count = |cx: &mut gpui::TestAppContext| {
+        buffer.read_with(cx, |buffer, _| {
+            buffer
+                .snapshot()
+                .diagnostics_in_range::<_, Point>(0..buffer.len(), false)
+                .count()
+        })
+    };
+    assert_eq!(diagnostic_count(cx), 1);
+
+    // The server stays attached through its registration, under which its static capabilities,
+    // and so what it said about the Rust document, no longer apply.
+    project.update(cx, |project, cx| {
+        project.set_language_for_buffer(&buffer, json_lang(), cx)
+    });
+    cx.executor().run_until_parked();
+    assert!(buffer_opened_in_server(&project, &buffer, server_id, cx));
+    assert_eq!(
+        diagnostic_count(cx),
+        0,
+        "expected the diagnostics of the server for the previous language to be cleared",
+    );
+}
+
+#[gpui::test]
+async fn test_call_hierarchy_follow_ups_of_documents_opened_by_registrations(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let (project, fake_server) =
+        setup_dynamic_registration_test(cx, lsp::ServerCapabilities::default()).await;
+    let fs = project.read_with(cx, |project, _| project.fs().as_fake());
+    fs.insert_tree(path!("/the-root"), json!({ "package.json": "{}" }))
+        .await;
+    project.read_with(cx, |project, _| project.languages().add(json_lang()));
+    cx.executor().run_until_parked();
+
+    let (manifest_buffer, _manifest_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/package.json"), cx)
+        })
+        .await
+        .unwrap();
+    let selector = Some(json!({ "documentSelector": [{ "language": "json" }] }));
+    register_capability(
+        &fake_server,
+        "textDocument/didOpen",
+        "open-manifests",
+        selector.clone(),
+    )
+    .await;
+    register_capability(
+        &fake_server,
+        "textDocument/prepareCallHierarchy",
+        "call-hierarchy-for-manifests",
+        selector,
+    )
+    .await;
+    cx.executor().run_until_parked();
+
+    let item = lsp::CallHierarchyItem {
+        name: "dependencies".to_string(),
+        kind: lsp::SymbolKind::FIELD,
+        tags: None,
+        detail: None,
+        uri: lsp::Uri::from_file_path(path!("/the-root/package.json")).unwrap(),
+        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 2)),
+        selection_range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 2)),
+        data: None,
+    };
+    let _prepare_requests = fake_server
+        .set_request_handler::<lsp::request::CallHierarchyPrepare, _, _>({
+            let item = item.clone();
+            move |_, _| {
+                let item = item.clone();
+                async move { Ok(Some(vec![item])) }
+            }
+        });
+    let follow_up_requests = Arc::new(Mutex::new(Vec::new()));
+    let _incoming_requests = fake_server
+        .set_request_handler::<lsp::request::CallHierarchyIncomingCalls, _, _>({
+            let follow_up_requests = follow_up_requests.clone();
+            move |_, _| {
+                follow_up_requests.lock().push("incoming");
+                async move { Ok(None) }
+            }
+        });
+    let _outgoing_requests = fake_server
+        .set_request_handler::<lsp::request::CallHierarchyOutgoingCalls, _, _>({
+            let follow_up_requests = follow_up_requests.clone();
+            move |_, _| {
+                follow_up_requests.lock().push("outgoing");
+                async move { Ok(None) }
+            }
+        });
+
+    let items = project
+        .update(cx, |project, cx| {
+            project.prepare_call_hierarchy(&manifest_buffer, 0, cx)
+        })
+        .await
+        .unwrap()
+        .expect("expected the registration to prepare the item");
+    let item = items.into_iter().next().expect("expected a prepared item");
+    project
+        .update(cx, |project, cx| project.incoming_calls(item.clone(), cx))
+        .await
+        .unwrap();
+    project
+        .update(cx, |project, cx| project.outgoing_calls(item, cx))
+        .await
+        .unwrap();
+    assert_eq!(
+        *follow_up_requests.lock(),
+        ["incoming", "outgoing"],
+        "expected the follow-ups of a prepared item to reach the server that prepared it",
+    );
+}
+
+#[gpui::test]
+async fn test_documents_opened_by_registrations_only_use_selecting_registrations(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let (project, fake_server) = setup_dynamic_registration_test(
+        cx,
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string()]),
+                ..lsp::CompletionOptions::default()
+            }),
+            code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+            diagnostic_provider: Some(lsp::DiagnosticServerCapabilities::Options(
+                lsp::DiagnosticOptions::default(),
+            )),
+            ..lsp::ServerCapabilities::default()
+        },
+    )
+    .await;
+    let fs = project.read_with(cx, |project, _| project.fs().as_fake());
+    fs.insert_tree(path!("/the-root"), json!({ "package.json": "{}" }))
+        .await;
+    project.read_with(cx, |project, _| project.languages().add(json_lang()));
+    cx.executor().run_until_parked();
+
+    let requested_uris = Arc::new(Mutex::new(Vec::new()));
+    fake_server.set_request_handler::<lsp::request::CodeActionRequest, _, _>({
+        let requested_uris = requested_uris.clone();
+        move |params, _| {
+            requested_uris
+                .lock()
+                .push(format!("codeAction {}", params.text_document.uri));
+            async move { Ok(None) }
+        }
+    });
+    fake_server.set_request_handler::<lsp::request::DocumentDiagnosticRequest, _, _>({
+        let requested_uris = requested_uris.clone();
+        move |params, _| {
+            requested_uris
+                .lock()
+                .push(format!("diagnostic {}", params.text_document.uri));
+            async move {
+                Ok(lsp::DocumentDiagnosticReportResult::Report(
+                    lsp::DocumentDiagnosticReport::Full(
+                        lsp::RelatedFullDocumentDiagnosticReport::default(),
+                    ),
+                ))
+            }
+        }
+    });
+
+    let (manifest_buffer, _manifest_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/package.json"), cx)
+        })
+        .await
+        .unwrap();
+    register_capability(
+        &fake_server,
+        "textDocument/didOpen",
+        "open-manifests",
+        Some(json!({ "documentSelector": [{ "language": "json" }] })),
+    )
+    .await;
+    // Registrations without a selector cover the languages the server serves, like its static
+    // capabilities.
+    register_capability(
+        &fake_server,
+        "textDocument/completion",
+        "complete-served-languages",
+        Some(json!({ "triggerCharacters": ["!"] })),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    assert!(buffer_opened_in_server(
+        &project,
+        &manifest_buffer,
+        fake_server.server.server_id(),
+        cx
+    ));
+
+    let manifest_uri = lsp::Uri::from_file_path(path!("/the-root/package.json")).unwrap();
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let request_features = async |cx: &mut gpui::TestAppContext| {
+        project
+            .update(cx, |project, cx| {
+                project.code_actions(&manifest_buffer, 0..0, None, cx)
+            })
+            .await
+            .unwrap();
+        lsp_store
+            .update(cx, |lsp_store, cx| {
+                lsp_store.pull_diagnostics_for_buffer(manifest_buffer.clone(), cx)
+            })
+            .await
+            .unwrap();
+        cx.executor().run_until_parked();
+        (
+            manifest_buffer.read_with(cx, |buffer, _| buffer.completion_triggers().clone()),
+            std::mem::take(&mut *requested_uris.lock()),
+        )
+    };
+
+    assert_eq!(
+        request_features(cx).await,
+        (BTreeSet::new(), Vec::new()),
+        "expected neither static capabilities nor registrations without a selector to apply to a document opened by registrations",
+    );
+
+    let selector = json!([{ "language": "json" }]);
+    register_capability(
+        &fake_server,
+        "textDocument/completion",
+        "complete-manifests",
+        Some(json!({ "documentSelector": selector, "triggerCharacters": [":"] })),
+    )
+    .await;
+    register_capability(
+        &fake_server,
+        "textDocument/codeAction",
+        "code-actions-for-manifests",
+        Some(json!({ "documentSelector": selector })),
+    )
+    .await;
+    register_capability(
+        &fake_server,
+        "textDocument/diagnostic",
+        "diagnose-manifests",
+        Some(json!({
+            "documentSelector": selector,
+            "interFileDependencies": false,
+            "workspaceDiagnostics": false,
+        })),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        request_features(cx).await,
+        (
+            BTreeSet::from([":".to_string()]),
+            vec![
+                format!("codeAction {manifest_uri}"),
+                format!("diagnostic {manifest_uri}"),
+            ],
+        ),
+        "expected the registrations selecting the document to apply to it",
     );
 }
 

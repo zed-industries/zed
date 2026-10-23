@@ -33,7 +33,9 @@ use crate::{
     project_settings::ProjectSettings,
 };
 
-type StylizerKey = (LanguageServerId, Option<LanguageName>);
+/// Legends depend on whether the buffer is opened in the server by its registrations, which
+/// only the registrations selecting it then apply to.
+type StylizerKey = (LanguageServerId, Option<LanguageName>, bool);
 
 pub(super) struct SemanticTokenConfig {
     stylizers: HashMap<StylizerKey, (lsp::SemanticTokensLegend, SemanticTokenStylizer)>,
@@ -54,7 +56,7 @@ impl SemanticTokenConfig {
     }
 
     pub(super) fn remove_server_data(&mut self, server_id: LanguageServerId) {
-        self.stylizers.retain(|&(id, _), _| id != server_id);
+        self.stylizers.retain(|&(id, _, _), _| id != server_id);
     }
 
     pub(super) fn update_rules(&mut self, new_rules: SemanticTokenRules) -> bool {
@@ -509,11 +511,13 @@ impl LspStore {
     pub fn get_or_create_token_stylizer(
         &mut self,
         server_id: LanguageServerId,
+        buffer_id: text::BufferId,
         language: Option<&LanguageName>,
         cx: &mut App,
     ) -> Option<&SemanticTokenStylizer> {
-        let key = (server_id, language.cloned());
-        let legend = self.semantic_tokens_legend(server_id, language)?;
+        let opened_by_registrations = self.buffer_opened_by_registrations(buffer_id, server_id);
+        let key = (server_id, language.cloned(), opened_by_registrations);
+        let legend = self.semantic_tokens_legend(server_id, language, opened_by_registrations)?;
         let up_to_date = self
             .semantic_token_config
             .stylizers
@@ -539,6 +543,7 @@ impl LspStore {
         &self,
         server_id: LanguageServerId,
         language: Option<&LanguageName>,
+        opened_by_registrations: bool,
     ) -> Option<&lsp::SemanticTokensLegend> {
         if let Some(local) = self.as_local()
             && let Some(language) = language
@@ -556,7 +561,11 @@ impl LspStore {
                 })
             {
                 for registration in registrations.values().rev() {
-                    if document_selector_matches(registration.document_selector.as_ref(), &context)
+                    if (!opened_by_registrations || registration.document_selector.is_some())
+                        && document_selector_matches(
+                            registration.document_selector.as_ref(),
+                            &context,
+                        )
                         && let Some(provider) = registration
                             .server_capabilities
                             .semantic_tokens_provider
@@ -565,6 +574,9 @@ impl LspStore {
                         return Some(semantic_tokens_provider_legend(provider));
                     }
                 }
+            }
+            if opened_by_registrations {
+                return None;
             }
             if let Some(provider) = local
                 .initial_server_capabilities
