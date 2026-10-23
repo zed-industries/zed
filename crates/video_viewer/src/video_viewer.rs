@@ -995,7 +995,106 @@ mod persistence {
 
 #[cfg(test)]
 mod tests {
+    use fs::{FakeFs, Fs as _};
+    use gpui::{TestAppContext, VisualTestContext};
+    use settings::SettingsStore;
+    use util::{path, rel_path::rel_path};
+    use workspace::item::ItemHandle;
+    use worktree::WorktreeId;
+
     use super::*;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            cx.set_global(db::AppDatabase::test_new());
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            init(cx);
+        });
+    }
+
+    /// Opens a file named `file_name` in a new workspace window. Its contents are no video: the
+    /// platform players cannot run in tests, because AVPlayer needs the process's main thread
+    /// and Media Foundation needs COM and a GPU.
+    async fn open_in_workspace<'a>(
+        file_name: &str,
+        cx: &'a mut TestAppContext,
+    ) -> (Result<Box<dyn ItemHandle>>, &'a mut VisualTestContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.create_dir(Path::new(path!("/root")))
+            .await
+            .expect("test root should be created");
+        fs.insert_file(
+            Path::new(path!("/root")).join(file_name),
+            b"not a video".to_vec(),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new(path!("/root"))], cx).await;
+        let worktree_id = cx.update(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .expect("test project should contain a worktree")
+                .read(cx)
+                .id()
+        });
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let item = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path(file_name)), None, true, window, cx)
+            })
+            .await;
+        cx.run_until_parked();
+        (item, cx)
+    }
+
+    #[gpui::test]
+    async fn test_video_files_open_in_the_video_viewer(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (item, cx) = open_in_workspace("Clip.MOV", cx).await;
+        let video_viewer = item
+            .expect("video file should open")
+            .downcast::<VideoViewer>()
+            .expect("video file should open in the video viewer");
+
+        video_viewer.read_with(cx, |video_viewer, cx| {
+            assert_eq!(video_viewer.tab_content_text(0, cx), "Clip.MOV");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_play_waits_until_the_video_is_ready(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (item, cx) = open_in_workspace("clip.mp4", cx).await;
+        let video_viewer = item
+            .expect("video file should open")
+            .downcast::<VideoViewer>()
+            .expect("video file should open in the video viewer");
+
+        video_viewer.update_in(cx, |video_viewer, window, cx| {
+            assert_ne!(video_viewer.state, PlayerState::Ready);
+            video_viewer.toggle_playback(&TogglePlayback, window, cx);
+            assert!(!video_viewer.is_playing());
+        });
+    }
+
+    #[test]
+    fn test_is_video_file() {
+        let project_path = |path| ProjectPath {
+            worktree_id: WorktreeId::from_usize(0),
+            path: rel_path(path).into(),
+        };
+        assert!(is_video_file(&project_path("clip.mp4")));
+        assert!(is_video_file(&project_path("Clip.MOV")));
+        assert!(!is_video_file(&project_path("song.mp3")));
+        assert_eq!(
+            is_video_file(&project_path("film.mkv")),
+            cfg!(target_os = "windows")
+        );
+    }
 
     #[test]
     fn test_format_time() {

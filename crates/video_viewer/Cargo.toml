@@ -64,3 +64,6 @@ windows-core.workspace = true
 
 [dev-dependencies]
 db = { workspace = true, features = ["test-support"] }
+editor = { workspace = true, features = ["test-support"] }
+fs.workspace = true
+theme.workspace = true
