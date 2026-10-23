@@ -1592,12 +1592,7 @@ fn resolve_preview_image(
             });
         if let Some(path) = path_with_parent_components {
             let project = project.downgrade();
-            return match image_store::use_image_location(
-                project.clone(),
-                vec![PathBuf::from(path)],
-                window,
-                cx,
-            )? {
+            return match image_store::use_image_location(project.clone(), vec![path], window, cx)? {
                 ImageLocation::Local(path) => Some(ImageSource::Resource(Resource::Path(path))),
                 ImageLocation::Project(path) => {
                     Some(image_store::project_image_source(project, path))
@@ -1638,17 +1633,15 @@ fn resolve_preview_image(
         }
     }
 
+    // The fallback reads the client filesystem, so a native join keeps Windows' verbatim prefix
+    // rules and leaves `..` for the OS to resolve after symlinks.
     let path = if let (Some(stripped), Some(root)) = (workspace_relative_path, workspace_directory)
     {
-        client_path_style
-            .join_path_preserving_components(root, stripped)
-            .ok()?
+        root.join(stripped)
     } else if client_path_style.has_root(Path::new(&decoded)) {
         PathBuf::from(decoded)
     } else {
-        client_path_style
-            .join_path_preserving_components(base_directory?, decoded)
-            .ok()?
+        base_directory?.join(decoded)
     };
 
     path.exists()
@@ -1673,25 +1666,42 @@ fn preview_image_path_with_parent_components(
     source_project_path: Option<&ProjectPath>,
     worktree: &Entity<Worktree>,
     cx: &App,
-) -> Option<String> {
+) -> Option<PathBuf> {
     let worktree = worktree.read(cx);
     let path_style = worktree.path_style();
+    let is_local = worktree.is_local();
+    // A native join applies Windows' verbatim (`\\?\`) prefix rules to local roots; remote
+    // worktrees follow the remote host's path style.
+    let join = |base: &Path, path: &str| {
+        if is_local {
+            Some(base.join(path))
+        } else {
+            path_style.join(base, path).map(PathBuf::from)
+        }
+    };
     let path =
         if workspace_relative_path.is_none() && path_style.is_absolute(Path::new(decoded_path)) {
-            decoded_path.to_owned()
+            PathBuf::from(decoded_path)
         } else {
             // Same precondition as `resolve_project_path_for_preview_image`: a single-file worktree
             // has no source directory, which leaves these paths to the workspace-directory fallback.
             let source_directory = source_project_path?.path.parent()?;
             if let Some(workspace_relative_path) = workspace_relative_path {
-                path_style.join(worktree.abs_path(), workspace_relative_path)?
+                join(worktree.abs_path().as_ref(), workspace_relative_path)?
             } else {
-                path_style.join(worktree.absolutize(source_directory), decoded_path)?
+                join(&worktree.absolutize(source_directory), decoded_path)?
             }
         };
-    path.split(path_style.separators_ch())
-        .any(|component| component == "..")
-        .then_some(path)
+    let has_parent_component = if is_local {
+        path.components()
+            .any(|component| component == std::path::Component::ParentDir)
+    } else {
+        path.to_str().is_some_and(|path| {
+            path.split(path_style.separators_ch())
+                .any(|component| component == "..")
+        })
+    };
+    has_parent_component.then_some(path)
 }
 
 fn resolve_project_path_for_preview_image(
