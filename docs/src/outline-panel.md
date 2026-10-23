@@ -56,3 +56,10 @@ Quickly navigate through all references when using the {#action editor::FindAllR
 ![Using the outline panel while viewing `find all references` multi-buffer](https://zed.dev/img/outline-panel/find-all-references.png)
 
 The outline view provides a great way to quickly navigate to specific parts of your code and helps you maintain context when working with large result sets in multi-buffers.
+
+### Call hierarchy
+
+Place the cursor on a function and run {#action editor::ShowCallHierarchy} from the command palette, or choose **Show Call Hierarchy** from the editor context menu. The
+outline panel switches to display a call hierarchy tree for that symbol.
+
+Use the header to switch between incoming and outgoing calls. Select a symbol to jump to the associated call site, and use the left and right arrow keys to move expand/collapse nodes in the tree. Choose **Back to Outline** to return to the document outline. Your language server must support call hierarchy.
