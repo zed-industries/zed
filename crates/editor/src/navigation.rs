@@ -1466,8 +1466,9 @@ impl Editor {
                     if Some(&target_buffer) == editor.buffer.read(cx).as_singleton().as_ref() {
                         editor.go_to_singleton_buffer_range(range, window, cx);
                     } else {
+                        let source_pane = workspace.read(cx).active_pane().clone();
                         window.defer(cx, move |window, cx| {
-                            let target_editor: Entity<Self> =
+                            let (target_editor, target_pane) =
                                 workspace.update(cx, |workspace, cx| {
                                     let preview_tabs_settings = PreviewTabsSettings::get_global(cx);
                                     let keep_old_preview = preview_tabs_settings
@@ -1475,7 +1476,7 @@ impl Editor {
                                     let allow_new_preview = preview_tabs_settings
                                         .enable_preview_file_from_code_navigation;
 
-                                    workspace.open_project_item(
+                                    let editor = workspace.open_project_item(
                                         None,
                                         target_buffer.clone(),
                                         true,
@@ -1484,14 +1485,24 @@ impl Editor {
                                         allow_new_preview,
                                         window,
                                         cx,
-                                    )
+                                    );
+                                    let target_pane =
+                                        workspace.pane_for_item_id(editor.entity_id());
+                                    (editor, target_pane)
                                 });
+
                             target_editor.update(cx, |target_editor, cx| {
-                                // When selecting a definition in a different buffer, don't create a
-                                // history entry at the previous cursor location.
                                 target_editor.go_to_singleton_buffer_range_impl(
                                     range,
-                                    RecordNavigation::Never,
+                                    // The source pane already recorded where the jump started, so only
+                                    // record the target's previous position when it's in another pane.
+                                    if target_pane
+                                        .is_none_or(|target_pane| target_pane == source_pane)
+                                    {
+                                        RecordNavigation::Never
+                                    } else {
+                                        RecordNavigation::Always
+                                    },
                                     window,
                                     cx,
                                 );
@@ -1942,6 +1953,7 @@ impl Editor {
                         let Some(workspace) = workspace else {
                             return Navigated::No;
                         };
+                        let source_pane = workspace.read(cx).active_pane().clone();
                         let offset = editor.cursor_top_offset(cx);
 
                         window.defer(cx, move |window, cx| {
@@ -2005,13 +2017,20 @@ impl Editor {
                                     return Navigated::No;
                                 }
 
-                                // When selecting a definition in a different buffer, don't create a
-                                // history entry at the previous cursor location.
                                 target_editor.change_selections(
                                     SelectionEffects::scroll(Autoscroll::for_go_to_definition(
                                         offset, cx,
                                     ))
-                                    .record_navigation(RecordNavigation::Never),
+                                    .record_navigation(
+                                        // The source pane already recorded where the jump started, so
+                                        // only record the target's previous position when it's in
+                                        // another pane.
+                                        if target_pane == source_pane {
+                                            RecordNavigation::Never
+                                        } else {
+                                            RecordNavigation::Always
+                                        },
+                                    ),
                                     window,
                                     cx,
                                     |s| s.select_anchor_ranges(target_ranges),

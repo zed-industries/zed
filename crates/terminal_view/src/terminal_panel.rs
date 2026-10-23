@@ -29,9 +29,10 @@ use util::{ResultExt, TryFutureExt, defer};
 use workspace::{
     ActivateNextPane, ActivatePane, ActivatePaneDown, ActivatePaneLeft, ActivatePaneRight,
     ActivatePaneUp, ActivatePreviousPane, DraggedTab, ItemId, MoveItemToPane,
-    MoveItemToPaneInDirection, MovePaneDown, MovePaneLeft, MovePaneRight, MovePaneUp, Pane,
-    PaneGroup, PaneNavigation, SplitDirection, SplitDown, SplitLeft, SplitMode, SplitRight,
-    SplitUp, SwapPaneDown, SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom, Workspace,
+    MoveItemToPaneInDirection, MovePaneDown, MovePaneLeft, MovePaneRight, MovePaneUp,
+    NavigationButtons, Pane, PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitMode,
+    SplitRight, SplitUp, SwapPaneDown, SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom,
+    Workspace,
     dock::{DockPosition, Panel, PanelEvent, PanelHandle},
     item::{ItemNavigation, SerializableItem},
     move_active_item, pane,
@@ -1320,7 +1321,7 @@ pub fn new_terminal_pane(
             None,
             workspace::NewTerminal::default().boxed_clone(),
             false,
-            PaneNavigation::Disabled,
+            NavigationButtons::Hidden,
             window,
             cx,
         );

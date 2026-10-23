@@ -58,8 +58,8 @@ use ui::{
 use util::ResultExt;
 use variable_list::VariableList;
 use workspace::{
-    ActivePaneDecorator, DraggedTab, Item, ItemHandle, ItemNavigation, Member, Pane, PaneGroup,
-    PaneNavigation, SplitDirection, Workspace, item::TabContentParams, move_item, pane::Event,
+    ActivePaneDecorator, DraggedTab, Item, ItemHandle, ItemNavigation, Member, NavigationButtons,
+    Pane, PaneGroup, SplitDirection, Workspace, item::TabContentParams, move_item, pane::Event,
 };
 
 static PROCESS_ID_PLACEHOLDER: LazyLock<String> =
@@ -654,7 +654,7 @@ pub(crate) fn new_debugger_pane(
             Some(can_drop_predicate),
             NoAction.boxed_clone(),
             true,
-            PaneNavigation::Disabled,
+            NavigationButtons::Hidden,
             window,
             cx,
         );

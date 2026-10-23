@@ -34279,6 +34279,130 @@ async fn test_goto_definition_reveals_existing_editor_in_other_pane(cx: &mut Tes
 }
 
 #[gpui::test]
+async fn test_goto_definition_split_records_position_of_active_target_editor(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            definition_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+    cx.set_state("fn main() { ˇtarget(); }");
+
+    let (fake_fs, worktree_id) = cx.update_workspace(|workspace, _, cx| {
+        let project = workspace.project();
+        let fake_fs = project.read(cx).fs().as_fake();
+        let worktree_id = project.read(cx).worktrees(cx).next().unwrap().read(cx).id();
+        (fake_fs, worktree_id)
+    });
+    let target_abs_path = EditorLspTestContext::root_path()
+        .join("dir")
+        .join("definition.rs");
+    let target_text = std::iter::once("fn target() {}\n".to_string())
+        .chain((1..40).map(|row| format!("// line {row}\n")))
+        .collect::<String>();
+    fake_fs
+        .insert_file(&target_abs_path, target_text.into_bytes())
+        .await;
+    cx.run_until_parked();
+
+    let origin_editor = cx.editor.clone();
+    let right_pane = cx.update_workspace(|workspace, window, cx| {
+        workspace.split_pane(
+            workspace.active_pane().clone(),
+            SplitDirection::Right,
+            window,
+            cx,
+        )
+    });
+    let target_editor = cx
+        .update_workspace(|workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, rel_path("dir/definition.rs")),
+                Some(right_pane.downgrade()),
+                false,
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    target_editor.update_in(&mut cx.cx.cx, |editor, window, cx| {
+        editor.change_selections(
+            SelectionEffects::no_scroll().record_navigation(RecordNavigation::Never),
+            window,
+            cx,
+            |selections| selections.select_ranges([Point::new(20, 0)..Point::new(20, 0)]),
+        );
+    });
+    cx.update_workspace(|workspace, window, cx| {
+        assert!(workspace.activate_item(&origin_editor, true, true, window, cx));
+    });
+    cx.run_until_parked();
+    right_pane.update(&mut cx.cx.cx, |pane, cx| pane.nav_history_mut().clear(cx));
+
+    let target_uri = lsp::Uri::from_file_path(target_abs_path).unwrap();
+    let _go_to_definition = cx
+        .lsp
+        .set_request_handler::<lsp::request::GotoDefinition, _, _>(move |_, _| {
+            let target_uri = target_uri.clone();
+            async move {
+                Ok(Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location {
+                    uri: target_uri,
+                    range: lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 9)),
+                })))
+            }
+        });
+
+    let navigated = origin_editor
+        .update_in(&mut cx.cx.cx, |editor, window, cx| {
+            editor.go_to_definition_split(&GoToDefinitionSplit, window, cx)
+        })
+        .await
+        .expect("Failed to navigate to definition");
+    assert_eq!(navigated, Navigated::Yes);
+    cx.run_until_parked();
+
+    let target_cursor_row = |cx: &mut EditorLspTestContext| {
+        target_editor.update(&mut cx.cx.cx, |editor, cx| {
+            editor
+                .selections
+                .newest::<Point>(&editor.display_snapshot(cx))
+                .head()
+                .row
+        })
+    };
+    right_pane.read_with(&cx.cx.cx, |pane, _| {
+        assert_eq!(
+            pane.active_item()
+                .and_then(|item| item.downcast::<Editor>()),
+            Some(target_editor.clone()),
+            "the already active target editor should be reused"
+        );
+    });
+    assert_eq!(target_cursor_row(&mut cx), 0);
+
+    cx.update_workspace(|workspace, window, cx| {
+        workspace.go_back(right_pane.downgrade(), window, cx)
+    })
+    .await
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        target_cursor_row(&mut cx),
+        20,
+        "going back should restore the target editor's position before the jump"
+    );
+}
+
+#[gpui::test]
 async fn test_goto_definition_with_find_all_references_fallback(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorLspTestContext::new_rust(

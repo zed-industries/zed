@@ -437,7 +437,7 @@ pub struct Pane {
     /// This is set to true if a user scroll has occurred more recently than a system scroll
     /// We want to suppress certain system scrolls when the user has intentionally scrolled
     suppress_scroll: bool,
-    navigation: PaneNavigation,
+    navigation_buttons: NavigationButtons,
     double_click_dispatch_action: Box<dyn Action>,
     save_modals_spawned: HashSet<EntityId>,
     close_pane_if_empty: bool,
@@ -483,15 +483,13 @@ struct NavHistoryState {
     preview_item_id: Option<EntityId>,
 }
 
-/// Whether a pane supports going back and forward between its items.
+/// Whether a pane shows the go back and go forward buttons in its tab bar.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum PaneNavigation {
-    /// Items are recorded in the navigation history, and the navigation buttons are shown
-    /// according to the tab bar settings.
-    Enabled,
-    /// Nothing is recorded, and neither navigation buttons nor actions are available, e.g. for
-    /// the terminal panel.
-    Disabled,
+pub enum NavigationButtons {
+    /// Shown according to the `tab_bar.show_nav_history_buttons` setting.
+    FollowSettings,
+    /// Never shown, e.g. for the terminal panel.
+    Hidden,
 }
 
 #[derive(Debug, Default, Copy, Clone)]
@@ -578,7 +576,7 @@ impl Pane {
         can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut Window, &mut App) -> bool + 'static>>,
         double_click_dispatch_action: Box<dyn Action>,
         use_max_tabs: bool,
-        navigation: PaneNavigation,
+        navigation_buttons: NavigationButtons,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -638,7 +636,7 @@ impl Pane {
             render_tab_bar_buttons: Rc::new(default_render_tab_bar_buttons),
             render_tab_bar: Rc::new(Self::render_tab_bar),
             show_tab_bar_buttons: TabBarSettings::get_global(cx).show_tab_bar_buttons,
-            navigation,
+            navigation_buttons,
             _subscriptions: subscriptions,
             double_click_dispatch_action,
             save_modals_spawned: HashSet::default(),
@@ -911,9 +909,6 @@ impl Pane {
 
     /// Records the item's current location, called when it gets deactivated or closed.
     pub(crate) fn record_navigation(&self, item: &dyn ItemHandle, cx: &mut App) {
-        if self.navigation == PaneNavigation::Disabled {
-            return;
-        }
         if let Some(location) = item.navigation(cx).capture_location(cx) {
             self.nav_history_for_item(item).push(location, cx);
         }
@@ -3595,7 +3590,7 @@ impl Pane {
     ) -> TabBar {
         tab_bar
             .when(
-                self.navigation == PaneNavigation::Enabled
+                self.navigation_buttons == NavigationButtons::FollowSettings
                     && TabBarSettings::get_global(cx).show_nav_history_buttons,
                 |tab_bar| {
                     tab_bar
@@ -4489,10 +4484,8 @@ impl Render for Pane {
             .on_action(cx.listener(Pane::toggle_zoom))
             .on_action(cx.listener(Pane::zoom_in))
             .on_action(cx.listener(Pane::zoom_out))
-            .when(self.navigation == PaneNavigation::Enabled, |pane| {
-                pane.on_action(cx.listener(Self::navigate_backward))
-                    .on_action(cx.listener(Self::navigate_forward))
-            })
+            .on_action(cx.listener(Self::navigate_backward))
+            .on_action(cx.listener(Self::navigate_forward))
             .on_action(cx.listener(Self::go_to_older_tag))
             .on_action(cx.listener(Self::go_to_newer_tag))
             .on_action(
@@ -4715,18 +4708,14 @@ impl Render for Pane {
                             }),
                     )
             })
-            .when(self.navigation == PaneNavigation::Enabled, |pane| {
-                pane.on_mouse_down(
-                    MouseButton::Navigate(NavigationDirection::Back),
-                    cx.listener(|pane, _, window, cx| pane.navigate_backward(&GoBack, window, cx)),
-                )
-                .on_mouse_down(
-                    MouseButton::Navigate(NavigationDirection::Forward),
-                    cx.listener(|pane, _, window, cx| {
-                        pane.navigate_forward(&GoForward, window, cx)
-                    }),
-                )
-            })
+            .on_mouse_down(
+                MouseButton::Navigate(NavigationDirection::Back),
+                cx.listener(|pane, _, window, cx| pane.navigate_backward(&GoBack, window, cx)),
+            )
+            .on_mouse_down(
+                MouseButton::Navigate(NavigationDirection::Forward),
+                cx.listener(|pane, _, window, cx| pane.navigate_forward(&GoForward, window, cx)),
+            )
     }
 }
 
