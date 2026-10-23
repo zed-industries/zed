@@ -92,7 +92,7 @@ use crate::linux::{
     wayland::{
         clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPES},
         cursor::Cursor,
-        serial::{Serial, SerialKind, SerialTracker},
+        serial::{ActivationContext, Serial, SerialKind, SerialTracker},
         to_shape,
         window::WaylandWindow,
     },
@@ -406,7 +406,6 @@ pub(crate) struct WaylandClientState {
     data_offers: Vec<DataOffer<WlDataOffer>>,
     primary_data_offer: Option<DataOffer<ZwpPrimarySelectionOfferV1>>,
     cursor: Cursor,
-    activation_context: Option<ActivationContext>,
     startup_activation_token: Option<String>,
     /// The environment this connection was made in, without its activation token.
     graphical_environment: GraphicalEnvironment,
@@ -554,30 +553,7 @@ pub(crate) enum PendingActivation {
     Window(ObjectId),
 }
 
-#[derive(Clone)]
-pub(crate) struct ActivationContext {
-    serial: Serial,
-    requesting_surface: wl_surface::WlSurface,
-}
-
-impl ActivationContext {
-    pub fn serial(&self) -> Serial {
-        self.serial
-    }
-
-    pub fn requesting_surface(&self) -> &wl_surface::WlSurface {
-        &self.requesting_surface
-    }
-}
-
 impl WaylandClientState {
-    fn activation_context(&self) -> Option<ActivationContext> {
-        self.activation_context
-            .as_ref()
-            .filter(|context| context.requesting_surface().is_alive())
-            .cloned()
-    }
-
     fn consume_startup_activation_token(&mut self, surface: &wl_surface::WlSurface) {
         let Some(startup_activation_token) = self.startup_activation_token.take() else {
             return;
@@ -681,7 +657,7 @@ impl WaylandClientStatePtr {
     }
 
     pub fn activation_context(&self) -> Option<ActivationContext> {
-        self.0.upgrade()?.borrow().activation_context()
+        self.0.upgrade()?.borrow().serial_tracker.activation_context()
     }
 
     pub fn start_external_drag(
@@ -1149,7 +1125,6 @@ impl WaylandConnection {
             data_offers: Vec::new(),
             primary_data_offer: None,
             cursor,
-            activation_context: None,
             startup_activation_token: activation_token,
             graphical_environment: GraphicalEnvironment {
                 activation_token: None,
@@ -1418,12 +1393,12 @@ impl WaylandConnection {
     pub(crate) fn open_uri(&self, uri: &str) {
         let state = self.0.borrow();
         if let (Some(activation), Some(context)) =
-            (state.globals.activation.clone(), state.activation_context())
+            (state.globals.activation.clone(), state.serial_tracker.activation_context())
         {
             let token = activation
                 .get_activation_token(&state.globals.qh, PendingActivation::Uri(uri.to_string()));
-            token.set_serial(context.serial().as_raw(), &state.wl_seat);
-            token.set_surface(context.requesting_surface());
+            token.set_serial(context.serial.as_raw(), &state.wl_seat);
+            token.set_surface(&context.requesting_surface);
             token.commit();
         } else {
             let executor = state.common.borrow().background_executor.clone();
@@ -1434,12 +1409,12 @@ impl WaylandConnection {
     pub(crate) fn reveal_path(&self, path: PathBuf) {
         let state = self.0.borrow();
         if let (Some(activation), Some(context)) =
-            (state.globals.activation.clone(), state.activation_context())
+            (state.globals.activation.clone(), state.serial_tracker.activation_context())
         {
             let token =
                 activation.get_activation_token(&state.globals.qh, PendingActivation::Path(path));
-            token.set_serial(context.serial().as_raw(), &state.wl_seat);
-            token.set_surface(context.requesting_surface());
+            token.set_serial(context.serial.as_raw(), &state.wl_seat);
+            token.set_surface(&context.requesting_surface);
             token.commit();
         } else {
             let executor = state.common.borrow().background_executor.clone();
@@ -1457,7 +1432,7 @@ impl WaylandConnection {
         };
         if state.mouse_focused_window.is_some() || state.keyboard_focused_window.is_some() {
             state.clipboard.set_primary(item);
-            let Some(serial) = state.serial_tracker.user_input_serial() else {
+            let Some(serial) = state.serial_tracker.selection_serial() else {
                 log::warn!(
                     "Skipping Wayland primary selection ownership request because no keyboard or pointer press serial has been received"
                 );
@@ -1482,7 +1457,7 @@ impl WaylandConnection {
         };
         if state.mouse_focused_window.is_some() || state.keyboard_focused_window.is_some() {
             state.clipboard.set(item);
-            let Some(serial) = state.serial_tracker.user_input_serial() else {
+            let Some(serial) = state.serial_tracker.selection_serial() else {
                 log::warn!(
                     "Skipping Wayland clipboard ownership request because no keyboard or pointer press serial has been received"
                 );
@@ -2170,15 +2145,15 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 ..
             } => {
                 if key_state == wl_keyboard::KeyState::Pressed {
-                    let serial = state.serial_tracker.update(SerialKind::KeyPress, serial);
-                    state.activation_context =
-                        state
-                            .keyboard_focused_window
-                            .as_ref()
-                            .map(|window| ActivationContext {
-                                serial,
-                                requesting_surface: window.surface(),
-                            });
+                    let focused_surface = state
+                        .keyboard_focused_window
+                        .as_ref()
+                        .map(|window| window.surface());
+                    state.serial_tracker.update_with_focused_surface(
+                        SerialKind::KeyPress,
+                        serial,
+                        focused_surface,
+                    );
                 }
 
                 let focused_window = state.keyboard_focused_window.clone();
@@ -2538,15 +2513,15 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 // Record presses only. Requests referencing this serial (popup grabs,
                 // interactive moves) are declined when given a release serial.
                 if button_state == wl_pointer::ButtonState::Pressed {
-                    let serial = state.serial_tracker.update(SerialKind::MousePress, serial);
-                    state.activation_context =
-                        state
-                            .mouse_focused_window
-                            .as_ref()
-                            .map(|window| ActivationContext {
-                                serial,
-                                requesting_surface: window.surface(),
-                            });
+                    let focused_surface = state
+                        .mouse_focused_window
+                        .as_ref()
+                        .map(|window| window.surface());
+                    state.serial_tracker.update_with_focused_surface(
+                        SerialKind::MousePress,
+                        serial,
+                        focused_surface,
+                    );
                 }
                 let button = linux_button_to_gpui(button);
                 let Some(button) = button else { return };

@@ -1868,8 +1868,8 @@ impl PlatformWindow for WaylandWindow {
                 PendingActivation::Window(state.surface.id()),
             );
             token.set_app_id(app_id);
-            token.set_serial(context.serial().as_raw(), &state.globals.seat);
-            token.set_surface(context.requesting_surface());
+            token.set_serial(context.serial.as_raw(), &state.globals.seat);
+            token.set_surface(&context.requesting_surface);
             token.commit();
         }
     }
