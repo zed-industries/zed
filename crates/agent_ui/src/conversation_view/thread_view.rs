@@ -11443,6 +11443,7 @@ impl ThreadView {
                 active_editor.update_in(cx, |editor, window, cx| {
                     let snapshot = editor.buffer().read(cx).snapshot(cx);
                     if snapshot.as_singleton().is_some()
+                        && let Some(agent_location) = agent_location
                         && let Some(anchor) = snapshot.anchor_in_excerpt(agent_location.position)
                     {
                         editor.change_selections(Default::default(), window, cx, |selections| {
