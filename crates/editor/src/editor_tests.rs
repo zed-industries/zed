@@ -34849,6 +34849,156 @@ async fn test_goto_definition_split_records_position_of_active_target_editor(
 }
 
 #[gpui::test]
+async fn test_jump_into_editor_in_same_pane_notifies_without_recording(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            definition_provider: Some(lsp::OneOf::Left(true)),
+            references_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+    cx.set_state("fn main() { ˇtarget(); }");
+
+    let (fake_fs, worktree_id) = cx.update_workspace(|workspace, _, cx| {
+        let project = workspace.project();
+        let fake_fs = project.read(cx).fs().as_fake();
+        let worktree_id = project.read(cx).worktrees(cx).next().unwrap().read(cx).id();
+        (fake_fs, worktree_id)
+    });
+    let target_abs_path = EditorLspTestContext::root_path()
+        .join("dir")
+        .join("definition.rs");
+    let target_text = std::iter::once("fn target() {}\n".to_string())
+        .chain((1..40).map(|row| format!("// line {row}\n")))
+        .collect::<String>();
+    fake_fs
+        .insert_file(&target_abs_path, target_text.into_bytes())
+        .await;
+    cx.run_until_parked();
+
+    let origin_editor = cx.editor.clone();
+    let pane = cx.update_workspace(|workspace, _, _| workspace.active_pane().clone());
+    let target_editor = cx
+        .update_workspace(|workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, rel_path("dir/definition.rs")),
+                Some(pane.downgrade()),
+                false,
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    let pushed_rows = Rc::new(RefCell::new(Vec::new()));
+    cx.cx.cx.update({
+        let pushed_rows = pushed_rows.clone();
+        |_, cx| {
+            cx.subscribe(&target_editor, move |editor, event: &EditorEvent, cx| {
+                if let EditorEvent::PushedToNavHistory {
+                    anchor,
+                    is_deactivate: false,
+                } = event
+                {
+                    let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
+                    pushed_rows
+                        .borrow_mut()
+                        .push(anchor.to_point(&snapshot).row);
+                }
+            })
+            .detach();
+        }
+    });
+
+    let target_uri = lsp::Uri::from_file_path(target_abs_path).unwrap();
+    let target_location = lsp::Location {
+        uri: target_uri,
+        range: lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 9)),
+    };
+    let _go_to_definition = cx
+        .lsp
+        .set_request_handler::<lsp::request::GotoDefinition, _, _>({
+            let target_location = target_location.clone();
+            move |_, _| {
+                let target_location = target_location.clone();
+                async move { Ok(Some(lsp::GotoDefinitionResponse::Scalar(target_location))) }
+            }
+        });
+    let _find_references = cx
+        .lsp
+        .set_request_handler::<lsp::request::References, _, _>(move |_, _| {
+            let target_location = target_location.clone();
+            async move { Ok(Some(vec![target_location])) }
+        });
+
+    // Both the go to definition and the single reference path jump into the target editor.
+    for use_references in [false, true] {
+        target_editor.update_in(&mut cx.cx.cx, |editor, window, cx| {
+            editor.change_selections(
+                SelectionEffects::no_scroll().record_navigation(RecordNavigation::Never),
+                window,
+                cx,
+                |selections| selections.select_ranges([Point::new(20, 0)..Point::new(20, 0)]),
+            );
+        });
+        cx.update_workspace(|workspace, window, cx| {
+            assert!(workspace.activate_item(&origin_editor, true, true, window, cx));
+        });
+        cx.run_until_parked();
+        pane.update(&mut cx.cx.cx, |pane, cx| pane.nav_history_mut().clear(cx));
+        pushed_rows.borrow_mut().clear();
+
+        let navigated = origin_editor
+            .update_in(&mut cx.cx.cx, |editor, window, cx| {
+                if use_references {
+                    editor
+                        .find_all_references(
+                            &FindAllReferences {
+                                always_open_multibuffer: false,
+                                ..FindAllReferences::default()
+                            },
+                            window,
+                            cx,
+                        )
+                        .expect("should find references")
+                } else {
+                    editor.go_to_definition(&GoToDefinition::default(), window, cx)
+                }
+            })
+            .await
+            .expect("Failed to navigate");
+        // The single reference path opens the target deferred and reports `Navigated::No`.
+        if !use_references {
+            assert_eq!(navigated, Navigated::Yes);
+        }
+        cx.run_until_parked();
+
+        assert_eq!(
+            *pushed_rows.borrow(),
+            vec![20],
+            "listeners like vim's `'` mark should still be notified about the jump \
+            (use_references: {use_references})"
+        );
+        let target_entries = pane.update(&mut cx.cx.cx, |pane, cx| {
+            std::iter::from_fn(|| pane.nav_history_mut().pop_backward(cx))
+                .filter(|entry| entry.item_id() == target_editor.entity_id())
+                .count()
+        });
+        assert_eq!(
+            target_entries, 0,
+            "the target editor's previous position shouldn't be recorded in the same pane \
+            (use_references: {use_references})"
+        );
+    }
+}
+
+#[gpui::test]
 async fn test_goto_definition_with_find_all_references_fallback(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorLspTestContext::new_rust(

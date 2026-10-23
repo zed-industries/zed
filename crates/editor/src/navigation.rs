@@ -1499,7 +1499,7 @@ impl Editor {
                                     if target_pane
                                         .is_none_or(|target_pane| target_pane == source_pane)
                                     {
-                                        RecordNavigation::Never
+                                        RecordNavigation::EventOnly
                                     } else {
                                         RecordNavigation::Always
                                     },
@@ -1573,7 +1573,7 @@ impl Editor {
         let min_row_delta = match record_navigation {
             RecordNavigation::Never => return,
             RecordNavigation::OnLargeJump => MIN_NAVIGATION_HISTORY_ROW_DELTA,
-            RecordNavigation::Always => 1,
+            RecordNavigation::Always | RecordNavigation::EventOnly => 1,
         };
         let data = self.navigation_data(cursor_anchor, cx);
         if let Some(nav_history) = self.nav_history.as_mut() {
@@ -1584,7 +1584,9 @@ impl Editor {
                 }
             }
 
-            nav_history.push(data.into_location(), cx);
+            if record_navigation != RecordNavigation::EventOnly {
+                nav_history.push(data.into_location(), cx);
+            }
             cx.emit(EditorEvent::PushedToNavHistory {
                 anchor: cursor_anchor,
                 is_deactivate: false,
@@ -2031,7 +2033,7 @@ impl Editor {
                                         // only record the target's previous position when it's in
                                         // another pane.
                                         if target_pane == source_pane {
-                                            RecordNavigation::Never
+                                            RecordNavigation::EventOnly
                                         } else {
                                             RecordNavigation::Always
                                         },

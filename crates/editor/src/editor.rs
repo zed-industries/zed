@@ -1366,6 +1366,9 @@ pub enum RecordNavigation {
     OnLargeJump,
     /// Records every move to a different row, e.g. for explicit jumps like go to definition.
     Always,
+    /// Like `Always`, but only emits `EditorEvent::PushedToNavHistory` without recording an
+    /// entry, e.g. for jumps whose origin is already recorded elsewhere.
+    EventOnly,
     /// Never records, e.g. when scrolling or restoring a location from the history.
     Never,
 }
