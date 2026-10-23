@@ -137,6 +137,7 @@ fn start_memory_usage_logging(
                 && let Some(process) = system.process(pid)
             {
                 let resident = process.memory();
+                let virtual_memory = process.virtual_memory();
                 let significant_change = last_logged_resident.is_none_or(|last| {
                     resident.abs_diff(last) >= (last / 10).max(MEMORY_USAGE_MINIMUM_LOGGED_DELTA)
                 });
@@ -149,15 +150,24 @@ fn start_memory_usage_logging(
                         }
                         None => String::new(),
                     };
+
+                    let reclaimed =
+                        trim_freed_heap_memory(&mut system, pid, refresh_kind, resident);
+                    let reclaimed_suffix = if reclaimed > 0 {
+                        format!(", reclaimed {} MiB", reclaimed / MIB)
+                    } else {
+                        String::new()
+                    };
+
                     log::info!(
-                        "memory usage: resident {} MiB{delta}, virtual {} MiB",
+                        "memory usage: resident {} MiB{delta}, virtual {} MiB{reclaimed_suffix}",
                         resident / MIB,
-                        process.virtual_memory() / MIB,
+                        virtual_memory / MIB,
                     );
                     if diagnostics_sender.unbounded_send(()).is_err() {
                         return;
                     }
-                    last_logged_resident = Some(resident);
+                    last_logged_resident = Some(resident - reclaimed);
                     last_logged_at = Instant::now();
                 }
             }
@@ -165,6 +175,47 @@ fn start_memory_usage_logging(
         }
     })
     .detach();
+}
+
+/// glibc's allocator only returns memory to the OS from the top of an arena, so a
+/// single long-lived allocation can pin an entire otherwise-empty heap. `malloc_trim`
+/// walks every arena's free bins and `madvise(MADV_DONTNEED)`s the pages behind them,
+/// which can reclaim gigabytes with no change in what the process is still using.
+///
+/// This runs on the background executor already used for memory polling, never on
+/// the foreground thread, because `malloc_trim` holds the arena locks it visits for
+/// the duration of the walk.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn trim_freed_heap_memory(
+    system: &mut System,
+    pid: sysinfo::Pid,
+    refresh_kind: ProcessRefreshKind,
+    resident_before: u64,
+) -> u64 {
+    // SAFETY: `malloc_trim` only touches the C allocator's own arena bookkeeping; it
+    // has no preconditions tied to Rust's aliasing or lifetime rules.
+    unsafe {
+        libc::malloc_trim(0);
+    }
+    let refreshed =
+        system.refresh_processes_specifics(ProcessesToUpdate::Some(&[pid]), false, refresh_kind);
+    if refreshed == 1
+        && let Some(process) = system.process(pid)
+    {
+        resident_before.saturating_sub(process.memory())
+    } else {
+        0
+    }
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn trim_freed_heap_memory(
+    _system: &mut System,
+    _pid: sysinfo::Pid,
+    _refresh_kind: ProcessRefreshKind,
+    _resident_before: u64,
+) -> u64 {
+    0
 }
 
 fn log_worktree_diagnostics(
