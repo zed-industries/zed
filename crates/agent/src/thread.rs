@@ -5,7 +5,9 @@ use crate::{
     GoToDefinitionTool, GrepTool, ListAgentsAndModelsTool, ListDirectoryTool, MovePathTool,
     ProjectSnapshot, ReadFileTool, RenameTool, SandboxedTerminalTool, SpawnAgentTool,
     SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision, WebSearchTool,
-    WriteFileTool, decide_permission_from_settings,
+    WriteFileTool,
+    context_budget::{TOOL_RESULT_TEXT_BYTE_BUDGET, truncate_text_to_budget},
+    decide_permission_from_settings,
 };
 use acp_thread::{AgentModelId, ClientUserMessageId, MentionUri, ProcessOutput};
 use action_log::ActionLog;
@@ -242,7 +244,7 @@ impl Message {
         }
     }
 
-    pub fn to_request(&self) -> Vec<LanguageModelRequestMessage> {
+    pub fn to_request(&self, tool_result_text_budget: Option<usize>) -> Vec<LanguageModelRequestMessage> {
         match self {
             Message::User(message) => {
                 if message.content.is_empty() {
@@ -251,7 +253,7 @@ impl Message {
                     vec![message.to_request()]
                 }
             }
-            Message::Agent(message) => message.to_request(),
+            Message::Agent(message) => message.to_request(tool_result_text_budget),
             Message::Compaction(info) => info.to_request(),
             Message::Resume => vec![LanguageModelRequestMessage {
                 role: Role::User,
@@ -673,7 +675,10 @@ impl AgentMessage {
         markdown
     }
 
-    pub fn to_request(&self) -> Vec<LanguageModelRequestMessage> {
+    pub fn to_request(
+        &self,
+        tool_result_text_budget: Option<usize>,
+    ) -> Vec<LanguageModelRequestMessage> {
         let mut assistant_message = LanguageModelRequestMessage {
             role: Role::Assistant,
             content: Vec::with_capacity(self.content.len()),
@@ -723,6 +728,16 @@ impl AgentMessage {
             // It thinks we are sending a tool use without a tool result.
             if tool_result.is_content_empty() {
                 tool_result.content = vec!["<Tool returned an empty string>".into()];
+            }
+            if let Some(budget) = tool_result_text_budget {
+                for content in &mut tool_result.content {
+                    if let language_model::LanguageModelToolResultContent::Text(text) = content {
+                        if let std::borrow::Cow::Owned(truncated) = truncate_text_to_budget(text, budget)
+                        {
+                            *text = truncated.into();
+                        }
+                    }
+                }
             }
             user_message
                 .content
@@ -4602,7 +4617,7 @@ impl Thread {
             self.build_request_messages_until(available_tools, self.messages.len(), cx);
 
         if let Some(message) = self.pending_message.as_ref() {
-            messages.extend(message.to_request());
+            messages.extend(message.to_request(Some(TOOL_RESULT_TEXT_BYTE_BUDGET)));
         }
 
         messages
@@ -5157,7 +5172,7 @@ fn extend_request_history_until(
     let end_ix = end_ix.min(messages.len());
     let Some(compaction_ix) = latest_compaction_message_ix_before(messages, end_ix) else {
         for message in &messages[..end_ix] {
-            request_messages.extend(message.to_request());
+            request_messages.extend(message.to_request(Some(TOOL_RESULT_TEXT_BYTE_BUDGET)));
         }
         return;
     };
@@ -5173,7 +5188,7 @@ fn extend_request_history_until(
     }
 
     for message in &messages[compaction_ix..end_ix] {
-        request_messages.extend(message.to_request());
+        request_messages.extend(message.to_request(Some(TOOL_RESULT_TEXT_BYTE_BUDGET)));
     }
 }
 
@@ -7535,7 +7550,7 @@ mod tests {
             "## Context Compaction (Completed)\n\nOlder context\n\n"
         );
 
-        let request_messages = message.to_request();
+        let request_messages = message.to_request(None);
         assert_eq!(request_messages.len(), 1);
         assert_eq!(request_messages[0].role, Role::User);
         assert!(!request_messages[0].cache);
@@ -7587,6 +7602,17 @@ mod tests {
                 .collect(),
             reasoning_details: None,
         }))
+    }
+
+    fn request_tool_result_text(request: &[LanguageModelRequestMessage]) -> String {
+        request
+            .iter()
+            .flat_map(|message| &message.content)
+            .filter_map(|content| match content {
+                language_model::MessageContent::ToolResult(result) => Some(result.text_contents()),
+                _ => None,
+            })
+            .collect()
     }
 
     fn summary_compaction(summary: &str) -> Arc<Message> {
@@ -8144,6 +8170,80 @@ mod tests {
                     request_bytes <= 100_000 * 4,
                     "compaction request is {request_bytes} bytes"
                 );
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_result_truncated_head_tail_and_marker(cx: &mut TestAppContext) {
+        let (thread, _event_stream, _fake) = setup_thread_for_test(cx).await;
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread
+                    .messages
+                    .push(user_text_message(ClientUserMessageId::new(), "task"));
+                thread
+                    .messages
+                    .push(tool_result_message("a".repeat(200_000)));
+
+                let request = thread.build_request_messages(Vec::new(), cx);
+                let text = request_tool_result_text(&request);
+
+                assert!(text.starts_with("aaa"));
+                assert!(text.ends_with("aaa"));
+                assert!(text.contains("chars elided"));
+                assert!(text.len() <= crate::context_budget::TOOL_RESULT_TEXT_BYTE_BUDGET + 40);
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_result_under_budget_passes_through(cx: &mut TestAppContext) {
+        let (thread, _event_stream, _fake) = setup_thread_for_test(cx).await;
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread
+                    .messages
+                    .push(user_text_message(ClientUserMessageId::new(), "task"));
+                thread
+                    .messages
+                    .push(tool_result_message("small".to_string()));
+
+                let request = thread.build_request_messages(Vec::new(), cx);
+
+                assert_eq!(request_tool_result_text(&request), "small");
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_thread_state_keeps_full_tool_result(cx: &mut TestAppContext) {
+        let (thread, _event_stream, _fake) = setup_thread_for_test(cx).await;
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread
+                    .messages
+                    .push(user_text_message(ClientUserMessageId::new(), "task"));
+                thread
+                    .messages
+                    .push(tool_result_message("a".repeat(200_000)));
+
+                let _request = thread.build_request_messages(Vec::new(), cx);
+
+                let Some(Message::Agent(message)) = thread.messages.get(1).map(|message| &**message)
+                else {
+                    panic!("expected agent message");
+                };
+                let stored_text = message
+                    .tool_results
+                    .values()
+                    .next()
+                    .map(|result| result.text_contents())
+                    .unwrap_or_default();
+                assert_eq!(stored_text.len(), 200_000);
             });
         });
     }
