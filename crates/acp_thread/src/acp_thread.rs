@@ -4859,16 +4859,6 @@ impl AcpThread {
                     acp_v2::SessionMessageChunk::new(
                         chunk.message_id.0,
                         content::from_v1(chunk.content).map_err(acp_v1::Error::from)?,
-                    )
-                    .sender_session_id(
-                        chunk
-                            .sender_session_id
-                            .map(|id| acp_v2::SessionId::new(id.0)),
-                    )
-                    .recipient_session_id(
-                        chunk
-                            .recipient_session_id
-                            .map(|id| acp_v2::SessionId::new(id.0)),
                     ),
                     cx,
                 )
@@ -4957,14 +4947,11 @@ impl AcpThread {
         chunk: acp_v2::SessionMessageChunk,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        // Chunk-envelope metadata does not patch the message's metadata.
+        // A chunk carries only content: its metadata does not patch the message's, and the
+        // RFD keeps a message's participants on `session_message`, so the participant fields
+        // that this schema version still has on chunks are ignored.
         let previous_entry_count = self.entries.len();
-        let location = self.session_message_location(
-            chunk.message_id,
-            chunk.sender_session_id,
-            chunk.recipient_session_id,
-            cx,
-        )?;
+        let location = self.keyed_message_location(MessageKind::Session, chunk.message_id, cx)?;
         self.append_message_content(
             location,
             MessageKind::Session,
@@ -13819,10 +13806,11 @@ mod tests {
                 .expect("participants can arrive later");
             thread
                 .append_session_message_chunk(
-                    acp_v2::SessionMessageChunk::new("task", "reproducing".into()),
+                    acp_v2::SessionMessageChunk::new("task", "reproducing".into())
+                        .sender_session_id(acp_v2::SessionId::new("other")),
                     cx,
                 )
-                .expect("omitted participants are kept");
+                .expect("a chunk's participant fields are ignored");
             let error = thread
                 .upsert_session_message(
                     acp_v2::SessionMessage::new("task")
@@ -13874,6 +13862,7 @@ mod tests {
                 json!({
                     "sessionUpdate": "session_message_chunk",
                     "messageId": "reply",
+                    "senderSessionId": "other",
                     "content": {"type": "text", "text": " now"},
                     "_meta": {"chunk": true},
                 }),
