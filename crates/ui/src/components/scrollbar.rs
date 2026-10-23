@@ -771,18 +771,22 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
         }
     }
 
+    fn restart_auto_hide(&mut self, cx: &mut Context<Self>) {
+        self._auto_hide_task.take();
+        self.schedule_auto_hide(cx);
+    }
+
     fn show_scrollbars(&mut self, cx: &mut Context<Self>) {
         let visibility = self.show_state.toggle_visible(self.show_behavior);
         self.set_visibility(visibility, cx);
-        self._auto_hide_task.take();
-        self.schedule_auto_hide(cx);
+        self.restart_auto_hide(cx);
     }
 
     fn set_show_behavior(&mut self, behavior: ShowBehavior, cx: &mut Context<Self>) {
         if self.show_behavior != behavior {
             self.show_behavior = behavior;
             self.set_visibility(VisibilityState::from_behavior(behavior), cx);
-            self.schedule_auto_hide(cx);
+            self.restart_auto_hide(cx);
             cx.notify();
         }
     }
@@ -1785,6 +1789,18 @@ mod tests {
         cx.update(|cx| cx.set_global(TestScrollbarSetting(ShowScrollbar::Never)));
         state.read_with(cx, |state, _| {
             assert_eq!(state.show_state, VisibilityState::Disabled);
+        });
+    }
+
+    #[gpui::test]
+    fn test_settings_change_cancels_pending_auto_hide(cx: &mut TestAppContext) {
+        let state = new_scrollbar_state(ShowScrollbar::Auto, cx);
+        state.update(cx, |state, cx| state.schedule_auto_hide(cx));
+
+        cx.update(|cx| cx.set_global(TestScrollbarSetting(ShowScrollbar::Always)));
+        cx.executor().advance_clock(SCROLLBAR_HIDE_DELAY_INTERVAL);
+        state.read_with(cx, |state, _| {
+            assert_eq!(state.show_state, VisibilityState::Visible);
         });
     }
 
