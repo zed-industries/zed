@@ -3883,7 +3883,7 @@ impl language::File for File {
     }
 
     fn can_open(&self) -> bool {
-        true
+        !matches!(self.disk_state, DiskState::Historic { was_deleted: true })
     }
 }
 

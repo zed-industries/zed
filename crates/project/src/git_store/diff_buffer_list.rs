@@ -334,6 +334,8 @@ impl DiffBufferList {
                     .as_ref()
                     .and_then(|tree| tree.entries.get(&item.repo_path))
                     .cloned();
+                let project_path_for_entry = project_path.clone();
+                let branch_diff_for_entry = branch_diff.clone();
                 let task = Self::load_buffer(
                     self.diff_base.clone(),
                     branch_diff,
@@ -345,6 +347,8 @@ impl DiffBufferList {
 
                 output.push(DiffBuffer {
                     repo_path: item.repo_path.clone(),
+                    project_path: project_path_for_entry,
+                    branch_diff: branch_diff_for_entry,
                     load: task,
                     file_status: status,
                 });
@@ -362,6 +366,7 @@ impl DiffBufferList {
                 let Some(project_path) = repo.read(cx).repo_path_to_project_path(path, cx) else {
                     continue;
                 };
+                let project_path_for_entry = project_path.clone();
                 let task = Self::load_buffer(
                     self.diff_base.clone(),
                     Some(branch_diff.clone()),
@@ -373,6 +378,8 @@ impl DiffBufferList {
 
                 output.push(DiffBuffer {
                     repo_path: path.clone(),
+                    project_path: project_path_for_entry,
+                    branch_diff: Some(branch_diff.clone()),
                     load: task,
                     file_status: diff_status_to_file_status(branch_diff),
                 });
@@ -541,7 +548,9 @@ pub struct LoadedDiffBuffer {
 
 pub struct DiffBuffer {
     pub repo_path: RepoPath,
+    pub project_path: crate::ProjectPath,
     pub file_status: FileStatus,
+    pub branch_diff: Option<git::status::TreeDiffStatus>,
     /// Not started until polled, so the consumer controls load concurrency.
     pub load: LocalBoxFuture<'static, Result<LoadedDiffBuffer>>,
 }

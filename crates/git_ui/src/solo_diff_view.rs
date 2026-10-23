@@ -1,4 +1,7 @@
-use crate::{git_panel::GitStatusEntry, git_panel_settings::GitPanelSettings, git_status_icon};
+use crate::{
+    git_panel::GitStatusEntry, git_panel_settings::GitPanelSettings, git_status_icon,
+    image_diff_view::ImageDiffView,
+};
 use anyhow::{Context as _, Result};
 use buffer_diff::DiffHunkSecondaryStatus;
 use editor::{
@@ -20,6 +23,7 @@ use multi_buffer::{MultiBuffer, PathKey, excerpt_context_lines};
 use project::{
     Project, ProjectPath,
     git_store::{Repository, RepositoryId},
+    image_store::is_image_file,
 };
 use settings::{Settings, SettingsStore, StatusStyle};
 use std::{
@@ -47,6 +51,31 @@ pub struct SoloDiffView {
     workspace: WeakEntity<Workspace>,
     showing_full_file: bool,
     _settings_subscription: Subscription,
+}
+
+pub fn open_file_diff_for_entry(
+    entry: GitStatusEntry,
+    repository: Entity<Repository>,
+    workspace: WeakEntity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Task<Result<()>> {
+    let Some(workspace_entity) = workspace.upgrade() else {
+        return Task::ready(Err(anyhow::anyhow!("workspace was dropped")));
+    };
+    let project = workspace_entity.read(cx).project().clone();
+    let is_image = repository
+        .read(cx)
+        .repo_path_to_project_path(&entry.repo_path, cx)
+        .is_some_and(|project_path| is_image_file(&project, &project_path, cx));
+
+    if is_image {
+        let task = ImageDiffView::open_or_focus(entry.repo_path, repository, workspace, window, cx);
+        cx.spawn(async move |_| task.await.map(|_| ()))
+    } else {
+        let task = SoloDiffView::open_or_focus(entry, repository, workspace, window, cx);
+        cx.spawn(async move |_| task.await.map(|_| ()))
+    }
 }
 
 impl SoloDiffView {
