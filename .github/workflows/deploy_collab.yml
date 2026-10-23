@@ -7,6 +7,7 @@ on:
   push:
     tags:
     - collab-production
+    - collab-staging
 permissions:
   contents: read
 jobs:
