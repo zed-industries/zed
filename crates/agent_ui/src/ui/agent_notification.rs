@@ -124,16 +124,22 @@ impl Render for AgentNotification {
                 h_flex()
                     .items_start()
                     .gap_2()
+                    .min_w_0()
                     .flex_1()
                     .child(
-                        h_flex().h(line_height).justify_center().child(
-                            Icon::new(self.icon)
-                                .color(Color::Muted)
-                                .size(IconSize::Small),
-                        ),
+                        h_flex()
+                            .h(line_height)
+                            .flex_shrink_0()
+                            .justify_center()
+                            .child(
+                                Icon::new(self.icon)
+                                    .color(Color::Muted)
+                                    .size(IconSize::Small),
+                            ),
                     )
                     .child(
                         v_flex()
+                            .min_w_0()
                             .flex_1()
                             .max_w(px(300.))
                             .child(
@@ -184,6 +190,8 @@ impl Render for AgentNotification {
                 v_flex()
                     .gap_1()
                     .items_center()
+                    .flex_shrink_0()
+                    .debug_selector(|| "agent-notification-actions".to_owned())
                     .child(
                         Button::new("open", "View")
                             .style(ButtonStyle::Tinted(ui::TintColor::Accent))
@@ -200,5 +208,40 @@ impl Render for AgentNotification {
                         })
                     })),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{TestAppContext, VisualTestContext, size};
+
+    #[gpui::test]
+    fn notification_actions_remain_visible_at_constrained_width(cx: &mut TestAppContext) {
+        crate::test_support::init_test(cx);
+
+        let window = cx.open_window(size(px(300.), px(72.)), |_window, _cx| {
+            AgentNotification::new(
+                "Agent finished a task that needs your attention",
+                Some("Finished running tools".into()),
+                IconName::ZedAgent,
+                Some("a-project-with-a-long-name"),
+            )
+        });
+        cx.run_until_parked();
+
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        let viewport_size = cx.update(|window, _cx| window.viewport_size());
+
+        let actions = cx
+            .debug_bounds("agent-notification-actions")
+            .expect("notification actions should be rendered");
+        assert!(
+            actions.left() >= px(0.)
+                && actions.right() <= viewport_size.width
+                && actions.top() >= px(0.)
+                && actions.bottom() <= viewport_size.height,
+            "notification actions {actions:?} should remain within viewport {viewport_size:?}"
+        );
     }
 }
