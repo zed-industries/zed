@@ -778,6 +778,7 @@ impl AcpConnection {
             session_id,
             AcpSession {
                 thread: thread.downgrade(),
+                is_subagent: false,
                 suppress_abort_err: false,
                 session_modes,
                 config_options,
@@ -7989,6 +7990,7 @@ exit 7
             parent_session_id.clone(),
             AcpSession {
                 thread: parent.downgrade(),
+                is_subagent: false,
                 suppress_abort_err: false,
                 session_modes: None,
                 config_options: None,

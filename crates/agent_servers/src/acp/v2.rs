@@ -773,6 +773,7 @@ impl AcpV2Connection {
             session_id.clone(),
             AcpSession {
                 thread: thread.downgrade(),
+                is_subagent: false,
                 suppress_abort_err: false,
                 session_modes: None,
                 config_options: Some(ConfigOptions::new(Rc::new(RefCell::new(Vec::new())))),
@@ -919,6 +920,15 @@ impl AcpV2Connection {
         })
     }
 
+    /// The subagents RFD allows no Client-initiated mutation of a subagent session except
+    /// the `cancel` its parent advertises, which `AcpThread::cancel` checks.
+    fn is_subagent_session(&self, session_id: &acp::SessionId) -> bool {
+        self.sessions
+            .borrow()
+            .get(session_id)
+            .is_some_and(|session| session.is_subagent && session.thread.upgrade().is_some())
+    }
+
     fn open_session(
         self: Rc<Self>,
         session_id: acp::SessionId,
@@ -930,6 +940,11 @@ impl AcpV2Connection {
     ) -> Task<Result<Entity<AcpThread>>> {
         if is_connection_closed(&self.connection) {
             return Task::ready(Err(anyhow!("Agent connection is closed")));
+        }
+        if self.is_subagent_session(&session_id) {
+            return Task::ready(Err(anyhow!(
+                "ACP subagent sessions are loaded with their parent"
+            )));
         }
         let path_style = project.read(cx).path_style(cx);
         let context = match self.session_context(
@@ -1425,14 +1440,8 @@ impl AgentConnection for AcpV2Connection {
         if !self.supports_close_session() {
             return Task::ready(Err(anyhow!("Closing sessions is not supported")));
         }
-        let is_subagent = self
-            .sessions
-            .borrow()
-            .get(session_id)
-            .and_then(|session| session.thread.upgrade())
-            .is_some_and(|thread| thread.read(cx).subagent_association().is_some());
-        if is_subagent {
-            // ACP forbids closing a subagent; the agent releases it when its parent closes.
+        if self.is_subagent_session(session_id) {
+            // The agent releases a subagent when its parent closes.
             return Task::ready(Err(anyhow!(
                 "ACP subagent sessions are closed with their parent"
             )));
@@ -1632,6 +1641,9 @@ impl AgentConnection for AcpV2Connection {
         session_id: &acp::SessionId,
         _cx: &App,
     ) -> Option<Rc<dyn AgentSessionConfigOptions>> {
+        if self.is_subagent_session(session_id) {
+            return None;
+        }
         let sessions = self.sessions.borrow();
         let session = sessions.get(session_id)?;
         Some(Rc::new(V2SessionConfigOptions {
@@ -2576,6 +2588,39 @@ mod tests {
                 .to_string()
                 .contains("ACP subagent sessions are closed with their parent")
         );
+        harness.send_update(
+            "child",
+            acp::SessionUpdate::ConfigOptionUpdate(acp::ConfigOptionUpdate::new(vec![
+                acp::SessionConfigOption::boolean("fast", "Fast", false),
+            ])),
+        );
+        harness.drain_updates(cx).await;
+        assert!(
+            cx.read(|cx| harness.client.session_config_options(&"child".into(), cx))
+                .is_none(),
+            "a subagent's configuration cannot be changed"
+        );
+        for replay_history in [true, false] {
+            let reopened = cx.update(|cx| {
+                let client = harness.client.clone();
+                let project = harness.project.clone();
+                let directories = PathList::new(&[session_path("a")]);
+                if replay_history {
+                    client.load_session("child".into(), project, directories, None, cx)
+                } else {
+                    client.resume_session("child".into(), project, directories, None, cx)
+                }
+            });
+            let error = bounded(reopened, cx)
+                .await
+                .expect_err("subagents cannot be loaded or resumed");
+            assert!(
+                error
+                    .to_string()
+                    .contains("ACP subagent sessions are loaded with their parent")
+            );
+        }
+        assert!(harness.resume_requests.is_empty());
 
         drop((parent, child));
         cx.run_until_parked();
