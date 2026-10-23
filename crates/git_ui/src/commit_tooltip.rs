@@ -1,10 +1,10 @@
-use crate::commit_view::CommitView;
+use crate::commit_view::{CommitView, CommitViewOptions};
 use anyhow::Result;
 use askpass::AskPassDelegate;
 use editor::hover_markdown_style;
 use futures::Future;
 use git::blame::BlameEntry;
-use git::repository::CommitSummary;
+use git::repository::{CommitSummary, RepoPath};
 use git::{GitRemote, commit::ParsedCommitMessage};
 use git_ui_core::askpass_modal::AskPassModal;
 use git_ui_core::notifications::show_error_toast;
@@ -220,6 +220,7 @@ pub struct CommitTooltip {
     markdown: Entity<Markdown>,
     repository: Entity<Repository>,
     workspace: WeakEntity<Workspace>,
+    scroll_to: Option<(RepoPath, u32)>,
 }
 
 impl CommitTooltip {
@@ -236,7 +237,7 @@ impl CommitTooltip {
             .and_then(|t| OffsetDateTime::from_unix_timestamp(t).ok())
             .unwrap_or(OffsetDateTime::now_utc());
 
-        Self::new(
+        let mut tooltip = Self::new(
             CommitDetails {
                 sha: blame.sha.to_string().into(),
                 commit_time,
@@ -253,7 +254,9 @@ impl CommitTooltip {
             repository,
             workspace,
             cx,
-        )
+        );
+        tooltip.scroll_to = blame.commit_line();
+        tooltip
     }
 
     pub fn new(
@@ -280,6 +283,7 @@ impl CommitTooltip {
             workspace,
             scroll_handle: ScrollHandle::new(),
             markdown,
+            scroll_to: None,
         }
     }
 }
@@ -333,6 +337,7 @@ impl Render for CommitTooltip {
         let message_max_height = window.line_height() * 12 + (ui_font_size / 0.4);
         let repo = self.repository.clone();
         let workspace = self.workspace.clone();
+        let scroll_to = self.scroll_to.clone();
         let commit_summary = CommitSummary {
             sha: self.commit.sha.clone(),
             subject: self
@@ -448,8 +453,10 @@ impl Render for CommitTooltip {
                                                         commit_summary.sha.to_string(),
                                                         repo.downgrade(),
                                                         workspace.clone(),
-                                                        None,
-                                                        None,
+                                                        CommitViewOptions {
+                                                            scroll_to: scroll_to.clone(),
+                                                            ..Default::default()
+                                                        },
                                                         window,
                                                         cx,
                                                     );
