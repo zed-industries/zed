@@ -496,6 +496,11 @@ pub struct GitSettings {
     ///
     /// Default: true
     pub show_stage_restore_buttons: bool,
+    /// Whether to show the stage and restore buttons as compact icons in the gutter
+    /// instead of a toolbar over the hunk.
+    ///
+    /// Default: false
+    pub compact_hunk_controls: bool,
     /// Directory where git worktrees are created, relative to the repository
     /// working directory. When the resolved directory is outside the project
     /// root, the project's directory name is automatically appended so that
@@ -715,6 +720,7 @@ impl Settings for ProjectSettings {
             diff_base: git.diff_base.unwrap_or_default(),
             path_style: git.path_style.unwrap().into(),
             show_stage_restore_buttons: git.show_stage_restore_buttons.unwrap_or(true),
+            compact_hunk_controls: git.compact_hunk_controls.unwrap_or(false),
             worktree_directory: git
                 .worktree_directory
                 .clone()

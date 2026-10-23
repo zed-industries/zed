@@ -673,6 +673,11 @@ pub struct GitSettings {
     ///
     /// Default: true
     pub show_stage_restore_buttons: Option<bool>,
+    /// Whether to show the stage and restore buttons as compact icons in the gutter
+    /// instead of a toolbar over the hunk.
+    ///
+    /// Default: false
+    pub compact_hunk_controls: Option<bool>,
     /// Directory where git worktrees are created, relative to the repository
     /// working directory.
     ///
