@@ -6930,6 +6930,31 @@ impl LspStore {
         };
 
         let mut messages_to_report = Vec::new();
+        // Servers may only be used by documents their registrations opened, which do not lead
+        // to the servers by their languages, so the servers are kept where they were started.
+        let servers_with_documents_opened_by_registrations = local
+            .buffers_opened_by_registrations
+            .values()
+            .flatten()
+            .copied()
+            .collect::<HashSet<_>>();
+        let mut roots_of_servers_with_documents_opened_by_registrations = Vec::new();
+        for (worktree_id, servers) in &local.lsp_tree.instances {
+            for (path, server_nodes) in &servers.roots {
+                for (server_node, languages) in server_nodes.values() {
+                    let root_path = server_node.launch_path();
+                    if server_node.id().is_some_and(|server_id| {
+                        servers_with_documents_opened_by_registrations.contains(&server_id)
+                    }) && root_path.worktree_id == *worktree_id
+                        && &root_path.path == path
+                        && let Some(language_name) = languages.first()
+                    {
+                        roots_of_servers_with_documents_opened_by_registrations
+                            .push((root_path.clone(), language_name.clone()));
+                    }
+                }
+            }
+        }
         let (new_tree, to_stop) = {
             let mut rebase = local.lsp_tree.rebase();
             let buffers = buffer_store
@@ -7048,6 +7073,13 @@ impl LspStore {
                 } else {
                     continue;
                 }
+            }
+            for (root_path, language_name) in
+                roots_of_servers_with_documents_opened_by_registrations
+            {
+                rebase
+                    .walk_root(root_path, language_name, cx)
+                    .for_each(drop);
             }
             rebase.finish()
         };

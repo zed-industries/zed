@@ -3837,6 +3837,88 @@ async fn test_did_open_registration_follows_language_server_setting_changes(
 }
 
 #[gpui::test]
+async fn test_settings_changes_keep_servers_used_by_documents_opened_by_registrations(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/the-root"),
+        json!({ "a.rs": "", "package.json": "{}" }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/the-root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    language_registry.add(json_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "the-language-server",
+            ..FakeLspAdapter::default()
+        },
+    );
+    cx.executor().run_until_parked();
+
+    let (_rust_buffer, rust_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let mut fake_server = fake_servers.next().await.unwrap();
+    let server_id = fake_server.server.server_id();
+    cx.executor().run_until_parked();
+    let (manifest_buffer, _manifest_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/package.json"), cx)
+        })
+        .await
+        .unwrap();
+    register_capability(
+        &fake_server,
+        "textDocument/didOpen",
+        "open-manifests",
+        Some(json!({ "documentSelector": [{ "language": "json" }] })),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    // Only the manifest, which the server does not serve the language of, uses the server.
+    cx.update(|_| drop(rust_handle));
+    cx.executor().run_until_parked();
+    assert!(buffer_opened_in_server(
+        &project,
+        &manifest_buffer,
+        server_id,
+        cx
+    ));
+
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |settings, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.languages_mut().insert(
+                    "JSON".into(),
+                    LanguageSettingsContent {
+                        tab_size: NonZeroU32::new(8),
+                        ..LanguageSettingsContent::default()
+                    },
+                );
+            });
+        })
+    });
+    cx.executor().run_until_parked();
+    assert!(
+        buffer_opened_in_server(&project, &manifest_buffer, server_id, cx),
+        "expected a settings change not to stop the server the manifest is opened in",
+    );
+    let (changed_uri, _) = edit_and_receive_change(&manifest_buffer, &mut fake_server, cx).await;
+    assert_eq!(
+        changed_uri,
+        lsp::Uri::from_file_path(path!("/the-root/package.json")).unwrap(),
+    );
+}
+
+#[gpui::test]
 async fn test_restarting_server_reused_by_invisible_worktree(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.executor());
