@@ -187,6 +187,9 @@ pub struct VideoViewer {
     player: Result<Player, SharedString>,
     state: PlayerState,
     showed_first_frame: bool,
+    /// The play state the controls last showed. Playback can stop on its own at the end of the
+    /// video, which produces no other event, so polling compares against this to redraw.
+    shown_playing: bool,
     frame: Option<DisplayedFrame>,
     position: Duration,
     volume: f32,
@@ -252,6 +255,7 @@ impl VideoViewer {
             player,
             state: PlayerState::Loading,
             showed_first_frame: false,
+            shown_playing: false,
             frame: None,
             position: Duration::ZERO,
             volume: 1.0,
@@ -277,9 +281,11 @@ impl VideoViewer {
         }
         let frame = player.take_frame();
         let position = player.position();
+        let is_playing = player.is_playing();
 
-        if state != self.state {
+        if state != self.state || is_playing != self.shown_playing {
             self.state = state;
+            self.shown_playing = is_playing;
             cx.notify();
         }
         if let Some(frame) = frame {
