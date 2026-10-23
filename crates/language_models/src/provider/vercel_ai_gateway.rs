@@ -233,7 +233,10 @@ impl VercelAiGatewayLanguageModelProvider {
     ) -> BoxFuture<
         'static,
         Result<
-            futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>,
+            futures::stream::BoxStream<
+                'static,
+                Result<ResponseStreamEvent, LanguageModelCompletionError>,
+            >,
             LanguageModelCompletionError,
         >,
     > {
@@ -311,6 +314,11 @@ impl LanguageModelProvider for VercelAiGatewayLanguageModelProvider {
 
     fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
         self.state.update(cx, |state, cx| state.authenticate(cx))
+    }
+
+    fn refresh_models(&self, cx: &mut App) {
+        self.state
+            .update(cx, |state, cx| state.restart_fetch_models_task(cx));
     }
 
     fn settings_view(&self, cx: &mut App) -> Option<ProviderSettingsView> {

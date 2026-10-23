@@ -8007,19 +8007,35 @@ exit 7
         let parent_id = parent_session_id.0.to_string();
 
         let unadvertised = context_for(false, cx);
-        handle_session_notification(
-            acp::SessionNotification::new(
-                parent_id.clone(),
-                acp::SessionUpdate::SubagentUpdate(acp::SubagentUpdate::new("child")),
-            ),
-            &mut cx.to_async(),
-            &unadvertised,
-        );
+        let delegation = || {
+            acp::SessionMessage::new("delegation")
+                .sender_session_id(acp::SessionId::new(parent_id.clone()))
+                .recipient_session_id(acp::SessionId::new("child"))
+                .content(vec!["Investigate".into()])
+        };
+        for update in [
+            acp::SessionUpdate::SubagentUpdate(acp::SubagentUpdate::new("child")),
+            acp::SessionUpdate::SessionMessage(delegation()),
+            acp::SessionUpdate::SessionMessageChunk(acp::SessionMessageChunk::new(
+                "delegation",
+                " more".into(),
+            )),
+        ] {
+            handle_session_notification(
+                acp::SessionNotification::new(parent_id.clone(), update),
+                &mut cx.to_async(),
+                &unadvertised,
+            );
+        }
         parent.read_with(cx, |parent, _| {
             assert_eq!(
                 parent.subagents().count(),
                 0,
                 "without the advertised capability, a v1 agent's subagent updates are ignored"
+            );
+            assert!(
+                parent.entries().is_empty(),
+                "and so are its session messages"
             );
         });
         assert!(
@@ -8055,6 +8071,20 @@ exit 7
             acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("Working".into())),
             cx,
         );
+        notify(
+            &parent_id,
+            acp::SessionUpdate::SessionMessage(delegation()),
+            cx,
+        );
+        parent.read_with(cx, |parent, _| {
+            assert!(
+                matches!(
+                    parent.entries(),
+                    [acp_thread::AgentThreadEntry::SessionMessage(_)]
+                ),
+                "with the capability, session messages are applied"
+            );
+        });
         let child = parent
             .read_with(cx, |parent, _| parent.subagent(&"child".into()).cloned())
             .expect("the parent owns the announced subagent");
@@ -8791,6 +8821,7 @@ exit 7
                 .map(|entry| match entry {
                     acp_thread::AgentThreadEntry::UserMessage(_) => "user",
                     acp_thread::AgentThreadEntry::AssistantMessage(_) => "assistant",
+                    acp_thread::AgentThreadEntry::SessionMessage(_) => "session_message",
                     acp_thread::AgentThreadEntry::ToolCall(_) => "tool_call",
                     acp_thread::AgentThreadEntry::Elicitation(_) => "elicitation",
                     acp_thread::AgentThreadEntry::ContextCompaction(_) => "compaction",
@@ -9791,13 +9822,20 @@ fn handle_session_notification(
         return;
     };
 
+    if matches!(
+        notification.update,
+        acp::SessionUpdate::SubagentUpdate(_)
+            | acp::SessionUpdate::SessionMessage(_)
+            | acp::SessionUpdate::SessionMessageChunk(_)
+    ) && !ctx.accepts_subagent_updates
+    {
+        log::warn!(
+            "Ignoring a subagents update for {session_id:?}: Zed did not advertise the subagents capability"
+        );
+        return;
+    }
+
     if let acp::SessionUpdate::SubagentUpdate(update) = notification.update {
-        if !ctx.accepts_subagent_updates {
-            log::warn!(
-                "Ignoring subagent update for {session_id:?}: Zed did not advertise the subagents capability"
-            );
-            return;
-        }
         if let Err(error) =
             cx.update(|cx| apply_v1_subagent_update(&strong_thread, update, &ctx.sessions, cx))
         {

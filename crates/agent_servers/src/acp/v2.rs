@@ -2375,6 +2375,94 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn v2_session_messages_reach_both_transcripts(cx: &mut TestAppContext) {
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let parent = harness.thread(cx).await;
+        harness.send_update(
+            "session",
+            acp::SessionUpdate::SubagentUpdate(acp::SubagentUpdate::new("child")),
+        );
+        let message = acp::SessionMessage::new("delegation")
+            .sender_session_id(acp::SessionId::new("session"))
+            .recipient_session_id(acp::SessionId::new("child"))
+            .content(vec!["Investigate the failure".into()]);
+        harness.send_update(
+            "session",
+            acp::SessionUpdate::SessionMessage(message.clone()),
+        );
+        harness.send_update("child", acp::SessionUpdate::SessionMessage(message));
+        harness.send_update(
+            "child",
+            acp::SessionUpdate::SessionMessageChunk(acp::SessionMessageChunk::new(
+                "delegation",
+                " on Windows".into(),
+            )),
+        );
+        harness.drain_updates(cx).await;
+
+        let child = parent
+            .read_with(cx, |parent, _| parent.subagent(&"child".into()).cloned())
+            .expect("announced subagent");
+        for (thread, expected_blocks) in [
+            (&parent, vec!["Investigate the failure".into()]),
+            (
+                &child,
+                vec!["Investigate the failure".into(), " on Windows".into()],
+            ),
+        ] {
+            thread.read_with(cx, |thread, _| {
+                let [acp_thread::AgentThreadEntry::SessionMessage(message)] = thread.entries()
+                else {
+                    panic!("expected one session message in {}", thread.session_id());
+                };
+                assert_eq!(message.sender_session_id, Some("session".into()));
+                assert_eq!(message.recipient_session_id, Some("child".into()));
+                assert_eq!(message.content.source_blocks(), expected_blocks.as_slice());
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn v2_resume_replay_delivers_subagent_history(cx: &mut TestAppContext) {
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let loading = harness.reopen(true, cx);
+        let (_, responder) = bounded(harness.resume_requests.recv(), cx)
+            .await
+            .expect("resume");
+        harness.send_update(
+            "saved",
+            acp::SessionUpdate::SubagentUpdate(acp::SubagentUpdate::new("child")),
+        );
+        harness.send_update(
+            "child",
+            acp::SessionUpdate::AgentMessage(
+                acp::AgentMessage::new("child-history").content(vec!["Replayed".into()]),
+            ),
+        );
+        let initial = initial_response();
+        responder
+            .respond(
+                acp::ResumeSessionResponse::new()
+                    .config_options(initial.config_options)
+                    .available_commands(initial.available_commands),
+            )
+            .expect("resumed");
+        let parent = bounded(loading, cx).await.expect("resumed parent");
+        cx.run_until_parked();
+
+        let child = parent
+            .read_with(cx, |parent, _| parent.subagent(&"child".into()).cloned())
+            .expect("the replayed announcement creates the subagent");
+        child.read_with(cx, |child, _| {
+            assert_eq!(
+                child.entries().len(),
+                1,
+                "history replayed before the resume response reaches the subagent"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn v2_subagent_updates_route_and_patch_child_sessions(cx: &mut TestAppContext) {
         use acp_thread::{ThreadStatus, subagents::SubagentAssociation};
         use agent_client_protocol::schema::MaybeUndefined;
