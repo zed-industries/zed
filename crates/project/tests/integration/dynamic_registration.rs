@@ -3885,27 +3885,30 @@ async fn test_restarting_server_reused_by_invisible_worktree(cx: &mut gpui::Test
         cx
     ));
 
-    project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(
-            vec![rust_buffer.clone()],
-            HashSet::default(),
-            cx,
-        )
-    });
-    cx.executor().run_until_parked();
-    let restarted_server = fake_servers
-        .try_recv()
-        .expect("expected the server to be restarted");
-    assert!(
-        fake_servers.try_recv().is_err(),
-        "expected the worktree reusing the server not to start another one",
-    );
-    cx.executor().run_until_parked();
-    for buffer in [&rust_buffer, &dependency_buffer] {
+    // Restarting from either worktree restarts the one server they share.
+    for restarted_buffer in [&rust_buffer, &dependency_buffer] {
+        project.update(cx, |project, cx| {
+            project.restart_language_servers_for_buffers(
+                vec![restarted_buffer.clone()],
+                HashSet::default(),
+                cx,
+            )
+        });
+        cx.executor().run_until_parked();
+        let restarted_server = fake_servers
+            .try_recv()
+            .expect("expected the server to be restarted");
         assert!(
-            buffer_opened_in_server(&project, buffer, restarted_server.server.server_id(), cx),
-            "expected the restarted server to be reused like the stopped one",
+            fake_servers.try_recv().is_err(),
+            "expected the worktree reusing the server not to start another one",
         );
+        cx.executor().run_until_parked();
+        for buffer in [&rust_buffer, &dependency_buffer] {
+            assert!(
+                buffer_opened_in_server(&project, buffer, restarted_server.server.server_id(), cx),
+                "expected the restarted server to be reused like the stopped one",
+            );
+        }
     }
 }
 

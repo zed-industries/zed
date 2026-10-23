@@ -13712,22 +13712,11 @@ impl LspStore {
                     let Some(local) = lsp_store.as_local_mut() else {
                         return;
                     };
-                    for buffer in buffers {
-                        if local
-                            .registered_buffers
-                            .contains_key(&buffer.read(cx).remote_id())
-                        {
-                            local.register_buffer_with_language_servers(
-                                &buffer,
-                                only_restart_servers.clone(),
-                                start_mode,
-                                cx,
-                            );
-                        }
-                    }
                     // A buffer that registrations opened a server in cannot start it, as it is
                     // not of a language the server serves, and no buffer of such a language may
-                    // be open, so the servers are also started again where they were before.
+                    // be open, so the servers are started again where they were before. This
+                    // precedes registering the buffers again, as those of worktrees that reused
+                    // the servers would otherwise start servers of their own.
                     let stopped_servers = stopped_names
                         .into_iter()
                         .map(LanguageServerSelector::Name)
@@ -13767,6 +13756,19 @@ impl LspStore {
                                     );
                                 }
                             }
+                        }
+                    }
+                    for buffer in buffers {
+                        if local
+                            .registered_buffers
+                            .contains_key(&buffer.read(cx).remote_id())
+                        {
+                            local.register_buffer_with_language_servers(
+                                &buffer,
+                                only_restart_servers.clone(),
+                                start_mode,
+                                cx,
+                            );
                         }
                     }
                 })
