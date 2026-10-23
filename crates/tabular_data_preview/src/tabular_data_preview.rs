@@ -1,12 +1,14 @@
 use editor::{Editor, EditorEvent};
-use gpui::{AppContext, Entity, EventEmitter, FocusHandle, Focusable, Task, actions};
+use gpui::{Action, AppContext, Entity, EventEmitter, FocusHandle, Focusable, Task, actions};
 
+use schemars::JsonSchema;
+use serde::Deserialize;
 use ui::{SharedString, prelude::*};
 use workspace::{Item, Pane, Workspace};
 
 use crate::parser::EditorState;
 
-pub use crate::table_view::{PerformanceMetrics, TableView};
+pub use crate::table_view::{CellSelection, PerformanceMetrics, TableView};
 
 mod parser;
 mod renderer;
@@ -16,6 +18,22 @@ mod table_view;
 pub mod types;
 
 actions!(tabular_data, [OpenPreview, OpenPreviewToTheSide]);
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum NavigationDirection {
+    #[default]
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+#[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
+#[action(namespace = tabular_data)]
+pub struct MoveFocusedCell {
+    pub direction: NavigationDirection,
+}
 
 /// Editor-backed adapter: watches an [`Editor`], parses its buffer into a [`crate::types::TableLikeContent`],
 /// and feeds the result to an embedded [`TableView`] that owns all grid rendering.

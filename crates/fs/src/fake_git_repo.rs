@@ -224,6 +224,13 @@ impl FakeGitRepository {
     fn edit_ref(&self, edit: RefEdit) -> BoxFuture<'_, Result<()>> {
         self.with_state_async(true, move |state| {
             match edit {
+                RefEdit::Create { ref_name, commit } => {
+                    anyhow::ensure!(
+                        !state.refs.contains_key(&ref_name),
+                        "reference {ref_name} already exists"
+                    );
+                    state.refs.insert(ref_name, commit);
+                }
                 RefEdit::Update { ref_name, commit } => {
                     state.refs.insert(ref_name, commit);
                 }
@@ -470,11 +477,51 @@ impl GitRepository for FakeGitRepository {
 
     fn checkout_files(
         &self,
-        _commit: String,
-        _paths: Vec<RepoPath>,
+        commit: Option<String>,
+        paths: Vec<RepoPath>,
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
-        unimplemented!()
+        let fs = self.fs.clone();
+        let workdir_path = self.dot_git_path.parent().unwrap().to_path_buf();
+        let restored = self.with_state_async(true, move |state| {
+            if let Some(commit) = &commit {
+                let head_sha = state.refs.get("HEAD").map(String::as_str);
+                anyhow::ensure!(
+                    commit == "HEAD" || Some(commit.as_str()) == head_sha,
+                    "fake git repository can only check out files from HEAD, got {commit}"
+                );
+            }
+            let source = if commit.is_some() {
+                &state.head_contents
+            } else {
+                &state.index_contents
+            };
+            let restored = paths
+                .into_iter()
+                .map(|path| {
+                    let content = source.get(&path).cloned().with_context(|| {
+                        format!(
+                            "pathspec '{}' did not match any file(s) known to git",
+                            path.as_unix_str()
+                        )
+                    })?;
+                    Ok((path, content))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            if commit.is_some() {
+                for (path, content) in &restored {
+                    state.index_contents.insert(path.clone(), content.clone());
+                }
+            }
+            Ok(restored)
+        });
+        async move {
+            for (path, content) in restored.await? {
+                fs.write_file_internal(workdir_path.join(path.as_std_path()), content, false)?;
+            }
+            Ok(())
+        }
+        .boxed()
     }
 
     fn path(&self) -> PathBuf {
@@ -1745,6 +1792,10 @@ impl GitRepository for FakeGitRepository {
                 }
             })?
         }))
+    }
+
+    fn create_ref(&self, ref_name: String, commit: String) -> BoxFuture<'_, Result<()>> {
+        self.edit_ref(RefEdit::Create { ref_name, commit })
     }
 
     fn update_ref(&self, ref_name: String, commit: String) -> BoxFuture<'_, Result<()>> {
