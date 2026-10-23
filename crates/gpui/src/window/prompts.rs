@@ -5,7 +5,7 @@ use futures::channel::oneshot;
 use crate::{
     AnyView, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, ParentElement, PromptButton, PromptLevel, Render,
-    StatefulInteractiveElement, Styled, div, opaque_grey, white,
+    StatefulInteractiveElement, Styled, div, opaque_grey, red, util::FluentBuilder, white,
 };
 
 use super::Window;
@@ -138,6 +138,7 @@ impl Render for FallbackPromptRenderer {
                     .rounded_xs()
                     .cursor_pointer()
                     .text_sm()
+                    .when(action.is_destructive(), |this| this.text_color(red()))
                     .child(action.label().clone())
                     .id(ix)
                     .on_click(cx.listener(move |_, _, _, cx| {
