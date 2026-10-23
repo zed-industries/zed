@@ -817,6 +817,42 @@ async fn test_stdio_server_restarts_when_project_root_becomes_available(cx: &mut
 }
 
 #[gpui::test]
+async fn test_global_context_servers_configured_without_worktrees(cx: &mut TestAppContext) {
+    let server_id = ContextServerId("my-server".into());
+
+    cx.update(|cx| {
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+    });
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, [], cx).await;
+
+    set_context_server_configuration(
+        vec![(
+            server_id.0.clone(),
+            settings::ContextServerSettingsContent::Http {
+                enabled: true,
+                url: "https://example.com/mcp".to_string(),
+                headers: Default::default(),
+                timeout: None,
+                oauth: None,
+            },
+        )],
+        cx,
+    );
+    cx.run_until_parked();
+
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+    cx.update(|cx| {
+        assert_eq!(
+            store.read(cx).configured_server_ids(),
+            vec![server_id.clone()],
+            "user-level context servers must be configured before any worktree exists"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_server_ids_includes_disabled_servers(cx: &mut TestAppContext) {
     const ENABLED_SERVER_ID: &str = "enabled-server";
     const DISABLED_SERVER_ID: &str = "disabled-server";
