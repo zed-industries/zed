@@ -373,6 +373,44 @@ async fn test_new_path_prompt(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_create_confirmation_keeps_the_checked_destination(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(path!("/root"), json!({}))
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (picker, cx) = build_open_path_prompt(project, true, false, cx);
+    picker.update_in(cx, |picker, _, _| {
+        picker.delegate.path_style = util::paths::PathStyle::Windows;
+    });
+
+    for query in [
+        r"\\?\C:\root\victim.txt\.",
+        r"\\?\C:\root\dir\..",
+        r"\\?\C:\root\test/file",
+        r"\\?\C:\root\test/\file",
+        r"C:\base\C:victim.txt",
+    ] {
+        insert_query(query, &picker, cx).await;
+
+        let (tx, receiver) = futures::channel::oneshot::channel();
+        picker.update_in(cx, |picker, window, cx| {
+            picker.delegate.tx = Some(tx);
+            picker.delegate.confirm(false, window, cx);
+        });
+
+        assert_eq!(
+            receiver.await.unwrap(),
+            Some(vec![std::path::PathBuf::from(query)]),
+            "{query}"
+        );
+    }
+}
+
+#[gpui::test]
 async fn test_open_path_prompt_panics_with_stale_highlight_positions(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
     app_state
