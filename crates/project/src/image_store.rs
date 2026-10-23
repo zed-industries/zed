@@ -494,6 +494,12 @@ impl ImageStore {
         self.state.reload_images(images, cx)
     }
 
+    pub fn disconnected_from_host(&mut self, cx: &mut Context<Self>) {
+        if let Some(remote) = self.state.as_remote() {
+            remote.update(cx, |remote, _cx| remote.disconnected_from_host());
+        }
+    }
+
     fn add_image(&mut self, image: Entity<ImageItem>, cx: &mut Context<ImageStore>) -> Result<()> {
         let image_id = image.read(cx).id;
         self.opened_images.insert(image_id, image.downgrade());
@@ -543,6 +549,17 @@ impl ImageStore {
 }
 
 impl RemoteImageStore {
+    /// Fail every parked `wait_for_remote_image` wait now that we've
+    /// disconnected from the host. Mirrors
+    /// `BufferStore::disconnected_from_host`'s clearing of
+    /// `remote_buffer_listeners`: dropping the senders resolves each
+    /// waiting `rx.await` with the same `oneshot::Canceled` error.
+    pub fn disconnected_from_host(&mut self) {
+        // Wake up all futures currently waiting on an image to get opened,
+        // to give them a chance to fail now that we've disconnected.
+        self.remote_image_listeners.clear();
+    }
+
     pub fn wait_for_remote_image(
         &mut self,
         id: ImageId,
