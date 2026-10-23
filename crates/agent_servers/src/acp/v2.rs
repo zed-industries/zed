@@ -1024,6 +1024,13 @@ impl AcpV2Connection {
                     let this = this.upgrade().context("Connection was released")?;
                     let thread = thread.upgrade().context("Session was released")?;
                     cx.update(|cx| {
+                        // Ordered responses apply after the replay and before any update sent
+                        // after the response, so this is the RFD's freshness boundary.
+                        if replay_history {
+                            thread.update(cx, |thread, cx| {
+                                thread.invalidate_replayed_subagent_state(cx)
+                            });
+                        }
                         if !thread.read(cx).has_received_session_state() {
                             log::warn!(
                                 "Agent resumed the session without reporting its current foreground state; activity remains unconfirmed"
@@ -2460,6 +2467,78 @@ mod tests {
                 "history replayed before the resume response reaches the subagent"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn v2_replayed_subagent_state_is_history(cx: &mut TestAppContext) {
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let announce_running_child = || {
+            harness.send_update(
+                "saved",
+                acp::SessionUpdate::SubagentUpdate(
+                    acp::SubagentUpdate::new("child")
+                        .title("Investigator")
+                        .capabilities(
+                            acp::SubagentSessionCapabilities::new()
+                                .cancel(acp::SessionCancelCapabilities::new()),
+                        ),
+                ),
+            );
+            harness.send_update(
+                "child",
+                acp::SessionUpdate::StateUpdate(acp::StateUpdate::Running(
+                    acp::RunningStateUpdate::new(),
+                )),
+            );
+        };
+        for replay_history in [true, false] {
+            let loading = harness.reopen(replay_history, cx);
+            let (_, responder) = bounded(harness.resume_requests.recv(), cx)
+                .await
+                .expect("resume");
+            harness.resume_state(acp::StateUpdate::Idle(acp::IdleStateUpdate::new()));
+            announce_running_child();
+            responder
+                .respond(acp::ResumeSessionResponse::new())
+                .expect("resumed");
+            let parent = bounded(loading, cx).await.expect("resumed parent");
+            let child = parent
+                .read_with(cx, |parent, _| parent.subagent(&"child".into()).cloned())
+                .expect("the subagent was announced before the response");
+            child.read_with(cx, |child, _| {
+                let association = child.subagent_association().expect("subagent");
+                assert_eq!(association.title.as_deref(), Some("Investigator"));
+                if replay_history {
+                    assert!(!association.can_cancel, "a replayed grant is history");
+                    assert_eq!(
+                        child.foreground_activity(),
+                        acp_thread::ForegroundActivity::Unconfirmed,
+                        "replayed activity is history"
+                    );
+                } else {
+                    // Without replay, updates sent before the response are current.
+                    assert!(association.can_cancel);
+                    assert_eq!(
+                        child.foreground_activity(),
+                        acp_thread::ForegroundActivity::Running
+                    );
+                }
+            });
+
+            if replay_history {
+                announce_running_child();
+                harness.drain_updates(cx).await;
+                child.read_with(cx, |child, _| {
+                    assert!(child.subagent_association().expect("subagent").can_cancel);
+                    assert_eq!(
+                        child.foreground_activity(),
+                        acp_thread::ForegroundActivity::Running
+                    );
+                });
+            }
+            drop((parent, child));
+            cx.run_until_parked();
+        }
     }
 
     #[gpui::test]

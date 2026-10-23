@@ -3979,6 +3979,23 @@ impl AcpThread {
         Ok(())
     }
 
+    /// Ends a history replay into this session, after a successful load or resume. The
+    /// subagents RFD treats what the replay reported about subagents' work state and
+    /// capabilities as history: it stays visible, but confirms no current activity and
+    /// allows no cancelling until the agent reports them again.
+    pub fn invalidate_replayed_subagent_state(&mut self, cx: &mut Context<Self>) {
+        for subagent in self.subagents.values() {
+            subagent.update(cx, |subagent, cx| {
+                if let Some(association) = subagent.subagent_association.as_mut() {
+                    association.can_cancel = false;
+                    cx.notify();
+                }
+                subagent.clear_session_state(cx).log_err();
+                subagent.invalidate_replayed_subagent_state(cx);
+            });
+        }
+    }
+
     pub fn parent_session_id(&self) -> Option<&acp_v2::SessionId> {
         self.parent_session_id.as_ref()
     }
