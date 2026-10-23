@@ -1607,6 +1607,7 @@
   {
     "context": "ImageViewer",
     "bindings": {
+      "ctrl-c": "image_viewer::CopyImage",
       "ctrl-=": "image_viewer::ZoomIn",
       "ctrl-+": "image_viewer::ZoomIn",
       "ctrl--": "image_viewer::ZoomOut",

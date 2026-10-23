@@ -1684,6 +1684,7 @@
     "context": "ImageViewer",
     "use_key_equivalents": true,
     "bindings": {
+      "cmd-c": "image_viewer::CopyImage",
       "cmd-=": "image_viewer::ZoomIn",
       "cmd-+": "image_viewer::ZoomIn",
       "cmd--": "image_viewer::ZoomOut",

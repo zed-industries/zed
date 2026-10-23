@@ -8723,6 +8723,7 @@ dependencies = [
  "file_icons",
  "fs",
  "gpui",
+ "image",
  "language",
  "log",
  "menu",
