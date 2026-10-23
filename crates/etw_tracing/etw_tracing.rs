@@ -159,7 +159,7 @@ fn save_etw_recording(output_path: PathBuf, cx: &mut App) {
     match send_json(&mut session.writer, &command) {
         Ok(()) => {
             session.state = EtwSessionState::Stopping;
-            show_etw_notification(cx, "Stopping ETW recording...");
+            show_etw_notification(cx, "Stopping ETW recording…");
         }
         Err(error) => {
             session.state = EtwSessionState::Recording;
@@ -190,7 +190,7 @@ fn cancel_etw_recording(cx: &mut App) {
     match send_json(&mut session.writer, &Command::Cancel) {
         Ok(()) => {
             session.state = EtwSessionState::Stopping;
-            show_etw_notification(cx, "Cancelling ETW recording...");
+            show_etw_notification(cx, "Cancelling ETW recording…");
         }
         Err(error) => {
             session.state = EtwSessionState::Recording;
