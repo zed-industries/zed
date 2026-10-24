@@ -95,8 +95,8 @@ pub use wrap_map::{WrapPoint, WrapRow, WrapSnapshot};
 
 use collections::{HashMap, HashSet, IndexSet};
 use gpui::{
-    App, Context, Entity, EntityId, Font, HighlightStyle, Hsla, LineLayout, Pixels, UnderlineStyle,
-    WeakEntity,
+    App, Context, Entity, EntityId, Font, HighlightStyle, Hsla, LineLayout, Pixels,
+    StrikethroughStyle, UnderlineStyle, WeakEntity,
 };
 use language::{
     LanguageAwareStyling, Point, Subscription as BufferSubscription,
@@ -1599,13 +1599,9 @@ impl DisplaySnapshot {
         &self,
         severity: lsp::DiagnosticSeverity,
         underline: bool,
-        is_unnecessary: bool,
         editor_style: &EditorStyle,
     ) -> Option<UnderlineStyle> {
-        (underline
-            && editor_style.show_underlines
-            && self.diagnostic_severity_is_visible(severity)
-            && !(is_unnecessary && severity > lsp::DiagnosticSeverity::WARNING))
+        (underline && editor_style.show_underlines && self.diagnostic_severity_is_visible(severity))
             .then(|| UnderlineStyle {
                 color: Some(diagnostic_style(severity, &editor_style.status)),
                 thickness: 1.0.into(),
@@ -1966,25 +1962,46 @@ impl DisplaySnapshot {
                         current_diagnostic_severity,
                     )
                 } else {
-                    let severity = chunk
-                        .diagnostic_severity
-                        .filter(|severity| self.diagnostic_severity_is_visible(*severity));
-                    let highlight = severity.map(|severity| HighlightStyle {
-                        fade_out: chunk
-                            .is_unnecessary
-                            .then_some(editor_style.unnecessary_code_fade),
-                        underline: self.diagnostic_underline_style(
-                            severity,
-                            chunk.underline,
-                            chunk.is_unnecessary,
-                            editor_style,
-                        ),
-                        ..Default::default()
+                    let is_visible = |severity: &lsp::DiagnosticSeverity| {
+                        self.diagnostic_severity_is_visible(*severity)
+                    };
+                    // Unnecessary and deprecated code below warning severity is common enough
+                    // that an underline on top of its fade or strikethrough would only be noise.
+                    let is_tag_underlined = |severity: &lsp::DiagnosticSeverity| {
+                        *severity <= lsp::DiagnosticSeverity::WARNING
+                    };
+                    let underline_severity = [
+                        chunk.untagged_diagnostic_severity,
+                        chunk.unnecessary_severity.filter(is_tag_underlined),
+                        chunk.deprecated_severity.filter(is_tag_underlined),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .min();
+                    let underline = underline_severity.and_then(|severity| {
+                        self.diagnostic_underline_style(severity, chunk.underline, editor_style)
                     });
+                    let highlight =
+                        chunk
+                            .diagnostic_severity
+                            .filter(is_visible)
+                            .map(|_| HighlightStyle {
+                                fade_out: chunk
+                                    .unnecessary_severity
+                                    .filter(is_visible)
+                                    .map(|_| editor_style.unnecessary_code_fade),
+                                strikethrough: chunk.deprecated_severity.filter(is_visible).map(
+                                    |_| StrikethroughStyle {
+                                        thickness: 1.0.into(),
+                                        ..Default::default()
+                                    },
+                                ),
+                                underline,
+                                ..Default::default()
+                            });
 
-                    current_diagnostic_underline = highlight.as_ref().and_then(|h| h.underline);
-                    current_diagnostic_severity =
-                        current_diagnostic_underline.and_then(|_| severity);
+                    current_diagnostic_underline = underline;
+                    current_diagnostic_severity = underline.and(underline_severity);
                     (highlight, current_diagnostic_severity)
                 };
 
@@ -3978,6 +3995,141 @@ pub mod tests {
                 (";\n".into(), None, black),
             ]
         );
+    }
+
+    #[gpui::test]
+    async fn test_highlighted_chunks_with_tagged_diagnostics(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| init_test(cx, &|_| {}));
+
+        const HINT: lsp::DiagnosticSeverity = lsp::DiagnosticSeverity::HINT;
+        const INFORMATION: lsp::DiagnosticSeverity = lsp::DiagnosticSeverity::INFORMATION;
+        const WARNING: lsp::DiagnosticSeverity = lsp::DiagnosticSeverity::WARNING;
+        assert_eq!(
+            highlighted_diagnostic_chunks(
+                "old_hint old_warning plain_hint",
+                [
+                    (0..8, HINT, false, true),
+                    (9..20, WARNING, false, true),
+                    (21..31, HINT, false, false),
+                ],
+                DiagnosticSeverity::Hint,
+                cx,
+            ),
+            [
+                ("old_hint".into(), false, true, None),
+                (" ".into(), false, false, None),
+                ("old_warning".into(), false, true, Some(WARNING)),
+                (" ".into(), false, false, None),
+                ("plain_hint".into(), false, false, Some(HINT)),
+            ]
+        );
+
+        // A tagged diagnostic only drops its own underline, not the one of a diagnostic it overlaps.
+        assert_eq!(
+            highlighted_diagnostic_chunks(
+                "aaaa bbbb cccc",
+                [(0..14, INFORMATION, false, false), (5..9, HINT, true, true)],
+                DiagnosticSeverity::Hint,
+                cx,
+            ),
+            [
+                ("aaaa ".into(), false, false, Some(INFORMATION)),
+                ("bbbb".into(), true, true, Some(INFORMATION)),
+                (" cccc".into(), false, false, Some(INFORMATION)),
+            ]
+        );
+
+        // A hidden tagged diagnostic stays hidden where it overlaps a visible diagnostic.
+        assert_eq!(
+            highlighted_diagnostic_chunks(
+                "aaaa bbbb cccc",
+                [(0..14, WARNING, false, false), (5..9, HINT, true, true)],
+                DiagnosticSeverity::Warning,
+                cx,
+            ),
+            [("aaaa bbbb cccc".into(), false, false, Some(WARNING))]
+        );
+    }
+
+    /// Returns the text of the highlighted chunks of the first row, merged by whether they are
+    /// faded and struck through, and by the severity of their diagnostic underline.
+    fn highlighted_diagnostic_chunks(
+        text: &str,
+        diagnostics: impl IntoIterator<Item = (Range<u32>, lsp::DiagnosticSeverity, bool, bool)>,
+        max_severity: DiagnosticSeverity,
+        cx: &mut gpui::TestAppContext,
+    ) -> Vec<(String, bool, bool, Option<lsp::DiagnosticSeverity>)> {
+        let buffer = cx.new(|cx| Buffer::local(text, cx));
+        buffer.update(cx, |buffer, cx| {
+            let entries = diagnostics.into_iter().map(
+                |(columns, severity, is_unnecessary, is_deprecated)| {
+                    DiagnosticEntry::new(
+                        PointUtf16::new(0, columns.start)..PointUtf16::new(0, columns.end),
+                        Diagnostic {
+                            severity,
+                            is_unnecessary,
+                            is_deprecated,
+                            message: "hi".into(),
+                            ..Default::default()
+                        },
+                    )
+                },
+            );
+            let diagnostics = DiagnosticSet::new(entries, buffer);
+            buffer.update_diagnostics(LanguageServerId(0), diagnostics, cx)
+        });
+
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let map = cx.new(|cx| {
+            DisplayMap::new(
+                buffer,
+                font("Courier"),
+                px(16.0),
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                max_severity,
+                cx,
+            )
+        });
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+
+        let editor_style = EditorStyle {
+            unnecessary_code_fade: 0.3,
+            ..EditorStyle::default()
+        };
+        let mut chunks = Vec::<(String, bool, bool, Option<lsp::DiagnosticSeverity>)>::new();
+        for chunk in snapshot.highlighted_chunks(
+            DisplayRow(0)..DisplayRow(1),
+            LanguageAwareStyling {
+                tree_sitter: true,
+                diagnostics: true,
+            },
+            &editor_style,
+        ) {
+            let is_faded = chunk.style.is_some_and(|style| style.fade_out.is_some());
+            let has_strikethrough = chunk
+                .style
+                .is_some_and(|style| style.strikethrough.is_some());
+            let underline_severity = chunk.diagnostic_underline_severity;
+            if let Some((last_text, last_faded, last_strikethrough, last_underline_severity)) =
+                chunks.last_mut()
+                && *last_faded == is_faded
+                && *last_strikethrough == has_strikethrough
+                && *last_underline_severity == underline_severity
+            {
+                last_text.push_str(chunk.text);
+                continue;
+            }
+            chunks.push((
+                chunk.text.to_string(),
+                is_faded,
+                has_strikethrough,
+                underline_severity,
+            ));
+        }
+        chunks
     }
 
     #[gpui::test]
