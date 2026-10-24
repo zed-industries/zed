@@ -7319,6 +7319,35 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_inline_html_without_preceding_text_is_hidden(cx: &mut TestAppContext) {
+        let options = MarkdownOptions {
+            parse_html: true,
+            ..Default::default()
+        };
+
+        for (markdown, expected_text) in [
+            ("<a id=\"status\"></a>\n## Status", "Status"),
+            ("<kbd>Ctrl</kbd> + Z", "Ctrl + Z"),
+            ("**bold**<span>text</span>", "boldtext"),
+        ] {
+            let rendered = render_markdown_with_options(markdown, None, options, cx);
+            let text: String = rendered
+                .lines
+                .iter()
+                .map(|line| line.layout.wrapped_text())
+                .collect();
+            assert!(
+                !text.contains('<'),
+                "inline HTML tags in {markdown:?} should not appear as literal text; got: {text:?}"
+            );
+            assert!(
+                text.contains(expected_text),
+                "text inside the tags in {markdown:?} should still render; got: {text:?}"
+            );
+        }
+    }
+
+    #[gpui::test]
     fn test_hard_break_in_text_paragraph_after_paragraph(cx: &mut TestAppContext) {
         let options = MarkdownOptions {
             parse_html: true,
