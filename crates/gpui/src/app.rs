@@ -322,7 +322,7 @@ impl Application {
 
     /// Register a handler to be invoked when the platform instructs the application
     /// to open one or more URLs.
-    pub fn on_open_urls<F>(&self, mut callback: F) -> &Self
+    pub fn on_open_urls<F>(&self, callback: F) -> &Self
     where
         F: 'static + FnMut(Vec<String>),
     {
@@ -574,7 +574,7 @@ impl SystemWindowTabController {
 
         let current_group = current_group?;
         // TODO: `.keys()` returns arbitrary order, what does "next" mean?
-        let mut group_ids: Vec<_> = controller.tab_groups.keys().collect();
+        let group_ids: Vec<_> = controller.tab_groups.keys().collect();
         let idx = group_ids.iter().position(|g| *g == current_group)?;
         let next_idx = (idx + 1) % group_ids.len();
 
@@ -599,7 +599,7 @@ impl SystemWindowTabController {
 
         let current_group = current_group?;
         // TODO: `.keys()` returns arbitrary order, what does "previous" mean?
-        let mut group_ids: Vec<_> = controller.tab_groups.keys().collect();
+        let group_ids: Vec<_> = controller.tab_groups.keys().collect();
         let idx = group_ids.iter().position(|g| *g == current_group)?;
         let prev_idx = if idx == 0 {
             group_ids.len() - 1
@@ -627,7 +627,7 @@ impl SystemWindowTabController {
 
     /// Initialize the visibility of the system window tab controller.
     pub fn init_visible(cx: &mut App, visible: bool) {
-        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        let controller = cx.global_mut::<SystemWindowTabController>();
         if controller.visible.is_none() {
             controller.visible = Some(visible);
         }
@@ -640,13 +640,13 @@ impl SystemWindowTabController {
 
     /// Set the visibility of the system window tab controller.
     pub fn set_visible(cx: &mut App, visible: bool) {
-        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        let controller = cx.global_mut::<SystemWindowTabController>();
         controller.visible = Some(visible);
     }
 
     /// Update the last active of a window.
     pub fn update_last_active(cx: &mut App, id: WindowId) {
-        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        let controller = cx.global_mut::<SystemWindowTabController>();
         for windows in controller.tab_groups.values_mut() {
             for tab in windows.iter_mut() {
                 if tab.id == id {
@@ -658,7 +658,7 @@ impl SystemWindowTabController {
 
     /// Update the position of a tab within its group.
     pub fn update_tab_position(cx: &mut App, id: WindowId, ix: usize) {
-        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        let controller = cx.global_mut::<SystemWindowTabController>();
         for (_, windows) in controller.tab_groups.iter_mut() {
             if let Some(current_pos) = windows.iter().position(|tab| tab.id == id) {
                 if ix < windows.len() && current_pos != ix {
@@ -683,7 +683,7 @@ impl SystemWindowTabController {
             return;
         }
 
-        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        let controller = cx.global_mut::<SystemWindowTabController>();
         for windows in controller.tab_groups.values_mut() {
             for tab in windows.iter_mut() {
                 if tab.id == id {
@@ -696,12 +696,12 @@ impl SystemWindowTabController {
 
     /// Insert a tab into a tab group.
     pub fn add_tab(cx: &mut App, id: WindowId, tabs: Vec<SystemWindowTab>) {
-        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        let controller = cx.global_mut::<SystemWindowTabController>();
         let Some(tab) = tabs.iter().find(|tab| tab.id == id).cloned() else {
             return;
         };
 
-        let mut expected_tab_ids: Vec<_> = tabs
+        let expected_tab_ids: Vec<_> = tabs
             .iter()
             .filter(|tab| tab.id != id)
             .map(|tab| tab.id)
@@ -729,7 +729,7 @@ impl SystemWindowTabController {
 
     /// Remove a tab from a tab group.
     pub fn remove_tab(cx: &mut App, id: WindowId) -> Option<SystemWindowTab> {
-        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        let controller = cx.global_mut::<SystemWindowTabController>();
         let mut removed_tab = None;
 
         controller.tab_groups.retain(|_, tabs| {
@@ -744,8 +744,8 @@ impl SystemWindowTabController {
 
     /// Move a tab to a new tab group.
     pub fn move_tab_to_new_window(cx: &mut App, id: WindowId) {
-        let mut removed_tab = Self::remove_tab(cx, id);
-        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        let removed_tab = Self::remove_tab(cx, id);
+        let controller = cx.global_mut::<SystemWindowTabController>();
 
         if let Some(tab) = removed_tab {
             let new_group_id = controller.tab_groups.keys().max().map_or(0, |k| k + 1);
@@ -755,7 +755,7 @@ impl SystemWindowTabController {
 
     /// Merge all tab groups into a single group.
     pub fn merge_all_windows(cx: &mut App, id: WindowId) {
-        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        let controller = cx.global_mut::<SystemWindowTabController>();
         let Some(initial_tabs) = controller.tabs(id) else {
             return;
         };
@@ -773,7 +773,7 @@ impl SystemWindowTabController {
 
     /// Selects the next tab in the tab group in the trailing direction.
     pub fn select_next_tab(cx: &mut App, id: WindowId) {
-        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        let controller = cx.global_mut::<SystemWindowTabController>();
         let Some(tabs) = controller.tabs(id) else {
             return;
         };
@@ -788,7 +788,7 @@ impl SystemWindowTabController {
 
     /// Selects the previous tab in the tab group in the leading direction.
     pub fn select_previous_tab(cx: &mut App, id: WindowId) {
-        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        let controller = cx.global_mut::<SystemWindowTabController>();
         let Some(tabs) = controller.tabs(id) else {
             return;
         };
@@ -2885,7 +2885,7 @@ impl App {
     /// The window is no longer accessible at the point this callback is invoked.
     pub fn on_window_closed(
         &self,
-        mut on_closed: impl FnMut(&mut App, WindowId) + 'static,
+        on_closed: impl FnMut(&mut App, WindowId) + 'static,
     ) -> Subscription {
         let (subscription, activate) = self.window_closed_observers.insert((), Box::new(on_closed));
         activate();
@@ -3478,7 +3478,7 @@ impl AppContext for App {
     where
         G: Global,
     {
-        let mut g = self.global::<G>();
+        let g = self.global::<G>();
         callback(g, self)
     }
 }

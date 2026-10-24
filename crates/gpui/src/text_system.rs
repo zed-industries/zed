@@ -726,7 +726,7 @@ impl WindowTextSystem {
         let mut font_runs = mem::take(&mut *self.font_runs_buffer.borrow_mut());
 
         let mut lines = SmallVec::new();
-        let mut max_wrap_lines = line_clamp;
+        let max_wrap_lines = line_clamp;
         let mut wrapped_lines = 0;
 
         let mut process_line = |line_text: SharedString, line_start, line_end| {

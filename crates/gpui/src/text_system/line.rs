@@ -899,7 +899,7 @@ fn paint_line_background(
                 }
 
                 if let Some((mut background_origin, background_color)) = finished_background {
-                    let mut width = glyph_origin.x - background_origin.x;
+                    let width = glyph_origin.x - background_origin.x;
                     if background_origin.x == glyph_origin.x {
                         background_origin.x -= max_glyph_size.width.half();
                     };
