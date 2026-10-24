@@ -1,5 +1,6 @@
 use crate::{FontId, GlyphId, Pixels, PlatformTextSystem, Point, SharedString, Size, point, px};
-use collections::FxHashMap;
+use collections::{FxHashMap, FxHashSet};
+use itertools::Itertools;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
 use std::{
@@ -197,7 +198,7 @@ impl LineLayout {
         max_lines: Option<usize>,
     ) -> SmallVec<[WrapBoundary; 1]> {
         let mut boundaries = SmallVec::new();
-        let mut first_non_whitespace_ix = None;
+        let mut previous_segment = None;
         let mut last_candidate_ix = None;
         let mut last_candidate_x = px(0.);
         let mut last_boundary = WrapBoundary {
@@ -205,7 +206,16 @@ impl LineLayout {
             glyph_ix: 0,
         };
         let mut last_boundary_x = px(0.);
-        let mut prev_ch = '\0';
+        // Shaping can combine characters across a line break opportunity, so we ignore those
+        // break opportunities that would separate them.
+        let glyph_indices: FxHashSet<_> = self
+            .runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.index))
+            .collect();
+        let break_indices: Vec<_> = LineWrapper::break_indices(text)
+            .filter(|index| glyph_indices.contains(index))
+            .collect();
         let mut glyphs = self
             .runs
             .iter()
@@ -215,37 +225,33 @@ impl LineLayout {
                     let character = text[glyph.index..].chars().next().unwrap();
                     (
                         WrapBoundary { run_ix, glyph_ix },
+                        glyph.index,
                         character,
                         glyph.position.x,
                     )
                 })
             })
+            .dedup_by(|(_, previous_index, ..), (_, index, ..)| previous_index == index)
             .peekable();
 
-        while let Some((boundary, ch, x)) = glyphs.next() {
+        while let Some((boundary, index, ch, x)) = glyphs.next() {
             if ch == '\n' {
                 continue;
             }
 
-            // Here is very similar to `LineWrapper::wrap_line` to determine text wrapping,
-            // but there are some differences, so we have to duplicate the code here.
-            if LineWrapper::is_word_char(ch) {
-                if prev_ch == ' ' && ch != ' ' && first_non_whitespace_ix.is_some() {
+            if ch != ' ' {
+                // Detect transitions between line-break segments rather than matching glyph
+                // indices directly, to accomodate RTL text. Workaround for the lack of complete
+                // UAX #9 support.
+                let segment = break_indices.partition_point(|break_index| *break_index <= index);
+                if previous_segment.is_some_and(|previous| previous != segment) {
                     last_candidate_ix = Some(boundary);
                     last_candidate_x = x;
                 }
-            } else {
-                if ch != ' ' && first_non_whitespace_ix.is_some() {
-                    last_candidate_ix = Some(boundary);
-                    last_candidate_x = x;
-                }
+                previous_segment = Some(segment);
             }
 
-            if ch != ' ' && first_non_whitespace_ix.is_none() {
-                first_non_whitespace_ix = Some(boundary);
-            }
-
-            let next_x = glyphs.peek().map_or(self.width, |(_, _, x)| *x);
+            let next_x = glyphs.peek().map_or(self.width, |(_, _, _, x)| *x);
             let width = next_x - last_boundary_x;
 
             if width > wrap_width && boundary > last_boundary {
@@ -265,7 +271,6 @@ impl LineLayout {
                 }
                 boundaries.push(last_boundary);
             }
-            prev_ch = ch;
         }
 
         boundaries
@@ -1103,6 +1108,87 @@ mod tests {
             .iter()
             .map(|g| f32::from(g.position.x))
             .collect()
+    }
+
+    #[test]
+    fn test_wrap_preserves_shaped_clusters() {
+        let mut layout = make_layout(vec![
+            glyph_at(0., 0),
+            glyph_at(5., 0),
+            glyph_at(10., 3),
+            glyph_at(15., 3),
+        ]);
+        layout.width = px(20.);
+        layout.len = "你好".len();
+        assert_eq!(
+            layout
+                .compute_wrap_boundaries("你好", px(15.), None)
+                .as_slice(),
+            &[WrapBoundary {
+                run_ix: 0,
+                glyph_ix: 2
+            }],
+        );
+
+        let mut layout = make_layout(vec![glyph_at(0., 0), glyph_at(10., 0)]);
+        layout.width = px(20.);
+        layout.len = 1;
+        assert!(
+            layout
+                .compute_wrap_boundaries("a", px(10.), None)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn test_wrap_right_to_left_text() {
+        for (text, indices, expected_boundaries) in [
+            ("אבג דהו", vec![11, 9, 7, 6, 4, 2, 0], vec![4]),
+            ("a אבג b", vec![0, 1, 6, 4, 2, 8, 9], vec![2, 6]),
+        ] {
+            let mut layout = make_layout(
+                indices
+                    .iter()
+                    .enumerate()
+                    .map(|(position, index)| glyph_at(position as f32 * 10., *index))
+                    .collect(),
+            );
+            layout.width = px(indices.len() as f32 * 10.);
+            layout.len = text.len();
+            assert_eq!(
+                layout.compute_wrap_boundaries(text, px(40.), None),
+                expected_boundaries
+                    .into_iter()
+                    .map(|glyph_ix| WrapBoundary {
+                        run_ix: 0,
+                        glyph_ix
+                    })
+                    .collect::<SmallVec<[WrapBoundary; 1]>>(),
+                "{text:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_wrap_ignores_breaks_inside_shaped_clusters() {
+        let text = "x a-bcde";
+        let mut layout = make_layout(
+            [0, 1, 2, 5, 6, 7]
+                .into_iter()
+                .map(|index| glyph_at(index as f32 * 10., index))
+                .collect(),
+        );
+        layout.width = px(80.);
+        layout.len = text.len();
+        assert_eq!(
+            layout
+                .compute_wrap_boundaries(text, px(60.), None)
+                .as_slice(),
+            &[WrapBoundary {
+                run_ix: 0,
+                glyph_ix: 2
+            }],
+        );
     }
 
     #[test]
