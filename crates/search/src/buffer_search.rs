@@ -1894,7 +1894,10 @@ mod tests {
     use util_macros::perf;
     #[cfg(target_os = "macos")]
     use workspace::{AppState, MultiWorkspace, Workspace};
-    use workspace::{item::Item, searchable::SearchableItem};
+    use workspace::{
+        item::{Item, ItemNavigation},
+        searchable::SearchableItem,
+    };
 
     fn init_globals(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -3724,6 +3727,10 @@ mod tests {
 
         impl Item for NonBufferSearchableItem {
             type Event = ();
+
+            fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+                ItemNavigation::Excluded
+            }
 
             fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
                 "Non-buffer item".into()

@@ -29,18 +29,13 @@ use project::{
     git_store::{CommitDiff, Repository, UnshallowState},
 };
 use settings::{DiffViewStyle, Settings};
-use std::{
-    any::{Any, TypeId},
-    collections::HashSet,
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{any::TypeId, collections::HashSet, path::PathBuf, sync::Arc};
 use theme::ActiveTheme;
 use ui::{ContextMenu, DiffStat, Disclosure, Divider, Tooltip, WithScrollbar, prelude::*};
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath, truncate_and_trailoff};
 use workspace::item::TabTooltipContent;
 use workspace::{
-    Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
+    Item, ItemHandle, ItemNavigation, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace, item::ItemEvent, notifications::NotifyTaskExt, pane::SaveIntent,
     searchable::SearchableItemHandle,
 };
@@ -1224,9 +1219,8 @@ impl Item for CommitView {
         Some("Commit View Opened")
     }
 
-    fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.editor
-            .update(cx, |editor, cx| editor.deactivated(window, cx));
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::delegate(self.editor.clone())
     }
 
     fn act_as_type<'a>(
@@ -1260,29 +1254,6 @@ impl Item for CommitView {
 
     fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
         self.editor.read(cx).active_project_path(cx)
-    }
-
-    fn set_nav_history(
-        &mut self,
-        nav_history: ItemNavHistory,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.editor.update(cx, |editor, cx| {
-            editor.rhs_editor().update(cx, |editor, _| {
-                editor.set_nav_history(Some(nav_history));
-            });
-        });
-    }
-
-    fn navigate(
-        &mut self,
-        data: Arc<dyn Any + Send>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        self.editor
-            .update(cx, |editor, cx| editor.navigate(data, window, cx))
     }
 
     fn added_to_workspace(

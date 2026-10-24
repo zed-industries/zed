@@ -1358,6 +1358,21 @@ struct HoveredCursor {
     selection_id: usize,
 }
 
+/// Whether moving the cursor records its previous location in the navigation history.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum RecordNavigation {
+    /// Records jumps of at least `MIN_NAVIGATION_HISTORY_ROW_DELTA` rows.
+    #[default]
+    OnLargeJump,
+    /// Records every move to a different row, e.g. for explicit jumps like go to definition.
+    Always,
+    /// Like `Always`, but only emits `EditorEvent::PushedToNavHistory` without recording an
+    /// entry, e.g. for jumps whose origin is already recorded elsewhere.
+    EventOnly,
+    /// Never records, e.g. when scrolling or restoring a location from the history.
+    Never,
+}
+
 #[derive(Debug)]
 /// SelectionEffects controls the side-effects of updating the selection.
 ///
@@ -1374,7 +1389,8 @@ struct HoveredCursor {
 /// move. Explicit jumps can opt into revealing folded destinations with [`Self::unfold`].
 #[derive(Clone)]
 pub struct SelectionEffects {
-    nav_history: Option<bool>,
+    /// `None` when unspecified, so that merged effects keep an explicitly requested behavior.
+    record_navigation: Option<RecordNavigation>,
     completions: bool,
     scroll: Option<Autoscroll>,
     from_search: bool,
@@ -1384,7 +1400,7 @@ pub struct SelectionEffects {
 impl Default for SelectionEffects {
     fn default() -> Self {
         Self {
-            nav_history: None,
+            record_navigation: None,
             completions: true,
             scroll: Some(Autoscroll::fit()),
             from_search: false,
@@ -1423,9 +1439,9 @@ impl SelectionEffects {
         }
     }
 
-    pub fn nav_history(self, nav_history: bool) -> Self {
+    pub fn record_navigation(self, record_navigation: RecordNavigation) -> Self {
         Self {
-            nav_history: Some(nav_history),
+            record_navigation: Some(record_navigation),
             ..self
         }
     }
@@ -10754,13 +10770,13 @@ impl Editor {
                                 }
                                 None => Autoscroll::newest(),
                             };
-                            let nav_history = editor.nav_history.take();
                             let multibuffer_snapshot = editor.buffer().read(cx).snapshot(cx);
                             let Some(buffer_snapshot) = multibuffer_snapshot.as_singleton() else {
                                 return;
                             };
                             editor.change_selections(
-                                SelectionEffects::scroll(autoscroll),
+                                SelectionEffects::scroll(autoscroll)
+                                    .record_navigation(RecordNavigation::Never),
                                 window,
                                 cx,
                                 |s| {
@@ -10773,7 +10789,6 @@ impl Editor {
                                     }));
                                 },
                             );
-                            editor.nav_history = nav_history;
                         });
                     }
                 })

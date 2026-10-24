@@ -5,7 +5,7 @@ pub(crate) mod scroll_amount;
 use crate::editor_settings::ScrollBeyondLastLine;
 use crate::{
     Anchor, DisplayPoint, DisplayRow, Editor, EditorEvent, EditorMode, EditorSettings,
-    MultiBufferSnapshot, RowExt, SelectionEffects, SizingBehavior, ToPoint,
+    MultiBufferSnapshot, RecordNavigation, RowExt, SelectionEffects, SizingBehavior, ToPoint,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
     persistence::EditorDb,
@@ -895,7 +895,7 @@ impl Editor {
         };
 
         self.change_selections(
-            SelectionEffects::no_scroll().nav_history(false),
+            SelectionEffects::no_scroll().record_navigation(RecordNavigation::Never),
             window,
             cx,
             |s| {

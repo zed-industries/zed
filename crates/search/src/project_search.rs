@@ -14,7 +14,7 @@ use anyhow::Context as _;
 use collections::HashMap;
 use editor::{
     Anchor, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer, PathKey,
-    SearchResultsStatus, SelectionEffects,
+    RecordNavigation, SearchResultsStatus, SelectionEffects,
     actions::{Backtab, FoldAll, SelectAll, Tab, UnfoldAll},
     items::active_match_index,
     multibuffer_context_lines,
@@ -38,7 +38,7 @@ use project::{
 };
 use settings::Settings;
 use std::{
-    any::{Any, TypeId},
+    any::TypeId,
     iter::Peekable,
     mem,
     ops::{Not, Range},
@@ -56,7 +56,7 @@ use ui::{
 };
 use util::{ResultExt as _, paths::PathMatcher};
 use workspace::{
-    DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
+    DeploySearch, ItemNavigation, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace, WorkspaceId,
     item::{Item, ItemBufferKind, ItemEvent, ItemHandle, SaveOptions},
     searchable::{Direction, SearchEvent, SearchToken, SearchableItem, SearchableItemHandle},
@@ -1134,9 +1134,8 @@ impl Item for ProjectSearchView {
         Some(Box::new(self.results_editor.clone()))
     }
 
-    fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.results_editor
-            .update(cx, |editor, cx| editor.deactivated(window, cx));
+    fn navigation(&self, _: &Entity<Self>, _: &App) -> ItemNavigation {
+        ItemNavigation::delegate(self.results_editor.clone())
     }
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
@@ -1247,27 +1246,6 @@ impl Item for ProjectSearchView {
         self.results_editor.update(cx, |editor, cx| {
             editor.added_to_workspace(workspace, window, cx)
         });
-    }
-
-    fn set_nav_history(
-        &mut self,
-        nav_history: ItemNavHistory,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.results_editor.update(cx, |editor, _| {
-            editor.set_nav_history(Some(nav_history));
-        });
-    }
-
-    fn navigate(
-        &mut self,
-        data: Arc<dyn Any + Send>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        self.results_editor
-            .update(cx, |editor, cx| editor.navigate(data, window, cx))
     }
 
     fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(ItemEvent)) {
@@ -2347,7 +2325,7 @@ impl ProjectSearchView {
                 let range_to_select = editor.range_for_match(first_match);
                 if editor.selections.newest_anchor().range() != range_to_select {
                     editor.change_selections(
-                        SelectionEffects::no_scroll().nav_history(false),
+                        SelectionEffects::no_scroll().record_navigation(RecordNavigation::Never),
                         window,
                         cx,
                         |s| s.select_ranges([range_to_select]),
