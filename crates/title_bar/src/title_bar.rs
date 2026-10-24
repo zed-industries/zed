@@ -615,21 +615,15 @@ impl TitleBar {
         let options = self.project.read(cx).remote_connection_options(cx)?;
         let host: SharedString = options.display_name().into();
 
-        let (nickname, tooltip_title, icon) = match options {
-            RemoteConnectionOptions::Ssh(options) => (
-                options.nickname.map(|nick| nick.into()),
-                "Remote Project",
-                IconName::Server,
-            ),
-            RemoteConnectionOptions::Wsl(_) => (None, "Remote Project", IconName::Linux),
+        let (tooltip_title, icon) = match options {
+            RemoteConnectionOptions::Ssh(_) => ("Remote Project", IconName::Server),
+            RemoteConnectionOptions::Wsl(_) => ("Remote Project", IconName::Linux),
             RemoteConnectionOptions::Docker(_dev_container_connection) => {
-                (None, "Dev Container", IconName::Box)
+                ("Dev Container", IconName::Box)
             }
             #[cfg(any(test, feature = "test-support"))]
-            RemoteConnectionOptions::Mock(_) => (None, "Mock Remote Project", IconName::Server),
+            RemoteConnectionOptions::Mock(_) => ("Mock Remote Project", IconName::Server),
         };
-
-        let nickname = nickname.unwrap_or_else(|| host.clone());
 
         let (indicator_color, meta) = match self.project.read(cx).remote_connection_state(cx)? {
             remote::ConnectionState::Connecting => (Color::Info, format!("Connecting to: {host}")),
@@ -687,7 +681,7 @@ impl TitleBar {
                                     ))
                                     .into_any_element(),
                                 )
-                                .child(Label::new(nickname).size(LabelSize::Small).truncate()),
+                                .child(Label::new(host).size(LabelSize::Small).truncate()),
                         ),
                     move |_window, cx| {
                         Tooltip::with_meta(

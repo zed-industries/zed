@@ -14,7 +14,7 @@ use gpui::{AsyncWindowContext, Entity, WeakEntity, WindowId};
 
 use language::{Toolchain, ToolchainScope};
 use project::{
-    Project, ProjectGroupKey, bookmark_store::SerializedBookmark,
+    Project, ProjectGroupKey, ProjectHost, bookmark_store::SerializedBookmark,
     debugger::breakpoint_store::SourceBreakpoint,
 };
 use remote::RemoteConnectionOptions;
@@ -43,6 +43,15 @@ pub(crate) enum RemoteConnectionKind {
 pub enum SerializedWorkspaceLocation {
     Local,
     Remote(RemoteConnectionOptions),
+}
+
+impl<'a> From<&'a SerializedWorkspaceLocation> for ProjectHost<'a> {
+    fn from(location: &'a SerializedWorkspaceLocation) -> Self {
+        match location {
+            SerializedWorkspaceLocation::Local => Self::Local,
+            SerializedWorkspaceLocation::Remote(connection) => Self::Remote(connection),
+        }
+    }
 }
 
 impl SerializedWorkspaceLocation {
@@ -78,7 +87,7 @@ impl SerializedProjectGroup {
     pub fn from_group(key: &ProjectGroupKey, expanded: bool) -> Self {
         Self {
             path_list: key.path_list().serialize(),
-            location: match key.host() {
+            location: match key.host().cloned() {
                 Some(host) => SerializedWorkspaceLocation::Remote(host),
                 None => SerializedWorkspaceLocation::Local,
             },
