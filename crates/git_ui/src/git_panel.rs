@@ -6903,6 +6903,12 @@ impl GitPanel {
         self.active_repository.as_ref()?;
 
         let diff_stat_total = self.diff_stat_total;
+        let can_refresh = self.active_repository.as_ref().is_some_and(|repository| {
+            repository
+                .read(cx)
+                .git_store()
+                .is_some_and(|git_store| git_store.read(cx).is_local())
+        });
 
         Some(
             h_flex()
@@ -6956,6 +6962,19 @@ impl GitPanel {
                     h_flex()
                         .gap_1()
                         .child(self.render_view_options_menu("view_options_menu"))
+                        .child(
+                            IconButton::new("refresh-git-status", IconName::RotateCw)
+                                .icon_size(IconSize::Small)
+                                .disabled(!can_refresh)
+                                .tooltip(Tooltip::text("Refresh Git Status"))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    if let Some(repository) = this.active_repository.clone() {
+                                        repository.update(cx, |repository, cx| {
+                                            repository.refresh_statuses(cx)
+                                        });
+                                    }
+                                })),
+                        )
                         .child(self.render_git_changes_actions_button(cx)),
                 ),
         )
