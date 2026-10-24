@@ -1106,6 +1106,14 @@
     },
   },
   {
+    "context": "PrReviewModal > Editor && mode == auto_height",
+    "bindings": {
+      "enter": "editor::Newline",
+      "escape": "menu::Cancel",
+      "ctrl-enter": "menu::Confirm",
+    },
+  },
+  {
     "context": "GitCommit > Editor && mode == auto_height",
     "bindings": {
       "escape": "menu::Cancel",
