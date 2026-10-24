@@ -1478,6 +1478,525 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
 }
 
 #[gpui::test]
+async fn test_remote_requests_for_documents_opened_by_registrations(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code/project"),
+        json!({ "lib.rs": "", "notes.md": "# notes" }),
+    )
+    .await;
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    let capabilities = lsp::ServerCapabilities {
+        code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+        ..lsp::ServerCapabilities::default()
+    };
+    project.update(cx, |project, _| {
+        project.languages().add(rust_lang());
+        project.languages().register_test_language(LanguageConfig {
+            name: "Markdown".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["md".into()],
+                ..LanguageMatcher::default()
+            }
+            .into(),
+            ..LanguageConfig::default()
+        });
+        project.languages().register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
+                name: "rust-analyzer",
+                capabilities: capabilities.clone(),
+                ..FakeLspAdapter::default()
+            },
+        );
+    });
+    let (code_action_uris_tx, code_action_uris) = smol::channel::unbounded();
+    let mut fake_servers = server_cx.update(|cx| {
+        headless.read(cx).languages.register_fake_lsp_server(
+            LanguageServerName(SharedString::from("rust-analyzer")),
+            capabilities,
+            Some(Box::new(move |fake_server| {
+                let code_action_uris_tx = code_action_uris_tx.clone();
+                fake_server.set_request_handler::<lsp::request::CodeActionRequest, _, _>(
+                    move |params, _| {
+                        code_action_uris_tx
+                            .try_send(params.text_document.uri)
+                            .unwrap();
+                        async move { Ok(None) }
+                    },
+                );
+            })),
+        )
+    });
+    let worktree_id = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project"), true, cx)
+        })
+        .await
+        .expect("worktree should open")
+        .0
+        .read_with(cx, |worktree, _| worktree.id());
+    let (_rust_buffer, _rust_handle) = project
+        .update(cx, |project, cx| {
+            project.open_buffer_with_lsp((worktree_id, rel_path("lib.rs")), cx)
+        })
+        .await
+        .expect("buffer should open with LSP");
+    let fake_server = fake_servers.next().await.expect("LSP should start");
+    let (notes_buffer, _notes_handle) = project
+        .update(cx, |project, cx| {
+            project.open_buffer_with_lsp((worktree_id, rel_path("notes.md")), cx)
+        })
+        .await
+        .expect("buffer should open with LSP");
+    cx.run_until_parked();
+
+    let register = async |method: &str, id: &str| {
+        fake_server
+            .request::<lsp::request::RegisterCapability>(
+                lsp::RegistrationParams {
+                    registrations: vec![lsp::Registration {
+                        id: id.to_string(),
+                        method: method.to_string(),
+                        register_options: Some(
+                            json!({ "documentSelector": [{ "language": "markdown" }] }),
+                        ),
+                    }],
+                },
+                DEFAULT_LSP_REQUEST_TIMEOUT,
+            )
+            .await
+            .into_response()
+            .unwrap();
+    };
+    let request_code_actions = async |cx: &mut TestAppContext| {
+        project
+            .update(cx, |project, cx| {
+                project.code_actions(&notes_buffer, 0..0, None, cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        std::iter::from_fn(|| code_action_uris.try_recv().ok()).collect::<Vec<_>>()
+    };
+
+    register("textDocument/didOpen", "open-notes").await;
+    cx.run_until_parked();
+    assert_eq!(
+        request_code_actions(cx).await,
+        Vec::new(),
+        "expected the static code action capability not to cover a document opened by registrations",
+    );
+
+    register("textDocument/codeAction", "code-actions-for-notes").await;
+    cx.run_until_parked();
+    assert_eq!(
+        request_code_actions(cx).await,
+        vec![lsp::Uri::from_file_path(path!("/code/project/notes.md")).unwrap()],
+        "expected the remote client to request code actions from the server whose registrations select the document",
+    );
+}
+
+#[gpui::test]
+async fn test_remote_semantic_tokens_of_documents_closed_by_registrations(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code/project"),
+        json!({ "lib.rs": "", "notes.md": "# notes" }),
+    )
+    .await;
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    project.update(cx, |project, _| {
+        project.languages().add(rust_lang());
+        project.languages().register_test_language(LanguageConfig {
+            name: "Markdown".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["md".into()],
+                ..LanguageMatcher::default()
+            }
+            .into(),
+            ..LanguageConfig::default()
+        });
+        project.languages().register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
+                name: "rust-analyzer",
+                ..FakeLspAdapter::default()
+            },
+        );
+    });
+    let mut fake_servers = server_cx.update(|cx| {
+        headless.read(cx).languages.register_fake_lsp_server(
+            LanguageServerName(SharedString::from("rust-analyzer")),
+            lsp::ServerCapabilities::default(),
+            Some(Box::new(|fake_server| {
+                fake_server.set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+                    |_, _| async move {
+                        Ok(Some(lsp::SemanticTokensResult::Tokens(
+                            lsp::SemanticTokens {
+                                result_id: None,
+                                // A one character token of the first type.
+                                data: vec![0, 0, 1, 0, 0],
+                            },
+                        )))
+                    },
+                );
+            })),
+        )
+    });
+    let worktree_id = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project"), true, cx)
+        })
+        .await
+        .expect("worktree should open")
+        .0
+        .read_with(cx, |worktree, _| worktree.id());
+    let (_rust_buffer, _rust_handle) = project
+        .update(cx, |project, cx| {
+            project.open_buffer_with_lsp((worktree_id, rel_path("lib.rs")), cx)
+        })
+        .await
+        .expect("buffer should open with LSP");
+    let fake_server = fake_servers.next().await.expect("LSP should start");
+    let (notes_buffer, _notes_handle) = project
+        .update(cx, |project, cx| {
+            project.open_buffer_with_lsp((worktree_id, rel_path("notes.md")), cx)
+        })
+        .await
+        .expect("buffer should open with LSP");
+    cx.run_until_parked();
+
+    for (id, method, options) in [
+        (
+            "open-notes",
+            "textDocument/didOpen",
+            json!({ "documentSelector": [{ "language": "markdown" }] }),
+        ),
+        (
+            "semantic-tokens-for-notes",
+            "textDocument/semanticTokens",
+            json!({
+                "documentSelector": [{ "language": "markdown" }],
+                "legend": { "tokenTypes": ["keyword"], "tokenModifiers": [] },
+                "full": true,
+            }),
+        ),
+    ] {
+        fake_server
+            .request::<lsp::request::RegisterCapability>(
+                lsp::RegistrationParams {
+                    registrations: vec![lsp::Registration {
+                        id: id.to_string(),
+                        method: method.to_string(),
+                        register_options: Some(options),
+                    }],
+                },
+                DEFAULT_LSP_REQUEST_TIMEOUT,
+            )
+            .await
+            .into_response()
+            .unwrap();
+    }
+    cx.run_until_parked();
+
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let token_server_count = async |cx: &mut TestAppContext| {
+        let tokens = lsp_store
+            .update(cx, |lsp_store, cx| {
+                lsp_store.semantic_tokens(notes_buffer.clone(), cx)
+            })
+            .await
+            .unwrap();
+        tokens.tokens.as_ref().map_or(0, |tokens| tokens.len())
+    };
+    assert_eq!(token_server_count(cx).await, 1);
+
+    // The semantic token registration remains, but the document is no longer open in the server.
+    fake_server
+        .request::<lsp::request::UnregisterCapability>(
+            lsp::UnregistrationParams {
+                unregisterations: vec![lsp::Unregistration {
+                    id: "open-notes".to_string(),
+                    method: "textDocument/didOpen".to_string(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        token_server_count(cx).await,
+        0,
+        "expected the client to drop the tokens of the server the document was closed in",
+    );
+}
+
+#[gpui::test]
+async fn test_remote_semantic_tokens_of_documents_opened_by_registrations_again(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code/project"),
+        json!({ "lib.rs": "", "notes.md": "# notes" }),
+    )
+    .await;
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    let markdown = || LanguageConfig {
+        name: "Markdown".into(),
+        matcher: LanguageMatcher {
+            path_suffixes: vec!["md".into()],
+            ..LanguageMatcher::default()
+        }
+        .into(),
+        ..LanguageConfig::default()
+    };
+    project.update(cx, |project, _| {
+        project.languages().add(rust_lang());
+        project.languages().register_test_language(markdown());
+        project.languages().register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
+                name: "rust-analyzer",
+                ..FakeLspAdapter::default()
+            },
+        );
+    });
+    let mut fake_servers = server_cx.update(|cx| {
+        headless.read(cx).languages.register_fake_lsp_server(
+            LanguageServerName(SharedString::from("rust-analyzer")),
+            lsp::ServerCapabilities::default(),
+            Some(Box::new(|fake_server| {
+                fake_server.set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+                    |_, _| async move {
+                        Ok(Some(lsp::SemanticTokensResult::Tokens(
+                            lsp::SemanticTokens {
+                                result_id: None,
+                                // A one character token of the first type.
+                                data: vec![0, 0, 1, 0, 0],
+                            },
+                        )))
+                    },
+                );
+            })),
+        )
+    });
+    let worktree_id = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project"), true, cx)
+        })
+        .await
+        .expect("worktree should open")
+        .0
+        .read_with(cx, |worktree, _| worktree.id());
+    let (_rust_buffer, _rust_handle) = project
+        .update(cx, |project, cx| {
+            project.open_buffer_with_lsp((worktree_id, rel_path("lib.rs")), cx)
+        })
+        .await
+        .expect("buffer should open with LSP");
+    let fake_server = fake_servers.next().await.expect("LSP should start");
+    let (notes_buffer, _notes_handle) = project
+        .update(cx, |project, cx| {
+            project.open_buffer_with_lsp((worktree_id, rel_path("notes.md")), cx)
+        })
+        .await
+        .expect("buffer should open with LSP");
+    cx.run_until_parked();
+
+    let set_markdown_language_servers_enabled =
+        |enabled: bool, server_cx: &mut TestAppContext, cx: &mut TestAppContext| {
+            server_cx.update(|cx| {
+                SettingsStore::update_global(cx, |store, cx| {
+                    store.update_user_settings(cx, |settings| {
+                        settings.languages_mut().insert(
+                            "Markdown".into(),
+                            language::language_settings::LanguageSettingsContent {
+                                enable_language_server: Some(enabled),
+                                ..Default::default()
+                            },
+                        );
+                    });
+                });
+            });
+            server_cx.run_until_parked();
+            cx.run_until_parked();
+        };
+    // The client cannot see the host's settings, so it still asks the host, which answers
+    // nothing for the document the server has not opened.
+    set_markdown_language_servers_enabled(false, server_cx, cx);
+    for (id, method, options) in [
+        (
+            "open-notes",
+            "textDocument/didOpen",
+            json!({ "documentSelector": [{ "language": "markdown" }] }),
+        ),
+        (
+            "semantic-tokens-for-notes",
+            "textDocument/semanticTokens",
+            json!({
+                "documentSelector": [{ "language": "markdown" }],
+                "legend": { "tokenTypes": ["keyword"], "tokenModifiers": [] },
+                "full": true,
+            }),
+        ),
+    ] {
+        fake_server
+            .request::<lsp::request::RegisterCapability>(
+                lsp::RegistrationParams {
+                    registrations: vec![lsp::Registration {
+                        id: id.to_string(),
+                        method: method.to_string(),
+                        register_options: Some(options),
+                    }],
+                },
+                DEFAULT_LSP_REQUEST_TIMEOUT,
+            )
+            .await
+            .into_response()
+            .unwrap();
+    }
+    cx.run_until_parked();
+
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let token_server_count = async |cx: &mut TestAppContext| {
+        let tokens = lsp_store
+            .update(cx, |lsp_store, cx| {
+                lsp_store.semantic_tokens(notes_buffer.clone(), cx)
+            })
+            .await
+            .unwrap();
+        tokens.tokens.as_ref().map_or(0, |tokens| tokens.len())
+    };
+    assert_eq!(token_server_count(cx).await, 0);
+
+    set_markdown_language_servers_enabled(true, server_cx, cx);
+    assert_eq!(
+        token_server_count(cx).await,
+        1,
+        "expected the client to fetch the tokens of the server the document was opened in",
+    );
+}
+
+#[gpui::test]
+async fn test_remote_semantic_token_legend_of_documents_opened_by_registrations(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(path!("/code/project"), json!({ "lib.rs": "" }))
+        .await;
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    project.update(cx, |project, _| {
+        project.languages().add(rust_lang());
+        project.languages().register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
+                name: "rust-analyzer",
+                ..FakeLspAdapter::default()
+            },
+        );
+    });
+    let mut fake_servers = server_cx.update(|cx| {
+        headless.read(cx).languages.register_fake_lsp_server(
+            LanguageServerName(SharedString::from("rust-analyzer")),
+            lsp::ServerCapabilities::default(),
+            None,
+        )
+    });
+    let worktree_id = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project"), true, cx)
+        })
+        .await
+        .expect("worktree should open")
+        .0
+        .read_with(cx, |worktree, _| worktree.id());
+    let (_rust_buffer, _rust_handle) = project
+        .update(cx, |project, cx| {
+            project.open_buffer_with_lsp((worktree_id, rel_path("lib.rs")), cx)
+        })
+        .await
+        .expect("buffer should open with LSP");
+    let fake_server = fake_servers.next().await.expect("LSP should start");
+    cx.run_until_parked();
+
+    let register = async |id: &str, language: Option<&str>, token_type: &str| {
+        let document_selector = language.map(|language| json!([{ "language": language }]));
+        fake_server
+            .request::<lsp::request::RegisterCapability>(
+                lsp::RegistrationParams {
+                    registrations: vec![lsp::Registration {
+                        id: id.to_string(),
+                        method: "textDocument/semanticTokens".to_string(),
+                        register_options: Some(json!({
+                            "documentSelector": document_selector,
+                            "legend": { "tokenTypes": [token_type], "tokenModifiers": [] },
+                            "full": true,
+                        })),
+                    }],
+                },
+                DEFAULT_LSP_REQUEST_TIMEOUT,
+            )
+            .await
+            .into_response()
+            .unwrap();
+    };
+    register("markdown-semantic-tokens", Some("markdown"), "string").await;
+    // Stands for the documents of the languages the server serves, so it must not decide the
+    // legend of documents its `didOpen` registrations opened, despite being the latest.
+    register("served-semantic-tokens", None, "type").await;
+    cx.run_until_parked();
+
+    let server_id = project.read_with(cx, |project, cx| {
+        project
+            .lsp_store()
+            .read(cx)
+            .language_server_statuses()
+            .find(|(_, status)| status.name.0 == "rust-analyzer")
+            .map(|(server_id, _)| server_id)
+            .expect("the client should know the server")
+    });
+    let token_type = |language: &str, cx: &mut TestAppContext| {
+        project.update(cx, |project, cx| {
+            project.lsp_store().update(cx, |lsp_store, cx| {
+                lsp_store
+                    .get_or_create_token_stylizer(
+                        server_id,
+                        Some(&language::LanguageName::new(language)),
+                        cx,
+                    )
+                    .and_then(|stylizer| {
+                        stylizer
+                            .token_type_name(project::lsp_store::TokenType(0))
+                            .cloned()
+                    })
+            })
+        })
+    };
+    assert_eq!(
+        token_type("Markdown", cx).as_deref(),
+        Some("string"),
+        "expected the legend of the registration selecting the document",
+    );
+    assert_eq!(
+        token_type("Rust", cx).as_deref(),
+        Some("type"),
+        "expected the latest registration to decide the legend of a served language",
+    );
+}
+
+#[gpui::test]
 async fn test_remote_completion_resolve_edit_ranges(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,
