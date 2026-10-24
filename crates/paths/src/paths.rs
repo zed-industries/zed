@@ -118,11 +118,35 @@ pub fn set_custom_data_dir(dir: &str) -> &'static PathBuf {
     })
 }
 
+/// Directory name for the portable data directory, expected as a sibling of the executable.
+const PORTABLE_DATA_DIR_NAME: &str = "data";
+
+/// Returns the portable data directory, if the running executable has a sibling `data` directory.
+///
+/// The portable build uses a self-contained layout (`zed.exe` + a sibling `data`
+/// directory) so it can be launched by double-clicking without a CLI flag, while
+/// keeping its data isolated from the installed Zed's user-level data directory.
+fn portable_data_dir() -> Option<PathBuf> {
+    let exe_path = env::current_exe().ok()?;
+    portable_data_dir_at(&exe_path)
+}
+
+/// Pure path counterpart of [`portable_data_dir`], evaluated for a given executable path.
+///
+/// Returns the sibling `data` directory only when it already exists, so regular
+/// executables (dev builds, installed copies) keep the platform default paths.
+fn portable_data_dir_at(exe_path: &Path) -> Option<PathBuf> {
+    let data_dir = exe_path.parent()?.join(PORTABLE_DATA_DIR_NAME);
+    data_dir.is_dir().then_some(data_dir)
+}
+
 /// Returns the path to the configuration directory used by Zed.
 pub fn config_dir() -> &'static PathBuf {
     CONFIG_DIR.get_or_init(|| {
         if let Some(custom_dir) = CUSTOM_DATA_DIR.get() {
             custom_dir.join("config")
+        } else if let Some(portable_dir) = portable_data_dir() {
+            portable_dir.join("config")
         } else if cfg!(target_os = "windows") {
             dirs::config_dir()
                 .expect("failed to determine RoamingAppData directory")
@@ -145,6 +169,8 @@ pub fn data_dir() -> &'static PathBuf {
     CURRENT_DATA_DIR.get_or_init(|| {
         if let Some(custom_dir) = CUSTOM_DATA_DIR.get() {
             custom_dir.clone()
+        } else if let Some(portable_dir) = portable_data_dir() {
+            portable_dir
         } else if cfg!(target_os = "macos") {
             home_dir()
                 .join("Library/Application Support")
@@ -634,4 +660,52 @@ pub fn global_gitignore_path() -> Option<PathBuf> {
     GLOBAL_GITIGNORE_PATH
         .get_or_init(::ignore::gitignore::gitconfig_excludes_path)
         .clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Creates a unique temporary directory under the system temp dir.
+    /// Uniqueness comes from process id + timestamp, so parallel tests don't collide.
+    fn create_unique_temp_dir(label: &str) -> PathBuf {
+        let dir = env::temp_dir().join(format!(
+            "zed_paths_test_{}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0),
+            label,
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn portable_data_dir_at_returns_sibling_data_dir_when_present() {
+        let base = create_unique_temp_dir("with_data");
+        let exe_path = base.join("zed.exe");
+        std::fs::write(&exe_path, b"").unwrap();
+        let expected = base.join(PORTABLE_DATA_DIR_NAME);
+        std::fs::create_dir(&expected).unwrap();
+
+        let found = portable_data_dir_at(&exe_path);
+
+        // Clean up before asserting so the temp dir doesn't leak on failure.
+        std::fs::remove_dir_all(&base).unwrap();
+        assert_eq!(found, Some(expected));
+    }
+
+    #[test]
+    fn portable_data_dir_at_returns_none_without_sibling_data_dir() {
+        let base = create_unique_temp_dir("without_data");
+        let exe_path = base.join("zed.exe");
+        std::fs::write(&exe_path, b"").unwrap();
+
+        let found = portable_data_dir_at(&exe_path);
+
+        std::fs::remove_dir_all(&base).unwrap();
+        assert_eq!(found, None);
+    }
 }
