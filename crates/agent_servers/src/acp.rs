@@ -460,6 +460,10 @@ impl ConfigOptions {
 
 pub struct AcpSession {
     thread: WeakEntity<AcpThread>,
+    /// Whether a parent announced this session as its ACP subagent. This mirrors the
+    /// thread's subagent association, so the connection can refuse a subagent's
+    /// mutations even while its thread is being updated.
+    is_subagent: bool,
     suppress_abort_err: bool,
     session_modes: Option<Rc<RefCell<acp::SessionModeState>>>,
     config_options: Option<ConfigOptions>,
@@ -834,6 +838,7 @@ fn apply_subagent_update(
         session_id,
         AcpSession {
             thread: subagent.downgrade(),
+            is_subagent: true,
             suppress_abort_err: false,
             session_modes: None,
             config_options: None,
