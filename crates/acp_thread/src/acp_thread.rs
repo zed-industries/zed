@@ -1129,6 +1129,7 @@ impl AgentThreadEntry {
 #[derive(Clone, Debug, Eq)]
 pub struct ToolCallLocation {
     pub path: PathBuf,
+    /// The 1-based line, as ACP numbers lines.
     pub line: Option<u32>,
     pub meta: Option<acp_v2::Meta>,
 }
@@ -1868,7 +1869,8 @@ impl ToolCall {
         let buffer = buffer.await.log_err()?;
         let position = buffer.update(cx, |buffer, _| {
             let snapshot = buffer.snapshot();
-            if let Some(row) = location.line {
+            if let Some(line) = location.line {
+                let row = line.saturating_sub(1);
                 let column = snapshot.indent_size_for_line(row).len;
                 let point = snapshot.clip_point(Point::new(row, column), Bias::Left);
                 snapshot.anchor_before(point)
@@ -18313,7 +18315,7 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             path!("/tmp/skills/test-skill"),
-            json!({ "SKILL.md": "skill body" }),
+            json!({ "SKILL.md": "skill body\nsecond line" }),
         )
         .await;
         let project = Project::test(fs, [], cx).await;
@@ -18333,7 +18335,9 @@ mod tests {
                         acp_v1::ToolCall::new("write_file", "Write SKILL.md")
                             .kind(acp_v1::ToolKind::Edit)
                             .status(acp_v1::ToolCallStatus::Completed)
-                            .locations(vec![acp_v1::ToolCallLocation::new(skill_path.clone())]),
+                            .locations(vec![
+                                acp_v1::ToolCallLocation::new(skill_path.clone()).line(2),
+                            ]),
                     ),
                     cx,
                 )
@@ -18352,7 +18356,15 @@ mod tests {
                 .buffer
                 .upgrade()
                 .expect("resolved location should keep an open buffer");
-            assert_eq!(buffer.read(cx).text(), "skill body");
+            assert_eq!(buffer.read(cx).text(), "skill body\nsecond line");
+            // ACP numbers lines from 1, so line 2 is the buffer's second row.
+            assert_eq!(
+                agent_location
+                    .position
+                    .to_point(&buffer.read(cx).snapshot())
+                    .row,
+                1
+            );
         });
     }
 
