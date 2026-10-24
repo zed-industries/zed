@@ -1,9 +1,66 @@
-use acp_thread::{ToolCall, ToolCallContent, ToolCallStatus};
-use gpui::{App, SharedString};
-use std::ops::Range;
+use acp_thread::{
+    AcpThread, AgentThreadEntry, MessageIdentity, SessionMessage, ToolCall, ToolCallContent,
+    ToolCallStatus,
+};
+use agent_client_protocol::schema::v2 as acp_v2;
+use gpui::{App, Entity, SharedString};
+use std::{fmt, ops::Range};
+
+use super::thread_view::{SessionMessageSide, session_message_side, subagent_label};
 
 /// Native subagent tool calls report a user cancellation as output with this text.
 const USER_CANCELED_OUTPUT: &str = "User canceled";
+
+/// The transcript entry a subagent card stands for. It keys the card's expansion state
+/// and element IDs, since the same subagent can have more than one card.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum SubagentCardId {
+    /// A native `spawn_agent` tool call.
+    ToolCall(acp_v2::ToolCallId),
+    /// An ACP parent's outgoing session message to the subagent.
+    SessionMessage(acp_v2::MessageId),
+}
+
+impl fmt::Display for SubagentCardId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ToolCall(id) => write!(f, "tool-call-{id}"),
+            Self::SessionMessage(id) => write!(f, "session-message-{id}"),
+        }
+    }
+}
+
+/// The subagent whose card a session message in `thread` is drawn as, in place of its
+/// message row. The message must be the first that `thread` sent to one of its own
+/// subagents. Later messages to the same subagent stay message rows, because nothing yet
+/// links each message to its part of the subagent's transcript or to its outcome, so one
+/// card covers the whole subagent.
+pub(crate) fn acp_subagent_card(
+    thread: &AcpThread,
+    entry_ix: usize,
+    message: &SessionMessage,
+) -> Option<(SubagentCardId, Entity<AcpThread>)> {
+    let own_session_id = thread.session_id();
+    let SessionMessageSide::Outgoing {
+        recipient: Some(recipient),
+    } = session_message_side(message, own_session_id)
+    else {
+        return None;
+    };
+    let subagent = thread.subagent(recipient)?.clone();
+    let MessageIdentity::Keyed(message_id) = &message.identity else {
+        return None;
+    };
+    let sent_earlier = thread.entries().get(..entry_ix)?.iter().any(|entry| {
+        matches!(
+            entry,
+            AgentThreadEntry::SessionMessage(earlier)
+                if session_message_side(earlier, own_session_id)
+                    == SessionMessageSide::Outgoing { recipient: Some(recipient) }
+        )
+    });
+    (!sent_earlier).then(|| (SubagentCardId::SessionMessage(message_id.clone()), subagent))
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SubagentStatus {
@@ -11,9 +68,53 @@ pub(crate) enum SubagentStatus {
     Completed,
     Failed,
     Canceled,
+    /// An ACP subagent that has reported no state yet, or reported that its state is unknown.
+    Unknown,
 }
 
 impl SubagentStatus {
+    /// An ACP subagent's status from the state it last reported, with the error to show for a
+    /// failure. Idle with no stop reason, or with one this version does not know, is a normal
+    /// end, as it is for any ACP session.
+    pub(crate) fn from_reported_state(
+        state: Option<&acp_v2::StateUpdate>,
+    ) -> (Self, Option<SharedString>) {
+        let Some(state) = state else {
+            return (Self::Unknown, None);
+        };
+        match state {
+            acp_v2::StateUpdate::Running(_) | acp_v2::StateUpdate::RequiresAction(_) => {
+                (Self::Running, None)
+            }
+            acp_v2::StateUpdate::Idle(idle) => match &idle.stop_reason {
+                Some(acp_v2::StopReason::Cancelled) => (Self::Canceled, None),
+                Some(acp_v2::StopReason::Error(error)) => (
+                    Self::Failed,
+                    error
+                        .error
+                        .as_ref()
+                        .map(|error| error.message.trim())
+                        .filter(|message| !message.is_empty())
+                        .map(|message| message.to_string().into()),
+                ),
+                Some(acp_v2::StopReason::MaxTokens) => (
+                    Self::Failed,
+                    Some("The subagent reached its token limit.".into()),
+                ),
+                Some(acp_v2::StopReason::MaxTurnRequests) => (
+                    Self::Failed,
+                    Some("The subagent reached its limit of model requests.".into()),
+                ),
+                Some(acp_v2::StopReason::Refusal) => (
+                    Self::Failed,
+                    Some("The subagent's model refused to continue.".into()),
+                ),
+                _ => (Self::Completed, None),
+            },
+            _ => (Self::Unknown, None),
+        }
+    }
+
     pub(crate) fn from_tool_call(tool_call: &ToolCall, cx: &App) -> Self {
         match tool_call.status() {
             ToolCallStatus::Pending
@@ -34,8 +135,12 @@ impl SubagentStatus {
 /// What a subagent card shows, independent of the source it was built from.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SubagentCardState {
-    /// The parent's label for the subagent. The card prefers the subagent thread's own title.
+    /// The parent's label for the subagent. A native card prefers the subagent thread's own
+    /// title; see `label_wins`.
     pub label: Option<SharedString>,
+    /// An ACP parent's own label for the subagent describes it in the parent's view, so it
+    /// wins over the subagent's title for itself.
+    pub label_wins: bool,
     pub status: SubagentStatus,
     pub error: Option<SharedString>,
     pub can_stop: bool,
@@ -58,6 +163,7 @@ impl SubagentCardState {
         let label = tool_call.label.read(cx).source();
         Self {
             label: (!label.is_empty()).then(|| label.to_string().into()),
+            label_wins: false,
             status,
             error: tool_call_error(tool_call, cx),
             can_stop: status == SubagentStatus::Running,
@@ -71,14 +177,37 @@ impl SubagentCardState {
         }
     }
 
+    /// Builds the card for an ACP subagent. Without a link from the parent's message to the
+    /// subagent's entries, the card covers the subagent's whole transcript.
+    pub(crate) fn from_acp_subagent(thread: &AcpThread) -> Self {
+        let (status, error) = SubagentStatus::from_reported_state(thread.foreground_state());
+        let can_cancel = thread
+            .subagent_association()
+            .is_some_and(|association| association.can_cancel);
+        Self {
+            label: Some(subagent_label(thread)),
+            label_wins: true,
+            status,
+            error,
+            can_stop: status == SubagentStatus::Running && can_cancel,
+            entries: None,
+        }
+    }
+
     pub(crate) fn title(&self, thread_title: Option<SharedString>) -> SharedString {
-        thread_title
-            .or_else(|| self.label.clone())
-            .unwrap_or_else(|| match self.status {
-                SubagentStatus::Canceled => "Subagent Canceled".into(),
-                SubagentStatus::Failed => "Subagent Failed".into(),
-                SubagentStatus::Running | SubagentStatus::Completed => "Spawning Agent…".into(),
-            })
+        let label = self.label.clone();
+        let title = if self.label_wins {
+            label.or(thread_title)
+        } else {
+            thread_title.or(label)
+        };
+        title.unwrap_or_else(|| match self.status {
+            SubagentStatus::Canceled => "Subagent Canceled".into(),
+            SubagentStatus::Failed => "Subagent Failed".into(),
+            SubagentStatus::Running | SubagentStatus::Completed | SubagentStatus::Unknown => {
+                "Spawning Agent…".into()
+            }
+        })
     }
 
     /// The last `max_entries` of the entries this card covers.
@@ -133,6 +262,7 @@ mod tests {
     ) -> SubagentCardState {
         SubagentCardState {
             label: label.map(|label| label.to_string().into()),
+            label_wins: false,
             status,
             error: None,
             can_stop: false,
@@ -155,6 +285,93 @@ mod tests {
             (SubagentStatus::Canceled, "Subagent Canceled"),
         ] {
             assert_eq!(card(None, status, None).title(None).as_ref(), title);
+        }
+    }
+
+    #[test]
+    fn an_acp_parents_label_wins_over_the_subagents_title() {
+        let acp_card = SubagentCardState {
+            label_wins: true,
+            ..card(Some("Investigator"), SubagentStatus::Running, None)
+        };
+        assert_eq!(
+            acp_card.title(Some("Own title".into())).as_ref(),
+            "Investigator"
+        );
+        let unlabeled = SubagentCardState {
+            label_wins: true,
+            ..card(None, SubagentStatus::Running, None)
+        };
+        assert_eq!(
+            unlabeled.title(Some("Own title".into())).as_ref(),
+            "Own title"
+        );
+    }
+
+    #[test]
+    fn reported_states_map_to_card_statuses() {
+        let idle = |stop_reason: Option<acp_v2::StopReason>| {
+            acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new().stop_reason(stop_reason))
+        };
+        let mut error = acp_v2::Error::internal_error();
+        error.message = "Context too small".into();
+        for (state, expected_status, expected_error) in [
+            (None, SubagentStatus::Unknown, None),
+            (
+                Some(acp_v2::StateUpdate::Running(
+                    acp_v2::RunningStateUpdate::new(),
+                )),
+                SubagentStatus::Running,
+                None,
+            ),
+            (
+                Some(acp_v2::StateUpdate::RequiresAction(
+                    acp_v2::RequiresActionStateUpdate::new(),
+                )),
+                SubagentStatus::Running,
+                None,
+            ),
+            (
+                Some(acp_v2::StateUpdate::Unknown(
+                    acp_v2::UnknownStateUpdate::new(),
+                )),
+                SubagentStatus::Unknown,
+                None,
+            ),
+            (Some(idle(None)), SubagentStatus::Completed, None),
+            (
+                Some(idle(Some(acp_v2::StopReason::EndTurn))),
+                SubagentStatus::Completed,
+                None,
+            ),
+            (
+                Some(idle(Some(acp_v2::StopReason::Cancelled))),
+                SubagentStatus::Canceled,
+                None,
+            ),
+            (
+                Some(idle(Some(acp_v2::StopReason::Error(
+                    acp_v2::ErrorStopReason::new().error(error),
+                )))),
+                SubagentStatus::Failed,
+                Some("Context too small"),
+            ),
+            (
+                Some(idle(Some(acp_v2::StopReason::Error(
+                    acp_v2::ErrorStopReason::new(),
+                )))),
+                SubagentStatus::Failed,
+                None,
+            ),
+            (
+                Some(idle(Some(acp_v2::StopReason::Refusal))),
+                SubagentStatus::Failed,
+                Some("The subagent's model refused to continue."),
+            ),
+        ] {
+            let (status, error) = SubagentStatus::from_reported_state(state.as_ref());
+            assert_eq!(status, expected_status, "{state:?}");
+            assert_eq!(error.as_deref(), expected_error, "{state:?}");
         }
     }
 
