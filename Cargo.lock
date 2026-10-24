@@ -16965,7 +16965,11 @@ name = "snippet"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
+ "iana-time-zone",
+ "rand 0.9.4",
  "smallvec",
+ "uuid",
 ]
 
 [[package]]
@@ -16993,6 +16997,7 @@ dependencies = [
 name = "snippets_ui"
 version = "0.1.0"
 dependencies = [
+ "editor",
  "file_icons",
  "fuzzy",
  "gpui",
@@ -17001,6 +17006,7 @@ dependencies = [
  "paths",
  "picker",
  "settings",
+ "snippet_provider",
  "ui",
  "util",
  "workspace",
