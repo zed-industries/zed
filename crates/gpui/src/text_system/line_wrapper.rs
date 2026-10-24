@@ -1,6 +1,7 @@
 use crate::{FontId, Pixels, SharedString, TextRun, TextSystem, px};
 use collections::HashMap;
 use std::{borrow::Cow, iter, sync::Arc};
+use unicode_segmentation::UnicodeSegmentation;
 
 /// Determines whether to truncate text from the start or end.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -100,6 +101,14 @@ impl LineWrapper {
             .collect::<Vec<_>>()
             .into_iter()
             .peekable();
+        let mut grapheme_indices = text
+            .grapheme_indices(true)
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .peekable();
+        let mut grapheme_index = 0;
+        let mut width_before_grapheme = px(0.);
         let mut candidates = fragments
             .iter()
             .flat_map(move |fragment| fragment.wrap_boundary_candidates())
@@ -108,7 +117,21 @@ impl LineWrapper {
             for candidate in candidates.by_ref() {
                 let ix = index;
                 index += candidate.len_utf8();
-                if break_indices.next_if_eq(&ix).is_some() && first_non_whitespace_ix.is_some() {
+                while grapheme_indices
+                    .peek()
+                    .is_some_and(|position| *position < ix)
+                {
+                    grapheme_indices.next();
+                }
+                let is_grapheme_boundary = grapheme_indices.next_if_eq(&ix).is_some();
+                if is_grapheme_boundary {
+                    grapheme_index = ix;
+                    width_before_grapheme = width;
+                }
+                if break_indices.next_if_eq(&ix).is_some()
+                    && is_grapheme_boundary
+                    && first_non_whitespace_ix.is_some()
+                {
                     last_candidate_ix = ix;
                     last_candidate_width = width;
                 }
@@ -137,14 +160,14 @@ impl LineWrapper {
                 };
 
                 width += item_width;
-                if width > wrap_width && ix > last_wrap_ix {
-                    let wrap_at_candidate =
-                        last_candidate_ix > 0 && width - last_candidate_width <= wrap_width;
+                if width > wrap_width && grapheme_index > last_wrap_ix {
+                    let wrap_at_candidate = last_candidate_ix > last_wrap_ix
+                        && width - last_candidate_width <= wrap_width;
 
                     let carried_width = if wrap_at_candidate {
                         width - last_candidate_width
                     } else {
-                        item_width
+                        width - width_before_grapheme
                     };
 
                     // Compute base indentation from the first non-whitespace character on the line
@@ -188,13 +211,18 @@ impl LineWrapper {
                     if wrap_at_candidate {
                         last_wrap_ix = last_candidate_ix;
                         width -= last_candidate_width;
+                        width_before_grapheme -= last_candidate_width;
                     } else {
-                        last_wrap_ix = ix;
-                        width = item_width;
+                        // An oversized grapheme stays intact, even if it exceeds the line width.
+                        last_wrap_ix = grapheme_index;
+                        width -= width_before_grapheme;
+                        width_before_grapheme = px(0.);
                     }
                     last_candidate_ix = 0;
 
-                    width += self.width_for_char(' ') * next_indent as f32;
+                    let indent_width = self.width_for_char(' ') * next_indent as f32;
+                    width += indent_width;
+                    width_before_grapheme += indent_width;
 
                     return Some(Boundary::new(last_wrap_ix, next_indent));
                 }
@@ -728,6 +756,85 @@ mod tests {
             cx.text_system().clone(),
             CharWidthCache::default(),
         )
+    }
+
+    fn assert_emergency_wrap_preserves_graphemes(wrapper: &mut LineWrapper) {
+        use unicode_segmentation::UnicodeSegmentation;
+
+        let mut failures = Vec::new();
+        for cluster in ["e\u{301}", "か\u{3099}", "👍🏽", "🇯🇵", "👩\u{200d}💻"] {
+            let cluster_width: Pixels = cluster
+                .chars()
+                .map(|character| wrapper.width_for_char(character))
+                .sum();
+            let first_width = cluster
+                .chars()
+                .next()
+                .map(|character| wrapper.width_for_char(character))
+                .expect("nonempty fixture");
+            for text in [cluster.to_owned(), format!("x{cluster}y")] {
+                let grapheme_boundaries: Vec<_> = text
+                    .grapheme_indices(true)
+                    .map(|(index, _)| index)
+                    .chain(std::iter::once(text.len()))
+                    .collect();
+                assert!(
+                    LineWrapper::break_indices(&text)
+                        .all(|index| grapheme_boundaries.contains(&index)),
+                    "UAX #14 boundary inside {text:?}"
+                );
+                let fragments = [LineFragment::text(&text)];
+                let full_width: Pixels = text
+                    .chars()
+                    .map(|character| wrapper.width_for_char(character))
+                    .sum();
+                assert!(
+                    wrapper
+                        .wrap_line(&fragments, full_width + px(1.), IndentAdjustment::NoIndent)
+                        .next()
+                        .is_none()
+                );
+                for wrap_width in [
+                    first_width - px(0.1),
+                    first_width,
+                    first_width + px(0.1),
+                    cluster_width - px(0.1),
+                    cluster_width,
+                    cluster_width + px(0.1),
+                ] {
+                    let boundaries: Vec<_> = wrapper
+                        .wrap_line(&fragments, wrap_width, IndentAdjustment::NoIndent)
+                        .map(|boundary| boundary.ix)
+                        .collect();
+                    let split_fragments: Vec<_> = text
+                        .split_inclusive(|_: char| true)
+                        .map(LineFragment::text)
+                        .collect();
+                    let split_boundaries: Vec<_> = wrapper
+                        .wrap_line(&split_fragments, wrap_width, IndentAdjustment::NoIndent)
+                        .map(|boundary| boundary.ix)
+                        .collect();
+                    assert_eq!(
+                        boundaries, split_boundaries,
+                        "fragmentation changed {text:?}"
+                    );
+                    let invalid: Vec<_> = boundaries
+                        .iter()
+                        .copied()
+                        .filter(|index| !grapheme_boundaries.contains(index))
+                        .collect();
+                    if !invalid.is_empty() {
+                        failures.push(format!("text={text:?}, width={wrap_width:?}, cluster_width={cluster_width:?}, breaks={boundaries:?}, inside_grapheme={invalid:?}"));
+                    }
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    #[test]
+    fn test_emergency_wrap_preserves_graphemes() {
+        assert_emergency_wrap_preserves_graphemes(&mut build_wrapper());
     }
 
     fn generate_test_runs(input_run_len: &[usize]) -> Vec<TextRun> {

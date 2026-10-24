@@ -788,6 +788,67 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
+    fn test_emergency_wrap_preserves_graphemes_native() {
+        use gpui::{IndentAdjustment, LineFragment, Pixels, TextSystem};
+
+        let text_system = Arc::new(TextSystem::new(Arc::new(AppleTextSystem::new())));
+        let font = font("Helvetica");
+        let font_id = text_system.resolve_font(&font);
+        let mut wrapper = text_system.line_wrapper(font, px(16.));
+        let mut failures = Vec::new();
+        for cluster in ["e\u{301}", "か\u{3099}", "👍🏽", "🇯🇵", "👩\u{200d}💻"] {
+            let widths: Vec<_> = cluster
+                .chars()
+                .map(|character| text_system.layout_width(font_id, px(16.), character))
+                .collect();
+            let cluster_width: Pixels = widths.iter().copied().sum();
+            let Some(first_width) = widths.first().copied() else {
+                continue;
+            };
+            for text in [cluster.to_owned(), format!("x{cluster}y")] {
+                let valid = if text == cluster {
+                    vec![0, text.len()]
+                } else {
+                    vec![0, 1, text.len() - 1, text.len()]
+                };
+                let fragments = [LineFragment::text(&text)];
+                let full_width: Pixels = text
+                    .chars()
+                    .map(|character| text_system.layout_width(font_id, px(16.), character))
+                    .sum();
+                assert!(
+                    wrapper
+                        .wrap_line(&fragments, full_width + px(1.), IndentAdjustment::NoIndent)
+                        .next()
+                        .is_none()
+                );
+                for wrap_width in [
+                    first_width - px(0.1),
+                    first_width,
+                    first_width + px(0.1),
+                    cluster_width - px(0.1),
+                    cluster_width,
+                    cluster_width + px(0.1),
+                ] {
+                    let boundaries: Vec<_> = wrapper
+                        .wrap_line(&fragments, wrap_width, IndentAdjustment::NoIndent)
+                        .map(|boundary| boundary.ix)
+                        .collect();
+                    let invalid: Vec<_> = boundaries
+                        .iter()
+                        .copied()
+                        .filter(|index| !valid.contains(index))
+                        .collect();
+                    if !invalid.is_empty() {
+                        failures.push(format!("text={text:?}, width={wrap_width:?}, cluster_width={cluster_width:?}, breaks={boundaries:?}, inside_grapheme={invalid:?}"));
+                    }
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    #[test]
     fn test_reload_family_with_features_and_fallbacks() {
         let fonts = AppleTextSystem::new();
         let mut font = font("Helvetica");
