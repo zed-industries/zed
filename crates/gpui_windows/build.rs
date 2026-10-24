@@ -128,9 +128,12 @@ mod shader_compilation {
             .arg("fxc.exe")
             .output()
             && output.status.success()
+            && let Some(path) = String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .map(str::trim)
+                .find(|path| Path::new(path).is_file())
         {
-            let path = String::from_utf8_lossy(&output.stdout);
-            return path.trim().to_string();
+            return path.to_string();
         }
 
         if let Ok(Some(path)) = find_latest_windows_sdk_binary("fxc.exe") {
