@@ -2059,7 +2059,7 @@ impl GitGraph {
                         .clone()
                 });
 
-                let short_sha = commit.data.sha.display_short();
+                let sha = commit.data.sha.to_string();
                 let mut formatted_time = String::new();
                 let subject: SharedString;
                 let author_name: Option<SharedString>;
@@ -2148,7 +2148,7 @@ impl GitGraph {
                             })
                             .into_any_element()
                     },
-                    column_label(short_sha.into()),
+                    column_label(sha.into()),
                 ]
             })
             .collect()
