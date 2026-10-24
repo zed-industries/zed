@@ -386,6 +386,11 @@ pub trait AgentSessionConfigOptions {
     /// Get all current config options with their state
     fn config_options(&self) -> Vec<acp_v2::SessionConfigOption>;
 
+    /// Agent-owned sessions may report configuration without allowing the client to change it.
+    fn is_read_only(&self) -> bool {
+        false
+    }
+
     /// Set a config option value
     /// Returns the full updated list of config options
     fn set_config_option(
@@ -910,7 +915,7 @@ mod test_support {
     use action_log::ActionLog;
     use collections::{HashMap, VecDeque};
     use futures::{channel::oneshot, future::try_join_all};
-    use gpui::{AppContext as _, WeakEntity};
+    use gpui::{AppContext as _, Entity, WeakEntity};
     use parking_lot::Mutex;
 
     use crate::AuthorizationKind;
@@ -1124,6 +1129,18 @@ mod test_support {
             let (sender, receiver) = oneshot::channel();
             self.next_close_responses.lock().push_back(receiver);
             sender
+        }
+
+        /// Makes a session this connection did not create, such as an ACP subagent, known to
+        /// it, as a real connection knows the subagents it announced.
+        pub fn track_session(&self, thread: &Entity<AcpThread>, cx: &App) {
+            self.sessions.lock().insert(
+                thread.read(cx).session_id().clone(),
+                Session {
+                    thread: thread.downgrade(),
+                    response_tx: None,
+                },
+            );
         }
 
         pub fn take_cancel_calls(&self) -> Vec<acp_v2::SessionId> {
