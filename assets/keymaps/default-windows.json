@@ -1445,6 +1445,14 @@
     },
   },
   {
+    "context": "TypstPreview",
+    "use_key_equivalents": true,
+    "bindings": {
+      "pageup": "typst::PreviousPage",
+      "pagedown": "typst::NextPage",
+    },
+  },
+  {
     "context": "KeymapEditor",
     "use_key_equivalents": true,
     "bindings": {

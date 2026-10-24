@@ -424,6 +424,18 @@ impl ScrollbarStyle {
     }
 }
 
+/// What a click on the track (outside the thumb) does.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TrackClickBehavior {
+    /// Center the thumb on the click position, jumping to that offset (default).
+    #[default]
+    JumpToPosition,
+    /// Scroll one viewport towards the click, like classic desktop scrollbars.
+    /// For long documents this keeps the jump proportional to one screen
+    /// instead of teleporting to the clicked ratio.
+    PageScroll,
+}
+
 #[derive(Clone)]
 pub struct Scrollbars<T: ScrollableHandle = ScrollHandle> {
     id: Option<ElementId>,
@@ -435,6 +447,7 @@ pub struct Scrollbars<T: ScrollableHandle = ScrollHandle> {
     reveal_policy: ScrollbarRevealPolicy,
     track_color: Option<Hsla>,
     border: bool,
+    track_click_behavior: TrackClickBehavior,
 }
 
 impl Scrollbars {
@@ -463,6 +476,7 @@ impl Scrollbars {
             reveal_policy: ScrollbarRevealPolicy::default(),
             track_color: None,
             border: false,
+            track_click_behavior: TrackClickBehavior::default(),
         }
     }
 }
@@ -505,6 +519,7 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
             border,
             style,
             reveal_policy,
+            track_click_behavior,
             ..
         } = self;
 
@@ -518,6 +533,7 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
             get_visibility,
             style,
             reveal_policy,
+            track_click_behavior,
         }
     }
 
@@ -533,6 +549,12 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
 
     pub fn reveal_policy(mut self, reveal_policy: ScrollbarRevealPolicy) -> Self {
         self.reveal_policy = reveal_policy;
+        self
+    }
+
+    /// Set what a click on the track (outside the thumb) does.
+    pub fn track_click_behavior(mut self, behavior: TrackClickBehavior) -> Self {
+        self.track_click_behavior = behavior;
         self
     }
 
@@ -697,6 +719,7 @@ struct ScrollbarState<T: ScrollableHandle = ScrollHandle> {
     track_color: Option<TrackColors>,
     track_corner_radii: Corners<Pixels>,
     reveal_policy: ScrollbarRevealPolicy,
+    track_click_behavior: TrackClickBehavior,
     show_state: VisibilityState,
     style: ScrollbarStyle,
     mouse_in_parent: bool,
@@ -728,6 +751,7 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
                 has_border: config.border,
             }),
             track_corner_radii,
+            track_click_behavior: config.track_click_behavior,
             show_behavior,
             get_visibility: config.get_visibility,
             style: config.style.unwrap_or_default(),
@@ -1645,6 +1669,25 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                             let offset =
                                 event.position.along(*axis) - thumb_bounds.origin.along(*axis);
                             state.set_dragging(*axis, offset, window, cx);
+                        } else if state.track_click_behavior
+                            == TrackClickBehavior::PageScroll
+                        {
+                            // Classic desktop scrollbars: clicking the track
+                            // pages one viewport towards the click. On long
+                            // documents the default jump-to-position turns any
+                            // near-miss of a small thumb into a teleport.
+                            let scroll_handle = state.scroll_handle();
+                            let viewport_size =
+                                scroll_handle.viewport().size.along(*axis);
+                            let max_offset = scroll_handle.max_offset().along(*axis);
+                            let pages_up = event.position.along(*axis)
+                                < thumb_bounds.origin.along(*axis);
+                            // Offsets are non-positive: paging up moves towards zero.
+                            let delta = if pages_up { viewport_size } else { -viewport_size };
+                            let new_offset = scroll_handle.offset().apply_along(*axis, |offset| {
+                                (offset + delta).clamp(-max_offset, Pixels::ZERO)
+                            });
+                            state.set_offset(new_offset, cx);
                         } else {
                             let scroll_handle = state.scroll_handle();
                             let click_offset = scrollbar_layout.compute_click_offset(
