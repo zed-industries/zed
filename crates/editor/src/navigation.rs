@@ -1216,6 +1216,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
+        if self.go_to_reference_in_results(direction, count, window, cx) {
+            return Some(Task::ready(Ok(())));
+        }
+
         let selection = self.selections.newest_anchor();
         let head = selection.head();
 
@@ -1308,6 +1312,84 @@ impl Editor {
 
             Ok(())
         }))
+    }
+
+    fn go_to_reference_in_results(
+        &mut self,
+        direction: Direction,
+        count: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(reference_ranges) = &self.reference_ranges else {
+            return false;
+        };
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let mut ranges = reference_ranges
+            .iter()
+            .filter(|range| {
+                range.start.is_valid(&snapshot)
+                    && range.end.is_valid(&snapshot)
+                    && range.start.cmp(&range.end, &snapshot).is_lt()
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        ranges.sort_unstable_by(|left, right| left.start.cmp(&right.start, &snapshot));
+        ranges.dedup();
+        if ranges.is_empty() || count == 0 {
+            return true;
+        }
+
+        let selection = self
+            .selections
+            .newest_anchor()
+            .map(|anchor| anchor.to_offset(&snapshot));
+        let head = selection.head();
+        // Find All References initially selects the entire first range, with its head at the end.
+        let current = ranges.iter().position(|range| {
+            let start = range.start.to_offset(&snapshot);
+            let end = range.end.to_offset(&snapshot);
+            (start <= head && head < end)
+                || (!selection.is_empty() && start <= selection.start && head == end)
+        });
+        let destination = if let Some(current) = current {
+            let count = count % ranges.len();
+            if count == 0 {
+                return true;
+            }
+            match direction {
+                Direction::Next => (current + count) % ranges.len(),
+                Direction::Prev => (current + ranges.len() - count) % ranges.len(),
+            }
+        } else {
+            let count = (count - 1) % ranges.len();
+            match direction {
+                Direction::Next => {
+                    let next = ranges
+                        .iter()
+                        .position(|range| range.start.to_offset(&snapshot) > head)
+                        .unwrap_or(0);
+                    (next + count) % ranges.len()
+                }
+                Direction::Prev => {
+                    let previous = ranges
+                        .iter()
+                        .rposition(|range| range.start.to_offset(&snapshot) < head)
+                        .unwrap_or(ranges.len() - 1);
+                    (previous + ranges.len() - count) % ranges.len()
+                }
+            }
+        };
+        let range = ranges[destination].clone();
+        let effects = SelectionEffects::scroll(Autoscroll::for_go_to_definition(
+            self.cursor_top_offset(cx),
+            cx,
+        ));
+        self.unfold_ranges(std::slice::from_ref(&range), false, false, cx);
+        self.change_selections(effects, window, cx, |selections| {
+            selections.select_ranges([range.start..range.start]);
+        });
+        true
     }
 
     /// Runs the LSP go-to query for `kind` (definition / declaration / type /
@@ -1525,7 +1607,7 @@ impl Editor {
                 };
                 let allow_preview = PreviewTabsSettings::get_global(cx)
                     .enable_preview_multibuffer_from_code_navigation;
-                Self::open_locations_in_multibuffer(
+                if let Some((editor, _, ranges)) = Self::open_locations_in_multibuffer(
                     workspace,
                     locations,
                     title,
@@ -1534,7 +1616,11 @@ impl Editor {
                     MultibufferSelectionMode::First,
                     window,
                     cx,
-                );
+                ) {
+                    editor.update(cx, |editor, _| {
+                        editor.reference_ranges = Some(ranges.into())
+                    });
+                }
                 Navigated::Yes
             })
         }))
@@ -1819,7 +1905,7 @@ impl Editor {
                     .update_in(cx, |workspace, window, cx| {
                         let allow_preview = PreviewTabsSettings::get_global(cx)
                             .enable_preview_multibuffer_from_code_navigation;
-                        if let Some((target_editor, target_pane)) =
+                        if let Some((target_editor, target_pane, _)) =
                             Self::open_locations_in_multibuffer(
                                 workspace,
                                 locations,
@@ -2203,14 +2289,14 @@ impl Editor {
         multibuffer_selection_mode: MultibufferSelectionMode,
         window: &mut Window,
         cx: &mut Context<Workspace>,
-    ) -> Option<(Entity<Editor>, Entity<Pane>)> {
+    ) -> Option<(Entity<Editor>, Entity<Pane>, Vec<Range<Anchor>>)> {
         if locations.is_empty() {
             log::error!("bug: open_locations_in_multibuffer called with empty list of locations");
             return None;
         }
 
         let capability = workspace.project().read(cx).capability();
-        let mut ranges = <Vec<Range<Anchor>>>::new();
+        let mut ranges = Vec::new();
 
         // a key to find existing multibuffer editors with the same set of locations
         // to prevent us from opening more and more multibuffer tabs for searches and the like
@@ -2230,18 +2316,13 @@ impl Editor {
                     multibuffer_context_lines(cx),
                     cx,
                 );
-                let snapshot = multibuffer.snapshot(cx);
                 let buffer_snapshot = buffer.read(cx).snapshot();
-                ranges.extend(ranges_for_buffer.into_iter().filter_map(|range| {
-                    let text_range = buffer_snapshot.anchor_range_inside(range);
-                    let start = snapshot.anchor_in_buffer(text_range.start)?;
-                    let end = snapshot.anchor_in_buffer(text_range.end)?;
-                    Some(start..end)
-                }))
+                ranges.extend(
+                    ranges_for_buffer
+                        .into_iter()
+                        .map(|range| buffer_snapshot.anchor_range_inside(range)),
+                );
             }
-
-            let final_snapshot = multibuffer.snapshot(cx);
-            ranges.sort_by(|a, b| a.start.cmp(&b.start, &final_snapshot));
 
             multibuffer.with_title(title)
         });
@@ -2272,37 +2353,48 @@ impl Editor {
                 editor
             })
         });
-        editor.update(cx, |editor, cx| match multibuffer_selection_mode {
-            MultibufferSelectionMode::First => {
-                if let Some(first_range) = ranges.first() {
+        let ranges = editor.update(cx, |editor, cx| {
+            // A reused editor owns a different multibuffer from the one assembled above.
+            let snapshot = editor.buffer.read(cx).snapshot(cx);
+            let mut ranges = ranges
+                .into_iter()
+                .filter_map(|range| snapshot.buffer_anchor_range_to_anchor_range(range))
+                .collect::<Vec<_>>();
+            ranges.sort_by(|left, right| left.start.cmp(&right.start, &snapshot));
+            match multibuffer_selection_mode {
+                MultibufferSelectionMode::First => {
+                    if let Some(first_range) = ranges.first() {
+                        editor.change_selections(
+                            SelectionEffects::no_scroll().unfold(),
+                            window,
+                            cx,
+                            |selections| {
+                                selections.clear_disjoint();
+                                selections
+                                    .select_anchor_ranges(std::iter::once(first_range.clone()));
+                            },
+                        );
+                    }
+                    editor.highlight_background(
+                        HighlightKey::Editor,
+                        &ranges,
+                        |_, theme| theme.colors().editor_highlighted_line_background,
+                        cx,
+                    );
+                }
+                MultibufferSelectionMode::All => {
                     editor.change_selections(
                         SelectionEffects::no_scroll().unfold(),
                         window,
                         cx,
                         |selections| {
                             selections.clear_disjoint();
-                            selections.select_anchor_ranges(std::iter::once(first_range.clone()));
+                            selections.select_anchor_ranges(ranges.clone());
                         },
                     );
                 }
-                editor.highlight_background(
-                    HighlightKey::Editor,
-                    &ranges,
-                    |_, theme| theme.colors().editor_highlighted_line_background,
-                    cx,
-                );
             }
-            MultibufferSelectionMode::All => {
-                editor.change_selections(
-                    SelectionEffects::no_scroll().unfold(),
-                    window,
-                    cx,
-                    |selections| {
-                        selections.clear_disjoint();
-                        selections.select_anchor_ranges(ranges);
-                    },
-                );
-            }
+            ranges
         });
 
         let item = Box::new(editor.clone());
@@ -2330,7 +2422,7 @@ impl Editor {
             pane.add_item(item, activate_pane, true, destination_index, window, cx);
         });
 
-        Some((editor, pane))
+        Some((editor, pane, ranges))
     }
 
     fn navigation_data(&self, cursor_anchor: Anchor, cx: &mut Context<Self>) -> NavigationData {

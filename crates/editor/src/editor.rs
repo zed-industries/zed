@@ -1056,6 +1056,7 @@ pub struct Editor {
     signature_help_state: SignatureHelpState,
     auto_signature_help: Option<bool>,
     find_all_references_task_sources: Vec<Anchor>,
+    reference_ranges: Option<Arc<[Range<Anchor>]>>,
     next_completion_id: CompletionId,
     code_actions_for_selection: CodeActionsForSelection,
     runnables_for_selection_toggle: Task<()>,
@@ -1909,6 +1910,7 @@ impl Editor {
         clone
             .scroll_manager
             .clone_state(&self.scroll_manager, &my_snapshot, &clone_snapshot, cx);
+        clone.reference_ranges = self.reference_ranges.clone();
         clone.searchable = self.searchable;
         clone.read_only = self.read_only;
         clone.buffers_with_disabled_indent_guides =
@@ -2445,6 +2447,7 @@ impl Editor {
             signature_help_state: SignatureHelpState::default(),
             auto_signature_help: None,
             find_all_references_task_sources: Vec::new(),
+            reference_ranges: None,
             next_completion_id: 0,
             next_inlay_id: 0,
             code_action_providers,
