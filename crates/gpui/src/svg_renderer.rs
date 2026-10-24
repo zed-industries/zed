@@ -307,11 +307,16 @@ fn rasterize_tree(tree: &usvg::Tree, size: SvgSize) -> Result<Pixmap, usvg::Erro
 }
 
 fn load_bundled_fonts(asset_source: &dyn AssetSource, db: &mut usvg::fontdb::Database) {
-    let font_paths = [
-        "fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf",
-        "fonts/lilex/Lilex-Regular.ttf",
-    ];
-    for path in font_paths {
+    // Load every bundled face, like the text system does, so SVG text is drawn with the same
+    // bold and italic faces it is measured with.
+    let font_paths = match asset_source.list("fonts") {
+        Ok(paths) => paths,
+        Err(error) => {
+            log::warn!("Failed to list bundled fonts: {error}");
+            return;
+        }
+    };
+    for path in font_paths.iter().filter(|path| path.ends_with(".ttf")) {
         match asset_source.load(path) {
             Ok(Some(data)) => db.load_font_data(data.into_owned()),
             Ok(None) => log::warn!("Bundled font not found: {path}"),

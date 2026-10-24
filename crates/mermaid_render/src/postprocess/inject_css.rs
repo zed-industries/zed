@@ -333,7 +333,7 @@ fn scope_css(raw_css: &str, svg_id: &str) -> String {
 }
 
 fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {
-    let font = &theme.font_family;
+    let font = theme.svg_font_family();
     let text = crate::css_color(theme.text_color);
     let line = crate::css_color(theme.line_color);
     let primary = crate::css_color(theme.primary_color);

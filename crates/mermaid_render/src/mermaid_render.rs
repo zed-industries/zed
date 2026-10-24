@@ -3,9 +3,9 @@
 
 //! Crate for rendering Mermaid diagram strings to SVG strings.
 //!
-//! The entrypoint to this crate is [`render_to_svg`].
-//!
-//! It takes a `&str` and a [`MermaidTheme`]. The output is an SVG with the
+//! The entrypoint to this crate is [`render_to_svg`]. It takes Mermaid source, a
+//! [`MermaidTheme`], and GPUI text resources so Merman can lay out labels with the font Zed will
+//! use to rasterize them. The output is an SVG with the
 //! following properties:
 //! - The style matches the provided theme
 //! - Nodes are given accent colors, even if none are provided in the mermaid
@@ -23,8 +23,8 @@
 //! `<foreignObject>` and CSS/attribute forms that rasterizers do not handle.
 //! Since merman 0.6, that generic cleanup is exposed as merman's raster-safe SVG
 //! pipeline. Zed opts into that pipeline during rendering, then keeps
-//! editor-specific theme and accent color rules in this crate. The [`gpui`]
-//! dependency is only needed for the [`Hsla`] and [`Rgba`] color types.
+//! editor-specific theme and accent color rules in this crate. GPUI supplies both theme colors and
+//! the text measurements used for layout.
 //!
 //! The [`render_to_svg`] function operates in two stages:
 //! - [`render`] the mermaid text to raster-safe SVG using [`merman`].
@@ -66,8 +66,10 @@
 mod postprocess;
 mod render;
 
+use std::sync::Arc;
+
 use anyhow::Result;
-use gpui::{Hsla, Rgba};
+use gpui::{Font, Hsla, Rgba, TextSystem};
 
 #[derive(Debug, Clone, Copy)]
 pub struct AccentColor {
@@ -78,7 +80,7 @@ pub struct AccentColor {
 #[derive(Debug, Clone)]
 pub struct MermaidTheme {
     pub dark_mode: bool,
-    pub font_family: String,
+    pub font: Font,
     pub background: Hsla,
     pub primary_color: Hsla,
     pub primary_text_color: Hsla,
@@ -105,6 +107,37 @@ pub struct MermaidTheme {
     pub accent_colors: Vec<AccentColor>,
 }
 
+impl MermaidTheme {
+    /// The same family is used for measuring and for the SVG, because the SVG renderer cannot
+    /// resolve `.SystemUIFont` and would otherwise draw labels in a different font than the one
+    /// they were measured with.
+    fn concrete_family(&self) -> &str {
+        gpui::font_name_with_fallbacks(self.font.family.as_ref(), "IBM Plex Sans")
+    }
+
+    fn measurement_font(&self) -> Font {
+        let mut font = self.font.clone();
+        font.family = self.concrete_family().to_string().into();
+        font.features = Default::default();
+        font.fallbacks = None;
+        font.weight = gpui::FontWeight::NORMAL;
+        font.style = gpui::FontStyle::Normal;
+        font
+    }
+
+    fn svg_font_family(&self) -> String {
+        let family = self.concrete_family();
+        if family
+            .split(',')
+            .any(|family| family.trim().eq_ignore_ascii_case("sans-serif"))
+        {
+            family.to_string()
+        } else {
+            format!("{family}, sans-serif")
+        }
+    }
+}
+
 /// Default theme for testing.
 #[cfg(any(test, feature = "test-support"))]
 impl Default for MermaidTheme {
@@ -125,7 +158,7 @@ impl Default for MermaidTheme {
 
         Self {
             dark_mode: false,
-            font_family: "Inter, ui-sans-serif, system-ui, -apple-system, \"Segoe UI\", \"DejaVu Sans\", \"Liberation Sans\", sans-serif, \"Noto Color Emoji\", \"Apple Color Emoji\", \"Segoe UI Emoji\"".to_string(),
+            font: gpui::font("Inter"),
             background: rgb(0xFFFFFF).into(),
             primary_color: rgb(0xF8FAFC).into(),
             primary_text_color: rgb(0x0F172A).into(),
@@ -176,8 +209,12 @@ pub use postprocess::util::text_color_for_background;
 
 /// See the [module-level docs][crate] for more info.
 #[ztracing::instrument(skip_all)]
-pub fn render_to_svg(source: &str, theme: &MermaidTheme) -> Result<String> {
-    let svg = render::render_mermaid(source, theme)?;
+pub fn render_to_svg(
+    source: &str,
+    theme: &MermaidTheme,
+    text_system: Arc<TextSystem>,
+) -> Result<String> {
+    let svg = render::render_mermaid(source, theme, text_system)?;
     let svg = postprocess::postprocess(&svg, theme)?;
     Ok(svg)
 }
@@ -185,6 +222,38 @@ pub fn render_to_svg(source: &str, theme: &MermaidTheme) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn render_to_svg_for_test(source: &str, theme: &MermaidTheme) -> Result<String> {
+        render_to_svg(
+            source,
+            theme,
+            Arc::new(TextSystem::new(Arc::new(gpui::NoopTextSystem::new()))),
+        )
+    }
+
+    #[test]
+    fn mermaid_font_representations_resolve_zed_virtual_families() {
+        for (source, measurement_family, svg_family) in [
+            (".ZedSans", "IBM Plex Sans", "IBM Plex Sans, sans-serif"),
+            (
+                "Zed Plex Sans",
+                "IBM Plex Sans",
+                "IBM Plex Sans, sans-serif",
+            ),
+            (".ZedMono", "Lilex", "Lilex, sans-serif"),
+            (
+                ".SystemUIFont",
+                "IBM Plex Sans",
+                "IBM Plex Sans, sans-serif",
+            ),
+            ("Custom Font", "Custom Font", "Custom Font, sans-serif"),
+        ] {
+            let mut theme = MermaidTheme::default();
+            theme.font = gpui::font(source);
+            assert_eq!(theme.measurement_font().family, measurement_family);
+            assert_eq!(theme.svg_font_family(), svg_family);
+        }
+    }
 
     #[test]
     fn mermaid_diagram_with_mixed_weight_combining_marks_does_not_panic() {
@@ -195,7 +264,7 @@ mod tests {
 
         let zalgo = "Ne\u{0301}\u{0302}\u{0303}\u{0304}\u{0306}\u{0307}\u{0308}\u{030a}d";
         let source = format!("flowchart TD\n  A[\"**{zalgo}** {zalgo}\"]");
-        let svg = render_to_svg(&source, &MermaidTheme::default())
+        let svg = render_to_svg_for_test(&source, &MermaidTheme::default())
             .expect("mermaid diagram should render to SVG");
 
         let mut db = usvg::fontdb::Database::new();
@@ -217,7 +286,7 @@ mod tests {
     #[test]
     fn er_multibyte_attribute_does_not_crash() {
         let source = "erDiagram\n顧客 {\n  文字列 名前\n}";
-        let _ = render_to_svg(source, &MermaidTheme::default());
+        let _ = render_to_svg_for_test(source, &MermaidTheme::default());
     }
 
     /// A flowchart with mutually nested subgraphs (`A` contains `B` and `B`
@@ -226,7 +295,7 @@ mod tests {
     #[test]
     fn cyclic_subgraphs_do_not_crash() {
         let source = "flowchart TD\n  subgraph A\n    B\n  end\n  subgraph B\n    A\n  end";
-        let result = render_to_svg(source, &MermaidTheme::default());
+        let result = render_to_svg_for_test(source, &MermaidTheme::default());
         if let Err(err) = result {
             let message = format!("{err:#}");
             assert!(
