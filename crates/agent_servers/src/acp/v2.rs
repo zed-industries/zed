@@ -1646,24 +1646,16 @@ impl AgentConnection for AcpV2Connection {
     fn session_config_options(
         &self,
         session_id: &acp::SessionId,
-        cx: &App,
+        _cx: &App,
     ) -> Option<Rc<dyn AgentSessionConfigOptions>> {
         if self.is_subagent_session(session_id) {
-            return None;
+            let sessions = self.sessions.borrow();
+            return Some(Rc::new(ReadOnlyConfigOptions(
+                sessions.get(session_id)?.config_options.clone()?,
+            )));
         }
         let sessions = self.sessions.borrow();
         let session = sessions.get(session_id)?;
-        if session
-            .thread
-            .upgrade()?
-            .read(cx)
-            .parent_session_id()
-            .is_some()
-        {
-            return Some(Rc::new(ReadOnlyConfigOptions(
-                session.config_options.clone()?,
-            )));
-        }
         Some(Rc::new(V2SessionConfigOptions {
             session_id: session_id.clone(),
             thread: session.thread.clone(),
@@ -2782,7 +2774,8 @@ mod tests {
         harness.drain_updates(cx).await;
         assert!(
             cx.read(|cx| harness.client.session_config_options(&"child".into(), cx))
-                .is_none(),
+                .expect("a subagent's configuration is shown")
+                .is_read_only(),
             "a subagent's configuration cannot be changed"
         );
         for replay_history in [true, false] {
