@@ -45,8 +45,8 @@ use ui::{
 };
 use util::{ResultExt, paths::PathExt};
 use workspace::{
-    HistoryManager, ModalView, MultiWorkspace, OpenMode, OpenOptions, OpenVisible, RecentWorkspace,
-    SerializedWorkspaceLocation, Workspace, WorkspaceDb, WorkspaceId,
+    HistoryManager, ModalView, MultiWorkspace, OpenMode, OpenOptions, OpenVisible, PathList,
+    RecentWorkspace, SerializedWorkspaceLocation, Workspace, WorkspaceDb, WorkspaceId,
     notifications::DetachAndPromptErr, with_active_or_new_workspace,
 };
 use zed_actions::{OpenDevContainer, OpenRecent, OpenRemote};
@@ -112,6 +112,17 @@ fn is_selectable_entry(entry: &ProjectPickerEntry) -> bool {
     )
 }
 
+fn disambiguated_project_name(paths: &[PathBuf], target_paths: &PathList) -> SharedString {
+    let details = project::path_disambiguation_details(paths);
+    target_paths
+        .ordered_paths()
+        .map(|path| project::path_suffix(path, details.get(path).copied().unwrap_or_default()))
+        .filter(|name| !name.is_empty())
+        .collect::<Vec<_>>()
+        .join(", ")
+        .into()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProjectPickerStyle {
     Modal,
@@ -135,18 +146,11 @@ pub async fn get_recent_projects(
         .filter(|workspace| matches!(workspace.location, SerializedWorkspaceLocation::Local))
         .collect();
 
-    let mut all_paths: Vec<PathBuf> = filtered
+    let all_paths: Vec<PathBuf> = filtered
         .iter()
         .flat_map(|workspace| workspace.identity_paths.paths().iter().cloned())
         .collect();
-    all_paths.sort_unstable();
-    all_paths.dedup();
-    let path_details =
-        util::disambiguate::compute_disambiguation_details(&all_paths, |path, detail| {
-            project::path_suffix(path, detail)
-        });
-    let path_detail_map: std::collections::HashMap<PathBuf, usize> =
-        all_paths.into_iter().zip(path_details).collect();
+    let path_detail_map = project::path_disambiguation_details(&all_paths);
 
     let entries: Vec<RecentProjectEntry> = filtered
         .into_iter()
@@ -214,18 +218,11 @@ fn get_open_folders(workspace: &Workspace, cx: &App) -> Vec<OpenFolderEntry> {
             .map(|wt| wt.read(cx).id())
     };
 
-    let mut all_paths: Vec<PathBuf> = visible_worktrees
+    let all_paths: Vec<PathBuf> = visible_worktrees
         .iter()
         .map(|wt| wt.read(cx).abs_path().to_path_buf())
         .collect();
-    all_paths.sort_unstable();
-    all_paths.dedup();
-    let path_details =
-        util::disambiguate::compute_disambiguation_details(&all_paths, |path, detail| {
-            project::path_suffix(path, detail)
-        });
-    let path_detail_map: std::collections::HashMap<PathBuf, usize> =
-        all_paths.into_iter().zip(path_details).collect();
+    let path_detail_map = project::path_disambiguation_details(&all_paths);
 
     let git_store = project.git_store().read(cx);
     let repositories: Vec<_> = git_store.repositories().values().cloned().collect();
@@ -1363,7 +1360,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                 let show_icon = self.filtered_entries_include_remote_project();
 
                 let mut path_start_offset = 0;
-                let (match_labels, path_highlights): (Vec<_>, Vec<_>) = paths
+                let (_match_labels, path_highlights): (Vec<_>, Vec<_>) = paths
                     .ordered_paths()
                     .map(|p| p.compact())
                     .map(|path| {
@@ -1374,9 +1371,20 @@ impl PickerDelegate for RecentProjectsDelegate {
                     })
                     .unzip();
 
+                let all_paths: Vec<_> = self
+                    .window_project_groups
+                    .iter()
+                    .flat_map(|group| group.path_list().paths().iter().cloned())
+                    .collect();
+                let display_name = disambiguated_project_name(&all_paths, paths);
+
                 let highlighted_match = HighlightedMatchWithPaths {
                     prefix: None,
-                    match_label: HighlightedMatch::join(match_labels.into_iter().flatten(), ", "),
+                    match_label: HighlightedMatch {
+                        text: display_name.to_string(),
+                        highlight_positions: Vec::new(),
+                        color: Color::Default,
+                    },
                     paths: path_highlights,
                     active: is_active,
                 };
@@ -1498,7 +1506,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                 };
 
                 let mut path_start_offset = 0;
-                let (match_labels, paths): (Vec<_>, Vec<_>) = identity_paths
+                let (_match_labels, paths): (Vec<_>, Vec<_>) = identity_paths
                     .ordered_paths()
                     .map(|p| p.compact())
                     .map(|path| {
@@ -1508,6 +1516,13 @@ impl PickerDelegate for RecentProjectsDelegate {
                         highlighted_text
                     })
                     .unzip();
+
+                let all_paths: Vec<_> = self
+                    .workspaces
+                    .iter()
+                    .flat_map(|workspace| workspace.identity_paths.paths().iter().cloned())
+                    .collect();
+                let display_name = disambiguated_project_name(&all_paths, identity_paths);
 
                 let tooltip_title = if paths.len() > 1 {
                     "Add Folders to this Project"
@@ -1524,7 +1539,11 @@ impl PickerDelegate for RecentProjectsDelegate {
 
                 let highlighted_match = HighlightedMatchWithPaths {
                     prefix,
-                    match_label: HighlightedMatch::join(match_labels.into_iter().flatten(), ", "),
+                    match_label: HighlightedMatch {
+                        text: display_name.to_string(),
+                        highlight_positions: Vec::new(),
+                        color: Color::Default,
+                    },
                     paths,
                     active: false,
                 };
@@ -2557,6 +2576,27 @@ mod tests {
 
     fn recent_workspaces() -> Vec<RecentWorkspace> {
         (0..RECENT_PROJECT_COUNT).map(recent_workspace).collect()
+    }
+
+    #[test]
+    fn project_names_include_parents_only_for_duplicate_roots() {
+        let first = PathBuf::from("/workspace/first/project");
+        let second = PathBuf::from("/workspace/second/project");
+        let unique = PathBuf::from("/workspace/third/unique");
+        let paths = vec![first.clone(), second.clone(), unique.clone()];
+
+        assert_eq!(
+            disambiguated_project_name(&paths, &PathList::new(&[first])),
+            "first/project"
+        );
+        assert_eq!(
+            disambiguated_project_name(&paths, &PathList::new(&[second])),
+            "second/project"
+        );
+        assert_eq!(
+            disambiguated_project_name(&paths, &PathList::new(&[unique])),
+            "unique"
+        );
     }
 
     fn draw(cx: &mut VisualTestContext) {
