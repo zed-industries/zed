@@ -3,6 +3,7 @@ use gpui_util::post_inc;
 use std::{
     cell::{Cell, RefCell},
     fmt::Debug,
+    mem,
     rc::Rc,
 };
 
@@ -17,11 +18,11 @@ impl<EmitterKey, Callback> Clone for SubscriberSet<EmitterKey, Callback> {
 }
 
 struct SubscriberSetState<EmitterKey, Callback> {
-    subscribers: BTreeMap<EmitterKey, Option<BTreeMap<usize, Subscriber<Callback>>>>,
+    subscribers: BTreeMap<EmitterKey, BTreeMap<usize, SetSubscriber<Callback>>>,
     next_subscriber_id: usize,
 }
 
-struct Subscriber<Callback> {
+struct SetSubscriber<Callback> {
     active: Rc<Cell<bool>>,
     dropped: Rc<Cell<bool>>,
     callback: Callback,
@@ -55,10 +56,9 @@ where
         lock.subscribers
             .entry(emitter_key.clone())
             .or_default()
-            .get_or_insert_with(Default::default)
             .insert(
                 subscriber_id,
-                Subscriber {
+                SetSubscriber {
                     active: active.clone(),
                     dropped: dropped.clone(),
                     callback,
@@ -75,11 +75,9 @@ where
                     return;
                 };
 
-                if let Some(subscribers) = subscribers {
-                    subscribers.remove(&subscriber_id);
-                    if subscribers.is_empty() {
-                        lock.subscribers.remove(&emitter_key);
-                    }
+                subscribers.remove(&subscriber_id);
+                if subscribers.is_empty() {
+                    lock.subscribers.remove(&emitter_key);
                 }
             })),
         };
@@ -92,7 +90,6 @@ where
     ) -> impl IntoIterator<Item = Callback> + use<EmitterKey, Callback> {
         let subscribers = self.0.borrow_mut().subscribers.remove(emitter);
         subscribers
-            .unwrap_or_default()
             .map(|s| s.into_values())
             .into_iter()
             .flatten()
@@ -111,35 +108,47 @@ where
     where
         F: FnMut(&mut Callback) -> bool,
     {
+        // We do not remove here upfront to reduce BTreeMap shuffling churn
         let Some(mut subscribers) = self
             .0
             .borrow_mut()
             .subscribers
             .get_mut(emitter)
-            .and_then(|s| s.take())
+            .map(mem::take)
         else {
             return;
         };
 
         subscribers.retain(|_, subscriber| {
-            if !subscriber.active.get() {
-                return true;
-            }
             if subscriber.dropped.get() {
                 return false;
+            }
+            if !subscriber.active.get() {
+                return true;
             }
             let keep = f(&mut subscriber.callback);
             keep && !subscriber.dropped.get()
         });
         let mut lock = self.0.borrow_mut();
 
-        // Add any new subscribers that were added while invoking the callback.
-        if let Some(Some(new_subscribers)) = lock.subscribers.remove(emitter) {
-            subscribers.extend(new_subscribers);
+        if subscribers.is_empty() {
+            if lock
+                .subscribers
+                .get(emitter)
+                .is_some_and(|subscribers| subscribers.is_empty())
+            {
+                lock.subscribers.remove(emitter);
+            }
+            return;
         }
 
-        if !subscribers.is_empty() {
-            lock.subscribers.insert(emitter.clone(), Some(subscribers));
+        // Add any new subscribers that were added while invoking the callback.
+        let new_subscribers = lock.subscribers.insert(emitter.clone(), subscribers);
+        if let Some(new_subscribers) = new_subscribers {
+            lock.subscribers
+                .get_mut(&emitter)
+                .unwrap()
+                .extend(new_subscribers);
         }
     }
 }
