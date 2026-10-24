@@ -20,7 +20,8 @@ use objc2_core_foundation::CFRetained;
 use objc2_core_video::{
     CVMetalTexture, CVMetalTextureCache, CVMetalTextureGetTexture, CVPixelBufferGetHeight,
     CVPixelBufferGetHeightOfPlane, CVPixelBufferGetPixelFormatType, CVPixelBufferGetWidth,
-    CVPixelBufferGetWidthOfPlane, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, kCVReturnSuccess,
+    CVPixelBufferGetWidthOfPlane, kCVPixelFormatType_32BGRA,
+    kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, kCVReturnSuccess,
 };
 use parking_lot::Mutex;
 
@@ -28,6 +29,78 @@ use std::{cell::Cell, ffi::c_void, mem, mem::MaybeUninit, ops::Range, ptr, slice
 
 // Exported to metal
 pub(crate) type PointF = gpui::Point<f32>;
+
+/// Reports on the frames that sample BGRA surfaces.
+///
+/// The owner of a premultiplied BGRA `CVPixelBuffer` shown with [`gpui::Window::paint_surface`]
+/// (an external renderer's output, shared through an IOSurface) must not draw into it again until
+/// GPUI has finished reading it, and only the renderer learns when that is. So every frame that
+/// samples a BGRA surface reports the buffers it samples once its command buffer is encoded, and
+/// again once that command buffer completes, with the GPU time it took. The renderer commits
+/// every frame command buffer it encodes, so a `Completed` is reported for each `Encoded` frame,
+/// to whichever hook is installed when its command buffer completes. Video (YCbCr) surfaces are
+/// not reported: their frames are never drawn into again.
+pub mod gpu_surfaces {
+    use objc2::runtime::AnyObject;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Arc, RwLock};
+
+    /// One frame's report. `frame` numbers the reported frames, process-wide, and `surfaces`
+    /// holds the address of each BGRA `CVPixelBuffer` the frame samples, once per draw, which
+    /// identifies it for as long as its owner retains it.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub enum Event {
+        /// The frame's command buffer is encoded with these surfaces bound and is about to be
+        /// committed.
+        Encoded { frame: u64, surfaces: Vec<u64> },
+        /// The frame's command buffer completed; its surfaces may be drawn into again.
+        Completed { frame: u64, gpu_ns: u64 },
+    }
+
+    /// Receives every report, on the thread that encodes the frame (`Encoded`) or Metal's
+    /// completion thread (`Completed`). It may call [`set_hook`].
+    pub type Hook = Arc<dyn Fn(Event) + Send + Sync>;
+
+    static HOOK: RwLock<Option<Hook>> = RwLock::new(None);
+    static NEXT_FRAME: AtomicU64 = AtomicU64::new(1);
+
+    /// Installs the hook that receives every report, replacing any earlier one, or removes it.
+    pub fn set_hook(hook: Option<Hook>) {
+        *HOOK.write().unwrap_or_else(|e| e.into_inner()) = hook;
+    }
+
+    fn hook() -> Option<Hook> {
+        HOOK.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    pub(super) fn has_hook() -> bool {
+        hook().is_some()
+    }
+
+    pub(super) fn next_frame() -> u64 {
+        NEXT_FRAME.fetch_add(1, Ordering::SeqCst)
+    }
+
+    /// Calls the hook with the lock released, so the hook may replace itself.
+    pub(super) fn report(event: Event) {
+        if let Some(hook) = hook() {
+            hook(event);
+        }
+    }
+
+    /// The GPU time a completed command buffer took, from its GPU start to its GPU end.
+    pub(super) fn gpu_time_ns(buffer: &AnyObject) -> u64 {
+        // SAFETY: `GPUStartTime` and `GPUEndTime` are `MTLCommandBuffer` properties returning
+        // `CFTimeInterval` (seconds as f64), read once the buffer completed.
+        let (start, end): (f64, f64) = unsafe {
+            (
+                objc2::msg_send![buffer, GPUStartTime],
+                objc2::msg_send![buffer, GPUEndTime],
+            )
+        };
+        ((end - start).max(0.0) * 1e9).round() as u64
+    }
+}
 
 #[cfg(not(feature = "runtime_shaders"))]
 const SHADERS_METALLIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shaders.metallib"));
@@ -126,6 +199,10 @@ pub struct MetalRenderer {
     monochrome_sprites_pipeline_state: metal::RenderPipelineState,
     polychrome_sprites_pipeline_state: metal::RenderPipelineState,
     surfaces_pipeline_state: metal::RenderPipelineState,
+    /// Draws premultiplied BGRA surfaces with source factor one.
+    surfaces_bgra_pipeline_state: metal::RenderPipelineState,
+    /// The BGRA pixel buffers the frame being encoded samples, for `gpu_surfaces`.
+    sampled_surfaces: Vec<u64>,
     unit_vertices: metal::Buffer,
     #[allow(clippy::arc_with_non_send_sync)]
     instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
@@ -387,6 +464,16 @@ impl MetalRenderer {
             "surface_fragment",
             MTLPixelFormat::BGRA8Unorm,
         );
+        // A BGRA surface is already premultiplied, so it blends like a path sprite: source factor
+        // one, destination factor one minus source alpha.
+        let surfaces_bgra_pipeline_state = build_path_sprite_pipeline_state(
+            &device,
+            &library,
+            "surfaces_bgra",
+            "surface_vertex",
+            "surface_bgra_fragment",
+            MTLPixelFormat::BGRA8Unorm,
+        );
 
         let command_queue = device.new_command_queue();
         let supports_shared_storage = cfg!(target_os = "ios") || is_apple_gpu;
@@ -427,6 +514,8 @@ impl MetalRenderer {
             monochrome_sprites_pipeline_state,
             polychrome_sprites_pipeline_state,
             surfaces_pipeline_state,
+            surfaces_bgra_pipeline_state,
+            sampled_surfaces: Vec::new(),
             unit_vertices,
             instance_buffer_pool,
             sprite_atlas,
@@ -583,6 +672,7 @@ impl MetalRenderer {
                 scene.surfaces.len(),
             )
         })?;
+        self.sampled_surfaces.clear();
         let command_buffer = self.draw_primitives_to_texture(
             scene,
             &instance_bindings,
@@ -593,9 +683,25 @@ impl MetalRenderer {
 
         let instance_buffer_pool = self.instance_buffer_pool.clone();
         let instance_buffer = Cell::new(Some(writer.finish()));
-        let block = RcBlock::new(move |_: ptr::NonNull<AnyObject>| {
+        // Every caller commits the command buffer it gets back, so the BGRA surfaces this frame
+        // samples are reported here, before its completed handler can run.
+        let surfaces_frame =
+            (!self.sampled_surfaces.is_empty() && gpu_surfaces::has_hook()).then(|| {
+                let frame = gpu_surfaces::next_frame();
+                gpu_surfaces::report(gpu_surfaces::Event::Encoded {
+                    frame,
+                    surfaces: mem::take(&mut self.sampled_surfaces),
+                });
+                frame
+            });
+        let block = RcBlock::new(move |command_buffer: ptr::NonNull<AnyObject>| {
             if let Some(instance_buffer) = instance_buffer.take() {
                 instance_buffer_pool.lock().release(instance_buffer);
+            }
+            if let Some(frame) = surfaces_frame {
+                // SAFETY: Metal hands a completed handler the command buffer it completed.
+                let gpu_ns = gpu_surfaces::gpu_time_ns(unsafe { command_buffer.as_ref() });
+                gpu_surfaces::report(gpu_surfaces::Event::Completed { frame, gpu_ns });
             }
         });
         // SAFETY: Both pointee types are opaque views of the same Objective-C block pointer ABI.
@@ -1220,7 +1326,6 @@ impl MetalRenderer {
             return;
         }
 
-        command_encoder.set_render_pipeline_state(&self.surfaces_pipeline_state);
         command_encoder.set_vertex_buffer(
             SurfaceInputIndex::Vertices as u64,
             Some(&self.unit_vertices),
@@ -1244,10 +1349,22 @@ impl MetalRenderer {
                 DevicePixels::from(CVPixelBufferGetHeight(image_buffer) as i32),
             );
 
+            // Each surface binds its format's pipeline; the vertex buffers bound above stay.
+            if CVPixelBufferGetPixelFormatType(image_buffer) == kCVPixelFormatType_32BGRA {
+                self.draw_bgra_surface(
+                    image_buffer,
+                    texture_size,
+                    (first_surface + index) as u64,
+                    command_encoder,
+                );
+                continue;
+            }
+
             assert_eq!(
                 CVPixelBufferGetPixelFormatType(image_buffer),
                 kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
             );
+            command_encoder.set_render_pipeline_state(&self.surfaces_pipeline_state);
 
             let plane_texture = |plane, format| unsafe {
                 let mut texture = ptr::null_mut();
@@ -1301,6 +1418,61 @@ impl MetalRenderer {
                 (first_surface + index) as u64,
             );
         }
+    }
+
+    /// Draws one premultiplied BGRA surface from its single plane and notes the pixel buffer as
+    /// one the frame being encoded samples.
+    fn draw_bgra_surface(
+        &mut self,
+        image_buffer: &objc2_core_video::CVPixelBuffer,
+        texture_size: Size<DevicePixels>,
+        instance: u64,
+        command_encoder: &metal::RenderCommandEncoderRef,
+    ) {
+        let texture = unsafe {
+            let mut texture = ptr::null_mut();
+            let status = CVMetalTextureCache::create_texture_from_image(
+                None,
+                &self.core_video_texture_cache,
+                image_buffer,
+                None,
+                objc2_metal::MTLPixelFormat::BGRA8Unorm,
+                CVPixelBufferGetWidth(image_buffer),
+                CVPixelBufferGetHeight(image_buffer),
+                0,
+                ptr::NonNull::from(&mut texture),
+            );
+            assert_eq!(
+                status, kCVReturnSuccess,
+                "failed to create CoreVideo Metal texture"
+            );
+            CFRetained::<CVMetalTexture>::from_raw(
+                ptr::NonNull::new(texture).expect("CoreVideo returned a null texture"),
+            )
+        };
+        command_encoder.set_render_pipeline_state(&self.surfaces_bgra_pipeline_state);
+        command_encoder.set_vertex_bytes(
+            SurfaceInputIndex::TextureSize as u64,
+            mem::size_of_val(&texture_size) as u64,
+            &texture_size as *const Size<DevicePixels> as *const _,
+        );
+        // The one BGRA plane takes the Y texture slot.
+        command_encoder.set_fragment_texture(SurfaceInputIndex::YTexture as u64, unsafe {
+            let texture =
+                CVMetalTextureGetTexture(&texture).expect("CoreVideo returned no Metal texture");
+            Some(metal::TextureRef::from_ptr(
+                objc2::rc::Retained::as_ptr(&texture) as *mut _,
+            ))
+        });
+        command_encoder.draw_primitives_instanced_base_instance(
+            metal::MTLPrimitiveType::Triangle,
+            0,
+            6,
+            1,
+            instance,
+        );
+        self.sampled_surfaces
+            .push(ptr::from_ref(image_buffer) as usize as u64);
     }
 }
 
@@ -1730,13 +1902,20 @@ mod tests {
     use super::*;
     use objc2_core_foundation::{CFDictionary, CFType};
     use objc2_core_video::{
-        CVPixelBufferCreate, CVPixelBufferGetBaseAddressOfPlane,
+        CVPixelBuffer, CVPixelBufferCreate, CVPixelBufferGetBaseAddress,
+        CVPixelBufferGetBaseAddressOfPlane, CVPixelBufferGetBytesPerRow,
         CVPixelBufferGetBytesPerRowOfPlane, CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags,
         CVPixelBufferUnlockBaseAddress, kCVPixelBufferIOSurfacePropertiesKey,
     };
+    use std::time::{Duration, Instant};
 
-    #[test]
-    fn render_core_video_surface() {
+    /// An IOSurface-backed pixel buffer, as `draw_surfaces` requires.
+    fn io_surface_pixel_buffer(
+        width: usize,
+        height: usize,
+        // `OSType`, which objc2-core-video keeps crate-private.
+        format: u32,
+    ) -> CFRetained<CVPixelBuffer> {
         let attributes = CFDictionary::from_slices(
             &[unsafe { kCVPixelBufferIOSurfacePropertiesKey }],
             &[&*CFDictionary::<CFType, CFType>::empty()],
@@ -1746,17 +1925,25 @@ mod tests {
             unsafe {
                 CVPixelBufferCreate(
                     None,
-                    16,
-                    16,
-                    kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+                    width,
+                    height,
+                    format,
                     Some(attributes.as_opaque()),
                     ptr::NonNull::from(&mut image_buffer),
                 )
             },
             kCVReturnSuccess
         );
-        let image_buffer =
-            unsafe { CFRetained::from_raw(ptr::NonNull::new(image_buffer).unwrap()) };
+        unsafe { CFRetained::from_raw(ptr::NonNull::new(image_buffer).unwrap()) }
+    }
+
+    /// A 4:2:0 YCbCr pixel buffer with every byte of both planes set to `value`.
+    fn ycbcr_pixel_buffer(width: usize, height: usize, value: u8) -> CFRetained<CVPixelBuffer> {
+        let image_buffer = io_surface_pixel_buffer(
+            width,
+            height,
+            kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+        );
         unsafe {
             assert_eq!(
                 CVPixelBufferLockBaseAddress(&image_buffer, CVPixelBufferLockFlags::empty()),
@@ -1766,13 +1953,19 @@ mod tests {
                 let bytes = CVPixelBufferGetBaseAddressOfPlane(&image_buffer, plane).cast::<u8>();
                 let length = CVPixelBufferGetBytesPerRowOfPlane(&image_buffer, plane)
                     * CVPixelBufferGetHeightOfPlane(&image_buffer, plane);
-                slice::from_raw_parts_mut(bytes, length).fill(128);
+                slice::from_raw_parts_mut(bytes, length).fill(value);
             }
             assert_eq!(
                 CVPixelBufferUnlockBaseAddress(&image_buffer, CVPixelBufferLockFlags::empty()),
                 kCVReturnSuccess
             );
         }
+        image_buffer
+    }
+
+    #[test]
+    fn render_core_video_surface() {
+        let image_buffer = ycbcr_pixel_buffer(16, 16, 128);
 
         let bounds = Bounds {
             origin: Point::default(),
@@ -1798,5 +1991,160 @@ mod tests {
             assert!(blue.abs_diff(128) <= 2);
             assert_eq!(*alpha, 255);
         }
+    }
+
+    /// An IOSurface-backed BGRA pixel buffer whose texel at (x, y) is `texel(x, y)` as B, G, R, A.
+    fn bgra_pixel_buffer(
+        width: usize,
+        height: usize,
+        texel: impl Fn(usize, usize) -> [u8; 4],
+    ) -> CFRetained<CVPixelBuffer> {
+        let image_buffer = io_surface_pixel_buffer(width, height, kCVPixelFormatType_32BGRA);
+        unsafe {
+            assert_eq!(
+                CVPixelBufferLockBaseAddress(&image_buffer, CVPixelBufferLockFlags::empty()),
+                kCVReturnSuccess
+            );
+            let bytes = CVPixelBufferGetBaseAddress(&image_buffer).cast::<u8>();
+            let bytes_per_row = CVPixelBufferGetBytesPerRow(&image_buffer);
+            for y in 0..height {
+                let row = slice::from_raw_parts_mut(bytes.add(y * bytes_per_row), width * 4);
+                for x in 0..width {
+                    row[x * 4..x * 4 + 4].copy_from_slice(&texel(x, y));
+                }
+            }
+            assert_eq!(
+                CVPixelBufferUnlockBaseAddress(&image_buffer, CVPixelBufferLockFlags::empty()),
+                kCVReturnSuccess
+            );
+        }
+        image_buffer
+    }
+
+    /// The `gpu_surfaces` hook is process-wide, so the tests that install one run one at a time.
+    static HOOK_TESTS: Mutex<()> = Mutex::new(());
+
+    /// Holds the hook for one test and uninstalls it when the test ends, passing or not.
+    struct HookGuard(#[allow(dead_code)] parking_lot::MutexGuard<'static, ()>);
+
+    fn install_hook(hook: gpu_surfaces::Hook) -> HookGuard {
+        let guard = HOOK_TESTS.lock();
+        gpu_surfaces::set_hook(Some(hook));
+        HookGuard(guard)
+    }
+
+    impl Drop for HookGuard {
+        fn drop(&mut self) {
+            gpu_surfaces::set_hook(None);
+        }
+    }
+
+    /// A hook may replace itself from inside a report, since the renderer reports from Metal's
+    /// completion thread and a stuck hook there would stall every frame's completion.
+    #[test]
+    fn surface_hook_may_replace_itself() {
+        let replaced = Arc::new(Mutex::new(false));
+        let guard = install_hook(Arc::new({
+            let replaced = replaced.clone();
+            move |_| {
+                gpu_surfaces::set_hook(None);
+                *replaced.lock() = true;
+            }
+        }));
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            gpu_surfaces::report(gpu_surfaces::Event::Completed {
+                frame: 0,
+                gpu_ns: 0,
+            });
+            sender.send(()).unwrap();
+        });
+        if receiver.recv_timeout(Duration::from_secs(5)).is_err() {
+            // The stuck thread holds the lock, so uninstalling the hook would hang too.
+            mem::forget(guard);
+            panic!("report deadlocked: the hook could not replace itself");
+        }
+        assert!(*replaced.lock());
+    }
+
+    /// A premultiplied BGRA surface keeps its color where alpha is zero, a YCbCr surface drawn
+    /// after it in the same batch still decodes as video, and the frame that samples the BGRA
+    /// surface reports it once encoded and once complete.
+    #[test]
+    fn render_bgra_surface_premultiplied() {
+        // Left: red at half alpha, premultiplied. Right: green at alpha zero.
+        let bgra = bgra_pixel_buffer(16, 16, |x, _| {
+            if x < 8 {
+                [0, 0, 128, 128]
+            } else {
+                [0, 200, 0, 0]
+            }
+        });
+        let bgra_address = ptr::from_ref(&*bgra) as usize as u64;
+        let ycbcr = ycbcr_pixel_buffer(16, 16, 128);
+
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let _guard = install_hook(Arc::new({
+            let events = events.clone();
+            move |event| events.lock().push(event)
+        }));
+
+        let mut scene = Scene::default();
+        for (order, x, image_buffer) in [(0, 0.0, bgra), (1, 16.0, ycbcr)] {
+            let bounds = Bounds {
+                origin: point(ScaledPixels(x), ScaledPixels(0.0)),
+                size: size(ScaledPixels(16.0), ScaledPixels(16.0)),
+            };
+            scene.insert_primitive(PaintSurface {
+                order,
+                bounds,
+                content_mask: ContentMask { bounds },
+                image_buffer,
+            });
+        }
+        scene.finish();
+
+        let mut renderer = MetalRenderer::new_headless(Arc::new(Mutex::new(Default::default())));
+        let image = renderer
+            .render_scene_to_image(&scene, size(DevicePixels(32), DevicePixels(16)))
+            .unwrap();
+
+        // Headless renderers are opaque: the clear is opaque black. Source factor one and
+        // destination factor one minus source alpha keep the surface's own color, so the
+        // alpha-zero green shows; a straight-alpha blend would halve the red and drop the green.
+        for (x, _, image::Rgba([red, green, blue, alpha])) in image.enumerate_pixels() {
+            if x < 8 {
+                assert!(red.abs_diff(128) <= 1, "red {red} at {x}");
+                assert_eq!((*green, *blue, *alpha), (0, 0, 255), "at {x}");
+            } else if x < 16 {
+                assert!(green.abs_diff(200) <= 1, "green {green} at {x}");
+                assert_eq!((*red, *blue, *alpha), (0, 0, 255), "at {x}");
+            } else {
+                assert!(red.abs_diff(128) <= 2, "red {red} at {x}");
+                assert!(green.abs_diff(128) <= 2, "green {green} at {x}");
+                assert!(blue.abs_diff(128) <= 2, "blue {blue} at {x}");
+                assert_eq!(*alpha, 255, "at {x}");
+            }
+        }
+
+        // The completed handler runs on Metal's thread, so it may land just after the wait.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while events.lock().len() < 2 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let events = events.lock().clone();
+        assert_eq!(events.len(), 2, "{events:?}");
+        let gpu_surfaces::Event::Encoded { frame, surfaces } = &events[0] else {
+            panic!("{events:?}");
+        };
+        assert_eq!(surfaces, &[bgra_address]);
+        // `gpu_ns` is whatever the device reports; some report none, so it isn't asserted.
+        let gpu_surfaces::Event::Completed {
+            frame: completed, ..
+        } = &events[1]
+        else {
+            panic!("{events:?}");
+        };
+        assert_eq!(completed, frame);
     }
 }

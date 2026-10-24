@@ -5168,6 +5168,13 @@ impl Window {
 
     /// Paint a surface into the scene for the next frame at the current z-index.
     ///
+    /// The pixel buffer must be IOSurface-backed and is either a 4:2:0 YCbCr video frame
+    /// (`kCVPixelFormatType_420YpCbCr8BiPlanarFullRange`) or a premultiplied BGRA image with
+    /// alpha (`kCVPixelFormatType_32BGRA`), such as an external renderer's output. A BGRA surface
+    /// composites premultiplied, and the Apple renderer reports which frames sample it
+    /// (`gpui_apple::metal_renderer::gpu_surfaces`), so its owner knows when it may draw into the
+    /// buffer again.
+    ///
     /// This method should only be called as part of the paint phase of element drawing.
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     pub fn paint_surface(
