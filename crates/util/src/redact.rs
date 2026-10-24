@@ -38,7 +38,7 @@ pub fn is_valid_environment_name(name: &str) -> bool {
 /// Redact a string which could include a command with environment variables
 pub fn redact_command(command: &str) -> String {
     REDACT_REGEX
-        .replace_all(command, r#"1="[REDACTED]""#)
+        .replace_all(command, r#"${1}="[REDACTED]""#)
         .to_string()
 }
 
