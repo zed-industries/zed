@@ -1617,6 +1617,15 @@
     },
   },
   {
+    "context": "VideoViewer",
+    "bindings": {
+      "space": "video_viewer::TogglePlayback",
+      "left": "video_viewer::SeekBackward",
+      "right": "video_viewer::SeekForward",
+      "m": "video_viewer::ToggleMute",
+    },
+  },
+  {
     "context": "RunModal",
     "bindings": {
       "alt-1": "new_process_modal::ActivateTaskTab",
