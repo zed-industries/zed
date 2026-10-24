@@ -268,7 +268,9 @@ impl DiffPatchHunk {
     }
 }
 
-fn diff_change_paths(change: &acp_v2::DiffChange) -> Option<(Option<&Path>, Option<&Path>)> {
+pub(crate) fn diff_change_paths(
+    change: &acp_v2::DiffChange,
+) -> Option<(Option<&Path>, Option<&Path>)> {
     match &change.operation {
         acp_v2::DiffChangeOperation::Add(change) => Some((None, Some(&change.path.0))),
         acp_v2::DiffChangeOperation::Delete(change) => Some((Some(&change.path.0), None)),
