@@ -50,11 +50,17 @@ where
         })))
     }
 
-    /// Inserts a new [`Subscription`] for the given `emitter_key`. By default, subscriptions
-    /// are inert, meaning that they won't be listed when calling `[SubscriberSet::remove]` or `[SubscriberSet::retain]`.
-    /// This method returns a tuple of a [`Subscription`] and an `impl FnOnce`, and you can use the latter
-    /// to activate the [`Subscription`].
-    pub fn insert(
+    /// Inserts an immediately active subscription for the given emitter.
+    pub fn insert(&self, emitter_key: EmitterKey, callback: Callback) -> Subscription {
+        let (subscription, activate) = self.insert_pending(emitter_key, callback);
+        activate();
+        subscription
+    }
+
+    /// Inserts a pending subscription and returns its handle and activation function.
+    ///
+    /// Pending callbacks are skipped by `retain` and excluded from `remove` until activated.
+    pub fn insert_pending(
         &self,
         emitter_key: EmitterKey,
         callback: Callback,
@@ -175,8 +181,20 @@ impl<Callback: 'static> SingleSubscriberSet<Callback> {
         })))
     }
 
-    /// Inserts an inert subscription and returns its handle and activation function.
-    pub fn insert(&self, callback: Callback) -> (Subscription, impl FnOnce() + use<Callback>) {
+    /// Inserts an immediately active subscription.
+    pub fn insert(&self, callback: Callback) -> Subscription {
+        let (subscription, activate) = self.insert_pending(callback);
+        activate();
+        subscription
+    }
+
+    /// Inserts a pending subscription and returns its handle and activation function.
+    ///
+    /// Pending callbacks are skipped by `retain` and excluded from `remove` until activated.
+    pub fn insert_pending(
+        &self,
+        callback: Callback,
+    ) -> (Subscription, impl FnOnce() + use<Callback>) {
         let state = Rc::new(Cell::new(SubscriberState::Pending));
         let mut lock = self.0.borrow_mut();
         let subscriber_id = post_inc(&mut lock.next_subscriber_id);
@@ -299,10 +317,60 @@ mod tests {
     use crate::{Global, TestApp};
 
     #[test]
+    fn test_immediate_and_pending_insertions() {
+        let subscribers = SubscriberSet::new();
+        let first = subscribers.insert(1usize, 10);
+        let (second, activate_second) = subscribers.insert_pending(1, 20);
+        let mut visited = Vec::new();
+        subscribers.retain(&1, |callback| {
+            visited.push(*callback);
+            subscribers.insert(1, 30).detach();
+            true
+        });
+        assert_eq!(visited, [10]);
+        activate_second();
+        assert_eq!(
+            subscribers.remove(&1).into_iter().collect::<Vec<_>>(),
+            [10, 20, 30]
+        );
+        drop(first);
+        drop(second);
+
+        let (pending, _activate) = subscribers.insert_pending(1, 40);
+        assert_eq!(subscribers.remove(&1).into_iter().count(), 0);
+        drop(pending);
+    }
+
+    #[test]
+    fn test_single_immediate_and_pending_insertions() {
+        let subscribers = SingleSubscriberSet::new();
+        let first = subscribers.insert(10);
+        let (second, activate_second) = subscribers.insert_pending(20);
+        let mut visited = Vec::new();
+        subscribers.retain(|callback| {
+            visited.push(*callback);
+            subscribers.insert(30).detach();
+            true
+        });
+        assert_eq!(visited, [10]);
+        activate_second();
+        assert_eq!(
+            subscribers.remove().into_iter().collect::<Vec<_>>(),
+            [10, 20, 30]
+        );
+        drop(first);
+        drop(second);
+
+        let (pending, _activate) = subscribers.insert_pending(40);
+        assert_eq!(subscribers.remove().into_iter().count(), 0);
+        drop(pending);
+    }
+
+    #[test]
     fn test_activation_after_drop_during_retain() {
         let subscribers = SubscriberSet::new();
-        let (first, activate_first) = subscribers.insert(1usize, 10);
-        let (second, activate_second) = subscribers.insert(1, 20);
+        let (first, activate_first) = subscribers.insert_pending(1usize, 10);
+        let (second, activate_second) = subscribers.insert_pending(1, 20);
         subscribers.retain(&1, |_| panic!("pending subscriber invoked"));
         activate_first();
         let mut second = Some((second, activate_second));
@@ -324,8 +392,8 @@ mod tests {
     #[test]
     fn test_single_activation_after_drop_during_retain() {
         let subscribers = SingleSubscriberSet::new();
-        let (first, activate_first) = subscribers.insert(10);
-        let (second, activate_second) = subscribers.insert(20);
+        let (first, activate_first) = subscribers.insert_pending(10);
+        let (second, activate_second) = subscribers.insert_pending(20);
         subscribers.retain(|_| panic!("pending subscriber invoked"));
         activate_first();
         let mut second = Some((second, activate_second));

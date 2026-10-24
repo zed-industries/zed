@@ -2226,7 +2226,7 @@ impl Window {
         &self,
         value: AnyWindowFocusListener,
     ) -> (Subscription, impl FnOnce() + use<>) {
-        self.focus_listeners.insert(value)
+        self.focus_listeners.insert_pending(value)
     }
 }
 
@@ -2313,14 +2313,11 @@ impl Window {
         &self,
         mut callback: impl FnMut(WindowVisibility, &mut Window, &mut App) + 'static,
     ) -> Subscription {
-        let (subscription, activate) =
-            self.visibility_observers
-                .insert(Box::new(move |visibility, window, cx| {
-                    callback(visibility, window, cx);
-                    true
-                }));
-        activate();
-        subscription
+        self.visibility_observers
+            .insert(Box::new(move |visibility, window, cx| {
+                callback(visibility, window, cx);
+                true
+            }))
     }
 
     /// Registers a callback to be invoked when the window appearance changes.
@@ -2328,14 +2325,11 @@ impl Window {
         &self,
         mut callback: impl FnMut(&mut Window, &mut App) + 'static,
     ) -> Subscription {
-        let (subscription, activate) =
-            self.appearance_observers
-                .insert(Box::new(move |window, cx| {
-                    callback(window, cx);
-                    true
-                }));
-        activate();
-        subscription
+        self.appearance_observers
+            .insert(Box::new(move |window, cx| {
+                callback(window, cx);
+                true
+            }))
     }
 
     /// Registers a callback to be invoked when the window button layout changes.
@@ -2343,14 +2337,11 @@ impl Window {
         &self,
         mut callback: impl FnMut(&mut Window, &mut App) + 'static,
     ) -> Subscription {
-        let (subscription, activate) =
-            self.button_layout_observers
-                .insert(Box::new(move |window, cx| {
-                    callback(window, cx);
-                    true
-                }));
-        activate();
-        subscription
+        self.button_layout_observers
+            .insert(Box::new(move |window, cx| {
+                callback(window, cx);
+                true
+            }))
     }
 
     /// Replaces the root entity of the window with a new one.
@@ -2698,15 +2689,13 @@ impl Window {
     {
         let entity_id = entity.entity_id();
         let window_handle = self.handle;
-        let (subscription, activate) = cx.release_listeners.insert(
+        cx.release_listeners.insert(
             entity_id,
             Box::new(move |entity, cx| {
                 let entity = entity.downcast_mut().expect("invalid entity type");
                 let _ = window_handle.update(cx, |_, window, cx| on_release(entity, window, cx));
             }),
-        );
-        activate();
-        subscription
+        )
     }
 
     /// Creates an [`AsyncWindowContext`], which has a static lifetime and can be held across
@@ -2857,13 +2846,10 @@ impl Window {
         &self,
         mut callback: impl FnMut(&mut Window, &mut App) + 'static,
     ) -> Subscription {
-        let (subscription, activate) =
-            self.display_observers.insert(Box::new(move |window, cx| {
-                callback(window, cx);
-                true
-            }));
-        activate();
-        subscription
+        self.display_observers.insert(Box::new(move |window, cx| {
+            callback(window, cx);
+            true
+        }))
     }
 
     /// Returns the bounds of the current window in the global coordinate space, which could span across multiple displays.
@@ -6648,7 +6634,7 @@ impl Window {
         f: impl Fn(&mut Window, &mut App) + 'static,
     ) -> Subscription {
         let window_handle = self.handle;
-        let (subscription, activate) = cx.global_observers.insert(
+        let (subscription, activate) = cx.global_observers.insert_pending(
             TypeId::of::<G>(),
             Box::new(move |cx| {
                 window_handle
