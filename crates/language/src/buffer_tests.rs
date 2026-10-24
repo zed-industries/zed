@@ -250,7 +250,7 @@ async fn test_first_line_pattern(cx: &mut TestAppContext) {
         name: "JavaScript".into(),
         matcher: (LanguageMatcher {
             path_suffixes: vec!["js".into()],
-            first_line_pattern: Some(Regex::new(r"\bnode\b").unwrap()),
+            first_line_pattern: Some(FirstLinePattern::new(r"\bnode\b").unwrap()),
             ..LanguageMatcher::default()
         })
         .into(),
@@ -475,7 +475,7 @@ async fn test_reregistering_language_during_load_yields_current_language(cx: &mu
     let language = pending_language.await.unwrap();
     assert_eq!(
         language.config.matcher.path_suffixes,
-        vec!["fresh".to_string()],
+        vec![PathSuffix::from("fresh")],
         "a load that races with a re-registration should resolve to the re-registered language"
     );
 }
@@ -528,7 +528,7 @@ async fn test_reregistering_language_during_failed_load_yields_current_language(
     let language = pending_language.await.unwrap();
     assert_eq!(
         language.config.matcher.path_suffixes,
-        vec!["fresh".to_string()],
+        vec![PathSuffix::from("fresh")],
         "a failed load that races with a re-registration should resolve to the re-registered language"
     );
 }
