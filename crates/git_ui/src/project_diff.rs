@@ -821,8 +821,6 @@ impl Render for ProjectDiffToolbar {
         let (additions, deletions) = project_diff.read(cx).calculate_changed_lines(cx);
         let is_multibuffer_empty = project_diff.read(cx).multibuffer(cx).read(cx).is_empty();
 
-        let stage_all_button_width = rems(5.);
-
         h_flex()
             .my_neg_1()
             .py_1()
@@ -873,7 +871,8 @@ impl Render for ProjectDiffToolbar {
                 h_group_sm()
                     .when(button_states.selection, |this| {
                         this.child(
-                            Button::new("stage", "Toggle Staged")
+                            IconButton::new("stage", IconName::Check)
+                                .icon_size(IconSize::Small)
                                 .tooltip(Tooltip::for_action_title_in(
                                     "Toggle Staged",
                                     &ToggleStaged,
@@ -887,7 +886,8 @@ impl Render for ProjectDiffToolbar {
                     })
                     .when(!button_states.selection, |this| {
                         this.child(
-                            Button::new("stage", "Stage")
+                            IconButton::new("stage", IconName::Plus)
+                                .icon_size(IconSize::Small)
                                 .disabled(!button_states.stage)
                                 .tooltip(Tooltip::for_action_title_in(
                                     "Stage and Go to Next Hunk",
@@ -899,7 +899,8 @@ impl Render for ProjectDiffToolbar {
                                 })),
                         )
                         .child(
-                            Button::new("unstage", "Unstage")
+                            IconButton::new("unstage", IconName::Dash)
+                                .icon_size(IconSize::Small)
                                 .disabled(!button_states.unstage)
                                 .tooltip(Tooltip::for_action_title_in(
                                     "Unstage and Go to Next Hunk",
@@ -917,8 +918,8 @@ impl Render for ProjectDiffToolbar {
                 button_states.unstage_all && !button_states.stage_all,
                 |this| {
                     this.child(
-                        Button::new("unstage-all", "Unstage All")
-                            .width(stage_all_button_width)
+                        IconButton::new("unstage-all", IconName::SquareMinus)
+                            .icon_size(IconSize::Small)
                             .tooltip(Tooltip::for_action_title_in(
                                 "Unstage All Changes",
                                 &UnstageAll,
@@ -934,8 +935,8 @@ impl Render for ProjectDiffToolbar {
                 !button_states.unstage_all || button_states.stage_all,
                 |this| {
                     this.child(
-                        Button::new("stage-all", "Stage All")
-                            .width(stage_all_button_width)
+                        IconButton::new("stage-all", IconName::SquarePlus)
+                            .icon_size(IconSize::Small)
                             .disabled(!button_states.stage_all)
                             .tooltip(Tooltip::for_action_title_in(
                                 "Stage All Changes",
@@ -950,7 +951,8 @@ impl Render for ProjectDiffToolbar {
             )
             .child(Divider::vertical())
             .child(
-                Button::new("commit", "Commit")
+                IconButton::new("commit", IconName::Check)
+                    .icon_size(IconSize::Small)
                     .tooltip(Tooltip::for_action_title_in(
                         "Commit",
                         &Commit,

@@ -1005,7 +1005,7 @@ mod remote_button {
     use gpui::{Action, Anchor, AnyView, ClickEvent, FocusHandle};
     use ui::{
         ButtonLike, CommonAnimationExt, ContextMenu, ElevationIndex, PopoverMenu,
-        PopoverMenuHandle, SplitButton, Tooltip, prelude::*,
+        PopoverMenuHandle, SplitButton, SplitButtonStyle, Tooltip, prelude::*,
     };
 
     pub fn render_fetch_button(
@@ -1305,7 +1305,7 @@ mod remote_button {
         )
         .into_any_element();
 
-        SplitButton::new(left, right)
+        SplitButton::new(left, right).style(SplitButtonStyle::Transparent)
     }
 }
 

@@ -51,6 +51,7 @@ pub struct SplitButton {
     left: SplitButtonKind,
     right: AnyElement,
     style: SplitButtonStyle,
+    full_width: bool,
 }
 
 impl SplitButton {
@@ -59,11 +60,18 @@ impl SplitButton {
             left: left.into(),
             right,
             style: SplitButtonStyle::Filled,
+            full_width: false,
         }
     }
 
     pub fn style(mut self, style: SplitButtonStyle) -> Self {
         self.style = style;
+        self
+    }
+
+    /// Stretches the button to fill its container, growing the left side.
+    pub fn full_width(mut self) -> Self {
+        self.full_width = true;
         self
     }
 }
@@ -80,6 +88,7 @@ impl RenderOnce for SplitButton {
             .inset();
 
         h_flex()
+            .when(self.full_width, |this| this.w_full())
             .when(is_filled_or_outlined, |this| this.relative().rounded_sm())
             .when(self.style == SplitButtonStyle::Transparent, |this| {
                 this.gap_px()
