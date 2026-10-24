@@ -56,7 +56,9 @@ use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
 use super::elicitation::{
     ElicitationCard, ElicitationCardHandlers, ElicitationFormState, should_render_elicitation,
 };
-use super::subagent_card::{SubagentCardId, SubagentCardState, SubagentStatus, acp_subagent_card};
+use super::subagent_card::{
+    AcpSubagentCard, SubagentCardId, SubagentCardState, SubagentStatus, acp_subagent_card,
+};
 use super::*;
 
 /// How a parent's view names a subagent. An ACP parent's own title for the subagent
@@ -5208,7 +5210,7 @@ impl ThreadView {
         // An ACP subagent reports its own outcome; a native one's is its parent's tool call.
         let thread = self.thread.read(cx);
         if thread.subagent_association().is_some() {
-            return SubagentCardState::from_acp_subagent(thread)
+            return SubagentCardState::from_acp_subagent(thread, None)
                 .status
                 .is_failed_or_canceled();
         }
@@ -7530,10 +7532,8 @@ impl ThreadView {
             }
             AgentThreadEntry::SessionMessage(message) => {
                 let session_message =
-                    match acp_subagent_card(self.thread.read(cx), entry_ix, message) {
-                        Some((card_id, subagent)) => {
-                            self.render_acp_subagent_card(entry_ix, &card_id, &subagent, window, cx)
-                        }
+                    match acp_subagent_card(self.thread.read(cx), entry_ix, message, cx) {
+                        Some(card) => self.render_acp_subagent_card(entry_ix, &card, window, cx),
                         None => self.render_session_message(entry_ix, message, window, cx),
                     };
                 if let Some(handle) = self
@@ -8950,12 +8950,12 @@ impl ThreadView {
     fn render_acp_subagent_card(
         &self,
         entry_ix: usize,
-        card_id: &SubagentCardId,
-        subagent: &Entity<AcpThread>,
+        card: &AcpSubagentCard,
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
-        let subagent_session_id = subagent.read(cx).session_id().clone();
+        let subagent = card.subagent.read(cx);
+        let subagent_session_id = subagent.session_id().clone();
         let subagent_thread_view = self
             .server_view
             .upgrade()
@@ -8964,8 +8964,8 @@ impl ThreadView {
         let content = self.render_subagent_card(
             self.thread.read(cx).session_id(),
             entry_ix,
-            card_id,
-            &SubagentCardState::from_acp_subagent(subagent.read(cx)),
+            &card.id,
+            &SubagentCardState::from_acp_subagent(subagent, card.entries),
             subagent_thread_view,
             &self.focus_handle(cx),
             window,

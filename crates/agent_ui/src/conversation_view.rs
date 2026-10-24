@@ -20559,13 +20559,149 @@ pub(crate) mod tests {
             "an idle subagent cannot be stopped"
         );
         child.read_with(cx, |child, _| {
-            let card = subagent_card::SubagentCardState::from_acp_subagent(child);
+            let card = subagent_card::SubagentCardState::from_acp_subagent(child, None);
             assert_eq!(card.status, subagent_card::SubagentStatus::Canceled);
             assert_eq!(
                 card.title(Some("Own title".into())).as_ref(),
                 "Investigator"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_each_linked_message_to_an_acp_subagent_is_its_own_card(cx: &mut TestAppContext) {
+        use subagent_card::{SubagentCardState, SubagentEntries, SubagentStatus};
+
+        init_test(cx);
+        let connection = StubAgentConnection::new();
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let root =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
+        let root_session_id = root.read_with(cx, |thread, _| thread.session_id().clone());
+        let child_session_id = acp_v2::SessionId::new("child");
+        let child = conversation_view.update(cx, |view, cx| {
+            create_test_acp_subagent(
+                root_session_id.clone(),
+                "child",
+                Rc::new(connection.clone()),
+                view.project.clone(),
+                cx,
+            )
+        });
+        // Each ACP notification is applied in its own update, as here.
+        root.update(cx, |root, cx| root.register_subagent(child.clone(), cx));
+        let to_child = |message_id: &str| {
+            acp_v2::SessionMessage::new(message_id)
+                .sender_session_id(root_session_id.clone())
+                .recipient_session_id(child_session_id.clone())
+                .content(vec![message_id.into()])
+        };
+        let delegate = |sent: &str, received: &str, cx: &mut VisualTestContext| {
+            root.update(cx, |root, cx| {
+                root.upsert_session_message(
+                    to_child(sent).recipient_message_id(acp_v2::MessageId::new(received)),
+                    cx,
+                )
+            })
+            .expect("outgoing view");
+            child
+                .update(cx, |child, cx| {
+                    child.upsert_session_message(
+                        to_child(received).sender_message_id(acp_v2::MessageId::new(sent)),
+                        cx,
+                    )
+                })
+                .expect("incoming view");
+        };
+        let report = |state: acp_v2::StateUpdate, cx: &mut VisualTestContext| {
+            child
+                .update(cx, |child, cx| child.update_session_state(state, cx))
+                .expect("reported state");
+        };
+        let running = || acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new());
+        let work = |message_id: &str, cx: &mut VisualTestContext| {
+            child
+                .update(cx, |child, cx| {
+                    child.upsert_assistant_message(
+                        acp_v2::AgentMessage::new(message_id).content(vec!["Working".into()]),
+                        cx,
+                    )
+                })
+                .expect("subagent work");
+        };
+        let cards = |cx: &mut VisualTestContext| {
+            root.read_with(cx, |root, cx| {
+                root.entries()
+                    .iter()
+                    .enumerate()
+                    .map(|(entry_ix, entry)| {
+                        let AgentThreadEntry::SessionMessage(message) = entry else {
+                            panic!("expected session messages, got {entry:?}");
+                        };
+                        subagent_card::acp_subagent_card(root, entry_ix, message, cx).map(|card| {
+                            let state = SubagentCardState::from_acp_subagent(
+                                card.subagent.read(cx),
+                                card.entries,
+                            );
+                            (card.entries, state.status)
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+        };
+        let entries = |start, end| Some(SubagentEntries { start, end });
+
+        delegate("launch", "task-1", cx);
+        report(running(), cx);
+        work("work-1", cx);
+        // The second message arrives while the subagent still works on the first.
+        delegate("follow-up", "task-2", cx);
+        work("work-2", cx);
+        assert_eq!(
+            cards(cx),
+            vec![
+                Some((entries(0, Some(1)), SubagentStatus::Running)),
+                Some((entries(2, None), SubagentStatus::Running)),
+            ],
+            "each message covers its part of the subagent, and an earlier one without an \
+             outcome yet shows the current state"
+        );
+
+        report(
+            acp_v2::StateUpdate::Idle(
+                acp_v2::IdleStateUpdate::new().stop_reason(acp_v2::StopReason::Refusal),
+            ),
+            cx,
+        );
+        delegate("retry", "task-3", cx);
+        report(running(), cx);
+        // A later message the subagent's view does not link to stays a row.
+        root.update(cx, |root, cx| {
+            root.upsert_session_message(to_child("unlinked"), cx)
+        })
+        .expect("outgoing view");
+        assert_eq!(
+            cards(cx),
+            vec![
+                Some((entries(0, Some(1)), SubagentStatus::Failed)),
+                Some((entries(2, Some(3)), SubagentStatus::Failed)),
+                Some((entries(4, None), SubagentStatus::Running)),
+                None,
+            ],
+            "an earlier message shows the first outcome after it"
+        );
+
+        cx.run_until_parked();
+        for selector in ["subagent-card-0", "subagent-card-1", "subagent-card-2"] {
+            assert!(cx.debug_bounds(selector).is_some(), "{selector}");
+        }
+        assert!(
+            cx.debug_bounds("subagent-card-3").is_none()
+                && cx.debug_bounds("session-message-participant-3").is_some(),
+            "the unlinked message is drawn as a row"
+        );
     }
 
     #[gpui::test]
