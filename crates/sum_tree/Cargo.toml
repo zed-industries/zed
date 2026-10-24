@@ -25,8 +25,8 @@ log.workspace = true
 ctor.workspace = true
 rand.workspace = true
 proptest.workspace = true
+proptest-derive.workspace = true
 zlog.workspace = true
-
 
 [package.metadata.cargo-shear]
 ignored = ["tracing"]
