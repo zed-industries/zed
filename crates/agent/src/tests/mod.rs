@@ -350,7 +350,7 @@ async fn test_echo(cx: &mut TestAppContext) {
     );
     fake.end_last(&model);
 
-    let events = events.collect().await;
+    let events: Vec<Result<ThreadEvent>> = events.collect().await;
     thread.update(cx, |thread, _cx| {
         assert_eq!(
             thread.last_received_or_pending_message().unwrap().role(),
@@ -523,7 +523,7 @@ async fn test_thinking(cx: &mut TestAppContext) {
     );
     fake.end_last(&model);
 
-    let events = events.collect().await;
+    let events: Vec<Result<ThreadEvent>> = events.collect().await;
     thread.update(cx, |thread, _cx| {
         assert_eq!(
             thread.last_received_or_pending_message().unwrap().role(),
@@ -3828,6 +3828,22 @@ async fn test_prompt_too_large_marks_token_usage_exceeded(cx: &mut TestAppContex
     fake.end_last(&model);
     cx.run_until_parked();
 
+    // Overflow recovery compacts and retries once; the retry overflows too.
+    fake.send_last_text(&model, "summary of the work");
+    fake.end_last(&model);
+    cx.run_until_parked();
+    fake.send_last_error(
+        &model,
+        LanguageModelCompletionError::from_http_status(
+            LanguageModelProviderName::new("test"),
+            http_client::StatusCode::PAYLOAD_TOO_LARGE,
+            "prompt too large".to_string(),
+            None,
+        ),
+    );
+    fake.end_last(&model);
+    cx.run_until_parked();
+
     thread.read_with(cx, |thread, _| {
         let usage = thread.latest_token_usage().unwrap();
         assert_eq!(usage.used_tokens, 1_000_000);
@@ -3864,9 +3880,217 @@ async fn test_prompt_too_large_uses_reported_token_count(cx: &mut TestAppContext
     fake.end_last(&model);
     cx.run_until_parked();
 
+    // Overflow recovery compacts and retries once; the retry overflows too.
+    fake.send_last_text(&model, "summary of the work");
+    fake.end_last(&model);
+    cx.run_until_parked();
+    fake.send_last_error(
+        &model,
+        LanguageModelCompletionError::from_http_status(
+            LanguageModelProviderName::new("test"),
+            http_client::StatusCode::PAYLOAD_TOO_LARGE,
+            "prompt is too long: 1500000 tokens".to_string(),
+            None,
+        ),
+    );
+    fake.end_last(&model);
+    cx.run_until_parked();
+
     thread.read_with(cx, |thread, _| {
         let usage = thread.latest_token_usage().unwrap();
         assert_eq!(usage.used_tokens, 1_500_000);
+        assert_eq!(usage.ratio(), acp_thread::TokenUsageRatio::Exceeded);
+    });
+}
+
+fn prompt_too_large_error() -> LanguageModelCompletionError {
+    LanguageModelCompletionError::from_http_status(
+        LanguageModelProviderName::new("test"),
+        http_client::StatusCode::PAYLOAD_TOO_LARGE,
+        "prompt too large".to_string(),
+        None,
+    )
+}
+
+#[gpui::test]
+async fn test_prompt_too_large_recovery_compacts_and_retries_once(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model,
+        fake,
+        thread,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+
+    let events = thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Message 1"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake.send_last_error(&model, prompt_too_large_error());
+    fake.end_last(&model);
+    cx.run_until_parked();
+
+    let compaction_request = fake.pending_completions().pop().unwrap();
+    assert_eq!(
+        compaction_request.intent,
+        Some(CompletionIntent::ThreadContextSummarization)
+    );
+    fake.send_last_text(&model, "summary of the work");
+    fake.end_last(&model);
+    cx.run_until_parked();
+
+    // The retried request is the only thing still streaming.
+    assert_eq!(fake.pending_completions().len(), 1);
+    fake.send_last_text(&model, "recovered");
+    fake.send_last_event(
+        &model,
+        LanguageModelCompletionEvent::Stop(StopReason::EndTurn),
+    );
+    fake.end_last(&model);
+    cx.run_until_parked();
+
+    assert!(fake.pending_completions().is_empty());
+    thread.read_with(cx, |thread, _| {
+        let last_message = thread.last_received_or_pending_message().unwrap();
+        assert_eq!(last_message.to_markdown(), "recovered\n");
+    });
+    let events: Vec<Result<ThreadEvent>> = events.collect().await;
+    assert!(events.iter().all(|event| event.is_ok()));
+}
+
+#[gpui::test]
+async fn test_prompt_too_large_recovery_retries_only_once(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model,
+        fake,
+        thread,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+
+    let events = thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Message 1"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake.send_last_error(&model, prompt_too_large_error());
+    fake.end_last(&model);
+    cx.run_until_parked();
+
+    fake.send_last_text(&model, "summary of the work");
+    fake.end_last(&model);
+    cx.run_until_parked();
+
+    fake.send_last_error(&model, prompt_too_large_error());
+    fake.end_last(&model);
+    cx.run_until_parked();
+
+    // No second compaction request: recovery runs once per turn.
+    assert!(fake.pending_completions().is_empty());
+    let events: Vec<Result<ThreadEvent>> = events.collect().await;
+    let error_count = events.iter().filter(|event| event.is_err()).count();
+    assert_eq!(error_count, 1);
+}
+
+#[gpui::test]
+async fn test_prompt_too_large_recovery_works_with_small_context_window(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model: _,
+        fake,
+        thread,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+
+    cx.update(|cx| {
+        let mut settings = AgentSettings::get_global(cx).clone();
+        settings.auto_compact.enabled = true;
+        AgentSettings::override_global(settings, cx);
+    });
+    let model = fake.update_model("fake", |model| {
+        model.max_token_count = 50_000;
+        model.max_input_tokens = 50_000;
+        model.max_output_tokens = None;
+    });
+    thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+
+    let events = thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Message 1"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake.send_last_error(&model, prompt_too_large_error());
+    fake.end_last(&model);
+    cx.run_until_parked();
+
+    fake.send_last_text(&model, "summary of the work");
+    fake.end_last(&model);
+    cx.run_until_parked();
+
+    // The retried request is the only thing still streaming.
+    assert_eq!(fake.pending_completions().len(), 1);
+    fake.send_last_text(&model, "recovered");
+    fake.send_last_event(
+        &model,
+        LanguageModelCompletionEvent::Stop(StopReason::EndTurn),
+    );
+    fake.end_last(&model);
+    cx.run_until_parked();
+
+    assert!(fake.pending_completions().is_empty());
+    let events: Vec<Result<ThreadEvent>> = events.collect().await;
+    assert!(events.iter().all(|event| event.is_ok()));
+}
+
+#[gpui::test]
+async fn test_prompt_too_large_recovery_reports_original_error_when_compaction_fails(
+    cx: &mut TestAppContext,
+) {
+    let ThreadTest {
+        model,
+        fake,
+        thread,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+
+    let events = thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Message 1"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake.send_last_error(&model, prompt_too_large_error());
+    fake.end_last(&model);
+    cx.run_until_parked();
+
+    fake.send_last_error(
+        &model,
+        LanguageModelCompletionError::from_http_status(
+            LanguageModelProviderName::new("test"),
+            http_client::StatusCode::UNAUTHORIZED,
+            "compaction provider error".to_string(),
+            None,
+        ),
+    );
+    fake.end_last(&model);
+    cx.run_until_parked();
+
+    let events: Vec<Result<ThreadEvent>> = events.collect().await;
+    let errors: Vec<String> = events
+        .iter()
+        .filter_map(|event| event.as_ref().err())
+        .map(|error| format!("{error:#}"))
+        .collect();
+    assert_eq!(errors.len(), 1);
+    assert!(errors[0].contains("Recovery compaction failed"));
+    assert!(errors[0].contains("prompt too large"));
+    thread.read_with(cx, |thread, _| {
+        let usage = thread.latest_token_usage().unwrap();
         assert_eq!(usage.ratio(), acp_thread::TokenUsageRatio::Exceeded);
     });
 }
@@ -7286,7 +7510,7 @@ async fn test_subagent_auto_compaction(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_subagent_compaction_respects_settings_and_context_window(cx: &mut TestAppContext) {
     for (enabled, max_tokens, max_output_tokens, input_tokens) in [
-        (true, 1_000_000, None, 899_999),
+        (true, 1_000_000, None, 899_000),
         (false, 1_000_000, None, 799_999),
         (true, 79_999, None, 63_999),
         (true, 100_000, Some(20_001), 79_999),

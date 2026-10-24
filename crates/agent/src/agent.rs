@@ -1,3 +1,4 @@
+mod context_budget;
 mod db;
 mod legacy_thread;
 mod native_agent_server;

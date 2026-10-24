@@ -512,8 +512,13 @@ mod tests {
             )
             .await
             .unwrap();
-        cx.executor().advance_clock(RELOAD_DEBOUNCE_DURATION);
-        cx.run_until_parked();
+        let extension_store = cx.update(|_, cx| ExtensionStore::global(cx));
+        cx.condition(&extension_store, |store, _| {
+            !store
+                .installed_extensions()
+                .contains_key(EMMET_EXTENSION_ID)
+        })
+        .await;
         cx.update(|_, cx| {
             assert_eq!(
                 ExtensionStore::global(cx)
@@ -566,12 +571,21 @@ mod tests {
     #[gpui::test]
     async fn test_suggestion_returns_after_failed_install(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
+        app_state
+            .client
+            .http_client()
+            .as_fake()
+            .replace_handler(|_, _| async { anyhow::bail!("extension download failed") });
         cx.update(|cx| {
             ExtensionStore::global(cx).update(cx, |store, cx| {
                 store.install_latest_extension(Arc::from(EMMET_EXTENSION_ID), cx);
             });
         });
-        cx.run_until_parked();
+        let extension_store = cx.update(|cx| ExtensionStore::global(cx));
+        cx.condition(&extension_store, |store, _| {
+            store.outstanding_operations().is_empty()
+        })
+        .await;
         cx.update(|cx| {
             let store = ExtensionStore::global(cx);
             let store = store.read(cx);
@@ -798,6 +812,13 @@ mod tests {
             cx.set_global(db::AppDatabase::test_new());
             release_channel::init(semver::Version::new(0, 0, 0), cx);
             extension::init(cx);
+            cx.foreground_executor()
+                .block_on(
+                    app_state
+                        .fs
+                        .create_dir(&paths::extensions_dir().join("installed")),
+                )
+                .unwrap();
             extension_host::init(
                 Arc::new(ExtensionHostProxy::new()),
                 app_state.fs.clone(),
@@ -820,6 +841,7 @@ mod tests {
         app_state: &Arc<AppState>,
         cx: &mut TestAppContext,
     ) {
+        cx.run_until_parked();
         app_state
             .fs
             .as_fake()

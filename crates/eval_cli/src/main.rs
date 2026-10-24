@@ -890,7 +890,7 @@ async fn run_agent(
                 continue;
             };
             agent_turn_count += 1;
-            for request_message in agent_message.to_request() {
+            for request_message in agent_message.to_request(None) {
                 for content in request_message.content {
                     if let language_model::MessageContent::ToolUse(tool_use) = content {
                         *counts.entry(tool_use.name.to_string()).or_default() += 1;
