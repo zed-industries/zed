@@ -2585,7 +2585,7 @@ mod tests {
                 .expect("resume");
             harness.resume_state(acp::StateUpdate::Idle(acp::IdleStateUpdate::new()));
             announce_running_child();
-            // A subagent whose replayed history ends, as claude-agent-acp replays each one.
+            // A subagent whose replayed history ends with an outcome.
             harness.send_update(
                 "saved",
                 acp::SessionUpdate::SubagentUpdate(acp::SubagentUpdate::new("finished")),
@@ -2609,11 +2609,15 @@ mod tests {
             let child = child.expect("the subagent was announced before the response");
             let finished = finished.expect("the subagent was announced before the response");
             finished.read_with(cx, |finished, _| {
-                assert_eq!(
-                    finished.foreground_state(),
-                    Some(&cancelled()),
-                    "a replayed outcome confirms no activity, so it stays"
-                );
+                if replay_history {
+                    assert_eq!(
+                        finished.foreground_state(),
+                        None,
+                        "a replayed outcome is history too"
+                    );
+                } else {
+                    assert_eq!(finished.foreground_state(), Some(&cancelled()));
+                }
             });
             child.read_with(cx, |child, _| {
                 let association = child.subagent_association().expect("subagent");
@@ -2636,7 +2640,9 @@ mod tests {
             });
 
             if replay_history {
+                // The agent reports current states after the response.
                 announce_running_child();
+                harness.send_update("finished", acp::SessionUpdate::StateUpdate(cancelled()));
                 harness.drain_updates(cx).await;
                 child.read_with(cx, |child, _| {
                     assert!(child.subagent_association().expect("subagent").can_cancel);
@@ -2644,6 +2650,9 @@ mod tests {
                         child.foreground_activity(),
                         acp_thread::ForegroundActivity::Running
                     );
+                });
+                finished.read_with(cx, |finished, _| {
+                    assert_eq!(finished.foreground_state(), Some(&cancelled()));
                 });
             }
             drop((parent, child, finished));
