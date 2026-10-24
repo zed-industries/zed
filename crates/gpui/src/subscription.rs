@@ -26,9 +26,15 @@ struct SubscriberSetState<EmitterKey, Callback> {
     next_subscriber_id: usize,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SubscriberState {
+    Pending,
+    Active,
+    Dropped,
+}
+
 struct Subscriber<Callback> {
-    active: Rc<Cell<bool>>,
-    dropped: Rc<Cell<bool>>,
+    state: Rc<Cell<SubscriberState>>,
     callback: Callback,
 }
 
@@ -53,8 +59,7 @@ where
         emitter_key: EmitterKey,
         callback: Callback,
     ) -> (Subscription, impl FnOnce() + use<EmitterKey, Callback>) {
-        let active = Rc::new(Cell::new(false));
-        let dropped = Rc::new(Cell::new(false));
+        let state = Rc::new(Cell::new(SubscriberState::Pending));
         let mut lock = self.0.borrow_mut();
         let subscriber_id = post_inc(&mut lock.next_subscriber_id);
         lock.subscribers
@@ -63,29 +68,35 @@ where
             .insert(
                 subscriber_id,
                 Subscriber {
-                    active: active.clone(),
-                    dropped: dropped.clone(),
+                    state: state.clone(),
                     callback,
                 },
             );
         let this = self.0.clone();
 
         let subscription = Subscription {
-            unsubscribe: Some(Box::new(move || {
-                dropped.set(true);
+            unsubscribe: Some(Box::new({
+                let state = state.clone();
+                move || {
+                    state.set(SubscriberState::Dropped);
 
-                let mut lock = this.borrow_mut();
-                let Some(subscribers) = lock.subscribers.get_mut(&emitter_key) else {
-                    return;
-                };
+                    let mut lock = this.borrow_mut();
+                    let Some(subscribers) = lock.subscribers.get_mut(&emitter_key) else {
+                        return;
+                    };
 
-                subscribers.remove(&subscriber_id);
-                if subscribers.is_empty() {
-                    lock.subscribers.remove(&emitter_key);
+                    subscribers.remove(&subscriber_id);
+                    if subscribers.is_empty() {
+                        lock.subscribers.remove(&emitter_key);
+                    }
                 }
             })),
         };
-        (subscription, move || active.set(true))
+        (subscription, move || {
+            if state.get() == SubscriberState::Pending {
+                state.set(SubscriberState::Active);
+            }
+        })
     }
 
     pub fn remove(
@@ -98,7 +109,7 @@ where
             .into_iter()
             .flatten()
             .filter_map(|subscriber| {
-                if subscriber.active.get() {
+                if subscriber.state.get() == SubscriberState::Active {
                     Some(subscriber.callback)
                 } else {
                     None
@@ -166,34 +177,39 @@ impl<Callback: 'static> SingleSubscriberSet<Callback> {
 
     /// Inserts an inert subscription and returns its handle and activation function.
     pub fn insert(&self, callback: Callback) -> (Subscription, impl FnOnce() + use<Callback>) {
-        let active = Rc::new(Cell::new(false));
-        let dropped = Rc::new(Cell::new(false));
+        let state = Rc::new(Cell::new(SubscriberState::Pending));
         let mut lock = self.0.borrow_mut();
         let subscriber_id = post_inc(&mut lock.next_subscriber_id);
         lock.subscribers.insert(
             subscriber_id,
             Subscriber {
-                active: active.clone(),
-                dropped: dropped.clone(),
+                state: state.clone(),
                 callback,
             },
         );
         let this = self.0.clone();
 
         let subscription = Subscription {
-            unsubscribe: Some(Box::new(move || {
-                dropped.set(true);
-                this.borrow_mut().subscribers.remove(&subscriber_id);
+            unsubscribe: Some(Box::new({
+                let state = state.clone();
+                move || {
+                    state.set(SubscriberState::Dropped);
+                    this.borrow_mut().subscribers.remove(&subscriber_id);
+                }
             })),
         };
-        (subscription, move || active.set(true))
+        (subscription, move || {
+            if state.get() == SubscriberState::Pending {
+                state.set(SubscriberState::Active);
+            }
+        })
     }
 
     /// Removes all subscriptions and returns the active callbacks in registration order.
     pub fn remove(&self) -> impl IntoIterator<Item = Callback> + use<Callback> {
         let subscribers = mem::take(&mut self.0.borrow_mut().subscribers);
         subscribers.into_values().filter_map(|subscriber| {
-            if subscriber.active.get() {
+            if subscriber.state.get() == SubscriberState::Active {
                 Some(subscriber.callback)
             } else {
                 None
@@ -211,14 +227,14 @@ impl<Callback: 'static> SingleSubscriberSet<Callback> {
 
 impl<Callback> Subscriber<Callback> {
     fn retain(&mut self, f: &mut impl FnMut(&mut Callback) -> bool) -> bool {
-        if self.dropped.get() {
-            return false;
+        match self.state.get() {
+            SubscriberState::Pending => true,
+            SubscriberState::Dropped => false,
+            SubscriberState::Active => {
+                let keep = f(&mut self.callback);
+                keep && self.state.get() != SubscriberState::Dropped
+            }
         }
-        if !self.active.get() {
-            return true;
-        }
-        let keep = f(&mut self.callback);
-        keep && !self.dropped.get()
     }
 }
 
@@ -281,6 +297,52 @@ impl std::fmt::Debug for Subscription {
 mod tests {
     use super::*;
     use crate::{Global, TestApp};
+
+    #[test]
+    fn test_activation_after_drop_during_retain() {
+        let subscribers = SubscriberSet::new();
+        let (first, activate_first) = subscribers.insert(1usize, 10);
+        let (second, activate_second) = subscribers.insert(1, 20);
+        subscribers.retain(&1, |_| panic!("pending subscriber invoked"));
+        activate_first();
+        let mut second = Some((second, activate_second));
+        let mut visited = Vec::new();
+
+        subscribers.retain(&1, |callback| {
+            visited.push(*callback);
+            let (subscription, activate) = second.take().expect("only the first callback runs");
+            drop(subscription);
+            activate();
+            true
+        });
+
+        assert_eq!(visited, [10]);
+        assert_eq!(subscribers.remove(&1).into_iter().collect::<Vec<_>>(), [10]);
+        drop(first);
+    }
+
+    #[test]
+    fn test_single_activation_after_drop_during_retain() {
+        let subscribers = SingleSubscriberSet::new();
+        let (first, activate_first) = subscribers.insert(10);
+        let (second, activate_second) = subscribers.insert(20);
+        subscribers.retain(|_| panic!("pending subscriber invoked"));
+        activate_first();
+        let mut second = Some((second, activate_second));
+        let mut visited = Vec::new();
+
+        subscribers.retain(|callback| {
+            visited.push(*callback);
+            let (subscription, activate) = second.take().expect("only the first callback runs");
+            drop(subscription);
+            activate();
+            true
+        });
+
+        assert_eq!(visited, [10]);
+        assert_eq!(subscribers.remove().into_iter().collect::<Vec<_>>(), [10]);
+        drop(first);
+    }
 
     #[test]
     fn test_unsubscribe_during_callback_with_insert() {
