@@ -89,7 +89,7 @@ use strum::{IntoEnumIterator, VariantNames};
 use theme_settings::ThemeSettings;
 use time::OffsetDateTime;
 use ui::{
-    ButtonLike, Checkbox, Chip, ContextMenu, ContextMenuEntry, DocumentationSide, ElevationIndex,
+    ButtonLike, Chip, ContextMenu, ContextMenuEntry, DocumentationSide, ElevationIndex,
     IndentGuideColors, KeyBinding, PopoverMenu, PopoverMenuHandle, ProjectEmptyState, ScrollAxes,
     Scrollbars, SplitButton, Tab, TintColor, Tooltip, WithScrollbar, prelude::*,
 };
@@ -8382,10 +8382,16 @@ impl GitPanel {
                     .and_then(|entry| entry.staging.as_bool())
             });
 
-        let checkbox = Checkbox::new("stage-file", is_staging_or_staged.into())
+        // Same `+` / `-` toggle as the panel's rows, instead of a checkbox.
+        let staged = is_staging_or_staged == Some(true);
+        let (icon, tooltip) = if staged {
+            (IconName::Dash, "Unstage File")
+        } else {
+            (IconName::Plus, "Stage File")
+        };
+        let stage_button = panel_icon_button("stage-file", icon)
             .disabled(!self.has_write_access(cx))
-            .fill()
-            .elevation(ElevationIndex::Surface)
+            .tooltip(move |_window, cx| Tooltip::for_action(tooltip, &ToggleStaged, cx))
             .on_click({
                 let entry = entry.clone();
                 let git_panel = entity.downgrade();
@@ -8401,10 +8407,9 @@ impl GitPanel {
         Some(
             h_flex()
                 .id("start-slot")
-                .text_lg()
-                .child(checkbox)
+                .child(stage_button)
                 .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                    // prevent the list item active state triggering when toggling checkbox
+                    // Keeps the header's active state from triggering on click.
                     cx.stop_propagation();
                 })
                 .into_any_element(),
