@@ -3697,6 +3697,9 @@ pub enum OutputTokensUpdate {
 #[derive(Debug)]
 pub enum AcpThreadEvent {
     StatusChanged,
+    /// The parent's title, description, or capabilities for this subagent changed. Views that
+    /// read them from the parent's side, such as its subagent card, observe this event.
+    SubagentAssociationUpdated,
     /// Idle confirmed after unconfirmed or unknown activity, without completing
     /// foreground work.
     ActivityConfirmedIdle,
@@ -3865,6 +3868,7 @@ impl AcpThread {
                 | AcpThreadEvent::EntryUpdated(_)
                 | AcpThreadEvent::Retry(_)
                 | AcpThreadEvent::SubagentSpawned(_)
+                | AcpThreadEvent::SubagentAssociationUpdated
                 | AcpThreadEvent::Stopped { .. }
                 | AcpThreadEvent::Error
                 | AcpThreadEvent::ConnectionLost
@@ -3975,8 +3979,29 @@ impl AcpThread {
             .as_mut()
             .context("Session is not an ACP subagent")?;
         association.apply(update);
+        cx.emit(AcpThreadEvent::SubagentAssociationUpdated);
         cx.notify();
         Ok(())
+    }
+
+    /// Ends a history replay into this session, after a successful load or resume. The
+    /// subagents RFD treats what the replay reported about subagents as history: it may
+    /// stay visible, but must not allow cancelling or confirm current activity until the
+    /// agent reports it again. A replayed outcome, such as a completed or failed
+    /// subagent, stays, since it confirms no activity.
+    pub fn invalidate_replayed_subagent_state(&mut self, cx: &mut Context<Self>) {
+        for subagent in self.subagents.values() {
+            subagent.update(cx, |subagent, cx| {
+                if let Some(association) = subagent.subagent_association.as_mut() {
+                    association.can_cancel = false;
+                    cx.notify();
+                }
+                if subagent.foreground_activity().is_active() {
+                    subagent.clear_session_state(cx).log_err();
+                }
+                subagent.invalidate_replayed_subagent_state(cx);
+            });
+        }
     }
 
     pub fn parent_session_id(&self) -> Option<&acp_v2::SessionId> {
@@ -4605,8 +4630,15 @@ impl AcpThread {
                 cx.emit(AcpThreadEvent::Stopped {
                     activity_generation: self.activity.generation(),
                     activity_duration: self.activity.duration(),
-                    stop_reason,
+                    stop_reason: stop_reason.clone(),
                 });
+            }
+            // A subagent's work can stop because Zed cancelled an ancestor. Its requests stay
+            // answerable until it reports that, and then go as if Zed had cancelled it.
+            if self.subagent_association.is_some()
+                && matches!(stop_reason, Some(acp_v2::StopReason::Cancelled))
+            {
+                self.cancel_local_actions(RequestPermissionOutcome::Cancelled, cx);
             }
         }
         if previous != self.foreground_activity() {
@@ -7359,6 +7391,12 @@ impl AcpThread {
         permission_outcome: RequestPermissionOutcome,
         cx: &mut Context<Self>,
     ) -> Result<Task<Result<()>>> {
+        anyhow::ensure!(
+            self.subagent_association
+                .as_ref()
+                .is_none_or(|association| association.can_cancel),
+            "This subagent's parent does not allow cancelling it"
+        );
         self.flush_streaming_text(cx);
         if self.uses_reported_activity() {
             self.activity.ensure_observable()?;
@@ -7367,7 +7405,16 @@ impl AcpThread {
             {
                 self.connection.cancel(self.session_id(), cx)?;
             }
-            self.cancel_generic_permission_requests(cx);
+            if self.subagent_association.is_some() {
+                // The subagents RFD has a cancelled subagent answer all of its permission
+                // requests, including the tool-call ones a v1 subagent makes.
+                let request_ids = self.permission_requests.keys().copied().collect::<Vec<_>>();
+                for id in request_ids {
+                    self.cancel_permission_request(id, cx);
+                }
+            } else {
+                self.cancel_generic_permission_requests(cx);
+            }
             let receiver = self.activity.wait_for_idle()?;
             let Some(receiver) = receiver else {
                 return Ok(Task::ready(Ok(())));
@@ -11663,17 +11710,19 @@ mod tests {
         (thread, connection)
     }
 
-    async fn new_agent_owned_test_thread(cx: &mut TestAppContext) -> Entity<AcpThread> {
+    async fn new_agent_owned_test_thread(
+        cx: &mut TestAppContext,
+    ) -> (Entity<AcpThread>, Rc<StubAgentConnection>) {
         let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
         let connection = Rc::new(StubAgentConnection::new());
-        cx.update(|cx| {
+        let thread = cx.update(|cx| {
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
             cx.new(|cx| {
                 AcpThread::new(
                     Some(acp_v2::SessionId::new("parent")),
                     None,
                     None,
-                    connection,
+                    connection.clone(),
                     project,
                     action_log,
                     acp_v2::SessionId::new("child"),
@@ -11682,7 +11731,151 @@ mod tests {
                 )
                 .agent_owned()
             })
-        })
+        });
+        cx.update(|cx| connection.track_session(&thread, cx));
+        (thread, connection)
+    }
+
+    fn idle_with(stop_reason: acp_v2::StopReason) -> acp_v2::StateUpdate {
+        acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new().stop_reason(stop_reason))
+    }
+
+    fn legacy_permission_request(
+        thread: &mut AcpThread,
+        tool_call_id: &str,
+        cx: &mut Context<AcpThread>,
+    ) -> Task<RequestPermissionOutcome> {
+        thread
+            .request_tool_call_authorization(
+                acp_v1::ToolCall::new(acp_v1::ToolCallId::new(tool_call_id), "Edit").into(),
+                PermissionOptions::Flat(vec![acp_v2::PermissionOption::new(
+                    "allow",
+                    "Allow",
+                    acp_v2::PermissionOptionKind::AllowOnce,
+                )]),
+                AuthorizationKind::PermissionGrant,
+                cx,
+            )
+            .expect("permission request")
+    }
+
+    #[gpui::test]
+    async fn test_cancelling_a_subagent_needs_its_parents_permission(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (thread, connection) = new_agent_owned_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                    cx,
+                )
+                .expect("running");
+        });
+        let refused = thread.update(cx, |thread, cx| thread.cancel(cx));
+        assert!(refused.await.is_err());
+        assert!(connection.take_cancel_calls().is_empty());
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_subagent_association(
+                    &acp_v2::SubagentUpdate::new("child").capabilities(
+                        acp_v2::SubagentSessionCapabilities::new()
+                            .cancel(acp_v2::SessionCancelCapabilities::new()),
+                    ),
+                    cx,
+                )
+                .expect("subagent")
+        });
+        // A v1 subagent's permission requests are anchored to its tool calls.
+        let permission = thread.update(cx, |thread, cx| {
+            legacy_permission_request(thread, "edit", cx)
+        });
+        let cancellation = thread.update(cx, |thread, cx| thread.cancel(cx));
+        assert_eq!(
+            connection.take_cancel_calls(),
+            vec![acp_v2::SessionId::new("child")]
+        );
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.pending_permission_requests().count(), 0);
+        });
+        assert!(matches!(
+            permission.await,
+            RequestPermissionOutcome::Cancelled
+        ));
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(idle_with(acp_v2::StopReason::Cancelled), cx)
+                .expect("idle")
+        });
+        cancellation
+            .await
+            .expect("the subagent confirmed cancellation");
+    }
+
+    #[gpui::test]
+    async fn test_a_cancelled_subagent_releases_its_pending_actions(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (thread, _connection) = new_agent_owned_test_thread(cx).await;
+        let running = || acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new());
+        thread.update(cx, |thread, cx| {
+            thread.update_session_state(running(), cx).expect("running");
+        });
+        let (generic, legacy, elicitation) = thread.update(cx, |thread, cx| {
+            let request = test_generic_permission_request(thread, "allow");
+            let (_, generic) = thread.request_permission(request, cx).expect("request");
+            let legacy = legacy_permission_request(thread, "edit", cx);
+            let session_id = thread.session_id().clone();
+            let elicitation = thread
+                .request_elicitation(
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationFormMode::new(
+                            acp_v2::ElicitationSessionScope::new(session_id),
+                            acp_v2::ElicitationSchema::new().string("name", true),
+                        ),
+                        "Provide a name",
+                    ),
+                    cx,
+                )
+                .expect("elicitation");
+            (generic, legacy, elicitation)
+        });
+
+        // Work that ends normally may leave background requests that still apply.
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(idle_with(acp_v2::StopReason::EndTurn), cx)
+                .expect("idle");
+            assert_eq!(thread.pending_permission_requests().count(), 2);
+            thread.update_session_state(running(), cx).expect("running");
+        });
+
+        // Zed did not cancel this subagent: its work stopped with an ancestor's.
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(idle_with(acp_v2::StopReason::Cancelled), cx)
+                .expect("idle");
+            assert_eq!(thread.pending_permission_requests().count(), 0);
+            let (_, tool_call) = thread
+                .tool_call(&acp_v2::ToolCallId::new("edit"))
+                .expect("tool call");
+            assert_eq!(tool_call.status(), ToolCallStatus::Canceled);
+            let elicitation_id = thread
+                .entries()
+                .iter()
+                .find_map(|entry| match entry {
+                    AgentThreadEntry::Elicitation(id) => Some(id.clone()),
+                    _ => None,
+                })
+                .expect("elicitation entry");
+            let (_, elicitation) = thread.elicitation(&elicitation_id).expect("elicitation");
+            assert!(matches!(elicitation.status, ElicitationStatus::Canceled));
+        });
+        assert_eq!(generic.await, acp_v2::RequestPermissionOutcome::Cancelled);
+        assert!(matches!(legacy.await, RequestPermissionOutcome::Cancelled));
+        assert!(matches!(
+            elicitation.await.action,
+            acp_v2::ElicitationAction::Cancel
+        ));
     }
 
     #[gpui::test]
@@ -11690,7 +11883,7 @@ mod tests {
         cx: &mut TestAppContext,
     ) {
         init_test(cx);
-        let thread = new_agent_owned_test_thread(cx).await;
+        let (thread, _connection) = new_agent_owned_test_thread(cx).await;
         thread.update(cx, |thread, cx| {
             assert!(thread.uses_reported_activity());
             assert_eq!(

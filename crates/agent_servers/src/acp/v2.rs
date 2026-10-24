@@ -1,10 +1,10 @@
 use super::{
     AcpDebugLog, AcpDebugMessage, AcpSession, ClientContext, ConfigOptions,
-    ContextServerConfiguration, ForegroundWork, PendingSessionUpdates, UnsupportedVersion,
-    apply_v2_session_notification, close_undelivered_session, drain_foreground_queue,
-    enqueue_notification, first_class_terminal_auth_task, is_disconnect_error, map_acp_error,
-    mcp_configurations_for_project, runtime, transport, with_v2_client_ingress,
-    work_dirs_from_session_info,
+    ContextServerConfiguration, ForegroundWork, PendingSessionUpdates, ReadOnlyConfigOptions,
+    UnsupportedVersion, apply_v2_session_notification, close_undelivered_session,
+    drain_foreground_queue, enqueue_notification, first_class_terminal_auth_task,
+    is_disconnect_error, map_acp_error, mcp_configurations_for_project, runtime, transport,
+    with_v2_client_ingress, work_dirs_from_session_info,
 };
 use acp_thread::{
     AcpThread, AgentConnection, AgentSessionConfigOptions, AgentSessionInfo, AgentSessionList,
@@ -773,6 +773,7 @@ impl AcpV2Connection {
             session_id.clone(),
             AcpSession {
                 thread: thread.downgrade(),
+                is_subagent: false,
                 suppress_abort_err: false,
                 session_modes: None,
                 config_options: Some(ConfigOptions::new(Rc::new(RefCell::new(Vec::new())))),
@@ -919,6 +920,15 @@ impl AcpV2Connection {
         })
     }
 
+    /// The subagents RFD allows no Client-initiated mutation of a subagent session except
+    /// the `cancel` its parent advertises, which `AcpThread::cancel` checks.
+    fn is_subagent_session(&self, session_id: &acp::SessionId) -> bool {
+        self.sessions
+            .borrow()
+            .get(session_id)
+            .is_some_and(|session| session.is_subagent && session.thread.upgrade().is_some())
+    }
+
     fn open_session(
         self: Rc<Self>,
         session_id: acp::SessionId,
@@ -930,6 +940,11 @@ impl AcpV2Connection {
     ) -> Task<Result<Entity<AcpThread>>> {
         if is_connection_closed(&self.connection) {
             return Task::ready(Err(anyhow!("Agent connection is closed")));
+        }
+        if self.is_subagent_session(&session_id) {
+            return Task::ready(Err(anyhow!(
+                "ACP subagent sessions are loaded with their parent"
+            )));
         }
         let path_style = project.read(cx).path_style(cx);
         let context = match self.session_context(
@@ -1024,6 +1039,13 @@ impl AcpV2Connection {
                     let this = this.upgrade().context("Connection was released")?;
                     let thread = thread.upgrade().context("Session was released")?;
                     cx.update(|cx| {
+                        // Ordered responses apply after the replay and before any update sent
+                        // after the response, so this is the RFD's freshness boundary.
+                        if replay_history {
+                            thread.update(cx, |thread, cx| {
+                                thread.invalidate_replayed_subagent_state(cx)
+                            });
+                        }
                         if !thread.read(cx).has_received_session_state() {
                             log::warn!(
                                 "Agent resumed the session without reporting its current foreground state; activity remains unconfirmed"
@@ -1425,14 +1447,8 @@ impl AgentConnection for AcpV2Connection {
         if !self.supports_close_session() {
             return Task::ready(Err(anyhow!("Closing sessions is not supported")));
         }
-        let is_subagent = self
-            .sessions
-            .borrow()
-            .get(session_id)
-            .and_then(|session| session.thread.upgrade())
-            .is_some_and(|thread| thread.read(cx).subagent_association().is_some());
-        if is_subagent {
-            // ACP forbids closing a subagent; the agent releases it when its parent closes.
+        if self.is_subagent_session(session_id) {
+            // The agent releases a subagent when its parent closes.
             return Task::ready(Err(anyhow!(
                 "ACP subagent sessions are closed with their parent"
             )));
@@ -1630,10 +1646,24 @@ impl AgentConnection for AcpV2Connection {
     fn session_config_options(
         &self,
         session_id: &acp::SessionId,
-        _cx: &App,
+        cx: &App,
     ) -> Option<Rc<dyn AgentSessionConfigOptions>> {
+        if self.is_subagent_session(session_id) {
+            return None;
+        }
         let sessions = self.sessions.borrow();
         let session = sessions.get(session_id)?;
+        if session
+            .thread
+            .upgrade()?
+            .read(cx)
+            .parent_session_id()
+            .is_some()
+        {
+            return Some(Rc::new(ReadOnlyConfigOptions(
+                session.config_options.clone()?,
+            )));
+        }
         Some(Rc::new(V2SessionConfigOptions {
             session_id: session_id.clone(),
             thread: session.thread.clone(),
@@ -2423,6 +2453,73 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn v2_subagent_config_options_are_read_only(cx: &mut TestAppContext) {
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let parent = harness.thread(cx).await;
+        harness.send_update(
+            "session",
+            acp::SessionUpdate::SubagentUpdate(acp::SubagentUpdate::new("child")),
+        );
+        harness.drain_updates(cx).await;
+
+        let options = cx
+            .read(|cx| harness.client.session_config_options(&"child".into(), cx))
+            .expect("the provider exists before the first config update");
+        assert!(options.is_read_only());
+        assert!(options.config_options().is_empty(), "no inherited values");
+        let mut updates = cx
+            .update(|cx| options.watch(cx))
+            .expect("child config watcher");
+        let model = |value: &str| {
+            acp::SessionConfigOption::select(
+                "model",
+                "Model",
+                value.to_owned(),
+                vec![acp::SessionConfigSelectOption::new(value, value)],
+            )
+        };
+        for snapshot in [
+            vec![
+                model("child-model"),
+                acp::SessionConfigOption::boolean("fast", "Fast", true),
+            ],
+            vec![model("fallback-model")],
+            vec![],
+        ] {
+            harness.send_update(
+                "child",
+                acp::SessionUpdate::ConfigOptionUpdate(acp::ConfigOptionUpdate::new(
+                    snapshot.clone(),
+                )),
+            );
+            harness.drain_updates(cx).await;
+            bounded(updates.recv(), cx).await.expect("config update");
+            assert_eq!(options.config_options(), snapshot);
+        }
+        for (config_id, value) in [
+            ("model", acp::SessionConfigOptionValue::id("fallback-model")),
+            ("fast", acp::SessionConfigOptionValue::boolean(false)),
+        ] {
+            let error = cx
+                .update(|cx| options.set_config_option(config_id.into(), value, cx))
+                .await
+                .expect_err("child options cannot be set");
+            assert!(error.to_string().contains("read-only"));
+        }
+        assert!(
+            harness.config_requests.try_recv().is_err(),
+            "no wire mutation"
+        );
+        parent.read_with(cx, |parent, cx| {
+            let options = harness
+                .client
+                .session_config_options(parent.session_id(), cx)
+                .expect("parent config");
+            assert!(!options.is_read_only());
+        });
+    }
+
+    #[gpui::test]
     async fn v2_resume_replay_delivers_subagent_history(cx: &mut TestAppContext) {
         let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
         let loading = harness.reopen(true, cx);
@@ -2460,6 +2557,106 @@ mod tests {
                 "history replayed before the resume response reaches the subagent"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn v2_replayed_subagent_state_is_history(cx: &mut TestAppContext) {
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let announce_running_child = || {
+            harness.send_update(
+                "saved",
+                acp::SessionUpdate::SubagentUpdate(
+                    acp::SubagentUpdate::new("child")
+                        .title("Investigator")
+                        .capabilities(
+                            acp::SubagentSessionCapabilities::new()
+                                .cancel(acp::SessionCancelCapabilities::new()),
+                        ),
+                ),
+            );
+            harness.send_update(
+                "child",
+                acp::SessionUpdate::StateUpdate(acp::StateUpdate::Running(
+                    acp::RunningStateUpdate::new(),
+                )),
+            );
+        };
+        let cancelled = || {
+            acp::StateUpdate::Idle(
+                acp::IdleStateUpdate::new().stop_reason(acp::StopReason::Cancelled),
+            )
+        };
+        for replay_history in [true, false] {
+            let loading = harness.reopen(replay_history, cx);
+            let (_, responder) = bounded(harness.resume_requests.recv(), cx)
+                .await
+                .expect("resume");
+            harness.resume_state(acp::StateUpdate::Idle(acp::IdleStateUpdate::new()));
+            announce_running_child();
+            // A subagent whose replayed history ends, as claude-agent-acp replays each one.
+            harness.send_update(
+                "saved",
+                acp::SessionUpdate::SubagentUpdate(acp::SubagentUpdate::new("finished")),
+            );
+            for state in [
+                acp::StateUpdate::Running(acp::RunningStateUpdate::new()),
+                cancelled(),
+            ] {
+                harness.send_update("finished", acp::SessionUpdate::StateUpdate(state));
+            }
+            responder
+                .respond(acp::ResumeSessionResponse::new())
+                .expect("resumed");
+            let parent = bounded(loading, cx).await.expect("resumed parent");
+            let (child, finished) = parent.read_with(cx, |parent, _| {
+                (
+                    parent.subagent(&"child".into()).cloned(),
+                    parent.subagent(&"finished".into()).cloned(),
+                )
+            });
+            let child = child.expect("the subagent was announced before the response");
+            let finished = finished.expect("the subagent was announced before the response");
+            finished.read_with(cx, |finished, _| {
+                assert_eq!(
+                    finished.foreground_state(),
+                    Some(&cancelled()),
+                    "a replayed outcome confirms no activity, so it stays"
+                );
+            });
+            child.read_with(cx, |child, _| {
+                let association = child.subagent_association().expect("subagent");
+                assert_eq!(association.title.as_deref(), Some("Investigator"));
+                if replay_history {
+                    assert!(!association.can_cancel, "a replayed grant is history");
+                    assert_eq!(
+                        child.foreground_activity(),
+                        acp_thread::ForegroundActivity::Unconfirmed,
+                        "replayed activity is history"
+                    );
+                } else {
+                    // Without replay, updates sent before the response are current.
+                    assert!(association.can_cancel);
+                    assert_eq!(
+                        child.foreground_activity(),
+                        acp_thread::ForegroundActivity::Running
+                    );
+                }
+            });
+
+            if replay_history {
+                announce_running_child();
+                harness.drain_updates(cx).await;
+                child.read_with(cx, |child, _| {
+                    assert!(child.subagent_association().expect("subagent").can_cancel);
+                    assert_eq!(
+                        child.foreground_activity(),
+                        acp_thread::ForegroundActivity::Running
+                    );
+                });
+            }
+            drop((parent, child, finished));
+            cx.run_until_parked();
+        }
     }
 
     #[gpui::test]
@@ -2576,6 +2773,39 @@ mod tests {
                 .to_string()
                 .contains("ACP subagent sessions are closed with their parent")
         );
+        harness.send_update(
+            "child",
+            acp::SessionUpdate::ConfigOptionUpdate(acp::ConfigOptionUpdate::new(vec![
+                acp::SessionConfigOption::boolean("fast", "Fast", false),
+            ])),
+        );
+        harness.drain_updates(cx).await;
+        assert!(
+            cx.read(|cx| harness.client.session_config_options(&"child".into(), cx))
+                .is_none(),
+            "a subagent's configuration cannot be changed"
+        );
+        for replay_history in [true, false] {
+            let reopened = cx.update(|cx| {
+                let client = harness.client.clone();
+                let project = harness.project.clone();
+                let directories = PathList::new(&[session_path("a")]);
+                if replay_history {
+                    client.load_session("child".into(), project, directories, None, cx)
+                } else {
+                    client.resume_session("child".into(), project, directories, None, cx)
+                }
+            });
+            let error = bounded(reopened, cx)
+                .await
+                .expect_err("subagents cannot be loaded or resumed");
+            assert!(
+                error
+                    .to_string()
+                    .contains("ACP subagent sessions are loaded with their parent")
+            );
+        }
+        assert!(harness.resume_requests.is_empty());
 
         drop((parent, child));
         cx.run_until_parked();

@@ -55,7 +55,7 @@ use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
 use super::elicitation::{
     ElicitationCard, ElicitationCardHandlers, ElicitationFormState, should_render_elicitation,
 };
-use super::subagent_card::{SubagentCardState, SubagentStatus};
+use super::subagent_card::{SubagentCardId, SubagentCardState, SubagentStatus, acp_subagent_card};
 use super::*;
 
 /// Which side of a session message a transcript shows, and the other participant when it
@@ -5251,7 +5251,15 @@ impl ThreadView {
             return false;
         };
 
-        let my_session_id = self.thread.read(cx).session_id().clone();
+        // An ACP subagent reports its own outcome; a native one's is its parent's tool call.
+        let thread = self.thread.read(cx);
+        if thread.subagent_association().is_some() {
+            return SubagentCardState::from_acp_subagent(thread)
+                .status
+                .is_failed_or_canceled();
+        }
+
+        let my_session_id = thread.session_id().clone();
 
         self.server_view
             .upgrade()
@@ -5278,6 +5286,12 @@ impl ThreadView {
         let thread = self.thread.clone();
         let is_done = thread.read(cx).status() == ThreadStatus::Idle;
         let is_canceled_or_failed = self.is_subagent_canceled_or_failed(cx);
+        // An ACP subagent can only be cancelled when its parent advertises `cancel` for it.
+        let can_stop = !is_done
+            && thread
+                .read(cx)
+                .subagent_association()
+                .is_none_or(|association| association.can_cancel);
 
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
 
@@ -5320,15 +5334,22 @@ impl ThreadView {
                         .child(
                             h_flex()
                                 .gap_0p5()
-                                .when(!is_done, |this| {
+                                .when(can_stop, |this| {
                                     this.child(
-                                        IconButton::new("stop_subagent", IconName::Stop)
-                                            .icon_size(IconSize::Small)
-                                            .icon_color(Color::Error)
-                                            .tooltip(Tooltip::text("Stop Subagent"))
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.cancel_thread(&thread, cx).detach();
-                                            })),
+                                        div()
+                                            .debug_selector(|| "subagent-titlebar-stop".into())
+                                            .child(
+                                                IconButton::new("stop_subagent", IconName::Stop)
+                                                    .icon_size(IconSize::Small)
+                                                    .icon_color(Color::Error)
+                                                    .tooltip(Tooltip::text("Stop Subagent"))
+                                                    .on_click(cx.listener(
+                                                        move |this, _, _, cx| {
+                                                            this.cancel_thread(&thread, cx)
+                                                                .detach();
+                                                        },
+                                                    )),
+                                            ),
                                     )
                                 })
                                 .child(
@@ -5356,7 +5377,15 @@ impl ThreadView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         if self.is_subagent() {
-            return div().into_any_element();
+            return h_flex()
+                .px_2()
+                .py_1()
+                .children(
+                    self.config_options_view
+                        .clone()
+                        .filter(|view| view.read(cx).is_read_only()),
+                )
+                .into_any_element();
         }
 
         let focus_handle = self.message_editor.focus_handle(cx);
@@ -7655,7 +7684,13 @@ impl ThreadView {
                 self.render_context_compaction(entry_ix, compaction, window, cx)
             }
             AgentThreadEntry::SessionMessage(message) => {
-                let session_message = self.render_session_message(entry_ix, message, window, cx);
+                let session_message =
+                    match acp_subagent_card(self.thread.read(cx), entry_ix, message) {
+                        Some((card_id, subagent)) => {
+                            self.render_acp_subagent_card(entry_ix, &card_id, &subagent, window, cx)
+                        }
+                        None => self.render_session_message(entry_ix, message, window, cx),
+                    };
                 if let Some(handle) = self
                     .entry_view_state
                     .read(cx)
@@ -9056,6 +9091,39 @@ impl ThreadView {
                     .border_color(cx.theme().colors().border)
                     .child(self.render_message_content(entry_ix, 0, &message.content, window, cx)),
             )
+    }
+
+    fn render_acp_subagent_card(
+        &self,
+        entry_ix: usize,
+        card_id: &SubagentCardId,
+        subagent: &Entity<AcpThread>,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Div {
+        let subagent_session_id = subagent.read(cx).session_id().clone();
+        let subagent_thread_view = self
+            .server_view
+            .upgrade()
+            .and_then(|server_view| server_view.read(cx).as_connected())
+            .and_then(|connected| connected.threads.get(&subagent_session_id));
+        let content = self.render_subagent_card(
+            self.thread.read(cx).session_id(),
+            entry_ix,
+            card_id,
+            &SubagentCardState::from_acp_subagent(subagent.read(cx)),
+            subagent_thread_view,
+            &self.focus_handle(cx),
+            window,
+            cx,
+        );
+
+        v_flex()
+            .mx_5()
+            .my_1p5()
+            .gap_3()
+            .debug_selector(move || format!("subagent-card-{entry_ix}"))
+            .child(content)
     }
 
     /// How this conversation names another of its sessions, or `None` when it has no thread
@@ -11999,7 +12067,7 @@ impl ThreadView {
         let content = self.render_subagent_card(
             active_session_id,
             entry_ix,
-            &tool_call.id,
+            &SubagentCardId::ToolCall(tool_call.id.clone()),
             &SubagentCardState::from_tool_call(tool_call, cx),
             subagent_thread_view,
             focus_handle,
@@ -12010,13 +12078,11 @@ impl ThreadView {
         v_flex().mx_5().my_1p5().gap_3().child(content)
     }
 
-    /// `card_id` keys the card's expansion state and element IDs, since the same
-    /// subagent can have one card per message it was sent.
     fn render_subagent_card(
         &self,
         active_session_id: &acp_v2::SessionId,
         entry_ix: usize,
-        card_id: &acp_v2::ToolCallId,
+        card_id: &SubagentCardId,
         state: &SubagentCardState,
         thread_view: Option<&Entity<ThreadView>>,
         focus_handle: &FocusHandle,
@@ -12042,10 +12108,7 @@ impl ThreadView {
             })
             .is_some();
 
-        let is_expanded = self
-            .entry_view_state
-            .read(cx)
-            .is_tool_call_expanded(card_id);
+        let is_expanded = self.is_subagent_card_expanded(card_id, cx);
         let files_changed = changed_buffers.len();
         let diff_stats = DiffStats::all_files(changed_buffers, cx);
 
@@ -12099,6 +12162,15 @@ impl ThreadView {
                 SubagentStatus::Completed => Icon::new(IconName::Check)
                     .size(IconSize::Small)
                     .color(Color::Success)
+                    .into_any_element(),
+                SubagentStatus::Unknown => div()
+                    .id(status_icon)
+                    .child(
+                        Icon::new(IconName::CircleHelp)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .tooltip(Tooltip::text("Subagent Status Unknown"))
                     .into_any_element(),
             });
 
@@ -12233,10 +12305,7 @@ impl ThreadView {
                                         let card_id = card_id.clone();
                                         move |this, _, window, cx| {
                                             let expanded =
-                                                this.entry_view_state.update(cx, |state, _cx| {
-                                                    state.toggle_tool_call_expansion(&card_id);
-                                                    state.is_tool_call_expanded(&card_id)
-                                                });
+                                                this.toggle_subagent_card_expansion(&card_id, cx);
                                             this.materialize_tool_call_views(entry_ix, window, cx);
                                             this.refresh_thread_search(window, cx);
                                             telemetry::event!("Subagent Toggled", expanded);
@@ -12247,22 +12316,29 @@ impl ThreadView {
                     )
                     .when(state.can_stop && subagent_session_id.is_some(), |buttons| {
                         buttons.child(
-                            IconButton::new(format!("stop-subagent-{}", entry_ix), IconName::Stop)
-                                .icon_size(IconSize::Small)
-                                .icon_color(Color::Error)
-                                .tooltip(Tooltip::text("Stop Subagent"))
-                                .when_some(
-                                    thread_view
-                                        .as_ref()
-                                        .map(|view| view.read(cx).thread.clone()),
-                                    |this, thread| {
-                                        this.on_click(cx.listener(
-                                            move |this, _event, _window, cx| {
-                                                telemetry::event!("Subagent Stopped");
-                                                this.cancel_thread(&thread, cx).detach();
-                                            },
-                                        ))
-                                    },
+                            div()
+                                .debug_selector(move || format!("stop-subagent-{entry_ix}"))
+                                .child(
+                                    IconButton::new(
+                                        format!("stop-subagent-{}", entry_ix),
+                                        IconName::Stop,
+                                    )
+                                    .icon_size(IconSize::Small)
+                                    .icon_color(Color::Error)
+                                    .tooltip(Tooltip::text("Stop Subagent"))
+                                    .when_some(
+                                        thread_view
+                                            .as_ref()
+                                            .map(|view| view.read(cx).thread.clone()),
+                                        |this, thread| {
+                                            this.on_click(cx.listener(
+                                                move |this, _event, _window, cx| {
+                                                    telemetry::event!("Subagent Stopped");
+                                                    this.cancel_thread(&thread, cx).detach();
+                                                },
+                                            ))
+                                        },
+                                    ),
                                 ),
                         )
                     }),
@@ -12344,10 +12420,31 @@ impl ThreadView {
             .into_any_element()
     }
 
+    fn is_subagent_card_expanded(&self, card_id: &SubagentCardId, cx: &App) -> bool {
+        let state = self.entry_view_state.read(cx);
+        match card_id {
+            SubagentCardId::ToolCall(id) => state.is_tool_call_expanded(id),
+            SubagentCardId::SessionMessage(id) => state.is_session_message_card_expanded(id),
+        }
+    }
+
+    /// Returns whether the card is expanded afterwards.
+    fn toggle_subagent_card_expansion(
+        &mut self,
+        card_id: &SubagentCardId,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.entry_view_state.update(cx, |state, _| match card_id {
+            SubagentCardId::ToolCall(id) => state.toggle_tool_call_expansion(id),
+            SubagentCardId::SessionMessage(id) => state.toggle_session_message_card_expansion(id),
+        });
+        self.is_subagent_card_expanded(card_id, cx)
+    }
+
     fn render_subagent_expanded_content(
         &self,
         thread_view: &Entity<ThreadView>,
-        card_id: &acp_v2::ToolCallId,
+        card_id: &SubagentCardId,
         state: &SubagentCardState,
         window: &Window,
         cx: &Context<Self>,
@@ -12411,7 +12508,7 @@ impl ThreadView {
                     // Include the card id so the same subagent session
                     // rendered in multiple parent cards gets distinct element
                     // ids for its inlined entries (avoids duplicate a11y ids).
-                    .id(format!("subagent-entries-{}-{}", session_id, card_id.0))
+                    .id(format!("subagent-entries-{}-{}", session_id, card_id))
                     .track_scroll(&scroll_handle)
                     .children(rendered_entries),
             )
