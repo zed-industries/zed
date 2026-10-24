@@ -1,6 +1,7 @@
 use std::{
     cell::{RefCell, RefMut},
     hash::Hash,
+    ops::Range,
     os::{
         fd::{AsRawFd, BorrowedFd, FromRawFd as _, RawFd},
         unix::net::UnixStream,
@@ -367,6 +368,7 @@ pub(crate) struct WaylandClientState {
     text_input: Option<zwp_text_input_v3::ZwpTextInputV3>,
     pre_edit_text: Option<String>,
     ime_pre_edit: Option<String>,
+    ime_pre_edit_range: Option<Range<usize>>,
     composing: bool,
     last_ime_cursor_rectangle: Option<ImeCursorRectangle>,
     // Surface to Window mapping
@@ -1071,6 +1073,7 @@ impl WaylandConnection {
             text_input: None,
             pre_edit_text: None,
             ime_pre_edit: None,
+            ime_pre_edit_range: None,
             composing: false,
             last_ime_cursor_rectangle: None,
             outputs: HashMap::default(),
@@ -2176,7 +2179,8 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                                     let pre_edit =
                                         state.pre_edit_text.clone().unwrap_or(String::default());
                                     drop(state);
-                                    focused_window.handle_ime(ImeInput::SetMarkedText(pre_edit));
+                                    focused_window
+                                        .handle_ime(ImeInput::SetMarkedText(pre_edit, None));
                                     state = client.borrow_mut();
                                 }
 
@@ -2197,7 +2201,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                                     }
                                     if let Some(current_key) = new_pre_edit {
                                         focused_window
-                                            .handle_ime(ImeInput::SetMarkedText(current_key));
+                                            .handle_ime(ImeInput::SetMarkedText(current_key, None));
                                     }
                                     compose.feed(keysym);
                                     state = client.borrow_mut();
@@ -2320,8 +2324,15 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
                     }
                 }
             }
-            zwp_text_input_v3::Event::PreeditString { text, .. } => {
+            zwp_text_input_v3::Event::PreeditString {
+                text,
+                cursor_begin,
+                cursor_end,
+            } => {
                 state.composing = true;
+                state.ime_pre_edit_range = text.as_deref().and_then(|text| {
+                    utf8_byte_range_to_utf16_range(text, cursor_begin, cursor_end)
+                });
                 state.ime_pre_edit = text;
             }
             zwp_text_input_v3::Event::Done { serial } => {
@@ -2332,8 +2343,9 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
                 };
 
                 if let Some(text) = state.ime_pre_edit.take() {
+                    let range = state.ime_pre_edit_range.take();
                     drop(state);
-                    window.handle_ime(ImeInput::SetMarkedText(text));
+                    window.handle_ime(ImeInput::SetMarkedText(text, range));
                     if let Some(area) = window.get_ime_area() {
                         let mut state = client.borrow_mut();
                         set_ime_cursor_rectangle_after_done(
@@ -2345,6 +2357,7 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
                     }
                 } else {
                     state.composing = false;
+                    state.ime_pre_edit_range = None;
                     drop(state);
                     window.handle_ime(ImeInput::DeleteText);
                 }
@@ -2352,6 +2365,21 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
             _ => {}
         }
     }
+}
+
+fn utf8_byte_range_to_utf16_range(
+    text: &str,
+    cursor_begin: i32,
+    cursor_end: i32,
+) -> Option<Range<usize>> {
+    let begin = usize::try_from(cursor_begin).ok()?;
+    let end = usize::try_from(cursor_end).ok()?;
+    if begin > end {
+        return None;
+    }
+    let start_utf16 = text.get(..begin)?.encode_utf16().count();
+    let end_utf16 = text.get(..end)?.encode_utf16().count();
+    Some(start_utf16..end_utf16)
 }
 
 fn linux_button_to_gpui(button: u32) -> Option<MouseButton> {
@@ -3192,6 +3220,67 @@ mod tests {
     use std::cell::Cell;
 
     use super::*;
+
+    #[test]
+    fn ascii_ranges_map_one_to_one() {
+        assert_eq!(utf8_byte_range_to_utf16_range("abc", 1, 2), Some(1..2));
+        assert_eq!(utf8_byte_range_to_utf16_range("abc", 0, 3), Some(0..3));
+    }
+
+    #[test]
+    fn empty_range_is_a_plain_cursor() {
+        assert_eq!(utf8_byte_range_to_utf16_range("abc", 0, 0), Some(0..0));
+        assert_eq!(utf8_byte_range_to_utf16_range("abc", 3, 3), Some(3..3));
+        assert_eq!(utf8_byte_range_to_utf16_range("", 0, 0), Some(0..0));
+    }
+
+    #[test]
+    fn bmp_multibyte_chars_count_as_one_utf16_unit() {
+        assert_eq!(utf8_byte_range_to_utf16_range("çğ", 2, 4), Some(1..2));
+        assert_eq!(utf8_byte_range_to_utf16_range("çğ", 0, 4), Some(0..2));
+        assert_eq!(utf8_byte_range_to_utf16_range("日本語", 3, 6), Some(1..2));
+        assert_eq!(utf8_byte_range_to_utf16_range("日本語", 0, 9), Some(0..3));
+    }
+
+    #[test]
+    fn mixed_ascii_and_multibyte_offsets_are_converted() {
+        assert_eq!(utf8_byte_range_to_utf16_range("aあb", 1, 4), Some(1..2));
+        assert_eq!(utf8_byte_range_to_utf16_range("aあb", 4, 5), Some(2..3));
+    }
+
+    #[test]
+    fn surrogate_pairs_count_as_two_utf16_units() {
+        assert_eq!(utf8_byte_range_to_utf16_range("a😀b", 1, 5), Some(1..3));
+        assert_eq!(utf8_byte_range_to_utf16_range("a😀b", 5, 6), Some(3..4));
+        assert_eq!(utf8_byte_range_to_utf16_range("a😀b", 0, 6), Some(0..4));
+    }
+
+    #[test]
+    fn offset_inside_a_char_is_rejected() {
+        assert_eq!(utf8_byte_range_to_utf16_range("çğ", 1, 2), None);
+        assert_eq!(utf8_byte_range_to_utf16_range("日本", 1, 3), None);
+        assert_eq!(utf8_byte_range_to_utf16_range("日本", 0, 2), None);
+        assert_eq!(utf8_byte_range_to_utf16_range("😀", 0, 2), None);
+    }
+
+    #[test]
+    fn negative_offsets_are_rejected() {
+        assert_eq!(utf8_byte_range_to_utf16_range("abc", -1, -1), None);
+        assert_eq!(utf8_byte_range_to_utf16_range("abc", -1, 2), None);
+        assert_eq!(utf8_byte_range_to_utf16_range("abc", 0, -1), None);
+    }
+
+    #[test]
+    fn inverted_range_is_rejected() {
+        assert_eq!(utf8_byte_range_to_utf16_range("abc", 2, 1), None);
+    }
+
+    #[test]
+    fn out_of_bounds_offsets_are_rejected() {
+        assert_eq!(utf8_byte_range_to_utf16_range("abc", 0, 4), None);
+        assert_eq!(utf8_byte_range_to_utf16_range("abc", 4, 4), None);
+        assert_eq!(utf8_byte_range_to_utf16_range("", 0, 1), None);
+    }
 
     #[test]
     fn rejects_required_globals_below_supported_versions() {
