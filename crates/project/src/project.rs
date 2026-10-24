@@ -1122,11 +1122,22 @@ impl DirectoryLister {
         project
             .visible_worktrees(cx)
             .next()
-            .map(|worktree| worktree.read(cx).abs_path().to_string_lossy().into_owned())
+            .map(|worktree| {
+                let worktree = worktree.read(cx);
+                let abs_path = worktree.abs_path();
+                let directory = if worktree.root_entry().is_some_and(|entry| entry.is_file()) {
+                    path_style.parent(&abs_path).unwrap_or(&abs_path)
+                } else {
+                    &abs_path
+                };
+                directory.to_string_lossy().into_owned()
+            })
             .or_else(|| std::env::home_dir().map(|dir| dir.to_string_lossy().into_owned()))
-            .map(|mut s| {
-                s.push_str(path_style.primary_separator());
-                s
+            .map(|mut query| {
+                if !query.ends_with(path_style.separators_ch()) {
+                    query.push_str(path_style.primary_separator());
+                }
+                query
             })
             .unwrap_or_else(|| {
                 if path_style.is_windows() {

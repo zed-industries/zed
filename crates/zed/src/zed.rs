@@ -99,8 +99,8 @@ use vim_mode_setting::VimModeSetting;
 use workspace::notifications::{NotificationId, dismiss_app_notification, show_app_notification};
 
 use workspace::{
-    AppState, MultiWorkspace, NewFile, NewWindow, OpenLog, Panel, Toast, Workspace,
-    WorkspaceSettings, create_and_open_local_file,
+    AppState, MultiWorkspace, NewFile, NewWindow, OpenLog, OpenPathPromptMode, Panel, Toast,
+    Workspace, WorkspaceSettings, create_and_open_local_file,
     notifications::simple_message_notification::MessageNotification, open_new,
 };
 use workspace::{CloseProject, CloseWindow, RestoreBanner, with_active_or_new_workspace};
@@ -1088,12 +1088,14 @@ fn register_actions(
                     multiple: true,
                     prompt: None,
                 },
-                action.create_new_window.unwrap_or_else(|| {
-                    matches!(
-                        WorkspaceSettings::get_global(cx).default_open_behavior,
-                        DefaultOpenBehavior::NewWindow
-                    )
-                }),
+                if action.create_new_window.unwrap_or_else(|| {
+                    WorkspaceSettings::get_global(cx).default_open_behavior
+                        == DefaultOpenBehavior::NewWindow
+                }) {
+                    OpenPathPromptMode::NewWindow
+                } else {
+                    OpenPathPromptMode::CurrentWindow
+                },
                 window,
                 cx,
             );
@@ -1109,7 +1111,13 @@ fn register_actions(
                     multiple: true,
                     prompt: None,
                 },
-                true,
+                if WorkspaceSettings::get_global(cx).default_open_behavior
+                    == DefaultOpenBehavior::NewWindow
+                {
+                    OpenPathPromptMode::NewWindow
+                } else {
+                    OpenPathPromptMode::CurrentWindow
+                },
                 window,
                 cx,
             );
@@ -1138,19 +1146,24 @@ fn register_actions(
                     prompt: None,
                 },
                 DirectoryLister::Project(workspace.project().clone()),
+                if create_new_window {
+                    OpenPathPromptMode::NewWindow
+                } else {
+                    OpenPathPromptMode::CurrentWindow
+                },
                 window,
                 cx,
             );
             cx.spawn_in(window, async move |this, cx| {
-                let Some(paths) = paths.await.log_err().flatten() else {
+                let Some(result) = paths.await.log_err().flatten() else {
                     return;
                 };
                 if let Some(task) = this
                     .update_in(cx, |this, window, cx| {
                         open_new_ssh_project_from_project(
                             this,
-                            paths,
-                            create_new_window,
+                            result.paths,
+                            result.open_in_new_window,
                             window,
                             cx,
                         )
@@ -2909,8 +2922,8 @@ mod tests {
     };
     use workspace::MultiWorkspace;
     use workspace::{
-        NewFile, OpenOptions, OpenVisible, SERIALIZATION_THROTTLE_TIME, SaveIntent, SplitDirection,
-        WorkspaceHandle,
+        NewFile, OpenOptions, OpenPathPromptResult, OpenVisible, SERIALIZATION_THROTTLE_TIME,
+        SaveIntent, SplitDirection, WorkspaceHandle,
         item::SaveOptions,
         item::{Item, ItemHandle},
         open_new, open_paths, pane,
@@ -3137,10 +3150,13 @@ mod tests {
         window
             .update(cx, |multi_workspace, window, cx| {
                 multi_workspace.workspace().update(cx, |workspace, _cx| {
-                    workspace.set_prompt_for_open_path(Box::new(|_, _, _, _| {
+                    workspace.set_prompt_for_open_path(Box::new(|_, _, mode, _, _| {
                         let (sender, receiver) = futures::channel::oneshot::channel();
                         sender
-                            .send(Some(vec![PathBuf::from(path!("/other-project"))]))
+                            .send(Some(OpenPathPromptResult {
+                                paths: vec![PathBuf::from(path!("/other-project"))],
+                                open_in_new_window: mode == OpenPathPromptMode::NewWindow,
+                            }))
                             .expect("path prompt receiver should be open");
                         receiver
                     }));
@@ -3163,6 +3179,38 @@ mod tests {
         );
         cx.simulate_prompt_answer("Cancel");
         executor.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_open_from_no_windows(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/root"), json!({ "file.txt": "" }))
+            .await;
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.use_system_path_prompts = Some(true);
+                settings.workspace.default_open_behavior = Some(DefaultOpenBehavior::NewWindow);
+            });
+        });
+        assert_eq!(cx.windows().len(), 0);
+        cx.update(|cx| cx.dispatch_action(&workspace::Open::default()));
+        cx.run_until_parked();
+        cx.simulate_path_prompt_response(|_| Some(vec![PathBuf::from(path!("/root/file.txt"))]));
+        cx.run_until_parked();
+        assert_eq!(cx.windows().len(), 1);
+        cx.windows()[0]
+            .downcast::<MultiWorkspace>()
+            .unwrap()
+            .update(cx, |multi_workspace, _, cx| {
+                assert_eq!(
+                    multi_workspace.workspace().read(cx).open_item_abs_paths(cx),
+                    vec![PathBuf::from(path!("/root/file.txt"))]
+                );
+            })
+            .unwrap();
     }
 
     #[gpui::test]

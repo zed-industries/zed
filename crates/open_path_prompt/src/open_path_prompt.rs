@@ -7,7 +7,7 @@ use file_finder_settings::FileFinderSettings;
 use file_icons::FileIcons;
 use futures::channel::oneshot;
 use fuzzy::{CharBag, StringMatch, StringMatchCandidate};
-use gpui::{HighlightStyle, StyledText, Task};
+use gpui::{Action, HighlightStyle, StyledText, Task};
 use picker::{Picker, PickerDelegate};
 use project::{DirectoryItem, DirectoryLister};
 use settings::SettingsStore;
@@ -19,18 +19,19 @@ use std::{
         atomic::{self, AtomicBool},
     },
 };
-use ui::{Context, LabelLike, ListItem, Window};
+use ui::{Context, KeyBinding, LabelLike, ListItem, Window};
 use ui::{HighlightedLabel, ListItemSpacing, prelude::*};
 use util::{
     ResultExt, maybe,
     paths::{PathStyle, compare_paths},
 };
-use workspace::Workspace;
+use workspace::{OpenPathPromptMode, OpenPathPromptResult, Workspace};
 
 pub struct OpenPathPrompt;
 
 pub struct OpenPathDelegate {
-    tx: Option<oneshot::Sender<Option<Vec<PathBuf>>>>,
+    on_confirm: Option<Box<dyn FnOnce(Option<OpenPathPromptResult>)>>,
+    mode: OpenPathPromptMode,
     lister: DirectoryLister,
     selected_index: usize,
     directory_state: DirectoryState,
@@ -53,31 +54,15 @@ impl OpenPathDelegate {
         creating_path: bool,
         cx: &App,
     ) -> Self {
-        let path_style = lister.path_style(cx);
-        let sort_mode = cx
-            .try_global::<SettingsStore>()
-            .and_then(|store| store.merged_settings().project_panel.as_ref()?.sort_mode)
-            .unwrap_or_default();
-        Self {
-            tx: Some(tx),
+        Self::with_confirmation(
+            Box::new(move |result| {
+                tx.send(result.map(|result| result.paths)).ok();
+            }),
             lister,
-            selected_index: 0,
-            directory_state: DirectoryState::None {
-                create: creating_path,
-            },
-            string_matches: Vec::new(),
-            cancel_flag: Arc::new(AtomicBool::new(false)),
-            should_dismiss: true,
-            prompt_root: match path_style {
-                PathStyle::Unix => "/".to_string(),
-                PathStyle::Windows => "C:\\".to_string(),
-            },
-            path_style,
-            replace_prompt: Task::ready(()),
-            render_footer: Arc::new(|_, _| None),
-            hidden_entries: false,
-            sort_mode,
-        }
+            creating_path,
+            OpenPathPromptMode::SelectPath,
+            cx,
+        )
     }
 
     pub fn with_footer(
@@ -157,6 +142,92 @@ impl OpenPathDelegate {
         }
     }
 
+    fn for_open(
+        tx: oneshot::Sender<Option<OpenPathPromptResult>>,
+        lister: DirectoryLister,
+        mode: OpenPathPromptMode,
+        cx: &App,
+    ) -> Self {
+        let delegate = Self::with_confirmation(
+            Box::new(move |result| {
+                tx.send(result).ok();
+            }),
+            lister,
+            false,
+            mode,
+            cx,
+        );
+        if mode == OpenPathPromptMode::SelectPath {
+            return delegate;
+        }
+        delegate.with_footer(Arc::new(move |_, cx| {
+            let (primary_label, secondary_label) = if mode == OpenPathPromptMode::NewWindow {
+                ("New Window", "This Window")
+            } else {
+                ("This Window", "New Window")
+            };
+            Some(
+                h_flex()
+                    .flex_1()
+                    .p_1p5()
+                    .gap_1()
+                    .justify_end()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(
+                        Button::new("open_secondary", secondary_label)
+                            .key_binding(KeyBinding::for_action(&menu::SecondaryConfirm, cx))
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
+                            }),
+                    )
+                    .child(
+                        Button::new("open_primary", primary_label)
+                            .key_binding(KeyBinding::for_action(&menu::Confirm, cx))
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(menu::Confirm.boxed_clone(), cx)
+                            }),
+                    )
+                    .into_any_element(),
+            )
+        }))
+    }
+
+    fn with_confirmation(
+        on_confirm: Box<dyn FnOnce(Option<OpenPathPromptResult>)>,
+        lister: DirectoryLister,
+        creating_path: bool,
+        mode: OpenPathPromptMode,
+        cx: &App,
+    ) -> Self {
+        let path_style = lister.path_style(cx);
+        let sort_mode = cx
+            .try_global::<SettingsStore>()
+            .and_then(|store| store.merged_settings().project_panel.as_ref()?.sort_mode)
+            .unwrap_or_default();
+        Self {
+            on_confirm: Some(on_confirm),
+            mode,
+            lister,
+            selected_index: 0,
+            directory_state: DirectoryState::None {
+                create: creating_path,
+            },
+            string_matches: Vec::new(),
+            cancel_flag: Arc::new(AtomicBool::new(false)),
+            should_dismiss: true,
+            prompt_root: match path_style {
+                PathStyle::Unix => "/".to_string(),
+                PathStyle::Windows => "C:\\".to_string(),
+            },
+            path_style,
+            replace_prompt: Task::ready(()),
+            render_footer: Arc::new(|_, _| None),
+            hidden_entries: false,
+            sort_mode,
+        }
+    }
+
     fn current_dir(&self) -> &'static str {
         match self.path_style {
             PathStyle::Unix => "./",
@@ -201,9 +272,10 @@ impl OpenPathPrompt {
         _window: Option<&mut Window>,
         _: &mut Context<Workspace>,
     ) {
-        workspace.set_prompt_for_open_path(Box::new(|workspace, lister, window, cx| {
-            let (tx, rx) = futures::channel::oneshot::channel();
-            Self::prompt_for_open_path(workspace, lister, false, None, tx, window, cx);
+        workspace.set_prompt_for_open_path(Box::new(|workspace, lister, mode, window, cx| {
+            let (tx, rx) = oneshot::channel();
+            let delegate = OpenPathDelegate::for_open(tx, lister, mode, cx);
+            Self::prompt_for_path(workspace, delegate, None, window, cx);
             rx
         }));
     }
@@ -215,44 +287,30 @@ impl OpenPathPrompt {
     ) {
         workspace.set_prompt_for_new_path(Box::new(
             |workspace, lister, suggested_name, window, cx| {
-                let (tx, rx) = futures::channel::oneshot::channel();
-                Self::prompt_for_new_path(workspace, lister, suggested_name, tx, window, cx);
+                let (tx, rx) = oneshot::channel();
+                let delegate = OpenPathDelegate::new(tx, lister, true, cx);
+                Self::prompt_for_path(workspace, delegate, suggested_name, window, cx);
                 rx
             },
         ));
     }
 
-    fn prompt_for_open_path(
+    fn prompt_for_path(
         workspace: &mut Workspace,
-        lister: DirectoryLister,
-        creating_path: bool,
+        delegate: OpenPathDelegate,
         suggested_name: Option<String>,
-        tx: oneshot::Sender<Option<Vec<PathBuf>>>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
         workspace.toggle_modal(window, cx, |window, cx| {
-            let delegate =
-                OpenPathDelegate::new(tx, lister.clone(), creating_path, cx).show_hidden();
-            let picker = Picker::uniform_list(delegate, window, cx);
-            let mut query = lister.default_query(cx);
+            let mut query = delegate.lister.default_query(cx);
+            let picker = Picker::uniform_list(delegate.show_hidden(), window, cx);
             if let Some(suggested_name) = suggested_name {
                 query.push_str(&suggested_name);
             }
             picker.set_query(&query, window, cx);
             picker
         });
-    }
-
-    fn prompt_for_new_path(
-        workspace: &mut Workspace,
-        lister: DirectoryLister,
-        suggested_name: Option<String>,
-        tx: oneshot::Sender<Option<Vec<PathBuf>>>,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) {
-        Self::prompt_for_open_path(workspace, lister, true, suggested_name, tx, window, cx);
     }
 }
 
@@ -659,9 +717,14 @@ impl PickerDelegate for OpenPathDelegate {
         )
     }
 
-    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let Some(candidate) = self.get_entry(self.selected_index) else {
             return;
+        };
+        let open_in_new_window = match self.mode {
+            OpenPathPromptMode::SelectPath => false,
+            OpenPathPromptMode::CurrentWindow => secondary,
+            OpenPathPromptMode::NewWindow => !secondary,
         };
 
         match &self.directory_state {
@@ -683,8 +746,11 @@ impl PickerDelegate for OpenPathDelegate {
                         };
                         confirmed_path
                     };
-                if let Some(tx) = self.tx.take() {
-                    tx.send(Some(vec![confirmed_path])).ok();
+                if let Some(on_confirm) = self.on_confirm.take() {
+                    on_confirm(Some(OpenPathPromptResult {
+                        paths: vec![confirmed_path],
+                        open_in_new_window,
+                    }));
                 }
             }
             DirectoryState::Create {
@@ -732,16 +798,22 @@ impl PickerDelegate for OpenPathDelegate {
                                     if answer != Some(0) {
                                         return;
                                     }
-                                    if let Some(tx) = picker.delegate.tx.take() {
-                                        tx.send(Some(vec![prompted_path])).ok();
+                                    if let Some(on_confirm) = picker.delegate.on_confirm.take() {
+                                        on_confirm(Some(OpenPathPromptResult {
+                                            paths: vec![prompted_path],
+                                            open_in_new_window,
+                                        }));
                                     }
                                     cx.emit(gpui::DismissEvent);
                                 })
                                 .ok();
                         });
                         return;
-                    } else if let Some(tx) = self.tx.take() {
-                        tx.send(Some(vec![prompted_path])).ok();
+                    } else if let Some(on_confirm) = self.on_confirm.take() {
+                        on_confirm(Some(OpenPathPromptResult {
+                            paths: vec![prompted_path],
+                            open_in_new_window,
+                        }));
                     }
                 }
             },
@@ -756,8 +828,8 @@ impl PickerDelegate for OpenPathDelegate {
 
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.cancel_flag.store(true, atomic::Ordering::Release);
-        if let Some(tx) = self.tx.take() {
-            tx.send(None).ok();
+        if let Some(on_confirm) = self.on_confirm.take() {
+            on_confirm(None);
         }
         cx.emit(gpui::DismissEvent)
     }

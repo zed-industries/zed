@@ -28,7 +28,7 @@ const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 use crate::open_remote_project_with_existing_connection;
 use crate::{
     CloseIntent, CloseWindow, DockPosition, Event as WorkspaceEvent, Item, ModalView, OpenMode,
-    Panel, Workspace, WorkspaceId, client_side_decorations,
+    OpenOptions, OpenVisible, Panel, Workspace, WorkspaceId, client_side_decorations,
     persistence::model::MultiWorkspaceState,
 };
 
@@ -1982,7 +1982,35 @@ impl MultiWorkspace {
             })
         } else {
             let workspace = self.workspace().clone();
-            cx.spawn_in(window, async move |_this, cx| {
+            let project = workspace.read(cx).project().read(cx);
+            let reuse_workspace = open_mode != OpenMode::NewWindow
+                && project.is_local()
+                && project.visibility_for_paths(&paths, true, cx).is_some();
+            cx.spawn_in(window, async move |_, cx| {
+                if reuse_workspace {
+                    let results = workspace
+                        .update_in(cx, |workspace, window, cx| {
+                            workspace.open_paths(
+                                paths,
+                                OpenOptions {
+                                    visible: Some(OpenVisible::All),
+                                    ..OpenOptions::default()
+                                },
+                                None,
+                                window,
+                                cx,
+                            )
+                        })?
+                        .await;
+                    workspace.update(cx, |workspace, cx| {
+                        for result in results.into_iter().flatten() {
+                            if let Err(error) = result {
+                                workspace.show_error(error, cx);
+                            }
+                        }
+                    });
+                    return Ok(workspace);
+                }
                 let should_continue = workspace
                     .update_in(cx, |workspace, window, cx| {
                         workspace.prepare_to_close(crate::CloseIntent::ReplaceWindow, window, cx)
@@ -1991,9 +2019,18 @@ impl MultiWorkspace {
                 if should_continue {
                     workspace
                         .update_in(cx, |workspace, window, cx| {
-                            workspace.open_workspace_for_paths(open_mode, paths, window, cx)
+                            Workspace::new_local(
+                                paths,
+                                workspace.app_state().clone(),
+                                window.window_handle().downcast(),
+                                None,
+                                None,
+                                open_mode,
+                                cx,
+                            )
                         })?
                         .await
+                        .map(|result| result.workspace)
                 } else {
                     Ok(workspace)
                 }
