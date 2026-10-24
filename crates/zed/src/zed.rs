@@ -7994,6 +7994,139 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_last_session_falls_back_to_last_workspace_when_session_id_is_orphaned(
+        cx: &mut TestAppContext,
+    ) {
+        use session::Session;
+        use workspace::{OpenMode, Workspace};
+
+        let app_state = init_test(cx);
+
+        let restored_dir = path!("/dir_opened_in_first_session");
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(restored_dir, json!({}))
+            .await;
+
+        // Open a workspace in the first session so its record is saved to the database.
+        let workspace::OpenResult { window, .. } = cx
+            .update(|cx| {
+                Workspace::new_local(
+                    vec![restored_dir.into()],
+                    app_state.clone(),
+                    None,
+                    None,
+                    None,
+                    OpenMode::Activate,
+                    cx,
+                )
+            })
+            .await
+            .expect("failed to open workspace");
+        cx.run_until_parked();
+        flush_workspace_serialization(&window, cx).await;
+
+        window
+            .update(cx, |_, window, _| window.remove_window())
+            .unwrap();
+        cx.run_until_parked();
+
+        // Reproduce a second instance having overwritten the saved session id: a restart
+        // after that finds no workspaces for the session it is asked to restore.
+        cx.update(|cx| {
+            app_state.session.update(cx, |app_session, _cx| {
+                app_session.replace_session_for_test(Session::test_with_old_session(
+                    "replaced-by-second-instance".to_string(),
+                ));
+            });
+        });
+
+        let mut async_cx = cx.to_async();
+        let locations = crate::restorable_workspace_locations(&mut async_cx, &app_state)
+            .await
+            .expect("an orphaned session id must fall back to the last opened workspace");
+        assert_eq!(
+            locations.len(),
+            1,
+            "expected the last opened workspace to be restored, got {locations:?}"
+        );
+        assert!(
+            locations[0]
+                .paths
+                .paths()
+                .iter()
+                .any(|path| path.as_path() == Path::new(restored_dir)),
+            "expected {restored_dir} to be restored, got {:?}",
+            locations[0].paths.paths()
+        );
+    }
+
+    #[gpui::test]
+    async fn test_restore_on_startup_disabled_does_not_fall_back_to_last_workspace(
+        cx: &mut TestAppContext,
+    ) {
+        use session::Session;
+        use workspace::{self, OpenMode, Workspace};
+
+        let app_state = init_test(cx);
+
+        // A user who disabled restoration must not have a project opened by the fallback.
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.workspace.restore_on_startup =
+                        Some(workspace::RestoreOnStartupBehavior::EmptyTab);
+                });
+            });
+        });
+
+        let kept_dir = path!("/dir_with_restoration_disabled");
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(kept_dir, json!({}))
+            .await;
+
+        let workspace::OpenResult { window, .. } = cx
+            .update(|cx| {
+                Workspace::new_local(
+                    vec![kept_dir.into()],
+                    app_state.clone(),
+                    None,
+                    None,
+                    None,
+                    OpenMode::Activate,
+                    cx,
+                )
+            })
+            .await
+            .expect("failed to open workspace");
+        cx.run_until_parked();
+        flush_workspace_serialization(&window, cx).await;
+
+        window
+            .update(cx, |_, window, _| window.remove_window())
+            .unwrap();
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            app_state.session.update(cx, |app_session, _cx| {
+                app_session.replace_session_for_test(Session::test_with_old_session(
+                    "replaced-by-second-instance".to_string(),
+                ));
+            });
+        });
+
+        let mut async_cx = cx.to_async();
+        let locations = crate::restorable_workspace_locations(&mut async_cx, &app_state).await;
+        assert!(
+            locations.is_none(),
+            "disabling restoration must not fall back to the last workspace, got {locations:?}"
+        );
+    }
+
+    #[gpui::test]
     async fn test_reload_restores_project_windows_and_tabs(cx: &mut TestAppContext) {
         use session::Session;
 
