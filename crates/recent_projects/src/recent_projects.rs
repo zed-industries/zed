@@ -1,5 +1,6 @@
 mod dev_container_suggest;
 pub mod disconnected_overlay;
+mod port_forwarding;
 mod remote_connections;
 mod remote_servers;
 pub mod sidebar_recent_projects;
@@ -32,6 +33,7 @@ use picker::{
     Picker, PickerDelegate, ScrollBehavior,
     highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
 };
+pub use port_forwarding::PortForwardingPopover;
 use project::{Worktree, git_store::Repository};
 pub use remote_connections::RemoteSettings;
 pub use remote_servers::RemoteServerProjects;
