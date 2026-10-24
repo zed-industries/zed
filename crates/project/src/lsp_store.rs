@@ -5633,6 +5633,38 @@ impl LspStore {
                     buffer.set_content_language_detection_enabled(false);
                 });
                 self.set_language_for_buffer(buffer_handle, new_language, cx);
+            } else {
+                // The language is registered but its first load is still in
+                // flight, so the synchronous poll above came up empty. The
+                // registry notifications for the registration and the load
+                // completion may both predate our maintain_buffer_languages
+                // subscription (extension-provided languages load fast,
+                // before the workspace finished opening), which means no
+                // re-detection will ever be triggered for this buffer.
+                // Await a fresh receiver and apply the load when it resolves,
+                // or the buffer stays language-less and its language servers
+                // never start.
+                let load = self.languages.load_language(available_language);
+                let buffer = buffer_handle.clone();
+                cx.spawn(async move |this, cx| {
+                    let Some(new_language) =
+                        load.await.log_err().and_then(|result| result.log_err())
+                    else {
+                        return;
+                    };
+                    this.update(cx, |this, cx| {
+                        // Only apply if the buffer is still unresolved;
+                        // don't override a language set in the meantime.
+                        let is_unresolved = buffer.read(cx).language().is_none_or(
+                            |current| current == &*language::PLAIN_TEXT,
+                        );
+                        if is_unresolved {
+                            this.set_language_for_buffer(&buffer, new_language, cx);
+                        }
+                    })
+                    .ok();
+                })
+                .detach();
             }
         } else {
             cx.emit(LspStoreEvent::LanguageDetected {

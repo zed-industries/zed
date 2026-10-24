@@ -301,6 +301,11 @@ impl LanguageRegistry {
             .all_lsp_adapters
             .insert(cached.name.clone(), cached.clone());
         state.version += 1;
+        // Notify subscribers: buffers that were opened (and possibly had
+        // their language set) before this adapter existed need a re-register
+        // pass so their language servers actually start. Extension-provided
+        // adapters register after the wasm extension loads, which can be
+        // well after the workspace restored its first buffers.
         *state.subscription.0.borrow_mut() = ();
     }
 

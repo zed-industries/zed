@@ -118,6 +118,30 @@ fn preview_launch_args(task_id: &str, entry_path: &str) -> Vec<String> {
     ]
 }
 
+/// Send `tinymist.doKillPreview` for `task_id`, disposing the server-side
+/// preview task (its renderer stops compiling and the data plane shuts down).
+///
+/// Killing an unknown task ID is not an error for us — the goal is that no
+/// task with this ID remains, whether or not one existed — so callers treat
+/// an error response the same as success (logged, not propagated).
+pub(crate) async fn kill_preview_via_lsp(
+    server: &Arc<LanguageServer>,
+    task_id: &str,
+    request_timeout: Duration,
+) -> Result<()> {
+    let kill_params = lsp::ExecuteCommandParams {
+        command: "tinymist.doKillPreview".into(),
+        arguments: vec![serde_json::json!(task_id)],
+        ..Default::default()
+    };
+    log::info!("typst_viewer: sending tinymist.doKillPreview for {task_id}");
+    server
+        .request::<lsp::request::ExecuteCommand>(kill_params, request_timeout)
+        .await
+        .into_response()
+        .map(|_| ())
+}
+
 /// Send `tinymist.doStartPreview` to the language server and return the
 /// WebSocket URL for the data plane.
 ///
@@ -139,15 +163,9 @@ pub async fn start_preview_via_lsp(
     // Kill any existing preview for this file — tinymist only allows one
     // preview per task ID, and the previous one may not have been cleaned
     // up (e.g. the pane was closed without sending doKillPreview).
-    let kill_params = lsp::ExecuteCommandParams {
-        command: "tinymist.doKillPreview".into(),
-        arguments: vec![serde_json::json!(task_id)],
-        ..Default::default()
-    };
-    log::info!("typst_viewer: sending tinymist.doKillPreview for {task_id}");
-    let _ = server
-        .request::<lsp::request::ExecuteCommand>(kill_params, request_timeout)
-        .await;
+    if let Err(err) = kill_preview_via_lsp(&server, &task_id, request_timeout).await {
+        log::info!("typst_viewer: doKillPreview before start failed: {err:#}");
+    }
 
     let args = preview_launch_args(&task_id, entry_str);
 

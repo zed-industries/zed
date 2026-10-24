@@ -133,6 +133,31 @@ impl TypstPreviewView {
         });
     }
 
+    /// Reset and restart the connection for a preview that reached a
+    /// terminal state. `start_connection` runs `start_preview_via_lsp`,
+    /// which kills the old server-side task first, so this is safe even if
+    /// a stale task is somehow still alive.
+    fn restart_connection(&mut self, cx: &mut Context<Self>) {
+        log::info!("typst_viewer: restarting preview connection after terminal state");
+        self.page_sources.clear();
+        self.glyph_defs.clear();
+        self.pending_rasterize.clear();
+        self.state = PreviewState::Connecting;
+        self.start_connection(cx);
+        cx.notify();
+    }
+
+    /// The task ID tinymist knows this preview by: the entry file's absolute
+    /// path string, identical to the ID used when the preview was started.
+    fn preview_task_id(&self, cx: &App) -> Option<String> {
+        self.source_buffer
+            .as_ref()
+            .and_then(|buffer| buffer.read(cx).file())
+            .and_then(|file| file.as_local())
+            .map(|file| file.abs_path(cx))
+            .and_then(|path| path.to_str().map(str::to_string))
+    }
+
     /// Try to get a WebSocket URL by asking the tinymist LSP to start a
     /// preview. Returns `None` if tinymist isn't available.
     /// Also returns any LSP subscriptions that must be kept alive.
@@ -704,7 +729,7 @@ impl TypstPreviewView {
         pane: &Pane,
         buffer: &Entity<MultiBuffer>,
         cx: &App,
-    ) -> Option<usize> {
+    ) -> Option<(Entity<TypstPreviewView>, usize)> {
         let buffer_id = buffer.read(cx).as_singleton()?.entity_id();
         pane.items_of_type::<TypstPreviewView>()
             .find(|view| {
@@ -713,7 +738,7 @@ impl TypstPreviewView {
                     .as_ref()
                     .is_some_and(|buffer| buffer.entity_id() == buffer_id)
             })
-            .and_then(|view| pane.index_for_item(&view))
+            .and_then(|view| pane.index_for_item(&view).map(|idx| (view, idx)))
     }
 
     pub fn register(workspace: &mut Workspace, _window: &mut Window, _cx: &mut Context<Workspace>) {
@@ -722,16 +747,23 @@ impl TypstPreviewView {
                 && Self::is_typst_file(&buffer, cx)
             {
                 let project = workspace.project().clone();
-                let view = TypstPreviewView::new(buffer.clone(), project, window, cx);
-                workspace.active_pane().update(cx, |pane, cx| {
-                    if let Some(existing_idx) =
-                        Self::find_existing_preview_item_idx(pane, &buffer, cx)
-                    {
+                let pane = workspace.active_pane().clone();
+                if let Some((existing, existing_idx)) =
+                    Self::find_existing_preview_item_idx(pane.read(cx), &buffer, cx)
+                {
+                    pane.update(cx, |pane, cx| {
+                        Self::revive_if_terminal(&existing, cx);
                         pane.activate_item(existing_idx, true, true, window, cx);
-                    } else {
+                    });
+                } else {
+                    // Only build the view when actually adding it: the
+                    // constructor starts an LSP round-trip whose kill leg
+                    // could tear down a reused preview.
+                    let view = TypstPreviewView::new(buffer.clone(), project, window, cx);
+                    pane.update(cx, |pane, cx| {
                         pane.add_item(Box::new(view), true, true, None, window, cx);
-                    }
-                });
+                    });
+                }
                 cx.notify();
             }
         });
@@ -741,7 +773,6 @@ impl TypstPreviewView {
                 && Self::is_typst_file(&buffer, cx)
             {
                 let project = workspace.project().clone();
-                let view = TypstPreviewView::new(buffer.clone(), project, window, cx);
                 let pane = workspace
                     .find_pane_in_direction(workspace::SplitDirection::Right, cx)
                     .unwrap_or_else(|| {
@@ -752,18 +783,41 @@ impl TypstPreviewView {
                             cx,
                         )
                     });
-                pane.update(cx, |pane, cx| {
-                    if let Some(existing_idx) =
-                        Self::find_existing_preview_item_idx(pane, &buffer, cx)
-                    {
+                if let Some((existing, existing_idx)) =
+                    Self::find_existing_preview_item_idx(pane.read(cx), &buffer, cx)
+                {
+                    pane.update(cx, |pane, cx| {
+                        Self::revive_if_terminal(&existing, cx);
                         pane.activate_item(existing_idx, true, true, window, cx);
-                    } else {
+                    });
+                } else {
+                    let view = TypstPreviewView::new(buffer.clone(), project, window, cx);
+                    pane.update(cx, |pane, cx| {
                         pane.add_item(Box::new(view), false, false, None, window, cx);
-                    }
-                });
+                    });
+                }
                 cx.notify();
             }
         });
+    }
+
+    /// Reconnect a reused preview that died: a dropped WebSocket or a
+    /// failed connect can't recover on its own, and without this the
+    /// keybinding would just focus a dead tab. Compile errors recover by
+    /// themselves once a save succeeds, so they are left alone.
+    fn revive_if_terminal(existing: &Entity<TypstPreviewView>, cx: &mut App) {
+        existing.update(cx, |view, cx| {
+            if Self::is_terminal_state(&view.state) {
+                view.restart_connection(cx);
+            }
+        });
+    }
+
+    fn is_terminal_state(state: &PreviewState) -> bool {
+        matches!(
+            state,
+            PreviewState::Disconnected { .. } | PreviewState::Error { .. }
+        )
     }
 }
 
@@ -958,6 +1012,53 @@ impl Item for TypstPreviewView {
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
         Some("typst preview: open")
+    }
+
+    /// The pane dropped this tab: dispose the matching server-side task so
+    /// tinymist stops compiling a document nobody watches. Deliberately
+    /// `on_removed` (fires once per real removal) and NOT `deactivated`,
+    /// which also fires when switching the active tab and would kill the
+    /// preview of a document the user merely navigated away from.
+    fn on_removed(&self, cx: &mut Context<Self>) {
+        let Some(task_id) = self.preview_task_id(cx) else {
+            log::info!(
+                "typst_viewer: preview tab removed without a file path; \
+                 skipping tinymist.doKillPreview"
+            );
+            return;
+        };
+
+        let buffer = self.source_buffer.as_ref().map(|buffer| buffer.read(cx));
+        let server_id = crate::find_tinymist_server(&self.project.read(cx), buffer, cx);
+        let request_timeout = project::project_settings::ProjectSettings::get_global(cx)
+            .global_lsp_settings
+            .get_request_timeout();
+
+        let server = server_id.and_then(|server_id| {
+            self.project
+                .read(cx)
+                .lsp_store()
+                .read(cx)
+                .language_server_for_id(server_id)
+        });
+        match server {
+            Some(server) => {
+                // Detached on purpose: the view is going away, but this task
+                // only touches the server and plain data, never the view.
+                cx.spawn(async move |_this, _cx| {
+                    if let Err(err) = crate::kill_preview_via_lsp(&server, &task_id, request_timeout)
+                        .await
+                    {
+                        log::info!("typst_viewer: doKillPreview after tab close failed: {err:#}");
+                    }
+                })
+                .detach();
+            }
+            None => log::info!(
+                "typst_viewer: tinymist server not running; \
+                 skipping doKillPreview for {task_id}"
+            ),
+        }
     }
 
     fn to_item_events(_event: &Self::Event, _f: &mut dyn FnMut(workspace::item::ItemEvent)) {}
@@ -1322,6 +1423,30 @@ mod error_frame_tests {
         assert_eq!(parse_error_frame("not json"), vec!["not json"]);
         let empty = r#"{"kind":"compileError","errors":[]}"#;
         assert_eq!(parse_error_frame(empty), vec![empty]);
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::{PreviewState, TypstPreviewView};
+
+    #[test]
+    fn terminal_states_are_disconnected_and_error_only() {
+        assert!(TypstPreviewView::is_terminal_state(&PreviewState::Disconnected {
+            reason: "server closed".into()
+        }));
+        assert!(TypstPreviewView::is_terminal_state(&PreviewState::Error {
+            message: "connect failed".into()
+        }));
+        // These recover by themselves (frames keep arriving / retries
+        // pending), so reviving them would discard live state.
+        assert!(!TypstPreviewView::is_terminal_state(&PreviewState::Connecting));
+        assert!(!TypstPreviewView::is_terminal_state(&PreviewState::Rendering {
+            pages: vec![None]
+        }));
+        assert!(!TypstPreviewView::is_terminal_state(&PreviewState::CompileError {
+            errors: vec!["unknown variable: hi".into()]
+        }));
     }
 }
 
