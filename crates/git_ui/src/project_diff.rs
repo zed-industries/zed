@@ -43,7 +43,7 @@ actions!(
     git,
     [
         /// Shows the diff against the configured diff base: working changes
-        /// relative to HEAD, or all branch changes relative to the default
+        /// relative to HEAD, or all branch changes relative to the default or parent
         /// branch, following the `git.diff_base` setting.
         Diff,
         /// Shows working changes relative to HEAD.
@@ -60,8 +60,8 @@ actions!(
     ]
 );
 
-/// Shows the diff between the working directory and your default
-/// branch (typically main or master).
+/// Shows the diff against the default branch, or the inferred parent branch
+/// when `git.diff_base` is `parent_branch`.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = git, name = "DiffBranch", deprecated_aliases = ["git::BranchDiff"])]
 pub(crate) struct DeployBranchDiff;
@@ -88,7 +88,9 @@ impl ProjectDiff {
                     let git = settings.git.get_or_insert_default();
                     git.diff_base = Some(match git.diff_base.unwrap_or_default() {
                         GitDiffBaseSetting::Head => GitDiffBaseSetting::DefaultBranch,
-                        GitDiffBaseSetting::DefaultBranch => GitDiffBaseSetting::Head,
+                        GitDiffBaseSetting::DefaultBranch | GitDiffBaseSetting::ParentBranch => {
+                            GitDiffBaseSetting::Head
+                        }
                     });
                 },
             );
@@ -121,7 +123,7 @@ impl ProjectDiff {
         cx: &mut Context<Workspace>,
     ) {
         let project = workspace.project().clone();
-        if project.read(cx).git_store().read(cx).diff_base() == GitDiffBaseSetting::DefaultBranch {
+        if project.read(cx).git_store().read(cx).diff_base() != GitDiffBaseSetting::Head {
             BranchDiff::deploy_branch_diff(workspace, window, cx);
             return;
         }

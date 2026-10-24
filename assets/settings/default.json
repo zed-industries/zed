@@ -1880,7 +1880,8 @@
     // 2. Show unstaged hunks hollow and staged hunks filled:
     //    "hunk_style": "unstaged_hollow"
     "hunk_style": "staged_hollow",
-    // Whether git features diff against HEAD ("head") or the default branch ("default_branch").
+    // Whether git features diff against HEAD ("head"), the default branch
+    // ("default_branch"), or the nearest inferred parent branch ("parent_branch").
     "diff_base": "head",
     // Should the name or path be displayed first in the git view.
     // "path_style": "file_name_first" or "file_path_first"
