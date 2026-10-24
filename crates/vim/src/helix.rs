@@ -3866,6 +3866,20 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_vim_jump_pushes_to_jump_list(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_vim_jump_to_word(&mut cx, "g z");
+        cx.set_state("ˇone two\nthree four\nfive six", Mode::Normal);
+
+        jump_to_word_with_keystrokes(&mut cx, "g z", "five");
+        cx.assert_state("one two\nthree four\nˇfive six", Mode::Normal);
+        cx.simulate_keystrokes("ctrl-o");
+        cx.run_until_parked();
+
+        cx.assert_state("ˇone two\nthree four\nfive six", Mode::Normal);
+    }
+
+    #[gpui::test]
     async fn test_helix_jump_consumes_label_keystrokes_before_ime(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         bind_vim_jump_to_word(&mut cx, "s");
