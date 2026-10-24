@@ -15179,18 +15179,14 @@ mod tests {
                 vec![
                     Path::new(path!("/project"))
                         .join("crates/editor/src/inlays/inlay_hints.rs:394"),
-                    Path::new(path!("/project"))
-                        .join("crates/editor/src/inlays")
-                        .join("inlay_hints.rs"),
+                    Path::new(path!("/project")).join("crates/editor/src/inlays/inlay_hints.rs"),
                 ],
             ),
             (
                 "crates/editor/src/element.rs:608".to_string(),
                 vec![
                     Path::new(path!("/project")).join("crates/editor/src/element.rs:608"),
-                    Path::new(path!("/project"))
-                        .join("crates/editor/src")
-                        .join("element.rs"),
+                    Path::new(path!("/project")).join("crates/editor/src/element.rs"),
                 ],
             ),
             (missing_file_uri.clone(), Vec::new()),
@@ -15198,9 +15194,7 @@ mod tests {
                 "../outside/missing.md:2".to_string(),
                 vec![
                     Path::new(path!("/project")).join("../outside/missing.md:2"),
-                    Path::new(path!("/project"))
-                        .join("../outside")
-                        .join("missing.md"),
+                    Path::new(path!("/project")).join("../outside/missing.md"),
                 ],
             ),
             (
