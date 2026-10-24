@@ -53,8 +53,8 @@ const SEEK_STEP: Duration = Duration::from_secs(5);
 const POSITION_REFRESH_INTERVAL: Duration = Duration::from_millis(100);
 const VOLUME_STEP: f32 = 0.1;
 
-pub fn is_audio_file(path: &ProjectPath) -> bool {
-    path.path.extension().is_some_and(|extension| {
+pub fn is_audio_file(path: &Path) -> bool {
+    path.extension().is_some_and(|extension| {
         AUDIO_EXTENSIONS
             .iter()
             .any(|audio_extension| extension.eq_ignore_ascii_case(audio_extension))
@@ -124,11 +124,13 @@ impl project::ProjectItem for AudioItem {
         path: &ProjectPath,
         cx: &mut App,
     ) -> Option<Task<Result<Entity<Self>>>> {
-        if !is_audio_file(path) {
+        let worktree: Entity<Worktree> = project.read(cx).worktree_for_id(path.worktree_id, cx)?;
+        // A file opened on its own gets a worktree whose root is the file, so its path inside the
+        // worktree is empty and only the absolute path has the extension.
+        if !is_audio_file(&worktree.read(cx).absolutize(&path.path)) {
             return None;
         }
         // Playback reads the file from disk, which remote worktrees cannot provide.
-        let worktree: Entity<Worktree> = project.read(cx).worktree_for_id(path.worktree_id, cx)?;
         if !worktree.read(cx).is_local() {
             return None;
         }
@@ -989,8 +991,7 @@ mod tests {
     use gpui::{TestAppContext, VisualTestContext};
     use settings::SettingsStore;
     use util::rel_path::rel_path;
-    use workspace::item::ItemHandle;
-    use worktree::WorktreeId;
+    use workspace::{OpenOptions, OpenVisible, item::ItemHandle};
 
     use super::*;
     use crate::playback::tests::write_wav;
@@ -1107,16 +1108,63 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_audio_file_outside_the_project_opens_in_the_audio_viewer(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        let directory = tempfile::tempdir().expect("temp dir should be created");
+        let project_root = directory.path().join("project");
+        std::fs::create_dir(&project_root).expect("project directory should be created");
+        let song = directory.path().join("Song.WAV");
+        write_wav(&song, 8000, 16000);
+        let project = Project::test(
+            RealFs::new(None, cx.executor()),
+            [project_root.as_path()],
+            cx,
+        )
+        .await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let item = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_abs_path(
+                    song.clone(),
+                    OpenOptions {
+                        visible: Some(OpenVisible::None),
+                        ..OpenOptions::default()
+                    },
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .expect("audio file should open");
+        cx.run_until_parked();
+        let audio_viewer = item
+            .downcast::<AudioViewer>()
+            .expect("an audio file outside the project should open in the audio viewer");
+        audio_viewer.read_with(cx, |audio_viewer, cx| {
+            assert_eq!(audio_viewer.tab_content_text(0, cx), "Song.WAV");
+            assert!(
+                audio_viewer.audio_item.read(cx).file.path().is_empty(),
+                "the file should be the root of its own worktree"
+            );
+            assert!(
+                matches!(audio_viewer.track, Track::Loaded { .. }),
+                "the track should be loaded"
+            );
+        });
+    }
+
     #[test]
     fn test_is_audio_file() {
-        let project_path = |path| ProjectPath {
-            worktree_id: WorktreeId::from_usize(0),
-            path: rel_path(path).into(),
-        };
-        assert!(is_audio_file(&project_path("song.mp3")));
-        assert!(is_audio_file(&project_path("Song.FLAC")));
-        assert!(!is_audio_file(&project_path("voice.opus")));
-        assert!(!is_audio_file(&project_path("notes.txt")));
+        assert!(is_audio_file(Path::new("song.mp3")));
+        assert!(is_audio_file(Path::new("/music/Song.FLAC")));
+        assert!(!is_audio_file(Path::new("voice.opus")));
+        assert!(!is_audio_file(Path::new("notes.txt")));
     }
 
     #[test]
