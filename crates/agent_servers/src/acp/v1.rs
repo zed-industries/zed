@@ -79,6 +79,8 @@ pub struct AcpConnection {
     auth_methods: Vec<acp_v2::AuthMethod>,
     agent_server_store: WeakEntity<AgentServerStore>,
     agent_capabilities: acp::AgentCapabilities,
+    /// Whether Zed advertised the subagents RFD, so the agent reports subagents with it.
+    accepts_subagent_updates: bool,
     request_elicitations: Entity<ElicitationStore>,
     defaults: AcpConnectionDefaults,
     _child: Option<transport::OwnedChild>,
@@ -561,13 +563,14 @@ impl AcpConnection {
         let request_elicitations = cx.new(|_| ElicitationStore::default());
         let client_capabilities = client_capabilities_for_agent(&agent_id);
 
+        let accepts_subagent_updates = client_capabilities.subagents.is_some();
         let dispatch_context = ClientContext {
             sessions: sessions.clone(),
             session_list: client_session_list.clone(),
             request_elicitations: request_elicitations.clone(),
             active_request_scopes: None,
             pending_session_updates: None,
-            accepts_subagent_updates: client_capabilities.subagents.is_some(),
+            accepts_subagent_updates,
         };
         let (mut runtime, shutdown) = runtime::ClientRuntime::new(dispatch_context, cx);
         let dispatch_tx = runtime.sender();
@@ -718,6 +721,7 @@ impl AcpConnection {
             sessions,
             pending_sessions: RefCell::new(HashMap::default()),
             agent_capabilities: response.agent_capabilities,
+            accepts_subagent_updates,
             request_elicitations,
             defaults,
             session_list,
@@ -742,6 +746,7 @@ impl AcpConnection {
         connection: ConnectionTo<Agent>,
         sessions: Rc<RefCell<HashMap<acp_v2::SessionId, AcpSession>>>,
         agent_capabilities: acp::AgentCapabilities,
+        accepts_subagent_updates: bool,
         request_elicitations: Entity<ElicitationStore>,
         agent_server_store: WeakEntity<AgentServerStore>,
         io_task: Task<()>,
@@ -763,6 +768,7 @@ impl AcpConnection {
             auth_methods: vec![],
             agent_server_store,
             agent_capabilities,
+            accepts_subagent_updates,
             request_elicitations,
             defaults,
             _child: None,
@@ -1459,6 +1465,10 @@ impl AgentConnection for AcpConnection {
 
     fn supports_load_session(&self) -> bool {
         self.agent_capabilities.load_session
+    }
+
+    fn announces_subagents(&self) -> bool {
+        self.accepts_subagent_updates
     }
 
     fn supports_resume_session(&self) -> bool {
@@ -2273,6 +2283,7 @@ pub mod test_support {
                 client_conn,
                 sessions,
                 agent_capabilities,
+                false,
                 request_elicitations,
                 agent_server_store,
                 client_io_task,
@@ -6969,6 +6980,7 @@ mod tests {
                 client_conn,
                 sessions,
                 acp::AgentCapabilities::default(),
+                false,
                 request_elicitations,
                 WeakEntity::new_invalid(),
                 client_io_task,
@@ -7594,6 +7606,7 @@ exit 7
                 client_conn,
                 sessions,
                 agent_capabilities,
+                accepts_subagent_updates,
                 request_elicitations,
                 agent_server_store,
                 client_io_task,
@@ -8935,6 +8948,11 @@ exit 7
             _keep_agent_alive,
         ) = connect_fake_agent(None, cx).await;
 
+        assert!(
+            !connection.announces_subagents(),
+            "a v1 connection that did not advertise subagents does not follow the RFD"
+        );
+
         // Queue up some history updates that the fake agent will stream to
         // the client during the `load_session` call, before responding.
         *load_session_updates
@@ -9015,6 +9033,10 @@ exit 7
                 cx,
             )
             .await;
+        assert!(
+            connection.announces_subagents(),
+            "a v1 connection that advertised subagents follows the RFD"
+        );
         *load_session_updates
             .lock()
             .expect("load_session_updates mutex poisoned") = vec![
