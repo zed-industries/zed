@@ -3040,19 +3040,11 @@ impl Sidebar {
                                             return;
                                         }
                                         this.update(cx, |sidebar, cx| {
-                                            if let Some(workspace) =
-                                                sidebar.workspace_for_group(&project_group_key, cx)
-                                            {
-                                                sidebar.activate_workspace(&workspace, window, cx);
-                                            } else {
-                                                sidebar.open_workspace_for_group(
-                                                    &project_group_key,
-                                                    window,
-                                                    cx,
-                                                );
-                                            }
-                                            sidebar.selection = None;
-                                            sidebar.active_entry = None;
+                                            sidebar.activate_or_open_workspace_for_group(
+                                                &project_group_key,
+                                                window,
+                                                cx,
+                                            );
                                         })
                                         .ok();
                                     }
@@ -7146,6 +7138,8 @@ impl Sidebar {
         }
     }
 
+    /// Return the active workspace when it belongs to the group
+    /// Otherwise, return the workspace for project path.
     fn workspace_for_group(&self, key: &ProjectGroupKey, cx: &App) -> Option<Entity<Workspace>> {
         let mw = self.multi_workspace.upgrade()?;
         let mw = mw.read(cx);
@@ -7154,10 +7148,11 @@ impl Sidebar {
         if active_key == *key {
             Some(active)
         } else {
-            mw.workspaces_for_project_group(key, cx).next().cloned()
+            mw.workspace_for_paths(key.path_list(), key.host(), cx)
         }
     }
 
+    /// Activates or opens a workspace for the group, preferring its last active one.
     pub(crate) fn activate_or_open_workspace_for_group(
         &mut self,
         key: &ProjectGroupKey,
@@ -7235,9 +7230,7 @@ impl Sidebar {
 
         if let Some(workspace) = self.multi_workspace.upgrade().and_then(|mw| {
             mw.read(cx)
-                .workspaces_for_project_group(&key, cx)
-                .next()
-                .cloned()
+                .workspace_for_paths(key.path_list(), key.host(), cx)
         }) {
             multi_workspace.update(cx, |multi_workspace, cx| {
                 multi_workspace.activate(workspace, None, window, cx);
