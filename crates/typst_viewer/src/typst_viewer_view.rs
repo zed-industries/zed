@@ -944,7 +944,7 @@ impl TypstPreviewView {
                 cx,
             ));
 
-        if let Some((status_text, status_color)) = export_status(&self.export_state) {
+        if let Some((status_text, status_color)) = export_status(&self.export_state, self.export_background) {
             // The status takes the remaining width and truncates, so a long
             // output path or error cannot push the toolbar apart.
             toolbar = toolbar.child(
@@ -1734,10 +1734,25 @@ async fn run_typst_compile(typst_exe: &Path, input: &Path, output: &Path) -> any
 
 /// Toolbar status line for the current export state: `None` while idle, so
 /// nothing is shown until an export starts.
-fn export_status(state: &ExportState) -> Option<(SharedString, Color)> {
+fn export_status(
+    state: &ExportState,
+    background: ExportBackground,
+) -> Option<(SharedString, Color)> {
     match state {
-        // Nothing while idle, and none while only the save dialog is open.
-        ExportState::Idle | ExportState::AwaitingPath => None,
+        // While idle (and while the save dialog is up) the toolbar shows the
+        // selected export background, so toggling Paper/Theme has an
+        // immediately visible effect even without a pending export.
+        ExportState::Idle | ExportState::AwaitingPath => Some((
+            format!(
+                "Export background: {}",
+                match background {
+                    ExportBackground::Paper => "Paper",
+                    ExportBackground::Theme => "Theme",
+                }
+            )
+            .into(),
+            Color::Muted,
+        )),
         ExportState::Running => Some(("Exporting…".into(), Color::Muted)),
         ExportState::Success { output_path } => Some((output_path.clone().into(), Color::Muted)),
         ExportState::Failed { reason } => {
@@ -2013,8 +2028,9 @@ mod on_demand_tests {
 #[cfg(test)]
 mod export_tests {
     use super::{
-        export_bg_document, export_bg_prelude, export_bg_wrapper_name, pdf_output_path,
-        rgba_to_hex, suggested_pdf_name, typst_candidates,
+        export_bg_document, export_bg_prelude, export_bg_wrapper_name, export_status,
+        pdf_output_path, rgba_to_hex, suggested_pdf_name, typst_candidates, ExportBackground,
+        ExportState,
     };
     use gpui::Rgba;
     use std::path::Path;
@@ -2047,6 +2063,16 @@ mod export_tests {
         // Without a file name there is no suggestion; the export reports
         // a failure instead of opening a dialog.
         assert!(suggested_pdf_name(Path::new("..")).is_none());
+    }
+
+    #[test]
+    fn export_status_shows_background_while_idle() {
+        let (text, _) = export_status(&ExportState::Idle, ExportBackground::Paper)
+            .expect("idle shows the background");
+        assert_eq!(text.as_ref(), "Export background: Paper");
+        let (text, _) = export_status(&ExportState::Idle, ExportBackground::Theme)
+            .expect("idle shows the background");
+        assert_eq!(text.as_ref(), "Export background: Theme");
     }
 
     #[test]
