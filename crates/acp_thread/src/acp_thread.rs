@@ -6282,8 +6282,10 @@ impl AcpThread {
             })
     }
 
+    /// The latest tool call that ran the subagent `session_id`. A resumed subagent has one
+    /// per run, and the latest says how the subagent's current work went.
     pub fn tool_call_for_subagent(&self, session_id: &acp_v2::SessionId) -> Option<&ToolCall> {
-        self.entries.iter().find_map(|entry| match entry {
+        self.entries.iter().rev().find_map(|entry| match entry {
             AgentThreadEntry::ToolCall(tool_call) => {
                 if let Some(subagent_session_info) = &tool_call.subagent_session_info
                     && &subagent_session_info.session_id == session_id
@@ -17191,6 +17193,35 @@ mod tests {
             RequestPermissionOutcome::Cancelled
         ));
         cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_for_subagent_is_its_latest_run(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            for (id, status) in [
+                ("first-run", acp_v1::ToolCallStatus::Failed),
+                ("resumed-run", acp_v1::ToolCallStatus::InProgress),
+            ] {
+                thread
+                    .upsert_tool_call(
+                        acp_v1::ToolCall::new(acp_v1::ToolCallId::new(id), "Run subagent")
+                            .status(status)
+                            .meta(acp_v1::Meta::from_iter([(
+                                SUBAGENT_SESSION_INFO_META_KEY.into(),
+                                json!({"session_id": "child", "message_start_index": 0}),
+                            )])),
+                        cx,
+                    )
+                    .expect("tool call");
+            }
+            let latest = thread
+                .tool_call_for_subagent(&acp_v2::SessionId::new("child"))
+                .expect("the subagent has a tool call");
+            assert_eq!(latest.id, acp_v2::ToolCallId::new("resumed-run"));
+            assert_eq!(latest.status(), ToolCallStatus::InProgress);
+        });
     }
 
     #[gpui::test]
