@@ -1309,6 +1309,19 @@ impl AgentDiff {
         });
     }
 
+    #[cfg(test)]
+    pub(crate) fn reviewed_thread(
+        workspace: &WeakEntity<Workspace>,
+        cx: &mut App,
+    ) -> Option<Entity<AcpThread>> {
+        Self::global(cx)
+            .read(cx)
+            .workspace_threads
+            .get(workspace)?
+            .thread
+            .upgrade()
+    }
+
     fn register_active_thread_impl(
         &mut self,
         workspace: &WeakEntity<Workspace>,
