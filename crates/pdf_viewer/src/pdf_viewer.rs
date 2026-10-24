@@ -1324,11 +1324,13 @@ mod persistence {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use fs::{FakeFs, Fs as _};
     use gpui::{TestAppContext, VisualTestContext};
     use settings::SettingsStore;
     use util::{path, rel_path::rel_path};
-    use workspace::item::ItemHandle;
+    use workspace::{OpenOptions, OpenVisible, item::ItemHandle};
 
     use super::*;
     use crate::pdf_document::tests::build_pdf;
@@ -1409,6 +1411,50 @@ mod tests {
 
         pdf_viewer.read_with(cx, |pdf_viewer, cx| {
             assert_eq!(pdf_viewer.tab_content_text(0, cx), "Doc.PDF");
+            assert_eq!(pdf_viewer.document.page_count(), 1);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_pdf_outside_the_project_opens_in_the_pdf_viewer(cx: &mut TestAppContext) {
+        let fs = init_test(cx);
+        for directory in [path!("/root"), path!("/outside")] {
+            fs.create_dir(Path::new(directory))
+                .await
+                .expect("test directory should be created");
+        }
+        fs.insert_file(
+            path!("/outside/doc.pdf"),
+            build_pdf(&[(72.0, 720.0, "Hello")]),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new(path!("/root"))], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let item = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_abs_path(
+                    PathBuf::from(path!("/outside/doc.pdf")),
+                    OpenOptions {
+                        visible: Some(OpenVisible::None),
+                        ..OpenOptions::default()
+                    },
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .expect("PDF should open");
+        let pdf_viewer = item
+            .downcast::<PdfViewer>()
+            .expect("a PDF outside the project should open in the PDF viewer");
+        pdf_viewer.read_with(cx, |pdf_viewer, cx| {
+            assert_eq!(pdf_viewer.tab_content_text(0, cx), "doc.pdf");
+            assert!(
+                pdf_viewer.pdf_item.read(cx).file().path.is_empty(),
+                "the file should be the root of its own worktree"
+            );
             assert_eq!(pdf_viewer.document.page_count(), 1);
         });
     }

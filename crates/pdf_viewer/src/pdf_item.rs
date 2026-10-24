@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
@@ -24,9 +24,8 @@ pub enum PdfItemEvent {
 
 impl EventEmitter<PdfItemEvent> for PdfItem {}
 
-pub fn is_pdf_file(path: &ProjectPath) -> bool {
-    path.path
-        .extension()
+pub fn is_pdf_file(path: &Path) -> bool {
+    path.extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"))
 }
 
@@ -168,11 +167,13 @@ impl ProjectItem for PdfItem {
         path: &ProjectPath,
         cx: &mut App,
     ) -> Option<Task<Result<Entity<Self>>>> {
-        if !is_pdf_file(path) {
+        let worktree = project.read(cx).worktree_for_id(path.worktree_id, cx)?;
+        // A file opened on its own gets a worktree whose root is the file, so its path inside the
+        // worktree is empty and only the absolute path has the extension.
+        if !is_pdf_file(&worktree.read(cx).absolutize(&path.path)) {
             return None;
         }
         // Remote worktrees cannot load binary files yet, so remote PDFs keep the default view.
-        let worktree = project.read(cx).worktree_for_id(path.worktree_id, cx)?;
         if !worktree.read(cx).is_local() {
             return None;
         }
