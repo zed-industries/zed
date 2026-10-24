@@ -73,8 +73,8 @@ pub enum PlayerState {
     Failed(String),
 }
 
-pub fn is_video_file(path: &ProjectPath) -> bool {
-    path.path.extension().is_some_and(|extension| {
+pub fn is_video_file(path: &Path) -> bool {
+    path.extension().is_some_and(|extension| {
         VIDEO_EXTENSIONS
             .iter()
             .any(|video_extension| extension.eq_ignore_ascii_case(video_extension))
@@ -137,11 +137,13 @@ impl project::ProjectItem for VideoItem {
         path: &ProjectPath,
         cx: &mut App,
     ) -> Option<Task<Result<Entity<Self>>>> {
-        if !is_video_file(path) {
+        let worktree: Entity<Worktree> = project.read(cx).worktree_for_id(path.worktree_id, cx)?;
+        // A file opened on its own gets a worktree whose root is the file, so its path inside the
+        // worktree is empty and only the absolute path has the extension.
+        if !is_video_file(&worktree.read(cx).absolutize(&path.path)) {
             return None;
         }
         // The platform player reads the file from disk, which remote worktrees cannot provide.
-        let worktree: Entity<Worktree> = project.read(cx).worktree_for_id(path.worktree_id, cx)?;
         if !worktree.read(cx).is_local() {
             return None;
         }
@@ -999,8 +1001,7 @@ mod tests {
     use gpui::{TestAppContext, VisualTestContext};
     use settings::SettingsStore;
     use util::{path, rel_path::rel_path};
-    use workspace::item::ItemHandle;
-    use worktree::WorktreeId;
+    use workspace::{OpenOptions, OpenVisible, item::ItemHandle};
 
     use super::*;
 
@@ -1081,17 +1082,52 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_video_file_outside_the_project_opens_in_the_video_viewer(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        for directory in [path!("/root"), path!("/outside")] {
+            fs.create_dir(Path::new(directory))
+                .await
+                .expect("test directory should be created");
+        }
+        fs.insert_file(path!("/outside/Clip.MOV"), b"not a video".to_vec())
+            .await;
+        let project = Project::test(fs, [Path::new(path!("/root"))], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let item = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_abs_path(
+                    PathBuf::from(path!("/outside/Clip.MOV")),
+                    OpenOptions {
+                        visible: Some(OpenVisible::None),
+                        ..OpenOptions::default()
+                    },
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .expect("video file should open");
+        let video_viewer = item
+            .downcast::<VideoViewer>()
+            .expect("a video file outside the project should open in the video viewer");
+        video_viewer.read_with(cx, |video_viewer, cx| {
+            assert_eq!(video_viewer.tab_content_text(0, cx), "Clip.MOV");
+        });
+    }
+
     #[test]
     fn test_is_video_file() {
-        let project_path = |path| ProjectPath {
-            worktree_id: WorktreeId::from_usize(0),
-            path: rel_path(path).into(),
-        };
-        assert!(is_video_file(&project_path("clip.mp4")));
-        assert!(is_video_file(&project_path("Clip.MOV")));
-        assert!(!is_video_file(&project_path("song.mp3")));
+        assert!(is_video_file(Path::new("clip.mp4")));
+        assert!(is_video_file(Path::new("/videos/Clip.MOV")));
+        assert!(!is_video_file(Path::new("song.mp3")));
         assert_eq!(
-            is_video_file(&project_path("film.mkv")),
+            is_video_file(Path::new("film.mkv")),
             cfg!(target_os = "windows")
         );
     }
