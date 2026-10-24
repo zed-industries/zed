@@ -594,6 +594,8 @@ actions!(
         ScrollUp,
         /// Selects a commit half a page below the current selection.
         ScrollDown,
+        /// Selects the checked-out commit and scrolls it to the center of the view.
+        CenterOnHead,
         /// Toggles the selected commit's changed files between flat and tree views.
         ToggleChangedFilesView,
     ]
@@ -1382,6 +1384,36 @@ fn compute_diff_stats(diff: &CommitDiff) -> (usize, usize) {
     })
 }
 
+/// The rows that get a background highlight, shared by the graph canvas, the
+/// ref label gutter, and the commit table so their row bands line up.
+#[derive(Clone, Copy)]
+struct RowHighlights {
+    selected_entry_idx: Option<usize>,
+    hovered_entry_idx: Option<usize>,
+    context_menu_entry_idx: Option<usize>,
+    head: Option<(usize, Hsla)>,
+}
+
+impl RowHighlights {
+    fn background(&self, row_idx: usize, is_focused: bool, cx: &App) -> Option<Hsla> {
+        let colors = cx.theme().colors();
+        if self.selected_entry_idx == Some(row_idx) || self.context_menu_entry_idx == Some(row_idx)
+        {
+            Some(if is_focused {
+                colors.element_selected
+            } else {
+                colors.element_hover
+            })
+        } else if self.hovered_entry_idx == Some(row_idx) {
+            Some(colors.element_hover.opacity(0.6))
+        } else {
+            self.head
+                .filter(|(head_entry_idx, _)| *head_entry_idx == row_idx)
+                .map(|(_, head_bg)| head_bg)
+        }
+    }
+}
+
 struct GitGraphContextMenu {
     menu: Entity<ContextMenu>,
     position: Point<Pixels>,
@@ -1874,6 +1906,44 @@ impl GitGraph {
         })
     }
 
+    /// Returns the index of the checked-out commit. This is resolved from the
+    /// HEAD SHA rather than from ref names so that a detached HEAD is found
+    /// as well.
+    fn head_entry_idx(&self, cx: &App) -> Option<usize> {
+        let repository = self.get_repository(cx)?;
+        let repository = repository.read(cx);
+        let head_sha: Oid = repository.head_commit.as_ref()?.sha.parse().ok()?;
+        let head_entry_idx = *repository
+            .get_graph_data(self.log_source.clone(), self.log_order)?
+            .commit_oid_to_index
+            .get(&head_sha)?;
+        (head_entry_idx < self.graph_data.commits.len()).then_some(head_entry_idx)
+    }
+
+    /// Returns the index of the checked-out commit along with the background
+    /// used to highlight its row.
+    fn head_row_highlight(&self, cx: &App) -> Option<(usize, Hsla)> {
+        let head_entry_idx = self.head_entry_idx(cx)?;
+        let head_commit = self.graph_data.commits.get(head_entry_idx)?;
+        let accent_color = cx
+            .theme()
+            .accents()
+            .color_for_index(head_commit.color_idx as u32);
+        Some((head_entry_idx, accent_color.opacity(0.08)))
+    }
+
+    fn row_highlights(&self, cx: &App) -> RowHighlights {
+        RowHighlights {
+            selected_entry_idx: self.selected_entry_idx,
+            hovered_entry_idx: self.hovered_entry_idx,
+            context_menu_entry_idx: self
+                .context_menu
+                .as_ref()
+                .and_then(|menu| menu.target_entry_index),
+            head: self.head_row_highlight(cx),
+        }
+    }
+
     /// Extracts a ref name (branch, remote ref, or tag) from a decoration in
     /// git's `%D` format, returning `None` for a detached `HEAD`.
     fn ref_name_from_decoration(decoration: &str) -> Option<SharedString> {
@@ -2221,6 +2291,25 @@ impl GitGraph {
             .min(last_entry_idx);
 
         self.select_entry(target_idx, ScrollStrategy::Nearest, cx);
+    }
+
+    fn center_on_head(&mut self, _: &CenterOnHead, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(head_entry_idx) = self.head_entry_idx(cx) else {
+            return;
+        };
+
+        // `select_entry` doesn't scroll when the entry is already selected, but
+        // HEAD may have been scrolled out of view since it was selected.
+        if self.selected_entry_idx == Some(head_entry_idx) {
+            self.table_interaction_state.update(cx, |state, cx| {
+                state
+                    .scroll_handle
+                    .scroll_to_item(head_entry_idx, ScrollStrategy::Center);
+                cx.notify();
+            });
+        } else {
+            self.select_entry(head_entry_idx, ScrollStrategy::Center, cx);
+        }
     }
 
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
@@ -3585,12 +3674,7 @@ impl GitGraph {
 
         let mut lines: BTreeMap<usize, Vec<_>> = BTreeMap::new();
 
-        let hovered_entry_idx = self.hovered_entry_idx;
-        let selected_entry_idx = self.selected_entry_idx;
-        let context_menu_target_index = self
-            .context_menu
-            .as_ref()
-            .and_then(|menu| menu.target_entry_index);
+        let row_highlights = self.row_highlights(cx);
         let is_focused = self.focus_handle.is_focused(window);
         let graph_canvas_bounds = self.graph_canvas_bounds.clone();
 
@@ -3604,21 +3688,12 @@ impl GitGraph {
                     let accent_colors = theme.accents();
                     let background = theme.colors().editor_background;
 
-                    let hover_bg = theme.colors().element_hover.opacity(0.6);
-                    let selected_bg = if is_focused {
-                        theme.colors().element_selected
-                    } else {
-                        theme.colors().element_hover
-                    };
-
                     for visible_row_idx in 0..rows.len() {
                         let absolute_row_idx = first_visible_row + visible_row_idx;
-                        let is_hovered = hovered_entry_idx == Some(absolute_row_idx);
-                        let is_selected = selected_entry_idx == Some(absolute_row_idx);
-                        let is_context_menu_target =
-                            context_menu_target_index == Some(absolute_row_idx);
 
-                        if is_hovered || is_selected || is_context_menu_target {
+                        if let Some(bg_color) =
+                            row_highlights.background(absolute_row_idx, is_focused, cx)
+                        {
                             let row_y = bounds.origin.y + visible_row_idx as f32 * row_height
                                 - vertical_scroll_offset;
                             let row_bounds = Bounds::new(
@@ -3629,11 +3704,6 @@ impl GitGraph {
                                 },
                             );
 
-                            let bg_color = if is_selected || is_context_menu_target {
-                                selected_bg
-                            } else {
-                                hover_bg
-                            };
                             window.paint_quad(gpui::fill(row_bounds, bg_color));
                         }
                     }
@@ -3824,16 +3894,10 @@ impl GitGraph {
                         }
 
                         // Match the node halo to the row's effective background so
-                        // the ring blends seamlessly on hovered/selected rows.
-                        let node_background = if selected_entry_idx == Some(absolute_row_idx)
-                            || context_menu_target_index == Some(absolute_row_idx)
-                        {
-                            background.blend(selected_bg)
-                        } else if hovered_entry_idx == Some(absolute_row_idx) {
-                            background.blend(hover_bg)
-                        } else {
-                            background
-                        };
+                        // the ring blends seamlessly on highlighted rows.
+                        let node_background = row_highlights
+                            .background(absolute_row_idx, is_focused, cx)
+                            .map_or(background, |row_bg| background.blend(row_bg));
 
                         draw_commit_circle(
                             commit_x,
@@ -3894,37 +3958,19 @@ impl GitGraph {
         let accent_colors = theme.accents().clone();
         let background = theme.colors().editor_background;
 
-        // Hover/selected highlight colors, matching `render_graph_canvas` so the
-        // band painted behind the labels in the gutter lines up with the rest of
-        // the row.
-        let hovered_entry_idx = self.hovered_entry_idx;
-        let selected_entry_idx = self.selected_entry_idx;
-        let context_menu_entry_idx = self
-            .context_menu
-            .as_ref()
-            .and_then(|menu| menu.target_entry_index);
+        let row_highlights = self.row_highlights(cx);
         let is_focused = self.focus_handle.is_focused(window);
-        let hover_bg = theme.colors().element_hover.opacity(0.6);
-        let selected_bg = if is_focused {
-            theme.colors().element_selected
-        } else {
-            theme.colors().element_hover
-        };
 
-        // Background highlight bands for hovered/selected rows, painted first so
-        // the labels render on top of them.
+        // Background highlight bands for hovered/selected/HEAD rows, painted
+        // first so the labels render on top of them.
         let mut elements = Vec::with_capacity(viewport_range.len());
         for absolute_idx in viewport_range.clone() {
-            let is_selected = selected_entry_idx == Some(absolute_idx)
-                || context_menu_entry_idx == Some(absolute_idx);
-            let is_hovered = hovered_entry_idx == Some(absolute_idx);
-            if !is_selected && !is_hovered {
+            let Some(bg_color) = row_highlights.background(absolute_idx, is_focused, cx) else {
                 continue;
-            }
+            };
 
             let visible_row_idx = absolute_idx - first_visible_row;
             let top = visible_row_idx as f32 * row_height - vertical_scroll_offset;
-            let bg_color = if is_selected { selected_bg } else { hover_bg };
 
             elements.push(
                 div()
@@ -4443,12 +4489,7 @@ impl Render for GitGraph {
                         )
                         .child({
                             let row_height = Self::row_height(window, cx);
-                            let selected_entry_idx = self.selected_entry_idx;
-                            let hovered_entry_idx = self.hovered_entry_idx;
-                            let context_menu_target_index = self
-                                .context_menu
-                                .as_ref()
-                                .and_then(|menu| menu.target_entry_index);
+                            let row_highlights = self.row_highlights(cx);
                             let weak_self = cx.weak_entity();
                             let focus_handle = self.focus_handle.clone();
                             let table_focus_handle =
@@ -4471,10 +4512,6 @@ impl Render for GitGraph {
                                 .width_config(table_width_config)
                                 .column_filter(table_filter)
                                 .map_row(move |(index, row), window, cx| {
-                                    let is_selected = selected_entry_idx == Some(index);
-                                    let is_hovered = hovered_entry_idx == Some(index);
-                                    let is_context_menu_target =
-                                        context_menu_target_index == Some(index);
                                     let table_focus_handle = table_focus_handle.clone();
                                     let is_focused = focus_handle.is_focused(window)
                                         || table_focus_handle.is_focused(window);
@@ -4482,22 +4519,11 @@ impl Render for GitGraph {
                                     let weak_for_hover = weak.clone();
                                     let weak_for_context_menu = weak.clone();
 
-                                    let hover_bg = cx.theme().colors().element_hover.opacity(0.6);
-                                    let selected_bg = if is_focused {
-                                        cx.theme().colors().element_selected
-                                    } else {
-                                        cx.theme().colors().element_hover
-                                    };
+                                    let row_bg = row_highlights.background(index, is_focused, cx);
 
                                     row.h(row_height)
                                         .cursor_pointer()
-                                        .when(is_selected || is_context_menu_target, |row| {
-                                            row.bg(selected_bg)
-                                        })
-                                        .when(
-                                            is_hovered && !is_selected && !is_context_menu_target,
-                                            |row| row.bg(hover_bg),
-                                        )
+                                        .when_some(row_bg, |row, row_bg| row.bg(row_bg))
                                         .on_hover(move |&is_hovered, _, cx| {
                                             weak_for_hover
                                                 .update(cx, |this, cx| {
@@ -4696,6 +4722,7 @@ impl Render for GitGraph {
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::scroll_up))
             .on_action(cx.listener(Self::scroll_down))
+            .on_action(cx.listener(Self::center_on_head))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::toggle_changed_files_view))
             .on_action(cx.listener(Self::focus_next_tab_stop))
@@ -7651,6 +7678,119 @@ mod tests {
 
         git_graph.read_with(&*cx, |graph, _| {
             assert_eq!(graph.selected_entry_idx, Some(1));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_head_row_highlight_follows_checked_out_commit(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({ ".git": {}, "file.txt": "content" }),
+        )
+        .await;
+
+        let first_sha = Oid::from_bytes(&[1; 20]).expect("valid commit SHA");
+        let second_sha = Oid::from_bytes(&[2; 20]).expect("valid commit SHA");
+        let third_sha = Oid::from_bytes(&[3; 20]).expect("valid commit SHA");
+        fs.set_graph_commits(
+            Path::new("/project/.git"),
+            vec![
+                Arc::new(InitialGraphCommitData {
+                    sha: third_sha,
+                    parents: smallvec![second_sha],
+                    ref_names: vec!["main".into()],
+                }),
+                Arc::new(InitialGraphCommitData {
+                    sha: second_sha,
+                    parents: smallvec![first_sha],
+                    ref_names: vec!["HEAD".into()],
+                }),
+                Arc::new(InitialGraphCommitData {
+                    sha: first_sha,
+                    parents: smallvec![],
+                    ref_names: Vec::new(),
+                }),
+            ],
+        );
+        fs.set_head_for_repo(Path::new("/project/.git"), &[], second_sha.to_string());
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace = multi_workspace.read_with(&*cx, |multi, _| multi.workspace().clone());
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace.downgrade(),
+                None,
+                window,
+                cx,
+            )
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(git_graph.clone()), None, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        git_graph.read_with(&*cx, |graph, cx| {
+            assert_eq!(
+                graph
+                    .head_row_highlight(cx)
+                    .map(|(head_entry_idx, _)| head_entry_idx),
+                Some(1),
+                "a detached HEAD should be highlighted on its commit's row"
+            );
+        });
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.focus_handle(cx).focus(window, cx);
+        });
+        cx.dispatch_action(CenterOnHead);
+        cx.run_until_parked();
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(
+                graph.selected_entry_idx,
+                Some(1),
+                "centering on a detached HEAD should select its commit"
+            );
+        });
+
+        fs.set_head_for_repo(Path::new("/project/.git"), &[], third_sha.to_string());
+        cx.run_until_parked();
+
+        git_graph.read_with(&*cx, |graph, cx| {
+            assert_eq!(
+                graph
+                    .head_row_highlight(cx)
+                    .map(|(head_entry_idx, _)| head_entry_idx),
+                Some(0),
+                "the highlight should move when HEAD changes"
+            );
+        });
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.focus_handle(cx).focus(window, cx);
+        });
+        cx.dispatch_action(CenterOnHead);
+        cx.run_until_parked();
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(
+                graph.selected_entry_idx,
+                Some(0),
+                "centering should follow HEAD after it moves"
+            );
         });
     }
 
