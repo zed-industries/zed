@@ -651,6 +651,11 @@ const DEBUG_TERMINAL_HEIGHT: Pixels = px(30.);
 const DEBUG_CELL_WIDTH: Pixels = px(5.);
 const DEBUG_LINE_HEIGHT: Pixels = px(5.);
 
+/// Environment variable carrying the Terminal Thread ID for agent panel
+/// terminal threads (`TerminalId::to_key_string`). Only set on terminals
+/// spawned for a terminal thread; regular terminals do not define it.
+pub const TERMINAL_THREAD_ID_ENV_VAR: &str = "ZED_TERMINAL_THREAD_ID";
+
 /// Inserts Zed-specific environment variables for terminal sessions.
 /// Used by both local terminals and remote terminals (via SSH).
 pub fn insert_zed_terminal_env(
