@@ -386,6 +386,11 @@ pub trait AgentSessionConfigOptions {
     /// Get all current config options with their state
     fn config_options(&self) -> Vec<acp_v2::SessionConfigOption>;
 
+    /// Agent-owned sessions may report configuration without allowing the client to change it.
+    fn is_read_only(&self) -> bool {
+        false
+    }
+
     /// Set a config option value
     /// Returns the full updated list of config options
     fn set_config_option(

@@ -73,6 +73,10 @@ impl ConfigOptionsView {
         }
     }
 
+    pub fn is_read_only(&self) -> bool {
+        self.config_options.is_read_only()
+    }
+
     pub fn toggle_category_picker(
         &mut self,
         category: acp::SessionConfigOptionCategory,
@@ -98,6 +102,9 @@ impl ConfigOptionsView {
         favorites_only: bool,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.config_options.is_read_only() {
+            return false;
+        }
         let Some(config_id) = self.first_config_option_id_matching(category, |option| {
             Self::can_cycle_config_option(option, favorites_only)
         }) else {
@@ -367,9 +374,10 @@ impl ConfigOptionSelector {
     }
 
     fn toggle_picker(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        if !self
-            .current_option()
-            .is_some_and(|option| matches!(option.kind, acp::SessionConfigKind::Select(_)))
+        if self.config_options.is_read_only()
+            || !self
+                .current_option()
+                .is_some_and(|option| matches!(option.kind, acp::SessionConfigKind::Select(_)))
         {
             return false;
         }
@@ -450,6 +458,28 @@ impl Render for ConfigOptionSelector {
         let Some(option) = self.current_option() else {
             return div().into_any_element();
         };
+
+        if self.config_options.is_read_only() {
+            let value = match &option.kind {
+                acp::SessionConfigKind::Select(_) => self.current_value_name(),
+                acp::SessionConfigKind::Boolean(boolean) => {
+                    format!(
+                        "{}: {}",
+                        option.name,
+                        if boolean.current_value { "On" } else { "Off" }
+                    )
+                }
+                _ => return div().into_any_element(),
+            };
+            return div()
+                .id(ElementId::Name(
+                    format!("config-option-{}", option.config_id.0).into(),
+                ))
+                .px_1()
+                .child(Label::new(value).size(LabelSize::Small).color(Color::Muted))
+                .tooltip(Tooltip::text(option.description.unwrap_or(option.name)))
+                .into_any_element();
+        }
 
         match &option.kind {
             acp::SessionConfigKind::Select(_) => {
@@ -989,6 +1019,9 @@ fn set_config_option_and_default(
     fs: Arc<dyn Fs>,
     cx: &mut App,
 ) -> Task<anyhow::Result<()>> {
+    if config_options.is_read_only() {
+        return Task::ready(Err(anyhow::anyhow!("Session configuration is read-only")));
+    }
     let response = config_options.set_config_option(config_id.clone(), value, cx);
     cx.spawn(async move |cx| {
         let options = response.await?;
@@ -1617,6 +1650,83 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn read_only_config_options_do_not_set_values_or_defaults(cx: &mut TestAppContext) {
+        let agent_server = Rc::new(TestAgentServer::default());
+        let config_options = Rc::new(TestSessionConfigOptions {
+            read_only: true,
+            ..TestSessionConfigOptions::new(vec![
+                acp::SessionConfigOption::select(
+                    "model",
+                    "Model",
+                    "child",
+                    vec![acp::SessionConfigSelectOption::new("child", "Child model")],
+                )
+                .category(acp::SessionConfigOptionCategory::Model),
+                acp::SessionConfigOption::boolean("fast", "Fast", true)
+                    .category(acp::SessionConfigOptionCategory::ModelConfig),
+            ])
+        });
+        let fs: Arc<dyn Fs> = FakeFs::new(cx.executor());
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            cx.new(|cx| {
+                ConfigOptionsView::new(
+                    config_options.clone(),
+                    agent_server.clone(),
+                    fs.clone(),
+                    window,
+                    cx,
+                )
+            })
+        });
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                assert_eq!(view.selectors.len(), 2);
+                assert!(!view.toggle_category_picker(
+                    acp::SessionConfigOptionCategory::Model,
+                    window,
+                    cx,
+                ));
+                for category in [
+                    acp::SessionConfigOptionCategory::Model,
+                    acp::SessionConfigOptionCategory::ModelConfig,
+                ] {
+                    assert!(!view.cycle_category_option(category, false, cx));
+                }
+            });
+        });
+        let error = cx
+            .update(|_, cx| {
+                set_config_option_and_default(
+                    config_options.clone(),
+                    agent_server.clone(),
+                    "fast".into(),
+                    acp::SessionConfigOptionValue::boolean(false),
+                    fs,
+                    cx,
+                )
+            })
+            .await
+            .expect_err("even a stale picker cannot set a read-only value");
+        assert!(error.to_string().contains("read-only"));
+        assert!(config_options.set_values.borrow().is_empty());
+        assert!(agent_server.saved_defaults.lock().is_empty());
+
+        config_options.replace_options(vec![acp::SessionConfigOption::boolean(
+            "fast", "Fast", false,
+        )]);
+        cx.run_until_parked();
+        view.read_with(cx, |view, cx| {
+            assert_eq!(view.selectors.len(), 1);
+            assert!(matches!(
+                view.selectors.first().expect("updated selector").read(cx).current_option()
+                    .expect("updated option").kind,
+                acp::SessionConfigKind::Boolean(boolean) if !boolean.current_value
+            ));
+        });
+    }
+
     #[derive(Default)]
     struct TestAgentServer {
         saved_defaults: Arc<Mutex<Vec<(String, Option<AgentConfigOptionValue>)>>>,
@@ -1658,6 +1768,7 @@ mod tests {
     }
 
     struct TestSessionConfigOptions {
+        read_only: bool,
         options: RefCell<Vec<acp::SessionConfigOption>>,
         set_values: RefCell<Vec<(String, acp::SessionConfigOptionValue)>>,
         updates: RefCell<watch::Sender<()>>,
@@ -1671,6 +1782,7 @@ mod tests {
     impl TestSessionConfigOptions {
         fn new(options: Vec<acp::SessionConfigOption>) -> Self {
             Self {
+                read_only: false,
                 options: RefCell::new(options),
                 set_values: RefCell::new(Vec::new()),
                 updates: RefCell::new(watch::channel(()).0),
@@ -1696,6 +1808,10 @@ mod tests {
     impl AgentSessionConfigOptions for TestSessionConfigOptions {
         fn config_options(&self) -> Vec<acp::SessionConfigOption> {
             self.options.borrow().clone()
+        }
+
+        fn is_read_only(&self) -> bool {
+            self.read_only
         }
 
         fn set_config_option(

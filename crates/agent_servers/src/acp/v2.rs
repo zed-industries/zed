@@ -1,10 +1,10 @@
 use super::{
     AcpDebugLog, AcpDebugMessage, AcpSession, ClientContext, ConfigOptions,
-    ContextServerConfiguration, ForegroundWork, PendingSessionUpdates, UnsupportedVersion,
-    apply_v2_session_notification, close_undelivered_session, drain_foreground_queue,
-    enqueue_notification, first_class_terminal_auth_task, is_disconnect_error, map_acp_error,
-    mcp_configurations_for_project, runtime, transport, with_v2_client_ingress,
-    work_dirs_from_session_info,
+    ContextServerConfiguration, ForegroundWork, PendingSessionUpdates, ReadOnlyConfigOptions,
+    UnsupportedVersion, apply_v2_session_notification, close_undelivered_session,
+    drain_foreground_queue, enqueue_notification, first_class_terminal_auth_task,
+    is_disconnect_error, map_acp_error, mcp_configurations_for_project, runtime, transport,
+    with_v2_client_ingress, work_dirs_from_session_info,
 };
 use acp_thread::{
     AcpThread, AgentConnection, AgentSessionConfigOptions, AgentSessionInfo, AgentSessionList,
@@ -1646,13 +1646,24 @@ impl AgentConnection for AcpV2Connection {
     fn session_config_options(
         &self,
         session_id: &acp::SessionId,
-        _cx: &App,
+        cx: &App,
     ) -> Option<Rc<dyn AgentSessionConfigOptions>> {
         if self.is_subagent_session(session_id) {
             return None;
         }
         let sessions = self.sessions.borrow();
         let session = sessions.get(session_id)?;
+        if session
+            .thread
+            .upgrade()?
+            .read(cx)
+            .parent_session_id()
+            .is_some()
+        {
+            return Some(Rc::new(ReadOnlyConfigOptions(
+                session.config_options.clone()?,
+            )));
+        }
         Some(Rc::new(V2SessionConfigOptions {
             session_id: session_id.clone(),
             thread: session.thread.clone(),
@@ -2439,6 +2450,73 @@ mod tests {
                 assert_eq!(message.content.source_blocks(), expected_blocks.as_slice());
             });
         }
+    }
+
+    #[gpui::test]
+    async fn v2_subagent_config_options_are_read_only(cx: &mut TestAppContext) {
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        let parent = harness.thread(cx).await;
+        harness.send_update(
+            "session",
+            acp::SessionUpdate::SubagentUpdate(acp::SubagentUpdate::new("child")),
+        );
+        harness.drain_updates(cx).await;
+
+        let options = cx
+            .read(|cx| harness.client.session_config_options(&"child".into(), cx))
+            .expect("the provider exists before the first config update");
+        assert!(options.is_read_only());
+        assert!(options.config_options().is_empty(), "no inherited values");
+        let mut updates = cx
+            .update(|cx| options.watch(cx))
+            .expect("child config watcher");
+        let model = |value: &str| {
+            acp::SessionConfigOption::select(
+                "model",
+                "Model",
+                value.to_owned(),
+                vec![acp::SessionConfigSelectOption::new(value, value)],
+            )
+        };
+        for snapshot in [
+            vec![
+                model("child-model"),
+                acp::SessionConfigOption::boolean("fast", "Fast", true),
+            ],
+            vec![model("fallback-model")],
+            vec![],
+        ] {
+            harness.send_update(
+                "child",
+                acp::SessionUpdate::ConfigOptionUpdate(acp::ConfigOptionUpdate::new(
+                    snapshot.clone(),
+                )),
+            );
+            harness.drain_updates(cx).await;
+            bounded(updates.recv(), cx).await.expect("config update");
+            assert_eq!(options.config_options(), snapshot);
+        }
+        for (config_id, value) in [
+            ("model", acp::SessionConfigOptionValue::id("fallback-model")),
+            ("fast", acp::SessionConfigOptionValue::boolean(false)),
+        ] {
+            let error = cx
+                .update(|cx| options.set_config_option(config_id.into(), value, cx))
+                .await
+                .expect_err("child options cannot be set");
+            assert!(error.to_string().contains("read-only"));
+        }
+        assert!(
+            harness.config_requests.try_recv().is_err(),
+            "no wire mutation"
+        );
+        parent.read_with(cx, |parent, cx| {
+            let options = harness
+                .client
+                .session_config_options(parent.session_id(), cx)
+                .expect("parent config");
+            assert!(!options.is_read_only());
+        });
     }
 
     #[gpui::test]
