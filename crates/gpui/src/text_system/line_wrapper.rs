@@ -935,7 +935,11 @@ mod tests {
                 .sum();
             assert_eq!(
                 wrapper
-                    .wrap_line(&[LineFragment::text(text)], wrap_width)
+                    .wrap_line(
+                        &[LineFragment::text(text)],
+                        wrap_width,
+                        IndentAdjustment::default()
+                    )
                     .collect::<Vec<_>>(),
                 [Boundary::new(expected_index, 0)],
                 "{text:?}",
