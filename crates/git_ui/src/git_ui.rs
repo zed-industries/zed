@@ -51,6 +51,7 @@ pub mod git_picker;
 mod git_runtime_diagnostics;
 pub mod multi_diff_view;
 pub mod picker_prompt;
+mod pr_review;
 pub mod project_diff;
 pub(crate) mod remote_output;
 pub mod repository_selector;
@@ -67,6 +68,7 @@ pub fn init(cx: &mut App) {
     editor::set_blame_renderer(blame_ui::GitBlameRenderer, cx);
     commit_view::init(cx);
     git_graph::init(cx);
+    pr_review::init(cx);
 
     git_ui_core::set_branch_picker_builder(
         |workspace, repository, window, cx| {
@@ -114,6 +116,7 @@ pub fn init(cx: &mut App) {
         branch_diff::BranchDiff::register(workspace, cx);
         CommitModal::register(workspace);
         git_panel::register(workspace);
+        pr_review::register(workspace);
         repository_selector::register(workspace);
         git_picker::register(workspace);
 
