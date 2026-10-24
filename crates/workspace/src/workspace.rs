@@ -1972,6 +1972,11 @@ impl Workspace {
         let bottom_dock = Dock::new(DockPosition::Bottom, modal_layer.clone(), window, cx);
         let right_dock = Dock::new(DockPosition::Right, modal_layer.clone(), window, cx);
         let left_dock_buttons = cx.new(|cx| PanelButtons::new(left_dock.clone(), cx));
+        let left_dock_header_buttons =
+            cx.new(|cx| PanelButtons::new_dock_header(left_dock.clone(), cx));
+        left_dock.update(cx, |dock, cx| {
+            dock.set_header_buttons(left_dock_header_buttons, cx)
+        });
         let bottom_dock_buttons = cx.new(|cx| PanelButtons::new(bottom_dock.clone(), cx));
         let right_dock_buttons = cx.new(|cx| PanelButtons::new(right_dock.clone(), cx));
         let multi_workspace = window

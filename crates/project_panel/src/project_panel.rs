@@ -6099,6 +6099,60 @@ impl ProjectPanel {
         false
     }
 
+    /// New file, new folder and collapse all, shown while hovering a worktree's
+    /// root row, like the folder header in VS Code's explorer.
+    fn render_root_actions(&self, root: SelectedEntry, cx: &Context<Self>) -> impl IntoElement {
+        let focus_handle = self.focus_handle.clone();
+        h_flex()
+            .flex_none()
+            .pr_1()
+            .gap_0p5()
+            .child(
+                IconButton::new("root-new-file", IconName::Plus)
+                    .icon_size(IconSize::Small)
+                    .size(ButtonSize::Compact)
+                    .tooltip(Tooltip::for_action_title_in(
+                        "New File",
+                        &NewFile,
+                        &focus_handle,
+                    ))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.selection = Some(root);
+                        this.new_file(&NewFile, window, cx);
+                    })),
+            )
+            .child(
+                IconButton::new("root-new-folder", IconName::FolderAdd)
+                    .icon_size(IconSize::Small)
+                    .size(ButtonSize::Compact)
+                    .tooltip(Tooltip::for_action_title_in(
+                        "New Folder",
+                        &NewDirectory,
+                        &focus_handle,
+                    ))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.selection = Some(root);
+                        this.new_directory(&NewDirectory, window, cx);
+                    })),
+            )
+            .child(
+                IconButton::new("root-collapse-all", IconName::ListCollapse)
+                    .icon_size(IconSize::Small)
+                    .size(ButtonSize::Compact)
+                    .tooltip(Tooltip::for_action_title_in(
+                        "Collapse All",
+                        &CollapseAllEntries,
+                        &focus_handle,
+                    ))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.collapse_all_entries(&CollapseAllEntries, window, cx);
+                    })),
+            )
+    }
+
     fn render_entry(
         &self,
         entry_id: ProjectEntryId,
@@ -6114,11 +6168,14 @@ impl ProjectPanel {
         let sticky_index = details.sticky.as_ref().map(|this| this.sticky_index);
         let settings = ProjectPanelSettings::get_global(cx);
         let show_editor = details.is_editing && !details.is_processing;
+        let is_worktree_root = details.path.is_empty();
 
         let selection = SelectedEntry {
             worktree_id: details.worktree_id,
             entry_id,
         };
+        let root_actions = (is_worktree_root && !show_editor)
+            .then(|| self.render_root_actions(selection, cx).into_any_element());
 
         let is_marked = self.marked_entries.contains(&selection);
         let is_active = self
@@ -6698,6 +6755,9 @@ impl ProjectPanel {
                             )
                         },
                     )
+                    .when_some(root_actions, |this, root_actions| {
+                        this.end_slot_on_hover(root_actions)
+                    })
                     .map(|this| {
                         let decoration_color =
                             entry_diagnostic_aware_icon_decoration_and_color(diagnostic_severity)

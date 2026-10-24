@@ -8,7 +8,7 @@ use client::proto;
 use db::kvp::KeyValueStore;
 
 use gpui::{
-    Action, Anchor, AnyView, App, Axis, Context, Entity, EntityId, EventEmitter, FocusHandle,
+    Action, Anchor, AnyElement, AnyView, App, Axis, Context, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, IntoElement, KeyContext, MouseButton, MouseDownEvent, MouseUpEvent, ParentElement,
     Render, SharedString, StyleRefinement, Styled, Subscription, WeakEntity, Window, deferred, div,
     px,
@@ -74,6 +74,11 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn icon_label(&self, _window: &Window, _: &App) -> Option<String> {
         None
     }
+    /// Whether the panel draws the dock's panel switcher in its own header row,
+    /// so the dock doesn't add a separate one above it.
+    fn embeds_panel_switcher(&self, _window: &Window, _cx: &App) -> bool {
+        false
+    }
     fn is_zoomed(&self, _window: &Window, _cx: &App) -> bool {
         false
     }
@@ -126,6 +131,7 @@ pub trait PanelHandle: Send + Sync {
     fn icon_tooltip(&self, window: &Window, cx: &App) -> Option<&'static str>;
     fn toggle_action(&self, window: &Window, cx: &App) -> Box<dyn Action>;
     fn icon_label(&self, window: &Window, cx: &App) -> Option<String>;
+    fn embeds_panel_switcher(&self, window: &Window, cx: &App) -> bool;
     fn panel_focus_handle(&self, cx: &App) -> FocusHandle;
     /// See `Panel::activation_focus_handle`.
     fn activation_focus_handle(&self, cx: &App) -> FocusHandle;
@@ -243,6 +249,10 @@ where
         self.read(cx).icon_label(window, cx)
     }
 
+    fn embeds_panel_switcher(&self, window: &Window, cx: &App) -> bool {
+        self.read(cx).embeds_panel_switcher(window, cx)
+    }
+
     fn to_any(&self) -> AnyView {
         self.clone().into()
     }
@@ -291,6 +301,7 @@ pub struct Dock {
     restoration: DockRestoreState,
     zoom_layer_open: bool,
     modal_layer: Entity<ModalLayer>,
+    header_buttons: Option<Entity<PanelButtons>>,
     _subscriptions: [Subscription; 2],
 }
 
@@ -389,7 +400,16 @@ struct PanelEntry {
 
 pub struct PanelButtons {
     dock: Entity<Dock>,
+    placement: PanelButtonsPlacement,
     _settings_subscription: Subscription,
+}
+
+/// Where a dock's panel switcher is drawn.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PanelButtonsPlacement {
+    StatusBar,
+    /// A row at the top of the open left dock, like VS Code's activity bar.
+    DockHeader,
 }
 
 pub(crate) const PANEL_SIZE_STATE_KEY: &str = "dock_panel_size";
@@ -459,6 +479,7 @@ impl Dock {
                 restoration: DockRestoreState::Restoring { pending: None },
                 zoom_layer_open: false,
                 modal_layer,
+                header_buttons: None,
             }
         });
 
@@ -1209,6 +1230,16 @@ impl Dock {
         cx.notify();
     }
 
+    /// Draws this dock's panel switcher at the top of the dock while it's open.
+    pub fn set_header_buttons(&mut self, buttons: Entity<PanelButtons>, cx: &mut Context<Self>) {
+        self.header_buttons = Some(buttons);
+        cx.notify();
+    }
+
+    fn has_header_buttons(&self) -> bool {
+        self.header_buttons.is_some()
+    }
+
     pub fn toggle_action(&self) -> Box<dyn Action> {
         match self.position {
             DockPosition::Left => crate::ToggleLeftDock.boxed_clone(),
@@ -1268,7 +1299,7 @@ impl Dock {
 }
 
 impl Render for Dock {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let dispatch_context = Self::dispatch_context(cx);
         if let Some(entry) = self.visible_entry() {
             let position = self.position;
@@ -1352,16 +1383,34 @@ impl Render for Dock {
                     DockPosition::Bottom => this.border_t_1(),
                 })
                 .child(
-                    div()
+                    v_flex()
                         .map(|this| match self.position().axis() {
                             Axis::Horizontal => this.w_full().h_full(),
                             Axis::Vertical => this.h_full().w_full(),
                         })
+                        .when_some(
+                            self.header_buttons
+                                .clone()
+                                .filter(|_| !entry.panel.embeds_panel_switcher(window, cx)),
+                            |this, header_buttons| {
+                            this.child(
+                                h_flex()
+                                    .flex_none()
+                                    .w_full()
+                                    .h(ui::Tab::container_height(cx))
+                                    .px_1p5()
+                                    .border_b_1()
+                                    .border_color(cx.theme().colors().border)
+                                    .child(header_buttons),
+                            )
+                        })
                         .child(
-                            entry
-                                .panel
-                                .to_any()
-                                .cached(StyleRefinement::default().v_flex().size_full()),
+                            div().flex_1().min_h_0().w_full().child(
+                                entry
+                                    .panel
+                                    .to_any()
+                                    .cached(StyleRefinement::default().v_flex().size_full()),
+                            ),
                         ),
                 )
                 .when(self.resizable(cx), |this| {
@@ -1378,10 +1427,23 @@ impl Render for Dock {
 
 impl PanelButtons {
     pub fn new(dock: Entity<Dock>, cx: &mut Context<Self>) -> Self {
+        Self::with_placement(dock, PanelButtonsPlacement::StatusBar, cx)
+    }
+
+    pub fn new_dock_header(dock: Entity<Dock>, cx: &mut Context<Self>) -> Self {
+        Self::with_placement(dock, PanelButtonsPlacement::DockHeader, cx)
+    }
+
+    fn with_placement(
+        dock: Entity<Dock>,
+        placement: PanelButtonsPlacement,
+        cx: &mut Context<Self>,
+    ) -> Self {
         cx.observe(&dock, |_, _, cx| cx.notify()).detach();
         let settings_subscription = cx.observe_global::<SettingsStore>(|_, cx| cx.notify());
         Self {
             dock,
+            placement,
             _settings_subscription: settings_subscription,
         }
     }
@@ -1393,8 +1455,17 @@ impl Render for PanelButtons {
         let active_index = dock.active_panel_index;
         let is_open = dock.is_open;
         let dock_position = dock.position;
+        let in_dock_header = self.placement == PanelButtonsPlacement::DockHeader;
+
+        // While the left dock is open, its switcher is drawn at the top of the
+        // dock instead, so the status bar copy steps aside.
+        if !in_dock_header && dock_position == DockPosition::Left && dock.has_header_buttons() && is_open
+        {
+            return h_flex();
+        }
 
         let (menu_anchor, menu_attach) = match dock.position {
+            DockPosition::Left if in_dock_header => (Anchor::TopLeft, Anchor::BottomLeft),
             DockPosition::Left => (Anchor::BottomLeft, Anchor::TopLeft),
             DockPosition::Bottom | DockPosition::Right => (Anchor::BottomRight, Anchor::TopRight),
         };
@@ -1534,7 +1605,11 @@ impl Render for PanelButtons {
                             // Include active state in element ID to invalidate the cached
                             // tooltip when panel state changes (e.g., via keyboard shortcut)
                             let button = IconButton::new((name, is_active_button as u64), icon)
-                                .icon_size(IconSize::Small)
+                                .icon_size(if in_dock_header {
+                                    IconSize::Medium
+                                } else {
+                                    IconSize::Small
+                                })
                                 .toggle_state(is_active_button)
                                 .tab_index(0isize)
                                 .aria_label(icon_tooltip)
@@ -1568,6 +1643,30 @@ impl Render for PanelButtons {
         }
 
         let has_buttons = !buttons.is_empty();
+
+        if in_dock_header {
+            let mut buttons: Vec<AnyElement> =
+                buttons.into_iter().map(IntoElement::into_any_element).collect();
+            // Search is a tab rather than a panel, so it has no panel button; Cursor
+            // puts it right after the file explorer.
+            let search_position = buttons.len().min(1);
+            buttons.insert(
+                search_position,
+                IconButton::new("dock-header-search", IconName::MagnifyingGlass)
+                    .icon_size(IconSize::Medium)
+                    .tooltip(|_window, cx| {
+                        Tooltip::for_action("Search", &crate::pane::DeploySearch::default(), cx)
+                    })
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(
+                            Box::new(crate::pane::DeploySearch::default()),
+                            cx,
+                        )
+                    })
+                    .into_any_element(),
+            );
+            return h_flex().gap_1().children(buttons);
+        }
 
         h_flex()
             .gap_1()
