@@ -1439,6 +1439,11 @@ impl AgentConnection for AcpV2Connection {
         self.initialize_response.capabilities.session.is_some()
     }
 
+    fn announces_subagents(&self) -> bool {
+        // Subagents are part of v2's baseline session model.
+        true
+    }
+
     fn close_session(
         self: Rc<Self>,
         session_id: &acp::SessionId,
@@ -2657,6 +2662,7 @@ mod tests {
         use agent_client_protocol::schema::MaybeUndefined;
 
         let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        assert!(harness.client.announces_subagents());
         let parent = harness.thread(cx).await;
         harness.send_update(
             "session",
