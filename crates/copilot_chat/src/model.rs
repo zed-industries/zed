@@ -1046,6 +1046,7 @@ fn into_copilot_responses(
         temperature,
         thinking_allowed,
         thinking_effort,
+        reasoning_mode: _,
         speed: _,
         compact_at_tokens: _,
         max_output_tokens: _,

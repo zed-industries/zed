@@ -18,8 +18,8 @@ use language_model::{
     CompletionIntent, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelCompletionStream, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelTextStream,
-    LanguageModelToolChoice, LanguageModelToolUse, LanguageModelToolUseId, Role, StopReason,
-    TokenUsage,
+    LanguageModelToolChoice, LanguageModelToolUse, LanguageModelToolUseId, ReasoningMode, Role,
+    StopReason, TokenUsage,
 };
 use language_models::provider::anthropic::telemetry::{
     AnthropicCompletionType, AnthropicEventData, AnthropicEventReporter, AnthropicEventType,
@@ -560,6 +560,7 @@ impl CodegenAlternative {
                 messages,
                 thinking_allowed: false,
                 thinking_effort: None,
+                reasoning_mode: ReasoningMode::Standard,
                 speed: None,
                 compact_at_tokens: None,
                 max_output_tokens: None,
@@ -644,6 +645,7 @@ impl CodegenAlternative {
                 messages: vec![request_message],
                 thinking_allowed: false,
                 thinking_effort: None,
+                reasoning_mode: ReasoningMode::Standard,
                 speed: None,
                 compact_at_tokens: None,
                 max_output_tokens: None,

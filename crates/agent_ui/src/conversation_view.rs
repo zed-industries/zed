@@ -5137,6 +5137,116 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_reasoning_mode_menu_gates_on_model_capability_and_updates_thread(
+        cx: &mut TestAppContext,
+    ) {
+        use language_model::{LanguageModelRegistry, ReasoningMode};
+
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let (server, provider) = cx.update(|cx| {
+            let provider = LanguageModelRegistry::test(cx);
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+            let thread_store = cx.new(|cx| ThreadStore::new(cx));
+            (NativeAgentServer::new(fs, thread_store), provider)
+        });
+        let (conversation_view, cx) = setup_conversation_view(server, cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+        cx.run_until_parked();
+        let thread_view = active_thread(&conversation_view, cx);
+        let native_thread = conversation_view.read_with(cx, |view, cx| view.as_native_thread(cx));
+        assert!(native_thread.is_some(), "expected a native thread");
+        let Some(native_thread) = native_thread else {
+            return;
+        };
+        assert_eq!(
+            native_thread.read_with(cx, |thread, _| thread.reasoning_mode()),
+            ReasoningMode::Standard,
+        );
+
+        thread_view.update_in(cx, |view, window, cx| {
+            view.reasoning_mode_menu_handle.show(window, cx);
+        });
+        cx.run_until_parked();
+        assert!(
+            !thread_view.read_with(cx, |view, _| view.reasoning_mode_menu_handle.is_deployed())
+        );
+
+        let model = provider.update_model("fake", |model| {
+            model.supports_pro_reasoning = true;
+            model.supports_thinking = false;
+        });
+        native_thread.update(cx, |thread, cx| thread.set_model(model, cx));
+        cx.run_until_parked();
+
+        for (mode, selector) in [
+            (ReasoningMode::Pro, "MENU_ITEM-Pro"),
+            (ReasoningMode::Standard, "MENU_ITEM-Standard"),
+        ] {
+            thread_view.update_in(cx, |view, window, cx| {
+                view.reasoning_mode_menu_handle.show(window, cx);
+            });
+            cx.run_until_parked();
+            assert!(
+                thread_view.read_with(cx, |view, _| view.reasoning_mode_menu_handle.is_deployed())
+            );
+            assert!(cx.debug_bounds("MENU_ITEM-Standard").is_some());
+            assert!(cx.debug_bounds("MENU_ITEM-Pro").is_some());
+
+            let entry = cx.debug_bounds(selector);
+            assert!(entry.is_some(), "expected reasoning mode menu entry");
+            if let Some(entry) = entry {
+                cx.simulate_click(entry.center(), gpui::Modifiers::default());
+            }
+            cx.run_until_parked();
+            assert_eq!(
+                native_thread.read_with(cx, |thread, _| thread.reasoning_mode()),
+                mode,
+            );
+        }
+
+        // Like the effort selector, the menu is unavailable while thinking is turned off.
+        let model = provider.update_model("fake", |model| model.supports_thinking = true);
+        for thinking_enabled in [false, true] {
+            native_thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread.set_thinking_enabled(thinking_enabled, cx);
+            });
+            cx.run_until_parked();
+            thread_view.update_in(cx, |view, window, cx| {
+                view.reasoning_mode_menu_handle.show(window, cx);
+            });
+            cx.run_until_parked();
+            // The handle reopens the menu from its last render even when the control is hidden,
+            // so check whether the menu is actually drawn.
+            assert_eq!(
+                cx.debug_bounds("MENU_ITEM-Pro").is_some(),
+                thinking_enabled,
+                "thinking_enabled: {thinking_enabled}",
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_reasoning_mode_menu_is_hidden_for_external_threads(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+        cx.run_until_parked();
+        let thread_view = active_thread(&conversation_view, cx);
+        thread_view.update_in(cx, |view, window, cx| {
+            view.reasoning_mode_menu_handle.show(window, cx);
+        });
+        cx.run_until_parked();
+        assert!(
+            !thread_view.read_with(cx, |view, _| view.reasoning_mode_menu_handle.is_deployed())
+        );
+    }
+
+    #[gpui::test]
     async fn test_receipt_submission_waits_for_echo_and_reported_idle(cx: &mut TestAppContext) {
         init_test(cx);
 

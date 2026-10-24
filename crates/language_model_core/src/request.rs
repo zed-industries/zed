@@ -483,6 +483,8 @@ pub struct LanguageModelRequest {
     pub temperature: Option<f32>,
     pub thinking_allowed: bool,
     pub thinking_effort: Option<String>,
+    #[serde(default, skip_serializing_if = "crate::is_default")]
+    pub reasoning_mode: ReasoningMode,
     pub speed: Option<Speed>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compact_at_tokens: Option<u64>,
@@ -518,6 +520,23 @@ impl LanguageModelRequest {
                     )
                 })
             })
+    }
+}
+
+#[derive(Clone, Copy, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningMode {
+    #[default]
+    Standard,
+    Pro,
+}
+
+impl ReasoningMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Standard => "Standard",
+            Self::Pro => "Pro",
+        }
     }
 }
 
@@ -574,6 +593,31 @@ mod tests {
             serde_json::from_value::<LanguageModelRequest>(serialized)?,
             request
         );
+        Ok(())
+    }
+
+    #[test]
+    fn request_reasoning_mode_serialization() -> serde_json::Result<()> {
+        assert_eq!(ReasoningMode::default(), ReasoningMode::Standard);
+        let request = LanguageModelRequest::default();
+        let serialized = serde_json::to_value(&request)?;
+        assert!(serialized.get("reasoning_mode").is_none());
+        assert_eq!(
+            serde_json::from_value::<LanguageModelRequest>(serialized.clone())?,
+            request
+        );
+
+        let mut explicit_standard = serialized.clone();
+        explicit_standard["reasoning_mode"] = serde_json::json!("standard");
+        let standard: LanguageModelRequest = serde_json::from_value(explicit_standard)?;
+        assert_eq!(standard.reasoning_mode, ReasoningMode::Standard);
+        assert_eq!(serde_json::to_value(standard)?, serialized);
+
+        let mut pro = serialized;
+        pro["reasoning_mode"] = serde_json::json!("pro");
+        let configured: LanguageModelRequest = serde_json::from_value(pro.clone())?;
+        assert_eq!(configured.reasoning_mode, ReasoningMode::Pro);
+        assert_eq!(serde_json::to_value(configured)?, pro);
         Ok(())
     }
 

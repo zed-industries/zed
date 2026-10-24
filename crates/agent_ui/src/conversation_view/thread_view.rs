@@ -39,7 +39,7 @@ use heapless::Vec as ArrayVec;
 use itertools::Itertools;
 use language_model::{
     FastModeConfirmation, LanguageModel, LanguageModelEffortLevel, LanguageModelId,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, Speed,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, ReasoningMode, Speed,
 };
 use notifications::status_toast::StatusToast;
 use project::ResolvedPath;
@@ -815,6 +815,7 @@ pub struct ThreadView {
     pub message_editor: Entity<MessageEditor>,
     pub add_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub thinking_effort_menu_handle: PopoverMenuHandle<ContextMenu>,
+    pub reasoning_mode_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub fast_mode_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub project: WeakEntity<Project>,
     /// Cache + worktree snapshot for resolving paths in markdown code spans.
@@ -1326,6 +1327,7 @@ impl ThreadView {
             message_editor,
             add_context_menu_handle: PopoverMenuHandle::default(),
             thinking_effort_menu_handle: PopoverMenuHandle::default(),
+            reasoning_mode_menu_handle: PopoverMenuHandle::default(),
             fast_mode_menu_handle: PopoverMenuHandle::default(),
             project,
             code_span_resolver,
@@ -5500,7 +5502,8 @@ impl ThreadView {
                                     .child(self.render_add_context_button(cx))
                                     .child(self.render_follow_toggle(cx))
                                     .children(self.render_fast_mode_control(cx))
-                                    .children(self.render_thinking_control(cx)),
+                                    .children(self.render_thinking_control(cx))
+                                    .children(self.render_reasoning_mode_control(cx)),
                             )
                             .child(
                                 h_flex()
@@ -6512,6 +6515,90 @@ impl ThreadView {
                 y: px(-2.0),
             })
             .anchor(gpui::Anchor::BottomLeft)
+    }
+
+    fn render_reasoning_mode_control(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let thread = self.as_native_thread(cx)?.read(cx);
+        let model = thread.model()?;
+        // Requests drop Pro while thinking is off, so hide it like the effort selector.
+        let thinking_turned_off = model.supports_thinking()
+            && !thread.thinking_enabled()
+            && model.supports_disabling_thinking_at_effort(
+                thread.thinking_effort().map(String::as_str),
+            );
+        if !model.supports_pro_reasoning || thinking_turned_off {
+            return None;
+        }
+
+        let selected_mode = thread.reasoning_mode();
+        let label_color = match selected_mode {
+            ReasoningMode::Standard => Color::Muted,
+            ReasoningMode::Pro => Color::Accent,
+        };
+        let icon = if self.reasoning_mode_menu_handle.is_deployed() {
+            IconName::ChevronUp
+        } else {
+            IconName::ChevronDown
+        };
+        let weak_self = cx.weak_entity();
+
+        Some(
+            PopoverMenu::new("reasoning-mode-selector")
+                .trigger_with_tooltip(
+                    ButtonLike::new("reasoning-mode-selector-trigger")
+                        .child(
+                            Label::new(selected_mode.label())
+                                .size(LabelSize::Small)
+                                .color(label_color),
+                        )
+                        .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted))
+                        .selected_style(ButtonStyle::Tinted(TintColor::Accent)),
+                    |_, cx| {
+                        Tooltip::with_meta(
+                            "Change Reasoning Mode",
+                            None,
+                            "Pro uses more tokens and has higher cost and latency than Standard.",
+                            cx,
+                        )
+                    },
+                )
+                .menu(move |window, cx| {
+                    Some(ContextMenu::build(window, cx, |mut menu, _window, _cx| {
+                        menu = menu.header("Change Reasoning Mode");
+
+                        for mode in [ReasoningMode::Standard, ReasoningMode::Pro] {
+                            menu.push_item(
+                                ContextMenuEntry::new(mode.label())
+                                    .toggleable(IconPosition::End, selected_mode == mode)
+                                    .handler({
+                                        let weak_self = weak_self.clone();
+                                        move |_window, cx| {
+                                            weak_self
+                                                .update(cx, |this, cx| {
+                                                    if let Some(thread) = this.as_native_thread(cx)
+                                                    {
+                                                        thread.update(cx, |thread, cx| {
+                                                            thread.set_reasoning_mode(mode, cx);
+                                                        });
+                                                    }
+                                                })
+                                                .log_err();
+                                        }
+                                    }),
+                            );
+                        }
+
+                        menu
+                    }))
+                })
+                .with_handle(self.reasoning_mode_menu_handle.clone())
+                .offset(gpui::Point {
+                    x: px(0.0),
+                    y: px(-2.0),
+                })
+                .anchor(gpui::Anchor::BottomLeft)
+                .into_any_element(),
+        )
     }
 
     fn render_send_button(&self, cx: &mut Context<Self>) -> AnyElement {

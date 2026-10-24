@@ -44,8 +44,8 @@ use language_model::{
     LanguageModelId, LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry,
     LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
     LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolUse,
-    LanguageModelToolUseId, MessageContent, ProviderErrorCategory, Role, SelectedModel, Speed,
-    StopReason, TokenUsage, ZED_CLOUD_PROVIDER_ID,
+    LanguageModelToolUseId, MessageContent, ProviderErrorCategory, ReasoningMode, Role,
+    SelectedModel, Speed, StopReason, TokenUsage, ZED_CLOUD_PROVIDER_ID,
 };
 use project::{Project, trusted_worktrees::TrustedWorktrees};
 use prompt_store::ProjectContext;
@@ -1281,6 +1281,7 @@ pub(crate) struct StreamingSaveKey {
     speed: Option<Speed>,
     thinking_enabled: bool,
     thinking_effort: Option<String>,
+    reasoning_mode: ReasoningMode,
     sandboxed_terminal_temp_dir: Option<PathBuf>,
     sandbox_grants: crate::db::DbSandboxGrants,
 }
@@ -1328,6 +1329,7 @@ pub struct Thread {
     summarization_model: Option<LanguageModel>,
     thinking_enabled: bool,
     thinking_effort: Option<String>,
+    reasoning_mode: ReasoningMode,
     speed: Option<Speed>,
     prompt_capabilities_tx: watch::Sender<acp_v2::PromptCapabilities>,
     pub(crate) prompt_capabilities_rx: watch::Receiver<acp_v2::PromptCapabilities>,
@@ -1480,6 +1482,7 @@ impl Thread {
             thinking_enabled: enable_thinking,
             speed,
             thinking_effort,
+            reasoning_mode: ReasoningMode::Standard,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
             project,
@@ -1503,6 +1506,7 @@ impl Thread {
         self.speed = parent.speed;
         self.thinking_enabled = parent.thinking_enabled;
         self.thinking_effort = parent.thinking_effort.clone();
+        self.reasoning_mode = parent.reasoning_mode();
         self.summarization_model = parent.summarization_model.clone();
         self.profile_id = parent.profile_id.clone();
         self.profile_downgraded_for_restricted_workspace =
@@ -1526,6 +1530,7 @@ impl Thread {
         self.thinking_enabled = selection.enable_thinking && model.supports_thinking();
         self.thinking_effort = selection.effort.clone();
         self.speed = selection.speed.filter(|_| model.supports_fast_mode());
+        self.reasoning_mode = ReasoningMode::Standard;
         self.prompt_capabilities_tx
             .send(Self::prompt_capabilities(Some(&model)))
             .log_err();
@@ -1814,6 +1819,10 @@ impl Thread {
 
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(model.as_model()));
+        let reasoning_mode = match model.as_model() {
+            Some(model) if !model.supports_pro_reasoning => ReasoningMode::Standard,
+            _ => db_thread.reasoning_mode,
+        };
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
 
@@ -1850,6 +1859,7 @@ impl Thread {
             summarization_model: None,
             thinking_enabled: db_thread.thinking_enabled,
             thinking_effort: db_thread.thinking_effort,
+            reasoning_mode,
             speed: db_thread.speed,
             project,
             action_log,
@@ -1958,6 +1968,7 @@ impl Thread {
             speed: self.speed,
             thinking_enabled: self.thinking_enabled,
             thinking_effort: self.thinking_effort.clone(),
+            reasoning_mode: self.reasoning_mode,
             draft_prompt: self.draft_prompt.clone(),
             ui_scroll_position: self.ui_scroll_position.map(|lo| {
                 crate::db::SerializedScrollPosition {
@@ -1991,6 +2002,7 @@ impl Thread {
             speed: self.speed,
             thinking_enabled: self.thinking_enabled,
             thinking_effort: self.thinking_effort.clone(),
+            reasoning_mode: self.reasoning_mode,
             sandboxed_terminal_temp_dir: self.sandboxed_terminal_temp_dir.clone(),
             sandbox_grants: self.sandbox_grants.borrow().to_db(),
         }
@@ -2070,6 +2082,9 @@ impl Thread {
     }
 
     pub fn set_model(&mut self, model: LanguageModel, cx: &mut Context<Self>) {
+        if !model.supports_pro_reasoning {
+            self.reasoning_mode = ReasoningMode::Standard;
+        }
         let old_usage = self.latest_token_usage();
         self.model = ThreadModel::Ready(model.clone());
         let new_caps = Self::prompt_capabilities(self.model.as_model());
@@ -2172,6 +2187,39 @@ impl Thread {
                     }
                 })
                 .ok();
+        }
+        cx.notify();
+    }
+
+    pub fn reasoning_mode(&self) -> ReasoningMode {
+        if self
+            .model()
+            .is_some_and(|model| model.supports_pro_reasoning)
+        {
+            self.reasoning_mode
+        } else {
+            ReasoningMode::Standard
+        }
+    }
+
+    pub fn set_reasoning_mode(&mut self, mode: ReasoningMode, cx: &mut Context<Self>) {
+        self.reasoning_mode = if self
+            .model()
+            .is_some_and(|model| model.supports_pro_reasoning)
+        {
+            mode
+        } else {
+            ReasoningMode::Standard
+        };
+
+        for subagent in &self.running_subagents {
+            subagent
+                .update(cx, |thread, cx| {
+                    if thread.inherits_parent_model_settings {
+                        thread.set_reasoning_mode(self.reasoning_mode, cx);
+                    }
+                })
+                .log_err();
         }
         cx.notify();
     }
@@ -4409,6 +4457,7 @@ impl Thread {
             thinking_allowed: self.thinking_enabled
                 || !model.supports_disabling_thinking_at_effort(self.thinking_effort.as_deref()),
             thinking_effort: self.thinking_effort.clone(),
+            reasoning_mode: self.reasoning_mode(),
             speed: self.speed(),
             compact_at_tokens: None,
             max_output_tokens: None,
@@ -9609,6 +9658,166 @@ mod tests {
                 );
             }
         });
+    }
+
+    #[gpui::test]
+    async fn test_reasoning_mode_is_opt_in_and_resets_for_unsupported_models(
+        cx: &mut TestAppContext,
+    ) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.update_model("fake", |model| model.supports_pro_reasoning = true);
+
+        thread.update(cx, |thread, cx| {
+            thread.set_model(model.clone(), cx);
+            assert_eq!(thread.reasoning_mode(), ReasoningMode::Standard);
+            let request = thread.build_completion_request(CompletionIntent::UserPrompt, cx);
+            assert!(
+                matches!(&request, Ok(request) if request.reasoning_mode == ReasoningMode::Standard),
+                "{request:?}"
+            );
+
+            thread.set_thinking_enabled(true, cx);
+            thread.set_thinking_effort(Some("high".into()), cx);
+            let save_key = thread.streaming_save_key();
+            thread.set_reasoning_mode(ReasoningMode::Pro, cx);
+            assert!(thread.streaming_save_key() != save_key);
+            let request = thread.build_completion_request(CompletionIntent::UserPrompt, cx);
+            assert!(
+                matches!(&request, Ok(request)
+                    if request.reasoning_mode == ReasoningMode::Pro
+                        && request.thinking_effort.as_deref() == Some("high")),
+                "{request:?}"
+            );
+        });
+
+        let saved = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+        assert_eq!(saved.reasoning_mode, ReasoningMode::Pro);
+
+        thread.update(cx, |thread, cx| {
+            let mut unsupported_model = model.clone();
+            unsupported_model.supports_pro_reasoning = false;
+            thread.set_model(unsupported_model, cx);
+            assert_eq!(thread.reasoning_mode(), ReasoningMode::Standard);
+            thread.set_reasoning_mode(ReasoningMode::Pro, cx);
+            assert_eq!(thread.reasoning_mode(), ReasoningMode::Standard);
+            thread.set_model(model, cx);
+            assert_eq!(thread.reasoning_mode(), ReasoningMode::Standard);
+            let request = thread.build_completion_request(CompletionIntent::UserPrompt, cx);
+            assert!(
+                matches!(&request, Ok(request) if request.reasoning_mode == ReasoningMode::Standard),
+                "{request:?}"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_reasoning_mode_restoration_checks_model_support(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.update_model("fake", |model| model.supports_pro_reasoning = true);
+        thread.update(cx, |thread, cx| {
+            thread.set_model(model.clone(), cx);
+            thread.set_reasoning_mode(ReasoningMode::Pro, cx);
+        });
+        let restore_thread = |saved: DbThread, cx: &mut TestAppContext| {
+            let (id, project, project_context, registry, templates) =
+                thread.read_with(cx, |thread, _| {
+                    (
+                        thread.id().clone(),
+                        thread.project.clone(),
+                        thread.project_context.clone(),
+                        thread.context_server_registry.clone(),
+                        thread.templates.clone(),
+                    )
+                });
+            cx.new(|cx| {
+                Thread::from_db(id, saved, project, project_context, registry, templates, cx)
+            })
+        };
+
+        let saved = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+        let restored = restore_thread(saved, cx);
+        assert_eq!(
+            restored.read_with(cx, |thread, _| thread.reasoning_mode()),
+            ReasoningMode::Pro
+        );
+
+        fake.update_model("fake", |model| model.supports_pro_reasoning = false);
+        let saved = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+        let restored = restore_thread(saved, cx);
+        restored.update(cx, |thread, cx| {
+            assert_eq!(thread.reasoning_mode(), ReasoningMode::Standard);
+            thread.set_model(model.clone(), cx);
+            assert_eq!(thread.reasoning_mode(), ReasoningMode::Standard);
+        });
+
+        let mut saved = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+        saved.model = Some(DbLanguageModel {
+            provider: model.provider_id.0.to_string(),
+            model: "pending-model".into(),
+        });
+        let pending = restore_thread(saved, cx);
+        assert!(pending.read_with(cx, |thread, _| {
+            matches!(thread.thread_model(), ThreadModel::Unresolved(_))
+        }));
+        let model = fake.update_model("pending-model", |model| model.supports_pro_reasoning = true);
+        pending.update(cx, |thread, cx| {
+            thread.set_model(model, cx);
+            assert_eq!(thread.reasoning_mode(), ReasoningMode::Pro);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_reasoning_mode_inherits_and_propagates_to_subagents(cx: &mut TestAppContext) {
+        let (parent, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.update_model("fake", |model| model.supports_pro_reasoning = true);
+        parent.update(cx, |thread, cx| {
+            thread.set_model(model.clone(), cx);
+            thread.set_reasoning_mode(ReasoningMode::Pro, cx);
+        });
+        let subagents = setup_parent_with_subagents(cx, &parent, 1);
+        let selection = LanguageModelSelection {
+            provider: model.provider_id.0.to_string().into(),
+            model: model.id.0.to_string(),
+            enable_thinking: false,
+            effort: None,
+            speed: None,
+        };
+        let independent_subagent = cx.new(|cx| Thread::new_subagent(&parent, Some(&selection), cx));
+        let unavailable_selection = LanguageModelSelection {
+            provider: "unavailable-provider".into(),
+            ..selection
+        };
+        let fallback_subagent =
+            cx.new(|cx| Thread::new_subagent(&parent, Some(&unavailable_selection), cx));
+        parent.update(cx, |thread, _| {
+            thread.register_running_subagent(independent_subagent.downgrade());
+            thread.register_running_subagent(fallback_subagent.downgrade());
+        });
+        for subagent in &subagents {
+            assert_eq!(
+                subagent.read_with(cx, |thread, _| thread.reasoning_mode()),
+                ReasoningMode::Pro
+            );
+        }
+        for mode in [ReasoningMode::Standard, ReasoningMode::Pro] {
+            parent.update(cx, |thread, cx| thread.set_reasoning_mode(mode, cx));
+            for subagent in &subagents {
+                assert_eq!(
+                    subagent.read_with(cx, |thread, _| thread.reasoning_mode()),
+                    mode
+                );
+            }
+            assert_eq!(
+                independent_subagent.read_with(cx, |thread, _| thread.reasoning_mode()),
+                ReasoningMode::Standard
+            );
+            // Like thinking and speed, a subagent whose configured model can't be resolved keeps
+            // the settings it inherited but no longer follows the parent.
+            assert_eq!(
+                fallback_subagent.read_with(cx, |thread, _| thread.reasoning_mode()),
+                ReasoningMode::Pro
+            );
+        }
     }
 
     #[gpui::test]
