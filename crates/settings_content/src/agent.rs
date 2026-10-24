@@ -66,6 +66,32 @@ pub enum SidebarSide {
     Right,
 }
 
+/// How tool calls are presented in agent conversations.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolCallDisplay {
+    /// Preserve the existing tool cards and expansion preferences.
+    #[default]
+    Verbose,
+    /// Show individual calls as expandable summaries.
+    Compact,
+    /// Group consecutive calls of the same kind into expandable summaries.
+    Grouped,
+}
+
 /// How thinking blocks should be displayed by default in the agent panel.
 #[derive(
     Clone,
@@ -361,6 +387,11 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub expand_terminal_card: Option<bool>,
+    /// How tool input and output are displayed in agent conversations.
+    /// Compact and grouped summaries start collapsed, independently of card expansion settings.
+    ///
+    /// Default: verbose
+    pub tool_call_display: Option<ToolCallDisplay>,
     /// Command to automatically run when Zed creates a Terminal Thread shell in the agent panel.
     /// The command is sent to the shell as if typed, so it is interpreted by your
     /// configured shell (including on Windows and remote/WSL projects).

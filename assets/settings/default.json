@@ -1387,6 +1387,8 @@
     //
     // Default: true
     "expand_terminal_card": true,
+    // Display full tool cards, individual summaries, or grouped summaries.
+    "tool_call_display": "verbose",
     // Command to automatically run when Zed creates a Terminal Thread shell in the agent panel.
     // The command is sent to the shell as if typed, so it is interpreted by your
     // configured shell (including on Windows and remote/WSL projects).

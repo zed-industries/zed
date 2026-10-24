@@ -27,7 +27,7 @@ use crate::completion_provider::{AvailableSkill, PromptLocalCommand, pluralize};
 use crate::message_editor::SharedSessionCapabilities;
 use crate::ui::{
     SandboxGroup, SandboxRow, SandboxSection, SandboxStatusTooltip, TerminalSandboxWarning,
-    TerminalToolHeader,
+    TerminalToolHeader, terminal_elapsed_label, terminal_running_indicator,
 };
 use crate::unicode_confusables;
 
@@ -56,7 +56,11 @@ use super::elicitation::{
     ElicitationCard, ElicitationCardHandlers, ElicitationFormState, should_render_elicitation,
 };
 use super::subagent_card::{SubagentCardState, SubagentStatus};
+use super::tool_call_groups::{
+    ActivityKind, ActivityStatus, ToolActivity, ToolCallGroup, ToolCallGroups, compact_preview,
+};
 use super::*;
+use settings::ToolCallDisplay;
 
 /// Which side of a session message a transcript shows, and the other participant when it
 /// is known.
@@ -785,6 +789,13 @@ pub struct ThreadView {
     pub list_state: ListState,
     pub session_capabilities: SharedSessionCapabilities,
     pub expanded_tool_call_raw_inputs: HashSet<acp_v2::ToolCallId>,
+    expanded_compact_tool_calls: HashSet<acp_v2::ToolCallId>,
+    expanded_tool_groups: HashSet<String>,
+    tool_call_groups: ToolCallGroups,
+    tool_groups_dirty: bool,
+    tool_timer_task: Option<Task<()>>,
+    rendered_tool_display: ToolCallDisplay,
+    rendered_search_visible: bool,
     collapsed_sandbox_authorization_details: HashSet<acp_v2::ToolCallId>,
     collapsed_sandbox_network_details: HashSet<acp_v2::ToolCallId>,
     /// Sandbox escalation prompts whose "surprising Unicode" warning the user
@@ -1058,7 +1069,9 @@ impl ThreadView {
 
         subscriptions.push(cx.observe(&thread, |_, _, cx| cx.notify()));
         subscriptions.push(cx.observe(&conversation, |_, _, cx| cx.notify()));
+        subscriptions.push(cx.observe_global::<SettingsStore>(|_, cx| cx.notify()));
         subscriptions.push(cx.subscribe(&thread, |this, _, event, cx| {
+            this.tool_groups_dirty = true;
             if matches!(
                 event,
                 AcpThreadEvent::ToolAuthorizationRequested(_)
@@ -1301,6 +1314,13 @@ impl ThreadView {
             last_token_limit_telemetry: None,
             thread_feedback: Default::default(),
             expanded_tool_call_raw_inputs: HashSet::default(),
+            expanded_compact_tool_calls: HashSet::default(),
+            expanded_tool_groups: HashSet::default(),
+            tool_call_groups: ToolCallGroups::default(),
+            tool_groups_dirty: true,
+            tool_timer_task: None,
+            rendered_tool_display: AgentSettings::get_global(cx).tool_call_display,
+            rendered_search_visible: false,
             collapsed_sandbox_authorization_details: HashSet::default(),
             collapsed_sandbox_network_details: HashSet::default(),
             acknowledged_confusable_warnings: HashSet::default(),
@@ -1575,6 +1595,25 @@ impl ThreadView {
 
     pub fn has_queued_messages(&self) -> bool {
         !self.message_queue.is_empty()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(super) fn expand_tool_call_for_test(
+        &mut self,
+        id: acp_v2::ToolCallId,
+        cx: &mut Context<Self>,
+    ) {
+        self.expanded_compact_tool_calls.insert(id.clone());
+        if let Some((index, _)) = self.thread.read(cx).tool_call(&id)
+            && let Some(group) = self.tool_call_groups.for_entry(index)
+        {
+            self.expanded_tool_groups.insert(group.first_id.clone());
+        }
+        self.entry_view_state
+            .update(cx, |state, _| state.expand_tool_call(id));
+        self.list_state
+            .remeasure_items(0..self.list_state.item_count());
+        cx.notify();
     }
 
     fn materialize_tool_call_views(
@@ -7193,6 +7232,94 @@ fn sandbox_network_rows(network: &SandboxNetPolicy) -> Vec<SandboxRow> {
 
 impl ThreadView {
     fn render_entries(&mut self, cx: &mut Context<Self>) -> List {
+        let display = AgentSettings::get_global(cx).tool_call_display;
+        if self.tool_groups_dirty
+            || self.rendered_tool_display != display
+            || self.rendered_search_visible != self.thread_search_visible
+        {
+            self.tool_groups_dirty = false;
+            let has_running_timer = display != ToolCallDisplay::Verbose
+                && self.thread.read(cx).entries().iter().any(|entry| {
+                    matches!(entry, AgentThreadEntry::ToolCall(call)
+                        if Self::tool_running_started_at(call, cx).is_some())
+                });
+            if has_running_timer && self.tool_timer_task.is_none() {
+                self.tool_timer_task = Some(cx.spawn(async move |this, cx| {
+                    loop {
+                        cx.background_executor().timer(Duration::from_secs(1)).await;
+                        if this.update(cx, |_, cx| cx.notify()).is_err() {
+                            break;
+                        }
+                    }
+                }));
+            } else if !has_running_timer {
+                self.tool_timer_task = None;
+            }
+            let groups = if display == ToolCallDisplay::Grouped && !self.thread_search_visible {
+                let thread = self.thread.read(cx);
+                let permission_tools: HashSet<_> = thread
+                    .pending_permission_requests()
+                    .filter_map(|request| request.generic_request())
+                    .filter_map(|request| Self::permission_tool_call(thread, request))
+                    .map(|(_, call)| call.id.clone())
+                    .collect();
+                ToolCallGroups::new(thread.entries().iter().map(|entry| {
+                    let AgentThreadEntry::ToolCall(call) = entry else {
+                        return None;
+                    };
+                    if permission_tools.contains(&call.id)
+                        || call.is_subagent()
+                        || call.authorization_id().is_some()
+                        || matches!(call.status(), ToolCallStatus::WaitingForConfirmation)
+                    {
+                        return None;
+                    }
+                    let kind = match call.kind() {
+                        acp_v2::ToolKind::Execute => ActivityKind::Execute,
+                        acp_v2::ToolKind::Read => ActivityKind::Read,
+                        acp_v2::ToolKind::Search => ActivityKind::Search,
+                        acp_v2::ToolKind::Edit => ActivityKind::Edit,
+                        acp_v2::ToolKind::Delete => ActivityKind::Delete,
+                        acp_v2::ToolKind::Move => ActivityKind::Move,
+                        acp_v2::ToolKind::Fetch => ActivityKind::Fetch,
+                        _ => return None,
+                    };
+                    let status = match Self::tool_display_status(call, cx) {
+                        ToolCallStatus::Pending => ActivityStatus::Pending,
+                        ToolCallStatus::InProgress => ActivityStatus::Running,
+                        ToolCallStatus::Completed => ActivityStatus::Completed,
+                        ToolCallStatus::Failed => ActivityStatus::Failed,
+                        ToolCallStatus::Canceled => ActivityStatus::Canceled,
+                        ToolCallStatus::Rejected => ActivityStatus::Rejected,
+                        ToolCallStatus::WaitingForConfirmation => return None,
+                    };
+                    Some(ToolActivity {
+                        id: call.id.0.to_string(),
+                        kind,
+                        status,
+                        paths: call
+                            .locations
+                            .iter()
+                            .map(|location| location.path.clone())
+                            .collect(),
+                    })
+                }))
+            } else {
+                ToolCallGroups::default()
+            };
+            if self.tool_call_groups != groups
+                || self.rendered_tool_display != display
+                || self.rendered_search_visible != self.thread_search_visible
+            {
+                self.tool_call_groups = groups;
+                self.rendered_tool_display = display;
+                self.rendered_search_visible = self.thread_search_visible;
+                // Keep raw entry indexes for prompt navigation and scroll targets. Hidden
+                // members have zero height; their group's header stays at its first entry.
+                self.list_state
+                    .remeasure_items(0..self.list_state.item_count());
+            }
+        }
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
         let centered_container = move |content: AnyElement| {
             h_flex().w_full().justify_center().child(
@@ -7208,6 +7335,30 @@ impl ThreadView {
             cx.processor(move |this, index: usize, window, cx| {
                 let entries = this.thread.read(cx).entries();
                 if let Some(entry) = entries.get(index) {
+                    if let Some(group) = this.tool_call_groups.for_entry(index) {
+                        let expanded = this.expanded_tool_groups.contains(&group.first_id);
+                        if index == group.entries.start {
+                            return centered_container(
+                                v_flex()
+                                    .w_full()
+                                    .child(this.render_tool_group_header(group, cx))
+                                    .when(expanded, |element| {
+                                        element.child(this.render_entry(
+                                            index,
+                                            entries.len(),
+                                            entry,
+                                            window,
+                                            cx,
+                                        ))
+                                    })
+                                    .into_any_element(),
+                            )
+                            .into_any_element();
+                        }
+                        if !expanded {
+                            return Empty.into_any_element();
+                        }
+                    }
                     let rendered = this.render_entry(index, entries.len(), entry, window, cx);
                     centered_container(rendered.into_any_element()).into_any_element()
                 } else if this.generating_indicator_in_list {
@@ -7222,6 +7373,69 @@ impl ThreadView {
         )
         .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
         .flex_grow_1()
+    }
+
+    fn render_tool_group_header(&self, group: &ToolCallGroup, cx: &Context<Self>) -> AnyElement {
+        let expanded = self.expanded_tool_groups.contains(&group.first_id);
+        let running_timer = group.running_command().and_then(|(id, _)| {
+            let (_, call) = self
+                .thread
+                .read(cx)
+                .tool_call(&acp_v2::ToolCallId::new(id))?;
+            Self::tool_running_started_at(call, cx)
+        });
+        let group_id = group.first_id.clone();
+        let entries = group.entries.clone();
+        let color = if group.has_failure() {
+            Color::Error
+        } else {
+            Color::Muted
+        };
+        h_flex()
+            .id(format!("tool-group-{}", group.first_id))
+            .debug_selector(|| format!("tool-group-{}", group.first_id))
+            .mx_5()
+            .py_1()
+            .gap_1p5()
+            .min_w_0()
+            .cursor_pointer()
+            .hover(|style| style.bg(cx.theme().colors().element_hover))
+            .child(Disclosure::new(
+                format!("tool-group-disclosure-{}", group.first_id),
+                expanded,
+            ))
+            .child(
+                Icon::new(if group.kind == ActivityKind::Execute {
+                    IconName::ToolTerminal
+                } else {
+                    IconName::ToolSearch
+                })
+                .size(IconSize::Small)
+                .color(color),
+            )
+            .child(
+                Label::new(group.label())
+                    .size(LabelSize::Small)
+                    .color(color)
+                    .truncate(),
+            )
+            .when_some(running_timer, |header, started_at| {
+                header.child(
+                    h_flex()
+                        .debug_selector(|| format!("tool-group-timer-{}", group.first_id))
+                        .gap_1p5()
+                        .child(terminal_elapsed_label(started_at.elapsed(), cx))
+                        .child(terminal_running_indicator()),
+                )
+            })
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if !this.expanded_tool_groups.remove(&group_id) {
+                    this.expanded_tool_groups.insert(group_id.clone());
+                }
+                this.list_state.remeasure_items(entries.clone());
+                cx.notify();
+            }))
+            .into_any_element()
     }
 
     fn render_entry(
@@ -7506,7 +7720,9 @@ impl ThreadView {
                 // A canceled tool call that produced visible output is still worth
                 // showing, but one that was canceled before producing anything just
                 // renders as a useless "Canceled" card — hide those entirely.
-                if matches!(tool_call.status(), ToolCallStatus::Canceled) {
+                if matches!(tool_call.status(), ToolCallStatus::Canceled)
+                    && AgentSettings::get_global(cx).tool_call_display == ToolCallDisplay::Verbose
+                {
                     let has_visible_content =
                         tool_call.content().iter().any(|content| match content {
                             ToolCallContent::ContentBlock { block, .. } => {
@@ -9342,7 +9558,181 @@ impl ThreadView {
             })
     }
 
+    fn tool_running_started_at(tool_call: &ToolCall, cx: &App) -> Option<Instant> {
+        if !matches!(
+            tool_call.status(),
+            ToolCallStatus::Pending | ToolCallStatus::InProgress
+        ) {
+            return None;
+        }
+        tool_call
+            .terminals()
+            .filter_map(|terminal| {
+                let terminal = terminal.read(cx);
+                let started = terminal.is_process_backed()
+                    || terminal
+                        .display_state()
+                        .is_some_and(|state| state.command().is_some());
+                (started && terminal.output().is_none()).then(|| terminal.started_at())
+            })
+            .max()
+    }
+
+    fn tool_display_status(tool_call: &ToolCall, cx: &App) -> ToolCallStatus {
+        let status = tool_call.status();
+        if matches!(
+            status,
+            ToolCallStatus::WaitingForConfirmation
+                | ToolCallStatus::Rejected
+                | ToolCallStatus::Canceled
+                | ToolCallStatus::Failed
+        ) {
+            return status;
+        }
+        // ACP tool status can lag behind terminal lifecycle events. Use the same
+        // execution state and clock as the expanded terminal card.
+        if Self::tool_running_started_at(tool_call, cx).is_some() {
+            return ToolCallStatus::InProgress;
+        }
+        if tool_call.terminals().any(|terminal| {
+            terminal.read(cx).output().is_some_and(|output| {
+                output.exit_status.exit_code.is_some_and(|code| code != 0)
+                    || output.exit_status.signal.is_some()
+            })
+        }) {
+            return ToolCallStatus::Failed;
+        }
+        if tool_call.terminals().next().is_some()
+            && tool_call
+                .terminals()
+                .all(|terminal| terminal.read(cx).output().is_some())
+        {
+            return ToolCallStatus::Completed;
+        }
+        status
+    }
+
     fn render_any_tool_call(
+        &self,
+        active_session_id: &acp_v2::SessionId,
+        entry_ix: usize,
+        tool_call: &ToolCall,
+        focus_handle: &FocusHandle,
+        layout: ToolCallLayout,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Stateful<Div> {
+        let needs_confirmation = tool_call.authorization_id().is_some()
+            || matches!(tool_call.status(), ToolCallStatus::WaitingForConfirmation)
+            || self
+                .render_generic_tool_permissions(active_session_id, tool_call, cx)
+                .is_some();
+        if AgentSettings::get_global(cx).tool_call_display == ToolCallDisplay::Verbose
+            || self.thread_search_visible
+            || tool_call.is_subagent()
+            || needs_confirmation
+        {
+            return self.render_tool_call_details(
+                active_session_id,
+                entry_ix,
+                tool_call,
+                focus_handle,
+                layout,
+                window,
+                cx,
+            );
+        }
+
+        let expanded = self.expanded_compact_tool_calls.contains(&tool_call.id);
+        let id = tool_call.id.clone();
+        let display_status = Self::tool_display_status(tool_call, cx);
+        let running_timer = Self::tool_running_started_at(tool_call, cx);
+        let status = match display_status {
+            ToolCallStatus::Pending => "Pending",
+            ToolCallStatus::InProgress => "Running",
+            ToolCallStatus::Completed => "Completed",
+            ToolCallStatus::Failed => "Failed",
+            ToolCallStatus::Canceled => "Canceled",
+            ToolCallStatus::Rejected => "Rejected",
+            ToolCallStatus::WaitingForConfirmation => "Needs approval",
+        };
+        let color = if display_status == ToolCallStatus::Failed {
+            Color::Error
+        } else {
+            Color::Muted
+        };
+        let icon = match tool_call.kind() {
+            acp_v2::ToolKind::Execute => IconName::ToolTerminal,
+            acp_v2::ToolKind::Read | acp_v2::ToolKind::Search => IconName::ToolSearch,
+            acp_v2::ToolKind::Edit => IconName::ToolPencil,
+            _ => IconName::ToolHammer,
+        };
+        let label = compact_preview(&tool_call.label.read(cx).source());
+        let header = h_flex()
+            .id(format!("compact-tool-header-{}", tool_call.id.0))
+            .debug_selector(|| format!("compact-tool-header-{}", tool_call.id.0))
+            .gap_1p5()
+            .py_1()
+            .min_w_0()
+            .cursor_pointer()
+            .hover(|style| style.bg(cx.theme().colors().element_hover))
+            .child(Disclosure::new(
+                format!("compact-tool-disclosure-{}", tool_call.id.0),
+                expanded,
+            ))
+            .child(Icon::new(icon).size(IconSize::Small).color(color))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(Label::new(label).size(LabelSize::Small).truncate()),
+            )
+            .map(|header| {
+                if let Some(started_at) = running_timer {
+                    header.child(
+                        h_flex()
+                            .debug_selector(|| format!("compact-tool-timer-{}", tool_call.id.0))
+                            .gap_1p5()
+                            .child(terminal_elapsed_label(started_at.elapsed(), cx))
+                            .child(terminal_running_indicator()),
+                    )
+                } else {
+                    header.child(Label::new(status).size(LabelSize::XSmall).color(color))
+                }
+            })
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if !this.expanded_compact_tool_calls.remove(&id) {
+                    this.expanded_compact_tool_calls.insert(id.clone());
+                    this.entry_view_state
+                        .update(cx, |state, _| state.expand_tool_call(id.clone()));
+                    this.materialize_tool_call_views(entry_ix, window, cx);
+                }
+                this.list_state.remeasure_items(entry_ix..entry_ix + 1);
+                this.refresh_thread_search(window, cx);
+                cx.notify();
+            }));
+        div()
+            .id(format!(
+                "compact-tool-{}-{}",
+                tool_call.id.0,
+                layout.id_str()
+            ))
+            .w_full()
+            .child(div().mx_5().child(header))
+            .when(expanded, |element| {
+                element.child(self.render_tool_call_details(
+                    active_session_id,
+                    entry_ix,
+                    tool_call,
+                    focus_handle,
+                    layout,
+                    window,
+                    cx,
+                ))
+            })
+    }
+
+    fn render_tool_call_details(
         &self,
         active_session_id: &acp_v2::SessionId,
         entry_ix: usize,

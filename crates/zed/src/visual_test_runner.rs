@@ -2126,7 +2126,7 @@ fn run_agent_thread_view_test(
     connection
         .set_next_prompt_action(move |thread, cx| thread.upsert_local_tool_call(tool_call, cx));
 
-    let stub_agent: Rc<dyn AgentServer> = Rc::new(StubAgentServer::new(connection));
+    let stub_agent: Rc<dyn AgentServer> = Rc::new(StubAgentServer::new(connection.clone()));
 
     // Create a window sized for the agent panel
     let window_size = size(px(500.0), px(900.0));
@@ -2262,6 +2262,190 @@ fn run_agent_thread_view_test(
         cx,
         update_baseline,
     )?;
+
+    connection.set_next_prompt_action(|_, _| Ok(()));
+    cx.update_window(workspace_window.into(), |_, window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.open_external_thread_with_server(stub_agent.clone(), window, cx);
+        });
+    })?;
+    cx.run_until_parked();
+    let display_view = cx
+        .read(|cx| panel.read(cx).active_thread_view_for_tests().cloned())
+        .context("Missing tool display fixture view")?;
+    let display_thread = cx
+        .read(|cx| {
+            display_view
+                .read(cx)
+                .active_thread()
+                .map(|view| view.read(cx).thread.clone())
+        })
+        .context("Missing tool display fixture thread")?;
+    let send = display_thread.update(cx, |thread, cx| {
+        thread.send(vec!["Inspect the project and run the checks.".into()], cx)
+    });
+    cx.background_executor.allow_parking();
+    let result = cx.foreground_executor.block_test(send);
+    cx.background_executor.forbid_parking();
+    result?;
+    cx.run_until_parked();
+
+    for (id, path) in [("read-one", "/src/main.rs"), ("read-two", "/Cargo.toml")] {
+        display_thread.update(cx, |thread, cx| {
+            thread.upsert_local_tool_call(
+                acp_v2::ToolCallUpdate::new(id)
+                    .title(format!("Read {path}"))
+                    .kind(acp_v2::ToolKind::Read)
+                    .status(acp_v2::ToolCallStatus::Completed)
+                    .locations(vec![acp_v2::ToolCallLocation::new(path)])
+                    .content(vec!["File contents inspected.".into()]),
+                cx,
+            )
+        })?;
+        cx.run_until_parked();
+    }
+    for (id, command) in [
+        (
+            "command-one",
+            "cd /project && python3 - <<'PY'\nfrom pathlib import Path\nfor path in Path('src').glob('*.rs'):\n    print(path.name)\nPY",
+        ),
+        ("command-two", "rg -n 'fn main|mod tests' src | head -40"),
+        ("command-three", "cargo test --locked && cargo fmt --check"),
+    ] {
+        display_thread.update(cx, |thread, cx| {
+            thread.upsert_local_tool_call(
+                acp_v2::ToolCallUpdate::new(id)
+                    .title(format!("```\n{command}\n```"))
+                    .kind(acp_v2::ToolKind::Execute)
+                    .status(acp_v2::ToolCallStatus::Completed)
+                    .content(vec![
+                        "Command finished successfully.\nAll checks passed.".into(),
+                    ]),
+                cx,
+            )
+        })?;
+        cx.run_until_parked();
+    }
+    display_thread.update(cx, |thread, cx| {
+        thread.upsert_assistant_message(
+            acp_v2::AgentMessage::new("fixture-answer").content(vec![
+                "I inspected two files and ran three commands. The checks passed.".into(),
+            ]),
+            cx,
+        )
+    })?;
+    cx.run_until_parked();
+
+    // Render the conversation directly so this fixture does not depend on dock visibility.
+    let display_window = cx.update(|cx| {
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                focus: false,
+                show: false,
+                ..Default::default()
+            },
+            |_, _| display_view.clone(),
+        )
+    })?;
+    cx.run_until_parked();
+
+    let original_settings = cx.read(|cx| agent_settings::AgentSettings::get_global(cx).clone());
+    for (mode, name) in [
+        (settings::ToolCallDisplay::Verbose, "agent_tools_verbose"),
+        (settings::ToolCallDisplay::Compact, "agent_tools_compact"),
+        (settings::ToolCallDisplay::Grouped, "agent_tools_grouped"),
+    ] {
+        cx.update(|cx| {
+            agent_settings::AgentSettings::override_global(
+                agent_settings::AgentSettings {
+                    tool_call_display: mode,
+                    ..original_settings.clone()
+                },
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        run_visual_test(name, display_window.into(), cx, update_baseline)?;
+    }
+    display_thread.update(cx, |thread, cx| {
+        thread.upsert_display_terminal(
+            "running-command".into(),
+            acp_thread::DisplayTerminalPatch {
+                command: agent_client_protocol::schema::MaybeUndefined::Value(
+                    "cargo test --locked && cargo fmt --check".into(),
+                ),
+                ..Default::default()
+            },
+            cx,
+        )?;
+        thread.upsert_wire_tool_call(
+            acp_v2::ToolCallUpdate::new("command-three")
+                .status(acp_v2::ToolCallStatus::Pending)
+                .content(vec![acp_v2::ToolCallContent::Terminal(
+                    acp_v2::Terminal::new("running-command"),
+                )]),
+            cx,
+        )
+    })?;
+    cx.run_until_parked();
+    for (mode, name) in [
+        (
+            settings::ToolCallDisplay::Grouped,
+            "agent_tools_grouped_running",
+        ),
+        (
+            settings::ToolCallDisplay::Compact,
+            "agent_tools_compact_running",
+        ),
+    ] {
+        cx.update(|cx| {
+            agent_settings::AgentSettings::override_global(
+                agent_settings::AgentSettings {
+                    tool_call_display: mode,
+                    ..original_settings.clone()
+                },
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        run_visual_test(name, display_window.into(), cx, update_baseline)?;
+    }
+    display_thread.update(cx, |thread, cx| {
+        thread.upsert_display_terminal(
+            "running-command".into(),
+            acp_thread::DisplayTerminalPatch {
+                exit_status: agent_client_protocol::schema::MaybeUndefined::Value(
+                    acp_v2::TerminalExitStatus::new().exit_code(0),
+                ),
+                ..Default::default()
+            },
+            cx,
+        )
+    })?;
+    cx.update(|cx| {
+        agent_settings::AgentSettings::override_global(
+            agent_settings::AgentSettings {
+                tool_call_display: settings::ToolCallDisplay::Grouped,
+                ..original_settings.clone()
+            },
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    display_view.update(cx, |view, cx| {
+        view.expand_tool_call("command-one".into(), cx)
+    });
+    cx.run_until_parked();
+    run_visual_test(
+        "agent_tools_grouped_expanded",
+        display_window.into(),
+        cx,
+        update_baseline,
+    )?;
+    cx.update(|cx| agent_settings::AgentSettings::override_global(original_settings, cx));
+
+    cx.update_window(display_window.into(), |_, window, _| window.remove_window())?;
 
     // Remove the worktree from the project to stop background scanning tasks
     // This prevents "root path could not be canonicalized" errors when we clean up

@@ -115,6 +115,7 @@ mod message_queue;
 mod subagent_card;
 mod thread_search_bar;
 mod thread_view;
+mod tool_call_groups;
 pub use message_queue::*;
 pub use thread_view::*;
 
@@ -3924,9 +3925,7 @@ impl ConversationView {
     pub fn expand_tool_call(&mut self, tool_call_id: acp_v2::ToolCallId, cx: &mut Context<Self>) {
         if let Some(active) = self.active_thread() {
             active.update(cx, |active, cx| {
-                active.entry_view_state.update(cx, |state, _cx| {
-                    state.expand_tool_call(tool_call_id);
-                });
+                active.expand_tool_call_for_test(tool_call_id, cx);
             });
             cx.notify();
         }
@@ -15872,6 +15871,598 @@ pub(crate) mod tests {
             lower_terminal.update(cx, |terminal, _| terminal.take_input_log()),
             vec![b"a".to_vec()],
         );
+    }
+
+    #[gpui::test]
+    async fn test_tool_display_message_navigation_uses_existing_keymap(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+                "keymaps/default-macos.json",
+                cx,
+            )
+            .expect("default macOS keymap");
+            cx.bind_keys(bindings);
+        });
+        let connection = StubAgentConnection::new();
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        for turn in 0..4 {
+            connection.set_next_prompt_updates(vec![
+                acp_v1::SessionUpdate::ToolCall(
+                    acp_v1::ToolCall::new(format!("{turn}-a"), "first command")
+                        .kind(acp_v1::ToolKind::Execute)
+                        .status(acp_v1::ToolCallStatus::Completed),
+                ),
+                acp_v1::SessionUpdate::ToolCall(
+                    acp_v1::ToolCall::new(format!("{turn}-b"), "second command")
+                        .kind(acp_v1::ToolKind::Execute)
+                        .status(acp_v1::ToolCallStatus::Completed),
+                ),
+                acp_v1::SessionUpdate::AgentMessageChunk(acp_v1::ContentChunk::new(
+                    "Reply\n\n".repeat(40).into(),
+                )),
+            ]);
+            thread
+                .update(cx, |thread, cx| {
+                    thread.send_raw(&format!("Question {turn}"), cx)
+                })
+                .await
+                .unwrap();
+            cx.run_until_parked();
+        }
+        let targets = thread.read_with(cx, |thread, _| {
+            thread
+                .entries()
+                .iter()
+                .enumerate()
+                .filter_map(|(index, entry)| {
+                    thread
+                        .is_user_authored_scroll_target(entry)
+                        .then_some(index)
+                })
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(targets.len(), 4);
+        for mode in [
+            settings::ToolCallDisplay::Verbose,
+            settings::ToolCallDisplay::Compact,
+            settings::ToolCallDisplay::Grouped,
+        ] {
+            cx.update(|_, cx| {
+                AgentSettings::override_global(
+                    AgentSettings {
+                        tool_call_display: mode,
+                        ..AgentSettings::get_global(cx).clone()
+                    },
+                    cx,
+                )
+            });
+            thread_view.update_in(cx, |view, window, cx| {
+                view.scroll_to_top(cx);
+                view.focus_handle(cx).focus(window, cx);
+            });
+            cx.run_until_parked();
+            for &target in targets.iter().skip(1) {
+                cx.simulate_keystrokes("shift-pagedown");
+                cx.run_until_parked();
+                assert_eq!(
+                    thread_view
+                        .read_with(cx, |view, _| view.list_state.logical_scroll_top().item_ix),
+                    target,
+                    "next message in {mode:?}"
+                );
+            }
+            for &target in targets.iter().rev().skip(1) {
+                cx.simulate_keystrokes("shift-pageup");
+                cx.run_until_parked();
+                assert_eq!(
+                    thread_view
+                        .read_with(cx, |view, _| view.list_state.logical_scroll_top().item_ix),
+                    target,
+                    "previous message in {mode:?}"
+                );
+            }
+            let editor = thread_view.read_with(cx, |view, _| view.message_editor.clone());
+            cx.focus(&editor);
+            cx.simulate_keystrokes("ctrl-alt-pagedown");
+            cx.run_until_parked();
+            assert_eq!(
+                thread_view.read_with(cx, |view, _| view.list_state.logical_scroll_top().item_ix),
+                targets[1],
+                "editor navigation in {mode:?}"
+            );
+            cx.simulate_keystrokes("ctrl-alt-pageup");
+            cx.run_until_parked();
+            assert_eq!(
+                thread_view.read_with(cx, |view, _| view.list_state.logical_scroll_top().item_ix),
+                targets[0]
+            );
+            let (header_selector, content_selector) = match mode {
+                settings::ToolCallDisplay::Verbose => continue,
+                settings::ToolCallDisplay::Compact => {
+                    ("compact-tool-header-0-a", "tool-call-0-a-standalone")
+                }
+                settings::ToolCallDisplay::Grouped => ("tool-group-0-a", "compact-tool-header-0-a"),
+            };
+            for expanded in [true, false] {
+                let header = cx.debug_bounds(header_selector).expect("summary header");
+                cx.simulate_click(header.center(), gpui::Modifiers::default());
+                cx.run_until_parked();
+                assert_eq!(cx.debug_bounds(content_selector).is_some(), expanded);
+                cx.simulate_keystrokes("ctrl-alt-pagedown");
+                cx.run_until_parked();
+                cx.simulate_keystrokes("ctrl-alt-pageup");
+                cx.run_until_parked();
+                assert_eq!(
+                    thread_view
+                        .read_with(cx, |view, _| view.list_state.logical_scroll_top().item_ix),
+                    targets[0]
+                );
+                assert_eq!(
+                    cx.debug_bounds(content_selector).is_some(),
+                    expanded,
+                    "message navigation preserves expansion in {mode:?}"
+                );
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_tool_display_group_collapse_preserves_keyboard_context(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    tool_call_display: settings::ToolCallDisplay::Grouped,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+            let bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+                "keymaps/default-macos.json",
+                cx,
+            )
+            .unwrap();
+            cx.bind_keys(bindings);
+        });
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![
+            acp_v1::SessionUpdate::ToolCall(
+                acp_v1::ToolCall::new("one", "first command").kind(acp_v1::ToolKind::Execute),
+            ),
+            acp_v1::SessionUpdate::ToolCall(
+                acp_v1::ToolCall::new("two", "second command").kind(acp_v1::ToolKind::Execute),
+            ),
+        ]);
+        let (conversation_view, cx) =
+            setup_full_size_conversation_and_send(connection, "Run commands", cx).await;
+        let thread_view = active_thread(&conversation_view, cx);
+        let header = cx.debug_bounds("tool-group-one").expect("group header");
+        cx.simulate_click(header.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        let focus = thread_view.read_with(cx, |view, cx| {
+            view.entry_view_state
+                .read(cx)
+                .entry(2)
+                .and_then(|entry| entry.focus_handle(cx))
+                .expect("second command focus")
+        });
+        cx.update(|window, cx| focus.focus(window, cx));
+        cx.run_until_parked();
+        let header = cx
+            .debug_bounds("tool-group-one")
+            .expect("expanded group header");
+        cx.simulate_click(header.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("compact-tool-header-two").is_none());
+        cx.update(|window, cx| {
+            assert!(
+                thread_view
+                    .read(cx)
+                    .focus_handle(cx)
+                    .contains_focused(window, cx),
+                "collapsing focused content retains the conversation key context"
+            )
+        });
+        cx.simulate_keystrokes("cmd-f");
+        cx.run_until_parked();
+        assert!(thread_view.read_with(cx, |view, _| view.thread_search_visible));
+    }
+
+    #[gpui::test]
+    async fn test_tool_display_compact_collapse_preserves_terminal_keyboard_context(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    tool_call_display: settings::ToolCallDisplay::Compact,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+            let bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+                "keymaps/default-macos.json",
+                cx,
+            )
+            .unwrap();
+            cx.bind_keys(bindings);
+        });
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_display_terminal(
+                    "terminal".into(),
+                    acp_thread::DisplayTerminalPatch {
+                        command: agent_client_protocol::schema::MaybeUndefined::Value(
+                            "printf hello".into(),
+                        ),
+                        ..Default::default()
+                    },
+                    cx,
+                )
+                .unwrap();
+            thread
+                .upsert_wire_tool_call(
+                    acp_v2::ToolCallUpdate::new("tool")
+                        .title("printf hello")
+                        .kind(acp_v2::ToolKind::Execute)
+                        .content(vec![acp_v2::ToolCallContent::Terminal(
+                            acp_v2::Terminal::new("terminal"),
+                        )]),
+                    cx,
+                )
+                .unwrap();
+        });
+        cx.run_until_parked();
+        let header = cx
+            .debug_bounds("compact-tool-header-tool")
+            .expect("compact header");
+        cx.simulate_click(header.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        let terminal =
+            thread.read_with(cx, |thread, _| thread.terminal("terminal".into()).unwrap());
+        let terminal_view = thread_view.read_with(cx, |view, cx| {
+            view.entry_view_state
+                .read(cx)
+                .entry(0)
+                .and_then(|entry| entry.terminal(&terminal))
+                .unwrap()
+        });
+        cx.focus(&terminal_view);
+        cx.run_until_parked();
+        let header = cx
+            .debug_bounds("compact-tool-header-tool")
+            .expect("expanded compact header");
+        cx.simulate_click(header.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("tool-call-tool-standalone").is_none());
+        cx.update(|window, cx| {
+            assert!(
+                thread_view
+                    .read(cx)
+                    .focus_handle(cx)
+                    .contains_focused(window, cx),
+                "collapsing a focused terminal retains the conversation key context"
+            )
+        });
+        cx.simulate_keystrokes("cmd-f");
+        cx.run_until_parked();
+        assert!(thread_view.read_with(cx, |view, _| view.thread_search_visible));
+    }
+
+    #[gpui::test]
+    async fn test_tool_display_timers_follow_terminal_lifecycle(cx: &mut TestAppContext) {
+        use agent_client_protocol::schema::MaybeUndefined;
+        init_test(cx);
+        cx.update(|cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    tool_call_display: settings::ToolCallDisplay::Grouped,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
+        for id in ["first", "second"] {
+            thread.update(cx, |thread, cx| {
+                thread
+                    .upsert_wire_tool_call(
+                        acp_v2::ToolCallUpdate::new(id)
+                            .title("sleep 30")
+                            .kind(acp_v2::ToolKind::Execute)
+                            .status(acp_v2::ToolCallStatus::Pending)
+                            .content(vec![acp_v2::ToolCallContent::Terminal(
+                                acp_v2::Terminal::new(id),
+                            )]),
+                        cx,
+                    )
+                    .expect("pending command");
+            });
+            cx.run_until_parked();
+        }
+        // A reference without execution metadata is not a running command.
+        assert!(cx.debug_bounds("tool-group-timer-first").is_none());
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_display_terminal(
+                    "second".into(),
+                    acp_thread::DisplayTerminalPatch {
+                        command: MaybeUndefined::Value("sleep 30".into()),
+                        ..Default::default()
+                    },
+                    cx,
+                )
+                .expect("command starts without tool status update");
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("tool-group-timer-first").is_some());
+        cx.update(|_, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    tool_call_display: settings::ToolCallDisplay::Compact,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("compact-tool-timer-first").is_none());
+        assert!(cx.debug_bounds("compact-tool-timer-second").is_some());
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_display_terminal(
+                    "second".into(),
+                    acp_thread::DisplayTerminalPatch {
+                        exit_status: MaybeUndefined::Value(
+                            acp_v2::TerminalExitStatus::new().exit_code(0),
+                        ),
+                        ..Default::default()
+                    },
+                    cx,
+                )
+                .expect("command finishes without tool status update");
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("compact-tool-timer-second").is_none());
+        cx.update(|_, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    tool_call_display: settings::ToolCallDisplay::Grouped,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("tool-group-timer-first").is_none());
+    }
+
+    #[gpui::test]
+    async fn test_tool_display_compact_expands_input_and_output(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            assert_eq!(
+                AgentSettings::get_global(cx).tool_call_display,
+                settings::ToolCallDisplay::Verbose,
+                "existing settings preserve the verbose default",
+            );
+            AgentSettings::override_global(
+                AgentSettings {
+                    tool_call_display: settings::ToolCallDisplay::Compact,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp_v1::SessionUpdate::ToolCall(
+            acp_v1::ToolCall::new("claude-bash", "```\ncat <<'EOF'\nhello\nEOF\n```")
+                .kind(acp_v1::ToolKind::Execute)
+                .status(acp_v1::ToolCallStatus::InProgress)
+                .content(vec!["first output".into()]),
+        )]);
+        let (conversation_view, cx) =
+            setup_full_size_conversation_and_send(connection, "Run a command", cx).await;
+        assert!(cx.debug_bounds("compact-tool-header-claude-bash").is_some());
+        assert!(
+            cx.debug_bounds("tool-call-claude-bash-standalone")
+                .is_none()
+        );
+        let header = cx
+            .debug_bounds("compact-tool-header-claude-bash")
+            .expect("compact header");
+        cx.simulate_click(header.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("tool-call-claude-bash-standalone")
+                .is_some()
+        );
+        assert!(cx.debug_bounds("tool-call-output-1-0").is_some());
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
+        thread
+            .update(cx, |thread, cx| {
+                thread.upsert_tool_call(
+                    acp_v1::ToolCall::new("claude-bash", "```\ncat <<'EOF'\nhello\nEOF\n```")
+                        .kind(acp_v1::ToolKind::Execute)
+                        .status(acp_v1::ToolCallStatus::Completed)
+                        .content(vec!["updated output".into()]),
+                    cx,
+                )
+            })
+            .expect("streamed tool update");
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("tool-call-output-1-0").is_some(),
+            "streaming must retain expansion"
+        );
+        let header = cx
+            .debug_bounds("compact-tool-header-claude-bash")
+            .expect("compact header");
+        cx.simulate_click(header.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("tool-call-claude-bash-standalone")
+                .is_none()
+        );
+        cx.update(|_, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    tool_call_display: settings::ToolCallDisplay::Verbose,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("compact-tool-header-claude-bash").is_none());
+        assert!(
+            cx.debug_bounds("tool-call-claude-bash-standalone")
+                .is_some()
+        );
+    }
+
+    #[gpui::test]
+    async fn test_tool_display_groups_preserve_search_and_growth(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    tool_call_display: settings::ToolCallDisplay::Grouped,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![
+            acp_v1::SessionUpdate::ToolCall(
+                acp_v1::ToolCall::new("bash-1", "printf first")
+                    .kind(acp_v1::ToolKind::Execute)
+                    .status(acp_v1::ToolCallStatus::Completed),
+            ),
+            acp_v1::SessionUpdate::ToolCall(
+                acp_v1::ToolCall::new("bash-2", "printf second")
+                    .kind(acp_v1::ToolKind::Execute)
+                    .status(acp_v1::ToolCallStatus::Completed),
+            ),
+        ]);
+        let (conversation_view, cx) =
+            setup_full_size_conversation_and_send(connection, "Run commands", cx).await;
+        assert!(cx.debug_bounds("tool-group-bash-1").is_some());
+        assert!(cx.debug_bounds("tool-group-bash-2").is_none());
+        assert!(cx.debug_bounds("compact-tool-header-bash-1").is_none());
+        let header = cx.debug_bounds("tool-group-bash-1").expect("group header");
+        cx.simulate_click(header.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("compact-tool-header-bash-1").is_some());
+        assert!(cx.debug_bounds("compact-tool-header-bash-2").is_some());
+        let thread_view = active_thread(&conversation_view, cx);
+        let thread = thread_view.read_with(cx, |view, _| view.thread.clone());
+        thread
+            .update(cx, |thread, cx| {
+                thread.upsert_tool_call(
+                    acp_v1::ToolCall::new("bash-3", "printf third")
+                        .kind(acp_v1::ToolKind::Execute)
+                        .status(acp_v1::ToolCallStatus::Completed),
+                    cx,
+                )
+            })
+            .expect("new call in existing group");
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("compact-tool-header-bash-3").is_some(),
+            "growing group retains expansion"
+        );
+        let header = cx.debug_bounds("tool-group-bash-1").expect("group header");
+        cx.simulate_click(header.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("compact-tool-header-bash-2").is_none());
+        thread_view.update_in(cx, |view, window, cx| {
+            view.toggle_search(&crate::ToggleSearch, window, cx)
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("tool-group-bash-1").is_none());
+        assert!(cx.debug_bounds("tool-call-bash-2-standalone").is_some());
+        let search_bar = thread_view
+            .read_with(cx, |view, _| view.thread_search_bar.clone())
+            .expect("search bar");
+        search_bar.update_in(cx, |bar, window, cx| {
+            bar.query_editor
+                .update(cx, |editor, cx| editor.set_text("second", window, cx));
+            bar.update_matches(window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(search_bar.read_with(cx, |bar, _| bar.match_count()), 1);
+        thread_view.update_in(cx, |view, window, cx| {
+            view.close_thread_search(window, cx);
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("tool-group-bash-1").is_some());
+        assert!(cx.debug_bounds("compact-tool-header-bash-2").is_none());
+        thread_view.read_with(cx, |view, cx| {
+            assert_thread_list_item_count_matches_entries(view, cx)
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_display_group_exposes_late_generic_permission(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    tool_call_display: settings::ToolCallDisplay::Grouped,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace_with_size(conversation_view.clone(), true, cx);
+        let thread =
+            active_thread(&conversation_view, cx).read_with(cx, |view, _| view.thread.clone());
+        upsert_permission_test_tool(&thread, "permission-tool", cx);
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("tool-group-permission-tool").is_some());
+        let request = generic_permission_prompt(
+            &thread,
+            Some(serde_json::json!({
+                "type": "tool_call", "toolCall": {"toolCallId": "permission-tool"}
+            })),
+            cx,
+        );
+        let (request_id, response) = request_test_generic_permission(&thread, request, cx);
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("tool-group-permission-tool").is_none());
+        assert!(
+            cx.debug_bounds("tool-call-permission-tool-standalone")
+                .is_some()
+        );
+        click_generic_permission(request_id, Some("custom"), cx);
+        assert_eq!(
+            response.await,
+            acp_v2::RequestPermissionOutcome::Selected(acp_v2::SelectedPermissionOutcome::new(
+                "custom"
+            ))
+        );
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("tool-group-permission-tool").is_some());
     }
 
     #[gpui::test]

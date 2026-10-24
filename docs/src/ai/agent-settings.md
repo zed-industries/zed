@@ -107,6 +107,48 @@ By default, context compaction (both `/compact` and auto-compaction) uses the th
 
 - The configured model should have a context window at least as large as the thread's primary model for predictable behavior.
 
+## Tool Call Display {#tool-call-display}
+
+In the Settings Editor, search for **Tool Call Display** to choose how tool calls
+appear in conversations, including Claude external-agent threads:
+
+- **Verbose** (default): Keep the existing tool cards and expansion preferences.
+- **Compact**: Show each call as a single-line summary. Expand it to inspect the
+  full available command input, output, and existing tool controls.
+- **Grouped**: Combine consecutive calls of the same kind into expandable rows,
+  such as "Ran 3 commands" or "Read 4 files". Expand a group to see its individual
+  calls, then expand a call for its details.
+
+Or add this to your settings.json:
+
+```json [settings]
+{
+  "agent": {
+    "tool_call_display": "grouped"
+  }
+}
+```
+
+Compact and grouped summaries start collapsed regardless of `expand_terminal_card`
+and `expand_edit_card`. Expanding a call opens its available details. Streaming
+updates preserve your expansion choices. Permission requests remain visible.
+
+Command counts refer to tool calls, not individual shell statements inside a
+pipeline or script. Reads show a unique file count when the agent supplies file
+locations; otherwise they show a count of read operations. Different tool kinds,
+messages, and subagent entries separate groups. Pending, failed, canceled, and
+rejected operations are indicated in the summary. While a command is executing,
+grouped mode shows "Running Command 5" with that command's elapsed time; compact
+mode shows the elapsed time beside the command. Both use the terminal card's
+rotating activity indicator and clock. The command number follows the order within
+the group, and an additional active count indicates concurrent commands. Elapsed
+time is shown when the agent supplies a running terminal; queued calls do not
+start a timer.
+
+Thread search temporarily shows individual tool cards so matches remain visible.
+Closing search restores your chosen presentation. These settings do not change
+what the agent executes or stores in the conversation.
+
 ## External Agents {#external-agents}
 
 The External Agents section configures ACP-integrated agents.
