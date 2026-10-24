@@ -92,7 +92,9 @@ enum ExportBackground {
     #[default]
     Paper,
     /// Compile a wrapper document that sets the page fill to the current
-    /// theme's editor background color ahead of the original content.
+    /// theme's editor background color ahead of the original content. The
+    /// preview mirrors the exported PDF by recoloring its default white
+    /// paper to the same color.
     Theme,
 }
 
@@ -135,7 +137,8 @@ pub struct TypstPreviewView {
     last_top_up: std::time::Instant,
     /// PDF export feature state, shown in the export toolbar.
     export_state: ExportState,
-    /// Paper vs theme background for PDF exports.
+    /// Paper vs theme background for PDF exports; Theme additionally
+    /// recolors the preview's default white paper to the same color.
     export_background: ExportBackground,
     _connection_task: Task<()>,
     _lsp_subscriptions: Vec<lsp::Subscription>,
@@ -546,6 +549,15 @@ impl TypstPreviewView {
             return;
         }
 
+        // Theme-preview paper recolor, decided per request on the UI thread:
+        // the spawned rasterization task must not read cx/theme itself.
+        let preview_fill = match self.export_background {
+            ExportBackground::Theme => {
+                Some(rgba_to_hex(cx.theme().colors().editor_background.to_rgb()))
+            }
+            ExportBackground::Paper => None,
+        };
+
         let range = self.visible_page_range();
 
         if let PreviewState::Rendering { pages } = &mut self.state {
@@ -580,9 +592,15 @@ impl TypstPreviewView {
                 continue;
             };
             let source_identity = source.svg.clone();
+            // Recolor the paper before the glyph defs go back in: the paper
+            // path lives in the cached source, defs only add shared symbols.
+            let base_svg = match &preview_fill {
+                Some(hex) => recolor_page_paper(&source.svg, hex),
+                None => std::borrow::Cow::Borrowed(&*source.svg),
+            };
             let full_svg = match self.glyph_defs.get(&index) {
-                Some(defs) => inject_glyph_defs(source.svg.as_bytes(), defs),
-                None => source.svg.as_bytes().to_vec(),
+                Some(defs) => inject_glyph_defs(base_svg.as_bytes(), defs),
+                None => base_svg.as_bytes().to_vec(),
             };
             self.pending_rasterize.insert(index);
             cx.spawn(async move |this, cx| {
@@ -628,6 +646,23 @@ impl TypstPreviewView {
             })
             .detach();
         }
+    }
+
+    /// Drop every cached page bitmap and re-rasterize the visible window so
+    /// the preview paper matches the newly selected export background
+    /// (Theme recolors the default white paper, Paper restores it). SVG
+    /// sources and glyph defs carry no fill color and stay cached; the
+    /// placeholders keep their size from `page_size`, so layout doesn't
+    /// jump. No-op outside the Rendering state: nothing to refresh yet.
+    fn refresh_page_bitmaps(&mut self, cx: &mut Context<Self>) {
+        let PreviewState::Rendering { pages } = &mut self.state else {
+            return;
+        };
+        for page in pages.iter_mut() {
+            *page = None;
+        }
+        self.pending_rasterize.clear();
+        self.request_rasterization(cx);
     }
 
     /// Placeholder size for a page whose SVG source hasn't arrived yet.
@@ -973,6 +1008,11 @@ impl TypstPreviewView {
             .selected_style(ButtonStyle::Tinted(TintColor::Accent))
             .on_click(cx.listener(move |this, _event, _window, cx| {
                 this.export_background = background;
+                // Refresh even when the choice didn't change: clicking the
+                // selected button is the escape hatch for bitmaps that went
+                // stale after a Zed theme switch (the fill is captured per
+                // rasterization request, not tracked reactively).
+                this.refresh_page_bitmaps(cx);
                 cx.notify();
             }))
             .into_any_element()
@@ -1404,6 +1444,47 @@ pub(crate) fn inject_glyph_defs(svg_bytes: &[u8], cached_defs: &str) -> Vec<u8> 
     } else {
         svg_bytes.to_vec()
     }
+}
+
+/// Opening of the page-sized rectangle Typst emits as the first
+/// `<path class="typst-shape">` of every page frame: the paper. Measured on
+/// typst 0.14.2 output, where attribute order and spacing are stable.
+const PAPER_PATH_OPEN: &str = "<path class=\"typst-shape\"";
+/// Fill attribute of the paper when the document does not set its own page
+/// color — Typst's white default.
+const DEFAULT_PAPER_FILL_ATTR: &str = "fill=\"#ffffff\"";
+
+/// Recolor the preview paper to the export theme color, so the on-screen
+/// page shows the same background as the exported PDF (WYSIWYG).
+///
+/// Only Typst's default white paper is recolored: a document that sets its
+/// own page fill keeps it, mirroring the export wrapper where the
+/// document's explicit `#set page` wins over the theme prelude. Known
+/// limitation (R1-10): an explicit white fill is indistinguishable from
+/// the default and is recolored too. Returns the input untouched when
+/// there is no default-white paper path, which also makes repeated calls
+/// on already recolored output a no-op.
+fn recolor_page_paper<'a>(svg: &'a str, bg_hex: &str) -> std::borrow::Cow<'a, str> {
+    let Some(path_start) = svg.find(PAPER_PATH_OPEN) else {
+        return std::borrow::Cow::Borrowed(svg);
+    };
+    // The fill attribute must live inside this tag: search only up to the
+    // tag's closing `>` so later content paths are never touched.
+    let Some(tag_len) = svg[path_start..].find('>') else {
+        return std::borrow::Cow::Borrowed(svg);
+    };
+    let Some(fill_offset) = svg[path_start..path_start + tag_len].find(DEFAULT_PAPER_FILL_ATTR)
+    else {
+        // Explicit page fill or already recolored: keep it verbatim.
+        return std::borrow::Cow::Borrowed(svg);
+    };
+    let fill_start = path_start + fill_offset;
+    let fill_end = fill_start + DEFAULT_PAPER_FILL_ATTR.len();
+    std::borrow::Cow::Owned(format!(
+        "{}fill=\"{bg_hex}\"{}",
+        &svg[..fill_start],
+        &svg[fill_end..],
+    ))
 }
 
 /// Compute which pages intersect the viewport from per-page display heights
@@ -2022,6 +2103,64 @@ mod on_demand_tests {
     #[test]
     fn visible_page_range_at_empty_pages() {
         assert_eq!(visible_page_range_at(0.0, 1000.0, &[], 12.0), 0..0);
+    }
+}
+
+#[cfg(test)]
+mod paper_recolor_tests {
+    use super::recolor_page_paper;
+
+    /// A measured typst 0.14.2 page frame: svg header, the paper rectangle
+    /// as the first shape path (fill parameterized), one content shape,
+    /// close tag. Attribute order and spacing are exactly as emitted.
+    fn page_frame(paper_fill: &str) -> String {
+        // r##: the fixture contains `fill="#000000"`, whose `"#` would
+        // terminate a plain r#"..."# raw string.
+        format!(
+            r##"<svg class="typst-doc" width="595.28pt" height="841.89pt"><path class="typst-shape" fill="{paper_fill}" fill-rule="nonzero" d="M 0 0v 841.8898 h 595.2756 v -841.8898 Z "/><path class="typst-shape" fill="#000000" d="M 10 10 h 20"/></svg>"##
+        )
+    }
+
+    #[test]
+    fn recolors_the_default_white_paper_to_the_theme_hex() {
+        let input = page_frame("#ffffff");
+        let recolored = recolor_page_paper(&input, "#1E1E1E");
+        // Constructive: the paper fill swaps, every other byte — attribute
+        // order, d path, content shape — is preserved verbatim.
+        assert_eq!(&*recolored, page_frame("#1E1E1E"));
+    }
+
+    #[test]
+    fn recolors_only_the_first_paper_path_not_later_white_shapes() {
+        // A white content shape after the paper keeps its fill: only the
+        // first shape path is the paper.
+        let input = r##"<svg class="typst-doc" width="595.28pt" height="841.89pt"><path class="typst-shape" fill="#ffffff" fill-rule="nonzero" d="M 0 0v 841.8898 h 595.2756 v -841.8898 Z "/><path class="typst-shape" fill="#ffffff" d="M 10 10 h 20"/></svg>"##;
+        let expected = r##"<svg class="typst-doc" width="595.28pt" height="841.89pt"><path class="typst-shape" fill="#1E1E1E" fill-rule="nonzero" d="M 0 0v 841.8898 h 595.2756 v -841.8898 Z "/><path class="typst-shape" fill="#ffffff" d="M 10 10 h 20"/></svg>"##;
+        assert_eq!(&*recolor_page_paper(input, "#1E1E1E"), expected);
+    }
+
+    #[test]
+    fn keeps_an_explicit_non_white_paper_color() {
+        // Mirrors the export wrapper: the document's own `#set page` wins
+        // over the theme background.
+        let input = page_frame("#ff4136");
+        assert_eq!(&*recolor_page_paper(&input, "#1E1E1E"), input);
+    }
+
+    #[test]
+    fn keeps_a_frame_without_shape_paths() {
+        let input =
+            r#"<svg class="typst-doc" width="10pt" height="10pt"><g class="typst-text"/></svg>"#;
+        assert_eq!(&*recolor_page_paper(input, "#1E1E1E"), input);
+    }
+
+    #[test]
+    fn is_idempotent_once_the_paper_is_recolored() {
+        let input = page_frame("#ffffff");
+        let recolored = recolor_page_paper(&input, "#1E1E1E");
+        // The recolored paper no longer matches the white default, so a
+        // second pass with the same theme must leave it alone.
+        assert_eq!(&*recolor_page_paper(&recolored, "#1E1E1E"), &*recolored);
     }
 }
 
