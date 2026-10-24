@@ -89,7 +89,11 @@ async fn start(
         }
     }
 
-    if binary.connection.is_some() {
+    if binary
+        .connection
+        .as_ref()
+        .is_some_and(|connection| connection.stdio_proxy.is_none())
+    {
         Ok(Box::new(
             TcpTransport::start(binary, log_handlers, cx).await?,
         ))
@@ -636,6 +640,7 @@ impl Transport for TcpTransport {
             host: self.host,
             port: self.port,
             timeout: Some(self.timeout),
+            stdio_proxy: None,
         })
     }
 

@@ -205,6 +205,7 @@ impl JsDebugAdapter {
                 host,
                 port,
                 timeout,
+                stdio_proxy: None,
             }),
             request_args: StartDebuggingRequestArguments {
                 configuration,
