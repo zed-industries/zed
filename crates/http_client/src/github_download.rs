@@ -1,12 +1,8 @@
-use std::{
-    path::{Path, PathBuf},
-    pin::Pin,
-    task::Poll,
-};
+use std::{path::Path, pin::Pin, task::Poll};
 
 use anyhow::{Context, Result};
 use async_compression::futures::bufread::{BzDecoder, GzipDecoder};
-use futures::{AsyncRead, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt, io::BufReader};
+use futures::{AsyncRead, AsyncSeekExt, AsyncWrite, io::BufReader};
 use sha2::{Digest, Sha256};
 
 use crate::{HttpClient, github::AssetKind};
@@ -47,29 +43,14 @@ pub async fn download_server_binary(
     destination_path: &Path,
     asset_kind: AssetKind,
 ) -> Result<(), anyhow::Error> {
-    log::info!("downloading github artifact from {url}");
-    let Some(destination_parent) = destination_path.parent() else {
-        anyhow::bail!("destination path has no parent: {destination_path:?}");
-    };
-
-    let staging_path = staging_path(destination_parent, asset_kind)?;
-    let mut response = http_client
-        .get(url, Default::default(), true)
-        .await
-        .with_context(|| format!("downloading release from {url}"))?;
-    let body = response.body_mut();
-
-    if let Err(err) = extract_to_staging(body, digest, url, &staging_path, asset_kind).await {
-        cleanup_staging_path(&staging_path, asset_kind).await;
-        return Err(err);
-    }
-
-    if let Err(err) = finalize_download(&staging_path, destination_path).await {
-        cleanup_staging_path(&staging_path, asset_kind).await;
-        return Err(err);
-    }
-
-    Ok(())
+    download_server_asset(
+        http_client,
+        url,
+        digest,
+        destination_path,
+        DownloadedAsset::Archive(asset_kind),
+    )
+    .await
 }
 
 pub async fn download_server_raw_binary(
@@ -79,172 +60,144 @@ pub async fn download_server_raw_binary(
     destination_path: &Path,
     binary_file_name: &str,
 ) -> Result<(), anyhow::Error> {
-    log::info!("downloading raw binary from {url}");
-    let Some(destination_parent) = destination_path.parent() else {
-        anyhow::bail!("destination path has no parent: {destination_path:?}");
-    };
-
-    let staging_path = staging_dir_path(destination_parent)?;
-    let result = async {
-        let mut response = http_client
-            .get(url, Default::default(), true)
-            .await
-            .with_context(|| format!("downloading release from {url}"))?;
-
-        let binary_path = staging_path.join(binary_file_name);
-        let mut writer = HashingWriter {
-            writer: async_fs::File::create(&binary_path)
-                .await
-                .with_context(|| format!("creating a file {binary_path:?} for {url}"))?,
-            hasher: Sha256::new(),
-        };
-        futures::io::copy(&mut BufReader::new(response.body_mut()), &mut writer)
-            .await
-            .with_context(|| format!("saving binary contents from {url}"))?;
-        let asset_sha_256 = writer
-            .finish()
-            .await
-            .with_context(|| format!("flushing binary contents for {url}"))?;
-
-        if let Some(expected_sha_256) = digest {
-            anyhow::ensure!(
-                sha256_matches(&asset_sha_256, expected_sha_256),
-                "{url} asset got SHA-256 mismatch. Expected: {expected_sha_256}, Got: {asset_sha_256}",
-            );
-        }
-
-        util::fs::make_file_executable(&binary_path)
-            .await
-            .with_context(|| format!("marking {binary_path:?} as executable"))?;
-        finalize_download(&staging_path, destination_path).await
-    }
-    .await;
-
-    if let Err(err) = result {
-        if let Err(err) = async_fs::remove_dir_all(&staging_path).await {
-            log::warn!("failed to remove staging directory {staging_path:?}: {err:?}");
-        }
-        return Err(err);
-    }
-
-    Ok(())
+    download_server_asset(
+        http_client,
+        url,
+        digest,
+        destination_path,
+        DownloadedAsset::RawBinary(binary_file_name),
+    )
+    .await
 }
 
-async fn extract_to_staging(
+enum DownloadedAsset<'a> {
+    Archive(AssetKind),
+    RawBinary(&'a str),
+}
+
+async fn download_server_asset(
+    http_client: &dyn HttpClient,
+    url: &str,
+    digest: Option<&str>,
+    destination_path: &Path,
+    downloaded_asset: DownloadedAsset<'_>,
+) -> Result<()> {
+    log::info!("downloading {url} into {destination_path:?}");
+    let mut response = http_client
+        .get(url, Default::default(), true)
+        .await
+        .with_context(|| format!("downloading release from {url}"))?;
+    anyhow::ensure!(
+        response.status().is_success(),
+        "downloading {url} failed with status {status}",
+        status = response.status()
+    );
+
+    let destination_parent = destination_path
+        .parent()
+        .with_context(|| format!("destination path has no parent: {destination_path:?}"))?;
+    let staging_directory = tempfile::Builder::new()
+        .prefix(".tmp-github-download-")
+        .tempdir_in(destination_parent)
+        .with_context(|| format!("creating staging directory in {destination_parent:?}"))?;
+    let staged_path = staging_directory.path().join("download");
+
+    match downloaded_asset {
+        DownloadedAsset::Archive(asset_kind) => {
+            download_and_extract(
+                response.body_mut(),
+                digest,
+                url,
+                staging_directory.path(),
+                &staged_path,
+                asset_kind,
+            )
+            .await?
+        }
+        DownloadedAsset::RawBinary(binary_file_name) => {
+            async_fs::create_dir(&staged_path)
+                .await
+                .with_context(|| format!("creating directory {staged_path:?}"))?;
+            let binary_path = staged_path.join(binary_file_name);
+            let mut binary_file = async_fs::File::create(&binary_path)
+                .await
+                .with_context(|| format!("creating a file {binary_path:?} for {url}"))?;
+            download_to_writer(response.body_mut(), &mut binary_file, digest, url).await?;
+            util::fs::make_file_executable(&binary_path)
+                .await
+                .with_context(|| format!("marking {binary_path:?} as executable"))?;
+        }
+    }
+
+    if async_fs::symlink_metadata(destination_path)
+        .await
+        .is_ok_and(|metadata| metadata.is_dir())
+    {
+        async_fs::remove_dir_all(destination_path)
+            .await
+            .with_context(|| format!("removing existing directory {destination_path:?}"))?;
+    }
+    async_fs::rename(&staged_path, destination_path)
+        .await
+        .with_context(|| format!("renaming {staged_path:?} to {destination_path:?}"))
+}
+
+async fn download_and_extract(
     body: impl AsyncRead + Unpin,
     digest: Option<&str>,
     url: &str,
-    staging_path: &Path,
+    staging_directory: &Path,
+    staged_path: &Path,
     asset_kind: AssetKind,
 ) -> Result<()> {
-    match digest {
-        Some(expected_sha_256) => {
-            let temp_asset_file = tempfile::NamedTempFile::new()
-                .with_context(|| format!("creating a temporary file for {url}"))?;
-            let (temp_asset_file, _temp_guard) = temp_asset_file.into_parts();
-            let mut writer = HashingWriter {
-                writer: async_fs::File::from(temp_asset_file),
-                hasher: Sha256::new(),
-            };
-            futures::io::copy(&mut BufReader::new(body), &mut writer)
-                .await
-                .with_context(|| {
-                    format!("saving archive contents into the temporary file for {url}")
-                })?;
-            let asset_sha_256 = format!("{:x}", writer.hasher.finalize());
-
-            anyhow::ensure!(
-                sha256_matches(&asset_sha_256, expected_sha_256),
-                "{url} asset got SHA-256 mismatch. Expected: {expected_sha_256}, Got: {asset_sha_256}",
-            );
-            writer
-                .writer
-                .seek(std::io::SeekFrom::Start(0))
-                .await
-                .with_context(|| format!("seeking temporary file for {url}"))?;
-            stream_file_archive(&mut writer.writer, url, staging_path, asset_kind)
-                .await
-                .with_context(|| {
-                    format!("extracting downloaded asset for {url} into {staging_path:?}")
-                })?;
-        }
-        None => {
-            stream_response_archive(body, url, staging_path, asset_kind)
-                .await
-                .with_context(|| {
-                    format!("extracting response for asset {url} into {staging_path:?}")
-                })?;
-        }
-    }
-    Ok(())
-}
-
-fn staging_dir_path(parent: &Path) -> Result<PathBuf> {
-    let dir = tempfile::Builder::new()
-        .prefix(".tmp-github-download-")
-        .tempdir_in(parent)
-        .with_context(|| format!("creating staging directory in {parent:?}"))?;
-    Ok(dir.keep())
-}
-
-fn staging_path(parent: &Path, asset_kind: AssetKind) -> Result<PathBuf> {
-    match asset_kind {
-        AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Zip => staging_dir_path(parent),
-        AssetKind::Gz => {
-            let path = tempfile::Builder::new()
-                .prefix(".tmp-github-download-")
-                .tempfile_in(parent)
-                .with_context(|| format!("creating staging file in {parent:?}"))?
-                .into_temp_path()
-                .keep()
-                .with_context(|| format!("persisting staging file in {parent:?}"))?;
-            Ok(path)
-        }
-    }
-}
-
-async fn cleanup_staging_path(staging_path: &Path, asset_kind: AssetKind) {
-    match asset_kind {
-        AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Zip => {
-            if let Err(err) = async_fs::remove_dir_all(staging_path).await {
-                log::warn!("failed to remove staging directory {staging_path:?}: {err:?}");
-            }
-        }
-        AssetKind::Gz => {
-            if let Err(err) = async_fs::remove_file(staging_path).await {
-                log::warn!("failed to remove staging file {staging_path:?}: {err:?}");
-            }
-        }
-    }
-}
-
-async fn finalize_download(staging_path: &Path, destination_path: &Path) -> Result<()> {
-    _ = async_fs::remove_dir_all(destination_path).await;
-    async_fs::rename(staging_path, destination_path)
+    // Buffer on the destination's volume rather than a possibly RAM-backed system temp dir.
+    let mut asset_file =
+        async_fs::File::from(tempfile::tempfile_in(staging_directory).with_context(|| {
+            format!("creating a temporary file for {url} in {staging_directory:?}")
+        })?);
+    download_to_writer(body, &mut asset_file, digest, url).await?;
+    asset_file
+        .seek(std::io::SeekFrom::Start(0))
         .await
-        .with_context(|| format!("renaming {staging_path:?} to {destination_path:?}"))?;
-    Ok(())
+        .with_context(|| format!("seeking to the start of the temporary file for {url}"))?;
+
+    if asset_kind != AssetKind::Gz {
+        async_fs::create_dir(staged_path)
+            .await
+            .with_context(|| format!("creating directory {staged_path:?}"))?;
+    }
+    stream_file_archive(asset_file, url, staged_path, asset_kind)
+        .await
+        .with_context(|| format!("extracting {url} into {staged_path:?}"))
 }
 
-async fn stream_response_archive(
-    response: impl AsyncRead + Unpin,
+async fn download_to_writer(
+    body: impl AsyncRead + Unpin,
+    writer: &mut (impl AsyncWrite + Unpin),
+    digest: Option<&str>,
     url: &str,
-    destination_path: &Path,
-    asset_kind: AssetKind,
 ) -> Result<()> {
-    match asset_kind {
-        AssetKind::TarGz => extract_tar_gz(destination_path, url, response).await?,
-        AssetKind::TarBz2 => extract_tar_bz2(destination_path, url, response).await?,
-        AssetKind::Gz => extract_gz(destination_path, url, response).await?,
-        AssetKind::Zip => {
-            util::archive::extract_zip(destination_path, response).await?;
-        }
+    let mut writer = HashingWriter {
+        writer,
+        hasher: Sha256::new(),
     };
+    futures::io::copy(&mut BufReader::new(body), &mut writer)
+        .await
+        .with_context(|| format!("saving downloaded contents from {url}"))?;
+
+    if let Some(expected_sha_256) = digest {
+        let asset_sha_256 = format!("{:x}", writer.hasher.finalize());
+        anyhow::ensure!(
+            sha256_matches(&asset_sha_256, expected_sha_256),
+            "{url} asset got SHA-256 mismatch. Expected: {expected_sha_256}, Got: {asset_sha_256}",
+        );
+    }
+
     Ok(())
 }
 
 async fn stream_file_archive(
-    file_archive: impl AsyncRead + AsyncSeek + Unpin,
+    file_archive: async_fs::File,
     url: &str,
     destination_path: &Path,
     asset_kind: AssetKind,
@@ -323,22 +276,6 @@ async fn extract_gz(
 struct HashingWriter<W: AsyncWrite + Unpin> {
     writer: W,
     hasher: Sha256,
-}
-
-impl<W: AsyncWrite + Unpin> HashingWriter<W> {
-    /// Closes and drops the inner writer, returning the hex SHA-256 digest of
-    /// everything written.
-    ///
-    /// Taking `self` by value guarantees the writer is dropped before this
-    /// returns. For file writers this releases the OS handle, which Windows
-    /// requires before an ancestor directory can be renamed or deleted; note
-    /// that closing alone is not enough, as `async_fs::File` holds its handle
-    /// until dropped.
-    async fn finish(mut self) -> std::io::Result<String> {
-        self.writer.close().await?;
-        drop(self.writer);
-        Ok(format!("{:x}", self.hasher.finalize()))
-    }
 }
 
 impl<W: AsyncWrite + Unpin> AsyncWrite for HashingWriter<W> {
