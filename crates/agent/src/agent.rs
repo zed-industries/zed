@@ -2525,7 +2525,7 @@ impl NativeAgentConnection {
                                 }),
                             ))
                         })??;
-                    let (message_id, preparation, retry_action) = if let Some(content) = content {
+                    let (message_id, retry_action) = if let Some(content) = content {
                         let message_id = ClientUserMessageId::new();
                         let retry_action = agent.read_with(cx, |agent, cx| {
                             let project_state = agent
@@ -2558,10 +2558,10 @@ impl NativeAgentConnection {
                                 cx,
                             )
                         })?;
-                        let preparation = acp_thread.update(cx, |thread, cx| {
-                            thread.prepare_local_prompt(message_id.clone(), source, cx)
+                        acp_thread.update(cx, |thread, cx| {
+                            thread.upsert_local_user_message(message_id.clone(), source, cx)
                         })?;
-                        (message_id, preparation, Some(retry_action))
+                        (message_id, Some(retry_action))
                     } else {
                         let previous_execution = previous_execution
                             .filter(|(id, _retry_action)| thread.read(cx).has_user_message(id));
@@ -2573,7 +2573,7 @@ impl NativeAgentConnection {
                         let retry_action =
                             previous_execution.and_then(|(_id, retry_action)| retry_action);
                         thread.update(cx, |thread, cx| thread.prepare_local_turn(cx));
-                        (message_id, Task::ready(()), retry_action)
+                        (message_id, retry_action)
                     };
                     let (cancellation_sender, cancellation_receiver) = oneshot::channel();
                     let driver = Self::drive_execution(
@@ -2583,7 +2583,6 @@ impl NativeAgentConnection {
                         acp_thread.downgrade(),
                         message_id.clone(),
                         retry_action.clone(),
-                        preparation,
                         cancellation_receiver,
                         completion_sender,
                         cx,
@@ -2630,7 +2629,6 @@ impl NativeAgentConnection {
         acp_thread: WeakEntity<AcpThread>,
         message_id: ClientUserMessageId,
         retry_action: Option<NativeRetryAction>,
-        preparation: Task<()>,
         cancellation: oneshot::Receiver<NativeCancellation>,
         completion: oneshot::Sender<std::result::Result<acp_v2::StopReason, Arc<anyhow::Error>>>,
         cx: &App,
@@ -2639,7 +2637,6 @@ impl NativeAgentConnection {
             let execution = cx.spawn({
                 let agent = agent.clone();
                 async move |cx| {
-                    preparation.await;
                     let task = cx.update(|cx| -> Result<_> {
                         let connection = NativeAgentConnection(
                             agent.upgrade().context("Native agent was released")?,
@@ -2685,34 +2682,25 @@ impl NativeAgentConnection {
                 thread.update(cx, |thread, cx| thread.cancel(cx)).detach();
             }
             let result = match result {
-                Ok(reason) => {
-                    let finish = acp_thread.update(cx, |thread, cx| {
-                        thread.finish_local_turn(reason.clone(), cx)
-                    });
-                    match finish {
-                        Ok(finish) => match finish.await {
-                            Ok(()) => acp_thread.update(cx, |thread, cx| {
-                                thread.update_session_state(
-                                    acp_v2::StateUpdate::Idle(
-                                        acp_v2::IdleStateUpdate::new().stop_reason(reason.clone()),
-                                    ),
-                                    cx,
-                                )
-                            }).and_then(|result| result).map(|()| reason),
-                            Err(error) => Err(error),
-                        },
-                        Err(error) => Err(error),
-                    }
-                }
+                Ok(reason) => acp_thread
+                    .update(cx, |thread, cx| thread.finish_local_turn(reason.clone(), cx))
+                    .and_then(|()| {
+                        acp_thread.update(cx, |thread, cx| {
+                            thread.update_session_state(
+                                acp_v2::StateUpdate::Idle(
+                                    acp_v2::IdleStateUpdate::new().stop_reason(reason.clone()),
+                                ),
+                                cx,
+                            )
+                        })
+                    })
+                    .and_then(|result| result)
+                    .map(|()| reason),
                 Err(error) => {
-                    let finish = acp_thread.update(cx, |thread, cx| {
+                    if let Err(finish_error) = acp_thread.update(cx, |thread, cx| {
                         thread.finish_local_turn(acp_v2::ErrorStopReason::new().into(), cx)
-                    });
-                    match finish {
-                        Ok(finish) => {
-                            finish.await.log_err();
-                        }
-                        Err(finish_error) => log::error!("Native error cleanup: {finish_error:#}"),
+                    }) {
+                        log::error!("Native error cleanup: {finish_error:#}");
                     }
                     Err(error)
                 }
@@ -3594,7 +3582,8 @@ impl acp_thread::AgentSessionTruncate for NativeAgentSessionTruncate {
         let thread = self.thread.clone();
         let acp_thread = self.acp_thread.clone();
         cx.spawn(async move |cx| {
-            // Preparation is session-owned and may precede the model turn.
+            // An MCP prompt, skill, or compaction may still be preparing before
+            // the model turn starts, so cancel it before truncating.
             cancellation.await?;
             let usage = thread.update(cx, |thread, cx| {
                 thread.truncate(client_user_message_id, cx)?;
@@ -4611,90 +4600,6 @@ mod internal_tests {
     }
 
     #[gpui::test]
-    async fn test_native_rewind_cancels_pending_preparation(cx: &mut TestAppContext) {
-        let fake = init_test(cx);
-        let (_connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
-        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
-        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
-        let message_id = ClientUserMessageId::new();
-        let content = vec!["rewound before model startup".into()];
-        let (release, preparation) = oneshot::channel::<()>();
-        let completion = cx.update(|cx| {
-            thread.update(cx, |thread, cx| {
-                thread.set_model(fake.model("fake"), cx);
-                let path_style = thread.project().read(cx).path_style(cx);
-                thread
-                    .push_acp_user_block(message_id.clone(), content.clone(), path_style, cx)
-                    .expect("accepted provider message");
-            });
-            acp_thread.update(cx, |thread, cx| {
-                thread
-                    .prepare_local_prompt(message_id.clone(), content.clone(), cx)
-                    .expect("accepted display message")
-                    .detach();
-                thread
-                    .update_session_state(
-                        acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
-                        cx,
-                    )
-                    .expect("running");
-            });
-            // The initial Git checkpoint can remain pending after acceptance.
-            let preparation = cx.spawn(async move |_cx| {
-                preparation.await.expect("release preparation");
-            });
-            let (sender, receiver) = oneshot::channel();
-            let completion = receiver.shared();
-            let (cancellation, cancelled) = oneshot::channel();
-            let retry_action = Some(NativeRetryAction::Prompt(content));
-            let driver = NativeAgentConnection::drive_execution(
-                agent.downgrade(),
-                session_id.clone(),
-                thread.clone(),
-                acp_thread.downgrade(),
-                message_id.clone(),
-                retry_action.clone(),
-                preparation,
-                cancelled,
-                sender,
-                cx,
-            );
-            agent.update(cx, |agent, _cx| {
-                agent
-                    .sessions
-                    .get_mut(&session_id)
-                    .expect("session")
-                    .execution = Some(NativeExecution {
-                    _driver: driver,
-                    message_id: message_id.clone(),
-                    retry_action,
-                    cancellation: Some(cancellation),
-                    completion: completion.clone(),
-                });
-            });
-            completion
-        });
-        cx.run_until_parked();
-        acp_thread
-            .update(cx, |thread, cx| thread.rewind(message_id.clone(), cx))
-            .await
-            .expect("rewind accepted message");
-        if release.send(()).is_err() {
-            log::debug!("Rewind already dropped pending preparation");
-        }
-        cx.run_until_parked();
-        assert!(
-            fake.pending_completions().is_empty(),
-            "rewind must fence startup"
-        );
-        assert!(!thread.read_with(cx, |thread, _| thread.has_user_message(&message_id)));
-        assert_eq!(
-            completion.await.expect("settled").expect("cancelled"),
-            acp_v2::StopReason::Cancelled
-        );
-    }
-
-    #[gpui::test]
     async fn test_native_stop_does_not_wait_for_uncooperative_tool(cx: &mut TestAppContext) {
         use crate::tests::test_tools::DelayTool;
         use language_model::{LanguageModelToolUse, LanguageModelToolUseInput};
@@ -5392,6 +5297,51 @@ mod internal_tests {
     #[gpui::test]
     async fn test_native_failed_mcp_reload_context(cx: &mut TestAppContext) {
         assert_failed_native_command_context("/native-prompts.prepare", true, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_native_rewind_cancels_pending_mcp_prompt(cx: &mut TestAppContext) {
+        let fake = init_test(cx);
+        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let mut requests = setup_native_prompt_server(&project, cx);
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        thread.update(cx, |thread, cx| thread.set_model(fake.model("fake"), cx));
+        let (receipt, completion) = cx.update(|cx| {
+            connection.submit_native(
+                session_id.clone(),
+                Some(vec!["/native-prompts.prepare".into()]),
+                cx,
+            )
+        });
+        receipt.await.expect("command accepted");
+        // Holding the prompt response keeps the turn before model startup.
+        let prompt_response = requests.next().await.expect("fetch prompt");
+        let message_id = thread
+            .read_with(cx, |thread, _| thread.last_user_message_id())
+            .expect("accepted command retained");
+        acp_thread
+            .update(cx, |thread, cx| thread.rewind(message_id.clone(), cx))
+            .await
+            .expect("rewind accepted message");
+        if prompt_response
+            .send(json!({
+                "messages": [{"role": "user", "content": {"type": "text", "text": "prepared"}}]
+            }))
+            .is_err()
+        {
+            log::debug!("Rewind already dropped the pending prompt fetch");
+        }
+        cx.run_until_parked();
+        assert!(
+            fake.pending_completions().is_empty(),
+            "rewind must fence startup"
+        );
+        assert!(!thread.read_with(cx, |thread, _| thread.has_user_message(&message_id)));
+        assert_eq!(
+            completion.await.expect("settled").expect("cancelled"),
+            acp_v2::StopReason::Cancelled
+        );
     }
 
     #[gpui::test]
