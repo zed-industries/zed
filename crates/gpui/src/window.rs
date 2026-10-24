@@ -3067,6 +3067,11 @@ impl Window {
         self.platform_window.set_traffic_light_position(position);
     }
 
+    #[cfg(target_os = "macos")]
+    pub fn set_traffic_light_visibility(&self, visible: bool) {
+        self.platform_window.set_traffic_light_visibility(visible);
+    }
+
     /// Sets the application identifier.
     pub fn set_app_id(&mut self, app_id: &str) {
         self.platform_window.set_app_id(app_id);
