@@ -8077,6 +8077,39 @@ fn terminal_page() -> SettingsPage {
         ]
     }
 
+    fn tab_bar_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SectionHeader("Tab Bar"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Tab Bar",
+                description: "Show the tab bar in the terminal panel.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("terminal.tab_bar.show"),
+                    pick: |settings_content| {
+                        settings_content
+                            .terminal
+                            .as_ref()?
+                            .tab_bar
+                            .as_ref()?
+                            .show
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .terminal
+                            .get_or_insert_default()
+                            .tab_bar
+                            .get_or_insert_default()
+                            .show = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
     fn scrollbar_section() -> [SettingsPageItem; 2] {
         [
             SettingsPageItem::SectionHeader("Scrollbar"),
@@ -8122,6 +8155,7 @@ fn terminal_page() -> SettingsPage {
             layout_settings_section(),
             advanced_settings_section(),
             toolbar_section(),
+            tab_bar_section(),
             scrollbar_section(),
         ],
     }

@@ -48,7 +48,9 @@ actions!(
         /// Toggles the terminal panel.
         Toggle,
         /// Toggles focus on the terminal panel.
-        ToggleFocus
+        ToggleFocus,
+        /// Toggles the tab bar display in the terminal panel.
+        ToggleTabBar
     ]
 );
 
@@ -68,6 +70,18 @@ pub fn init(cx: &mut App) {
                         workspace.close_panel::<TerminalPanel>(window, cx);
                     }
                 }
+            });
+            workspace.register_action(|workspace, _: &ToggleTabBar, _window, cx| {
+                let fs = workspace.app_state().fs.clone();
+                let current_show = TerminalSettings::get_global(cx).tab_bar.show;
+                settings::update_settings_file(fs, cx, move |settings, _| {
+                    settings
+                        .terminal
+                        .get_or_insert_default()
+                        .tab_bar
+                        .get_or_insert_default()
+                        .show = Some(!current_show);
+                });
             });
         },
     )
@@ -1326,7 +1340,7 @@ pub fn new_terminal_pane(
         pane.set_zoomed(zoomed, cx);
         pane.set_can_navigate(false, cx);
         pane.display_nav_history_buttons(None);
-        pane.set_should_display_tab_bar(|_, _| true);
+        pane.set_should_display_tab_bar(|_, cx| TerminalSettings::get_global(cx).tab_bar.show);
         pane.set_zoom_out_on_close(false);
 
         let split_closure_terminal_panel = terminal_panel.downgrade();
