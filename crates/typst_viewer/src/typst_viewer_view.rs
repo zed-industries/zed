@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context as _;
@@ -15,7 +16,7 @@ use project::Project;
 use settings::Settings as _;
 use smallvec::SmallVec;
 use ui::prelude::*;
-use ui::{ScrollAxes, Scrollbars, TrackClickBehavior, WithScrollbar};
+use ui::{ScrollAxes, Scrollbars, TintColor, TrackClickBehavior, WithScrollbar};
 use workspace::item::Item;
 use workspace::{Pane, Workspace};
 
@@ -38,6 +39,23 @@ const PAGE_GAP: f32 = 12.0;
 // A4 portrait in points.
 const DEFAULT_PAGE_WIDTH: f32 = 595.0;
 const DEFAULT_PAGE_HEIGHT: f32 = 842.0;
+
+// --- PDF export (D5/US-6) ---
+/// Wall-clock limit for one `typst compile` run, in seconds. Past it the
+/// export is reported as failed; dropping the pending compile future kills
+/// the child process (`kill_on_drop`).
+const TYPST_EXPORT_TIMEOUT_SECS: u64 = 120;
+/// Development fallback when no typst.exe sits next to zed.exe (portable
+/// self-contained layout). Points at the toolchain downloaded for this task.
+const FALLBACK_TYPST_EXE: &str = r"D:\Projects\custom\tools\typst-0.14.2\typst.exe";
+/// Name suffix of the wrapper document compiled for theme-background
+/// exports; combined with a dot prefix and the source's file stem it
+/// becomes e.g. `.hello.export-bg.typ`, a name real documents won't
+/// collide with.
+const EXPORT_BG_WRAPPER_SUFFIX: &str = ".export-bg.typ";
+/// Export toolbar height in points: a compact strip above the preview
+/// content, sized to hold the default 22px ui buttons.
+const EXPORT_TOOLBAR_HEIGHT: f32 = 28.0;
 
 /// A page's SVG source with its intrinsic display size, parsed once on
 /// receipt.  The glyph defs are cached separately per page and re-injected
@@ -65,6 +83,34 @@ enum PreviewState {
     },
 }
 
+/// Background choice for PDF exports.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+enum ExportBackground {
+    /// Compile the document as-is: the PDF shows the paper color the
+    /// document itself produces (Typst's white default or an explicit
+    /// page fill).
+    #[default]
+    Paper,
+    /// Compile a wrapper document that sets the page fill to the current
+    /// theme's editor background color ahead of the original content.
+    Theme,
+}
+
+/// Outcome of the last PDF export, rendered in the toolbar. Success/Failed
+/// stay visible until the next export starts.
+#[derive(Default)]
+enum ExportState {
+    #[default]
+    Idle,
+    Running,
+    Success {
+        output_path: String,
+    },
+    Failed {
+        reason: String,
+    },
+}
+
 pub struct TypstPreviewView {
     source_buffer: Option<Entity<Buffer>>,
     project: Entity<Project>,
@@ -81,6 +127,10 @@ pub struct TypstPreviewView {
     pending_rasterize: HashSet<usize>,
     /// Last fallback top-up from render (throttled); see `top_up_rasterization`.
     last_top_up: std::time::Instant,
+    /// PDF export feature state, shown in the export toolbar.
+    export_state: ExportState,
+    /// Paper vs theme background for PDF exports.
+    export_background: ExportBackground,
     _connection_task: Task<()>,
     _lsp_subscriptions: Vec<lsp::Subscription>,
 }
@@ -106,6 +156,8 @@ impl TypstPreviewView {
                 glyph_defs: HashMap::new(),
                 pending_rasterize: HashSet::new(),
                 last_top_up: std::time::Instant::now(),
+                export_state: ExportState::Idle,
+                export_background: ExportBackground::Paper,
                 _connection_task: Task::ready(()),
                 _lsp_subscriptions: Vec::new(),
             };
@@ -703,6 +755,139 @@ impl TypstPreviewView {
         }
     }
 
+    // =========================================================================
+    // PDF export (D5/US-6)
+    // =========================================================================
+
+    /// On-disk path of the source document, mirroring `preview_task_id`:
+    /// only local buffers with a file path can be exported.
+    fn export_input_path(&self, cx: &App) -> Option<PathBuf> {
+        self.source_buffer
+            .as_ref()
+            .and_then(|buffer| buffer.read(cx).file())
+            .and_then(|file| file.as_local())
+            .map(|file| file.abs_path(cx))
+    }
+
+    /// Kick off a PDF export for the source document. The compile runs on
+    /// the background executor; the toolbar reflects the result until the
+    /// next export starts.
+    fn export_pdf(&mut self, cx: &mut Context<Self>) {
+        // The button is disabled while running, but a click can still race
+        // the state change; ignore it instead of stacking exports.
+        if matches!(self.export_state, ExportState::Running) {
+            return;
+        }
+
+        let Some(input_path) = self.export_input_path(cx) else {
+            self.export_state = ExportState::Failed {
+                reason: "document has no on-disk path".into(),
+            };
+            cx.notify();
+            return;
+        };
+
+        // The theme color is read on the UI thread; the background task only
+        // receives the finished hex string.
+        let background_hex = match self.export_background {
+            ExportBackground::Paper => None,
+            ExportBackground::Theme => {
+                Some(rgba_to_hex(cx.theme().colors().editor_background.to_rgb()))
+            }
+        };
+
+        self.export_state = ExportState::Running;
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { export_to_pdf(&input_path, background_hex.as_deref()).await })
+                .await;
+            this.update(cx, |this, cx| {
+                this.export_state = match result {
+                    Ok(output_path) => ExportState::Success {
+                        output_path: output_path.display().to_string(),
+                    },
+                    Err(err) => ExportState::Failed {
+                        reason: format!("{err:#}"),
+                    },
+                };
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// The compact export toolbar: export button, background toggle, and the
+    /// status of the last export. Rendered in every preview state so the
+    /// export entry point never disappears.
+    fn render_export_toolbar(&self, cx: &mut Context<Self>) -> AnyElement {
+        let is_running = matches!(self.export_state, ExportState::Running);
+
+        let mut toolbar = div()
+            .id("typst-export-toolbar")
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_1()
+            .px_2()
+            .h(px(EXPORT_TOOLBAR_HEIGHT))
+            .flex_none()
+            .child(
+                Button::new("export-pdf", "Export PDF")
+                    .label_size(LabelSize::Small)
+                    .disabled(is_running)
+                    .on_click(cx.listener(|this, _event, _window, cx| this.export_pdf(cx))),
+            )
+            .child(self.render_background_toggle(
+                "export-bg-paper",
+                "Paper",
+                ExportBackground::Paper,
+                cx,
+            ))
+            .child(self.render_background_toggle(
+                "export-bg-theme",
+                "Theme",
+                ExportBackground::Theme,
+                cx,
+            ));
+
+        if let Some((status_text, status_color)) = export_status(&self.export_state) {
+            // The status takes the remaining width and truncates, so a long
+            // output path or error cannot push the toolbar apart.
+            toolbar = toolbar.child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(Label::new(status_text).color(status_color).truncate_start()),
+            );
+        }
+
+        toolbar.into_any_element()
+    }
+
+    /// One of the two background choice buttons; the selected one is
+    /// highlighted via the accent tint.
+    fn render_background_toggle(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        background: ExportBackground,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        Button::new(id, label)
+            .label_size(LabelSize::Small)
+            .toggle_state(self.export_background == background)
+            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+            .on_click(cx.listener(move |this, _event, _window, cx| {
+                this.export_background = background;
+                cx.notify();
+            }))
+            .into_any_element()
+    }
+
     pub fn resolve_active_item_as_typst_buffer(
         workspace: &Workspace,
         cx: &mut Context<Workspace>,
@@ -830,7 +1015,7 @@ impl Render for TypstPreviewView {
 
         let content = match &self.state {
             PreviewState::Connecting => div()
-                .size_full()
+                .flex_1()
                 .flex()
                 .items_center()
                 .justify_center()
@@ -944,7 +1129,7 @@ impl Render for TypstPreviewView {
             }
 
             PreviewState::Disconnected { reason } => div()
-                .size_full()
+                .flex_1()
                 .flex()
                 .items_center()
                 .justify_center()
@@ -952,7 +1137,7 @@ impl Render for TypstPreviewView {
                 .into_any_element(),
 
             PreviewState::Error { message } => div()
-                .size_full()
+                .flex_1()
                 .flex()
                 .items_center()
                 .justify_center()
@@ -961,7 +1146,7 @@ impl Render for TypstPreviewView {
 
             PreviewState::CompileError { errors } => {
                 let mut column = div()
-                    .size_full()
+                    .flex_1()
                     .flex()
                     .flex_col()
                     .items_center()
@@ -983,6 +1168,9 @@ impl Render for TypstPreviewView {
             .flex()
             .flex_col()
             .bg(cx.theme().colors().editor_background)
+            // The toolbar is the first child in every preview state; the
+            // content below fills the remaining height via flex_1.
+            .child(self.render_export_toolbar(cx))
             .child(content)
     }
 }
@@ -1263,6 +1451,198 @@ pub(crate) fn rasterize_svg_to_image(
     Ok(Arc::new(image))
 }
 
+// =========================================================================
+// PDF export helpers: typst binary lookup, wrapper documents, subprocess
+// =========================================================================
+
+/// Locations where the typst binary may live, in priority order: next to
+/// zed.exe (portable self-contained layout) first, then the development
+/// fallback.
+fn typst_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(dir) = current_exe.parent() {
+            candidates.push(dir.join("typst.exe"));
+        }
+    }
+    candidates.push(PathBuf::from(FALLBACK_TYPST_EXE));
+    candidates
+}
+
+/// Pick the first typst binary that exists on disk, or fail with every
+/// location we looked at so the failure message is actionable.
+fn resolve_typst_executable() -> anyhow::Result<PathBuf> {
+    let candidates = typst_candidates();
+    candidates
+        .iter()
+        .find(|path| path.is_file())
+        .cloned()
+        .with_context(|| {
+            format!(
+                "typst.exe not found; looked at: {}",
+                candidates
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })
+}
+
+/// Sibling PDF path for a source file: same directory, same stem with the
+/// extension replaced. `None` when the path has no usable file name
+/// (e.g. it terminates in `..`).
+fn pdf_output_path(source: &Path) -> Option<PathBuf> {
+    if source.file_name().is_none() {
+        return None;
+    }
+    Some(source.with_extension("pdf"))
+}
+
+/// Dot-prefixed name for the theme-background wrapper document, e.g.
+/// `hello.typ` → `.hello.export-bg.typ` (the `.typ` suffix of the wrapper
+/// is the constant below, the stem comes from the source). `None` for
+/// paths without a representable file name.
+fn export_bg_wrapper_name(source: &Path) -> Option<String> {
+    let stem = source.file_stem()?.to_str()?;
+    Some(format!(".{stem}{EXPORT_BG_WRAPPER_SUFFIX}"))
+}
+
+/// The `#set page(fill: ...)` prelude line prepended to the wrapper.
+fn export_bg_prelude(bg_hex: &str) -> String {
+    format!("#set page(fill: rgb(\"{bg_hex}\"))\n")
+}
+
+/// Wrapper document content: the prelude line, then the original file
+/// verbatim. Prelude first keeps Typst's "last `#set page` wins" order, so
+/// a document with an explicit page fill still exports with its own color.
+fn export_bg_document(source_text: &str, bg_hex: &str) -> String {
+    format!("{}{source_text}", export_bg_prelude(bg_hex))
+}
+
+/// Format a gpui color as the `#RRGGBB` string Typst's `rgb()` accepts.
+/// Alpha is dropped on purpose: a page fill must be fully opaque.
+fn rgba_to_hex(color: gpui::Rgba) -> String {
+    // Scale the 0..1 f32 channels to 0..=255, saturating so out-of-range
+    // components can't wrap around in the integer cast.
+    let channel = |component: f32| -> u8 { (component.clamp(0.0, 1.0) * 255.0).round() as u8 };
+    format!(
+        "#{:02X}{:02X}{:02X}",
+        channel(color.r),
+        channel(color.g),
+        channel(color.b)
+    )
+}
+
+/// Write the theme-background wrapper document next to the source file.
+/// The source is read from disk on purpose: exports compile the saved
+/// state, matching the preview's on-save semantics.
+fn write_export_wrapper(input: &Path, bg_hex: &str) -> anyhow::Result<PathBuf> {
+    let source_text = std::fs::read_to_string(input)
+        .with_context(|| format!("failed to read {}", input.display()))?;
+    let wrapper_name = export_bg_wrapper_name(input)
+        .context("cannot build an export wrapper name for this document")?;
+    // Same directory as the source, not the system temp dir: typst resolves
+    // relative imports/images against the entry file's directory.
+    let wrapper_path = input
+        .parent()
+        .map(|dir| dir.join(&wrapper_name))
+        .unwrap_or_else(|| PathBuf::from(&wrapper_name));
+    std::fs::write(&wrapper_path, export_bg_document(&source_text, bg_hex))
+        .with_context(|| format!("failed to write {}", wrapper_path.display()))?;
+    Ok(wrapper_path)
+}
+
+/// Export `input` to a sibling PDF via the external typst binary.
+///
+/// `bg_hex` selects the theme-background mode: when set, a temporary
+/// `.{name}.export-bg.typ` wrapper is compiled instead of the source, with
+/// a page-fill prelude ahead of the original text. The wrapper is removed
+/// on every exit path, including compile failure and timeout — the compile
+/// future is always awaited to completion inside this function, so no
+/// drop guard is needed.
+async fn export_to_pdf(input: &Path, bg_hex: Option<&str>) -> anyhow::Result<PathBuf> {
+    let output_path = pdf_output_path(input)
+        .with_context(|| format!("cannot derive a PDF output path from {}", input.display()))?;
+
+    let wrapper_path = match bg_hex {
+        Some(hex) => Some(write_export_wrapper(input, hex)?),
+        None => None,
+    };
+    let compile_input = wrapper_path.as_deref().unwrap_or(input);
+
+    let result = async {
+        let typst_exe = resolve_typst_executable()?;
+        run_typst_compile(&typst_exe, compile_input, &output_path).await
+    }
+    .await;
+
+    // Best-effort cleanup: a leftover dot-file must not mask the real result.
+    if let Some(wrapper) = &wrapper_path {
+        if let Err(err) = std::fs::remove_file(wrapper) {
+            log::warn!(
+                "typst_viewer: failed to remove export wrapper {}: {err}",
+                wrapper.display()
+            );
+        }
+    }
+
+    result.map(|()| output_path)
+}
+
+/// Run `typst compile <input> <output>` under the export timeout. The
+/// command future is raced against a timer; losing futures are dropped,
+/// which kills the child process because of `kill_on_drop`.
+async fn run_typst_compile(typst_exe: &Path, input: &Path, output: &Path) -> anyhow::Result<()> {
+    let mut command = smol::process::Command::new(typst_exe);
+    command
+        .arg("compile")
+        .arg(input)
+        .arg(output)
+        .kill_on_drop(true);
+
+    let timeout = std::time::Duration::from_secs(TYPST_EXPORT_TIMEOUT_SECS);
+    let compiled = smol::future::race(
+        async {
+            command
+                .output()
+                .await
+                .with_context(|| format!("failed to launch {}", typst_exe.display()))
+        },
+        async {
+            smol::Timer::after(timeout).await;
+            Err(anyhow::anyhow!(
+                "typst export timed out after {TYPST_EXPORT_TIMEOUT_SECS}s"
+            ))
+        },
+    )
+    .await?;
+
+    if !compiled.status.success() {
+        // typst reports compile errors on stderr; surface them as the reason.
+        let stderr = String::from_utf8_lossy(&compiled.stderr);
+        anyhow::bail!(
+            "typst compile failed ({}): {}",
+            compiled.status,
+            stderr.trim()
+        );
+    }
+    Ok(())
+}
+
+/// Toolbar status line for the current export state: `None` while idle, so
+/// nothing is shown until an export starts.
+fn export_status(state: &ExportState) -> Option<(SharedString, Color)> {
+    match state {
+        ExportState::Idle => None,
+        ExportState::Running => Some(("Exporting…".into(), Color::Muted)),
+        ExportState::Success { output_path } => Some((output_path.clone().into(), Color::Muted)),
+        ExportState::Failed { reason } => {
+            Some((format!("Export failed: {reason}").into(), Color::Error))
+        }
+    }
+}
+
 #[cfg(test)]
 mod layout_tests {
     use super::*;
@@ -1524,5 +1904,111 @@ mod on_demand_tests {
     #[test]
     fn visible_page_range_at_empty_pages() {
         assert_eq!(visible_page_range_at(0.0, 1000.0, &[], 12.0), 0..0);
+    }
+}
+
+#[cfg(test)]
+mod export_tests {
+    use super::{
+        export_bg_document, export_bg_prelude, export_bg_wrapper_name, pdf_output_path,
+        rgba_to_hex, typst_candidates,
+    };
+    use gpui::Rgba;
+    use std::path::Path;
+
+    #[test]
+    fn pdf_output_path_sits_next_to_source() {
+        let output = pdf_output_path(Path::new("D:/docs/hello.typ")).expect("should derive");
+        assert_eq!(output, Path::new("D:/docs/hello.pdf"));
+        // Multi-dot stems keep everything but the last extension.
+        let output = pdf_output_path(Path::new("D:/docs/my.notes.typ")).expect("should derive");
+        assert_eq!(output, Path::new("D:/docs/my.notes.pdf"));
+    }
+
+    #[test]
+    fn pdf_output_path_is_none_without_file_name() {
+        assert!(pdf_output_path(Path::new("..")).is_none());
+    }
+
+    #[test]
+    fn export_bg_wrapper_name_dot_prefixes_the_source_file_name() {
+        let name =
+            export_bg_wrapper_name(Path::new("D:/docs/hello.typ")).expect("should build a name");
+        assert_eq!(name, ".hello.export-bg.typ");
+        // A path without a file name cannot produce a wrapper name.
+        assert!(export_bg_wrapper_name(Path::new("/")).is_none());
+    }
+
+    #[test]
+    fn export_bg_document_puts_prelude_with_hex_before_source() {
+        assert_eq!(
+            export_bg_prelude("#1E1E1E"),
+            "#set page(fill: rgb(\"#1E1E1E\"))\n"
+        );
+        let source = "#import \"lib.typ\": *\nHello\n";
+        let document = export_bg_document(source, "#0B0E14");
+        assert!(
+            document.starts_with("#set page(fill: rgb(\"#0B0E14\"))\n"),
+            "the prelude with the theme hex must come first, got: {document}"
+        );
+        assert!(
+            document.ends_with(source),
+            "the original text must be kept verbatim after the prelude"
+        );
+    }
+
+    #[test]
+    fn rgba_to_hex_formats_opaque_srgb_channels() {
+        assert_eq!(
+            rgba_to_hex(Rgba {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+                a: 1.0
+            }),
+            "#FFFFFF"
+        );
+        assert_eq!(
+            rgba_to_hex(Rgba {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 1.0
+            }),
+            "#000000"
+        );
+        let dark = 30.0_f32 / 255.0; // 0x1E
+        assert_eq!(
+            rgba_to_hex(Rgba {
+                r: dark,
+                g: dark,
+                b: dark,
+                a: 1.0
+            }),
+            "#1E1E1E"
+        );
+        // Alpha must not leak into the page fill hex.
+        assert_eq!(
+            rgba_to_hex(Rgba {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+                a: 0.5
+            }),
+            "#FFFFFF"
+        );
+    }
+
+    #[test]
+    fn typst_candidates_tried_in_order_with_dev_fallback_last() {
+        let candidates = typst_candidates();
+        let last = candidates.last().expect("fallback candidate must exist");
+        assert_eq!(last, Path::new(super::FALLBACK_TYPST_EXE));
+        // The sibling-of-zed.exe candidate, when resolvable, comes first.
+        if let Ok(current_exe) = std::env::current_exe() {
+            if let Some(dir) = current_exe.parent() {
+                assert_eq!(candidates.first(), Some(&dir.join("typst.exe")));
+            }
+        }
     }
 }
