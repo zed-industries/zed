@@ -812,7 +812,7 @@ async fn test_lsp_log_view(cx: &mut TestAppContext) {
         LanguageConfig {
             name: "Rust".into(),
             matcher: (LanguageMatcher {
-                path_suffixes: vec!["rs".to_string()],
+                path_suffixes: vec!["rs".into()],
                 ..Default::default()
             })
             .into(),

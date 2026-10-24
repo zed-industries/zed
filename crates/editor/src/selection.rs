@@ -1,6 +1,17 @@
 use super::*;
 use crate::columnar_selection::ColumnarSelectionRows;
 
+/// How a [`crate::actions::SelectNext`] or [`crate::actions::SelectPrevious`]
+/// action originated.
+///
+/// When started from a caret, whole-word matching is always enabled, compared
+/// to when started from a selection, where the configured whole-word option is
+/// used instead.
+enum SelectNextOrigin {
+    Caret,
+    Selection,
+}
+
 impl Editor {
     pub fn sync_selections(
         &mut self,
@@ -493,22 +504,23 @@ impl Editor {
                         .text_for_range(selection.start..selection.end)
                         .collect::<String>();
                     let is_empty = query.is_empty();
-                    let select_state = SelectNextState {
-                        query: self.build_query(&[query.chars().rev().collect::<String>()], cx)?,
-                        wordwise: true,
-                        done: is_empty,
-                    };
+                    let select_state = self.build_select_state(
+                        query.chars().rev().collect(),
+                        SelectNextOrigin::Caret,
+                        is_empty,
+                        cx,
+                    )?;
                     self.select_prev_state = Some(select_state);
                 } else {
                     self.select_prev_state = None;
                 }
             } else if let Some(selected_text) = selected_text {
-                self.select_prev_state = Some(SelectNextState {
-                    query: self
-                        .build_query(&[selected_text.chars().rev().collect::<String>()], cx)?,
-                    wordwise: false,
-                    done: false,
-                });
+                self.select_prev_state = Some(self.build_select_state(
+                    selected_text.chars().rev().collect(),
+                    SelectNextOrigin::Selection,
+                    false,
+                    cx,
+                )?);
                 self.select_previous(action, window, cx)?;
             }
         }
@@ -1766,13 +1778,31 @@ impl Editor {
             return;
         }
 
+        if state.effects.unfold {
+            self.unfold_buffers_with_selections(cx);
+            let ranges = self
+                .selections
+                .disjoint_anchor_ranges()
+                .chain(
+                    self.selections
+                        .pending_anchor()
+                        .map(|selection| selection.range()),
+                )
+                .collect::<Vec<_>>();
+            self.unfold_ranges(&ranges, false, false, cx);
+        }
+
         if state.changed {
             self.selection_history.push(state.history_entry);
+        }
 
+        if state.changed || state.effects.unfold {
             if let Some(autoscroll) = state.effects.scroll {
                 self.request_autoscroll(autoscroll, cx);
             }
+        }
 
+        if state.changed {
             let old_cursor_position = &state.old_cursor_position;
 
             self.selections_did_change(true, old_cursor_position, state.effects, window, cx);
@@ -2073,12 +2103,25 @@ impl Editor {
         change: impl FnOnce(&mut MutableSelectionsCollection<'_, '_>) -> R,
     ) -> R {
         let snapshot = self.display_snapshot(cx);
+        let unfold = effects.unfold
+            || self
+                .deferred_selection_effects_state
+                .as_ref()
+                .is_some_and(|state| state.effects.unfold);
+        let change = |selections: &mut MutableSelectionsCollection<'_, '_>| {
+            if unfold {
+                // Folded display coordinates would otherwise move anchor-based jump destinations.
+                selections.preserve_buffer_positions();
+            }
+            change(selections)
+        };
         if self.deferred_selection_effects_state.is_some() {
             let (changed, result) = self.change_selections_without_effects(&snapshot, change);
             if let Some(state) = &mut self.deferred_selection_effects_state {
                 state.effects.scroll = effects.scroll.or(state.effects.scroll);
                 state.effects.completions = effects.completions;
                 state.effects.nav_history = effects.nav_history.or(state.effects.nav_history);
+                state.effects.unfold |= effects.unfold;
                 state.changed |= changed;
             }
             return result;
@@ -2587,21 +2630,19 @@ impl Editor {
                         .text_for_range(selection.start..selection.end)
                         .collect::<String>();
                     let is_empty = query.is_empty();
-                    let select_state = SelectNextState {
-                        query: self.build_query(&[query], cx)?,
-                        wordwise: true,
-                        done: is_empty,
-                    };
+                    let select_state =
+                        self.build_select_state(query, SelectNextOrigin::Caret, is_empty, cx)?;
                     self.select_next_state = Some(select_state);
                 } else {
                     self.select_next_state = None;
                 }
             } else if let Some(selected_text) = selected_text {
-                self.select_next_state = Some(SelectNextState {
-                    query: self.build_query(&[selected_text], cx)?,
-                    wordwise: false,
-                    done: false,
-                });
+                self.select_next_state = Some(self.build_select_state(
+                    selected_text,
+                    SelectNextOrigin::Selection,
+                    false,
+                    cx,
+                )?);
                 self.select_next_match_internal(
                     display_map,
                     replace_newest,
@@ -2614,18 +2655,35 @@ impl Editor {
         Ok(())
     }
 
-    fn build_query<I, P>(&self, patterns: I, cx: &Context<Self>) -> Result<AhoCorasick, BuildError>
+    fn build_query<I, P>(patterns: I, case_sensitive: bool) -> Result<AhoCorasick, BuildError>
     where
         I: IntoIterator<Item = P>,
         P: AsRef<[u8]>,
     {
-        let case_sensitive = self
-            .select_next_is_case_sensitive
-            .unwrap_or_else(|| EditorSettings::get_global(cx).search.case_sensitive);
-
         let mut builder = AhoCorasickBuilder::new();
         builder.ascii_case_insensitive(!case_sensitive);
         builder.build(patterns)
+    }
+
+    fn build_select_state(
+        &self,
+        query: String,
+        origin: SelectNextOrigin,
+        done: bool,
+        cx: &App,
+    ) -> Result<SelectNextState, BuildError> {
+        let search_options = self.select_next_options.unwrap_or_else(|| {
+            let search_settings = EditorSettings::get_global(cx).search;
+            SelectSearchOptions {
+                case_sensitive: search_settings.case_sensitive,
+                whole_word: search_settings.whole_word,
+            }
+        });
+        Ok(SelectNextState {
+            query: Self::build_query(&[query], search_options.case_sensitive)?,
+            wordwise: matches!(origin, SelectNextOrigin::Caret) || search_options.whole_word,
+            done,
+        })
     }
 
     fn find_syntax_node_boundary(
