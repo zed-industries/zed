@@ -459,6 +459,14 @@ pub fn external_agents_dir() -> &'static PathBuf {
     EXTERNAL_AGENTS_DIR.get_or_init(|| data_dir().join("external_agents"))
 }
 
+/// Returns the path to the MCP registry cache directory
+///
+/// This is where servers from registry.modelcontextprotocol.io is cached
+pub fn mcp_registry_dir() -> &'static PathBuf {
+    static MCP_REGISTRY_DIR: OnceLock<PathBuf> = OnceLock::new();
+    MCP_REGISTRY_DIR.get_or_init(|| data_dir().join("mcp"))
+}
+
 /// Returns the path to the Copilot directory.
 pub fn copilot_dir() -> &'static PathBuf {
     static COPILOT_DIR: OnceLock<PathBuf> = OnceLock::new();
