@@ -18396,6 +18396,47 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_restoring_more_pinned_tabs_than_max_tabs(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            register_serializable_item::<TestItem>(cx);
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.max_tabs = Some(std::num::NonZeroUsize::new(1).unwrap());
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({ "test.txt": "" })).await;
+        let project = Project::test(fs, ["root".as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        // Pinned tabs are exempt from `max_tabs`, so restoring a session with
+        // more pinned tabs than `max_tabs` must bring all of them back.
+        let pane = restore_pane(
+            &workspace,
+            SerializedPane::new(
+                vec![
+                    SerializedItem::new("TestItem", 1, false, false),
+                    SerializedItem::new("TestItem", 2, false, false),
+                    SerializedItem::new("TestItem", 3, true, false),
+                ],
+                true,
+                3,
+            ),
+            cx,
+        )
+        .await;
+
+        let (items_len, pinned_count) =
+            pane.read_with(cx, |pane, _| (pane.items_len(), pane.pinned_count()));
+        assert_eq!(items_len, 3, "all three pinned tabs should be restored");
+        assert_eq!(pinned_count, 3);
+    }
+
+    #[gpui::test]
     async fn test_restoring_active_and_preview_tabs_when_items_fail_to_deserialize(
         cx: &mut TestAppContext,
     ) {
