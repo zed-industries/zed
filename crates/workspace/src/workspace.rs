@@ -5234,17 +5234,15 @@ impl Workspace {
         let path = Path::new(url_or_path);
         // Try to resolve relative path against base_path first
         let path_from_base = if let Some(base) = base_path {
-            let resolved_path = path_style.join(base, path).map(PathBuf::from);
+            let resolved_path = path_style.join(base, path);
             if project_is_local {
-                if let Some(resolved_path) = resolved_path
-                    && resolved_path.exists()
-                {
+                if resolved_path.exists() {
                     open_abs_path(self, resolved_path, cx);
                     return;
                 }
                 None
             } else {
-                resolved_path
+                Some(resolved_path)
             }
         } else {
             None

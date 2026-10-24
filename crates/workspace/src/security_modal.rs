@@ -398,8 +398,8 @@ impl SecurityModal {
             Some(home_dir) => path_style
                 .strip_prefix(path, home_dir)
                 .ok()
-                .and_then(|stripped| path_style.join("~", stripped))
-                .map(|joined| Cow::Owned(PathBuf::from(joined)))
+                .map(|stripped| path_style.join(Path::new("~"), stripped))
+                .map(Cow::Owned)
                 .unwrap_or(Cow::Borrowed(path)),
             None => Cow::Borrowed(path),
         }
@@ -541,13 +541,7 @@ fn validate_trust_scope(
     let expanded = match (trimmed.strip_prefix('~'), home_dir) {
         (Some(rest), Some(home_dir)) => {
             let rest = rest.trim_start_matches(path_style.separators_ch());
-            if path_style == PathStyle::local() {
-                home_dir.join(rest)
-            } else {
-                path_style
-                    .join_path_preserving_components(home_dir, rest)
-                    .map_err(|error| SharedString::from(error.to_string()))?
-            }
+            path_style.join(home_dir, Path::new(rest))
         }
         _ => PathBuf::from(trimmed),
     };

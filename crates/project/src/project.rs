@@ -5281,9 +5281,8 @@ impl Project {
         if let Some(file) = buffer.read(cx).file()
             && let Some(dir) = file.path().parent()
         {
-            if let Some(joined) = path_style.join(&*dir.display(path_style), path)
-                && let Some(joined) = RelPath::new(joined.as_ref(), path_style).ok()
-            {
+            let joined = path_style.join(&*dir.display(path_style), path);
+            if let Some(joined) = RelPath::new(joined.as_ref(), path_style).ok() {
                 candidates.push(joined.into_arc());
             }
         }

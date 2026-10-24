@@ -90,7 +90,7 @@ use task::Shell;
 use text::{Bias, BufferId, OffsetRangeExt, Rope, ToOffset};
 use util::{
     ResultExt, debug_panic,
-    paths::{PathStyle, SanitizedPath, normalize_path},
+    paths::{PathStyle, SanitizedPath},
     post_inc,
     rel_path::RelPath,
 };
@@ -6335,6 +6335,11 @@ impl RepositorySnapshot {
         worktree_name: &str,
         worktree_directory_setting: &str,
     ) -> Result<PathBuf> {
+        anyhow::ensure!(
+            !self.path_style.has_root(Path::new(worktree_name)),
+            "worktree name must not contain a root directory component"
+        );
+
         let repository_anchor = self.linked_worktree_anchor_path();
         let project_name = self
             .path_style
@@ -6345,8 +6350,17 @@ impl RepositorySnapshot {
             worktree_directory_setting,
             self.path_style,
         )?;
-        let directory = self.path_style.join_path(&directory, worktree_name)?;
-        self.path_style.join_path(&directory, project_name)
+        let worktree_directory = self
+            .path_style
+            .normalize_lexically(self.path_style.join(&directory, worktree_name));
+
+        anyhow::ensure!(
+            self.path_style.starts_with(&worktree_directory, &directory),
+            "Worktree name {worktree_name:?} resolves to {worktree_directory:?}, \
+             which is outside the configured worktree directory {directory:?}"
+        );
+
+        Ok(self.path_style.join(&worktree_directory, project_name))
     }
 
     /// The main worktree is the original checkout that other worktrees were
@@ -6398,11 +6412,8 @@ impl RepositorySnapshot {
 
     pub fn repo_path_to_abs_path(&self, repo_path: &RepoPath) -> PathBuf {
         let repo_path = repo_path.display(self.path_style);
-        PathBuf::from(
-            self.path_style
-                .join(&self.work_directory_abs_path, repo_path.as_ref())
-                .unwrap(),
-        )
+        self.path_style
+            .join(&self.work_directory_abs_path, repo_path.as_ref())
     }
 
     #[inline]
@@ -10876,19 +10887,11 @@ pub fn worktrees_directory_for_repo(
         anyhow::bail!("git.worktree_directory must not be \"..\" (use \"../some-name\" instead)");
     }
 
-    let joined = path_style.join_path(repository_anchor_path, trimmed)?;
-    let resolved = if path_style.is_posix() {
-        joined
-    } else {
-        normalize_path(&joined)
-    };
+    let resolved = path_style.normalize_lexically(path_style.join(repository_anchor_path, trimmed));
     let resolved = if path_style.starts_with(resolved.as_path(), repository_anchor_path) {
         resolved
-    } else if let Some(repo_dir_name) = path_style
-        .file_name(repository_anchor_path)
-        .and_then(|name| name.to_str())
-    {
-        path_style.join_path(&resolved, repo_dir_name)?
+    } else if let Some(repo_dir_name) = path_style.file_name(repository_anchor_path) {
+        path_style.normalize_lexically(path_style.join(&resolved, repo_dir_name))
     } else {
         resolved
     };
@@ -12353,8 +12356,8 @@ mod tests {
         let work_dir = Path::new("/home/user/dev/lsp-tests");
         let directory =
             worktrees_directory_for_repo(work_dir, "../worktrees", PathStyle::Unix).unwrap();
-        let directory = PathStyle::Unix.join_path(&directory, "nimble-sky").unwrap();
-        let path = PathStyle::Unix.join_path(&directory, "lsp-tests").unwrap();
+        let directory = PathStyle::Unix.join(&directory, "nimble-sky");
+        let path = PathStyle::Unix.join(&directory, "lsp-tests");
 
         assert_eq!(
             path,
@@ -12406,6 +12409,51 @@ mod tests {
                 .path_for_new_linked_worktree("nimble-sky", "../worktrees")
                 .unwrap(),
             PathBuf::from(r"C:\Users\user\dev\worktrees\lsp-tests\nimble-sky\lsp-tests")
+        );
+    }
+
+    #[test]
+    fn test_new_worktree_path_rejects_names_outside_worktree_directory() {
+        let unix_snapshot = RepositorySnapshot::empty(
+            RepositoryId(0),
+            Path::new("/home/user/dev/lsp-tests").into(),
+            None,
+            None,
+            None,
+            PathStyle::Unix,
+        );
+
+        let windows_snapshot = RepositorySnapshot::empty(
+            RepositoryId(0),
+            Path::new(r"C:\Users\user\dev\lsp-tests").into(),
+            None,
+            None,
+            None,
+            PathStyle::Windows,
+        );
+
+        for (snapshot, worktree_name) in [
+            (&unix_snapshot, ".."),
+            (&unix_snapshot, "../.."),
+            (&unix_snapshot, "../../test_worktree"),
+            (&unix_snapshot, "feature/../../escaped"),
+            (&windows_snapshot, "D:trial"),
+            (&windows_snapshot, "C:trial"),
+        ] {
+            assert!(
+                snapshot
+                    .path_for_new_linked_worktree(worktree_name, "../worktrees")
+                    .is_err(),
+                "{worktree_name:?} should be rejected"
+            );
+        }
+
+        // Nested names remain valid as long as they resolve inside the directory.
+        assert_eq!(
+            unix_snapshot
+                .path_for_new_linked_worktree("feature/nested", "../worktrees")
+                .unwrap(),
+            PathBuf::from("/home/user/dev/worktrees/lsp-tests/feature/nested/lsp-tests")
         );
     }
 
