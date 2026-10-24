@@ -32,8 +32,12 @@ actions!(
         ToggleVisualBlock,
         /// Deletes the visual selection.
         VisualDelete,
+        /// Deletes the visual selection without yanking.
+        VisualDeleteNoYank,
         /// Deletes entire lines in visual selection.
         VisualDeleteLine,
+        /// Deletes entire lines in visual selection.
+        VisualDeleteLineNoYank,
         /// Yanks (copies) the visual selection.
         VisualYank,
         /// Yanks entire lines in visual selection.
@@ -85,9 +89,17 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         vim.record_current_action(cx);
         vim.visual_delete(false, window, cx);
     });
+    Vim::action(editor, cx, |vim, _: &VisualDeleteNoYank, window, cx| {
+        vim.record_current_action(cx);
+        vim.visual_delete_no_yank(false, window, cx);
+    });
     Vim::action(editor, cx, |vim, _: &VisualDeleteLine, window, cx| {
         vim.record_current_action(cx);
         vim.visual_delete(true, window, cx);
+    });
+    Vim::action(editor, cx, |vim, _: &VisualDeleteLineNoYank, window, cx| {
+        vim.record_current_action(cx);
+        vim.visual_delete_no_yank(true, window, cx);
     });
     Vim::action(editor, cx, |vim, _: &VisualYank, window, cx| {
         vim.visual_yank(false, window, cx)
@@ -617,12 +629,15 @@ impl Vim {
         });
     }
 
-    pub fn visual_delete(
-        &mut self,
-        line_mode: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<TransactionId> {
+    pub fn visual_delete(&mut self, line_mode: bool, window: &mut Window, cx: &mut Context<Self>) -> Option<TransactionId> {
+        self.visual_delete_with_optional_yank(line_mode, window, cx, true)
+    }
+
+    pub fn visual_delete_no_yank(&mut self, line_mode: bool, window: &mut Window, cx: &mut Context<Self>) -> Option<TransactionId> {
+        self.visual_delete_with_optional_yank(line_mode, window, cx, false)
+    }
+
+    pub fn visual_delete_with_optional_yank(&mut self, line_mode: bool, window: &mut Window, cx: &mut Context<Self>, yank: bool) -> Option<TransactionId> {
         self.store_visual_marks(window, cx);
         let transaction_id = self.update_editor(cx, |vim, editor, cx| {
             let mut original_columns: HashMap<_, _> = Default::default();
@@ -659,12 +674,14 @@ impl Vim {
                         selection.goal = SelectionGoal::None;
                     });
                 });
-                let kind = if line_mode {
-                    MotionKind::Linewise
-                } else {
-                    MotionKind::Exclusive
-                };
-                vim.copy_selections_content(editor, kind, window, cx);
+                if yank {
+                  let kind = if line_mode {
+                      MotionKind::Linewise
+                  } else {
+                      MotionKind::Exclusive
+                  };
+                  vim.copy_selections_content(editor, kind, window, cx);
+                }
 
                 if line_mode && vim.mode != Mode::VisualBlock {
                     editor.change_selections(Default::default(), window, cx, |s| {

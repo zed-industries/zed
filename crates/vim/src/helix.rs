@@ -2439,7 +2439,12 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.enable_helix();
 
-        // test delete a selection
+        // yank selection to insure yank is overwritten
+        cx.set_state("hello «worlˇ»d", Mode::HelixNormal);
+        cx.simulate_keystrokes("y");
+        cx.shared_clipboard().assert_eq("worl");
+
+        // test delete a selection from Helix Normal Mode
         cx.set_state(
             indoc! {"
             The qu«ick ˇ»brown
@@ -2458,16 +2463,109 @@ mod test {
             Mode::HelixNormal,
         );
 
+        cx.shared_clipboard().assert_eq("ick ");
+
+        // test delete a selection from Helix Select Mode
+        cx.set_state(
+            indoc! {"
+            The qui«ckˇ» brown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixSelect,
+        );
+
+        cx.simulate_keystrokes("f o");
+        cx.simulate_keystrokes("d");
+
+        cx.assert_state(
+            indoc! {"
+            The quiˇwn
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+
+        cx.shared_clipboard().assert_eq("ck bro");
+
         // test deleting a single character
         cx.simulate_keystrokes("d");
 
         cx.assert_state(
             indoc! {"
-            The quˇrown
+            The quiˇn
             fox jumps over
             the lazy dog."},
             Mode::HelixNormal,
         );
+
+        cx.shared_clipboard().assert_eq("w");
+    }
+
+    #[gpui::test]
+    async fn test_delete_no_yank(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // yank selection to insure yank is *not* overwritten
+        cx.set_state("hello «worldˇ»", Mode::HelixNormal);
+        cx.simulate_keystrokes("y");
+        cx.shared_clipboard().assert_eq("world");
+
+        // test delete a selection from Helix Normal Mode
+        cx.set_state(
+            indoc! {"
+            The qu«ick ˇ»brown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("alt-d");
+
+        cx.assert_state(
+            indoc! {"
+            The quˇbrown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+
+        cx.shared_clipboard().assert_eq("world");
+
+        // test delete a selection from Helix Select Mode
+        cx.set_state(
+            indoc! {"
+            The qui«ckˇ» brown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixSelect,
+        );
+
+        cx.simulate_keystrokes("f o");
+        cx.simulate_keystrokes("alt-d");
+
+        cx.assert_state(
+            indoc! {"
+            The quiˇwn
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+
+        cx.shared_clipboard().assert_eq("world");
+
+        // test deleting a single character
+        cx.simulate_keystrokes("alt-d");
+
+        cx.assert_state(
+            indoc! {"
+            The quiˇn
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+
+        cx.shared_clipboard().assert_eq("world");
     }
 
     #[gpui::test]
