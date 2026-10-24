@@ -7,12 +7,12 @@ use async_tungstenite::tungstenite::Message;
 use futures::{FutureExt as _, StreamExt as _};
 use gpui::{
     App, Context, ElementId, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, Render,
-    RenderImage, ScrollHandle, SharedString, Task, Window, actions,
+    RenderImage, ScrollHandle, SharedString, Task, WeakEntity, Window, actions,
 };
 use image::Frame;
 use language::Buffer;
 use multi_buffer::MultiBuffer;
-use project::Project;
+use project::{DirectoryLister, Project};
 use settings::Settings as _;
 use smallvec::SmallVec;
 use ui::prelude::*;
@@ -102,6 +102,8 @@ enum ExportBackground {
 enum ExportState {
     #[default]
     Idle,
+    /// A save dialog for the output path is open; no compile has started.
+    AwaitingPath,
     Running,
     Success {
         output_path: String,
@@ -114,6 +116,10 @@ enum ExportState {
 pub struct TypstPreviewView {
     source_buffer: Option<Entity<Buffer>>,
     project: Entity<Project>,
+    /// Owning workspace, captured at construction: the PDF export flow
+    /// opens its save dialog through it. Weak so the view never extends
+    /// the workspace's lifetime.
+    workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     scroll_handle: ScrollHandle,
     state: PreviewState,
@@ -142,6 +148,9 @@ impl TypstPreviewView {
         _window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
+        // Capture the owning workspace before moving into the view's own
+        // context: this is the only place the Workspace handle is at hand.
+        let workspace = cx.weak_entity();
         cx.new(|cx| {
             let source_buffer = active_buffer.read_with(cx, |buffer, _cx| buffer.as_singleton());
             let focus_handle = cx.focus_handle();
@@ -149,6 +158,7 @@ impl TypstPreviewView {
             let mut this = Self {
                 source_buffer,
                 project: project.clone(),
+                workspace,
                 focus_handle,
                 scroll_handle: ScrollHandle::new(),
                 state: PreviewState::Connecting,
@@ -769,32 +779,110 @@ impl TypstPreviewView {
             .map(|file| file.abs_path(cx))
     }
 
-    /// Kick off a PDF export for the source document. The compile runs on
-    /// the background executor; the toolbar reflects the result until the
-    /// next export starts.
-    fn export_pdf(&mut self, cx: &mut Context<Self>) {
-        // The button is disabled while running, but a click can still race
-        // the state change; ignore it instead of stacking exports.
-        if matches!(self.export_state, ExportState::Running) {
+    /// Kick off a PDF export for the source document: open a save dialog
+    /// for the output path first, then run the compile pipeline against the
+    /// confirmed path.
+    fn export_pdf(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // The button is disabled while an export runs, but a click can still
+        // race the state change or land while the save dialog is up; ignore
+        // it instead of stacking exports or prompts.
+        if matches!(
+            self.export_state,
+            ExportState::Running | ExportState::AwaitingPath
+        ) {
             return;
         }
 
         let Some(input_path) = self.export_input_path(cx) else {
-            self.export_state = ExportState::Failed {
-                reason: "document has no on-disk path".into(),
-            };
-            cx.notify();
+            self.fail_export("document has no on-disk path", cx);
             return;
         };
+        let Some(suggested_name) = suggested_pdf_name(&input_path) else {
+            self.fail_export(
+                format!("cannot derive a PDF file name for {}", input_path.display()),
+                cx,
+            );
+            return;
+        };
+        let workspace = self.workspace.clone();
 
-        // The theme color is read on the UI thread; the background task only
-        // receives the finished hex string.
+        // Stay off Running until the path is confirmed, so the toolbar never
+        // claims an export is under way while only a dialog is open.
+        self.export_state = ExportState::AwaitingPath;
+        cx.notify();
+
+        cx.spawn_in(window, async move |this, cx| {
+            let output_path = Self::prompt_export_path(&workspace, suggested_name, cx).await;
+            this.update(cx, |this, cx| match output_path {
+                Some(output_path) => this.start_pdf_compile(input_path, output_path, cx),
+                // Cancelled (or the prompt channel died): plain idle — no
+                // failure state, nothing written to disk.
+                None => {
+                    this.export_state = ExportState::Idle;
+                    cx.notify();
+                }
+            })
+        })
+        .detach();
+    }
+
+    /// Record an export failure and refresh the toolbar.
+    fn fail_export(&mut self, reason: impl Into<String>, cx: &mut Context<Self>) {
+        self.export_state = ExportState::Failed {
+            reason: reason.into(),
+        };
+        cx.notify();
+    }
+
+    /// Open the workspace's save dialog for the PDF output path. `None`
+    /// covers both "user cancelled" and a closed prompt channel — neither
+    /// is an export failure.
+    async fn prompt_export_path(
+        workspace: &WeakEntity<Workspace>,
+        suggested_name: String,
+        cx: &mut gpui::AsyncWindowContext,
+    ) -> Option<PathBuf> {
+        // Same lister construction as the pane save-as flow: local projects
+        // prompt with real directories, remote ones fall back to the
+        // project view.
+        let receiver = workspace
+            .update_in(cx, |workspace, window, cx| {
+                let lister = if workspace.project().read(cx).is_local() {
+                    DirectoryLister::Local(
+                        workspace.project().clone(),
+                        workspace.app_state().fs.clone(),
+                    )
+                } else {
+                    DirectoryLister::Project(workspace.project().clone())
+                };
+                workspace.prompt_for_new_path(lister, Some(suggested_name), window, cx)
+            })
+            .ok()?;
+        // First confirmed path; None when the dialog was cancelled.
+        receiver.await.ok().flatten().into_iter().flatten().next()
+    }
+
+    /// Compile the export to the user-confirmed output path. The theme
+    /// color is read here, so it reflects the theme at confirm time rather
+    /// than at button-click time.
+    fn start_pdf_compile(&mut self, input: PathBuf, output: PathBuf, cx: &mut Context<Self>) {
         let background_hex = match self.export_background {
             ExportBackground::Paper => None,
             ExportBackground::Theme => {
                 Some(rgba_to_hex(cx.theme().colors().editor_background.to_rgb()))
             }
         };
+        // One line per export for post-hoc troubleshooting: what was
+        // compiled, with which background, to where.
+        let mode = match background_hex.as_deref() {
+            Some(hex) => format!("theme({hex})"),
+            None => "paper".into(),
+        };
+        log::info!(
+            "typst_viewer: exporting PDF: input={}, mode={mode}, output={}",
+            input.display(),
+            output.display(),
+        );
 
         self.export_state = ExportState::Running;
         cx.notify();
@@ -802,7 +890,9 @@ impl TypstPreviewView {
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
-                .spawn(async move { export_to_pdf(&input_path, background_hex.as_deref()).await })
+                .spawn(
+                    async move { export_to_pdf(&input, &output, background_hex.as_deref()).await },
+                )
                 .await;
             this.update(cx, |this, cx| {
                 this.export_state = match result {
@@ -839,7 +929,7 @@ impl TypstPreviewView {
                 Button::new("export-pdf", "Export PDF")
                     .label_size(LabelSize::Small)
                     .disabled(is_running)
-                    .on_click(cx.listener(|this, _event, _window, cx| this.export_pdf(cx))),
+                    .on_click(cx.listener(|this, _event, window, cx| this.export_pdf(window, cx))),
             )
             .child(self.render_background_toggle(
                 "export-bg-paper",
@@ -1499,6 +1589,15 @@ fn pdf_output_path(source: &Path) -> Option<PathBuf> {
     Some(source.with_extension("pdf"))
 }
 
+/// Bare file name of the sibling PDF path, used as the save dialog's
+/// suggested name. `None` when the source has no usable file name.
+fn suggested_pdf_name(source: &Path) -> Option<String> {
+    pdf_output_path(source)?
+        .file_name()?
+        .to_str()
+        .map(str::to_string)
+}
+
 /// Dot-prefixed name for the theme-background wrapper document, e.g.
 /// `hello.typ` → `.hello.export-bg.typ` (the `.typ` suffix of the wrapper
 /// is the constant below, the stem comes from the source). `None` for
@@ -1553,18 +1652,21 @@ fn write_export_wrapper(input: &Path, bg_hex: &str) -> anyhow::Result<PathBuf> {
     Ok(wrapper_path)
 }
 
-/// Export `input` to a sibling PDF via the external typst binary.
+/// Export `input` to `output` via the external typst binary.
 ///
 /// `bg_hex` selects the theme-background mode: when set, a temporary
 /// `.{name}.export-bg.typ` wrapper is compiled instead of the source, with
-/// a page-fill prelude ahead of the original text. The wrapper is removed
-/// on every exit path, including compile failure and timeout — the compile
-/// future is always awaited to completion inside this function, so no
-/// drop guard is needed.
-async fn export_to_pdf(input: &Path, bg_hex: Option<&str>) -> anyhow::Result<PathBuf> {
-    let output_path = pdf_output_path(input)
-        .with_context(|| format!("cannot derive a PDF output path from {}", input.display()))?;
-
+/// a page-fill prelude ahead of the original text. The wrapper always sits
+/// next to the source regardless of where `output` points — typst resolves
+/// the document's relative imports against the entry file's directory. The
+/// wrapper is removed on every exit path, including compile failure and
+/// timeout — the compile future is always awaited to completion inside this
+/// function, so no drop guard is needed.
+async fn export_to_pdf(
+    input: &Path,
+    output: &Path,
+    bg_hex: Option<&str>,
+) -> anyhow::Result<PathBuf> {
     let wrapper_path = match bg_hex {
         Some(hex) => Some(write_export_wrapper(input, hex)?),
         None => None,
@@ -1573,7 +1675,7 @@ async fn export_to_pdf(input: &Path, bg_hex: Option<&str>) -> anyhow::Result<Pat
 
     let result = async {
         let typst_exe = resolve_typst_executable()?;
-        run_typst_compile(&typst_exe, compile_input, &output_path).await
+        run_typst_compile(&typst_exe, compile_input, output).await
     }
     .await;
 
@@ -1587,7 +1689,7 @@ async fn export_to_pdf(input: &Path, bg_hex: Option<&str>) -> anyhow::Result<Pat
         }
     }
 
-    result.map(|()| output_path)
+    result.map(|()| output.to_path_buf())
 }
 
 /// Run `typst compile <input> <output>` under the export timeout. The
@@ -1634,7 +1736,8 @@ async fn run_typst_compile(typst_exe: &Path, input: &Path, output: &Path) -> any
 /// nothing is shown until an export starts.
 fn export_status(state: &ExportState) -> Option<(SharedString, Color)> {
     match state {
-        ExportState::Idle => None,
+        // Nothing while idle, and none while only the save dialog is open.
+        ExportState::Idle | ExportState::AwaitingPath => None,
         ExportState::Running => Some(("Exporting…".into(), Color::Muted)),
         ExportState::Success { output_path } => Some((output_path.clone().into(), Color::Muted)),
         ExportState::Failed { reason } => {
@@ -1911,7 +2014,7 @@ mod on_demand_tests {
 mod export_tests {
     use super::{
         export_bg_document, export_bg_prelude, export_bg_wrapper_name, pdf_output_path,
-        rgba_to_hex, typst_candidates,
+        rgba_to_hex, suggested_pdf_name, typst_candidates,
     };
     use gpui::Rgba;
     use std::path::Path;
@@ -1928,6 +2031,22 @@ mod export_tests {
     #[test]
     fn pdf_output_path_is_none_without_file_name() {
         assert!(pdf_output_path(Path::new("..")).is_none());
+    }
+
+    #[test]
+    fn suggested_pdf_name_is_the_sibling_pdf_file_name() {
+        assert_eq!(
+            suggested_pdf_name(Path::new("D:/docs/hello.typ")).as_deref(),
+            Some("hello.pdf")
+        );
+        // Multi-dot stems keep everything but the last extension.
+        assert_eq!(
+            suggested_pdf_name(Path::new("D:/docs/my.notes.typ")).as_deref(),
+            Some("my.notes.pdf")
+        );
+        // Without a file name there is no suggestion; the export reports
+        // a failure instead of opening a dialog.
+        assert!(suggested_pdf_name(Path::new("..")).is_none());
     }
 
     #[test]
