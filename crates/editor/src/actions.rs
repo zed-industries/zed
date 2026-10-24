@@ -505,6 +505,12 @@ actions!(
         CopyFileName,
         /// Copies the file name without extension to the clipboard.
         CopyFileNameWithoutExtension,
+        /// Copies the selected diff hunks from the right (new) side of a two-way
+        /// diff to the left (old) side.
+        CopyHunkToLeft,
+        /// Copies the selected diff hunks from the left (old) side of a two-way
+        /// diff to the right (new) side.
+        CopyHunkToRight,
         /// Copies a permalink to the current line or selection.
         CopyPermalinkToLine,
         /// Cuts selected text to the clipboard.
