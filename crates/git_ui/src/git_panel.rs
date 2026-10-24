@@ -7754,8 +7754,6 @@ impl GitPanel {
         let remote = self.git_remote(cx);
 
         let focused_history_entry = self.focused_history_entry;
-        let is_panel_focused = self.focus_handle.is_focused(window);
-        let show_focus_border = self.history_keyboard_nav;
         let has_context_menu = self.context_menu.is_some();
         let context_menu_target_index = self
             .context_menu
@@ -7852,12 +7850,20 @@ impl GitPanel {
                                     .render(window, cx);
 
                                     let is_unpushed = index < ahead_count;
-                                    let is_focused = focused_history_entry == Some(index);
                                     let is_context_menu_target =
                                         context_menu_target_index == Some(index);
                                     let workspace = workspace.clone();
                                     let repo = repo_weak.clone();
                                     let sha_for_click = sha_string;
+
+                                    let is_selected = focused_history_entry == Some(index);
+                                    let selected_bg_alpha = 0.08;
+                                    let info_color = cx.theme().status().info;
+                                    let base_bg = if is_selected {
+                                        info_color.alpha(selected_bg_alpha)
+                                    } else {
+                                        cx.theme().colors().ghost_element_background
+                                    };
 
                                     let dot_separator = || {
                                         Label::new("•")
@@ -7876,14 +7882,12 @@ impl GitPanel {
                                         .gap_0p5()
                                         .border_1()
                                         .border_color(gpui::transparent_black())
-                                        .when(
-                                            is_focused && is_panel_focused && show_focus_border,
-                                            |this| {
-                                                this.border_color(
+                                        .bg(base_bg)
+                                        .when(is_selected, |this| {
+                                            this.border_color(
                                                     cx.theme().colors().panel_focused_border,
-                                                )
-                                            },
-                                        )
+                                            )
+                                        })
                                         .hover(|s| s.bg(cx.theme().colors().element_hover))
                                         .when(is_context_menu_target, |this| {
                                             this.bg(cx.theme().colors().element_hover)
