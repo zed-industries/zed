@@ -185,6 +185,7 @@ fn assert_remote_project_integration_sidebar_state(
     let mut saw_remote_thread = false;
     for entry in &sidebar.contents.entries {
         match entry {
+            ListEntry::FolderHeader { .. } => panic!("unexpected folder header"),
             ListEntry::ProjectHeader { label, .. } => {
                 assert_eq!(
                     label.as_ref(),
@@ -665,6 +666,10 @@ fn visible_entries_as_strings(
                     ""
                 };
                 match entry {
+                    ListEntry::FolderHeader { name, expanded, .. } => {
+                        let icon = if *expanded { "v" } else { ">" };
+                        format!("{} ({}){}", icon, name, selected)
+                    }
                     ListEntry::ProjectHeader { label, key, .. } => {
                         let icon = if sidebar.is_group_collapsed(key, cx) {
                             ">"
@@ -5879,7 +5884,9 @@ async fn test_rename_thread_from_sidebar_updates_title_override(cx: &mut TestApp
                     thread.metadata.thread_id,
                     thread.metadata.display_title(),
                 )),
-                ListEntry::ProjectHeader { .. } | ListEntry::Terminal(_) => None,
+                ListEntry::FolderHeader { .. }
+                | ListEntry::ProjectHeader { .. }
+                | ListEntry::Terminal(_) => None,
             })
             .expect("sidebar should have a thread entry")
     });
@@ -5965,7 +5972,9 @@ async fn test_rename_thread_from_sidebar_updates_title_override(cx: &mut TestApp
             .iter()
             .find_map(|entry| match entry {
                 ListEntry::Thread(thread) => Some(thread),
-                ListEntry::ProjectHeader { .. } | ListEntry::Terminal(_) => None,
+                ListEntry::FolderHeader { .. }
+                | ListEntry::ProjectHeader { .. }
+                | ListEntry::Terminal(_) => None,
             })
             .expect("renamed thread should match the search");
         let title = thread.metadata.display_title();
@@ -6004,7 +6013,9 @@ async fn test_rename_selected_thread_action_renames_selected_thread(cx: &mut Tes
             .enumerate()
             .find_map(|(ix, entry)| match entry {
                 ListEntry::Thread(thread) => Some((ix, thread.metadata.thread_id)),
-                ListEntry::ProjectHeader { .. } | ListEntry::Terminal(_) => None,
+                ListEntry::FolderHeader { .. }
+                | ListEntry::ProjectHeader { .. }
+                | ListEntry::Terminal(_) => None,
             })
             .expect("sidebar should have a thread entry")
     });
@@ -8072,6 +8083,7 @@ async fn test_clicking_worktree_thread_does_not_briefly_render_as_separate_proje
         let mut saw_expected_thread = false;
         for entry in &sidebar.contents.entries {
             match entry {
+                ListEntry::FolderHeader { .. } => panic!("unexpected folder header"),
                 ListEntry::ProjectHeader { label, .. } => {
                     assert_eq!(
                         label.as_ref(),
@@ -16026,4 +16038,80 @@ fn sidebar_painted_background_at(position: Point<Pixels>, cx: &mut VisualTestCon
             .expect("solid background at pointer");
         u32::from(Rgba::from(color))
     })
+}
+
+#[gpui::test]
+async fn test_project_folders_and_project_order(cx: &mut TestAppContext) {
+    use workspace::ProjectGroup;
+
+    let project = init_test_project("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    let key = |name: &str| ProjectGroupKey::new(None, PathList::new(&[PathBuf::from(name)]));
+    let folder = multi_workspace.update(cx, |mw, cx| {
+        for name in ["/zeta", "/alpha", "/mid"] {
+            mw.test_add_project_group(ProjectGroup {
+                key: key(name),
+                workspaces: Vec::new(),
+                expanded: true,
+            });
+        }
+        let folder = mw.create_project_folder("Work".into(), cx);
+        mw.move_project_group(&key("/mid"), Some(folder), None, cx);
+        folder
+    });
+    cx.run_until_parked();
+
+    let headers = |cx: &mut gpui::VisualTestContext| {
+        visible_entries_as_strings(&sidebar, cx)
+            .into_iter()
+            .filter(|entry| entry.starts_with("v ") || entry.starts_with("> "))
+            .collect::<Vec<_>>()
+    };
+
+    // Folders come first, then top-level projects in manual order.
+    assert_eq!(
+        headers(cx),
+        [
+            "v (Work)",
+            "v [mid]",
+            "v [my-project]",
+            "v [zeta]",
+            "v [alpha]"
+        ]
+    );
+
+    cx.update(|_, cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .agent
+                    .get_or_insert_default()
+                    .set_threads_sidebar_project_order(SidebarProjectOrder::Alphabetical);
+            });
+        });
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        headers(cx),
+        [
+            "v (Work)",
+            "v [mid]",
+            "v [alpha]",
+            "v [my-project]",
+            "v [zeta]"
+        ]
+    );
+
+    // A collapsed folder hides its projects.
+    multi_workspace.update(cx, |mw, cx| {
+        mw.set_project_folder_expanded(folder, false, cx)
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        headers(cx),
+        ["> (Work)", "v [alpha]", "v [my-project]", "v [zeta]"]
+    );
 }

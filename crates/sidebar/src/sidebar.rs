@@ -29,9 +29,9 @@ use feature_flags::{
 };
 use gpui::{
     Action as _, AnyElement, App, ClickEvent, Context, Decorations, DismissEvent, Entity, EntityId,
-    FocusHandle, Focusable, KeyContext, ListState, Modifiers, Pixels, Render, SharedString, Task,
-    TaskExt, WeakEntity, Window, WindowBackgroundAppearance, WindowHandle, linear_color_stop,
-    linear_gradient, list, prelude::*, px,
+    FocusHandle, Focusable, KeyContext, ListState, Modifiers, Pixels, PromptLevel, Render,
+    SharedString, Task, TaskExt, WeakEntity, Window, WindowBackgroundAppearance, WindowHandle,
+    linear_color_stop, linear_gradient, list, prelude::*, px,
 };
 use itertools::Itertools;
 use language_model::LanguageModelRegistry;
@@ -48,7 +48,7 @@ use remote::{RemoteConnectionOptions, same_remote_connection_identity};
 use ui::utils::platform_title_bar_height;
 
 use serde::{Deserialize, Serialize};
-use settings::{Settings as _, SettingsStore};
+use settings::{Settings as _, SettingsStore, SidebarProjectOrder};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::mem;
@@ -68,8 +68,9 @@ use util::path_list::PathList;
 use workspace::{
     CloseWindow, FocusWorkspaceSidebar, MoveProjectDown, MoveProjectUp, MultiWorkspace,
     MultiWorkspaceEvent, NextProject, NextThread, Open, OpenMode, PreviousProject, PreviousThread,
-    ProjectGroupKey, RemovalIntent, SaveIntent, Sidebar as WorkspaceSidebar, SidebarSide, Toast,
-    ToggleWorkspaceSidebar, Workspace, notifications::NotificationId, sidebar_side_context_menu,
+    ProjectFolder, ProjectFolderId, ProjectGroup, ProjectGroupKey, RemovalIntent, SaveIntent,
+    Sidebar as WorkspaceSidebar, SidebarSide, Toast, ToggleWorkspaceSidebar, Workspace,
+    notifications::NotificationId, sidebar_side_context_menu,
 };
 
 use git_ui_core::worktree_service::{RemoteBranchName, worktree_create_targets};
@@ -396,6 +397,11 @@ impl ThreadEntry {
 
 #[derive(Clone)]
 enum ListEntry {
+    FolderHeader {
+        id: ProjectFolderId,
+        name: SharedString,
+        expanded: bool,
+    },
     ProjectHeader {
         key: ProjectGroupKey,
         label: SharedString,
@@ -414,6 +420,7 @@ enum ListEntry {
 enum RenameTarget {
     Thread(ThreadId),
     Terminal(TerminalId),
+    Folder(ProjectFolderId),
 }
 
 impl RenameTarget {
@@ -427,9 +434,55 @@ impl RenameTarget {
                 Self::Terminal(terminal.metadata.terminal_id),
                 terminal.metadata.editable_title(),
             )),
+            ListEntry::FolderHeader { id, name, .. } => Some((Self::Folder(*id), name.clone())),
             ListEntry::ProjectHeader { .. } => None,
         }
     }
+}
+
+#[derive(Clone)]
+struct DraggedProjectGroup {
+    key: ProjectGroupKey,
+    label: SharedString,
+}
+
+impl Render for DraggedProjectGroup {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        render_drag_preview(IconName::Folder, self.label.clone(), cx)
+    }
+}
+
+#[derive(Clone)]
+struct DraggedProjectFolder {
+    id: ProjectFolderId,
+    name: SharedString,
+}
+
+impl Render for DraggedProjectFolder {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        render_drag_preview(IconName::FolderOpen, self.name.clone(), cx)
+    }
+}
+
+fn render_drag_preview(icon: IconName, label: SharedString, cx: &App) -> impl IntoElement {
+    h_flex()
+        .px_2()
+        .py_1()
+        .gap_1p5()
+        .rounded_sm()
+        .bg(cx.theme().colors().elevated_surface_background)
+        .border_1()
+        .border_color(cx.theme().colors().border)
+        .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))
+        .child(Label::new(label))
+}
+
+enum SidebarSlot {
+    Folder(ProjectFolder),
+    Group {
+        group: ProjectGroup,
+        folder_collapsed: bool,
+    },
 }
 
 #[derive(Clone)]
@@ -453,7 +506,7 @@ impl ActivatableEntry {
                 metadata: terminal.metadata.clone(),
                 workspace: terminal.workspace.clone(),
             }),
-            ListEntry::ProjectHeader { .. } => None,
+            ListEntry::FolderHeader { .. } | ListEntry::ProjectHeader { .. } => None,
         }
     }
 }
@@ -463,7 +516,9 @@ impl ListEntry {
     fn session_id(&self) -> Option<&acp::SessionId> {
         match self {
             ListEntry::Thread(thread_entry) => thread_entry.metadata.session_id.as_ref(),
-            ListEntry::Terminal(_) | ListEntry::ProjectHeader { .. } => None,
+            ListEntry::Terminal(_)
+            | ListEntry::FolderHeader { .. }
+            | ListEntry::ProjectHeader { .. } => None,
         }
     }
 
@@ -484,6 +539,7 @@ impl ListEntry {
             ListEntry::ProjectHeader { key, .. } => {
                 multi_workspace.workspaces_for_project_group(key, cx)
             }
+            ListEntry::FolderHeader { .. } => Vec::new(),
         }
     }
 }
@@ -514,6 +570,7 @@ struct SidebarContents {
 /// height-affecting state here.
 #[derive(Debug, PartialEq, Eq)]
 enum EntryShape {
+    Folder(ProjectFolderId),
     ProjectHeader {
         key: ProjectGroupKey,
         // Toggles the "No threads yet" empty-state row when not collapsed.
@@ -820,6 +877,7 @@ pub struct Sidebar {
     restoring_tasks: HashMap<agent_ui::ThreadId, Task<()>>,
     recent_projects_popover_handle: PopoverMenuHandle<SidebarRecentProjects>,
     project_header_menu_handles: HashMap<usize, PopoverMenuHandle<ContextMenu>>,
+    folder_header_menu_handles: HashMap<usize, PopoverMenuHandle<ContextMenu>>,
     project_header_new_thread_menu_handles: HashMap<usize, PopoverMenuHandle<ContextMenu>>,
     project_header_menu_ix: Option<usize>,
     worktree_default_branches: HashMap<ProjectGroupKey, DefaultBranchCache>,
@@ -914,6 +972,16 @@ impl Sidebar {
         })
         .detach();
 
+        let mut project_order = AgentSettings::get_global(cx).threads_sidebar.project_order;
+        cx.observe_global::<SettingsStore>(move |this, cx| {
+            let new_order = AgentSettings::get_global(cx).threads_sidebar.project_order;
+            if new_order != project_order {
+                project_order = new_order;
+                this.schedule_update_entries(false, cx);
+            }
+        })
+        .detach();
+
         cx.observe(
             &TerminalThreadMetadataStore::global(cx),
             |this, _store, cx| {
@@ -971,6 +1039,7 @@ impl Sidebar {
             restoring_tasks: HashMap::new(),
             recent_projects_popover_handle: PopoverMenuHandle::default(),
             project_header_menu_handles: HashMap::new(),
+            folder_header_menu_handles: HashMap::new(),
             project_header_new_thread_menu_handles: HashMap::new(),
             project_header_menu_ix: None,
             worktree_default_branches: HashMap::new(),
@@ -1398,6 +1467,143 @@ impl Sidebar {
     ///     - If you have no threads, and two workspaces for the worktree and the main workspace, make sure at least one is shown
     /// - Should always show every thread, associated with each workspace in the multiworkspace
     /// - After every build_contents, our "active" state should exactly match the current workspace's, current agent panel's current thread.
+    /// Orders project groups by folder, then by the `threads_sidebar.project_order`
+    /// setting. Folders are hidden while searching so matches show flat.
+    // ponytail: folders always come before top-level projects; mix them if users ask.
+    fn sidebar_slots(
+        multi_workspace: &MultiWorkspace,
+        mut groups: Vec<ProjectGroup>,
+        path_detail_map: &HashMap<PathBuf, usize>,
+        query: &str,
+        cx: &App,
+    ) -> Vec<SidebarSlot> {
+        match AgentSettings::get_global(cx).threads_sidebar.project_order {
+            SidebarProjectOrder::Manual => {}
+            SidebarProjectOrder::Alphabetical => groups
+                .sort_by_cached_key(|group| group.key.display_name(path_detail_map).to_lowercase()),
+            SidebarProjectOrder::Recent => {
+                let store = ThreadMetadataStore::global(cx).read(cx);
+                groups.sort_by_cached_key(|group| {
+                    std::cmp::Reverse(
+                        store
+                            .entries_for_main_worktree_path(
+                                group.key.path_list(),
+                                group.key.host().as_ref(),
+                            )
+                            .map(Self::thread_display_time)
+                            .max(),
+                    )
+                });
+            }
+        }
+
+        let is_searching = !query.is_empty();
+        let mut slots = Vec::with_capacity(groups.len());
+        let mut top_level = Vec::new();
+        let mut grouped: HashMap<ProjectFolderId, Vec<ProjectGroup>> = HashMap::new();
+        for group in groups {
+            match multi_workspace.project_group_folder(&group.key) {
+                Some(folder) if !is_searching => grouped.entry(folder).or_default().push(group),
+                _ => top_level.push(group),
+            }
+        }
+        if !is_searching {
+            for folder in multi_workspace.project_folders() {
+                let folder_collapsed = !folder.expanded;
+                let folder_groups = grouped.remove(&folder.id).unwrap_or_default();
+                slots.push(SidebarSlot::Folder(folder.clone()));
+                slots.extend(folder_groups.into_iter().map(|group| SidebarSlot::Group {
+                    group,
+                    folder_collapsed,
+                }));
+            }
+        }
+        slots.extend(top_level.into_iter().map(|group| SidebarSlot::Group {
+            group,
+            folder_collapsed: false,
+        }));
+        slots
+    }
+
+    /// Applies a manual reorder. When projects are sorted automatically, it
+    /// first asks to switch the setting back to manual order.
+    fn reorder_projects(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        reorder: impl FnOnce(&mut MultiWorkspace, &mut Context<MultiWorkspace>) + 'static,
+    ) {
+        let multi_workspace = self.multi_workspace.clone();
+        if AgentSettings::get_global(cx).threads_sidebar.project_order
+            == SidebarProjectOrder::Manual
+        {
+            multi_workspace.update(cx, reorder).ok();
+            return;
+        }
+        let answer = window.prompt(
+            PromptLevel::Info,
+            "Switch to manual project order?",
+            Some(
+                "Projects in the threads sidebar are sorted automatically. \
+                 Moving a project switches the sidebar to manual order.",
+            ),
+            &["Switch to Manual", "Cancel"],
+            cx,
+        );
+        let fs = <dyn fs::Fs>::global(cx);
+        cx.spawn(async move |_, cx| {
+            if answer.await? != 0 {
+                return anyhow::Ok(());
+            }
+            cx.update(|cx| {
+                settings::update_settings_file(fs, cx, |settings, _| {
+                    settings
+                        .agent
+                        .get_or_insert_default()
+                        .set_threads_sidebar_project_order(SidebarProjectOrder::Manual);
+                });
+                multi_workspace.update(cx, reorder).ok();
+            });
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn create_folder_for_project(
+        &mut self,
+        key: ProjectGroupKey,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
+            return;
+        };
+        let name = "New Folder";
+        let id = multi_workspace.update(cx, |multi_workspace, cx| {
+            let id = multi_workspace.create_project_folder(name.to_string(), cx);
+            multi_workspace.move_project_group(&key, Some(id), None, cx);
+            id
+        });
+        self.update_entries(cx);
+        let folder_ix = self.contents.entries.iter().position(
+            |entry| matches!(entry, ListEntry::FolderHeader { id: entry_id, .. } if *entry_id == id),
+        );
+        if let Some(ix) = folder_ix {
+            self.start_renaming_entry(ix, RenameTarget::Folder(id), name.into(), window, cx);
+        }
+    }
+
+    fn toggle_folder(&mut self, id: ProjectFolderId, cx: &mut Context<Self>) {
+        self.multi_workspace
+            .update(cx, |multi_workspace, cx| {
+                let expanded = multi_workspace
+                    .project_folder(id)
+                    .is_some_and(|folder| folder.expanded);
+                multi_workspace.set_project_folder_expanded(id, !expanded, cx);
+            })
+            .ok();
+    }
+
     fn rebuild_contents(&mut self, cx: &App) {
         let Some(multi_workspace) = self.multi_workspace.upgrade() else {
             return;
@@ -1473,6 +1679,8 @@ impl Sidebar {
         let path_detail_map: HashMap<PathBuf, usize> =
             all_paths.into_iter().zip(path_details).collect();
 
+        let slots = Self::sidebar_slots(mw, groups, &path_detail_map, &query, cx);
+
         let mut branch_by_path: HashMap<PathBuf, SharedString> = HashMap::new();
         for ws in &workspaces {
             let project = ws.read(cx).project().read(cx);
@@ -1495,7 +1703,22 @@ impl Sidebar {
             }
         }
 
-        for group in &groups {
+        for slot in slots {
+            let (group, folder_collapsed) = match slot {
+                SidebarSlot::Folder(folder) => {
+                    entries.push(ListEntry::FolderHeader {
+                        id: folder.id,
+                        name: folder.name.into(),
+                        expanded: folder.expanded,
+                    });
+                    continue;
+                }
+                SidebarSlot::Group {
+                    group,
+                    folder_collapsed,
+                } => (group, folder_collapsed),
+            };
+            let group = &group;
             let group_key = &group.key;
             let group_workspaces = &group.workspaces;
 
@@ -1594,6 +1817,19 @@ impl Sidebar {
                     .then_some(terminal.metadata.terminal_id)
             }));
             if group_key.path_list().paths().is_empty() {
+                continue;
+            }
+
+            if folder_collapsed {
+                // Keep the hidden threads' ids so their notifications survive
+                // the retain below.
+                let store = ThreadMetadataStore::global(cx).read(cx);
+                current_thread_ids.extend(
+                    store
+                        .entries_for_main_worktree_path(group_key.path_list(), group_host.as_ref())
+                        .chain(store.entries_for_path(group_key.path_list(), group_host.as_ref()))
+                        .map(|metadata| metadata.thread_id),
+                );
                 continue;
             }
 
@@ -2124,6 +2360,7 @@ impl Sidebar {
                     .map(|state| !state.expanded)
                     .unwrap_or(false),
             },
+            ListEntry::FolderHeader { id, .. } => EntryShape::Folder(*id),
             ListEntry::Thread(thread) => EntryShape::Thread(thread.metadata.thread_id),
             ListEntry::Terminal(terminal) => EntryShape::Terminal(terminal.metadata.terminal_id),
         })
@@ -2233,8 +2470,11 @@ impl Sidebar {
         // is_selected means the keyboard selector is here.
         let is_selected = is_focused && self.selection == Some(ix);
 
-        let is_group_header_after_first =
-            ix > 0 && matches!(entry, ListEntry::ProjectHeader { .. });
+        let is_group_header_after_first = ix > 0
+            && matches!(
+                entry,
+                ListEntry::FolderHeader { .. } | ListEntry::ProjectHeader { .. }
+            );
 
         let is_active = self
             .active_entry
@@ -2242,6 +2482,10 @@ impl Sidebar {
             .is_some_and(|active| active.matches_entry(entry));
 
         let rendered = match entry {
+            ListEntry::FolderHeader { id, name, expanded } => {
+                self.folder_header_menu_handles.entry(ix).or_default();
+                self.render_folder_header(ix, *id, name, *expanded, is_selected, cx)
+            }
             ListEntry::ProjectHeader {
                 key,
                 label,
@@ -2289,6 +2533,172 @@ impl Sidebar {
         } else {
             rendered
         }
+    }
+
+    fn render_folder_header(
+        &self,
+        ix: usize,
+        id: ProjectFolderId,
+        name: &SharedString,
+        expanded: bool,
+        is_selected: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let group_name = SharedString::from(format!("folder-header-group-{ix}"));
+        let is_renaming = self.rename_target == Some(RenameTarget::Folder(id));
+        let colors = cx.theme().colors();
+        let folder_icon = if expanded {
+            IconName::FolderOpen
+        } else {
+            IconName::Folder
+        };
+
+        h_flex()
+            .id(SharedString::from(format!("folder-header-{ix}")))
+            .group(&group_name)
+            .cursor_pointer()
+            .h(Tab::content_height(cx))
+            .w_full()
+            .pl_2()
+            .pr_1p5()
+            .gap_1()
+            .justify_between()
+            .border_1()
+            .border_color(if is_selected {
+                colors.border_focused
+            } else {
+                gpui::transparent_black()
+            })
+            .hover(|style| style.bg(colors.element_hover))
+            .child(
+                h_flex()
+                    .min_w_0()
+                    .w_full()
+                    .gap_1p5()
+                    .child(
+                        Icon::new(folder_icon)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .map(|this| {
+                        if is_renaming {
+                            this.child(self.rename_editor.clone())
+                        } else {
+                            this.child(Label::new(name.clone()).truncate())
+                        }
+                    }),
+            )
+            .child(
+                div()
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(self.render_folder_header_menu(ix, id, name, &group_name, cx)),
+            )
+            .on_drag(
+                DraggedProjectFolder {
+                    id,
+                    name: name.clone(),
+                },
+                |dragged, _, _, cx| cx.new(|_| dragged.clone()),
+            )
+            .drag_over::<DraggedProjectFolder>(|style, _, _, cx| {
+                style
+                    .bg(cx.theme().colors().drop_target_background)
+                    .border_color(cx.theme().colors().drop_target_border)
+            })
+            .drag_over::<DraggedProjectGroup>(|style, _, _, cx| {
+                style
+                    .bg(cx.theme().colors().drop_target_background)
+                    .border_color(cx.theme().colors().drop_target_border)
+            })
+            .on_drop(
+                cx.listener(move |this, dragged: &DraggedProjectFolder, _, cx| {
+                    let source = dragged.id;
+                    this.multi_workspace
+                        .update(cx, |multi_workspace, cx| {
+                            multi_workspace.drop_project_folder_on(source, id, cx);
+                        })
+                        .ok();
+                }),
+            )
+            .on_drop(
+                cx.listener(move |this, dragged: &DraggedProjectGroup, _, cx| {
+                    let key = dragged.key.clone();
+                    this.multi_workspace
+                        .update(cx, |multi_workspace, cx| {
+                            multi_workspace.move_project_group(&key, Some(id), None, cx);
+                        })
+                        .ok();
+                }),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if this.rename_target != Some(RenameTarget::Folder(id)) {
+                    this.toggle_folder(id, cx);
+                }
+            }))
+            .into_any_element()
+    }
+
+    fn render_folder_header_menu(
+        &self,
+        ix: usize,
+        id: ProjectFolderId,
+        name: &SharedString,
+        group_name: &SharedString,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let menu_handle = self
+            .folder_header_menu_handles
+            .get(&ix)
+            .cloned()
+            .unwrap_or_default();
+        let is_menu_open = menu_handle.is_deployed();
+        let this = cx.weak_entity();
+        let name = name.clone();
+
+        PopoverMenu::new(format!("folder-header-menu-{ix}"))
+            .with_handle(menu_handle)
+            .trigger(
+                IconButton::new(format!("folder-ellipsis-menu-{ix}"), IconName::Ellipsis)
+                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                    .icon_size(IconSize::Small)
+                    .when(!is_menu_open, |el| el.visible_on_hover(group_name)),
+            )
+            .menu(move |window, cx| {
+                let this = this.clone();
+                let name = name.clone();
+                Some(ContextMenu::build(window, cx, move |menu, _, _| {
+                    let rename_sidebar = this.clone();
+                    let delete_sidebar = this.clone();
+                    menu.entry("Rename", None, move |window, cx| {
+                        let name = name.clone();
+                        rename_sidebar
+                            .update(cx, |sidebar, cx| {
+                                sidebar.start_renaming_entry(
+                                    ix,
+                                    RenameTarget::Folder(id),
+                                    name,
+                                    window,
+                                    cx,
+                                );
+                            })
+                            .ok();
+                    })
+                    .entry("Delete Folder", None, move |_, cx| {
+                        delete_sidebar
+                            .update(cx, |sidebar, cx| {
+                                sidebar
+                                    .multi_workspace
+                                    .update(cx, |multi_workspace, cx| {
+                                        multi_workspace.remove_project_folder(id, cx);
+                                    })
+                                    .ok();
+                            })
+                            .ok();
+                    })
+                }))
+            })
+            .anchor(gpui::Anchor::TopRight)
+            .into_any_element()
     }
 
     fn render_remote_project_icon(
@@ -2361,6 +2771,7 @@ impl Sidebar {
             == WindowBackgroundAppearance::Opaque
             && sidebar_base_bg.a >= 1.0;
 
+        let label_text = label.clone();
         let label = if highlight_positions.is_empty() {
             Label::new(label.clone())
                 .when(!is_active, |this| this.color(Color::Muted))
@@ -2389,6 +2800,14 @@ impl Sidebar {
                 })
         };
 
+        let in_folder = self
+            .multi_workspace
+            .read_with(cx, |multi_workspace, _| {
+                multi_workspace.project_group_folder(key).is_some()
+            })
+            .unwrap_or(false);
+        let can_drag = !is_sticky && !has_filter;
+
         let header = h_flex()
             .id(id)
             .group(&group_name)
@@ -2396,7 +2815,7 @@ impl Sidebar {
             .relative()
             .h(Tab::content_height(cx))
             .w_full()
-            .pl_2()
+            .map(|this| if in_folder { this.pl_5() } else { this.pl_2() })
             .pr_1p5()
             .justify_between()
             .border_1()
@@ -2513,6 +2932,28 @@ impl Sidebar {
                     cx.stop_propagation();
                     menu_handle.toggle(window, cx);
                 }
+            })
+            .when(can_drag, |this| {
+                let dragged = DraggedProjectGroup {
+                    key: key.clone(),
+                    label: label_text.clone(),
+                };
+                let target = key.clone();
+                this.on_drag(dragged, |dragged, _, _, cx| cx.new(|_| dragged.clone()))
+                    .drag_over::<DraggedProjectGroup>(|style, _, _, cx| {
+                        style
+                            .bg(cx.theme().colors().drop_target_background)
+                            .border_color(cx.theme().colors().drop_target_border)
+                    })
+                    .on_drop(
+                        cx.listener(move |this, dragged: &DraggedProjectGroup, window, cx| {
+                            let key = dragged.key.clone();
+                            let target = target.clone();
+                            this.reorder_projects(window, cx, move |multi_workspace, cx| {
+                                multi_workspace.drop_project_group_on(&key, &target, cx);
+                            });
+                        }),
+                    )
             })
             .on_click(
                 cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
@@ -2922,6 +3363,14 @@ impl Sidebar {
                     })
                     .unwrap_or((None, 0));
                 let show_reorder_entries = total_groups >= 2;
+                let (folders, current_folder) = multi_workspace
+                    .read_with(cx, |mw, _| {
+                        (
+                            mw.project_folders().to_vec(),
+                            mw.project_group_folder(&project_group_key),
+                        )
+                    })
+                    .unwrap_or_default();
                 let can_move_up = group_index.is_some_and(|i| i > 0);
                 let can_move_down = group_index.is_some_and(|i| i + 1 < total_groups);
 
@@ -3148,10 +3597,10 @@ impl Sidebar {
                         };
 
                         let menu = menu.when(show_reorder_entries, |this| {
-                            let move_up_multi_workspace = multi_workspace.clone();
+                            let move_up_sidebar = this_for_menu.clone();
                             let move_up_key = project_group_key.clone();
                             let move_up_weak_menu = weak_menu.clone();
-                            let move_down_multi_workspace = multi_workspace.clone();
+                            let move_down_sidebar = this_for_menu.clone();
                             let move_down_key = project_group_key.clone();
                             let move_down_weak_menu = weak_menu.clone();
 
@@ -3160,10 +3609,20 @@ impl Sidebar {
                                     ContextMenuEntry::new("Move Up")
                                         .action(Box::new(MoveProjectUp))
                                         .disabled(!can_move_up)
-                                        .handler(move |_window, cx| {
-                                            move_up_multi_workspace
-                                                .update(cx, |mw, cx| {
-                                                    mw.move_project_group_up(&move_up_key, cx);
+                                        .handler(move |window, cx| {
+                                            let move_up_key = move_up_key.clone();
+                                            move_up_sidebar
+                                                .update(cx, |sidebar, cx| {
+                                                    sidebar.reorder_projects(
+                                                        window,
+                                                        cx,
+                                                        move |mw, cx| {
+                                                            mw.move_project_group_up(
+                                                                &move_up_key,
+                                                                cx,
+                                                            );
+                                                        },
+                                                    );
                                                 })
                                                 .ok();
                                             move_up_weak_menu
@@ -3175,10 +3634,20 @@ impl Sidebar {
                                     ContextMenuEntry::new("Move Down")
                                         .action(Box::new(MoveProjectDown))
                                         .disabled(!can_move_down)
-                                        .handler(move |_window, cx| {
-                                            move_down_multi_workspace
-                                                .update(cx, |mw, cx| {
-                                                    mw.move_project_group_down(&move_down_key, cx);
+                                        .handler(move |window, cx| {
+                                            let move_down_key = move_down_key.clone();
+                                            move_down_sidebar
+                                                .update(cx, |sidebar, cx| {
+                                                    sidebar.reorder_projects(
+                                                        window,
+                                                        cx,
+                                                        move |mw, cx| {
+                                                            mw.move_project_group_down(
+                                                                &move_down_key,
+                                                                cx,
+                                                            );
+                                                        },
+                                                    );
                                                 })
                                                 .ok();
                                             move_down_weak_menu
@@ -3187,6 +3656,65 @@ impl Sidebar {
                                         }),
                                 )
                         });
+
+                        let menu = menu.separator();
+                        let menu = folders.iter().fold(menu, |menu, folder| {
+                            if Some(folder.id) == current_folder {
+                                return menu;
+                            }
+                            let folder_id = folder.id;
+                            let multi_workspace = multi_workspace.clone();
+                            let project_group_key = project_group_key.clone();
+                            let weak_menu = weak_menu.clone();
+                            menu.entry(format!("Move to {}", folder.name), None, move |_, cx| {
+                                multi_workspace
+                                    .update(cx, |multi_workspace, cx| {
+                                        multi_workspace.move_project_group(
+                                            &project_group_key,
+                                            Some(folder_id),
+                                            None,
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
+                                weak_menu.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
+                            })
+                        });
+                        let menu = menu.when(current_folder.is_some(), |menu| {
+                            let multi_workspace = multi_workspace.clone();
+                            let project_group_key = project_group_key.clone();
+                            let weak_menu = weak_menu.clone();
+                            menu.entry("Remove from Folder", None, move |_, cx| {
+                                multi_workspace
+                                    .update(cx, |multi_workspace, cx| {
+                                        multi_workspace.move_project_group(
+                                            &project_group_key,
+                                            None,
+                                            None,
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
+                                weak_menu.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
+                            })
+                        });
+                        let menu = {
+                            let this = this_for_menu.clone();
+                            let project_group_key = project_group_key.clone();
+                            let weak_menu = weak_menu.clone();
+                            menu.entry("New Folder…", None, move |window, cx| {
+                                let project_group_key = project_group_key.clone();
+                                weak_menu.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
+                                this.update(cx, |sidebar, cx| {
+                                    sidebar.create_folder_for_project(
+                                        project_group_key,
+                                        window,
+                                        cx,
+                                    );
+                                })
+                                .ok();
+                            })
+                        };
 
                         let project_group_key = project_group_key.clone();
                         let remove_multi_workspace = multi_workspace.clone();
@@ -3475,7 +4003,9 @@ impl Sidebar {
                 let Some(target) = self.rename_target else {
                     return;
                 };
-                if matches!(target, RenameTarget::Thread(_)) && new_title.is_empty() {
+                if matches!(target, RenameTarget::Thread(_) | RenameTarget::Folder(_))
+                    && new_title.is_empty()
+                {
                     return;
                 }
                 let new_title = SharedString::from(new_title);
@@ -3485,6 +4015,17 @@ impl Sidebar {
                     }
                     RenameTarget::Terminal(terminal_id) => {
                         self.apply_terminal_rename(terminal_id, new_title, cx);
+                    }
+                    RenameTarget::Folder(folder_id) => {
+                        self.multi_workspace
+                            .update(cx, |multi_workspace, cx| {
+                                multi_workspace.rename_project_folder(
+                                    folder_id,
+                                    new_title.to_string(),
+                                    cx,
+                                );
+                            })
+                            .ok();
                     }
                 }
             }
@@ -3648,6 +4189,10 @@ impl Sidebar {
         };
 
         match entry {
+            ListEntry::FolderHeader { id, .. } => {
+                let id = *id;
+                self.toggle_folder(id, cx);
+            }
             ListEntry::ProjectHeader { key, .. } => {
                 let key = key.clone();
                 self.toggle_collapse(&key, window, cx);
@@ -4422,6 +4967,12 @@ impl Sidebar {
                     }
                 }
             }
+            Some(ListEntry::FolderHeader { id, expanded, .. }) => {
+                if *expanded {
+                    let id = *id;
+                    self.toggle_folder(id, cx);
+                }
+            }
             None => {}
         }
     }
@@ -4437,6 +4988,11 @@ impl Sidebar {
         // Find the group header for the current selection.
         let header_ix = match self.contents.entries.get(ix) {
             Some(ListEntry::ProjectHeader { .. }) => Some(ix),
+            Some(ListEntry::FolderHeader { id, .. }) => {
+                let id = *id;
+                self.toggle_folder(id, cx);
+                None
+            }
             Some(ListEntry::Thread(_) | ListEntry::Terminal(_)) => (0..ix).rev().find(|&i| {
                 matches!(
                     self.contents.entries.get(i),
@@ -5877,7 +6433,9 @@ impl Sidebar {
                 }
                 ListEntry::Thread(thread) => Sidebar::thread_display_time(&thread.metadata),
                 ListEntry::Terminal(terminal) => terminal.metadata.created_at,
-                ListEntry::ProjectHeader { .. } => unreachable!(),
+                ListEntry::FolderHeader { .. } | ListEntry::ProjectHeader { .. } => {
+                    unreachable!()
+                }
             }
         }
 
@@ -5930,6 +6488,7 @@ impl Sidebar {
             .entries
             .iter()
             .filter_map(|entry| match entry {
+                ListEntry::FolderHeader { .. } => None,
                 ListEntry::ProjectHeader { label, key, .. } => {
                     current_header_label = Some(label.clone());
                     current_header_key = Some(key.clone());
@@ -7344,7 +7903,7 @@ impl Sidebar {
                 let workspace = terminal.workspace.clone();
                 self.activate_terminal_entry(metadata, workspace, true, window, cx);
             }
-            ListEntry::ProjectHeader { .. } => {}
+            ListEntry::FolderHeader { .. } | ListEntry::ProjectHeader { .. } => {}
         }
     }
 
