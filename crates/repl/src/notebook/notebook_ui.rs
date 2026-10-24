@@ -5,7 +5,7 @@ use std::{path::PathBuf, sync::Arc};
 use anyhow::{Context as _, Result};
 use client::proto::ViewId;
 use collections::HashMap;
-use editor::DisplayPoint;
+use editor::EditorSettingsScrollbarProxy;
 use feature_flags::{FeatureFlagAppExt as _, NotebookFeatureFlag};
 use futures::FutureExt;
 use futures::future::Shared;
@@ -17,8 +17,10 @@ use jupyter_protocol::JupyterKernelspec;
 use language::{Language, LanguageRegistry};
 use log;
 use project::{Project, ProjectEntryId, ProjectPath};
-use settings::Settings as _;
-use ui::{CommonAnimationExt, KeyBinding, Tooltip, prelude::*};
+use ui::{
+    CommonAnimationExt, KeyBinding, ScrollAxes, ScrollbarStyle, Scrollbars, Tooltip, WithScrollbar,
+    prelude::*,
+};
 use workspace::item::{ItemEvent, SaveOptions, TabContentParams};
 use workspace::searchable::SearchableItemHandle;
 use workspace::{Item, ItemHandle, Pane, ProjectItem, ToolbarItemLocation};
@@ -68,6 +70,14 @@ pub(crate) const LARGE_SPACING_SIZE: f32 = 16.0;
 pub(crate) const GUTTER_WIDTH: f32 = 19.0;
 pub(crate) const CODE_BLOCK_INSET: f32 = MEDIUM_SPACING_SIZE;
 pub(crate) const CONTROL_SIZE: f32 = 20.0;
+pub(crate) fn new_cell_list_state(cell_count: usize) -> ListState {
+    ListState::new(cell_count, gpui::ListAlignment::Top, px(1000.)).measure_all()
+}
+
+fn reset_cell_list_state(state: &mut ListState, cell_count: usize) {
+    state.reset(cell_count);
+    *state = state.clone().measure_all();
+}
 
 const NOTEBOOK_EXTENSION: &str = "ipynb";
 
@@ -207,7 +217,7 @@ impl NotebookEditor {
         let cell_count = cell_order.len();
 
         let this = cx.entity();
-        let cell_list = ListState::new(cell_count, gpui::ListAlignment::Top, px(1000.));
+        let cell_list = new_cell_list_state(cell_count);
 
         let mut editor = Self {
             project,
@@ -1361,16 +1371,32 @@ impl NotebookEditor {
             )
     }
 
-    fn cell_list(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn cell_list(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let view = cx.entity();
-        list(self.cell_list.clone(), move |index, window, cx| {
-            view.update(cx, |this, cx| {
-                let cell_id = &this.cell_order[index];
-                let cell = this.cell_map.get(cell_id).unwrap();
-                this.render_cell(index, cell, window, cx).into_any_element()
-            })
-        })
-        .size_full()
+        let colors = cx.theme().colors();
+        div()
+            .id("notebook-cell-list")
+            .size_full()
+            .bg(colors.editor_background)
+            .child(
+                list(self.cell_list.clone(), move |index, window, cx| {
+                    view.update(cx, |this, cx| {
+                        let cell_id = &this.cell_order[index];
+                        let cell = this.cell_map.get(cell_id).unwrap();
+                        this.render_cell(index, cell, window, cx).into_any_element()
+                    })
+                })
+                .size_full(),
+            )
+            .custom_scrollbars(
+                Scrollbars::for_settings::<EditorSettingsScrollbarProxy>()
+                    .show_along(ScrollAxes::Vertical)
+                    .style(ScrollbarStyle::Editor)
+                    .with_stable_track_along(ScrollAxes::Vertical, colors.editor_background)
+                    .tracked_scroll_handle(&self.cell_list),
+                window,
+                cx,
+            )
     }
 
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1610,18 +1636,25 @@ impl Render for NotebookEditor {
                     .flex_1()
                     .w_full()
                     .h_full()
-                    .gap_2()
                     .child(
                         div()
                             .flex_1()
                             .h_full()
+                            .bg(cx.theme().colors().editor_background)
                             .child(if self.cell_order.is_empty() {
                                 self.render_empty_state(cx).into_any_element()
                             } else {
                                 self.cell_list(window, cx).into_any_element()
                             }),
                     )
-                    .child(self.render_notebook_controls(window, cx)),
+                    .child(
+                        div()
+                            .h_full()
+                            .border_l_1()
+                            .border_color(cx.theme().colors().border)
+                            .bg(cx.theme().colors().editor_background)
+                            .child(self.render_notebook_controls(window, cx)),
+                    ),
             )
             .child(self.render_kernel_status_bar(window, cx))
     }
@@ -1985,8 +2018,7 @@ impl Item for NotebookEditor {
                 this.cell_order = cell_order.clone();
                 this.original_cell_order = cell_order;
                 this.cell_map = cell_map;
-                this.cell_list =
-                    ListState::new(this.cell_order.len(), gpui::ListAlignment::Top, px(1000.));
+                reset_cell_list_state(&mut this.cell_list, this.cell_order.len());
                 cx.notify();
             })?;
 
@@ -2365,5 +2397,41 @@ mod tests {
             );
             assert!(!buffer.is_dirty(), "saving should leave the buffer clean");
         });
+    }
+
+    #[gpui::test]
+    fn test_new_cell_list_state_reports_scroll_range_for_many_cells(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let cell_count = 40;
+        const PROBE_CELL_HEIGHT: Pixels = px(128.);
+        let state = new_cell_list_state(cell_count);
+
+        struct Probe(ListState);
+        impl Render for Probe {
+            fn render(
+                &mut self,
+                _window: &mut Window,
+                _cx: &mut Context<Self>,
+            ) -> impl IntoElement {
+                list(
+                    self.0.clone(),
+                    |_, _, _| div().h(PROBE_CELL_HEIGHT).w_full().into_any(),
+                )
+                    .w_full()
+                    .h_full()
+            }
+        }
+
+        let view = cx.update(|_, cx| cx.new(|_| Probe(state.clone())));
+
+        let viewport = gpui::size(px(400.), px(200.));
+        cx.draw(
+            gpui::point(px(0.), px(0.)),
+            viewport,
+            |_, _| view.into_any_element(),
+        );
+
+        let max_y = state.max_offset_for_scrollbar().y;
+        assert_eq!(max_y, PROBE_CELL_HEIGHT * cell_count - viewport.height);
     }
 }
