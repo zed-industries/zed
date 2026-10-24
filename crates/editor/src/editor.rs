@@ -8777,8 +8777,31 @@ impl Editor {
         update: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>),
     ) -> Option<TransactionId> {
         self.with_selection_effects_deferred(window, cx, |this, window, cx| {
-            this.start_transaction_at(Instant::now(), window, cx);
+            let transaction_id = this.start_transaction_at(Instant::now(), window, cx);
+            let ordered_list_edits = transaction_id.and_then(|_| {
+                let snapshot = this.buffer.read(cx).snapshot(cx);
+                this.selections
+                    .disjoint_anchors()
+                    .iter()
+                    .any(|selection| {
+                        snapshot
+                            .language_settings_at(selection.head(), cx)
+                            .extend_list_on_newline
+                            && snapshot
+                                .language_scope_at(selection.head())
+                                .is_some_and(|language| !language.ordered_list().is_empty())
+                    })
+                    .then(|| {
+                        let subscription = this.buffer.update(cx, |buffer, _| buffer.subscribe());
+                        (snapshot, subscription)
+                    })
+            });
             update(this, window, cx);
+            if let Some((snapshot, subscription)) = ordered_list_edits {
+                let new_snapshot = this.buffer.read(cx).snapshot(cx);
+                let edits = subscription.consume().into_inner();
+                this.renumber_ordered_lists(&snapshot, &new_snapshot, edits, window, cx);
+            }
             this.end_transaction_at(Instant::now(), cx)
         })
     }
