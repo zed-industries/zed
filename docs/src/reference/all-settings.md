@@ -5687,6 +5687,7 @@ Available variables:
     "entry_spacing": "comfortable",
     "file_icons": true,
     "folder_indicator": "icon",
+    "hide_empty_folder_chevrons": false,
     "git_status": true,
     "indent_size": 20,
     "auto_reveal_entries": true,
@@ -5861,6 +5862,23 @@ Available variables:
 {
   "project_panel": {
     "auto_fold_dirs": false
+  }
+}
+```
+
+### Hide Empty Folder Chevrons
+
+- Description: Whether to hide the disclosure chevron on directories that are known to be empty. Only has an effect when `folder_indicator` is `chevron` or `both`. Directories whose contents have not been loaded yet (for example, gitignored directories that were never expanded) keep their chevron. Entries hidden by `hide_gitignore` or `hide_hidden` do not count as contents.
+- Setting: `hide_empty_folder_chevrons`
+- Default: `false`
+
+**Options**
+
+```json [settings]
+{
+  "project_panel": {
+    "folder_indicator": "chevron",
+    "hide_empty_folder_chevrons": true
   }
 }
 ```

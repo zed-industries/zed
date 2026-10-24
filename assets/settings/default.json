@@ -901,6 +901,9 @@
     // 3. A disclosure chevron followed by a folder icon:
     //   "both"
     "folder_indicator": "icon",
+    // Whether to hide the disclosure chevron on directories that are known to be empty.
+    // Only has an effect when "folder_indicator" shows a chevron.
+    "hide_empty_folder_chevrons": false,
     // Whether to show the git status in the project panel.
     "git_status": true,
     // Amount of indentation for nested items.
