@@ -4982,9 +4982,7 @@ impl AcpThread {
         chunk: acp_v2::SessionMessageChunk,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        // A chunk carries only content: its metadata does not patch the message's, and the
-        // RFD keeps a message's participants on `session_message`, so the participant fields
-        // that this schema version still has on chunks are ignored.
+        // A chunk carries only content: its metadata does not patch the message's.
         let previous_entry_count = self.entries.len();
         let location = self.keyed_message_location(MessageKind::Session, chunk.message_id, cx)?;
         self.append_message_content(
@@ -14002,11 +14000,10 @@ mod tests {
                 .expect("participants can arrive later");
             thread
                 .append_session_message_chunk(
-                    acp_v2::SessionMessageChunk::new("task", "reproducing".into())
-                        .sender_session_id(acp_v2::SessionId::new("other")),
+                    acp_v2::SessionMessageChunk::new("task", "reproducing".into()),
                     cx,
                 )
-                .expect("a chunk's participant fields are ignored");
+                .expect("a chunk appends to a message with participants");
             let error = thread
                 .upsert_session_message(
                     acp_v2::SessionMessage::new("task")

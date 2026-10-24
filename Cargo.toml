@@ -1031,6 +1031,11 @@ features = [
 ]
 
 [patch.crates-io]
+# Temporary: the unreleased schema with session message references
+# (agentclientprotocol/agent-client-protocol#2465). Its version is still 1.12.0, which
+# satisfies the `=1.12.0` pin of `agent-client-protocol` 3.5.0. Replace with the released
+# schema and SDK before merging.
+agent-client-protocol-schema = { git = "https://github.com/agentclientprotocol/agent-client-protocol", rev = "62bd8636848dadefd8546b527cd1aac6db5423b9" }
 cpal = { git = "https://github.com/RustAudio/cpal", rev = "e1612d5d98152f8dc2a62e1b51ef7cbf4f7f26b7" }
 # Unify `tree_sitter_language::LanguageFn` between crates.io grammar crates and
 # the git tree-sitter above; two instances of the crate would make grammar
