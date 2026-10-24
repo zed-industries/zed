@@ -1195,6 +1195,8 @@
       "default_width": 300,
       // Automatically open the Threads Sidebar when opening a folder in an existing window.
       "auto_open": true,
+      // How to group threads in the Threads Sidebar. Can be 'project' or 'worktree'.
+      "group_by": "project",
     },
     // Default fixed width when the agent panel is docked to the left or right and
     // `flexible` is false.
