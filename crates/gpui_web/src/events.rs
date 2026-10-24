@@ -669,6 +669,7 @@ impl WebWindowInner {
                 modifiers,
                 touch_phase: TouchPhase::Moved,
                 source: ScrollSource::Pointer,
+                release_velocity: None,
             }));
         })
     }

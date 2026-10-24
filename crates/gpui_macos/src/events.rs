@@ -286,6 +286,7 @@ pub(crate) unsafe fn platform_input_from_native(
                     touch_phase: phase,
                     modifiers: read_modifiers(native_event),
                     source: ScrollSource::Pointer,
+                    release_velocity: None,
                 })
             }),
             NSEventType::LeftMouseDragged

@@ -190,7 +190,13 @@ define_class!(
         #[unsafe(method(handleScroll:))]
         fn handle_scroll(&self, recognizer: &UIPanGestureRecognizer) {
             self.ivars()
-                .with_window(|window| window.handle_scroll(recognizer));
+                .with_window(|window| window.handle_scroll(recognizer, true));
+        }
+
+        #[unsafe(method(handleWheelScroll:))]
+        fn handle_wheel_scroll(&self, recognizer: &UIPanGestureRecognizer) {
+            self.ivars()
+                .with_window(|window| window.handle_scroll(recognizer, false));
         }
 
         #[unsafe(method(handleBackGesture:))]
@@ -348,23 +354,27 @@ impl IosWindow {
             ));
         }
 
-        // Trackpad and mouse-wheel scrolling reaches UIKit apps only through a
-        // pan recognizer that accepts scroll types. With no allowed touch types
-        // it never claims finger touches, so those keep reaching `touchesBegan`
-        // and GPUI's own recognizer.
+        // Separate continuous gestures from discrete wheel steps: only continuous
+        // scrolling should coast on release. Neither recognizer claims finger
+        // touches, which keep reaching GPUI's own touch recognizer.
         let scroll_target: &AnyObject = &view;
-        // SAFETY: `MetalView` implements `handleScroll:` and owns the recognizer.
-        let scroll_recognizer = unsafe {
-            UIPanGestureRecognizer::initWithTarget_action(
-                UIPanGestureRecognizer::alloc(main_thread),
-                Some(scroll_target),
-                Some(sel!(handleScroll:)),
-            )
-        };
-        scroll_recognizer.setAllowedScrollTypesMask(UIScrollTypeMask::All);
-        scroll_recognizer.setAllowedTouchTypes(&NSArray::new());
-        scroll_recognizer.setCancelsTouchesInView(false);
-        view.addGestureRecognizer(&scroll_recognizer);
+        for (scroll_types, action) in [
+            (UIScrollTypeMask::Continuous, sel!(handleScroll:)),
+            (UIScrollTypeMask::Discrete, sel!(handleWheelScroll:)),
+        ] {
+            // SAFETY: `MetalView` implements both actions and owns the recognizers.
+            let recognizer = unsafe {
+                UIPanGestureRecognizer::initWithTarget_action(
+                    UIPanGestureRecognizer::alloc(main_thread),
+                    Some(scroll_target),
+                    Some(action),
+                )
+            };
+            recognizer.setAllowedScrollTypesMask(scroll_types);
+            recognizer.setAllowedTouchTypes(&NSArray::new());
+            recognizer.setCancelsTouchesInView(false);
+            view.addGestureRecognizer(&recognizer);
+        }
 
         // The leading-edge swipe is iOS's back gesture. The delegate lets it
         // begin only when an element claims it; it then cancels the touches it
@@ -550,8 +560,8 @@ impl IosWindowState {
     }
 
     /// Delivers one step of a trackpad or mouse-wheel scroll gesture.
-    fn handle_scroll(&self, recognizer: &UIPanGestureRecognizer) {
-        let Some(event) = scroll_event(recognizer, &self.view) else {
+    fn handle_scroll(&self, recognizer: &UIPanGestureRecognizer, continuous: bool) {
+        let Some(event) = scroll_event(recognizer, &self.view, continuous) else {
             return;
         };
         self.mouse_position.set(event.position);

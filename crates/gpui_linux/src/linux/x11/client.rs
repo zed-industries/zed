@@ -2590,6 +2590,7 @@ fn make_scroll_wheel_event(
         modifiers,
         touch_phase: TouchPhase::default(),
         source: gpui::ScrollSource::Pointer,
+        release_velocity: None,
     }
 }
 
