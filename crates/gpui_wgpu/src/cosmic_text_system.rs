@@ -1418,8 +1418,10 @@ mod tests {
         let glyph_id = font.font.as_swash().charmap().map('-');
         assert_ne!(glyph_id, 0);
         assert!(font.should_hint(glyph_id));
+        Ok(())
+    }
 
-     #[test]
+    #[test]
     fn cached_font_resolution_does_not_wait_for_cold_lookups() -> Result<()> {
         for family in [".ZedSans", "Missing Font"] {
             let platform_text_system = Arc::new(text_system()?);
