@@ -1268,6 +1268,14 @@ mod tests {
     }
 
     #[test]
+    fn parse_and_layout_packet_verification_path() {
+        let formula = r"\text{Channel} \longrightarrow \text{Connection} \longrightarrow \text{ClientID}\ \ (`07\text{-tendermint-}14`) \longrightarrow \text{AppHash} \longrightarrow \text{Verify Merkle Proof}";
+        let prepared = parse_and_layout(formula, true).expect("packet verification path lays out");
+        assert!(prepared.metrics.width.is_finite() && prepared.metrics.width > 0.0);
+        assert!(!prepared.display_list.items.is_empty());
+    }
+
+    #[test]
     fn parse_and_layout_chemistry_preserved() {
         let result = parse_and_layout(r"\ce{H2SO4 + 2NaOH -> Na2SO4 + 2H2O}", true);
         assert!(result.is_ok(), "{:?}", result.err());
