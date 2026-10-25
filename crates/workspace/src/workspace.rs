@@ -10983,22 +10983,6 @@ fn matches_requested_host(project: &Project, requested: &ProjectHost<'_>, cx: &A
     }
 }
 
-fn workspace_is_at_location(
-    workspace: &Entity<Workspace>,
-    location: &SerializedWorkspaceLocation,
-    cx: &App,
-) -> bool {
-    let project = workspace.read(cx).project.read(cx);
-
-    match (project.remote_connection_options(cx), location) {
-        (Some(connection), SerializedWorkspaceLocation::Remote(requested)) => {
-            matches_remote_location(connection, requested)
-        }
-        (None, SerializedWorkspaceLocation::Local) => project.is_local(),
-        _ => false,
-    }
-}
-
 pub fn workspace_windows_for_location<'a>(
     serialized_location: &'a SerializedWorkspaceLocation,
     cx: &'a App,
@@ -11008,9 +10992,17 @@ pub fn workspace_windows_for_location<'a>(
         .filter_map(|window| window.downcast::<MultiWorkspace>())
         .filter(move |multi_workspace| {
             multi_workspace.read(cx).is_ok_and(|multi_workspace| {
-                multi_workspace
-                    .workspaces()
-                    .any(|workspace| workspace_is_at_location(workspace, serialized_location, cx))
+                multi_workspace.workspaces().any(|workspace| {
+                    let project = workspace.read(cx).project.read(cx);
+
+                    match (project.remote_connection_options(cx), serialized_location) {
+                        (Some(connection), SerializedWorkspaceLocation::Remote(requested)) => {
+                            matches_remote_location(connection, requested)
+                        }
+                        (None, SerializedWorkspaceLocation::Local) => project.is_local(),
+                        _ => false,
+                    }
+                })
             })
         })
 }
