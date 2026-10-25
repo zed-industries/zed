@@ -7381,6 +7381,94 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_graph_canvas_resizes_with_detail_panel_in_same_frame(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            serde_json::json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let mut rng = StdRng::seed_from_u64(42);
+        let commits = generate_random_commit_dag(&mut rng, 20, false);
+        fs.set_graph_commits(Path::new("/project/.git"), commits);
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace_weak =
+            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let draw_and_measure = |cx: &mut gpui::VisualTestContext| {
+            cx.draw(
+                point(px(0.), px(0.)),
+                gpui::size(px(1200.), px(800.)),
+                |_, _| git_graph.clone().into_any_element(),
+            );
+            git_graph.read_with(&*cx, |graph, _| {
+                graph
+                    .graph_canvas_bounds
+                    .get()
+                    .expect("graph canvas should have been painted")
+                    .size
+                    .width
+            })
+        };
+
+        // Two frames so the column state has settled before measuring.
+        draw_and_measure(cx);
+        let width_without_panel = draw_and_measure(cx);
+
+        git_graph.update(cx, |graph, cx| {
+            graph.select_entry(0, ScrollStrategy::Nearest, cx);
+        });
+        cx.run_until_parked();
+        let width_with_panel = draw_and_measure(cx);
+        assert!(
+            width_with_panel < width_without_panel,
+            "opening the detail panel should shrink the graph canvas in the same frame \
+             (without panel: {width_without_panel:?}, with panel: {width_with_panel:?})"
+        );
+        assert_eq!(width_with_panel, draw_and_measure(cx));
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.cancel(&Cancel, window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            draw_and_measure(cx),
+            width_without_panel,
+            "closing the detail panel should restore the graph canvas width in the same frame"
+        );
+    }
+
+    #[gpui::test]
     async fn test_copy_selected_commit_tag_with_one_tag_copies_to_clipboard(
         cx: &mut TestAppContext,
     ) {
