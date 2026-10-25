@@ -19,9 +19,11 @@ Terminal Threads also appear as entries in the sidebar alongside agent threads, 
 
 To focus the sidebar without toggling it, use {#kb multi_workspace::FocusWorkspaceSidebar}. To search your threads, press {#kb agents_sidebar::FocusSidebarFilter} while the sidebar is focused.
 
-To change the sidebar’s default width, open the Settings Editor and search for “Threads Sidebar Default Width”. See [`agent.threads_sidebar_default_width`](../reference/all-settings.md#agent-threads-sidebar-default-width) for values and a configuration example.
+To change the sidebar’s position, open the Settings Editor and search for “Threads Sidebar Position”, which writes `agent.threads_sidebar.position`. To change its default width, search for “Threads Sidebar Default Width”. See [`agent.threads_sidebar.default_width`](../reference/all-settings.md#agent-threads-sidebar-default-width) for values and a configuration example.
 
-Drag the divider to override the configured width. Double-click it to return to the setting and follow subsequent settings changes.
+Drag the divider to resize the sidebar. Changing the default width updates even a manually resized sidebar. Double-click the divider to return to the configured width.
+
+The “Threads Sidebar Auto Open” setting controls whether opening a folder in an existing window opens the sidebar. Its JSON key is `agent.threads_sidebar.auto_open`.
 
 ### Switching Threads {#switching-threads}
 

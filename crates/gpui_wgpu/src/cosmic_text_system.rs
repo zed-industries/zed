@@ -418,10 +418,17 @@ impl CosmicTextSystemState {
                 "Segoe Fluent Icons",
             ];
 
+            // This only decides whether a face can be a primary font. The
+            // editor measures layout with the width of 'm' and would panic
+            // without it.
+            //
+            // Don't remove the face from the font database. Arabic, Devanagari
+            // and emoji fonts often have no Latin glyphs, and they are exactly
+            // what cosmic-text falls back to when the primary font lacks a
+            // glyph.
             if font.as_swash().charmap().map('m') == 0
                 && !allowed_bad_font_names.contains(&postscript_name.as_str())
             {
-                self.font_system.db_mut().remove_face(font.id());
                 continue;
             };
 
@@ -1200,7 +1207,14 @@ fn check_is_known_emoji_font(postscript_name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "test-support")]
     use std::{cell::RefCell, rc::Rc};
+    use std::{
+        sync::mpsc,
+        thread,
+        time::{Duration, Instant},
+    };
 
     #[test]
     fn all_font_names_tracks_available_families() -> Result<()> {
@@ -1255,6 +1269,70 @@ mod tests {
         let text_system = CosmicTextSystem::new_without_system_fonts("IBM Plex Sans");
         text_system.add_fonts(vec![Cow::Borrowed(IBM_PLEX)])?;
         Ok(text_system)
+    }
+
+    #[test]
+    fn cached_font_resolution_does_not_wait_for_cold_lookups() -> Result<()> {
+        for family in [".ZedSans", "Missing Font"] {
+            let platform_text_system = Arc::new(text_system()?);
+            let text_system = gpui::TextSystem::new(platform_text_system.clone());
+            let cached = gpui::font(family);
+            let expected = platform_text_system.font_id(&gpui::font(".ZedSans"))?;
+            assert_eq!(text_system.resolve_font(&cached), expected);
+            let (sender, receiver) = mpsc::channel();
+
+            thread::scope(|scope| {
+                let backend = platform_text_system.0.read();
+                let deadline = Instant::now() + Duration::from_secs(5);
+                let cold = scope.spawn(|| text_system.resolve_font(&cached.clone().bold()));
+                while !platform_text_system.0.is_locked_exclusive() && Instant::now() < deadline {
+                    thread::yield_now();
+                }
+                let cold_waiting = platform_text_system.0.is_locked_exclusive();
+                let warm = scope.spawn(|| sender.send(text_system.resolve_font(&cached)));
+                let result =
+                    receiver.recv_timeout(deadline.saturating_duration_since(Instant::now()));
+                drop(backend);
+                let cold_result = cold.join();
+                let warm_result = warm.join();
+
+                assert!(cold_waiting);
+                assert_eq!(result.expect("cached lookup blocked"), expected);
+                assert_eq!(cold_result.expect("cold lookup panicked"), expected);
+                warm_result
+                    .expect("warm lookup panicked")
+                    .expect("receiver dropped");
+            });
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn adding_fonts_retries_cached_font_failures() -> Result<()> {
+        let platform_text_system = Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
+        let text_system = gpui::TextSystem::new(platform_text_system.clone());
+        text_system.add_fonts(vec![Cow::Borrowed(IBM_PLEX)])?;
+        let original_fallback = platform_text_system.font_id(&gpui::font(".ZedSans"))?;
+        let requests = [
+            gpui::Font::default(),
+            gpui::font("Lilex"),
+            gpui::font("Missing Font"),
+        ];
+        for requested in &requests {
+            assert_eq!(text_system.resolve_font(requested), original_fallback);
+        }
+        assert_eq!(
+            text_system.get_font_for_id(original_fallback),
+            Some(gpui::font(".ZedSans"))
+        );
+
+        text_system.add_fonts(vec![Cow::Borrowed(LILEX)])?;
+        for (requested, resolved) in requests.iter().zip([".SystemUIFont", "Lilex", ".ZedMono"]) {
+            let installed = platform_text_system.font_id(&gpui::font(resolved))?;
+            assert_ne!(installed, original_fallback);
+            assert_eq!(text_system.resolve_font(requested), installed);
+        }
+        Ok(())
     }
 
     #[test]
@@ -1314,6 +1392,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "test-support")]
     #[test]
     fn reports_graphemes_that_exhaust_font_fallback() -> Result<()> {
         let platform_text_system = Arc::new(text_system()?);
@@ -1517,6 +1596,50 @@ mod tests {
             assert!(layout.width > Pixels::ZERO, "{text:?}");
         }
 
+        Ok(())
+    }
+
+    /// cosmic-text sums word widths to get a line's width but accumulates glyph
+    /// advances to position glyphs, so a trailing zero-advance glyph (here a
+    /// zero-width space) can land a few ulps past the width. When that glyph is a
+    /// wrap boundary, the row before it extends past the line's width, and hit
+    /// testing in that sliver used to panic (ZED-BW8, ZED-75K, ZED-81Z).
+    #[test]
+    fn index_for_position_past_line_width() -> Result<()> {
+        let text_system = Arc::new(gpui::TextSystem::new(Arc::new(text_system()?)));
+        let window_text_system = gpui::WindowTextSystem::new(text_system);
+        let text: SharedString = "Warning: this will delete files\u{200b}".into();
+        let runs = [gpui::TextRun {
+            len: text.len(),
+            font: gpui::font("IBM Plex Sans"),
+            ..Default::default()
+        }];
+        let lines =
+            window_text_system.shape_text(text, gpui::px(14.), &runs, Some(gpui::px(4.)), None)?;
+        let line = &lines[0];
+        let width = line.unwrapped_layout.width;
+        let boundary_glyph = |row: usize| {
+            let boundary = line.wrap_boundaries()[row];
+            &line.runs()[boundary.run_ix].glyphs[boundary.glyph_ix]
+        };
+        let row = (1..line.wrap_boundaries().len())
+            .find(|row| boundary_glyph(*row).position.x > width)
+            .expect("trailing zero-width space should be a wrap boundary past the line width");
+        let row_start_x = f32::from(boundary_glyph(row - 1).position.x);
+        let row_end = boundary_glyph(row);
+
+        let mut x = f32::from(width) - row_start_x;
+        while x + row_start_x < f32::from(width) {
+            x = x.next_up();
+        }
+        assert!(gpui::px(x + row_start_x) < row_end.position.x);
+
+        let line_height = gpui::px(20.);
+        let position = gpui::point(gpui::px(x), line_height * row as f32 + gpui::px(1.));
+        assert_eq!(
+            line.index_for_position(position, line_height),
+            Err(row_end.index)
+        );
         Ok(())
     }
 

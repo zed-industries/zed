@@ -273,6 +273,7 @@ impl ProjectDiff {
             }
         });
         let diff_observation = cx.observe(&diff, |_, _, cx| cx.notify());
+
         Self {
             project,
             workspace: workspace.downgrade(),
@@ -998,7 +999,7 @@ mod tests {
     use editor::test::editor_test_context::{EditorTestContext, assert_state_with_diff};
     use gpui::{TestAppContext, VisualTestContext};
     use multi_buffer::PathKey;
-    use project::{FakeFs, git_store::MAX_CONCURRENT_BLOB_READS};
+    use project::{FakeFs, git_store::MAX_CONCURRENT_OBJECT_READS};
     use serde_json::json;
     use settings::{DiffViewStyle, GitPanelGroupBy, GitPanelSortBy, SettingsStore};
     use std::path::Path;
@@ -1367,6 +1368,18 @@ mod tests {
         let paths_b = diff_item.read_with(cx, |diff, cx| diff.excerpt_paths(cx));
         assert_eq!(paths_b.len(), 1);
         assert_eq!(*paths_b[0], *"b.txt");
+
+        let active_repository_path = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .map(|repository| repository.read(cx).work_directory_abs_path.clone())
+        });
+
+        assert_eq!(
+            active_repository_path.as_deref(),
+            Some(Path::new(path!("/project_b"))),
+            "Project B should remain the active repository"
+        );
     }
 
     #[gpui::test]
@@ -1603,7 +1616,7 @@ mod tests {
     async fn test_merge_base_loading_is_incremental(cx: &mut TestAppContext) {
         init_test(cx);
 
-        const FILE_COUNT: usize = MAX_CONCURRENT_BLOB_READS + 4;
+        const FILE_COUNT: usize = MAX_CONCURRENT_OBJECT_READS + 4;
 
         let names = (0..FILE_COUNT)
             .map(|index| format!("f{index:02}.txt"))

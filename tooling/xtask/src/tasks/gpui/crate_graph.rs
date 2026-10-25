@@ -1,7 +1,10 @@
 use anyhow::{Context as _, Result, ensure};
 use guppy::{
     MetadataCommand,
-    graph::{DependencyDirection, ExternalSource, PackageGraph, PackageSet, PackageSource},
+    graph::{
+        DependencyDirection, ExternalSource, PackageGraph, PackageMetadata, PackageSet,
+        PackageSource,
+    },
 };
 use url::Url;
 
@@ -11,12 +14,16 @@ pub fn load_workspace_graph() -> Result<PackageGraph> {
         .context("failed to load the workspace crate graph")
 }
 
+pub fn is_gpui_root(package: PackageMetadata<'_>) -> bool {
+    package.in_workspace() && package.name().starts_with("gpui")
+}
+
 /// Returns all GPUI crates in the current workspace
 pub fn gpui_crates(graph: &PackageGraph) -> Result<PackageSet<'_>> {
     let roots = graph
         .workspace()
         .iter_by_name()
-        .filter(|(name, _)| name.starts_with("gpui"))
+        .filter(|(_, package)| is_gpui_root(*package))
         .map(|(_, package)| package.id())
         .collect::<Vec<_>>();
     ensure!(!roots.is_empty(), "no GPUI crates found in the workspace");
@@ -32,6 +39,29 @@ pub fn gpui_crates(graph: &PackageGraph) -> Result<PackageSet<'_>> {
             package.in_workspace() || is_zed_fork(package.source())
         }),
     )
+}
+
+pub fn explain_crate<'graph>(
+    graph: &'graph PackageGraph,
+    name: &str,
+) -> Result<PackageSet<'graph>> {
+    let crates = gpui_crates(graph)?;
+    let selected = crates.filter(DependencyDirection::Forward, |package| {
+        package.name() == name
+    });
+    ensure!(
+        !selected.is_empty(),
+        "crate `{name}` is not in the GPUI publish list"
+    );
+
+    let dependents = selected
+        .to_package_query(DependencyDirection::Reverse)
+        .resolve_with_fn(|_, link| !link.dev_only());
+
+    let dependencies = crates
+        .to_package_query(DependencyDirection::Forward)
+        .resolve_with_fn(|_, link| !link.dev_only());
+    Ok(dependents.intersection(&dependencies))
 }
 
 fn is_zed_fork(source: PackageSource<'_>) -> bool {
@@ -219,7 +249,9 @@ mod tests {
             },
             FixturePackage {
                 name: "fork",
-                origin: Git("git+https://github.com/zed-industries/fork?rev=abc#abc"),
+                origin: Git(
+                    "git+https://github.com/zed-industries/fork?rev=abc#0123456789abcdef0123456789abcdef01234567",
+                ),
                 dependencies: &[FixtureDependency {
                     to: "collections",
                     kind: Normal(Required),
@@ -283,6 +315,83 @@ mod tests {
         assert!(crates.links(DependencyDirection::Reverse).all(|link| {
             names.contains(&link.from().name()) && names.contains(&link.to().name())
         }));
+
+        let explanation = explain_crate(&graph, "fork")?;
+        assert_eq!(
+            explanation
+                .packages(DependencyDirection::Forward)
+                .map(|package| package.name())
+                .collect::<Vec<_>>(),
+            ["gpui_platform", "gpui", "registry", "fork"],
+        );
+        assert_eq!(
+            explanation
+                .links(DependencyDirection::Forward)
+                .filter(|link| !link.dev_only())
+                .map(|link| (link.from().name(), link.to().name()))
+                .collect::<std::collections::BTreeSet<_>>(),
+            [
+                ("gpui_platform", "gpui"),
+                ("gpui", "registry"),
+                ("registry", "fork")
+            ]
+            .into_iter()
+            .collect(),
+        );
+        let root = explain_crate(&graph, "gpui_platform")?;
+        assert_eq!(root.len(), 1);
+        assert!(
+            root.packages(DependencyDirection::Forward)
+                .all(is_gpui_root)
+        );
+        for excluded in ["zed", "test_helper", "registry", "missing"] {
+            assert!(explain_crate(&graph, excluded).is_err(), "{excluded}");
+        }
+
+        use super::super::publish_plan::{Repository, build_publish_plan};
+
+        let plan = build_publish_plan(&graph)?;
+        assert_eq!(
+            plan.iter()
+                .map(|entry| entry.package.name())
+                .collect::<Vec<_>>(),
+            names,
+        );
+        assert_eq!(
+            plan.iter()
+                .map(|entry| entry.package.id())
+                .collect::<Vec<_>>(),
+            crates
+                .package_ids(DependencyDirection::Reverse)
+                .collect::<Vec<_>>(),
+        );
+        for entry in &plan {
+            let package = entry.repository.publish_info(entry.package.name());
+            match package.repository {
+                Repository::Workspace => {
+                    assert_ne!(package.original_name, "fork");
+                    if package.original_name == "gpui_macros" {
+                        assert_eq!(
+                            package.repository.target_name(package.original_name),
+                            "gpui-macros"
+                        );
+                    }
+                }
+                Repository::Git(repository) => {
+                    assert_eq!(package.original_name, "fork");
+                    assert_eq!(
+                        package.repository.target_name(package.original_name),
+                        "zed-fork"
+                    );
+                    assert_eq!(repository.owner, "zed-industries");
+                    assert_eq!(repository.repo, "fork");
+                    assert_eq!(
+                        repository.revision.as_ref(),
+                        "0123456789abcdef0123456789abcdef01234567"
+                    );
+                }
+            }
+        }
         Ok(())
     }
 

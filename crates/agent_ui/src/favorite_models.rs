@@ -7,7 +7,7 @@ use settings::{Settings as _, update_settings_file};
 use ui::App;
 
 pub fn toggle_in_settings(
-    model: Arc<dyn LanguageModel>,
+    model: LanguageModel,
     should_be_favorite: bool,
     fs: Arc<dyn Fs>,
     cx: &mut App,
