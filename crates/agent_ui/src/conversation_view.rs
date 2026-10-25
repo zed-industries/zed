@@ -2587,6 +2587,8 @@ impl ConversationView {
     /// Restores a child session that a tool call references but its parent does not
     /// own, such as a native subagent from a thread loaded from the database. Children
     /// the parent already owns are never loaded: ACP forbids loading subagent sessions.
+    /// Neither is any session where the subagents RFD applies, since a child referenced
+    /// there may still be announced, and loading it first would reject the announcement.
     fn load_subagent_session(
         &mut self,
         subagent_id: acp_v2::SessionId,
@@ -2598,6 +2600,7 @@ impl ConversationView {
         };
         if connected.threads.contains_key(&subagent_id)
             || !connected.connection.supports_load_session()
+            || connected.connection.announces_subagents()
         {
             return;
         }
@@ -6892,6 +6895,32 @@ pub(crate) mod tests {
                     end: Some(5),
                 }),
                 "{id}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_referenced_subagents_load_only_without_the_subagents_rfd(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        for announces_subagents in [false, true] {
+            let connection = StubAgentConnection::new()
+                .with_supports_load_session(true)
+                .with_announced_subagents(announces_subagents);
+            let (conversation_view, cx) =
+                setup_conversation_view(StubAgentServer::new(connection), cx).await;
+            let root_session_id = active_thread(&conversation_view, cx)
+                .read_with(cx, |view, _| view.session_id.clone());
+            let referenced = acp_v2::SessionId::new("referenced");
+            conversation_view.update(cx, |view, cx| {
+                view.load_subagent_session(referenced.clone(), root_session_id, cx);
+            });
+            cx.run_until_parked();
+            assert_eq!(
+                conversation_view.read_with(cx, |view, _| view.thread_view(&referenced).is_some()),
+                !announces_subagents,
+                "a session a tool call references is loaded only where the RFD does not apply"
             );
         }
     }
