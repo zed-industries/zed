@@ -12,6 +12,23 @@ pub struct LanguageSettings {
     pub preferred_line_length: u32,
 }
 
+/// The settings that control which files Zed scans in a worktree.
+#[derive(Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorktreeSettings {
+    /// Glob patterns for files and directories that Zed excludes from the worktree.
+    pub file_scan_exclusions: Vec<String>,
+    /// Glob patterns for files and directories that Zed includes in the worktree
+    /// even when they match `file_scan_exclusions` or are gitignored.
+    pub file_scan_inclusions: Vec<String>,
+}
+
+/// The user's file type associations.
+#[derive(Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FileTypeSettings {
+    /// Glob patterns assigned to each language, keyed by language name.
+    pub file_types: HashMap<String, Vec<String>>,
+}
+
 /// The settings for a particular language server.
 #[derive(Default, Debug, Serialize, Deserialize)]
 pub struct LspSettings {

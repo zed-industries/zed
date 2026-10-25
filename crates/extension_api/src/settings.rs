@@ -21,6 +21,26 @@ impl LspSettings {
     }
 }
 
+impl WorktreeSettings {
+    /// Returns the [`WorktreeSettings`] for the given worktree.
+    ///
+    /// Language servers that index a workspace can forward these patterns
+    /// so they skip the same files Zed does.
+    pub fn for_worktree(worktree: &Worktree) -> Result<Self> {
+        get_settings("worktree", None, Some(worktree.id()))
+    }
+}
+
+impl FileTypeSettings {
+    /// Returns the [`FileTypeSettings`] for the given worktree.
+    ///
+    /// Language servers can use these associations to treat additional files
+    /// as belonging to their language.
+    pub fn for_worktree(worktree: &Worktree) -> Result<Self> {
+        get_settings("file_types", None, Some(worktree.id()))
+    }
+}
+
 impl ContextServerSettings {
     /// Returns the [`ContextServerSettings`] for the given context server.
     pub fn for_project(context_server_id: &str, project: &Project) -> Result<Self> {

@@ -15,7 +15,7 @@ use extension::{
 };
 use futures::{AsyncReadExt, lock::Mutex};
 use futures::{FutureExt as _, io::BufReader};
-use gpui::{BackgroundExecutor, SharedString};
+use gpui::{App, BackgroundExecutor, SharedString};
 use language::{BinaryStatus, LanguageName, language_settings::AllLanguageSettings};
 use project::project_settings::ProjectSettings;
 use semver::Version;
@@ -949,6 +949,111 @@ impl dap::Host for WasmState {
     }
 }
 
+fn settings_json(
+    category: &str,
+    key: Option<String>,
+    location: Option<::settings::SettingsLocation>,
+    cx: &App,
+) -> Result<String> {
+    match category {
+        "language" => {
+            let key = key.map(|k| LanguageName::new(&k));
+            let settings =
+                AllLanguageSettings::get(location, cx).language(location, key.as_ref(), cx);
+            Ok(serde_json::to_string(&settings::LanguageSettings {
+                tab_size: settings.tab_size,
+                hard_tabs: settings.hard_tabs,
+                preferred_line_length: settings.preferred_line_length,
+            })?)
+        }
+        "lsp" => {
+            let settings = key
+                .and_then(|key| {
+                    ProjectSettings::get(location, cx)
+                        .lsp
+                        .get(&::lsp::LanguageServerName::from_proto(key))
+                })
+                .cloned()
+                .unwrap_or_default();
+            Ok(serde_json::to_string(&settings::LspSettings {
+                binary: settings.binary.map(|binary| settings::CommandSettings {
+                    path: binary.path,
+                    arguments: binary.arguments,
+                    env: binary.env.map(|env| env.into_iter().collect()),
+                }),
+                settings: settings.settings,
+                initialization_options: settings.initialization_options,
+            })?)
+        }
+        "context_servers" => {
+            let settings = key
+                .and_then(|key| {
+                    ProjectSettings::get(location, cx)
+                        .context_servers
+                        .get(key.as_str())
+                })
+                .cloned()
+                .unwrap_or_else(|| {
+                    project::project_settings::ContextServerSettings::default_extension()
+                });
+
+            match settings {
+                project::project_settings::ContextServerSettings::Stdio {
+                    enabled: _,
+                    command,
+                    ..
+                } => Ok(serde_json::to_string(&settings::ContextServerSettings {
+                    command: Some(settings::CommandSettings {
+                        path: command.path.to_str().map(|path| path.to_string()),
+                        arguments: Some(command.args),
+                        env: command.env.map(|env| env.into_iter().collect()),
+                    }),
+                    settings: None,
+                })?),
+                project::project_settings::ContextServerSettings::Extension {
+                    enabled: _,
+                    settings,
+                    ..
+                } => Ok(serde_json::to_string(&settings::ContextServerSettings {
+                    command: None,
+                    settings: Some(settings),
+                })?),
+                project::project_settings::ContextServerSettings::Http { .. } => {
+                    bail!("remote context server settings not supported in 0.6.0")
+                }
+            }
+        }
+        "worktree" => {
+            let settings = project::WorktreeSettings::get(location, cx);
+            Ok(serde_json::to_string(&settings::WorktreeSettings {
+                file_scan_exclusions: settings
+                    .file_scan_exclusions
+                    .sources()
+                    .map(String::from)
+                    .collect(),
+                file_scan_inclusions: settings
+                    .file_scan_inclusions
+                    .sources()
+                    .map(String::from)
+                    .collect(),
+            })?)
+        }
+        "file_types" => {
+            let settings = AllLanguageSettings::get(location, cx);
+            Ok(serde_json::to_string(&settings::FileTypeSettings {
+                file_types: settings
+                    .file_types
+                    .iter()
+                    .map(|(language, (_, patterns))| (language.to_string(), patterns.clone()))
+                    .collect(),
+            })?)
+        }
+        _ => {
+            bail!("Unknown settings category: {}", category);
+        }
+    }
+}
+
 impl ExtensionImports for WasmState {
     async fn get_settings(
         &mut self,
@@ -969,82 +1074,7 @@ impl ExtensionImports for WasmState {
                         path,
                     });
 
-                cx.update(|cx| match category.as_str() {
-                    "language" => {
-                        let key = key.map(|k| LanguageName::new(&k));
-                        let settings = AllLanguageSettings::get(location, cx).language(
-                            location,
-                            key.as_ref(),
-                            cx,
-                        );
-                        Ok(serde_json::to_string(&settings::LanguageSettings {
-                            tab_size: settings.tab_size,
-                            hard_tabs: settings.hard_tabs,
-                            preferred_line_length: settings.preferred_line_length,
-                        })?)
-                    }
-                    "lsp" => {
-                        let settings = key
-                            .and_then(|key| {
-                                ProjectSettings::get(location, cx)
-                                    .lsp
-                                    .get(&::lsp::LanguageServerName::from_proto(key))
-                            })
-                            .cloned()
-                            .unwrap_or_default();
-                        Ok(serde_json::to_string(&settings::LspSettings {
-                            binary: settings.binary.map(|binary| settings::CommandSettings {
-                                path: binary.path,
-                                arguments: binary.arguments,
-                                env: binary.env.map(|env| env.into_iter().collect()),
-                            }),
-                            settings: settings.settings,
-                            initialization_options: settings.initialization_options,
-                        })?)
-                    }
-                    "context_servers" => {
-                        let settings = key
-                            .and_then(|key| {
-                                ProjectSettings::get(location, cx)
-                                    .context_servers
-                                    .get(key.as_str())
-                            })
-                            .cloned()
-                            .unwrap_or_else(|| {
-                                project::project_settings::ContextServerSettings::default_extension(
-                                )
-                            });
-
-                        match settings {
-                            project::project_settings::ContextServerSettings::Stdio {
-                                enabled: _,
-                                command,
-                                ..
-                            } => Ok(serde_json::to_string(&settings::ContextServerSettings {
-                                command: Some(settings::CommandSettings {
-                                    path: command.path.to_str().map(|path| path.to_string()),
-                                    arguments: Some(command.args),
-                                    env: command.env.map(|env| env.into_iter().collect()),
-                                }),
-                                settings: None,
-                            })?),
-                            project::project_settings::ContextServerSettings::Extension {
-                                enabled: _,
-                                settings,
-                                ..
-                            } => Ok(serde_json::to_string(&settings::ContextServerSettings {
-                                command: None,
-                                settings: Some(settings),
-                            })?),
-                            project::project_settings::ContextServerSettings::Http { .. } => {
-                                bail!("remote context server settings not supported in 0.6.0")
-                            }
-                        }
-                    }
-                    _ => {
-                        bail!("Unknown settings category: {}", category);
-                    }
-                })
+                cx.update(|cx| settings_json(&category, key, location, cx))
             }
             .boxed_local()
         })
@@ -1159,5 +1189,90 @@ impl ExtensionImports for WasmState {
             .await
             .with_context(|| format!("setting permissions for path {path:?}"))
             .to_wasmtime_result()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ::settings::{LocalSettingsKind, LocalSettingsPath, SettingsStore};
+    use gpui::TestAppContext;
+    use util::rel_path::rel_path;
+
+    #[gpui::test]
+    fn test_worktree_and_file_types_settings(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let mut store = SettingsStore::test(cx);
+            store
+                .set_user_settings(
+                    &serde_json::json!({
+                        "file_scan_exclusions": ["**/generated"],
+                        "file_scan_inclusions": ["generated/keep.php"],
+                        "file_types": { "PHP": ["*.module"] },
+                    })
+                    .to_string(),
+                    cx,
+                )
+                .unwrap();
+            let worktree_id = WorktreeId::from_usize(1);
+            store
+                .set_local_settings(
+                    worktree_id,
+                    LocalSettingsPath::InWorktree(rel_path("").into()),
+                    LocalSettingsKind::Settings,
+                    Some(
+                        &serde_json::json!({
+                            "file_scan_exclusions": ["storage/framework"],
+                            "file_types": { "PHP": ["*.theme"] },
+                        })
+                        .to_string(),
+                    ),
+                    cx,
+                )
+                .unwrap();
+            cx.set_global(store);
+
+            let get = |category: &str, location| -> String {
+                settings_json(category, None, location, cx).unwrap()
+            };
+
+            let worktree: settings::WorktreeSettings =
+                serde_json::from_str(&get("worktree", None)).unwrap();
+            assert_eq!(
+                worktree,
+                settings::WorktreeSettings {
+                    file_scan_exclusions: vec!["**/generated".into()],
+                    file_scan_inclusions: vec!["generated/keep.php".into()],
+                }
+            );
+            let file_types: settings::FileTypeSettings =
+                serde_json::from_str(&get("file_types", None)).unwrap();
+            assert_eq!(
+                file_types.file_types.get("PHP"),
+                Some(&vec!["*.module".to_string()])
+            );
+
+            let location = Some(::settings::SettingsLocation {
+                worktree_id,
+                path: RelPath::empty(),
+            });
+            let worktree: settings::WorktreeSettings =
+                serde_json::from_str(&get("worktree", location)).unwrap();
+            assert_eq!(
+                worktree,
+                settings::WorktreeSettings {
+                    file_scan_exclusions: vec!["storage/framework".into()],
+                    file_scan_inclusions: vec!["generated/keep.php".into()],
+                }
+            );
+            let file_types: settings::FileTypeSettings =
+                serde_json::from_str(&get("file_types", location)).unwrap();
+            assert_eq!(
+                file_types.file_types.get("PHP"),
+                Some(&vec!["*.module".to_string(), "*.theme".to_string()])
+            );
+
+            assert!(settings_json("unknown", None, None, cx).is_err());
+        });
     }
 }
