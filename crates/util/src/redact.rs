@@ -13,8 +13,9 @@ const REDACTED_SUFFIXES: &[&str] = &[
 static REDACT_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
     // Only match sensitive names so a non-sensitive assignment does not
     // consume a nested or adjacent secret assignment as part of its value.
+    // Use ASCII-only case folding for names; util does not enable regex's unicode-case feature.
     regex::Regex::new(&format!(
-        r#"(?i)((?:[a-z_][a-z0-9_]*)?(?:{}))=(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\S+)"#,
+        r#"(?i-u:((?:[a-z_][a-z0-9_]*)?(?:{})))=(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\S+)"#,
         REDACTED_SUFFIXES.join("|"),
     ))
     .unwrap()
