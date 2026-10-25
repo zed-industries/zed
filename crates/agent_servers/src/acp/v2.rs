@@ -1345,9 +1345,22 @@ impl AgentConnection for AcpV2Connection {
                     })?;
                     let result = (|| {
                         for notification in notifications {
+                            // Traffic for the new session's subagents goes to their own threads,
+                            // which the announcements before it created.
+                            let target = this
+                                .sessions
+                                .borrow()
+                                .get(&notification.session_id)
+                                .map(|session| session.thread.clone())
+                                .with_context(|| {
+                                    format!(
+                                        "Session update for unannounced session {}",
+                                        notification.session_id
+                                    )
+                                })?;
                             apply_v2_session_notification(
                                 notification,
-                                &thread.downgrade(),
+                                &target,
                                 &this.sessions,
                                 cx,
                             )?;
@@ -3771,6 +3784,69 @@ done
             "failed deletes must not retry"
         );
         assert!(harness.closes.is_empty());
+    }
+
+    #[gpui::test]
+    async fn v2_new_session_keeps_subagent_traffic_sent_before_its_response(
+        cx: &mut TestAppContext,
+    ) {
+        let harness = SessionHarness::new(session_capabilities(), vec![], vec![], cx).await;
+        *harness.hold_new_responses.lock().expect("new mode") = true;
+        let creation = harness.create(cx);
+        let (_, response) = bounded(harness.new_replies.recv(), cx)
+            .await
+            .expect("new request");
+        let message = |id: &str, text: &str| {
+            acp::SessionUpdate::AgentMessage(acp::AgentMessage::new(id).content(vec![text.into()]))
+        };
+        harness.send_update(
+            "session",
+            acp::SessionUpdate::SubagentUpdate(acp::SubagentUpdate::new("child")),
+        );
+        harness.send_update("child", message("child-message", "child works"));
+        harness.send_update(
+            "child",
+            acp::SessionUpdate::SubagentUpdate(acp::SubagentUpdate::new("grandchild")),
+        );
+        harness.send_update(
+            "grandchild",
+            message("grandchild-message", "grandchild works"),
+        );
+        // Traffic for a session nobody announced is still not delivered.
+        harness.send_update("stranger", message("stranger-message", "unrelated"));
+        cx.run_until_parked();
+        response
+            .respond(initial_response())
+            .expect("new session response");
+        let parent = bounded(creation, cx).await.expect("created session");
+        cx.run_until_parked();
+
+        let child = parent
+            .read_with(cx, |parent, _| parent.subagent(&"child".into()).cloned())
+            .expect("announced before the response");
+        let grandchild = child
+            .read_with(cx, |child, _| child.subagent(&"grandchild".into()).cloned())
+            .expect("announced before the response");
+        for (thread, text) in [(&child, "child works"), (&grandchild, "grandchild works")] {
+            thread.read_with(cx, |thread, cx| {
+                assert!(
+                    thread.to_markdown(cx).contains(text),
+                    "a subagent's traffic sent before the response reaches it"
+                );
+            });
+        }
+        parent.read_with(cx, |parent, cx| {
+            let transcript = parent.to_markdown(cx);
+            assert!(!transcript.contains("child works"));
+            assert!(!transcript.contains("unrelated"));
+        });
+        assert!(
+            !harness
+                .client
+                .sessions
+                .borrow()
+                .contains_key(&acp::SessionId::new("stranger"))
+        );
     }
 
     #[gpui::test]
