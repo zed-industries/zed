@@ -1,5 +1,6 @@
 > [!IMPORTANT]
 > Remove this line to confirm you've reviewed this PR before submitting.
+<!-- HUMAN REVIEW REMOVAL BOUNDARY: After your own review, delete this comment and the two blockquote lines above. Keep "# Zed" and everything below. -->
 # Zed
 
 [![Zed](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/zed-industries/zed/main/assets/badge/v0.json)](https://zed.dev)
