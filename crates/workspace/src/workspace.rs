@@ -20310,6 +20310,97 @@ mod tests {
         });
     }
 
+    async fn switch_from_zoomed_panel_to_sibling_panel(
+        via_panel_button: bool,
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        // Workspace actions are registered on the `MultiWorkspace` root, so a bare `Workspace`
+        // window wouldn't route dispatched actions to the workspace.
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+
+        let (zoomed_panel, sibling_panel) = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.register_action(
+                |workspace, _: &crate::dock::test::ToggleTestPanel, window, cx| {
+                    workspace.toggle_panel_focus::<SecondTestPanel>(window, cx);
+                },
+            );
+            let sibling_panel = cx.new(|cx| SecondTestPanel {
+                focus_handle: cx.focus_handle(),
+                zoomed: false,
+            });
+            workspace.add_panel(sibling_panel.clone(), window, cx);
+            let zoomed_panel = cx.new(|cx| TestPanel::new(DockPosition::Bottom, 100, cx));
+            workspace.add_panel(zoomed_panel.clone(), window, cx);
+            (zoomed_panel, sibling_panel)
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_panel_focus::<TestPanel>(window, cx);
+        });
+        zoomed_panel.update(cx, |_, cx| cx.emit(PanelEvent::ZoomIn));
+        cx.run_until_parked();
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(zoomed_panel.read(cx).zoomed);
+            assert!(workspace.zoomed.is_some());
+            assert!(
+                zoomed_panel
+                    .read(cx)
+                    .focus_handle(cx)
+                    .contains_focused(window, cx)
+            );
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            if via_panel_button {
+                // Mirrors the click handler in `PanelButtons::render`.
+                let focus_handle = workspace
+                    .bottom_dock()
+                    .read(cx)
+                    .panel_button_focus_handle(window, cx);
+                window.focus(&focus_handle, cx);
+            }
+            window.dispatch_action(crate::dock::test::ToggleTestPanel.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let dock = workspace.bottom_dock().read(cx);
+            assert!(dock.is_open(), "dock should stay open");
+            assert_eq!(
+                dock.active_panel().map(|panel| panel.panel_id()),
+                Some(sibling_panel.entity_id()),
+                "sibling panel should become the active panel",
+            );
+            assert!(
+                sibling_panel
+                    .read(cx)
+                    .focus_handle(cx)
+                    .contains_focused(window, cx),
+                "sibling panel should be focused",
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_switch_from_zoomed_panel_to_sibling_panel_via_action(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        switch_from_zoomed_panel_to_sibling_panel(false, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_switch_from_zoomed_panel_to_sibling_panel_via_button(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        switch_from_zoomed_panel_to_sibling_panel(true, cx).await;
+    }
+
     struct SecondTestPanel {
         focus_handle: FocusHandle,
         zoomed: bool,

@@ -989,6 +989,14 @@ impl Dock {
         }
     }
 
+    /// Panel buttons focus this before dispatching their action. A zoomed panel isn't rendered
+    /// inside its dock, so the dock's own handle would be outside the frame and the action dropped.
+    pub(crate) fn panel_button_focus_handle(&self, window: &Window, cx: &App) -> FocusHandle {
+        self.zoomed_panel(window, cx)
+            .map(|panel| panel.panel_focus_handle(cx))
+            .unwrap_or_else(|| self.focus_handle.clone())
+    }
+
     pub fn active_panel_size(&self) -> Option<PanelSizeState> {
         if self.is_open {
             self.active_panel_entry().map(|entry| entry.size_state)
@@ -1435,7 +1443,7 @@ impl Render for PanelButtons {
                     (action, icon_tooltip.into())
                 };
 
-                let focus_handle = dock.focus_handle(cx);
+                let focus_handle = dock.panel_button_focus_handle(window, cx);
                 let icon_label = entry.panel.icon_label(window, cx);
 
                 Some(
