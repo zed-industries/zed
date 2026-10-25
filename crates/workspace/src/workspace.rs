@@ -891,7 +891,8 @@ fn prompt_and_open_paths(
     create_new_window: bool,
     cx: &mut App,
 ) {
-    let workspace_window = workspace_windows_for_host(&ProjectHost::Local, cx).next();
+    let workspace_window =
+        workspace_windows_for_location(&SerializedWorkspaceLocation::Local, cx).next();
 
     if let Some(workspace_window) = workspace_window {
         workspace_window
@@ -10926,6 +10927,30 @@ pub struct WorkspaceOpenTarget {
     pub visible: OpenVisible,
 }
 
+fn matches_remote_location(
+    connection: &RemoteConnectionOptions,
+    requested: &RemoteConnectionOptions,
+) -> bool {
+    match (connection, requested) {
+        (RemoteConnectionOptions::Ssh(_), RemoteConnectionOptions::Ssh(_)) => {
+            connection.identity() == requested.identity()
+        }
+        (RemoteConnectionOptions::Wsl(connection), RemoteConnectionOptions::Wsl(requested)) => {
+            // The WSL username is not consistently populated in the workspace location, so ignore it for now.
+            connection.distro_name == requested.distro_name
+        }
+        (
+            RemoteConnectionOptions::Docker(connection),
+            RemoteConnectionOptions::Docker(requested),
+        ) => connection.container_id == requested.container_id,
+        #[cfg(any(test, feature = "test-support"))]
+        (RemoteConnectionOptions::Mock(connection), RemoteConnectionOptions::Mock(requested)) => {
+            connection.id == requested.id
+        }
+        _ => false,
+    }
+}
+
 fn matches_requested_host(project: &Project, requested: &ProjectHost<'_>, cx: &App) -> bool {
     match requested {
         ProjectHost::Local => project.is_local(),
@@ -10934,32 +10959,48 @@ fn matches_requested_host(project: &Project, requested: &ProjectHost<'_>, cx: &A
                 return false;
             };
 
+            if !matches_remote_location(connection, requested) {
+                return false;
+            }
+
             match (connection, *requested) {
-                (
-                    RemoteConnectionOptions::Wsl(options),
-                    RemoteConnectionOptions::Wsl(requested),
-                ) => {
-                    // WSL entry points do not consistently specify the user.
-                    options.distro_name == requested.distro_name
-                }
                 (
                     RemoteConnectionOptions::Ssh(options),
                     RemoteConnectionOptions::Ssh(requested_options),
                 ) => {
                     // SSH arguments can override the host and user.
                     // Normalize the args to make None == Some(vec![]) for comparison.
-                    connection.identity() == requested.identity()
-                        && options.args.as_deref().unwrap_or_default()
-                            == requested_options.args.as_deref().unwrap_or_default()
+                    options.args.as_deref().unwrap_or_default()
+                        == requested_options.args.as_deref().unwrap_or_default()
                 }
-                _ => connection.identity() == requested.identity(),
+                (
+                    RemoteConnectionOptions::Docker(options),
+                    RemoteConnectionOptions::Docker(requested_options),
+                ) => options.remote_user == requested_options.remote_user,
+                _ => true,
             }
         }
     }
 }
 
-pub fn workspace_windows_for_host<'a>(
-    host: &'a ProjectHost<'_>,
+fn workspace_is_at_location(
+    workspace: &Entity<Workspace>,
+    location: &SerializedWorkspaceLocation,
+    cx: &App,
+) -> bool {
+    let project = workspace.read(cx).project.read(cx);
+
+    match (project.remote_connection_options(cx), location) {
+        (Some(connection), SerializedWorkspaceLocation::Remote(requested)) => {
+            matches_remote_location(connection, requested)
+        }
+        (None, SerializedWorkspaceLocation::Local) => project.is_local(),
+        _ => false,
+    }
+}
+
+pub fn workspace_windows_for_location<'a>(
+    serialized_location: &'a SerializedWorkspaceLocation,
     cx: &'a App,
 ) -> impl Iterator<Item = WindowHandle<MultiWorkspace>> + 'a {
     cx.windows()
@@ -10967,9 +11008,9 @@ pub fn workspace_windows_for_host<'a>(
         .filter_map(|window| window.downcast::<MultiWorkspace>())
         .filter(move |multi_workspace| {
             multi_workspace.read(cx).is_ok_and(|multi_workspace| {
-                multi_workspace.workspaces().any(|workspace| {
-                    matches_requested_host(workspace.read(cx).project.read(cx), host, cx)
-                })
+                multi_workspace
+                    .workspaces()
+                    .any(|workspace| workspace_is_at_location(workspace, serialized_location, cx))
             })
         })
 }
@@ -11345,12 +11386,12 @@ pub fn open_paths(
                         .active_window()
                         .and_then(|window| window.downcast::<MultiWorkspace>());
 
-                    workspace_windows_for_host(&ProjectHost::Local, cx)
+                    workspace_windows_for_location(&SerializedWorkspaceLocation::Local, cx)
                         .min_by_key(|window| Some(*window) != active_window)
                         .filter(|window| {
-                            window.read(cx).is_ok_and(|multi_workspace| {
-                                multi_workspace.multi_workspace_enabled(cx)
-                            })
+                            window
+                                .read(cx)
+                                .is_ok_and(|mw| mw.multi_workspace_enabled(cx))
                         })
                 });
 

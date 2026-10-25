@@ -416,7 +416,7 @@ async fn test_open_directory_in_empty_workspace_does_not_open_sidebar(cx: &mut T
     let window = cx.add_window(|window, cx| {
         let mw = MultiWorkspace::test_new(project, window, cx);
         // Simulate a blank project that has an untitled editor tab,
-        // so that workspace_windows_for_host finds this window.
+        // so that workspace_windows_for_location finds this window.
         mw.workspace().update(cx, |workspace, cx| {
             workspace.active_pane().update(cx, |pane, cx| {
                 let item = cx.new(|cx| item::test::TestItem::new(cx));
@@ -552,12 +552,24 @@ async fn test_local_workspace_lookup_skips_collab_with_same_paths(cx: &mut TestA
 
     let paths = PathList::new(&[PathBuf::from(path!("/project"))]);
 
-    multi_workspace.read_with(cx, |multi_workspace, cx| {
-        assert_eq!(
-            multi_workspace.workspace_for_paths(&paths, None, cx),
-            Some(multi_workspace.workspace().clone()),
-        );
-    });
+    let local_workspace =
+        multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+    let workspace = multi_workspace
+        .update_in(cx, |multi_workspace, window, cx| {
+            multi_workspace.find_or_create_local_workspace(
+                paths,
+                None,
+                None,
+                OpenMode::Activate,
+                None,
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(workspace, local_workspace);
 }
 
 #[gpui::test]

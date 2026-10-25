@@ -1063,28 +1063,19 @@ impl MultiWorkspace {
     }
 
     /// Finds an existing workspace whose root paths and host exactly match.
-    /// When `host` is `None`, only local workspaces are considered.
     pub fn workspace_for_paths(
         &self,
         path_list: &PathList,
         host: Option<&RemoteConnectionOptions>,
         cx: &App,
     ) -> Option<Entity<Workspace>> {
-        for workspace in self.workspaces() {
-            let workspace_state = workspace.read(cx);
-            let root_paths = PathList::new(&workspace_state.root_paths(cx));
-            let project = workspace_state.project().read(cx);
-            let host_matches: bool = match host {
-                Some(host) => project.remote_connection_options(cx) == Some(host),
-                None => project.is_local(),
-            };
-            let paths_match = root_paths == *path_list;
-            if host_matches && paths_match {
-                return Some(workspace.clone());
-            }
-        }
-
-        None
+        self.workspaces()
+            .find(|workspace| {
+                let workspace = workspace.read(cx);
+                workspace.project().read(cx).remote_connection_options(cx) == host
+                    && PathList::new(&workspace.root_paths(cx)) == *path_list
+            })
+            .cloned()
     }
 
     /// Finds an existing workspace whose paths match, or creates a new one.
@@ -1117,6 +1108,11 @@ impl MultiWorkspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
+        if let Some(workspace) = self.workspace_for_paths(&paths, host.as_ref(), cx) {
+            self.activate(workspace.clone(), source_workspace, window, cx);
+            return Task::ready(Ok(workspace));
+        }
+
         let Some(connection_options) = host else {
             return self.find_or_create_local_workspace(
                 paths,
@@ -1128,11 +1124,6 @@ impl MultiWorkspace {
                 cx,
             );
         };
-
-        if let Some(workspace) = self.workspace_for_paths(&paths, Some(&connection_options), cx) {
-            self.activate(workspace.clone(), source_workspace, window, cx);
-            return Task::ready(Ok(workspace));
-        }
 
         let app_state = self.workspace().read(cx).app_state().clone();
         let window_handle = window.window_handle().downcast::<MultiWorkspace>();
@@ -1220,7 +1211,18 @@ impl MultiWorkspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
-        if let Some(workspace) = self.workspace_for_paths(&path_list, None, cx) {
+        let local_workspace_for_paths = |multi_workspace: &Self, path_list: &PathList, cx: &App| {
+            multi_workspace
+                .workspaces()
+                .find(|workspace| {
+                    let workspace = workspace.read(cx);
+                    workspace.project().read(cx).is_local()
+                        && PathList::new(&workspace.root_paths(cx)) == *path_list
+                })
+                .cloned()
+        };
+
+        if let Some(workspace) = local_workspace_for_paths(self, &path_list, cx) {
             self.activate(workspace.clone(), source_workspace, window, cx);
             return Task::ready(Ok(workspace));
         }
@@ -1257,8 +1259,7 @@ impl MultiWorkspace {
             if let Some(requesting_window) = requesting_window
                 && let Some(workspace) = requesting_window
                     .update(cx, |multi_workspace, window, cx| {
-                        multi_workspace
-                            .workspace_for_paths(&effective_path_list, None, cx)
+                        local_workspace_for_paths(multi_workspace, &effective_path_list, cx)
                             .inspect(|workspace| {
                                 multi_workspace.activate(
                                     workspace.clone(),
