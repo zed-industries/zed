@@ -1,7 +1,8 @@
+use collections::HashMap;
 use editor::display_map::DisplaySnapshot;
 use editor::{Bias, DisplayPoint, MultiBufferOffset, movement};
 use gpui::{Context, Window};
-use multi_buffer::Anchor;
+use multi_buffer::{Anchor, MultiBufferSnapshot, ToOffset};
 use text::Selection;
 
 use crate::Vim;
@@ -81,9 +82,39 @@ fn preserved_selection_anchors(
 
 type SurroundEdits = Vec<(std::ops::Range<MultiBufferOffset>, String)>;
 
+/// One end of a selection that `ms` surrounds, resolved after the edit.
+struct SurroundedEdge {
+    /// Anchors around the pre-edit offset: everything inserted there ends up
+    /// between them.
+    before: Anchor,
+    after: Anchor,
+    /// The length of the text requested at this offset that belongs before
+    /// the edge.
+    skip: usize,
+}
+
+impl SurroundedEdge {
+    fn new(snapshot: &MultiBufferSnapshot, offset: MultiBufferOffset, skip: usize) -> Self {
+        Self {
+            before: snapshot.anchor_before(offset),
+            after: snapshot.anchor_after(offset),
+            skip,
+        }
+    }
+
+    fn resolve(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
+        let before = self.before.to_offset(snapshot);
+        let after = self.after.to_offset(snapshot);
+        // The multi buffer does not always grow by the requested amount: the
+        // editor can be read-only, or an excerpt can end at the insertion
+        // point. Only move over text that was actually inserted.
+        before + self.skip.min(after - before)
+    }
+}
+
 enum SurroundSelections {
-    PreEditAnchors(Vec<std::ops::Range<Anchor>>),
-    PostEditOffsets(Vec<std::ops::Range<MultiBufferOffset>>),
+    Anchors(Vec<std::ops::Range<Anchor>>),
+    Surrounded(Vec<std::ops::Range<SurroundedEdge>>),
 }
 
 fn apply_helix_surround_edits<F>(
@@ -107,9 +138,14 @@ fn apply_helix_surround_edits<F>(
             edits.sort_by_key(|edit| edit.0.start);
             editor.edit(edits, cx);
 
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
             editor.change_selections(Default::default(), window, cx, |s| match new_selections {
-                SurroundSelections::PreEditAnchors(anchors) => s.select_anchor_ranges(anchors),
-                SurroundSelections::PostEditOffsets(ranges) => s.select_ranges(ranges),
+                SurroundSelections::Anchors(anchors) => s.select_anchor_ranges(anchors),
+                SurroundSelections::Surrounded(edges) => s.select_ranges(
+                    edges
+                        .iter()
+                        .map(|edge| edge.start.resolve(&snapshot)..edge.end.resolve(&snapshot)),
+                ),
             });
             editor.set_clip_at_line_ends(true, cx);
         });
@@ -124,36 +160,42 @@ impl Vim {
         let pair = bracket_pair_for_str_helix(text);
 
         apply_helix_surround_edits(self, window, cx, |display_map, selections| {
+            let snapshot = display_map.buffer_snapshot();
             let mut edits = Vec::new();
             let mut ranges = Vec::new();
+            // The length of the text requested so far at each offset.
+            let mut requested_at = HashMap::default();
 
             // Like Helix, the new selection covers the surrounded text
             // including the added delimiters, so that surrounds compose and
-            // `i`/`a` land outside the pair. The selections are computed from
-            // the insertions made before them rather than from anchors: when
-            // two selections touch, both the closing delimiter of the first
-            // and the opening delimiter of the second are inserted at the
-            // same offset, so no anchor can end up between them.
-            let mut inserted_len = 0;
+            // `i`/`a` land outside the pair. When two selections touch, the
+            // closing delimiter of the first and the opening delimiter of the
+            // second are inserted at the same offset, so no anchor can end up
+            // between them. Instead, each edge records how much of the text
+            // requested at its offset was pushed before it.
             for selection in selections {
                 let range = selection.range();
                 let start = range.start.to_offset(display_map, Bias::Right);
                 let end = range.end.to_offset(display_map, Bias::Left);
 
+                let requested = requested_at.entry(start).or_insert(0);
+                let start_edge = SurroundedEdge::new(snapshot, start, *requested);
+                *requested += pair.start.len();
                 edits.push((start..start, pair.start.clone()));
+
+                let requested = requested_at.entry(end).or_insert(0);
+                *requested += pair.end.len();
+                let end_edge = SurroundedEdge::new(snapshot, end, *requested);
                 edits.push((end..end, pair.end.clone()));
 
-                let new_start = start + inserted_len;
-                inserted_len += pair.start.len() + pair.end.len();
-                let new_end = end + inserted_len;
                 if selection.reversed {
-                    ranges.push(new_end..new_start);
+                    ranges.push(end_edge..start_edge);
                 } else {
-                    ranges.push(new_start..new_end);
+                    ranges.push(start_edge..end_edge);
                 }
             }
 
-            (edits, SurroundSelections::PostEditOffsets(ranges))
+            (edits, SurroundSelections::Surrounded(ranges))
         });
     }
 
@@ -184,7 +226,7 @@ impl Vim {
                 }
             }
 
-            (edits, SurroundSelections::PreEditAnchors(anchors))
+            (edits, SurroundSelections::Anchors(anchors))
         });
     }
 
@@ -211,14 +253,19 @@ impl Vim {
                 }
             }
 
-            (edits, SurroundSelections::PreEditAnchors(anchors))
+            (edits, SurroundSelections::Anchors(anchors))
         });
     }
 }
 
 #[cfg(test)]
 mod test {
+    use editor::test::editor_test_context::EditorTestContext;
+    use editor::{Editor, EditorMode, MultiBuffer};
+    use gpui::UpdateGlobal;
     use indoc::indoc;
+    use language::Point;
+    use settings::SettingsStore;
 
     use crate::{state::Mode, test::VimTestContext};
 
@@ -269,6 +316,52 @@ mod test {
         cx.set_state("«가ˇ»«나ˇ»«다ˇ»", Mode::HelixNormal);
         cx.simulate_keystrokes("m s \"");
         cx.assert_state("«\"가\"ˇ»«\"나\"ˇ»«\"다\"ˇ»", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_helix_surround_add_read_only(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        cx.set_state("ˇa", Mode::HelixNormal);
+        cx.update_editor(|editor, _window, _cx| editor.set_read_only(true));
+        cx.simulate_keystrokes("m s (");
+        cx.assert_state("«aˇ»", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_helix_surround_add_at_excerpt_end(cx: &mut gpui::TestAppContext) {
+        VimTestContext::init(cx);
+        cx.update(|cx| {
+            VimTestContext::init_keybindings(true, cx);
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |s| s.helix_mode = Some(true));
+            });
+        });
+        let (editor, cx) = cx.add_window_view(|window, cx| {
+            let multi_buffer = MultiBuffer::build_multi(
+                [("a\nx\nb", vec![Point::new(0, 0)..Point::new(0, 1)])],
+                cx,
+            );
+            // Edit the source so that the excerpt still shows `Aa` but no
+            // longer grows over text inserted at its end.
+            let buffer = multi_buffer
+                .read(cx)
+                .all_buffers()
+                .into_iter()
+                .next()
+                .unwrap();
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(1..4, "")], None, cx);
+                buffer.edit([(0..0, "A")], None, cx);
+            });
+            Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+        });
+        let mut cx = EditorTestContext::for_editor_in(editor, cx).await;
+
+        cx.set_selections_state("«Aaˇ»");
+        cx.simulate_keystrokes("m s (");
+        cx.assert_editor_state("«(Aaˇ»");
     }
 
     #[gpui::test]
