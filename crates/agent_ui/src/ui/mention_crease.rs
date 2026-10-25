@@ -1,7 +1,7 @@
-use std::{path::PathBuf, time::Duration};
+use std::{borrow::Cow, path::PathBuf, time::Duration};
 
 use acp_thread::MentionUri;
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v2 as acp;
 use editor::Editor;
 use gpui::{
     Animation, AnimationExt, AnyView, Context, IntoElement, TaskExt, WeakEntity, Window,
@@ -11,7 +11,7 @@ use language::Buffer;
 use rope::Point;
 use settings::Settings;
 use theme_settings::ThemeSettings;
-use ui::{ButtonLike, TintColor, Tooltip, prelude::*};
+use ui::{ButtonLike, TintColor, Tooltip, prelude::*, utils::replace_control_characters};
 use workspace::{OpenOptions, Workspace};
 
 use crate::open_abs_path_at_point;
@@ -35,10 +35,14 @@ impl MentionCrease {
         icon: impl Into<SharedString>,
         label: impl Into<SharedString>,
     ) -> Self {
+        let mut label = label.into();
+        if let Cow::Owned(replaced) = replace_control_characters(&label) {
+            label = replaced.into();
+        }
         Self {
             id: id.into(),
             icon: icon.into(),
-            label: label.into(),
+            label,
             mention_uri: None,
             workspace: None,
             is_toggled: false,

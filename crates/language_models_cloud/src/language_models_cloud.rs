@@ -537,6 +537,7 @@ pub fn language_model(model: &cloud_llm_client::LanguageModel) -> LanguageModel 
                 name: effort_level.name.clone().into(),
                 value: effort_level.value.clone().into(),
                 is_default: effort_level.is_default.unwrap_or(false),
+                supports_disabling_thinking: effort_level.supports_disabling_thinking,
             })
             .collect(),
         supports_streaming_tools: model.supports_streaming_tools,
@@ -1161,11 +1162,17 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudModelProvider<TP> {
             cloud_llm_client::LanguageModelProvider::Google => {
                 let http_client = self.http_client.clone();
                 let token_provider = self.token_provider.clone();
-                let request =
-                    match into_google(request, config.id.to_string(), GoogleModelMode::Default) {
-                        Ok(request) => request,
-                        Err(error) => return async move { Err(error.into()) }.boxed(),
-                    };
+                let mode = if config.supports_thinking {
+                    GoogleModelMode::Thinking {
+                        budget_tokens: None,
+                    }
+                } else {
+                    GoogleModelMode::Default
+                };
+                let request = match into_google(request, config.id.to_string(), mode) {
+                    Ok(request) => request,
+                    Err(error) => return async move { Err(error.into()) }.boxed(),
+                };
                 let auth_context = token_provider.auth_context(cx);
                 let future = request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
@@ -2390,6 +2397,62 @@ mod tests {
         }
     }
 
+    #[gpui::test]
+    async fn hosted_google_requests_summaries_using_catalog_thinking_support(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut config = cloud_test_config();
+        config.provider = cloud_llm_client::LanguageModelProvider::Google;
+        config.id = cloud_llm_client::LanguageModelId("future-google-model".into());
+        config.supports_thinking = true;
+        let (provider, model) = bind_test_model(
+            FakeHttpClient::create(|mut request| async move {
+                let mut body = String::new();
+                request.body_mut().read_to_string(&mut body).await?;
+                let body: serde_json::Value = serde_json::from_str(&body)?;
+                assert_eq!(
+                    body["provider_request"]["generationConfig"]["thinkingConfig"],
+                    json!({"thinkingLevel": "MEDIUM", "includeThoughts": true})
+                );
+                let completed = CompletionEvent::Event(json!({
+                    "candidates": [{
+                        "content": {
+                            "role": "model",
+                            "parts": [{"text": "Summary", "thought": true}, {"text": "Answer"}]
+                        },
+                        "finishReason": "STOP"
+                    }]
+                }));
+                let ended = CompletionEvent::<serde_json::Value>::Status(
+                    CompletionRequestStatus::StreamEnded,
+                );
+                Ok(Response::builder()
+                    .status(200)
+                    .header(SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, "true")
+                    .body(AsyncBody::from(format!(
+                        "{}\n{}\n",
+                        serde_json::to_string(&completed)?,
+                        serde_json::to_string(&ended)?,
+                    )))?)
+            }),
+            config,
+        );
+        let mut request = compact_test_request();
+        request.thinking_allowed = true;
+        request.thinking_effort = Some("medium".into());
+        let mut stream = cx
+            .update(|cx| provider.stream_completion(&model, request, cx))
+            .await
+            .unwrap();
+        let mut summaries = Vec::new();
+        while let Some(event) = stream.next().await {
+            if let LanguageModelCompletionEvent::Thinking { text, .. } = event.unwrap() {
+                summaries.push(text);
+            }
+        }
+        assert_eq!(summaries, ["Summary"]);
+    }
+
     fn cloud_google_test_model(
         events: Vec<serde_json::Value>,
     ) -> (CloudModelProvider<TestTokenProvider>, LanguageModel) {
@@ -2462,6 +2525,32 @@ mod tests {
     ) -> (CloudModelProvider<TestTokenProvider>, LanguageModel) {
         let model = language_model(&config);
         (test_provider(http_client, vec![config]), model)
+    }
+
+    #[test]
+    fn test_disabling_thinking_support_uses_effort_level_override() {
+        let mut config = cloud_anthropic_test_config();
+        config.supports_disabling_thinking = false;
+        config.supported_effort_levels = vec![
+            cloud_llm_client::SupportedEffortLevel {
+                name: Arc::from("High"),
+                value: Arc::from("high"),
+                is_default: Some(true),
+                supports_disabling_thinking: Some(true),
+            },
+            cloud_llm_client::SupportedEffortLevel {
+                name: Arc::from("Max"),
+                value: Arc::from("max"),
+                is_default: None,
+                supports_disabling_thinking: None,
+            },
+        ];
+        let model = language_model(&config);
+
+        assert!(model.supports_disabling_thinking_at_effort(None));
+        assert!(model.supports_disabling_thinking_at_effort(Some("high")));
+        assert!(!model.supports_disabling_thinking_at_effort(Some("max")));
+        assert!(!model.supports_disabling_thinking_at_effort(Some("unknown")));
     }
 
     fn cloud_anthropic_test_config() -> cloud_llm_client::LanguageModel {
