@@ -9065,13 +9065,10 @@ exit 7
             );
         });
         subagent("finished", cx).read_with(cx, |finished, _| {
-            assert!(
-                matches!(
-                    finished.foreground_state(),
-                    Some(acp_v2::StateUpdate::Idle(idle))
-                        if idle.stop_reason == Some(acp_v2::StopReason::Cancelled)
-                ),
-                "a replayed outcome confirms no activity, so it stays"
+            assert_eq!(
+                finished.foreground_activity(),
+                acp_thread::ForegroundActivity::Unconfirmed,
+                "a replayed outcome is history too, until the agent reports a current one"
             );
         });
         subagent("live", cx).read_with(cx, |live, _| {
