@@ -23,6 +23,7 @@ use agent_client_protocol::{
 use anyhow::anyhow;
 use async_channel;
 use collections::HashMap;
+use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use futures::channel::mpsc;
 use futures::future::Shared;
 use futures::{Future, FutureExt as _};
@@ -478,7 +479,12 @@ fn client_builder(
         )
 }
 
-fn client_capabilities_for_agent(agent_id: &AgentId) -> acp::ClientCapabilities {
+/// `offer_subagents` advertises the unstable subagents RFD, which Zed only offers v1 agents
+/// behind the `acp-beta` flag.
+fn client_capabilities_for_agent(
+    agent_id: &AgentId,
+    offer_subagents: bool,
+) -> acp::ClientCapabilities {
     let mut meta = acp::Meta::from_iter([
         ("terminal_output".into(), true.into()),
         ("terminal-auth".into(), true.into()),
@@ -508,6 +514,7 @@ fn client_capabilities_for_agent(agent_id: &AgentId) -> acp::ClientCapabilities 
                 .form(acp::ElicitationFormCapabilities::new())
                 .url(acp::ElicitationUrlCapabilities::new()),
         )
+        .subagents(offer_subagents.then(acp::SubagentCapabilities::new))
         .meta(meta)
 }
 
@@ -561,7 +568,8 @@ impl AcpConnection {
         let client_session_list: Rc<RefCell<Option<Rc<AcpSessionList>>>> =
             Rc::new(RefCell::new(None));
         let request_elicitations = cx.new(|_| ElicitationStore::default());
-        let client_capabilities = client_capabilities_for_agent(&agent_id);
+        let offer_subagents = cx.update(|cx| cx.has_flag::<AcpBetaFeatureFlag>());
+        let client_capabilities = client_capabilities_for_agent(&agent_id, offer_subagents);
 
         let accepts_subagent_updates = client_capabilities.subagents.is_some();
         let dispatch_context = ClientContext {
@@ -5287,7 +5295,7 @@ mod tests {
 
     #[test]
     fn client_capabilities_include_elicitation() {
-        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"));
+        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"), false);
         let elicitation = capabilities
             .elicitation
             .expect("elicitation should always be advertised");
@@ -5297,14 +5305,19 @@ mod tests {
     }
 
     #[test]
-    fn client_capabilities_do_not_advertise_subagents() {
+    fn client_capabilities_advertise_subagents_only_when_offered() {
         for agent_id in ["codex-acp", CURSOR_ID] {
-            assert!(
-                client_capabilities_for_agent(&AgentId::new(agent_id))
-                    .subagents
-                    .is_none(),
+            let agent_id = AgentId::new(agent_id);
+            let without = serde_json::to_value(client_capabilities_for_agent(&agent_id, false))
+                .expect("capabilities serialize");
+            assert_eq!(
+                without.get("subagents"),
+                None,
                 "v1 subagent support must only be offered behind acp-beta"
             );
+            let with = serde_json::to_value(client_capabilities_for_agent(&agent_id, true))
+                .expect("capabilities serialize");
+            assert_eq!(with.get("subagents"), Some(&serde_json::json!({})));
         }
     }
 
@@ -5612,7 +5625,7 @@ mod tests {
 
     #[test]
     fn cursor_client_capabilities_include_parameterized_model_picker_meta() {
-        let capabilities = client_capabilities_for_agent(&AgentId::new(CURSOR_ID));
+        let capabilities = client_capabilities_for_agent(&AgentId::new(CURSOR_ID), false);
         let meta = capabilities
             .meta
             .expect("expected client capabilities meta");
@@ -5627,7 +5640,7 @@ mod tests {
 
     #[test]
     fn non_cursor_client_capabilities_do_not_include_parameterized_model_picker_meta() {
-        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"));
+        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"), false);
         let meta = capabilities
             .meta
             .expect("expected client capabilities meta");
@@ -5637,7 +5650,7 @@ mod tests {
 
     #[test]
     fn client_capabilities_include_boolean_config_options() {
-        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"));
+        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"), false);
 
         assert!(
             capabilities
@@ -5650,7 +5663,7 @@ mod tests {
 
     #[test]
     fn client_capabilities_include_compaction_and_notices() {
-        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"));
+        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"), false);
         let capabilities =
             serde_json::to_value(capabilities).expect("client capabilities should serialize");
         let session = capabilities
@@ -7107,6 +7120,150 @@ mod tests {
 
     #[cfg(unix)]
     #[gpui::test]
+    async fn stdio_offers_subagents_only_behind_acp_beta(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+        });
+        cx.executor().allow_parking();
+
+        let directory = tempfile::tempdir().expect("create working directory");
+        let project = project::Project::example([directory.path()], &mut cx.to_async()).await;
+        let agent_server_store =
+            project.read_with(cx, |project, _| project.agent_server_store().downgrade());
+        let session_id = acp::SessionId::new("parent");
+        let initialize_response =
+            serde_json::to_string(&acp::InitializeResponse::new(ProtocolVersion::V1))
+                .expect("serialize initialization");
+        let session_response =
+            serde_json::to_string(&acp::NewSessionResponse::new(session_id.clone()))
+                .expect("serialize session");
+        let prompt_response =
+            serde_json::to_string(&acp::PromptResponse::new(acp::StopReason::EndTurn))
+                .expect("serialize prompt response");
+        let announcement = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": acp::SessionNotification::new(
+                session_id,
+                acp::SessionUpdate::SubagentUpdate(
+                    acp::SubagentUpdate::new("child")
+                        .title("Worker")
+                        .state(acp::StateUpdate::Running(acp::RunningStateUpdate::new())),
+                ),
+            ),
+        });
+        // Like claude-agent-acp, this agent reports a subagent while it works on a prompt.
+        // It sends the announcement whatever Zed advertised, so the test also covers Zed
+        // ignoring subagent updates it did not ask for.
+        let script = format!(
+            r#"
+read_request() {{
+    IFS= read -r request || exit 2
+    request_id=$(printf '%s' "$request" | sed -n 's/.*"id":\("[^"]*"\).*/\1/p')
+    test -n "$request_id" || exit 3
+}}
+respond() {{
+    printf '{{"jsonrpc":"2.0","id":%s,"result":%s}}\n' "$request_id" "$1"
+}}
+read_request
+respond '{initialize_response}'
+read_request
+respond '{session_response}'
+read_request
+printf '%s\n' '{announcement}'
+respond '{prompt_response}'
+exec cat >/dev/null
+"#,
+        );
+
+        for enabled in [false, true] {
+            cx.update(|cx| crate::acp::selection_tests::set_beta(enabled, cx));
+            let command = AgentServerCommand {
+                path: "/bin/sh".into(),
+                args: vec!["-c".into(), script.clone()],
+                env: None,
+            };
+            let timeout = cx
+                .background_executor
+                .timer(std::time::Duration::from_secs(5))
+                .fuse();
+            let exchange = async {
+                let connection = AcpConnection::stdio(
+                    AgentId::new("subagent-agent"),
+                    project.clone(),
+                    command,
+                    agent_server_store.clone(),
+                    None,
+                    HashMap::default(),
+                    &mut cx.to_async(),
+                )
+                .await
+                .expect("initialize scripted agent");
+                let connection = Rc::new(connection);
+                let (messages, _receiver) = connection.debug_log.subscribe();
+                let initialize = messages
+                    .iter()
+                    .find_map(|message| match &message.message {
+                        AcpDebugMessageContent::Request { method, params, .. }
+                            if method.as_ref() == "initialize" =>
+                        {
+                            params.clone()
+                        }
+                        _ => None,
+                    })
+                    .expect("Zed's initialize request is logged");
+                assert_eq!(
+                    initialize.pointer("/clientCapabilities/subagents"),
+                    enabled.then(|| serde_json::json!({})).as_ref(),
+                    "v1 subagents are offered exactly when acp-beta is on"
+                );
+
+                let thread = cx
+                    .update(|cx| {
+                        connection.clone().new_session(
+                            project.clone(),
+                            PathList::new(&[directory.path()]),
+                            cx,
+                        )
+                    })
+                    .await
+                    .expect("create scripted session");
+                thread
+                    .update(cx, |thread, cx| thread.send_raw("Delegate", cx))
+                    .await
+                    .expect("the prompt response should arrive")
+                    .expect("prompt should finish");
+                cx.run_until_parked();
+                thread.read_with(cx, |thread, cx| {
+                    let titles = thread
+                        .subagents()
+                        .map(|subagent| {
+                            subagent
+                                .read(cx)
+                                .subagent_association()
+                                .and_then(|association| association.title.clone())
+                        })
+                        .collect::<Vec<_>>();
+                    let expected = if enabled {
+                        vec![Some(SharedString::from("Worker"))]
+                    } else {
+                        Vec::new()
+                    };
+                    assert_eq!(titles, expected);
+                });
+            }
+            .fuse();
+            futures::pin_mut!(exchange, timeout);
+            futures::select! {
+                _ = exchange => {}
+                _ = timeout => panic!("timed out waiting for the scripted agent"),
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
     async fn agent_exit_preserves_final_updates_and_diagnostics(cx: &mut gpui::TestAppContext) {
         assert_agent_exit_preserves_final_output(false, cx).await;
     }
@@ -7566,7 +7723,7 @@ exit 7
         let response = client_conn
             .send_request(
                 acp::InitializeRequest::new(ProtocolVersion::V1).client_capabilities(
-                    client_capabilities_for_agent(&AgentId::new("fake-agent")),
+                    client_capabilities_for_agent(&AgentId::new("fake-agent"), false),
                 ),
             )
             .block_task()
