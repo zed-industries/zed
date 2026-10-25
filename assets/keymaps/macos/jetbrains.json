@@ -1,5 +1,12 @@
 [
   {
+    "use_key_equivalents": true,
+    "bindings": {
+      // The context-free default otherwise outranks the Workspace symbol-search binding.
+      "cmd-o": ["zed::Unbind", "workspace::Open"],
+    },
+  },
+  {
     "bindings": {
       "cmd-{": "pane::ActivatePreviousItem",
       "cmd-}": "pane::ActivateNextItem",

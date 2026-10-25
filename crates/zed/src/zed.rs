@@ -5823,28 +5823,58 @@ mod tests {
 
     actions!(test_only, [ActionA, ActionB]);
 
+    /// The default keymap with a base keymap layered on top, as Zed loads them.
+    fn load_base_keymap(default_keymap: &str, base_keymap: &str, cx: &App) -> gpui::Keymap {
+        let mut bindings =
+            settings::KeymapFile::load_asset_allow_partial_failure(default_keymap, cx).unwrap();
+        for binding in &mut bindings {
+            binding.set_meta(settings::KeybindSource::Default.meta());
+        }
+        let mut base_bindings =
+            settings::KeymapFile::load_asset_allow_partial_failure(base_keymap, cx).unwrap();
+        for binding in &mut base_bindings {
+            binding.set_meta(settings::KeybindSource::Base.meta());
+        }
+        bindings.extend(base_bindings);
+        gpui::Keymap::new(bindings)
+    }
+
+    #[cfg(target_os = "macos")]
+    #[gpui::test]
+    fn test_jetbrains_project_symbol_shortcuts_override_open(cx: &mut TestAppContext) {
+        init_keymap_test(cx);
+
+        cx.update(|cx| {
+            let keymap = load_base_keymap(
+                "keymaps/default-macos.json",
+                "keymaps/macos/jetbrains.json",
+                cx,
+            );
+            // The context-free `Open` default ranks as deep as the focused editor, above the
+            // `Workspace`-scoped JetBrains binding.
+            let contexts = ["Workspace", "Pane", "Editor"]
+                .map(|context| gpui::KeyContext::parse(context).unwrap());
+            let (bindings, _) =
+                keymap.bindings_for_input(&[gpui::Keystroke::parse("cmd-o").unwrap()], &contexts);
+            assert_eq!(
+                bindings.first().map(|binding| binding.action().name()),
+                Some("project_symbols::Toggle")
+            );
+
+            // Native menu accelerators are looked up by action, without a context stack.
+            assert!(
+                keymap
+                    .bindings_for_action(&workspace::Open::default())
+                    .next()
+                    .is_none()
+            );
+        });
+    }
+
     /// The actions the emacs keymap resolves for `keystroke` in `context`.
     fn emacs_bindings_for(keystroke: &str, context: &str, cx: &mut TestAppContext) -> Vec<String> {
         cx.update(|cx| {
-            let mut bindings = settings::KeymapFile::load_asset_allow_partial_failure(
-                "keymaps/default-linux.json",
-                cx,
-            )
-            .unwrap();
-            for binding in &mut bindings {
-                binding.set_meta(settings::KeybindSource::Default.meta());
-            }
-            let mut emacs_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
-                "keymaps/linux/emacs.json",
-                cx,
-            )
-            .unwrap();
-            for binding in &mut emacs_bindings {
-                binding.set_meta(settings::KeybindSource::Base.meta());
-            }
-            bindings.extend(emacs_bindings);
-
-            gpui::Keymap::new(bindings)
+            load_base_keymap("keymaps/default-linux.json", "keymaps/linux/emacs.json", cx)
                 .bindings_for_input(
                     &[gpui::Keystroke::parse_with_os(keystroke, cx.platform_info().os).unwrap()],
                     &[gpui::KeyContext::parse(context).unwrap()],
