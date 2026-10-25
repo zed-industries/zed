@@ -344,6 +344,8 @@ impl Vim {
                 tail = movement::saturating_right(map, tail);
                 tail_x = map.x_for_display_point(tail, &text_layout_details);
             }
+            let head_row = head.row();
+            let head_buffer_row = map.start_of_relative_buffer_row(head, 0).row();
             if !is_reversed && !preserve_goal {
                 head = movement::saturating_right(map, head);
                 head_x = map.x_for_display_point(head, &text_layout_details);
@@ -364,7 +366,7 @@ impl Vim {
 
             let mut selections = Vec::new();
             let mut row = tail.row();
-            let going_up = tail.row() > head.row();
+            let going_up = tail.row() > head_row;
             let direction = if going_up { -1 } else { 1 };
 
             loop {
@@ -402,15 +404,22 @@ impl Vim {
                 // `head.row()` might be a `DisplayPoint` mapped to a soft
                 // wrapped line, hence the need for `<=` and `>=` instead of
                 // `==`.
-                if going_up && row <= head.row() || !going_up && row >= head.row() {
+                if going_up && row <= head_row || !going_up && row >= head_row {
                     break;
                 }
 
                 // Find the next or previous buffer row where the `row` should
                 // be moved to, so that wrapped lines are skipped.
-                row = map
+                let next_row = map
                     .start_of_relative_buffer_row(DisplayPoint::new(row, 0), direction)
                     .row();
+                row = if going_up {
+                    next_row.max(head_row)
+                } else if next_row >= head_buffer_row {
+                    head_row
+                } else {
+                    next_row
+                };
             }
 
             s.select(selections);
@@ -937,12 +946,17 @@ impl Vim {
 }
 #[cfg(test)]
 mod test {
+    use gpui::UpdateGlobal;
     use indoc::indoc;
+    use language::language_settings::SoftWrap;
+    use settings::SettingsStore;
     use workspace::item::Item;
 
     use crate::{
+        motion::{Down, EndOfDocument, StartOfDocument, Up},
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
+        visual::ToggleVisualBlock,
     };
 
     #[gpui::test]
@@ -1654,6 +1668,50 @@ mod test {
             «1ˇ»2345678901234567890
             "
         });
+    }
+
+    #[gpui::test]
+    async fn test_visual_block_end_of_document_wrapped_eof(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.defaults.soft_wrap = Some(SoftWrap::Bounded);
+                    settings
+                        .project
+                        .all_languages
+                        .defaults
+                        .preferred_line_length = Some(12);
+                });
+            });
+        });
+        cx.set_state("123456789012ˇ34\n12345678901234", Mode::Normal);
+        assert_eq!(cx.display_text(), "123456789012\n34\n123456789012\n34");
+
+        cx.dispatch_action(ToggleVisualBlock);
+        cx.dispatch_action(EndOfDocument);
+
+        cx.assert_state("123456789012«3ˇ»4\n123456789012«3ˇ»4", Mode::VisualBlock);
+
+        cx.set_state("12345678901ˇ2\n12345678901234", Mode::Normal);
+        cx.dispatch_action(ToggleVisualBlock);
+        cx.dispatch_action(EndOfDocument);
+        cx.assert_state("12345678901«2ˇ»\n12345678901«2ˇ»34", Mode::VisualBlock);
+
+        cx.set_state("12345678901234\n123456789012ˇ34", Mode::Normal);
+        cx.dispatch_action(ToggleVisualBlock);
+        cx.dispatch_action(StartOfDocument);
+        cx.assert_state("123456789012«3ˇ»4\n123456789012«3ˇ»4", Mode::VisualBlock);
+
+        cx.set_state("ˇ12345678901234", Mode::Normal);
+        cx.dispatch_action(Down {
+            display_lines: true,
+        });
+        cx.dispatch_action(ToggleVisualBlock);
+        cx.dispatch_action(Up {
+            display_lines: false,
+        });
+        cx.assert_state("123456789012«3ˇ»4", Mode::VisualBlock);
     }
 
     #[gpui::test]
