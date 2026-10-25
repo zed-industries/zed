@@ -226,9 +226,9 @@ impl WindowsWindowInner {
         // Don't resize the renderer when the window is minimized, but record that it was minimized so
         // that on restore the swap chain can be recreated via `update_drawable_size_even_if_unchanged`.
         if wparam.0 == SIZE_MINIMIZED as usize {
-            self.state
-                .restore_from_minimized
-                .set(self.state.callbacks.request_frame.take());
+            if let Some(callback) = self.state.callbacks.request_frame.take() {
+                self.state.restore_from_minimized.set(Some(callback));
+            }
             return Some(0);
         }
 
