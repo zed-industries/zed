@@ -80,7 +80,11 @@ fn preserved_selection_anchors(
 }
 
 type SurroundEdits = Vec<(std::ops::Range<MultiBufferOffset>, String)>;
-type SurroundAnchors = Vec<std::ops::Range<Anchor>>;
+
+enum SurroundSelections {
+    PreEditAnchors(Vec<std::ops::Range<Anchor>>),
+    PostEditOffsets(Vec<std::ops::Range<MultiBufferOffset>>),
+}
 
 fn apply_helix_surround_edits<F>(
     vim: &mut Vim,
@@ -88,7 +92,7 @@ fn apply_helix_surround_edits<F>(
     cx: &mut Context<Vim>,
     mut build: F,
 ) where
-    F: FnMut(&DisplaySnapshot, Vec<Selection<DisplayPoint>>) -> (SurroundEdits, SurroundAnchors),
+    F: FnMut(&DisplaySnapshot, Vec<Selection<DisplayPoint>>) -> (SurroundEdits, SurroundSelections),
 {
     vim.update_editor(cx, |_, editor, cx| {
         editor.transact(window, cx, |editor, window, cx| {
@@ -96,13 +100,16 @@ fn apply_helix_surround_edits<F>(
 
             let display_map = editor.display_snapshot(cx);
             let selections = editor.selections.all_display(&display_map);
-            let (mut edits, anchors) = build(&display_map, selections);
+            let (mut edits, new_selections) = build(&display_map, selections);
 
+            // The sort is stable, so insertions at the same offset keep the
+            // order they were pushed in.
             edits.sort_by_key(|edit| edit.0.start);
             editor.edit(edits, cx);
 
-            editor.change_selections(Default::default(), window, cx, |s| {
-                s.select_anchor_ranges(anchors);
+            editor.change_selections(Default::default(), window, cx, |s| match new_selections {
+                SurroundSelections::PreEditAnchors(anchors) => s.select_anchor_ranges(anchors),
+                SurroundSelections::PostEditOffsets(ranges) => s.select_ranges(ranges),
             });
             editor.set_clip_at_line_ends(true, cx);
         });
@@ -118,30 +125,35 @@ impl Vim {
 
         apply_helix_surround_edits(self, window, cx, |display_map, selections| {
             let mut edits = Vec::new();
-            let mut anchors = Vec::new();
+            let mut ranges = Vec::new();
 
+            // Like Helix, the new selection covers the surrounded text
+            // including the added delimiters, so that surrounds compose and
+            // `i`/`a` land outside the pair. The selections are computed from
+            // the insertions made before them rather than from anchors: when
+            // two selections touch, both the closing delimiter of the first
+            // and the opening delimiter of the second are inserted at the
+            // same offset, so no anchor can end up between them.
+            let mut inserted_len = 0;
             for selection in selections {
                 let range = selection.range();
                 let start = range.start.to_offset(display_map, Bias::Right);
                 let end = range.end.to_offset(display_map, Bias::Left);
 
-                // Like Helix, the new selection covers the surrounded text
-                // including the added delimiters, so that surrounds compose
-                // and `i`/`a` land outside the pair. The anchor biases make
-                // the selection grow over the insertions at its edges.
-                let snapshot = display_map.buffer_snapshot();
-                let start_anchor = snapshot.anchor_before(start);
-                let end_anchor = snapshot.anchor_after(end);
-                edits.push((end..end, pair.end.clone()));
                 edits.push((start..start, pair.start.clone()));
+                edits.push((end..end, pair.end.clone()));
+
+                let new_start = start + inserted_len;
+                inserted_len += pair.start.len() + pair.end.len();
+                let new_end = end + inserted_len;
                 if selection.reversed {
-                    anchors.push(end_anchor..start_anchor);
+                    ranges.push(new_end..new_start);
                 } else {
-                    anchors.push(start_anchor..end_anchor);
+                    ranges.push(new_start..new_end);
                 }
             }
 
-            (edits, anchors)
+            (edits, SurroundSelections::PostEditOffsets(ranges))
         });
     }
 
@@ -172,7 +184,7 @@ impl Vim {
                 }
             }
 
-            (edits, anchors)
+            (edits, SurroundSelections::PreEditAnchors(anchors))
         });
     }
 
@@ -199,7 +211,7 @@ impl Vim {
                 }
             }
 
-            (edits, anchors)
+            (edits, SurroundSelections::PreEditAnchors(anchors))
         });
     }
 }
@@ -235,6 +247,28 @@ mod test {
         cx.set_state("hello «ˇworl»d", Mode::HelixNormal);
         cx.simulate_keystrokes("m s (");
         cx.assert_state("hello «ˇ(worl)»d", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_helix_surround_add_adjacent_selections(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        cx.set_state("«aˇ»«bˇ»«cˇ»«dˇ»", Mode::HelixNormal);
+        cx.simulate_keystrokes("m s \"");
+        cx.assert_state("«\"a\"ˇ»«\"b\"ˇ»«\"c\"ˇ»«\"d\"ˇ»", Mode::HelixNormal);
+
+        cx.set_state("«ifˇ»  «ifˇ»«ifˇ»", Mode::HelixNormal);
+        cx.simulate_keystrokes("m s (");
+        cx.assert_state("«(if)ˇ»  «(if)ˇ»«(if)ˇ»", Mode::HelixNormal);
+
+        cx.set_state("«ˇno»«ˇob»", Mode::HelixNormal);
+        cx.simulate_keystrokes("m s [");
+        cx.assert_state("«ˇ[no]»«ˇ[ob]»", Mode::HelixNormal);
+
+        cx.set_state("«가ˇ»«나ˇ»«다ˇ»", Mode::HelixNormal);
+        cx.simulate_keystrokes("m s \"");
+        cx.assert_state("«\"가\"ˇ»«\"나\"ˇ»«\"다\"ˇ»", Mode::HelixNormal);
     }
 
     #[gpui::test]
