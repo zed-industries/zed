@@ -1520,8 +1520,7 @@ impl Pane {
     fn update_active_tab(&mut self, index: usize) {
         if !self.is_tab_pinned(index) {
             self.suppress_scroll = false;
-            self.tab_bar_scroll_handle
-                .scroll_to_item(index - self.pinned_tab_count);
+            self.tab_bar_scroll_handle.scroll_to_item(index);
         }
     }
 
@@ -3625,23 +3624,19 @@ impl Pane {
                 window,
                 cx,
             )
-            .children(pinned_tabs.len().ne(&0).then(|| {
-                let max_scroll = self.tab_bar_scroll_handle.max_offset().x;
-                // We need to check both because offset returns delta values even when the scroll handle is not scrollable
-                let is_scrolled = self.tab_bar_scroll_handle.offset().x < px(0.);
-                // Avoid flickering when max_offset is very small (< 2px).
-                // The border adds 1-2px which can push max_offset back to 0, creating a loop.
-                let is_scrollable = max_scroll > px(2.0);
-                let has_active_unpinned_tab = self.active_item_index >= self.pinned_tab_count;
+            .child(
                 h_flex()
+                    .id("tabs")
+                    .overflow_x_scroll()
+                    .w_full()
+                    .track_scroll(&self.tab_bar_scroll_handle)
+                    .on_scroll(cx.listener(|this, _, _, _| {
+                        this.suppress_scroll = true;
+                    }))
                     .children(pinned_tabs)
-                    .when(is_scrollable && is_scrolled, |this| {
-                        this.when(has_active_unpinned_tab, |this| this.border_r_2())
-                            .when(!has_active_unpinned_tab, |this| this.border_r_1())
-                            .border_color(cx.theme().colors().border)
-                    })
-            }))
-            .child(self.render_unpinned_tabs_container(unpinned_tabs, tab_count, cx));
+                    .children(unpinned_tabs)
+                    .child(self.render_tab_bar_drop_target(tab_count, cx)),
+            );
         tab_bar.into_any_element()
     }
 
