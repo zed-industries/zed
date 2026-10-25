@@ -229,12 +229,14 @@ impl TerminalView {
         cx: &mut Context<Workspace>,
     ) {
         let local = action.local;
-        let working_directory = default_working_directory(workspace, cx);
+        let working_directory =
+            working_directory_for_profile(workspace, action.profile.as_deref(), cx);
+        let profile = action.profile.clone();
         TerminalPanel::add_center_terminal(workspace, window, cx, move |project, cx| {
             if local {
-                project.create_local_terminal(cx)
+                project.create_local_terminal_with_profile(profile, cx)
             } else {
-                project.create_terminal_shell(working_directory, cx)
+                project.create_terminal_shell_with_profile(working_directory, profile, cx)
             }
         })
         .detach_and_log_err(cx);
@@ -287,6 +289,7 @@ impl TerminalView {
             cx.observe_global::<SettingsStore>(Self::settings_changed),
         ];
 
+        let needs_serialize = terminal.read(cx).profile_name.is_some();
         Self {
             terminal,
             workspace: workspace_handle,
@@ -309,7 +312,7 @@ impl TerminalView {
             block_below_cursor: None,
             scroll_top: Pixels::ZERO,
             scroll_handle,
-            needs_serialize: false,
+            needs_serialize,
             custom_title: None,
             ime_state: None,
             self_handle: cx.entity().downgrade(),
@@ -2022,6 +2025,7 @@ impl SerializableItem for TerminalView {
 
         let workspace_id = self.workspace_id?;
         let cwd = terminal.working_directory();
+        let profile_name = terminal.profile_name.clone();
         let custom_title = self.custom_title.clone();
         self.needs_serialize = false;
 
@@ -2032,6 +2036,8 @@ impl SerializableItem for TerminalView {
                     .await?;
             }
             db.save_custom_title(item_id, workspace_id, custom_title)
+                .await?;
+            db.save_profile_name(item_id, workspace_id, profile_name)
                 .await?;
             Ok(())
         }))
@@ -2050,35 +2056,60 @@ impl SerializableItem for TerminalView {
         cx: &mut App,
     ) -> Task<anyhow::Result<Entity<Self>>> {
         window.spawn(cx, async move |cx| {
-            let (cwd, custom_title) = cx
+            let (cwd, custom_title, profile_name) = cx
                 .update(|_window, cx| {
                     let db = TerminalDb::global(cx);
                     let from_db = db
                         .get_working_directory(item_id, workspace_id)
                         .log_err()
                         .flatten();
+                    let profile_name = db
+                        .get_profile_name(item_id, workspace_id)
+                        .log_err()
+                        .flatten();
+                    let profile_name = profile_name.filter(|name| {
+                        project
+                            .read(cx)
+                            .terminal_settings(&from_db, cx)
+                            .profiles
+                            .contains_key(name)
+                            || workspace
+                                .read_with(cx, |workspace, cx| {
+                                    terminal_settings_for_workspace(workspace, cx)
+                                        .profiles
+                                        .contains_key(name)
+                                })
+                                .log_err()
+                                .unwrap_or(false)
+                    });
                     let cwd = if from_db
                         .as_ref()
                         .is_some_and(|from_db| !from_db.as_os_str().is_empty())
                     {
                         from_db
                     } else {
-                        workspace
-                            .upgrade()
-                            .and_then(|workspace| default_working_directory(workspace.read(cx), cx))
+                        workspace.upgrade().and_then(|workspace| {
+                            working_directory_for_profile(
+                                workspace.read(cx),
+                                profile_name.as_deref(),
+                                cx,
+                            )
+                        })
                     };
                     let custom_title = db
                         .get_custom_title(item_id, workspace_id)
                         .log_err()
                         .flatten()
                         .filter(|title| !title.trim().is_empty());
-                    (cwd, custom_title)
+                    (cwd, custom_title, profile_name)
                 })
                 .ok()
-                .unwrap_or((None, None));
+                .unwrap_or((None, None, None));
 
             let terminal = project
-                .update(cx, |project, cx| project.create_terminal_shell(cwd, cx))
+                .update(cx, |project, cx| {
+                    project.create_terminal_shell_with_profile(cwd, profile_name, cx)
+                })
                 .await?;
             cx.update(|window, cx| {
                 cx.new(|cx| {
@@ -2264,8 +2295,22 @@ impl SearchableItem for TerminalView {
 /// local `is_dir` checks) is skipped -- returning `None` lets the remote shell
 /// open in the remote user's home directory by default.
 pub fn default_working_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
+    working_directory_for_profile(workspace, None, cx)
+}
+
+pub(crate) fn working_directory_for_profile(
+    workspace: &Workspace,
+    profile: Option<&str>,
+    cx: &App,
+) -> Option<PathBuf> {
+    let settings = terminal_settings_for_workspace(workspace, cx);
+    let working_directory = settings
+        .resolve_profile(profile)
+        .log_err()
+        .map(|(_, settings)| settings.working_directory)
+        .unwrap_or_else(|| settings.working_directory.clone());
     let is_remote = workspace.project().read(cx).is_remote();
-    let directory = match &TerminalSettings::get_global(cx).working_directory {
+    let directory = match &working_directory {
         WorkingDirectory::CurrentFileDirectory => workspace
             .project()
             .read(cx)
@@ -2286,6 +2331,14 @@ pub fn default_working_directory(workspace: &Workspace, cx: &App) -> Option<Path
     } else {
         directory.or_else(dirs::home_dir)
     }
+}
+
+pub(crate) fn terminal_settings_for_workspace(workspace: &Workspace, cx: &App) -> TerminalSettings {
+    let project = workspace.project().read(cx);
+    let directory = project
+        .active_project_directory(cx)
+        .map(|path| path.to_path_buf());
+    project.terminal_settings(&directory, cx).clone()
 }
 
 fn current_project_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
@@ -3403,6 +3456,63 @@ mod tests {
             view.set_custom_title(Some("  ".to_string()), cx);
             assert!(view.custom_title().is_none());
         });
+    }
+
+    #[gpui::test]
+    async fn test_terminal_profiles_restore_and_fall_back_when_removed(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let result = async {
+            let (project, workspace, window_handle) = init_test_with_window(cx).await;
+            cx.update_global(|store: &mut SettingsStore, cx| {
+                store.set_user_settings(
+                    r#"{"terminal": {
+                    "default_profile": "Bash",
+                    "profiles": {"Bash": {"shell": "system"}, "JavaScript": {"shell": "system"}}
+                }}"#,
+                    cx,
+                )
+            })
+            .result()?;
+            let workspace_database = cx.update(|cx| workspace::WorkspaceDb::global(cx));
+            let workspace_id = workspace_database.next_id().await?;
+            let database = cx.update(|cx| TerminalDb::global(cx));
+            database
+                .save_profile_name(1, workspace_id, Some("JavaScript".into()))
+                .await?;
+            for expected_profile in ["JavaScript", "Bash"] {
+                let restored = window_handle
+                    .update(cx, |_, window, cx| {
+                        TerminalView::deserialize(
+                            project.clone(),
+                            workspace.downgrade(),
+                            workspace_id,
+                            1,
+                            window,
+                            cx,
+                        )
+                    })?
+                    .await?;
+                restored.read_with(cx, |view, cx| {
+                    assert_eq!(
+                        view.terminal().read(cx).profile_name.as_deref(),
+                        Some(expected_profile)
+                    );
+                });
+                cx.update_global(|store: &mut SettingsStore, cx| {
+                    store.set_user_settings(
+                        r#"{"terminal": {
+                        "default_profile": "Bash",
+                        "profiles": {"Bash": {"shell": "system"}}
+                    }}"#,
+                        cx,
+                    )
+                })
+                .result()?;
+            }
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        assert!(result.is_ok(), "{result:?}");
     }
 
     #[gpui::test]

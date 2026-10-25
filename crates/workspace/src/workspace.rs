@@ -632,6 +632,8 @@ pub struct NewCenterTerminal {
     /// If true, creates a local terminal even in remote projects.
     #[serde(default)]
     pub local: bool,
+    #[serde(default)]
+    pub profile: Option<String>,
 }
 
 /// Opens a new terminal.
@@ -642,6 +644,8 @@ pub struct NewTerminal {
     /// If true, creates a local terminal even in remote projects.
     #[serde(default)]
     pub local: bool,
+    #[serde(default)]
+    pub profile: Option<String>,
 }
 
 /// Increases size of a currently focused dock by a given amount of pixels.

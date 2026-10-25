@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use collections::{HashMap, HashSet};
+use collections::{HashMap, HashSet, IndexMap};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
@@ -9,6 +9,10 @@ use crate::{FontFamilyName, FontFeaturesContent, FontSize, FontWeightContent};
 
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ProjectTerminalSettingsContent {
+    /// Named shell or command configurations available in the terminal profile menu.
+    pub profiles: Option<IndexMap<String, TerminalProfileContent>>,
+    /// The profile used for new terminals. When omitted, uses `shell`.
+    pub default_profile: Option<String>,
     /// What shell to use when opening a terminal.
     ///
     /// Default: system
@@ -106,6 +110,15 @@ pub struct ProjectTerminalSettingsContent {
     ///
     /// Default: 1
     pub path_hyperlink_timeout_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(deny_unknown_fields)]
+pub struct TerminalProfileContent {
+    pub shell: Option<Shell>,
+    pub env: Option<HashMap<String, String>>,
+    pub working_directory: Option<WorkingDirectory>,
+    pub detect_venv: Option<VenvSettings>,
 }
 
 #[with_fallible_options]
@@ -626,9 +639,61 @@ pub enum ActivateScript {
 
 #[cfg(test)]
 mod test {
+    use anyhow::Context as _;
     use serde_json::json;
 
-    use crate::{PathHyperlinkRegexes, ProjectSettingsContent, Shell, merge_from::MergeFrom};
+    use crate::{
+        PathHyperlinkRegexes, ProjectSettingsContent, ProjectTerminalSettingsContent, Shell,
+        merge_from::MergeFrom,
+    };
+
+    #[test]
+    fn test_terminal_profiles_merge_project_overrides() -> anyhow::Result<()> {
+        let mut settings: ProjectTerminalSettingsContent = serde_json::from_value(json!({
+            "shell": "system",
+            "default_profile": "Bash",
+            "profiles": {
+                "Bash": {"shell": {"program": "bash"}, "env": {"SHARED": "user"}},
+                "JavaScript": {"shell": {"with_arguments": {
+                    "program": "node", "args": ["--interactive"]
+                }}}
+            }
+        }))?;
+        settings.merge_from(&serde_json::from_value(json!({
+            "profiles": {"Bash": {"env": {"PROJECT": "1"}}}
+        }))?);
+        let profiles = settings
+            .profiles
+            .as_ref()
+            .context("profiles must be preserved")?;
+        assert_eq!(
+            profiles.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["Bash", "JavaScript"]
+        );
+        let bash = profiles.get("Bash").context("Bash profile must exist")?;
+        assert_eq!(bash.shell, Some(Shell::Program("bash".into())));
+        assert_eq!(
+            bash.env
+                .as_ref()
+                .and_then(|environment| environment.get("SHARED"))
+                .map(String::as_str),
+            Some("user")
+        );
+        assert_eq!(
+            bash.env
+                .as_ref()
+                .and_then(|environment| environment.get("PROJECT"))
+                .map(String::as_str),
+            Some("1")
+        );
+        assert_eq!(
+            serde_json::from_value::<ProjectTerminalSettingsContent>(serde_json::to_value(
+                &settings
+            )?)?,
+            settings
+        );
+        Ok(())
+    }
 
     #[test]
     fn test_path_hyperlink_regexes_preserve_entry_forms() -> anyhow::Result<()> {

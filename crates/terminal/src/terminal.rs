@@ -1026,6 +1026,7 @@ impl TerminalBuilder {
         );
 
         let terminal = Terminal {
+            profile_name: None,
             task: None,
             terminal_type: TerminalType::DisplayOnly,
             subprocess: None,
@@ -1316,6 +1317,7 @@ impl TerminalBuilder {
 
             let no_task = task.is_none();
             let terminal = Terminal {
+                profile_name: None,
                 task,
                 terminal_type,
                 subprocess,
@@ -1520,6 +1522,7 @@ enum TerminalType {
 }
 
 pub struct Terminal {
+    pub profile_name: Option<String>,
     terminal_type: TerminalType,
     /// Set for non-PTY terminals (see [`HeadlessTerminal`]); owns the spawned
     /// subprocess and the task pumping its output into the grid.

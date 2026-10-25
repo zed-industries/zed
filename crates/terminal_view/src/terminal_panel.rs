@@ -5,6 +5,7 @@ use crate::{
     persistence::{
         SerializedItems, SerializedTerminalPanel, deserialize_terminal_panel, serialize_pane_group,
     },
+    terminal_settings_for_workspace, working_directory_for_profile,
 };
 use breadcrumbs::Breadcrumbs;
 use collections::HashMap;
@@ -125,7 +126,9 @@ impl TerminalPanel {
         cx: &mut Context<Self>,
     ) {
         let assistant_enabled = self.assistant_enabled;
+        let workspace = self.workspace.clone();
         terminal_pane.update(cx, |pane, cx| {
+            let profiles_menu_handle = ui::PopoverMenuHandle::default();
             pane.set_render_tab_bar_buttons(cx, move |pane, window, cx| {
                 let split_context = pane
                     .active_item()
@@ -137,11 +140,19 @@ impl TerminalPanel {
                     .is_some_and(|view| view.read(cx).rename_editor_is_focused(window, cx));
                 if !pane.has_focus(window, cx)
                     && !pane.context_menu_focused(window, cx)
+                    && !profiles_menu_handle.is_focused(window, cx)
                     && !has_focused_rename_editor
                 {
                     return (None, None);
                 }
                 let focus_handle = pane.focus_handle(cx);
+                let profiles_focus_handle = focus_handle.clone();
+                let profiles = workspace
+                    .read_with(cx, |workspace, cx| {
+                        terminal_settings_for_workspace(workspace, cx).profiles
+                    })
+                    .log_err()
+                    .unwrap_or_default();
                 let right_children = h_flex()
                     .gap(DynamicSpacing::Base02.rems(cx))
                     .child(
@@ -172,6 +183,39 @@ impl TerminalPanel {
                                 Some(menu)
                             }),
                     )
+                    .when(!profiles.is_empty(), |this| {
+                        this.child(
+                            PopoverMenu::new("terminal-profiles-popover-menu")
+                                .trigger_with_tooltip(
+                                    IconButton::new("terminal-profiles", IconName::ChevronDown)
+                                        .icon_size(IconSize::Small)
+                                        .aria_label("Terminal Profiles")
+                                        .tab_index(0_isize),
+                                    Tooltip::text("Terminal Profiles"),
+                                )
+                                .anchor(Anchor::TopRight)
+                                .with_handle(profiles_menu_handle.clone())
+                                .menu(move |window, cx| {
+                                    Some(ContextMenu::build(window, cx, |menu, _, _| {
+                                        let mut menu = menu.context(profiles_focus_handle.clone());
+                                        for name in profiles.keys() {
+                                            menu = menu.action(
+                                                name.clone(),
+                                                workspace::NewTerminal {
+                                                    profile: Some(name.clone()),
+                                                    ..Default::default()
+                                                }
+                                                .boxed_clone(),
+                                            );
+                                        }
+                                        menu.separator().action(
+                                            "Configure Profiles…",
+                                            zed_actions::OpenSettingsFile.boxed_clone(),
+                                        )
+                                    }))
+                                }),
+                        )
+                    })
                     .when(assistant_enabled, |this| {
                         this.when_some(split_context.clone(), |this, focus_handle| {
                             this.child(InlineAssistTabBarButton { focus_handle })
@@ -747,13 +791,15 @@ impl TerminalPanel {
             .is_some_and(|item| item.downcast::<TerminalView>().is_some());
 
         if center_pane_has_focus && active_center_item_is_terminal {
-            let working_directory = default_working_directory(workspace, cx);
+            let working_directory =
+                working_directory_for_profile(workspace, action.profile.as_deref(), cx);
             let local = action.local;
+            let profile = action.profile.clone();
             Self::add_center_terminal(workspace, window, cx, move |project, cx| {
                 if local {
-                    project.create_local_terminal(cx)
+                    project.create_local_terminal_with_profile(profile, cx)
                 } else {
-                    project.create_terminal_shell(working_directory, cx)
+                    project.create_terminal_shell_with_profile(working_directory, profile, cx)
                 }
             })
             .detach_and_log_err(cx);
@@ -766,9 +812,10 @@ impl TerminalPanel {
 
         terminal_panel
             .update(cx, |this, cx| {
-                this.add_terminal_shell(
+                this.add_terminal_shell_with_profile(
                     action.local,
-                    default_working_directory(workspace, cx),
+                    working_directory_for_profile(workspace, action.profile.as_deref(), cx),
+                    action.profile.clone(),
                     RevealStrategy::Always,
                     window,
                     cx,
@@ -849,7 +896,26 @@ impl TerminalPanel {
         }
         let project = workspace.project().downgrade();
         cx.spawn_in(window, async move |workspace, cx| {
-            let terminal = project.update(cx, create_terminal)?.await?;
+            let terminal = match project.update(cx, create_terminal)?.await {
+                Ok(terminal) => terminal,
+                Err(error) => {
+                    workspace.update_in(cx, |workspace, window, cx| {
+                        let failed_to_spawn = cx.new(|cx| FailedToSpawnTerminal {
+                            error: error.to_string(),
+                            focus_handle: cx.focus_handle(),
+                        });
+                        let focus_item = !workspace.has_active_modal(window, cx);
+                        workspace.add_item_to_active_pane(
+                            Box::new(failed_to_spawn),
+                            None,
+                            focus_item,
+                            window,
+                            cx,
+                        );
+                    })?;
+                    return Err(error);
+                }
+            };
 
             workspace.update_in(cx, |workspace, window, cx| {
                 let terminal_view = cx.new(|cx| {
@@ -937,6 +1003,18 @@ impl TerminalPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<WeakEntity<Terminal>>> {
+        self.add_terminal_shell_with_profile(force_local, cwd, None, reveal_strategy, window, cx)
+    }
+
+    fn add_terminal_shell_with_profile(
+        &mut self,
+        force_local: bool,
+        working_directory: Option<PathBuf>,
+        profile: Option<String>,
+        reveal_strategy: RevealStrategy,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<WeakEntity<Terminal>>> {
         let workspace = self.workspace.clone();
         self.spawn_pending_terminal(window, cx, async move |terminal_panel, cx| {
             if workspace.update(cx, |workspace, cx| !is_enabled_in_workspace(workspace, cx))? {
@@ -945,11 +1023,15 @@ impl TerminalPanel {
             let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
             let terminal = if force_local {
                 project
-                    .update(cx, |project, cx| project.create_local_terminal(cx))
+                    .update(cx, |project, cx| {
+                        project.create_local_terminal_with_profile(profile, cx)
+                    })
                     .await
             } else {
                 project
-                    .update(cx, |project, cx| project.create_terminal_shell(cwd, cx))
+                    .update(cx, |project, cx| {
+                        project.create_terminal_shell_with_profile(working_directory, profile, cx)
+                    })
                     .await
             };
 
@@ -987,6 +1069,15 @@ impl TerminalPanel {
                     terminal.downgrade()
                 }),
                 Err(error) => {
+                    workspace.update_in(cx, |workspace, window, cx| match reveal_strategy {
+                        RevealStrategy::Always if !workspace.has_active_modal(window, cx) => {
+                            workspace.focus_panel::<Self>(window, cx);
+                        }
+                        RevealStrategy::Always | RevealStrategy::NoFocus => {
+                            workspace.open_panel::<Self>(window, cx);
+                        }
+                        RevealStrategy::Never => {}
+                    })?;
                     pane.update_in(cx, |pane, window, cx| {
                         let focus = pane.has_focus(window, cx);
                         let failed_to_spawn = cx.new(|cx| FailedToSpawnTerminal {
@@ -2942,6 +3033,155 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_terminal_profiles_dropdown_opens_selected_profile(cx: &mut TestAppContext) {
+        use anyhow::Context as _;
+
+        cx.executor().allow_parking();
+        init_test(cx);
+        let result = async {
+            cx.update_global(|store: &mut SettingsStore, cx| {
+                store.set_user_settings(
+                    r#"{"terminal": {
+                    "default_profile": "Bash",
+                    "profiles": {"Bash": {"shell": "system"}, "JavaScript": {"shell": "system"}}
+                }}"#,
+                    cx,
+                )
+            })
+            .result()?;
+            let (window_handle, terminal_panel) = init_workspace_with_panel(cx).await;
+            let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+            let default_terminal = terminal_panel
+                .update_in(cx, |panel, window, cx| {
+                    panel.add_terminal_shell(false, None, RevealStrategy::Always, window, cx)
+                })
+                .await?
+                .upgrade()
+                .context("default terminal was dropped")?;
+            assert_eq!(
+                default_terminal
+                    .read_with(cx, |terminal, _| terminal.profile_name.clone())
+                    .as_deref(),
+                Some("Bash")
+            );
+            cx.run_until_parked();
+
+            let new_terminal_menu = terminal_panel.read_with(cx, |panel, cx| {
+                panel
+                    .active_pane
+                    .read(cx)
+                    .new_item_context_menu_handle
+                    .clone()
+            });
+            cx.update(|window, cx| new_terminal_menu.show(window, cx));
+            cx.run_until_parked();
+            assert!(cx.debug_bounds("MENU_ITEM-Spawn Task").is_some());
+            cx.update(|_, cx| new_terminal_menu.hide(cx));
+            cx.run_until_parked();
+
+            let button = cx
+                .debug_bounds("ICON-ChevronDown")
+                .context("profile dropdown is missing")?;
+            cx.simulate_click(button.center(), Modifiers::default());
+            cx.run_until_parked();
+            let javascript = cx
+                .debug_bounds("MENU_ITEM-JavaScript")
+                .context("JavaScript profile is missing")?;
+            cx.simulate_click(javascript.center(), Modifiers::default());
+            cx.run_until_parked();
+
+            let terminal = terminal_panel
+                .read_with(cx, |panel, cx| {
+                    panel
+                        .active_pane
+                        .read(cx)
+                        .active_item()
+                        .and_then(|item| item.downcast::<TerminalView>())
+                        .map(|view| view.read(cx).terminal().clone())
+                })
+                .context("selected terminal is missing")?;
+            assert_eq!(
+                terminal
+                    .read_with(cx, |terminal, _| terminal.profile_name.clone())
+                    .as_deref(),
+                Some("JavaScript")
+            );
+            let project = window_handle.read_with(cx, |multi_workspace, cx| {
+                multi_workspace.workspace().read(cx).project().clone()
+            })?;
+            let cloned = project
+                .update(cx, |project, cx| {
+                    project.clone_terminal(&terminal, cx, None)
+                })
+                .await?;
+            assert_eq!(
+                cloned
+                    .read_with(cx, |terminal, _| terminal.profile_name.clone())
+                    .as_deref(),
+                Some("JavaScript")
+            );
+            let default = project
+                .update(cx, |project, cx| project.create_terminal_shell(None, cx))
+                .await?;
+            assert_eq!(
+                default
+                    .read_with(cx, |terminal, _| terminal.profile_name.clone())
+                    .as_deref(),
+                Some("Bash")
+            );
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[gpui::test]
+    async fn test_terminal_profiles_show_configuration_errors(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+        let result = async {
+            let (window_handle, terminal_panel) = init_workspace_with_panel(cx).await;
+            let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+            let terminal = terminal_panel
+                .update_in(cx, |panel, window, cx| {
+                    panel.add_terminal_shell_with_profile(
+                        false,
+                        None,
+                        Some("Missing".into()),
+                        RevealStrategy::Always,
+                        window,
+                        cx,
+                    )
+                })
+                .await;
+            assert!(terminal.is_err());
+            window_handle.update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    assert!(workspace.is_dock_at_position_open(
+                        terminal_panel.read(cx).position(window, cx),
+                        cx,
+                    ));
+                });
+            })?;
+            terminal_panel.read_with(cx, |panel, cx| {
+                let error = panel
+                    .active_pane
+                    .read(cx)
+                    .active_item()
+                    .and_then(|item| item.downcast::<FailedToSpawnTerminal>())
+                    .map(|view| view.read(cx).error.clone());
+                assert_eq!(
+                    error.as_deref(),
+                    Some("Terminal profile \"Missing\" is not configured")
+                );
+            });
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[gpui::test]
     async fn test_new_terminal_opens_in_panel_by_default(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
         init_test(cx);
@@ -3226,7 +3466,10 @@ mod tests {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
                     TerminalPanel::new_terminal(
                         workspace,
-                        &workspace::NewTerminal { local: true },
+                        &workspace::NewTerminal {
+                            local: true,
+                            ..Default::default()
+                        },
                         window,
                         cx,
                     );
