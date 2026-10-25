@@ -1072,7 +1072,8 @@ impl TerminalView {
     }
 
     fn send_keystroke(&mut self, text: &SendKeystroke, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(keystroke) = Keystroke::parse(&text.0).log_err() {
+        if let Some(keystroke) = Keystroke::parse_with_os(&text.0, cx.platform_info().os).log_err()
+        {
             self.clear_bell(cx);
             self.blink_manager.update(cx, BlinkManager::pause_blinking);
             self.process_keystroke(&keystroke, cx);
@@ -1080,7 +1081,7 @@ impl TerminalView {
     }
 
     fn dispatch_context(&self, cx: &App) -> KeyContext {
-        let mut dispatch_context = KeyContext::new_with_defaults();
+        let mut dispatch_context = KeyContext::new_with_defaults(cx.platform_info().os);
         dispatch_context.add("Terminal");
 
         if self.terminal.read(cx).vi_mode_enabled() {

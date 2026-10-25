@@ -1,6 +1,6 @@
 use std::mem;
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, bail};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{
     AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
@@ -198,7 +198,10 @@ pub async fn stream_generate_content(
     api_key: &str,
     mut request: GenerateContentRequest,
     extra_headers: &CustomHeaders,
-) -> Result<BoxStream<'static, Result<GenerateContentResponse>>, LanguageModelCompletionError> {
+) -> Result<
+    BoxStream<'static, Result<GenerateContentResponse, LanguageModelCompletionError>>,
+    LanguageModelCompletionError,
+> {
     let api_key = api_key.trim();
     validate_generate_content_request(&request)?;
 
@@ -251,15 +254,21 @@ pub async fn stream_generate_content(
                             }
                             match serde_json::from_str(line) {
                                 Ok(response) => Some(Ok(response)),
-                                Err(error) => Some(Err(anyhow!(format!(
-                                    "Error parsing JSON: {error:?}\n{line:?}"
-                                )))),
+                                Err(error) => {
+                                    Some(Err(LanguageModelCompletionError::DeserializeResponse {
+                                        provider: GOOGLE_PROVIDER_NAME,
+                                        error,
+                                    }))
+                                }
                             }
                         } else {
                             None
                         }
                     }
-                    Err(error) => Some(Err(anyhow!(error))),
+                    Err(error) => Some(Err(LanguageModelCompletionError::ApiReadResponseError {
+                        provider: GOOGLE_PROVIDER_NAME,
+                        error,
+                    })),
                 }
             })
             .boxed())
@@ -956,7 +965,75 @@ struct ListModelEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use completion::GoogleEventMapper;
+    use futures::{TryStreamExt, stream};
+    use http_client::{FakeHttpClient, Response};
+    use language_model_core::LanguageModelCompletionEvent;
     use serde_json::json;
+    use std::io::{Error, ErrorKind};
+
+    #[test]
+    fn stream_body_failures_remain_retryable() {
+        for kind in [ErrorKind::TimedOut, ErrorKind::ConnectionReset] {
+            let error = completion_error(Some(kind));
+            assert!(error.is_transient());
+            assert!(matches!(
+                error,
+                LanguageModelCompletionError::ApiReadResponseError { provider, error }
+                    if provider == GOOGLE_PROVIDER_NAME && error.kind() == kind
+            ));
+        }
+    }
+
+    #[test]
+    fn malformed_stream_data_remains_non_retryable() {
+        let error = completion_error(None);
+        assert!(!error.is_transient());
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::DeserializeResponse { provider, .. }
+                if provider == GOOGLE_PROVIDER_NAME
+        ));
+    }
+
+    fn completion_error(read_error: Option<ErrorKind>) -> LanguageModelCompletionError {
+        futures::executor::block_on(async {
+            let client = FakeHttpClient::create(move |_| async move {
+                let chunks = vec![
+                    Ok(b"data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Thinking\"}]}}]}\n\n".to_vec()),
+                    match read_error {
+                        Some(kind) => Err(Error::new(kind, "stream read failed")),
+                        None => Ok(b"data: not json\n\n".to_vec()),
+                    },
+                ];
+                Ok(Response::builder().body(AsyncBody::from_reader(
+                    stream::iter(chunks).into_async_read(),
+                ))?)
+            });
+            let request = serde_json::from_value(json!({
+                "model": "models/gemini-3.8-flash",
+                "contents": [{"role": "user", "parts": [{"text": "Think"}]}]
+            }))
+            .unwrap();
+            let responses = stream_generate_content(
+                client.as_ref(),
+                API_URL,
+                "test-key",
+                request,
+                &CustomHeaders::default(),
+            )
+            .await
+            .unwrap();
+            let mut events = GoogleEventMapper::new().map_stream(responses).boxed();
+            assert!(matches!(
+                events.next().await,
+                Some(Ok(LanguageModelCompletionEvent::Text(text))) if text == "Thinking"
+            ));
+            let error = events.next().await.unwrap().unwrap_err();
+            assert!(events.next().await.is_none());
+            error
+        })
+    }
 
     #[test]
     fn test_lowest_thinking_level_per_model() {

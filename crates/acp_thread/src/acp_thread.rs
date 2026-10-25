@@ -9,6 +9,7 @@ pub mod elicitation;
 mod mention;
 pub mod notices;
 pub mod prompt_capabilities;
+pub mod subagents;
 mod submission;
 mod terminal;
 pub use ::terminal::HeadlessTerminal;
@@ -358,6 +359,7 @@ pub enum MessageKind {
     User,
     Assistant,
     Thought,
+    Session,
 }
 
 #[derive(Debug)]
@@ -382,6 +384,32 @@ impl UserMessage {
         writeln!(markdown, "{}", self.content.to_markdown(cx)).unwrap();
         writeln!(markdown).unwrap();
         markdown
+    }
+}
+
+/// A message between this session and another, such as a parent and its subagent. The
+/// session that sent it is the outgoing view; the session that received it is the incoming
+/// view. Either participant may be unknown.
+#[derive(Debug)]
+pub struct SessionMessage {
+    pub identity: MessageIdentity,
+    pub sender_session_id: Option<acp_v2::SessionId>,
+    pub recipient_session_id: Option<acp_v2::SessionId>,
+    pub meta: Option<acp_v2::Meta>,
+    pub content: MessageContent,
+}
+
+impl SessionMessage {
+    fn to_markdown(&self, cx: &App) -> String {
+        let heading = match (&self.sender_session_id, &self.recipient_session_id) {
+            (Some(sender), Some(recipient)) => {
+                format!("## Message from `{sender}` to `{recipient}`")
+            }
+            (Some(sender), None) => format!("## Message from `{sender}`"),
+            (None, Some(recipient)) => format!("## Message to `{recipient}`"),
+            (None, None) => "## Session message".to_string(),
+        };
+        format!("{heading}\n\n{}\n\n", self.content.to_markdown(cx))
     }
 }
 
@@ -474,12 +502,17 @@ enum MessageLocation {
         entry_index: usize,
         chunk_index: usize,
     },
+    Session {
+        entry_index: usize,
+    },
 }
 
 impl MessageLocation {
     fn entry_index(self) -> usize {
         match self {
-            Self::User { entry_index } | Self::Assistant { entry_index, .. } => entry_index,
+            Self::User { entry_index }
+            | Self::Assistant { entry_index, .. }
+            | Self::Session { entry_index } => entry_index,
         }
     }
 
@@ -496,6 +529,9 @@ impl MessageLocation {
                     AssistantMessageChunk::Message { block, meta, .. }
                     | AssistantMessageChunk::Thought { block, meta, .. } => Some((block, meta)),
                 }
+            }
+            (Self::Session { .. }, AgentThreadEntry::SessionMessage(message)) => {
+                Some((&mut message.content, &mut message.meta))
             }
             _ => None,
         }
@@ -514,6 +550,7 @@ impl MessageLocation {
 pub enum AgentThreadEntry {
     UserMessage(UserMessage),
     AssistantMessage(AssistantMessage),
+    SessionMessage(SessionMessage),
     ToolCall(ToolCall),
     Elicitation(ElicitationEntryId),
     ContextCompaction(ContextCompaction),
@@ -977,9 +1014,41 @@ impl AgentThreadEntry {
         match self {
             Self::UserMessage(message) => message.indented,
             Self::AssistantMessage(message) => message.indented,
+            Self::SessionMessage(_) => false,
             Self::ToolCall(_) => false,
             Self::Elicitation(_) => false,
             Self::ContextCompaction(_) => false,
+        }
+    }
+
+    pub fn has_pending_markdown_render(&self, cx: &App) -> bool {
+        let has_pending_render =
+            |markdown: &Entity<Markdown>| markdown.read(cx).has_pending_render();
+        match self {
+            Self::UserMessage(message) => message.content.markdowns().any(has_pending_render),
+            Self::AssistantMessage(message) => message.chunks.iter().any(|chunk| {
+                let (AssistantMessageChunk::Message { block, .. }
+                | AssistantMessageChunk::Thought { block, .. }) = chunk;
+                block.markdowns().any(has_pending_render)
+            }),
+            Self::SessionMessage(message) => message.content.markdowns().any(has_pending_render),
+            Self::ToolCall(call) => {
+                has_pending_render(&call.label)
+                    || call
+                        .raw_input_markdown
+                        .as_ref()
+                        .is_some_and(has_pending_render)
+                    || call
+                        .content()
+                        .iter()
+                        .filter_map(ToolCallContent::markdown)
+                        .any(has_pending_render)
+            }
+            Self::ContextCompaction(compaction) => {
+                compaction.error.as_ref().is_some_and(has_pending_render)
+                    || compaction.summary.markdowns().any(has_pending_render)
+            }
+            Self::Elicitation(_) => false,
         }
     }
 
@@ -987,6 +1056,7 @@ impl AgentThreadEntry {
         match self {
             Self::UserMessage(message) => message.to_markdown(cx),
             Self::AssistantMessage(message) => message.to_markdown(cx),
+            Self::SessionMessage(message) => message.to_markdown(cx),
             Self::ToolCall(tool_call) => tool_call.to_markdown(cx),
             Self::Elicitation(_) => "## Input Requested\n\n".to_string(),
             Self::ContextCompaction(compaction) => {
@@ -1644,7 +1714,7 @@ impl ToolCall {
                     (Some(markdown), Some(text)) => update_markdown_in_place(markdown, &text, cx),
                     (_, Some(text)) => {
                         self.raw_input_markdown = Some(cx.new(|cx| {
-                            Markdown::new(text.into(), Some(language_registry.clone()), None, cx)
+                            Markdown::new_deferred(text, Some(language_registry.clone()), cx)
                         }));
                     }
                     (_, None) => self.raw_input_markdown = None,
@@ -1697,7 +1767,7 @@ impl ToolCall {
             update_markdown_in_place(markdown, &text, cx);
         } else {
             let markdown =
-                cx.new(|cx| Markdown::new(text.into(), Some(language_registry.clone()), None, cx));
+                cx.new(|cx| Markdown::new_deferred(text, Some(language_registry.clone()), cx));
             self.raw_output_content = Some(Box::new(ToolCallContent::ContentBlock {
                 block: ContentBlock::from_markdown(markdown),
                 meta: None,
@@ -2689,6 +2759,7 @@ impl ContentBlock {
                 MarkdownOptions {
                     render_mermaid_diagrams: true,
                     render_metadata_blocks: true,
+                    defer_parsing: true,
                     ..Default::default()
                 },
                 cx,
@@ -3095,13 +3166,12 @@ impl ToolCallContent {
                 meta: content.meta,
             },
             PreparedToolCallContent::LegacyDiff(source) => {
-                let diff = cx.new(|cx| {
+                let diff = cx.new(|_| {
                     Diff::finalized(
                         source.path.to_string_lossy().into_owned(),
                         source.old_text.clone(),
                         source.new_text.clone(),
                         language_registry.clone(),
-                        cx,
                     )
                 });
                 Self::LegacyDiff { source, diff }
@@ -3179,7 +3249,7 @@ impl ToolCallContent {
 
     pub fn to_markdown(&self, cx: &App) -> String {
         match self {
-            Self::ContentBlock { block, .. } => block.to_markdown(cx).to_string(),
+            Self::ContentBlock { block, .. } => block.to_markdown(cx).to_owned(),
             Self::Diff(diff) | Self::LegacyDiff { diff, .. } => diff.read(cx).to_markdown(cx),
             Self::Terminal { terminal, .. } => terminal.read(cx).to_markdown(cx),
             Self::DiffPatch { source, .. } => format!(
@@ -3459,6 +3529,10 @@ fn stop_reason_from_v1(reason: &acp_v1::StopReason) -> Option<acp_v2::StopReason
 pub struct AcpThread {
     session_info: AgentSessionInfo,
     parent_session_id: Option<acp_v2::SessionId>,
+    /// Child sessions this session owns, such as subagents, in registration order.
+    subagents: IndexMap<acp_v2::SessionId, Entity<AcpThread>>,
+    /// Set when this session is an ACP subagent announced by its parent.
+    subagent_association: Option<subagents::SubagentAssociation>,
     provisional_title: Option<SharedString>,
     entries: Vec<AgentThreadEntry>,
     // Notices stay with the live session, but never enter conversation history or exports.
@@ -3623,7 +3697,11 @@ pub enum OutputTokensUpdate {
 #[derive(Debug)]
 pub enum AcpThreadEvent {
     StatusChanged,
-    /// Initial Idle confirmation is not a foreground completion.
+    /// The parent's title, description, or capabilities for this subagent changed. Views that
+    /// read them from the parent's side, such as its subagent card, observe this event.
+    SubagentAssociationUpdated,
+    /// Idle confirmed after unconfirmed or unknown activity, without completing
+    /// foreground work.
     ActivityConfirmedIdle,
     SubmissionUpdated(SubmissionId),
     PromptUpdated,
@@ -3639,6 +3717,7 @@ pub enum AcpThreadEvent {
     /// The request left `Pending`; this does not imply delivery to its response waiter.
     ElicitationResponded(ElicitationEntryId),
     Retry(RetryStatus),
+    /// A child session was registered; read it with [`AcpThread::subagent`].
     SubagentSpawned(acp_v2::SessionId),
     Stopped {
         activity_generation: u64,
@@ -3789,6 +3868,7 @@ impl AcpThread {
                 | AcpThreadEvent::EntryUpdated(_)
                 | AcpThreadEvent::Retry(_)
                 | AcpThreadEvent::SubagentSpawned(_)
+                | AcpThreadEvent::SubagentAssociationUpdated
                 | AcpThreadEvent::Stopped { .. }
                 | AcpThreadEvent::Error
                 | AcpThreadEvent::ConnectionLost
@@ -3836,13 +3916,19 @@ impl AcpThread {
             next_notice_id: 0,
             elicitations: ElicitationStore::default(),
             permission_requests: IndexMap::default(),
+            subagents: IndexMap::default(),
+            subagent_association: None,
             plans: HashMap::default(),
             visible_plan: None,
             provisional_title: None,
             project,
             running_turn: None,
             turn_id: 0,
-            submissions: SessionSubmissions::new(receipt_submissions),
+            submissions: SessionSubmissions::new(
+                receipt_submissions.map_or(SubmissionTransport::Completion, |transport| {
+                    SubmissionTransport::Receipt(transport)
+                }),
+            ),
             activity: SessionActivity::default(),
             received_session_state: false,
             reported_usage: None,
@@ -3866,6 +3952,53 @@ impl AcpThread {
             ui_scroll_position: None,
             streaming_text_buffer: None,
             idle_sleep_prevention: IdleSleepPrevention::Inactive,
+        }
+    }
+
+    /// Marks an ACP subagent session, whose work its parent agent owns. Zed cannot
+    /// submit prompts to it, and its foreground state is unconfirmed until the agent
+    /// reports one.
+    pub fn agent_owned(mut self) -> Self {
+        self.submissions = SessionSubmissions::new(SubmissionTransport::AgentOwned);
+        self.activity.mark_unconfirmed();
+        self.subagent_association = Some(subagents::SubagentAssociation::default());
+        self
+    }
+
+    pub fn subagent_association(&self) -> Option<&subagents::SubagentAssociation> {
+        self.subagent_association.as_ref()
+    }
+
+    pub fn update_subagent_association(
+        &mut self,
+        update: &acp_v2::SubagentUpdate,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let association = self
+            .subagent_association
+            .as_mut()
+            .context("Session is not an ACP subagent")?;
+        association.apply(update);
+        cx.emit(AcpThreadEvent::SubagentAssociationUpdated);
+        cx.notify();
+        Ok(())
+    }
+
+    /// Ends a history replay into this session, after a successful load or resume. The
+    /// subagents RFD treats the work states and cancel grants that the replay reported for
+    /// subagents as history, outcomes included: each subagent's work state is unconfirmed,
+    /// and it cannot be cancelled, until the agent reports current ones after the response.
+    /// Titles and transcripts stay.
+    pub fn invalidate_replayed_subagent_state(&mut self, cx: &mut Context<Self>) {
+        for subagent in self.subagents.values() {
+            subagent.update(cx, |subagent, cx| {
+                if let Some(association) = subagent.subagent_association.as_mut() {
+                    association.can_cancel = false;
+                    cx.notify();
+                }
+                subagent.clear_session_state(cx).log_err();
+                subagent.invalidate_replayed_subagent_state(cx);
+            });
         }
     }
 
@@ -4050,14 +4183,23 @@ impl AcpThread {
 
     pub fn status(&self) -> ThreadStatus {
         match self.foreground_activity() {
-            ForegroundActivity::Unconfirmed => ThreadStatus::Unconfirmed,
+            ForegroundActivity::Unconfirmed | ForegroundActivity::Unknown => {
+                ThreadStatus::Unconfirmed
+            }
             ForegroundActivity::Idle => ThreadStatus::Idle,
-            _ => ThreadStatus::Generating,
+            ForegroundActivity::Running | ForegroundActivity::RequiresAction => {
+                ThreadStatus::Generating
+            }
         }
     }
 
+    /// Whether the agent reports this session's foreground state, rather than Zed
+    /// deriving it from its own prompt turns.
     pub fn uses_reported_activity(&self) -> bool {
-        self.submissions.receipt_transport().is_some()
+        !matches!(
+            self.submissions.transport(),
+            SubmissionTransport::Completion
+        )
     }
 
     pub fn foreground_state(&self) -> Option<&acp_v2::StateUpdate> {
@@ -4173,6 +4315,7 @@ impl AcpThread {
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::Elicitation(_)
                 | AgentThreadEntry::AssistantMessage(_)
+                | AgentThreadEntry::SessionMessage(_)
                 | AgentThreadEntry::ContextCompaction(_) => {}
             }
         }
@@ -4319,7 +4462,9 @@ impl AcpThread {
     ) -> Submission {
         let (sender, receiver) = oneshot::channel();
         let (disconnect_sender, disconnect_receiver) = self
-            .uses_reported_activity()
+            .submissions
+            .receipt_transport()
+            .is_some()
             .then(oneshot::channel::<()>)
             .unzip();
         let task = cx.spawn(async move |this, cx| {
@@ -4340,12 +4485,15 @@ impl AcpThread {
                 response => response,
             };
             let update = this.update(cx, |this, cx| {
-                if this.uses_reported_activity()
+                if this.submissions.receipt_transport().is_some()
                     && response.as_ref().err().is_some_and(|error| {
                         error.is::<SubmissionDisconnected>()
                             || error
                                 .downcast_ref::<agent_client_protocol::Error>()
-                                .is_some_and(agent_client_protocol::is_incoming_transport_closed)
+                                .is_some_and(|error| {
+                                    agent_client_protocol::is_incoming_transport_closed(error)
+                                        || agent_client_protocol::is_connection_terminated(error)
+                                })
                     })
                 {
                     this.handle_connection_lost(cx);
@@ -4394,11 +4542,10 @@ impl AcpThread {
     }
 
     fn set_foreground_state(&mut self, state: acp_v2::StateUpdate, cx: &mut Context<Self>) {
-        let previous = self.foreground_activity();
+        let previous_generation = self.activity.generation();
         self.activity
             .update(state, self.entries.len().saturating_sub(1));
-        let current = self.foreground_activity();
-        if !previous.is_active() && current.is_active() {
+        if self.activity.generation() != previous_generation {
             self.had_error = false;
             self.local_execution_error = None;
         }
@@ -4437,7 +4584,7 @@ impl AcpThread {
             "Session does not report foreground state"
         );
         let previous = self.foreground_activity();
-        let was_active = previous.is_active();
+        let was_in_progress = self.activity.in_progress();
         self.received_session_state = true;
         self.set_foreground_state(state, cx);
         if let Some(acp_v2::StateUpdate::Idle(idle)) = self.activity.state() {
@@ -4462,7 +4609,7 @@ impl AcpThread {
                     ));
                 }
             }
-            if was_active {
+            if was_in_progress {
                 self.flush_streaming_text(cx);
                 self.shrink_message_source_capacity(self.activity.first_entry_index());
                 if self.parent_session_id.is_none() {
@@ -4481,17 +4628,43 @@ impl AcpThread {
                 cx.emit(AcpThreadEvent::Stopped {
                     activity_generation: self.activity.generation(),
                     activity_duration: self.activity.duration(),
-                    stop_reason,
+                    stop_reason: stop_reason.clone(),
                 });
+            }
+            // A subagent's work can stop because Zed cancelled an ancestor. Its requests stay
+            // answerable until it reports that, and then go as if Zed had cancelled it.
+            if self.subagent_association.is_some()
+                && matches!(stop_reason, Some(acp_v2::StopReason::Cancelled))
+            {
+                self.cancel_local_actions(RequestPermissionOutcome::Cancelled, cx);
             }
         }
         if previous != self.foreground_activity() {
             cx.emit(AcpThreadEvent::StatusChanged);
         }
-        if previous == ForegroundActivity::Unconfirmed
+        if !was_in_progress
+            && matches!(
+                previous,
+                ForegroundActivity::Unconfirmed | ForegroundActivity::Unknown
+            )
             && self.foreground_activity() == ForegroundActivity::Idle
         {
             cx.emit(AcpThreadEvent::ActivityConfirmedIdle);
+        }
+        Ok(())
+    }
+
+    /// Forgets the reported foreground state without implying idle, as when an ACP
+    /// subagent association clears its `state`. Work in progress stays in progress.
+    pub fn clear_session_state(&mut self, cx: &mut Context<Self>) -> Result<()> {
+        anyhow::ensure!(
+            self.uses_reported_activity(),
+            "Session does not report foreground state"
+        );
+        let previous = self.foreground_activity();
+        self.activity.mark_unconfirmed();
+        if previous != self.foreground_activity() {
+            cx.emit(AcpThreadEvent::StatusChanged);
         }
         Ok(())
     }
@@ -4515,6 +4688,7 @@ impl AcpThread {
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::Elicitation(_)
                 | AgentThreadEntry::AssistantMessage(_)
+                | AgentThreadEntry::SessionMessage(_)
                 | AgentThreadEntry::ContextCompaction(_) => {}
             }
         }
@@ -4537,6 +4711,7 @@ impl AcpThread {
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::Elicitation(_)
                 | AgentThreadEntry::AssistantMessage(_)
+                | AgentThreadEntry::SessionMessage(_)
                 | AgentThreadEntry::ContextCompaction(_) => {}
             }
         }
@@ -4549,6 +4724,7 @@ impl AcpThread {
             match entry {
                 AgentThreadEntry::UserMessage(..) => return false,
                 AgentThreadEntry::AssistantMessage(..)
+                | AgentThreadEntry::SessionMessage(_)
                 | AgentThreadEntry::ContextCompaction(_)
                 | AgentThreadEntry::Elicitation(_) => continue,
                 AgentThreadEntry::ToolCall(..) => return true,
@@ -4680,6 +4856,47 @@ impl AcpThread {
                     cx,
                 );
             }
+            acp_v1::SessionUpdate::SessionMessage(message) => {
+                let content = match message.content {
+                    MaybeUndefined::Undefined => MaybeUndefined::Undefined,
+                    MaybeUndefined::Null => MaybeUndefined::Null,
+                    MaybeUndefined::Value(blocks) => MaybeUndefined::Value(
+                        blocks
+                            .into_iter()
+                            .map(content::from_v1)
+                            .collect::<Result<Vec<_>>>()
+                            .map_err(acp_v1::Error::from)?,
+                    ),
+                };
+                self.upsert_session_message_inner(
+                    acp_v2::SessionMessage::new(message.message_id.0)
+                        .sender_session_id(
+                            message
+                                .sender_session_id
+                                .map(|id| acp_v2::SessionId::new(id.0)),
+                        )
+                        .recipient_session_id(
+                            message
+                                .recipient_session_id
+                                .map(|id| acp_v2::SessionId::new(id.0)),
+                        )
+                        .content(content)
+                        .meta(message.meta),
+                    MetadataUpdate::V1,
+                    cx,
+                )
+                .map_err(acp_v1::Error::from)?;
+            }
+            acp_v1::SessionUpdate::SessionMessageChunk(chunk) => {
+                self.append_session_message_chunk(
+                    acp_v2::SessionMessageChunk::new(
+                        chunk.message_id.0,
+                        content::from_v1(chunk.content).map_err(acp_v1::Error::from)?,
+                    ),
+                    cx,
+                )
+                .map_err(acp_v1::Error::from)?;
+            }
             _ => {}
         }
         Ok(())
@@ -4694,7 +4911,7 @@ impl AcpThread {
             MessageKind::User,
             update.message_id,
             update.content,
-            update.meta,
+            MetadataUpdate::V2(update.meta),
             cx,
         )
     }
@@ -4708,7 +4925,7 @@ impl AcpThread {
             MessageKind::Assistant,
             update.message_id,
             update.content,
-            update.meta,
+            MetadataUpdate::V2(update.meta),
             cx,
         )
     }
@@ -4722,9 +4939,90 @@ impl AcpThread {
             MessageKind::Thought,
             update.message_id,
             update.content,
-            update.meta,
+            MetadataUpdate::V2(update.meta),
             cx,
         )
+    }
+
+    pub fn upsert_session_message(
+        &mut self,
+        update: acp_v2::SessionMessage,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        self.upsert_session_message_inner(update, MetadataUpdate::V2, cx)
+    }
+
+    fn upsert_session_message_inner(
+        &mut self,
+        update: acp_v2::SessionMessage,
+        metadata: fn(MaybeUndefined<acp_v2::Meta>) -> MetadataUpdate,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let previous_entry_count = self.entries.len();
+        let location = self.session_message_location(
+            update.message_id,
+            update.sender_session_id,
+            update.recipient_session_id,
+            cx,
+        )?;
+        self.replace_message_content(
+            location,
+            MessageKind::Session,
+            update.content,
+            metadata(update.meta),
+            previous_entry_count,
+            cx,
+        )
+    }
+
+    pub fn append_session_message_chunk(
+        &mut self,
+        chunk: acp_v2::SessionMessageChunk,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        // A chunk carries only content: its metadata does not patch the message's, and the
+        // RFD keeps a message's participants on `session_message`, so the participant fields
+        // that this schema version still has on chunks are ignored.
+        let previous_entry_count = self.entries.len();
+        let location = self.keyed_message_location(MessageKind::Session, chunk.message_id, cx)?;
+        self.append_message_content(
+            location,
+            MessageKind::Session,
+            chunk.content,
+            previous_entry_count,
+            cx,
+        )
+    }
+
+    /// Participants that an update omits keep their earlier value, and a known participant
+    /// cannot change.
+    fn session_message_location(
+        &mut self,
+        id: acp_v2::MessageId,
+        sender: Option<acp_v2::SessionId>,
+        recipient: Option<acp_v2::SessionId>,
+        cx: &mut Context<Self>,
+    ) -> Result<MessageLocation> {
+        let location = self.keyed_message_location(MessageKind::Session, id, cx)?;
+        let Some(AgentThreadEntry::SessionMessage(message)) =
+            self.entries.get_mut(location.entry_index())
+        else {
+            anyhow::bail!("session message disappeared during update");
+        };
+        for (stored, reported) in [
+            (&mut message.sender_session_id, sender),
+            (&mut message.recipient_session_id, recipient),
+        ] {
+            let Some(reported) = reported else {
+                continue;
+            };
+            anyhow::ensure!(
+                stored.as_ref().is_none_or(|stored| stored == &reported),
+                "Session message participants cannot change"
+            );
+            *stored = Some(reported);
+        }
+        Ok(location)
     }
 
     fn update_keyed_message(
@@ -4732,11 +5030,23 @@ impl AcpThread {
         kind: MessageKind,
         id: acp_v2::MessageId,
         content: MaybeUndefined<Vec<acp_v2::ContentBlock>>,
-        meta: MaybeUndefined<acp_v2::Meta>,
+        meta: MetadataUpdate,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let previous_entry_count = self.entries.len();
         let location = self.keyed_message_location(kind, id, cx)?;
+        self.replace_message_content(location, kind, content, meta, previous_entry_count, cx)
+    }
+
+    fn replace_message_content(
+        &mut self,
+        location: MessageLocation,
+        kind: MessageKind,
+        content: MaybeUndefined<Vec<acp_v2::ContentBlock>>,
+        meta: MetadataUpdate,
+        previous_entry_count: usize,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
         if !content.is_undefined()
             && self
                 .streaming_text_buffer
@@ -4765,7 +5075,7 @@ impl AcpThread {
                 message_content.replace(replacement, &language_registry, path_style, cx);
             }
         }
-        MetadataUpdate::V2(meta).apply(message_meta);
+        meta.apply(message_meta);
         self.emit_message_update(location, previous_entry_count, cx);
         Ok(())
     }
@@ -4784,6 +5094,17 @@ impl AcpThread {
         } = chunk;
         let previous_entry_count = self.entries.len();
         let location = self.keyed_message_location(kind, message_id, cx)?;
+        self.append_message_content(location, kind, content, previous_entry_count, cx)
+    }
+
+    fn append_message_content(
+        &mut self,
+        location: MessageLocation,
+        kind: MessageKind,
+        content: acp_v2::ContentBlock,
+        previous_entry_count: usize,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
         let content = match content {
             acp_v2::ContentBlock::Text(text) => {
                 let (content, _) = location
@@ -4852,6 +5173,11 @@ impl AcpThread {
                 {
                     Some(MessageLocation::User { entry_index })
                 }
+                AgentThreadEntry::SessionMessage(message)
+                    if kind == MessageKind::Session && message.identity == identity =>
+                {
+                    Some(MessageLocation::Session { entry_index })
+                }
                 AgentThreadEntry::AssistantMessage(message) => message
                     .chunks
                     .iter()
@@ -4884,6 +5210,17 @@ impl AcpThread {
                         indented: false,
                     }));
                 Ok(MessageLocation::User { entry_index })
+            }
+            MessageKind::Session => {
+                self.entries
+                    .push(AgentThreadEntry::SessionMessage(SessionMessage {
+                        identity,
+                        sender_session_id: None,
+                        recipient_session_id: None,
+                        meta: None,
+                        content: MessageContent::default(),
+                    }));
+                Ok(MessageLocation::Session { entry_index })
             }
             MessageKind::Assistant | MessageKind::Thought => {
                 let chunk = if kind == MessageKind::Thought {
@@ -4931,7 +5268,7 @@ impl AcpThread {
         previous_entry_count: usize,
         cx: &mut Context<Self>,
     ) {
-        if self.uses_reported_activity()
+        if self.submissions.receipt_transport().is_some()
             && let Some(AgentThreadEntry::UserMessage(message)) =
                 self.entries.get(location.entry_index())
             && let MessageIdentity::Keyed(id) = &message.identity
@@ -5514,8 +5851,24 @@ impl AcpThread {
         cx.emit(AcpThreadEvent::TitleUpdated);
     }
 
-    pub fn subagent_spawned(&mut self, session_id: acp_v2::SessionId, cx: &mut Context<Self>) {
+    /// Takes ownership of a child session. A session ID that is already registered
+    /// keeps its existing thread. Callers must not register this session or one of its
+    /// ancestors, since the registry holds children strongly.
+    pub fn register_subagent(&mut self, subagent: Entity<AcpThread>, cx: &mut Context<Self>) {
+        let session_id = subagent.read(cx).session_id().clone();
+        if self.subagents.contains_key(&session_id) {
+            return;
+        }
+        self.subagents.insert(session_id.clone(), subagent);
         cx.emit(AcpThreadEvent::SubagentSpawned(session_id));
+    }
+
+    pub fn subagent(&self, session_id: &acp_v2::SessionId) -> Option<&Entity<AcpThread>> {
+        self.subagents.get(session_id)
+    }
+
+    pub fn subagents(&self) -> impl Iterator<Item = &Entity<AcpThread>> {
+        self.subagents.values()
     }
 
     pub fn update_token_usage(&mut self, usage: Option<TokenUsage>, cx: &mut Context<Self>) {
@@ -5927,8 +6280,10 @@ impl AcpThread {
             })
     }
 
+    /// The latest tool call that ran the subagent `session_id`. A resumed subagent has one
+    /// per run, and the latest says how the subagent's current work went.
     pub fn tool_call_for_subagent(&self, session_id: &acp_v2::SessionId) -> Option<&ToolCall> {
-        self.entries.iter().find_map(|entry| match entry {
+        self.entries.iter().rev().find_map(|entry| match entry {
             AgentThreadEntry::ToolCall(tool_call) => {
                 if let Some(subagent_session_info) = &tool_call.subagent_session_info
                     && &subagent_session_info.session_id == session_id
@@ -6583,14 +6938,27 @@ impl AcpThread {
         push_user_message: bool,
         cx: &mut Context<Self>,
     ) -> Submission {
-        if let Some(submissions) = self.submissions.receipt_transport().cloned() {
-            let id = self.register_submission(message.clone().into(), cx);
-            let request = submissions.submit(message, cx);
-            self.track_receipt_submission(id, request, cx)
-        } else {
-            let id = self.register_submission(message.clone().into(), cx);
-            self.send_inner(id, message, push_user_message, cx)
+        let id = self.register_submission(message.clone().into(), cx);
+        match self.submissions.transport().clone() {
+            SubmissionTransport::Receipt(submissions) => {
+                let request = submissions.submit(message, cx);
+                self.track_receipt_submission(id, request, cx)
+            }
+            SubmissionTransport::Completion => self.send_inner(id, message, push_user_message, cx),
+            SubmissionTransport::AgentOwned => self.reject_agent_owned_submission(id, cx),
         }
+    }
+
+    fn reject_agent_owned_submission(
+        &mut self,
+        id: SubmissionId,
+        cx: &mut Context<Self>,
+    ) -> Submission {
+        self.track_submission(id, None, cx, async move |_, _| {
+            Err(anyhow!(
+                "The agent owns this session, so it does not accept prompts"
+            ))
+        })
     }
 
     pub fn submit_receipt(
@@ -6774,14 +7142,19 @@ impl AcpThread {
     }
 
     pub fn can_retry(&self, cx: &App) -> bool {
-        self.submissions.receipt_transport().map_or_else(
-            || self.connection.retry(self.session_id(), cx).is_some(),
-            |submissions| submissions.supports_retry(),
-        ) && self
-            .submissions
-            .latest_id()
-            .and_then(|id| self.submissions.get(id))
-            .is_none_or(|submission| self.validate_prompt_content(&submission.content).is_ok())
+        let supports_retry = match self.submissions.transport() {
+            SubmissionTransport::Receipt(submissions) => submissions.supports_retry(),
+            SubmissionTransport::Completion => {
+                self.connection.retry(self.session_id(), cx).is_some()
+            }
+            SubmissionTransport::AgentOwned => false,
+        };
+        supports_retry
+            && self
+                .submissions
+                .latest_id()
+                .and_then(|id| self.submissions.get(id))
+                .is_none_or(|submission| self.validate_prompt_content(&submission.content).is_ok())
     }
 
     pub fn retry(&mut self, cx: &mut Context<Self>) -> Submission {
@@ -6795,9 +7168,15 @@ impl AcpThread {
         if let Err(error) = self.validate_prompt_content(&content) {
             return self.track_submission(id, None, cx, async move |_, _| Err(error));
         }
-        if let Some(submissions) = self.submissions.receipt_transport() {
-            let request = submissions.retry(cx);
-            return self.track_receipt_submission(id, request, cx);
+        match self.submissions.transport() {
+            SubmissionTransport::Receipt(submissions) => {
+                let request = submissions.retry(cx);
+                return self.track_receipt_submission(id, request, cx);
+            }
+            SubmissionTransport::AgentOwned => {
+                return self.reject_agent_owned_submission(id, cx);
+            }
+            SubmissionTransport::Completion => {}
         }
         self.run_turn(id, cx, async move |this, cx| {
             this.update(cx, |this, cx| {
@@ -7012,6 +7391,12 @@ impl AcpThread {
         permission_outcome: RequestPermissionOutcome,
         cx: &mut Context<Self>,
     ) -> Result<Task<Result<()>>> {
+        anyhow::ensure!(
+            self.subagent_association
+                .as_ref()
+                .is_none_or(|association| association.can_cancel),
+            "This subagent's parent does not allow cancelling it"
+        );
         self.flush_streaming_text(cx);
         if self.uses_reported_activity() {
             self.activity.ensure_observable()?;
@@ -7020,7 +7405,16 @@ impl AcpThread {
             {
                 self.connection.cancel(self.session_id(), cx)?;
             }
-            self.cancel_generic_permission_requests(cx);
+            if self.subagent_association.is_some() {
+                // The subagents RFD has a cancelled subagent answer all of its permission
+                // requests, including the tool-call ones a v1 subagent makes.
+                let request_ids = self.permission_requests.keys().copied().collect::<Vec<_>>();
+                for id in request_ids {
+                    self.cancel_permission_request(id, cx);
+                }
+            } else {
+                self.cancel_generic_permission_requests(cx);
+            }
             let receiver = self.activity.wait_for_idle()?;
             let Some(receiver) = receiver else {
                 return Ok(Task::ready(Ok(())));
@@ -7700,7 +8094,7 @@ impl AcpThread {
                 #[cfg(not(target_os = "windows"))]
                 let (task_command, task_args, task_env, sandbox, spawn_cwd) = {
                     let mut builder = ShellBuilder::new(&Shell::Program(shell), is_windows);
-                    if headless {
+                    if headless || (cfg!(target_os = "linux") && sandbox_wrap.is_some()) {
                         builder = builder.non_interactive();
                     }
                     let (task_command, task_args) = builder
@@ -8027,7 +8421,7 @@ fn markdown_for_raw_output(
     cx: &mut App,
 ) -> Option<Entity<Markdown>> {
     let text = raw_output_text(raw_output)?;
-    Some(cx.new(|cx| Markdown::new(text.into(), Some(language_registry.clone()), None, cx)))
+    Some(cx.new(|cx| Markdown::new_deferred(text, Some(language_registry.clone()), cx)))
 }
 
 fn raw_output_text(raw_output: &serde_json::Value) -> Option<String> {
@@ -9677,13 +10071,12 @@ mod tests {
             };
             assert_eq!(source.path, PathBuf::from("second.rs"));
             assert_ne!(diff, &previous);
-            let native_diff = cx.new(|cx| {
+            let native_diff = cx.new(|_| {
                 Diff::finalized(
                     "native.rs".into(),
                     Some("before".into()),
                     "after".into(),
                     languages.clone(),
-                    cx,
                 )
             });
             let mut native = ToolCallContent::Diff(native_diff.clone());
@@ -11176,6 +11569,9 @@ mod tests {
             AgentThreadEntry::UserMessage(message) => {
                 (&message.identity, &message.content, &message.meta)
             }
+            AgentThreadEntry::SessionMessage(message) => {
+                (&message.identity, &message.content, &message.meta)
+            }
             AgentThreadEntry::AssistantMessage(message) => {
                 let [chunk] = message.chunks.as_slice() else {
                     panic!("expected one assistant chunk");
@@ -11194,6 +11590,23 @@ mod tests {
                 }
             }
             _ => panic!("expected a message"),
+        }
+    }
+
+    /// Session messages take chunks through their own API, which also records participants.
+    fn append_keyed_chunk(
+        thread: &mut AcpThread,
+        kind: MessageKind,
+        chunk: acp_v2::ContentChunk,
+        cx: &mut Context<AcpThread>,
+    ) -> Result<()> {
+        if kind == MessageKind::Session {
+            thread.append_session_message_chunk(
+                acp_v2::SessionMessageChunk::new(chunk.message_id, chunk.content).meta(chunk.meta),
+                cx,
+            )
+        } else {
+            thread.append_message_chunk(kind, chunk, cx)
         }
     }
 
@@ -11295,6 +11708,306 @@ mod tests {
             .await
             .expect("receipt session should be created");
         (thread, connection)
+    }
+
+    async fn new_agent_owned_test_thread(
+        cx: &mut TestAppContext,
+    ) -> (Entity<AcpThread>, Rc<StubAgentConnection>) {
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let connection = Rc::new(StubAgentConnection::new());
+        let thread = cx.update(|cx| {
+            let action_log = cx.new(|_| ActionLog::new(project.clone()));
+            cx.new(|cx| {
+                AcpThread::new(
+                    Some(acp_v2::SessionId::new("parent")),
+                    None,
+                    None,
+                    connection.clone(),
+                    project,
+                    action_log,
+                    acp_v2::SessionId::new("child"),
+                    watch::Receiver::constant(acp_v2::PromptCapabilities::new()),
+                    cx,
+                )
+                .agent_owned()
+            })
+        });
+        cx.update(|cx| connection.track_session(&thread, cx));
+        (thread, connection)
+    }
+
+    fn idle_with(stop_reason: acp_v2::StopReason) -> acp_v2::StateUpdate {
+        acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new().stop_reason(stop_reason))
+    }
+
+    fn legacy_permission_request(
+        thread: &mut AcpThread,
+        tool_call_id: &str,
+        cx: &mut Context<AcpThread>,
+    ) -> Task<RequestPermissionOutcome> {
+        thread
+            .request_tool_call_authorization(
+                acp_v1::ToolCall::new(acp_v1::ToolCallId::new(tool_call_id), "Edit").into(),
+                PermissionOptions::Flat(vec![acp_v2::PermissionOption::new(
+                    "allow",
+                    "Allow",
+                    acp_v2::PermissionOptionKind::AllowOnce,
+                )]),
+                AuthorizationKind::PermissionGrant,
+                cx,
+            )
+            .expect("permission request")
+    }
+
+    #[gpui::test]
+    async fn test_cancelling_a_subagent_needs_its_parents_permission(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (thread, connection) = new_agent_owned_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                    cx,
+                )
+                .expect("running");
+        });
+        let refused = thread.update(cx, |thread, cx| thread.cancel(cx));
+        assert!(refused.await.is_err());
+        assert!(connection.take_cancel_calls().is_empty());
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_subagent_association(
+                    &acp_v2::SubagentUpdate::new("child").capabilities(
+                        acp_v2::SubagentSessionCapabilities::new()
+                            .cancel(acp_v2::SessionCancelCapabilities::new()),
+                    ),
+                    cx,
+                )
+                .expect("subagent")
+        });
+        // A v1 subagent's permission requests are anchored to its tool calls.
+        let permission = thread.update(cx, |thread, cx| {
+            legacy_permission_request(thread, "edit", cx)
+        });
+        let cancellation = thread.update(cx, |thread, cx| thread.cancel(cx));
+        assert_eq!(
+            connection.take_cancel_calls(),
+            vec![acp_v2::SessionId::new("child")]
+        );
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.pending_permission_requests().count(), 0);
+        });
+        assert!(matches!(
+            permission.await,
+            RequestPermissionOutcome::Cancelled
+        ));
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(idle_with(acp_v2::StopReason::Cancelled), cx)
+                .expect("idle")
+        });
+        cancellation
+            .await
+            .expect("the subagent confirmed cancellation");
+    }
+
+    #[gpui::test]
+    async fn test_a_cancelled_subagent_releases_its_pending_actions(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (thread, _connection) = new_agent_owned_test_thread(cx).await;
+        let running = || acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new());
+        thread.update(cx, |thread, cx| {
+            thread.update_session_state(running(), cx).expect("running");
+        });
+        let (generic, legacy, elicitation) = thread.update(cx, |thread, cx| {
+            let request = test_generic_permission_request(thread, "allow");
+            let (_, generic) = thread.request_permission(request, cx).expect("request");
+            let legacy = legacy_permission_request(thread, "edit", cx);
+            let session_id = thread.session_id().clone();
+            let elicitation = thread
+                .request_elicitation(
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationFormMode::new(
+                            acp_v2::ElicitationSessionScope::new(session_id),
+                            acp_v2::ElicitationSchema::new().string("name", true),
+                        ),
+                        "Provide a name",
+                    ),
+                    cx,
+                )
+                .expect("elicitation");
+            (generic, legacy, elicitation)
+        });
+
+        // Work that ends normally may leave background requests that still apply.
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(idle_with(acp_v2::StopReason::EndTurn), cx)
+                .expect("idle");
+            assert_eq!(thread.pending_permission_requests().count(), 2);
+            thread.update_session_state(running(), cx).expect("running");
+        });
+
+        // Zed did not cancel this subagent: its work stopped with an ancestor's.
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(idle_with(acp_v2::StopReason::Cancelled), cx)
+                .expect("idle");
+            assert_eq!(thread.pending_permission_requests().count(), 0);
+            let (_, tool_call) = thread
+                .tool_call(&acp_v2::ToolCallId::new("edit"))
+                .expect("tool call");
+            assert_eq!(tool_call.status(), ToolCallStatus::Canceled);
+            let elicitation_id = thread
+                .entries()
+                .iter()
+                .find_map(|entry| match entry {
+                    AgentThreadEntry::Elicitation(id) => Some(id.clone()),
+                    _ => None,
+                })
+                .expect("elicitation entry");
+            let (_, elicitation) = thread.elicitation(&elicitation_id).expect("elicitation");
+            assert!(matches!(elicitation.status, ElicitationStatus::Canceled));
+        });
+        assert_eq!(generic.await, acp_v2::RequestPermissionOutcome::Cancelled);
+        assert!(matches!(legacy.await, RequestPermissionOutcome::Cancelled));
+        assert!(matches!(
+            elicitation.await.action,
+            acp_v2::ElicitationAction::Cancel
+        ));
+    }
+
+    #[gpui::test]
+    async fn test_agent_owned_sessions_report_activity_without_accepting_prompts(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (thread, _connection) = new_agent_owned_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            assert!(thread.uses_reported_activity());
+            assert_eq!(
+                thread.foreground_activity(),
+                ForegroundActivity::Unconfirmed
+            );
+            assert!(!thread.can_retry(cx));
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                    cx,
+                )
+                .expect("agent-owned sessions accept reported state");
+            assert_eq!(thread.status(), ThreadStatus::Generating);
+        });
+
+        let submission = thread.update(cx, |thread, cx| thread.send(vec!["prompt".into()], cx));
+        let submission_id = submission.id;
+        cx.run_until_parked();
+        assert!(submission.await.is_err());
+        thread.read_with(cx, |thread, _| {
+            assert!(matches!(
+                thread
+                    .submission(submission_id)
+                    .expect("rejected prompt")
+                    .state,
+                SubmissionState::Failed(_)
+            ));
+        });
+
+        let retry = thread.update(cx, |thread, cx| thread.retry(cx));
+        cx.run_until_parked();
+        assert!(retry.await.is_err());
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.entries().is_empty());
+            assert!(thread.running_turn.is_none());
+            assert_eq!(thread.foreground_activity(), ForegroundActivity::Running);
+            assert_eq!(thread.activity_generation(), 1);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_unknown_activity_is_unconfirmed_without_ending_work(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (thread, _) = new_receipt_test_thread(cx).await;
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&thread, {
+                let events = events.clone();
+                move |_, event, _| match event {
+                    AcpThreadEvent::Stopped {
+                        activity_generation,
+                        stop_reason,
+                        ..
+                    } => events.borrow_mut().push(format!(
+                        "stopped {activity_generation} {}",
+                        matches!(stop_reason, Some(acp_v2::StopReason::Error(_)))
+                    )),
+                    AcpThreadEvent::ActivityConfirmedIdle => {
+                        events.borrow_mut().push("confirmed idle".to_string())
+                    }
+                    _ => {}
+                }
+            })
+        });
+        let running = || acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new());
+        let unknown = || acp_v2::StateUpdate::Unknown(acp_v2::UnknownStateUpdate::new());
+
+        thread.update(cx, |thread, cx| {
+            thread.update_session_state(running(), cx).expect("running");
+        });
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+
+        thread.update(cx, |thread, cx| {
+            thread.update_session_state(unknown(), cx).expect("unknown");
+            assert_eq!(thread.foreground_activity(), ForegroundActivity::Unknown);
+            assert_eq!(thread.status(), ThreadStatus::Unconfirmed);
+            assert!(!thread.is_waiting_for_confirmation());
+        });
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(running(), cx)
+                .expect("running again");
+            assert_eq!(
+                thread.activity_generation(),
+                1,
+                "unknown must not end the work that was in progress"
+            );
+            thread
+                .update_session_state(unknown(), cx)
+                .expect("unknown again");
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Idle(
+                        acp_v2::IdleStateUpdate::new()
+                            .stop_reason(acp_v2::StopReason::Error(acp_v2::ErrorStopReason::new())),
+                    ),
+                    cx,
+                )
+                .expect("failed idle");
+            assert!(thread.had_error());
+        });
+        cx.run_until_parked();
+        assert_eq!(*events.borrow(), ["stopped 1 true"]);
+
+        events.borrow_mut().clear();
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(unknown(), cx)
+                .expect("unknown while idle");
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new()),
+                    cx,
+                )
+                .expect("idle");
+            assert_eq!(thread.activity_generation(), 1);
+        });
+        cx.run_until_parked();
+        assert_eq!(*events.borrow(), ["confirmed idle"]);
     }
 
     #[gpui::test]
@@ -13158,6 +13871,7 @@ mod tests {
             MessageKind::User,
             MessageKind::Assistant,
             MessageKind::Thought,
+            MessageKind::Session,
         ] {
             let thread = new_test_thread(cx).await;
             let original = json!([{"type": "text", "text": "original", "_meta": {"block": true}}]);
@@ -13224,6 +13938,10 @@ mod tests {
                             serde_json::from_value(patch).expect("thought patch"),
                             cx,
                         ),
+                        MessageKind::Session => thread.upsert_session_message(
+                            serde_json::from_value(patch).expect("session message patch"),
+                            cx,
+                        ),
                     }
                     .expect("apply patch");
                     let (identity, content, meta) = only_keyed_message(thread);
@@ -13245,14 +13963,14 @@ mod tests {
                     acp_v2::TextContent::new("chunk")
                         .meta(acp_v2::Meta::from_iter([("block".into(), json!(true))])),
                 );
-                thread
-                    .append_message_chunk(
-                        kind,
-                        acp_v2::ContentChunk::new(block.clone(), "patch")
-                            .meta(acp_v2::Meta::from_iter([("envelope".into(), json!(true))])),
-                        cx,
-                    )
-                    .expect("append scoped metadata");
+                append_keyed_chunk(
+                    thread,
+                    kind,
+                    acp_v2::ContentChunk::new(block.clone(), "patch")
+                        .meta(acp_v2::Meta::from_iter([("envelope".into(), json!(true))])),
+                    cx,
+                )
+                .expect("append scoped metadata");
                 let (_, content, meta) = only_keyed_message(thread);
                 assert_eq!(content.source_blocks(), &[block]);
                 assert_eq!(
@@ -13264,6 +13982,108 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_session_messages_keep_participants_and_convert_from_v1(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            thread
+                .append_session_message_chunk(
+                    acp_v2::SessionMessageChunk::new("task", "Start by ".into()),
+                    cx,
+                )
+                .expect("a message can start with a chunk and no participants");
+            thread
+                .upsert_session_message(
+                    acp_v2::SessionMessage::new("task")
+                        .sender_session_id(acp_v2::SessionId::new("parent"))
+                        .recipient_session_id(acp_v2::SessionId::new("child")),
+                    cx,
+                )
+                .expect("participants can arrive later");
+            thread
+                .append_session_message_chunk(
+                    acp_v2::SessionMessageChunk::new("task", "reproducing".into())
+                        .sender_session_id(acp_v2::SessionId::new("other")),
+                    cx,
+                )
+                .expect("a chunk's participant fields are ignored");
+            let error = thread
+                .upsert_session_message(
+                    acp_v2::SessionMessage::new("task")
+                        .sender_session_id(acp_v2::SessionId::new("other")),
+                    cx,
+                )
+                .expect_err("a known participant cannot change");
+            assert!(error.to_string().contains("cannot change"), "{error}");
+            thread
+                .upsert_assistant_message(
+                    acp_v2::AgentMessage::new("task").content(vec!["answer".into()]),
+                    cx,
+                )
+                .expect("assistant messages have their own ID space");
+
+            let [
+                AgentThreadEntry::SessionMessage(message),
+                AgentThreadEntry::AssistantMessage(_),
+            ] = thread.entries()
+            else {
+                panic!("expected a session message, then an assistant message");
+            };
+            assert_eq!(message.identity, MessageIdentity::Keyed("task".into()));
+            assert_eq!(message.sender_session_id, Some("parent".into()));
+            assert_eq!(message.recipient_session_id, Some("child".into()));
+            assert_eq!(
+                message.content.source_blocks(),
+                &["Start by ".into(), "reproducing".into()]
+            );
+        });
+
+        // v1 replaces message metadata where v2 patches it by key.
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            for update in [
+                json!({
+                    "sessionUpdate": "session_message",
+                    "messageId": "reply",
+                    "senderSessionId": "child",
+                    "content": [{"type": "text", "text": "Done"}],
+                    "_meta": {"first": true},
+                }),
+                json!({
+                    "sessionUpdate": "session_message",
+                    "messageId": "reply",
+                    "recipientSessionId": "parent",
+                    "_meta": {"second": true},
+                }),
+                json!({
+                    "sessionUpdate": "session_message_chunk",
+                    "messageId": "reply",
+                    "senderSessionId": "other",
+                    "content": {"type": "text", "text": " now"},
+                    "_meta": {"chunk": true},
+                }),
+            ] {
+                thread
+                    .handle_session_update(serde_json::from_value(update).expect("v1 update"), cx)
+                    .expect("v1 session message");
+            }
+            let [AgentThreadEntry::SessionMessage(message)] = thread.entries() else {
+                panic!("expected one session message");
+            };
+            assert_eq!(message.sender_session_id, Some("child".into()));
+            assert_eq!(message.recipient_session_id, Some("parent".into()));
+            assert_eq!(
+                message.meta,
+                Some(acp_v2::Meta::from_iter([("second".into(), json!(true))]))
+            );
+            assert_eq!(
+                message.content.source_blocks(),
+                &["Done".into(), " now".into()]
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_v2_entity_metadata_patches_by_key(cx: &mut TestAppContext) {
         init_test(cx);
         let mut messages = Vec::new();
@@ -13271,6 +14091,7 @@ mod tests {
             MessageKind::User,
             MessageKind::Assistant,
             MessageKind::Thought,
+            MessageKind::Session,
         ] {
             messages.push((kind, new_test_thread(cx).await));
         }
@@ -13337,19 +14158,25 @@ mod tests {
                                 .meta(metadata.clone()),
                             cx,
                         ),
+                        MessageKind::Session => thread.upsert_session_message(
+                            acp_v2::SessionMessage::new("metadata")
+                                .content(vec![block.clone()])
+                                .meta(metadata.clone()),
+                            cx,
+                        ),
                     }
                     .expect("message upsert");
                     let (_, content, stored) = only_keyed_message(thread);
                     assert_eq!(stored, &expected, "{kind:?}");
                     assert_eq!(content.source_blocks(), std::slice::from_ref(&block));
-                    thread
-                        .append_message_chunk(
-                            *kind,
-                            acp_v2::ContentChunk::new("chunk".into(), "metadata")
-                                .meta(snapshot_meta.clone()),
-                            cx,
-                        )
-                        .expect("message chunk");
+                    append_keyed_chunk(
+                        thread,
+                        *kind,
+                        acp_v2::ContentChunk::new("chunk".into(), "metadata")
+                            .meta(snapshot_meta.clone()),
+                        cx,
+                    )
+                    .expect("message chunk");
                     assert_eq!(only_keyed_message(thread).2, &expected);
                 });
             }
@@ -14847,6 +15674,12 @@ mod tests {
                     thread.to_markdown(cx),
                     format!("## Context Compaction (Completed)\n\n{summary}\n\n")
                 );
+                let entry = thread.entries.last().expect("compaction entry must exist");
+                assert!(!entry.has_pending_markdown_render(cx));
+                for markdown in compaction.summary.markdowns() {
+                    markdown.update(cx, |markdown, cx| markdown.ensure_parsed(cx));
+                }
+                assert!(entry.has_pending_markdown_render(cx));
             }
 
             thread
@@ -14878,6 +15711,13 @@ mod tests {
             assert_eq!(
                 thread.to_markdown(cx),
                 "## Context Compaction (Failed)\n\n**Error:** model unavailable\n\n"
+            );
+            assert!(
+                thread
+                    .entries
+                    .last()
+                    .expect("compaction entry must exist")
+                    .has_pending_markdown_render(cx)
             );
 
             for error in [
@@ -16351,6 +17191,35 @@ mod tests {
             RequestPermissionOutcome::Cancelled
         ));
         cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_for_subagent_is_its_latest_run(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            for (id, status) in [
+                ("first-run", acp_v1::ToolCallStatus::Failed),
+                ("resumed-run", acp_v1::ToolCallStatus::InProgress),
+            ] {
+                thread
+                    .upsert_tool_call(
+                        acp_v1::ToolCall::new(acp_v1::ToolCallId::new(id), "Run subagent")
+                            .status(status)
+                            .meta(acp_v1::Meta::from_iter([(
+                                SUBAGENT_SESSION_INFO_META_KEY.into(),
+                                json!({"session_id": "child", "message_start_index": 0}),
+                            )])),
+                        cx,
+                    )
+                    .expect("tool call");
+            }
+            let latest = thread
+                .tool_call_for_subagent(&acp_v2::SessionId::new("child"))
+                .expect("the subagent has a tool call");
+            assert_eq!(latest.id, acp_v2::ToolCallId::new("resumed-run"));
+            assert_eq!(latest.status(), ToolCallStatus::InProgress);
+        });
     }
 
     #[gpui::test]
@@ -22427,6 +23296,65 @@ mod tests {
                 assert_eq!(cx.active_idle_sleep_preventions(), 0);
             }
         }
+    }
+
+    #[gpui::test]
+    async fn test_register_subagent_keeps_the_first_thread_for_a_session(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (parent, connection) = new_receipt_test_thread(cx).await;
+        let parent_session_id = parent.read_with(cx, |thread, _| thread.session_id().clone());
+        let new_child = |session_id: &str, cx: &mut TestAppContext| {
+            let connection = connection.clone();
+            let parent_session_id = parent_session_id.clone();
+            let project = parent.read_with(cx, |thread, _| thread.project().clone());
+            let session_id = acp_v2::SessionId::new(session_id);
+            cx.update(|cx| {
+                let action_log = cx.new(|_| ActionLog::new(project.clone()));
+                cx.new(|cx| {
+                    AcpThread::new(
+                        Some(parent_session_id),
+                        None,
+                        None,
+                        connection,
+                        project,
+                        action_log,
+                        session_id,
+                        watch::Receiver::constant(acp_v2::PromptCapabilities::new()),
+                        cx,
+                    )
+                })
+            })
+        };
+        let first = new_child("child", cx);
+        let duplicate = new_child("child", cx);
+        let other = new_child("other", cx);
+        let spawned = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&parent, {
+                let spawned = spawned.clone();
+                move |_, event, _| {
+                    if let AcpThreadEvent::SubagentSpawned(session_id) = event {
+                        spawned.borrow_mut().push(session_id.to_string());
+                    }
+                }
+            })
+        });
+
+        parent.update(cx, |parent, cx| {
+            parent.register_subagent(first.clone(), cx);
+            parent.register_subagent(duplicate.clone(), cx);
+            parent.register_subagent(other.clone(), cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(*spawned.borrow(), ["child", "other"]);
+        parent.read_with(cx, |parent, _| {
+            assert_eq!(
+                parent.subagent(&acp_v2::SessionId::new("child")),
+                Some(&first)
+            );
+            assert_eq!(parent.subagents().collect::<Vec<_>>(), [&first, &other]);
+        });
     }
 
     #[gpui::test]

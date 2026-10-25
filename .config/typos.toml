@@ -112,6 +112,8 @@ extend-ignore-re = [
     "GHIzJ",
     # Intentionally non-matching query in project search tests
     "NOTHINGmATCHEStHIS",
+    # Ordinal suffix for spelled-out dates in script/github-pr-cleanup.py
+    '2: "nd"',
 ]
 check-filename = true
 

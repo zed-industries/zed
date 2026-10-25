@@ -232,7 +232,6 @@ struct Session {
     acp_thread: WeakEntity<acp_thread::AcpThread>,
     execution: Option<NativeExecution>,
     pending_cancellation: watch::Sender<()>,
-    subagents: Vec<Entity<acp_thread::AcpThread>>,
     project_id: EntityId,
     /// Latest snapshot to persist. Overwritten in place on every save request;
     /// the single save worker drains it, coalescing bursts into one write.
@@ -420,19 +419,19 @@ pub struct LanguageModels {
     model_list: acp_thread::AgentModelList,
     refresh_models_rx: watch::Receiver<()>,
     refresh_models_tx: watch::Sender<()>,
-    _authenticate_all_providers_task: Task<()>,
 }
 
 impl LanguageModels {
     fn new(cx: &mut App) -> Self {
         let (refresh_models_tx, refresh_models_rx) = watch::channel(());
+        LanguageModelRegistry::global(cx)
+            .update(cx, |registry, cx| registry.authenticate_providers(cx));
 
         let mut this = Self {
             models: HashMap::default(),
             model_list: acp_thread::AgentModelList::Grouped(IndexMap::default()),
             refresh_models_rx,
             refresh_models_tx,
-            _authenticate_all_providers_task: Self::authenticate_all_language_model_providers(cx),
         };
         this.refresh_list(cx);
         this
@@ -517,65 +516,6 @@ impl LanguageModels {
 
     fn model_id(model: &LanguageModel) -> AgentModelId {
         AgentModelId::new(format!("{}/{}", model.provider_id().0, model.id().0))
-    }
-
-    fn authenticate_all_language_model_providers(cx: &mut App) -> Task<()> {
-        let authenticate_all_providers = LanguageModelRegistry::global(cx)
-            .read(cx)
-            .visible_providers()
-            .iter()
-            .map(|provider| (provider.id(), provider.name(), provider.authenticate(cx)))
-            .collect::<Vec<_>>();
-
-        cx.spawn(async move |cx| {
-            for (provider_id, provider_name, authenticate_task) in authenticate_all_providers {
-                if let Err(err) = authenticate_task.await {
-                    match err {
-                        language_model::AuthenticateError::CredentialsNotFound => {
-                            // Since we're authenticating these providers in the
-                            // background for the purposes of populating the
-                            // language selector, we don't care about providers
-                            // where the credentials are not found.
-                        }
-                        language_model::AuthenticateError::ConnectionRefused => {
-                            // Not logging connection refused errors as they are mostly from LM Studio's noisy auth failures.
-                            // LM Studio only has one auth method (endpoint call) which fails for users who haven't enabled it.
-                            // TODO: Better manage LM Studio auth logic to avoid these noisy failures.
-                        }
-                        _ => {
-                            // Some providers have noisy failure states that we
-                            // don't want to spam the logs with every time the
-                            // language model selector is initialized.
-                            //
-                            // Ideally these should have more clear failure modes
-                            // that we know are safe to ignore here, like what we do
-                            // with `CredentialsNotFound` above.
-                            match provider_id.0.as_ref() {
-                                "lmstudio" | "ollama" => {
-                                    // LM Studio and Ollama both make fetch requests to the local APIs to determine if they are "authenticated".
-                                    //
-                                    // These fail noisily, so we don't log them.
-                                }
-                                "copilot_chat" => {
-                                    // Copilot Chat returns an error if Copilot is not enabled, so we don't log those errors.
-                                }
-                                _ => {
-                                    log::error!(
-                                        "Failed to authenticate provider: {}: {err:#}",
-                                        provider_name.0
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            cx.update(|cx| {
-                LanguageModelRegistry::global(cx)
-                    .update(cx, |registry, cx| registry.refresh_fallback_model(cx))
-            });
-        })
     }
 }
 
@@ -1071,7 +1011,6 @@ impl NativeAgent {
                 acp_thread: acp_thread.downgrade(),
                 execution: None,
                 pending_cancellation: watch::channel(()).0,
-                subagents: Vec::new(),
                 project_id,
                 pending_save,
                 last_streaming_save_key: None,
@@ -2937,11 +2876,6 @@ impl NativeAgentConnection {
                                     thread.update_tool_call(update, cx)
                                 })??;
                             }
-                            ThreadEvent::SubagentSpawned(session_id) => {
-                                acp_thread.update(cx, |thread, cx| {
-                                    thread.subagent_spawned(session_id, cx);
-                                })?;
-                            }
                             ThreadEvent::Retry(status) => {
                                 if acp_thread::refusal_fallback_model_from_meta(&status.meta)
                                     .is_some()
@@ -3742,14 +3676,13 @@ impl NativeThreadEnvironment {
                     .get(&parent_session_id)
                     .map(|s| s.project_id)
                     .context("parent session not found")?;
-                let acp_thread = agent.register_session(subagent_thread.clone(), project_id, cx);
-                let parent_session = agent
-                    .sessions
-                    .get_mut(&parent_session_id)
-                    .context("parent session not found")?;
-                parent_session.subagents.push(acp_thread.clone());
-                Ok(acp_thread)
+                Ok(agent.register_session(subagent_thread.clone(), project_id, cx))
             })??;
+        self.acp_thread
+            .update(cx, |parent, cx| {
+                parent.register_subagent(acp_thread.clone(), cx)
+            })
+            .context("Parent thread no longer exists")?;
 
         let depth = current_depth + 1;
 
@@ -9519,6 +9452,58 @@ mod internal_tests {
         assert_eq!(session_count, 0);
         assert_eq!(project_count, 0);
         assert!(weak_project.upgrade().is_none());
+    }
+
+    #[gpui::test]
+    async fn test_only_created_subagents_are_registered_with_the_parent(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({ "a": {} })).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = cx
+            .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
+        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+        let new_session = |cx: &mut TestAppContext| {
+            cx.update(|cx| {
+                connection
+                    .clone()
+                    .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
+            })
+        };
+        let parent = new_session(cx).await.unwrap();
+        let unrelated = new_session(cx).await.unwrap();
+        let parent_session_id = parent.read_with(cx, |thread, _| thread.session_id().clone());
+        let unrelated_session_id = unrelated.read_with(cx, |thread, _| thread.session_id().clone());
+        let environment = NativeThreadEnvironment {
+            agent: agent.downgrade(),
+            thread: cx
+                .update(|cx| native_thread_for_session(&agent, &parent_session_id, cx))
+                .downgrade(),
+            acp_thread: parent.downgrade(),
+        };
+
+        let child = cx
+            .update(|cx| environment.create_subagent_thread("child".to_string(), None, cx))
+            .unwrap();
+        cx.update(|cx| environment.resume_subagent_thread(child.id(), cx))
+            .expect("resume the child");
+        // Resuming a session the parent did not create, including itself, must not make
+        // the parent own it: that would be a reference cycle or a self-update.
+        cx.update(|cx| environment.resume_subagent_thread(unrelated_session_id, cx))
+            .expect("resume an unrelated live session");
+        cx.update(|cx| environment.resume_subagent_thread(parent_session_id, cx))
+            .expect("resume the parent's own session");
+
+        parent.read_with(cx, |parent, cx| {
+            assert_eq!(
+                parent
+                    .subagents()
+                    .map(|subagent| subagent.read(cx).session_id().clone())
+                    .collect::<Vec<_>>(),
+                [child.id()]
+            );
+        });
     }
 
     #[gpui::test]
