@@ -960,6 +960,10 @@ impl TypstPreviewView {
             .px_2()
             .h(px(EXPORT_TOOLBAR_HEIGHT))
             .flex_none()
+            // Always themed: the toolbar is viewer chrome above the
+            // mode-colored content area, keeping its labels readable
+            // even when Paper floods the window white.
+            .bg(cx.theme().colors().editor_background)
             .child(
                 Button::new("export-pdf", "Export PDF")
                     .label_size(LabelSize::Small)
@@ -1289,6 +1293,14 @@ impl Render for TypstPreviewView {
             }
         };
 
+        // The area behind the pages floods the whole window with the
+        // mode's background: paper white in Paper mode (default-white
+        // pages blend into one full-window sheet), the theme color in
+        // Theme mode (recolored pages blend in). The toolbar keeps the
+        // theme color so its chrome stays readable in both modes.
+        let (content_bg, content_text) =
+            content_appearance(self.export_background, cx.theme().colors().editor_background);
+
         div()
             .key_context("TypstPreview")
             .track_focus(&self.focus_handle(cx))
@@ -1297,7 +1309,10 @@ impl Render for TypstPreviewView {
             .size_full()
             .flex()
             .flex_col()
-            .bg(cx.theme().colors().editor_background)
+            .bg(content_bg)
+            // State messages and placeholders inherit this so they stay
+            // readable on the flooded white content area in Paper mode.
+            .when_some(content_text, |el, color| el.text_color(color))
             // The toolbar is the first child in every preview state; the
             // content below fills the remaining height via flex_1.
             .child(self.render_export_toolbar(cx))
@@ -1813,6 +1828,22 @@ async fn run_typst_compile(typst_exe: &Path, input: &Path, output: &Path) -> any
     Ok(())
 }
 
+/// Background and text colors for the preview content area — the window
+/// area behind the pages. Paper mode floods it with Typst's default paper
+/// white (default-white pages blend into one full-window sheet) and flips
+/// inherited text to black so state messages stay readable; Theme mode
+/// floods it with the theme color the recolored pages match and leaves
+/// text colors to the theme.
+fn content_appearance(
+    background: ExportBackground,
+    editor_background: gpui::Hsla,
+) -> (gpui::Hsla, Option<gpui::Hsla>) {
+    match background {
+        ExportBackground::Paper => (gpui::white(), Some(gpui::black())),
+        ExportBackground::Theme => (editor_background, None),
+    }
+}
+
 /// Toolbar status line for the current export state: `None` while idle, so
 /// nothing is shown until an export starts.
 fn export_status(
@@ -2167,9 +2198,9 @@ mod paper_recolor_tests {
 #[cfg(test)]
 mod export_tests {
     use super::{
-        export_bg_document, export_bg_prelude, export_bg_wrapper_name, export_status,
-        pdf_output_path, rgba_to_hex, suggested_pdf_name, typst_candidates, ExportBackground,
-        ExportState,
+        content_appearance, export_bg_document, export_bg_prelude, export_bg_wrapper_name,
+        export_status, pdf_output_path, rgba_to_hex, suggested_pdf_name, typst_candidates,
+        ExportBackground, ExportState,
     };
     use gpui::Rgba;
     use std::path::Path;
@@ -2202,6 +2233,22 @@ mod export_tests {
         // Without a file name there is no suggestion; the export reports
         // a failure instead of opening a dialog.
         assert!(suggested_pdf_name(Path::new("..")).is_none());
+    }
+
+    #[test]
+    fn content_appearance_floods_paper_with_white_and_theme_with_editor_bg() {
+        let editor_bg = gpui::Hsla {
+            h: 0.6,
+            s: 0.1,
+            l: 0.1,
+            a: 1.0,
+        };
+        let (bg, text) = content_appearance(ExportBackground::Paper, editor_bg);
+        assert_eq!(bg, gpui::white());
+        assert_eq!(text, Some(gpui::black()));
+        let (bg, text) = content_appearance(ExportBackground::Theme, editor_bg);
+        assert_eq!(bg, editor_bg);
+        assert_eq!(text, None);
     }
 
     #[test]
