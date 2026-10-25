@@ -1107,7 +1107,9 @@ impl AgentThreadEntry {
         }
     }
 
-    pub fn location(&self, ix: usize) -> Option<(ToolCallLocation, AgentLocation)> {
+    /// Returns the raw location with a best-effort resolved projection.
+    /// Resolution is not a precondition for navigation.
+    pub fn location(&self, ix: usize) -> Option<(ToolCallLocation, Option<AgentLocation>)> {
         if let AgentThreadEntry::ToolCall(ToolCall {
             locations,
             resolved_locations,
@@ -1116,7 +1118,7 @@ impl AgentThreadEntry {
         {
             Some((
                 locations.get(ix)?.clone(),
-                resolved_locations.get(ix)?.clone()?,
+                resolved_locations.get(ix).cloned().flatten(),
             ))
         } else {
             None
@@ -3546,7 +3548,8 @@ pub struct AcpThread {
     action_log: Entity<ActionLog>,
     _git_store_subscription: Subscription,
     update_last_checkpoint_if_changed_task: Option<Task<Result<()>>>,
-    shared_buffers: HashMap<Entity<Buffer>, BufferSnapshot>,
+    // ACP bookkeeping must not extend a buffer's lifetime.
+    shared_buffers: HashMap<WeakEntity<Buffer>, BufferSnapshot>,
     turn_id: u32,
     running_turn: Option<RunningTurn>,
     connection: Rc<dyn AgentConnection>,
@@ -6317,9 +6320,13 @@ impl AcpThread {
                 }
                 let project = this.project.clone();
 
+                this.shared_buffers
+                    .retain(|buffer, _| buffer.upgrade().is_some());
                 for location in resolved_locations.iter().flatten() {
-                    this.shared_buffers
-                        .insert(location.buffer.clone(), location.buffer.read(cx).snapshot());
+                    this.shared_buffers.insert(
+                        location.buffer.downgrade(),
+                        location.buffer.read(cx).snapshot(),
+                    );
                 }
                 let Some((ix, tool_call)) = this.tool_call_mut(&id) else {
                     return;
@@ -7847,7 +7854,7 @@ impl AcpThread {
 
             let snapshot = if reuse_shared_snapshot {
                 this.read_with(cx, |this, _| {
-                    this.shared_buffers.get(&buffer.clone()).cloned()
+                    this.shared_buffers.get(&buffer.downgrade()).cloned()
                 })
                 .log_err()
                 .flatten()
@@ -7864,7 +7871,10 @@ impl AcpThread {
 
                 let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
                 this.update(cx, |this, _| {
-                    this.shared_buffers.insert(buffer.clone(), snapshot.clone());
+                    this.shared_buffers
+                        .retain(|buffer, _| buffer.upgrade().is_some());
+                    this.shared_buffers
+                        .insert(buffer.downgrade(), snapshot.clone());
                 })?;
                 snapshot
             };
@@ -7918,7 +7928,7 @@ impl AcpThread {
             let buffer = load?.await?;
             let snapshot = this.update(cx, |this, cx| {
                 this.shared_buffers
-                    .get(&buffer)
+                    .get(&buffer.downgrade())
                     .cloned()
                     .unwrap_or_else(|| buffer.read(cx).snapshot())
             })?;
@@ -17737,7 +17747,10 @@ mod tests {
             let (index, call) = thread.tool_call(&id).expect("tool");
             assert_eq!(call.locations, vec![respelled.clone()]);
             assert!(call.resolved_locations.is_empty());
-            assert!(thread.entries[index].location(0).is_none());
+            assert_eq!(
+                thread.entries[index].location(0),
+                Some((call.locations.first().expect("raw location").clone(), None))
+            );
         });
         cx.run_until_parked();
         thread.update(cx, |thread, cx| {
@@ -17762,7 +17775,10 @@ mod tests {
             let (index, call) = thread.tool_call(&id).expect("tool");
             assert_eq!(call.locations, vec![relative.clone()]);
             assert!(call.resolved_locations.is_empty());
-            assert!(thread.entries[index].location(0).is_none());
+            assert_eq!(
+                thread.entries[index].location(0),
+                Some((call.locations.first().expect("raw location").clone(), None))
+            );
         });
         cx.run_until_parked();
         thread.update(cx, |thread, cx| {
@@ -17783,6 +17799,370 @@ mod tests {
             assert!(call.locations.is_empty());
             assert!(call.resolved_locations.is_empty());
             assert!(thread.entries[index].location(0).is_none());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_location_does_not_retain_buffer(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({"file.rs": "first\nsecond\n"}))
+            .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new(path!("/project"))]),
+                    cx,
+                )
+            })
+            .await
+            .expect("session");
+        let project_path = project.read_with(cx, |project, cx| {
+            project
+                .project_path_for_absolute_path(Path::new(path!("/project/file.rs")), cx)
+                .expect("project path")
+        });
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_wire_tool_call(
+                    serde_json::from_value(json!({
+                        "toolCallId": "locations",
+                        "locations": [{"path": path!("/project/file.rs"), "line": 1}]
+                    }))
+                    .expect("location patch"),
+                    cx,
+                )
+                .expect("tool call");
+        });
+        cx.run_until_parked();
+        project.read_with(cx, |project, cx| {
+            assert!(project.get_open_buffer(&project_path, cx).is_none());
+        });
+        thread.read_with(cx, |thread, _| {
+            let (index, _) = thread
+                .tool_call(&acp_v2::ToolCallId::new("locations"))
+                .expect("tool");
+            let (location, _) = thread
+                .entries
+                .get(index)
+                .expect("entry")
+                .location(0)
+                .expect("raw location");
+            assert_eq!(location.path, PathBuf::from(path!("/project/file.rs")));
+            assert_eq!(location.line, Some(1));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_location_preserves_owned_buffer(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({"file.rs": "first\nsecond\n"}))
+            .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new(path!("/project"))]),
+                    cx,
+                )
+            })
+            .await
+            .expect("session");
+        let project_path = project.read_with(cx, |project, cx| {
+            project
+                .project_path_for_absolute_path(Path::new(path!("/project/file.rs")), cx)
+                .expect("project path")
+        });
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer(project_path.clone(), cx)
+            })
+            .await
+            .expect("open buffer");
+        let weak_buffer = buffer.downgrade();
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_wire_tool_call(
+                    serde_json::from_value(json!({
+                        "toolCallId": "locations",
+                        "locations": [{"path": path!("/project/file.rs"), "line": 1}]
+                    }))
+                    .expect("location patch"),
+                    cx,
+                )
+                .expect("tool call");
+        });
+        cx.run_until_parked();
+        assert!(weak_buffer.upgrade().is_some());
+        project.read_with(cx, |project, cx| {
+            assert_eq!(
+                project.get_open_buffer(&project_path, cx),
+                Some(buffer.clone())
+            );
+        });
+        thread.read_with(cx, |thread, _| {
+            let (index, _) = thread
+                .tool_call(&acp_v2::ToolCallId::new("locations"))
+                .expect("tool");
+            let (_, projection) = thread
+                .entries
+                .get(index)
+                .expect("entry")
+                .location(0)
+                .expect("raw location");
+            assert_eq!(projection.expect("resolved projection").buffer, weak_buffer);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_location_preserves_unsaved_edits(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({"file.rs": "first\nsecond\n"}))
+            .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new(path!("/project"))]),
+                    cx,
+                )
+            })
+            .await
+            .expect("session");
+        let project_path = project.read_with(cx, |project, cx| {
+            project
+                .project_path_for_absolute_path(Path::new(path!("/project/file.rs")), cx)
+                .expect("project path")
+        });
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer(project_path.clone(), cx)
+            })
+            .await
+            .expect("open buffer");
+        let weak_buffer = buffer.downgrade();
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "unsaved\n")], None, cx)
+        });
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_wire_tool_call(
+                    serde_json::from_value(json!({
+                        "toolCallId": "locations",
+                        "locations": [{"path": path!("/project/file.rs"), "line": 1}]
+                    }))
+                    .expect("location patch"),
+                    cx,
+                )
+                .expect("tool call");
+        });
+        cx.run_until_parked();
+        assert!(weak_buffer.upgrade().is_some());
+        project.read_with(cx, |project, cx| {
+            assert_eq!(
+                project.get_open_buffer(&project_path, cx),
+                Some(buffer.clone())
+            );
+        });
+        thread.read_with(cx, |thread, _| {
+            let (index, _) = thread
+                .tool_call(&acp_v2::ToolCallId::new("locations"))
+                .expect("tool");
+            let (_, projection) = thread
+                .entries
+                .get(index)
+                .expect("entry")
+                .location(0)
+                .expect("raw location");
+            assert_eq!(projection.expect("resolved projection").buffer, weak_buffer);
+        });
+        buffer.read_with(cx, |buffer, _| {
+            assert!(buffer.is_dirty());
+            assert_eq!(buffer.text(), "unsaved\nfirst\nsecond\n");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_location_multiple_calls_do_not_retain_buffer(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({"file.rs": "first\nsecond\n"}))
+            .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new(path!("/project"))]),
+                    cx,
+                )
+            })
+            .await
+            .expect("session");
+        let project_path = project.read_with(cx, |project, cx| {
+            project
+                .project_path_for_absolute_path(Path::new(path!("/project/file.rs")), cx)
+                .expect("project path")
+        });
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_wire_tool_call(
+                    serde_json::from_value(json!({
+                        "toolCallId": "locations",
+                        "locations": [{"path": path!("/project/file.rs"), "line": 1}]
+                    }))
+                    .expect("location patch"),
+                    cx,
+                )
+                .expect("tool call");
+        });
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_wire_tool_call(
+                    serde_json::from_value(json!({
+                        "toolCallId": "second",
+                        "locations": [{"path": path!("/project/file.rs"), "line": 1}]
+                    }))
+                    .expect("location patch"),
+                    cx,
+                )
+                .expect("tool call");
+        });
+        cx.run_until_parked();
+        project.read_with(cx, |project, cx| {
+            assert!(project.get_open_buffer(&project_path, cx).is_none());
+        });
+        thread.read_with(cx, |thread, _| {
+            let (index, _) = thread
+                .tool_call(&acp_v2::ToolCallId::new("locations"))
+                .expect("tool");
+            let (location, _) = thread
+                .entries
+                .get(index)
+                .expect("entry")
+                .location(0)
+                .expect("raw location");
+            assert_eq!(location.path, PathBuf::from(path!("/project/file.rs")));
+            assert_eq!(location.line, Some(1));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_location_replay_does_not_retain_buffer(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({"file.rs": "first\nsecond\n"}))
+            .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new(path!("/project"))]),
+                    cx,
+                )
+            })
+            .await
+            .expect("session");
+        let project_path = project.read_with(cx, |project, cx| {
+            project
+                .project_path_for_absolute_path(Path::new(path!("/project/file.rs")), cx)
+                .expect("project path")
+        });
+        let update = acp_v1::SessionUpdate::ToolCall(
+            acp_v1::ToolCall::new("locations", "Read file").locations(vec![
+                acp_v1::ToolCallLocation::new(PathBuf::from(path!("/project/file.rs"))).line(1),
+            ]),
+        );
+        for _ in 0..2 {
+            thread
+                .update(cx, |thread, cx| {
+                    thread.handle_session_update(update.clone(), cx)
+                })
+                .expect("replay tool call");
+            cx.run_until_parked();
+        }
+        cx.run_until_parked();
+        project.read_with(cx, |project, cx| {
+            assert!(project.get_open_buffer(&project_path, cx).is_none());
+        });
+        thread.read_with(cx, |thread, _| {
+            let (index, _) = thread
+                .tool_call(&acp_v2::ToolCallId::new("locations"))
+                .expect("tool");
+            let (location, _) = thread
+                .entries
+                .get(index)
+                .expect("entry")
+                .location(0)
+                .expect("raw location");
+            assert_eq!(location.path, PathBuf::from(path!("/project/file.rs")));
+            assert_eq!(location.line, Some(1));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_location_missing_path_preserves_raw_location(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({"file.rs": "first\nsecond\n"}))
+            .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new(path!("/project"))]),
+                    cx,
+                )
+            })
+            .await
+            .expect("session");
+        let project_path = project.read_with(cx, |project, cx| {
+            project
+                .project_path_for_absolute_path(Path::new(path!("/project/missing.rs")), cx)
+                .expect("project path")
+        });
+        thread.update(cx, |thread, cx| {
+            thread
+                .upsert_wire_tool_call(
+                    serde_json::from_value(json!({
+                        "toolCallId": "locations",
+                        "locations": [{"path": path!("/project/missing.rs"), "line": 1}]
+                    }))
+                    .expect("location patch"),
+                    cx,
+                )
+                .expect("tool call");
+        });
+        cx.run_until_parked();
+        thread.read_with(cx, |thread, _| {
+            let (index, _) = thread
+                .tool_call(&acp_v2::ToolCallId::new("locations"))
+                .expect("tool");
+            let (location, _) = thread
+                .entries
+                .get(index)
+                .expect("entry")
+                .location(0)
+                .expect("raw location");
+            assert_eq!(location.path, PathBuf::from(path!("/project/missing.rs")));
+            assert_eq!(location.line, Some(1));
+        });
+        project.read_with(cx, |project, cx| {
+            assert!(project.get_open_buffer(&project_path, cx).is_none());
         });
     }
 
@@ -18349,7 +18729,11 @@ mod tests {
         let connection = Rc::new(FakeAgentConnection::new());
         let thread = cx
             .update(|cx| {
-                connection.new_session(project, PathList::new(&[Path::new(path!("/project"))]), cx)
+                connection.new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new(path!("/project"))]),
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -18377,12 +18761,21 @@ mod tests {
                 .expect("external tool-call location should resolve");
             assert_eq!(tool_call_location.path, skill_path);
 
-            let buffer = agent_location
-                .buffer
-                .upgrade()
-                .expect("resolved location should keep an open buffer");
-            assert_eq!(buffer.read(cx).text(), "skill body");
+            let agent_location =
+                agent_location.expect("external tool-call location should resolve");
+            assert!(
+                agent_location.buffer.upgrade().is_none(),
+                "resolved buffer must not be retained"
+            );
+            assert!(thread.project.read(cx).opened_buffers(cx).is_empty());
         });
+
+        let buffer = project.update(cx, |project, cx| {
+            project.open_local_buffer(skill_path.clone(), cx)
+        });
+        cx.run_until_parked();
+        let buffer = buffer.await.expect("external file should reopen");
+        cx.update(|cx| assert_eq!(buffer.read(cx).text(), "skill body"));
     }
 
     #[gpui::test]
