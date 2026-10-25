@@ -276,6 +276,7 @@ impl ChangedFileEntry {
         ix: usize,
         depth: usize,
         directory_label: Option<SharedString>,
+        selected: bool,
         commit_sha: SharedString,
         repository: WeakEntity<Repository>,
         workspace: WeakEntity<Workspace>,
@@ -286,6 +287,7 @@ impl ChangedFileEntry {
 
         ListItem::new(("changed-file", ix))
             .spacing(ListItemSpacing::Sparse)
+            .toggle_state(selected)
             .indent_level(depth)
             .indent_step_size(px(TREE_INDENT))
             .start_slot(git_status_icon(self.status))
@@ -358,7 +360,13 @@ struct ChangedFileDirectoryEntry {
 }
 
 impl ChangedFileDirectoryEntry {
-    fn render(&self, ix: usize, git_graph: WeakEntity<GitGraph>, cx: &App) -> AnyElement {
+    fn render(
+        &self,
+        ix: usize,
+        selected: bool,
+        git_graph: WeakEntity<GitGraph>,
+        cx: &App,
+    ) -> AnyElement {
         let path = self.path.clone();
         let expanded = self.expanded;
         let folder_icon = FileIcons::get_folder_icon(expanded, path.as_std_path(), cx)
@@ -377,6 +385,7 @@ impl ChangedFileDirectoryEntry {
             });
 
         ListItem::new(("changed-file-dir", ix))
+            .toggle_state(selected)
             .spacing(ListItemSpacing::Sparse)
             .indent_level(self.depth)
             .indent_step_size(px(TREE_INDENT))
@@ -1482,6 +1491,10 @@ pub struct GitGraph {
     changed_files_expanded_dirs: HashMap<RepoPath, bool>,
     pending_select_sha: Option<Oid>,
     nav_history: Option<ItemNavHistory>,
+    commit_details_focus_handle: FocusHandle,
+    changed_files_focus_handle: FocusHandle,
+    view_commit_focus_handle: FocusHandle,
+    selected_changed_file_index: Option<usize>,
 }
 
 impl GitGraph {
@@ -1747,6 +1760,10 @@ impl GitGraph {
             changed_files_expanded_dirs: HashMap::default(),
             pending_select_sha: None,
             nav_history: None,
+            commit_details_focus_handle: cx.focus_handle(),
+            changed_files_focus_handle: cx.focus_handle().tab_index(7).tab_stop(true),
+            view_commit_focus_handle: cx.focus_handle().tab_index(8).tab_stop(true),
+            selected_changed_file_index: None,
         };
 
         this.fetch_initial_graph_data(cx);
@@ -2159,6 +2176,7 @@ impl GitGraph {
         self.selected_commit_diff = None;
         self.selected_commit_diff_stats = None;
         self.changed_files_expanded_dirs.clear();
+        self.selected_changed_file_index = None;
         cx.emit(ItemEvent::Edit);
         cx.notify();
     }
@@ -2224,6 +2242,14 @@ impl GitGraph {
     }
 
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .commit_details_focus_handle
+            .contains_focused(window, cx)
+        {
+            cx.propagate();
+            return;
+        }
+
         self.open_selected_commit_view(window, cx);
     }
 
@@ -2234,6 +2260,7 @@ impl GitGraph {
         cx: &mut Context<Self>,
     ) {
         self.changed_files_view_mode = self.changed_files_view_mode.toggled();
+        self.selected_changed_file_index = None;
         self.changed_files_scroll_handle
             .scroll_to_item(0, ScrollStrategy::Top);
         cx.notify();
@@ -2327,9 +2354,23 @@ impl GitGraph {
         cx: &mut Context<Self>,
     ) {
         window.focus_next(cx);
+        if !self.focus_handle.contains_focused(window, cx) {
+            let search_focus_handle = self.search_state.editor.focus_handle(cx);
+            window.focus(&search_focus_handle, cx);
+        }
         self.activate_search_editor_if_focused(window, cx);
+        self.select_first_changed_file_if_focused(window);
+
         cx.stop_propagation();
         cx.notify();
+    }
+
+    fn select_first_changed_file_if_focused(&mut self, window: &Window) {
+        if self.changed_files_focus_handle.is_focused(window)
+            && self.selected_changed_file_index.is_none()
+        {
+            self.selected_changed_file_index = Some(0);
+        }
     }
 
     fn focus_previous_tab_stop(
@@ -2339,7 +2380,18 @@ impl GitGraph {
         cx: &mut Context<Self>,
     ) {
         window.focus_prev(cx);
+
+        if !self.focus_handle.contains_focused(window, cx) {
+            // View Commit is the last tab stop while the commit details panel is shown.
+            let last_focus_handle = if self.selected_entry_idx.is_some() {
+                self.view_commit_focus_handle.clone()
+            } else {
+                self.table_interaction_state.read(cx).focus_handle.clone()
+            };
+            window.focus(&last_focus_handle, cx);
+        }
         self.activate_search_editor_if_focused(window, cx);
+        self.select_first_changed_file_if_focused(window);
         cx.stop_propagation();
         cx.notify();
     }
@@ -2363,6 +2415,7 @@ impl GitGraph {
         self.selected_commit_diff = None;
         self.selected_commit_diff_stats = None;
         self.changed_files_expanded_dirs.clear();
+        self.selected_changed_file_index = None;
         self.changed_files_scroll_handle
             .scroll_to_item(0, ScrollStrategy::Top);
         self.table_interaction_state.update(cx, |state, cx| {
@@ -2624,6 +2677,123 @@ impl GitGraph {
                     })
                     .ok();
             }
+        }
+    }
+
+    fn changed_file_tree_entries(&self, entries: &[ChangedFileEntry]) -> Vec<ChangedFileTreeEntry> {
+        build_changed_file_tree_entries(entries.to_vec(), &self.changed_files_expanded_dirs)
+    }
+
+    fn changed_file_entries(&self, cx: &App) -> Vec<ChangedFileEntry> {
+        self.selected_commit_diff
+            .as_ref()
+            .map(|diff| {
+                let mut files = diff.files.iter().collect::<Vec<_>>();
+                if !self.changed_files_view_mode.is_tree() {
+                    files.sort_by_key(|file| file.status());
+                }
+                files
+                    .into_iter()
+                    .map(|file| ChangedFileEntry::from_commit_file(file, cx))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn changed_files_row_count(&self, cx: &App) -> usize {
+        let entries = self.changed_file_entries(cx);
+        if self.changed_files_view_mode.is_tree() {
+            self.changed_file_tree_entries(&entries).len()
+        } else {
+            entries.len()
+        }
+    }
+
+    fn select_next_changed_file(
+        &mut self,
+        _: &SelectNext,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let row_count = self.changed_files_row_count(cx);
+        if row_count == 0 {
+            return;
+        }
+        let next_index = match self.selected_changed_file_index {
+            Some(index) => (index + 1).min(row_count - 1),
+            None => 0,
+        };
+        self.selected_changed_file_index = Some(next_index);
+        self.changed_files_scroll_handle
+            .scroll_to_item(next_index, ScrollStrategy::Nearest);
+        cx.notify();
+    }
+
+    fn select_previous_changed_file(
+        &mut self,
+        _: &SelectPrevious,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let row_count = self.changed_files_row_count(cx);
+        if row_count == 0 {
+            return;
+        }
+        let previous_index = match self.selected_changed_file_index {
+            Some(index) => index.saturating_sub(1),
+            None => 0,
+        };
+        self.selected_changed_file_index = Some(previous_index);
+        self.changed_files_scroll_handle
+            .scroll_to_item(previous_index, ScrollStrategy::Nearest);
+        cx.notify();
+    }
+
+    fn open_selected_changed_file(
+        &mut self,
+        _: &menu::Confirm,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self.selected_changed_file_index else {
+            return;
+        };
+        let Some(selected_idx) = self.selected_entry_idx else {
+            return;
+        };
+        let Some(commit_entry) = self.graph_data.commits.get(selected_idx) else {
+            return;
+        };
+        let Some(repository) = self.get_repository(cx) else {
+            return;
+        };
+
+        let commit_sha: SharedString = commit_entry.data.sha.to_string().into();
+        let repository = repository.downgrade();
+        let workspace = self.workspace.clone();
+        let entries = self.changed_file_entries(cx);
+
+        if self.changed_files_view_mode.is_tree() {
+            let tree_entries = self.changed_file_tree_entries(&entries);
+            match tree_entries.get(index) {
+                Some(ChangedFileTreeEntry::Directory(directory)) => {
+                    self.changed_files_expanded_dirs
+                        .insert(directory.path.clone(), !directory.expanded);
+                    cx.notify();
+                }
+                Some(ChangedFileTreeEntry::File(file)) => {
+                    file.entry.open_in_commit_view(
+                        &commit_sha,
+                        &repository,
+                        &workspace,
+                        window,
+                        cx,
+                    );
+                }
+                None => {}
+            }
+        } else if let Some(entry) = entries.get(index) {
+            entry.open_in_commit_view(&commit_sha, &repository, &workspace, window, cx);
         }
     }
 
@@ -3098,33 +3268,17 @@ impl GitGraph {
         let (total_lines_added, total_lines_removed) =
             self.selected_commit_diff_stats.unwrap_or((0, 0));
 
-        let changed_file_entries: Vec<ChangedFileEntry> = self
-            .selected_commit_diff
-            .as_ref()
-            .map(|diff| {
-                let mut files = diff.files.iter().collect::<Vec<_>>();
-                if !self.changed_files_view_mode.is_tree() {
-                    files.sort_by_key(|file| file.status());
-                }
-                files
-                    .into_iter()
-                    .map(|file| ChangedFileEntry::from_commit_file(file, cx))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let changed_file_entries = Rc::new(changed_file_entries);
+        let changed_file_entries = Rc::new(self.changed_file_entries(cx));
         let tree_entries: Rc<Vec<ChangedFileTreeEntry>> = if self.changed_files_view_mode.is_tree()
         {
-            Rc::new(build_changed_file_tree_entries(
-                changed_file_entries.as_ref().clone(),
-                &self.changed_files_expanded_dirs,
-            ))
+            Rc::new(self.changed_file_tree_entries(&changed_file_entries))
         } else {
             Rc::default()
         };
 
         let is_tree_view = self.changed_files_view_mode.is_tree();
         let view_toggle = IconButton::new("toggle-changed-files-view", IconName::ListTree)
+            .tab_index(6_isize)
             .icon_size(IconSize::Small)
             .toggle_state(self.changed_files_view_mode.is_tree())
             .tooltip({
@@ -3137,6 +3291,7 @@ impl GitGraph {
             })
             .on_click(cx.listener(|this, _, _window, cx| {
                 this.changed_files_view_mode = this.changed_files_view_mode.toggled();
+                this.selected_changed_file_index = None;
                 this.changed_files_scroll_handle
                     .scroll_to_item(0, ScrollStrategy::Top);
                 cx.notify();
@@ -3144,6 +3299,9 @@ impl GitGraph {
 
         v_flex()
             .min_w(px(300.))
+            .tab_index(3)
+            .tab_group()
+            .track_focus(&self.commit_details_focus_handle)
             .h_full()
             .bg(cx.theme().colors().editor_background)
             .flex_basis(DefiniteLength::Fraction(
@@ -3158,6 +3316,7 @@ impl GitGraph {
                     .child(
                         div().absolute().top_2().right_2().child(
                             IconButton::new("close-detail", IconName::Close)
+                                .tab_index(1_isize)
                                 .icon_size(IconSize::Small)
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.selected_entry_idx = None;
@@ -3166,6 +3325,7 @@ impl GitGraph {
                                     this.selected_commit_message = None;
                                     this._selected_commit_message_task = None;
                                     this.changed_files_expanded_dirs.clear();
+                                    this.selected_changed_file_index = None;
                                     this._commit_diff_task = None;
                                     cx.notify();
                                 })),
@@ -3177,6 +3337,7 @@ impl GitGraph {
                                 "toggle-commit-metadata",
                                 !self.commit_details_metadata_collapsed,
                             )
+                            .tab_index(0_isize)
                             .tooltip({
                                 let label = if self.commit_details_metadata_collapsed {
                                     "Show Commit Details"
@@ -3268,6 +3429,7 @@ impl GitGraph {
                                                     .size(IconSize::Small)
                                                     .color(icon_color),
                                             )
+                                            .tab_index(2_isize)
                                             .label_size(LabelSize::Small)
                                             .truncate(true)
                                             .color(Color::Muted)
@@ -3312,6 +3474,7 @@ impl GitGraph {
                                     };
 
                                     Button::new("sha-button", &full_sha)
+                                        .tab_index(3_isize)
                                         .start_icon(
                                             Icon::new(icon).size(IconSize::Small).color(icon_color),
                                         )
@@ -3374,6 +3537,7 @@ impl GitGraph {
                                                 .size(IconSize::Small)
                                                 .color(Color::Muted),
                                         )
+                                        .tab_index(4_isize)
                                         .label_size(LabelSize::Small)
                                         .truncate(true)
                                         .color(Color::Muted)
@@ -3431,6 +3595,10 @@ impl GitGraph {
                     .child(
                         div()
                             .id("changed-files-container")
+                            .track_focus(&self.changed_files_focus_handle)
+                            .on_action(cx.listener(Self::select_next_changed_file))
+                            .on_action(cx.listener(Self::select_previous_changed_file))
+                            .on_action(cx.listener(Self::open_selected_changed_file))
                             .flex_1()
                             .min_h_0()
                             .child({
@@ -3446,6 +3614,11 @@ impl GitGraph {
                                 let workspace = self.workspace.clone();
                                 let git_graph = cx.weak_entity();
                                 let indent_tree_entries = tree_entries.clone();
+                                let selected_changed_file_index = self
+                                    .changed_files_focus_handle
+                                    .is_focused(window)
+                                    .then_some(self.selected_changed_file_index)
+                                    .flatten();
 
                                 uniform_list(
                                     "changed-files-list",
@@ -3453,16 +3626,25 @@ impl GitGraph {
                                     move |range, _window, cx| {
                                         range
                                             .map(|ix| {
+                                                let selected =
+                                                    selected_changed_file_index == Some(ix);
+
                                                 if is_tree_view {
                                                     match &tree_entries[ix] {
                                                         ChangedFileTreeEntry::Directory(entry) => {
-                                                            entry.render(ix, git_graph.clone(), cx)
+                                                            entry.render(
+                                                                ix,
+                                                                selected,
+                                                                git_graph.clone(),
+                                                                cx,
+                                                            )
                                                         }
                                                         ChangedFileTreeEntry::File(entry) => {
                                                             entry.entry.render(
                                                                 ix,
                                                                 entry.depth,
                                                                 None,
+                                                                selected,
                                                                 commit_sha.clone(),
                                                                 repository.clone(),
                                                                 workspace.clone(),
@@ -3479,6 +3661,7 @@ impl GitGraph {
                                                         ix,
                                                         0,
                                                         directory_label,
+                                                        selected,
                                                         commit_sha.clone(),
                                                         repository.clone(),
                                                         workspace.clone(),
@@ -3526,6 +3709,7 @@ impl GitGraph {
             .child(
                 h_flex().p_1p5().w_full().child(
                     Button::new("view-commit", "View Commit")
+                        .track_focus(&self.view_commit_focus_handle)
                         .full_width()
                         .start_icon(
                             Icon::new(IconName::GitCommit)
@@ -4263,13 +4447,13 @@ impl GitGraph {
                     .w_full()
                     .gap_1()
                     .child(
-                        Disclosure::new("toggle-commit-message", !collapsed).on_click(cx.listener(
-                            |this, _, _, cx| {
+                        Disclosure::new("toggle-commit-message", !collapsed)
+                            .tab_index(5_isize)
+                            .on_click(cx.listener(|this, _, _, cx| {
                                 this.commit_details_message_collapsed =
                                     !this.commit_details_message_collapsed;
                                 cx.notify();
-                            },
-                        )),
+                            })),
                     )
                     .child(
                         Label::new("Message")
@@ -7775,6 +7959,319 @@ mod tests {
                 Some(git_graph.clone()),
                 "Go Back from the commit diff view should return to the Git Graph view"
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tab_navigation_stays_within_git_graph(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            serde_json::json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let mut rng = StdRng::seed_from_u64(42);
+        let commits = generate_random_commit_dag(&mut rng, 10, false);
+        fs.set_graph_commits(Path::new("/project/.git"), commits);
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+
+        let workspace = multi_workspace.read_with(&*cx, |multi, _| multi.workspace().clone());
+        let workspace_weak = workspace.downgrade();
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(git_graph.clone()), None, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        cx.draw(
+            point(px(0.), px(0.)),
+            gpui::size(px(1200.), px(800.)),
+            |_, _| multi_workspace.clone().into_any_element(),
+        );
+        cx.run_until_parked();
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.select_first(&menu::SelectFirst, window, cx);
+        });
+        cx.run_until_parked();
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            let table_focus_handle = graph.table_interaction_state.read(cx).focus_handle.clone();
+            window.focus(&table_focus_handle, cx);
+        });
+        cx.run_until_parked();
+
+        let mut reached_changed_files = false;
+        let mut reached_view_commit = false;
+        let mut wrapped_to_search = false;
+
+        for _ in 0..20 {
+            cx.dispatch_action(FocusNextTabStop);
+            cx.run_until_parked();
+
+            let done = git_graph.update_in(cx, |graph, window, cx| {
+                assert!(
+                    graph.focus_handle.contains_focused(window, cx),
+                    "Tab moved focus outside of the Git Graph"
+                );
+                reached_changed_files |= graph.changed_files_focus_handle.is_focused(window);
+                reached_view_commit |= graph.view_commit_focus_handle.is_focused(window);
+                graph.focus_handle(cx).is_focused(window) // the search editor
+            });
+            if done {
+                wrapped_to_search = true;
+                break;
+            }
+        }
+
+        assert!(
+            reached_changed_files,
+            "Tab should reach the changed files list"
+        );
+        assert!(
+            reached_view_commit,
+            "Tab should reach the View Commit button"
+        );
+        assert!(
+            wrapped_to_search,
+            "Tab should wrap around to the search editor"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_shift_tab_wraps_to_last_tab_stop(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            serde_json::json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let mut rng = StdRng::seed_from_u64(42);
+        let commits = generate_random_commit_dag(&mut rng, 10, false);
+        fs.set_graph_commits(Path::new("/project/.git"), commits);
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+
+        let workspace = multi_workspace.read_with(&*cx, |multi, _| multi.workspace().clone());
+        let workspace_weak = workspace.downgrade();
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(git_graph.clone()), None, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        cx.draw(
+            point(px(0.), px(0.)),
+            gpui::size(px(1200.), px(800.)),
+            |_, _| multi_workspace.clone().into_any_element(),
+        );
+        cx.run_until_parked();
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.select_first(&menu::SelectFirst, window, cx);
+        });
+        cx.run_until_parked();
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            window.focus(&graph.focus_handle(cx), cx);
+        });
+        cx.run_until_parked();
+
+        cx.dispatch_action(FocusPreviousTabStop);
+        cx.run_until_parked();
+
+        git_graph.update_in(cx, |graph, window, _| {
+            assert!(
+                graph.view_commit_focus_handle.is_focused(window),
+                "Shift-Tab from the search editor should wrap to View Commit"
+            );
+        });
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.cancel(&menu::Cancel, window, cx);
+            window.focus(&graph.focus_handle(cx), cx);
+        });
+        cx.run_until_parked();
+
+        cx.dispatch_action(FocusPreviousTabStop);
+        cx.run_until_parked();
+        git_graph.update_in(cx, |graph, window, cx| {
+            let table_focus_handle = graph.table_interaction_state.read(cx).focus_handle.clone();
+            assert!(
+                 table_focus_handle.is_focused(window),
+                 "Shift-Tab from the search editor should wrap to the table when no commit is selected"
+             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_changed_files_keyboard_selection(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            serde_json::json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let mut rng = StdRng::seed_from_u64(42);
+        let commits = generate_random_commit_dag(&mut rng, 10, false);
+        fs.set_graph_commits(Path::new("/project/.git"), commits);
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+
+        let workspace = multi_workspace.read_with(&*cx, |multi, _| multi.workspace().clone());
+        let workspace_weak = workspace.downgrade();
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(git_graph.clone()), None, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        cx.draw(
+            point(px(0.), px(0.)),
+            gpui::size(px(1200.), px(800.)),
+            |_, _| multi_workspace.clone().into_any_element(),
+        );
+        cx.run_until_parked();
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.select_first(&menu::SelectFirst, window, cx);
+        });
+        cx.run_until_parked();
+
+        git_graph.update(cx, |graph, cx| {
+            graph.changed_files_view_mode = ChangedFilesViewMode::Flat;
+            graph.selected_commit_diff = Some(CommitDiff {
+                files: vec![
+                    CommitFile {
+                        path: RepoPath::new("a.txt").expect("repository path should be valid"),
+                        old_text: Some("old".into()),
+                        new_text: Some("new".into()),
+                        is_binary: false,
+                    },
+                    CommitFile {
+                        path: RepoPath::new("b.txt").expect("repository path should be valid"),
+                        old_text: Some("old".into()),
+                        new_text: Some("new".into()),
+                        is_binary: false,
+                    },
+                ],
+                is_shallow_boundary: false,
+            });
+            cx.notify();
+        });
+
+        // Down past the end clamps to the last row
+        git_graph.update_in(cx, |graph, window, cx| {
+            for _ in 0..3 {
+                graph.select_next_changed_file(&menu::SelectNext, window, cx);
+            }
+            assert_eq!(graph.selected_changed_file_index, Some(1));
+        });
+
+        // Up past the start clamps to the first row
+        git_graph.update_in(cx, |graph, window, cx| {
+            for _ in 0..3 {
+                graph.select_previous_changed_file(&menu::SelectPrevious, window, cx);
+            }
+            assert_eq!(graph.selected_changed_file_index, Some(0));
+        });
+
+        // Selecting another commit resets the changed file selection
+        git_graph.update(cx, |graph, cx| {
+            graph.select_entry(1, ScrollStrategy::Nearest, cx);
+            assert_eq!(graph.selected_changed_file_index, None);
+        });
+
+        // An empty list (diff not loaded yet) leaves the selection unset
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.selected_commit_diff = None;
+            graph.select_next_changed_file(&menu::SelectNext, window, cx);
+            assert_eq!(graph.selected_changed_file_index, None);
         });
     }
 

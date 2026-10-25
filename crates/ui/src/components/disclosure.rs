@@ -17,6 +17,7 @@ pub struct Disclosure {
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
     on_toggle_expanded: Option<Arc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     opened_icon: IconName,
+    tab_index: Option<isize>,
 }
 
 impl Disclosure {
@@ -32,11 +33,18 @@ impl Disclosure {
             shape: None,
             visible_on_hover: None,
             tooltip: None,
+            tab_index: None,
         }
     }
 
     pub fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
         self.tooltip = Some(Box::new(tooltip));
+        self
+    }
+
+    /// Sets the tab index of the underlying [`IconButton`].
+    pub fn tab_index(mut self, tab_index: impl Into<isize>) -> Self {
+        self.tab_index = Some(tab_index.into());
         self
     }
 
@@ -112,6 +120,7 @@ impl RenderOnce for Disclosure {
         .when_some(self.on_toggle_expanded, move |this, on_toggle| {
             this.on_click(move |event, window, cx| on_toggle(event, window, cx))
         })
+        .when_some(self.tab_index, |this, tab_index| this.tab_index(tab_index))
     }
 }
 
