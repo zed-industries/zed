@@ -14034,8 +14034,8 @@ pub(crate) fn open_link(
                                     ]
                                     .into_iter()
                                     .flatten()
-                                    .map(move |path| {
-                                        path_style.join(root, path)
+                                    .filter_map(move |path| {
+                                        (!path_style.has_root(path)).then(|| path_style.join(root, path))
                                     })
                                 })
                                 .collect::<Vec<_>>()
