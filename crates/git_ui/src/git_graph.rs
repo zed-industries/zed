@@ -23,7 +23,7 @@ use gpui::{
     Hsla, MouseButton, MouseDownEvent, PathBuilder, Pixels, Point, ScrollEvent, ScrollHandle,
     ScrollStrategy, SharedString, Subscription, Task, TextRun, TextStyleRefinement,
     UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, point, prelude::*,
-    px, uniform_list,
+    px, relative, uniform_list,
 };
 use language::line_diff;
 use markdown::{Markdown, MarkdownElement};
@@ -1552,9 +1552,7 @@ impl GitGraph {
             )
             .width;
 
-        label_width
-            .clamp(REF_LABEL_GUTTER_MIN_WIDTH, REF_LABEL_GUTTER_MAX_WIDTH)
-            .min(self.graph_viewport_width(window, cx) / 2.)
+        label_width.clamp(REF_LABEL_GUTTER_MIN_WIDTH, REF_LABEL_GUTTER_MAX_WIDTH)
     }
 
     /// Returns the column fractions in display order:
@@ -1606,16 +1604,6 @@ impl GitGraph {
         };
 
         ColumnWidthConfig::explicit(widths)
-    }
-
-    fn graph_viewport_width(&self, window: &Window, cx: &App) -> Pixels {
-        let container = self.column_widths.read(cx).cached_container_width();
-        let graph_fraction = self.preview_column_fractions(window, cx)[0];
-        if container > px(0.) && graph_fraction > 0.0 {
-            container * graph_fraction
-        } else {
-            self.graph_canvas_content_width()
-        }
     }
 
     pub fn new(
@@ -3561,12 +3549,7 @@ impl GitGraph {
         let first_visible_row = (scroll_offset_y / row_height).floor() as usize;
         let vertical_scroll_offset = scroll_offset_y - (first_visible_row as f32 * row_height);
 
-        // The graph column is split into a fixed-width ref-label gutter and the
-        // canvas; the canvas only occupies the space to the right of the gutter.
-        let canvas_viewport_width = (self.graph_viewport_width(window, cx)
-            - self.ref_label_gutter_width(window, cx))
-        .max(px(0.));
-        let graph_width = self.graph_canvas_content_width().max(canvas_viewport_width);
+        let graph_content_width = self.graph_canvas_content_width();
         let last_visible_row = first_visible_row + visible_row_count + 1;
 
         let viewport_range = first_visible_row.min(loaded_commit_count.saturating_sub(1))
@@ -3846,7 +3829,8 @@ impl GitGraph {
                 })
             },
         )
-        .w(graph_width)
+        .w_full()
+        .min_w(graph_content_width)
         .h_full()
     }
 
@@ -3860,7 +3844,6 @@ impl GitGraph {
         cx: &mut Context<GitGraph>,
     ) -> impl IntoElement {
         let row_height = Self::row_height(window, cx);
-        let gutter_width = self.ref_label_gutter_width(window, cx);
         let visible_row_count = self.visible_row_count(window, cx);
         let table_state = self.table_interaction_state.read(cx);
         let viewport_height = table_state
@@ -3931,7 +3914,7 @@ impl GitGraph {
                     .absolute()
                     .top(top)
                     .left_0()
-                    .w(gutter_width)
+                    .w_full()
                     .h(row_height)
                     .bg(bg_color)
                     .into_any_element(),
@@ -3988,7 +3971,7 @@ impl GitGraph {
                     .absolute()
                     .top(top)
                     .left_0()
-                    .w(gutter_width)
+                    .w_full()
                     .h(row_height)
                     .child(
                         h_flex()
@@ -4608,6 +4591,7 @@ impl Render for GitGraph {
                                                                         .relative()
                                                                         .h_full()
                                                                         .w(gutter_width)
+                                                                        .max_w(relative(0.5))
                                                                         .flex_shrink_0()
                                                                         .overflow_hidden()
                                                                         .child(
@@ -7394,6 +7378,94 @@ mod tests {
                 computed_row_height, measured_item_height,
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_graph_canvas_resizes_with_detail_panel_in_same_frame(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            serde_json::json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let mut rng = StdRng::seed_from_u64(42);
+        let commits = generate_random_commit_dag(&mut rng, 20, false);
+        fs.set_graph_commits(Path::new("/project/.git"), commits);
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace_weak =
+            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let draw_and_measure = |cx: &mut gpui::VisualTestContext| {
+            cx.draw(
+                point(px(0.), px(0.)),
+                gpui::size(px(1200.), px(800.)),
+                |_, _| git_graph.clone().into_any_element(),
+            );
+            git_graph.read_with(&*cx, |graph, _| {
+                graph
+                    .graph_canvas_bounds
+                    .get()
+                    .expect("graph canvas should have been painted")
+                    .size
+                    .width
+            })
+        };
+
+        // Two frames so the column state has settled before measuring.
+        draw_and_measure(cx);
+        let width_without_panel = draw_and_measure(cx);
+
+        git_graph.update(cx, |graph, cx| {
+            graph.select_entry(0, ScrollStrategy::Nearest, cx);
+        });
+        cx.run_until_parked();
+        let width_with_panel = draw_and_measure(cx);
+        assert!(
+            width_with_panel < width_without_panel,
+            "opening the detail panel should shrink the graph canvas in the same frame \
+             (without panel: {width_without_panel:?}, with panel: {width_with_panel:?})"
+        );
+        assert_eq!(width_with_panel, draw_and_measure(cx));
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.cancel(&Cancel, window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            draw_and_measure(cx),
+            width_without_panel,
+            "closing the detail panel should restore the graph canvas width in the same frame"
+        );
     }
 
     #[gpui::test]
