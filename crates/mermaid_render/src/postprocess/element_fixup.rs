@@ -311,7 +311,7 @@ pub(super) fn process<'a>(
         inner: events,
         background_css: crate::css_color(theme.background),
         text_color_css: crate::css_color(theme.text_color),
-        font_family_css: theme.font_family.clone(),
+        font_family_css: theme.svg_font_family(),
         svg_seen: false,
         skip_rect_depth: 0,
     }
