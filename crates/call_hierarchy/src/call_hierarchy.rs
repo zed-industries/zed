@@ -762,6 +762,7 @@ impl PickerDelegate for CallHierarchyDelegate {
         let tooltip_max_width = self.modal_width;
         let full_signature = call.display.full_signature.clone();
         let full_path = call.display.path.clone();
+        let detail = call.display.detail.clone();
 
         Some(
             ListItem::new(ix)
@@ -791,6 +792,7 @@ impl PickerDelegate for CallHierarchyDelegate {
                         AnyView::from(cx.new(|_| CallSignatureTooltip {
                             label: tooltip_label.clone(),
                             full_signature: full_signature.clone(),
+                            detail: detail.clone(),
                             path: full_path.clone(),
                             max_width: tooltip_max_width,
                         }))
@@ -803,6 +805,7 @@ impl PickerDelegate for CallHierarchyDelegate {
 struct CallSignatureTooltip {
     label: Option<(Arc<CodeLabel>, SharedString)>,
     full_signature: SharedString,
+    detail: Option<SharedString>,
     path: Option<SharedString>,
     max_width: Pixels,
 }
@@ -824,10 +827,28 @@ impl Render for CallSignatureTooltip {
         let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size(cx);
         let max_width = self.max_width;
         let path = self.path.clone();
+        let detail_styled = if label_carries_detail(self.label.as_ref().map(|(label, _)| label.as_ref())) {
+            None
+        } else {
+            self.detail.clone().map(|detail| {
+                let mut detail_style = signature_style.clone();
+                detail_style.color = cx.theme().colors().text_muted;
+                StyledText::new(detail).with_default_highlights(&detail_style, std::iter::empty())
+            })
+        };
+
         tooltip_container(cx, move |el, _| {
             el.max_w(max_width)
                 .gap_0p5()
-                .child(div().text_size(buffer_font_size).child(signature))
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .flex_wrap()
+                        .text_size(buffer_font_size)
+                        .child(signature)
+                        .children(detail_styled)
+                )
+
                 .children(
                     path.map(|path| Label::new(path).size(LabelSize::Small).color(Color::Muted)),
                 )
