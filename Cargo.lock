@@ -18337,6 +18337,7 @@ dependencies = [
  "gpui",
  "icons",
  "livekit_client",
+ "path",
  "platform_title_bar",
  "project",
  "recent_projects",
