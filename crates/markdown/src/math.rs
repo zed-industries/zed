@@ -350,6 +350,10 @@ impl CachedMathExpression {
     }
 }
 
+/// Optical adjustment (in pixels) to slightly raise math formulas so that Computer Modern's
+/// visual baseline and math axis align seamlessly with heavier sans-serif UI fonts.
+const MATH_INLINE_OPTICAL_Y_OFFSET: f32 = 1.0;
+
 /// Renders a math expression as a GPUI element.
 ///
 /// Returns the rendered image if available, or a fallback element showing
@@ -377,7 +381,7 @@ pub(crate) fn render_math_expression(
                     .into_any_element()
             } else {
                 let baseline = text_baseline.unwrap_or(math_state.text_ascent);
-                let shift = baseline - baseline_y;
+                let shift = baseline - baseline_y - MATH_INLINE_OPTICAL_Y_OFFSET;
                 div()
                     .child(gpui::img(image).mt(px(shift)))
                     .into_any_element()
