@@ -42,12 +42,16 @@ pub(crate) type PointF = gpui::Point<f32>;
 /// not reported: their frames are never drawn into again.
 pub mod gpu_surfaces {
     use objc2::runtime::AnyObject;
+    use parking_lot::RwLock;
+    use std::mem;
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
-    use std::sync::{Arc, RwLock};
 
-    /// One frame's report. `frame` numbers the reported frames, process-wide, and `surfaces`
-    /// holds the address of each BGRA `CVPixelBuffer` the frame samples, once per draw, which
-    /// identifies it for as long as its owner retains it.
+    /// One frame's report. `frame` numbers the reported frames, process-wide across every
+    /// window's renderer, and `surfaces` holds the address of each BGRA `CVPixelBuffer` the frame
+    /// samples, once per draw, which identifies it for as long as its owner retains it. A buffer
+    /// painted in two windows is reported by a frame of each, and is free to draw into again only
+    /// once both have completed.
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub enum Event {
         /// The frame's command buffer is encoded with these surfaces bound and is about to be
@@ -58,19 +62,26 @@ pub mod gpu_surfaces {
     }
 
     /// Receives every report, on the thread that encodes the frame (`Encoded`) or Metal's
-    /// completion thread (`Completed`). It may call [`set_hook`].
+    /// completion thread (`Completed`). It may call [`set_hook`]. It must not panic: `Completed`
+    /// is delivered from the command buffer's completed handler, an Objective-C block, and a
+    /// panic there aborts the process.
     pub type Hook = Arc<dyn Fn(Event) + Send + Sync>;
 
     static HOOK: RwLock<Option<Hook>> = RwLock::new(None);
     static NEXT_FRAME: AtomicU64 = AtomicU64::new(1);
 
     /// Installs the hook that receives every report, replacing any earlier one, or removes it.
+    /// The earlier hook is dropped with the lock released, so what it captured may use these
+    /// functions as it drops.
     pub fn set_hook(hook: Option<Hook>) {
-        *HOOK.write().unwrap_or_else(|e| e.into_inner()) = hook;
+        let mut guard = HOOK.write();
+        let old = mem::replace(&mut *guard, hook);
+        drop(guard);
+        drop(old);
     }
 
     fn hook() -> Option<Hook> {
-        HOOK.read().unwrap_or_else(|e| e.into_inner()).clone()
+        HOOK.read().clone()
     }
 
     pub(super) fn has_hook() -> bool {
@@ -2028,7 +2039,11 @@ mod tests {
     struct HookGuard(#[allow(dead_code)] parking_lot::MutexGuard<'static, ()>);
 
     fn install_hook(hook: gpu_surfaces::Hook) -> HookGuard {
-        let guard = HOOK_TESTS.lock();
+        // A hook test that fails leaks its guard (see `surface_hook_may_replace_itself`), so the
+        // next one fails too instead of waiting for it forever.
+        let guard = HOOK_TESTS
+            .try_lock_for(Duration::from_secs(30))
+            .expect("another hook test failed and kept the gpu_surfaces hook");
         gpu_surfaces::set_hook(Some(hook));
         HookGuard(guard)
     }
@@ -2065,6 +2080,33 @@ mod tests {
             panic!("report deadlocked: the hook could not replace itself");
         }
         assert!(*replaced.lock());
+    }
+
+    /// Replacing the hook drops the old one outside the lock, so whatever it captured may use the
+    /// hook functions as it drops.
+    #[test]
+    fn set_hook_drops_the_old_hook_outside_the_lock() {
+        struct AsksOnDrop;
+        impl Drop for AsksOnDrop {
+            fn drop(&mut self) {
+                gpu_surfaces::has_hook();
+            }
+        }
+        let asks = AsksOnDrop;
+        let guard = install_hook(Arc::new(move |_| {
+            let _ = &asks;
+        }));
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            gpu_surfaces::set_hook(None);
+            sender.send(()).unwrap();
+        });
+        if receiver.recv_timeout(Duration::from_secs(5)).is_err() {
+            // The stuck thread holds the lock, so uninstalling the hook would hang too.
+            mem::forget(guard);
+            panic!("set_hook deadlocked: the old hook was dropped under the lock");
+        }
+        assert!(!gpu_surfaces::has_hook());
     }
 
     /// A premultiplied BGRA surface keeps its color where alpha is zero, a YCbCr surface drawn

@@ -11,7 +11,8 @@ use refineable::Refineable;
 /// A source of a surface's content.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SurfaceSource {
-    /// A CoreVideo image buffer
+    /// A CoreVideo image buffer: a 4:2:0 YCbCr video frame or a premultiplied BGRA image, as
+    /// [`Window::paint_surface`](crate::Window::paint_surface) documents.
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     Surface(CFRetained<CVPixelBuffer>),
 }
