@@ -208,7 +208,7 @@ impl MathState {
         };
         let text_system = cx.text_system();
         let font_id = text_system.resolve_font(&font);
-        let base_font_size = font_size / 1.21;
+        let base_font_size = font_size / MATH_FONT_SCALE_FACTOR;
         let ascent = text_system
             .ascent(font_id, Pixels::from(base_font_size))
             .as_f32();
@@ -349,6 +349,11 @@ impl CachedMathExpression {
         })
     }
 }
+
+/// Scaling factor applied to math formulas relative to the surrounding text font size.
+/// KaTeX's standard ratio is 1.21 in web CSS, but in Zed's UI 1.14 balances KaTeX's
+/// larger capital letters and symbols with surrounding UI fonts.
+pub(crate) const MATH_FONT_SCALE_FACTOR: f32 = 1.14;
 
 /// Optical adjustment (in pixels) to slightly raise math formulas so that Computer Modern's
 /// visual baseline and math axis align seamlessly with heavier sans-serif UI fonts.

@@ -704,7 +704,7 @@ impl Markdown {
             Some(MarkdownFont::Preview) => theme_settings.markdown_preview_font_size(cx).as_f32(),
             _ => theme_settings.ui_font_size(cx).as_f32(),
         };
-        let font_size = base_font_size * 1.21;
+        let font_size = base_font_size * crate::math::MATH_FONT_SCALE_FACTOR;
         if (self.math_state.font_size() - font_size).abs() > 0.01 {
             let parsed = self.parsed_markdown.clone();
             self.math_state.update(&parsed, font_size, cx);
@@ -1195,7 +1195,7 @@ impl Markdown {
                         }
                         _ => theme_settings.ui_font_size(cx).as_f32(),
                     };
-                    let font_size = base_font_size * 1.21;
+                    let font_size = base_font_size * crate::math::MATH_FONT_SCALE_FACTOR;
                     this.math_state.update(&parsed_markdown, font_size, cx);
                 } else {
                     this.math_state.clear();
@@ -2960,7 +2960,9 @@ impl Element for MarkdownElement {
                         if let Some(expr) = parsed_markdown.math_expressions.get(&range.start) {
                             let text_style = builder.text_style();
                             let text_font_size = text_style.font_size.to_pixels(window.rem_size());
-                            let line_height_length = if !self.style.height_is_multiple_of_line_height
+                            let line_height_length = if !self
+                                .style
+                                .height_is_multiple_of_line_height
                                 && text_style.line_height == self.style.base_text_style.line_height
                             {
                                 rems(1.3).into()
