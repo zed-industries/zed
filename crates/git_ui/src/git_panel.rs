@@ -1228,6 +1228,7 @@ pub struct GitPanel {
     commit_history_scroll_handle: UniformListScrollHandle,
     commit_history: CommitHistory,
     focused_history_entry: Option<usize>,
+    active_history_sha: Option<Oid>,
     history_keyboard_nav: bool,
     _commit_message_buffer_subscription: Option<Subscription>,
     _repo_subscriptions: Vec<Subscription>,
@@ -1371,10 +1372,18 @@ impl GitPanel {
         let pending_commit_message_restores = serialized_panel
             .map(|panel| panel.commit_messages)
             .unwrap_or_default();
+        let workspace_entity = cx.entity();
 
         cx.new(|cx| {
             let focus_handle = cx.focus_handle();
             cx.on_focus(&focus_handle, window, Self::focus_in).detach();
+
+            cx.subscribe(&workspace_entity, |this, _, event, cx| {
+                if let workspace::Event::ActiveItemChanged = event {
+                    this.update_active_history_sha(cx);
+                }
+            })
+            .detach();
 
             let mut was_sort_by = GitPanelSettings::get_global(cx).sort_by;
             let mut was_group_by = GitPanelSettings::get_global(cx).group_by;
@@ -1565,6 +1574,7 @@ impl GitPanel {
                 commit_history_scroll_handle: UniformListScrollHandle::new(),
                 commit_history: CommitHistory::Loading,
                 focused_history_entry: None,
+                active_history_sha: None,
                 history_keyboard_nav: false,
                 _commit_message_buffer_subscription: None,
                 _repo_subscriptions: Vec::new(),
@@ -5564,6 +5574,9 @@ impl GitPanel {
             }
         }
         self.active_repository = new_active_repository;
+        if active_repository_changed {
+            self.update_active_history_sha(cx);
+        }
         self.reopen_commit_buffer(window, cx);
         self.preload_commit_history(cx);
         if self.active_tab == GitPanelTab::History {
@@ -7510,6 +7523,36 @@ impl GitPanel {
         }
     }
 
+    fn history_entry_index(&self, sha: Oid) -> Option<usize> {
+        self.commit_history_entries()
+            .iter()
+            .position(|entry| entry.sha == sha)
+    }
+
+    fn update_active_history_sha(&mut self, cx: &mut Context<Self>) {
+        let active_history_sha = maybe!({
+            let repository = self.active_repository.as_ref()?;
+            let commit_view = self
+                .workspace
+                .upgrade()?
+                .read(cx)
+                .active_item_as::<CommitView>(cx)?;
+            let commit_view = commit_view.read(cx);
+            if commit_view.repository() != repository {
+                return None;
+            }
+            commit_view.commit_sha().parse().ok()
+        });
+        if self.active_history_sha == active_history_sha {
+            return;
+        }
+        self.active_history_sha = active_history_sha;
+        if let Some(index) = active_history_sha.and_then(|sha| self.history_entry_index(sha)) {
+            self.focused_history_entry = Some(index);
+        }
+        cx.notify();
+    }
+
     fn select_next_history_entry(&mut self, cx: &mut Context<Self>) {
         let count = self.commit_history_entries().len();
         if count == 0 {
@@ -7703,10 +7746,15 @@ impl GitPanel {
     fn set_commit_history(&mut self, commit_history: CommitHistory, cx: &mut Context<Self>) {
         let changed = self.commit_history != commit_history;
         self.commit_history = commit_history;
-        // Keep the focused entry within range as the history grows or clears.
+        // Keep the focused entry within range as the history grows or clears,
+        // starting from the active commit when nothing is focused yet.
         let count = self.commit_history_entries().len();
-        let focused = self.focused_history_entry.unwrap_or(0);
-        self.focused_history_entry = (count > 0).then(|| focused.min(count - 1));
+        let focused = self.focused_history_entry.or_else(|| {
+            self.active_history_sha
+                .and_then(|sha| self.history_entry_index(sha))
+        });
+        self.focused_history_entry =
+            focused.and_then(|focused| (count > 0).then(|| focused.min(count - 1)));
         if changed {
             cx.notify();
         }
@@ -7754,6 +7802,7 @@ impl GitPanel {
         let remote = self.git_remote(cx);
 
         let focused_history_entry = self.focused_history_entry;
+        let active_history_sha = self.active_history_sha;
         let is_panel_focused = self.focus_handle.is_focused(window);
         let show_focus_border = self.history_keyboard_nav;
         let has_context_menu = self.context_menu.is_some();
@@ -7853,6 +7902,7 @@ impl GitPanel {
 
                                     let is_unpushed = index < ahead_count;
                                     let is_focused = focused_history_entry == Some(index);
+                                    let is_active = active_history_sha == Some(entry.sha);
                                     let is_context_menu_target =
                                         context_menu_target_index == Some(index);
                                     let workspace = workspace.clone();
@@ -7884,8 +7934,17 @@ impl GitPanel {
                                                 )
                                             },
                                         )
-                                        .hover(|s| s.bg(cx.theme().colors().element_hover))
-                                        .when(is_context_menu_target, |this| {
+                                        .when(is_active, |this| {
+                                            this.bg(cx.theme().colors().element_selected)
+                                        })
+                                        .hover(|s| {
+                                            s.bg(if is_active {
+                                                cx.theme().colors().element_selected
+                                            } else {
+                                                cx.theme().colors().element_hover
+                                            })
+                                        })
+                                        .when(is_context_menu_target && !is_active, |this| {
                                             this.bg(cx.theme().colors().element_hover)
                                         })
                                         .child(
@@ -11196,6 +11255,134 @@ mod tests {
         assert!(
             !fs.is_dir(Path::new(path!("/demo/plain.txt/.git"))).await,
             "git init should not run inside a single-file worktree"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_history_tab_tracks_active_commit_view(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree("/root", json!({ "project": { ".git": {} } }))
+            .await;
+
+        let dot_git = Path::new(path!("/root/project/.git"));
+        let [newest_sha, middle_sha, oldest_sha] =
+            [3, 2, 1].map(|byte| Oid::from_bytes(&[byte; 20]).unwrap());
+        fs.with_git_state(dot_git, false, |state| {
+            state.refs.insert("HEAD".into(), newest_sha.to_string());
+            state.graph_commits = [newest_sha, middle_sha, oldest_sha]
+                .into_iter()
+                .map(|sha| {
+                    Arc::new(git::repository::InitialGraphCommitData {
+                        sha,
+                        parents: SmallVec::new(),
+                        ref_names: Vec::new(),
+                    })
+                })
+                .collect();
+        })
+        .unwrap();
+
+        let project = Project::test(fs, [Path::new(path!("/root/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+        cx.run_until_parked();
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+        panel.update_in(cx, |panel, window, cx| {
+            panel.activate_history_tab(&ActivateHistoryTab, window, cx);
+        });
+        wait_for_commit_history_to_settle(&panel, cx).await;
+        cx.run_until_parked();
+
+        let history_state = |cx: &mut VisualTestContext| {
+            panel.read_with(cx, |panel, _| {
+                (panel.active_history_sha, panel.focused_history_entry)
+            })
+        };
+        assert_eq!(
+            history_state(cx),
+            (None, None),
+            "no commit should be highlighted or focused before one is opened"
+        );
+
+        let repository = panel.read_with(cx, |panel, _| panel.active_repository.clone().unwrap());
+        let open_commit = |sha: Oid, cx: &mut VisualTestContext| {
+            cx.update(|window, cx| {
+                CommitView::open(
+                    sha.to_string(),
+                    repository.downgrade(),
+                    workspace.downgrade(),
+                    None,
+                    None,
+                    window,
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+        };
+
+        open_commit(middle_sha, cx);
+        assert_eq!(history_state(cx), (Some(middle_sha), Some(1)));
+        let middle_commit_view = workspace
+            .read_with(cx, |workspace, cx| {
+                workspace.active_item_as::<CommitView>(cx)
+            })
+            .unwrap();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let test_item = cx.new(TestItem::new);
+            workspace.add_item_to_active_pane(Box::new(test_item), None, true, window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            history_state(cx),
+            (None, Some(1)),
+            "switching to a non-commit tab should clear the highlight but keep the cursor"
+        );
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.active_pane().update(cx, |pane, cx| {
+                let index = pane.index_for_item(&middle_commit_view).unwrap();
+                pane.activate_item(index, true, true, window, cx);
+            });
+        });
+        cx.run_until_parked();
+        assert_eq!(history_state(cx), (Some(middle_sha), Some(1)));
+
+        open_commit(oldest_sha, cx);
+        assert_eq!(history_state(cx), (Some(oldest_sha), Some(2)));
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.activate_changes_tab(&ActivateChangesTab, window, cx);
+            panel.activate_history_tab(&ActivateHistoryTab, window, cx);
+        });
+        wait_for_commit_history_to_settle(&panel, cx).await;
+        assert_eq!(
+            history_state(cx),
+            (Some(oldest_sha), Some(2)),
+            "reloading the history should place the cursor on the active commit"
+        );
+
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.active_pane().update(cx, |pane, cx| {
+                    let item_id = pane.active_item().unwrap().item_id();
+                    pane.close_item_by_id(item_id, workspace::SaveIntent::Skip, window, cx)
+                })
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            history_state(cx),
+            (Some(middle_sha), Some(1)),
+            "closing the active commit view should highlight the commit view activated next"
         );
     }
 
