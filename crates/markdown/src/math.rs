@@ -352,7 +352,8 @@ impl CachedMathExpression {
 
 /// Optical adjustment (in pixels) to slightly raise math formulas so that Computer Modern's
 /// visual baseline and math axis align seamlessly with heavier sans-serif UI fonts.
-const MATH_INLINE_OPTICAL_Y_OFFSET: f32 = 1.0;
+/// On macOS Retina displays (2x scale), 0.5 logical pixels corresponds to exactly 1 physical pixel.
+const MATH_INLINE_OPTICAL_Y_OFFSET: f32 = 0.5;
 
 /// Renders a math expression as a GPUI element.
 ///
