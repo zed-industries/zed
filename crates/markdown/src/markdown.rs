@@ -2974,7 +2974,7 @@ impl Element for MarkdownElement {
                             let text_system = cx.text_system();
                             let font_id = text_system.resolve_font(&text_style.font());
                             let text_ascent = text_system.ascent(font_id, text_font_size);
-                            let text_descent = text_system.descent(font_id, text_font_size);
+                            let text_descent = text_system.descent(font_id, text_font_size).abs();
                             let padding_top = (text_line_height - text_ascent - text_descent) / 2.0;
                             let text_baseline = (padding_top + text_ascent).as_f32();
 

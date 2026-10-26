@@ -216,7 +216,7 @@ impl MathState {
             .descent(font_id, Pixels::from(base_font_size))
             .as_f32();
         let line_height = base_font_size * 1.3;
-        let padding_top = (line_height - ascent - descent) / 2.0;
+        let padding_top = (line_height - ascent - descent.abs()) / 2.0;
         self.text_ascent = padding_top + ascent;
 
         let mut new_order = Vec::new();
