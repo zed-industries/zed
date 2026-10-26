@@ -677,6 +677,13 @@ pub struct TurnFields {
     pub reported_activity_generation: Option<u64>,
 }
 
+enum ThreadControlsPosition {
+    /// Below a finalized assistant message.
+    TurnEnd { user_message_index: Option<usize> },
+    /// Below the last entry when it isn't an assistant message.
+    ThreadBottom,
+}
+
 /// How a tool call is rendered relative to its surroundings.
 ///
 /// `Standalone` draws its own border/margin/location header. `Embedded` is
@@ -6796,6 +6803,7 @@ impl ThreadView {
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
+        let is_thread_bottom = entry_ix + 1 == total_entries;
         let is_indented = entry.is_indented();
         let is_first_indented = is_indented
             && self
@@ -7011,7 +7019,6 @@ impl ThreadView {
                 is_subagent_output: _,
             }) => {
                 let mut is_blank = true;
-                let is_last = entry_ix + 1 == total_entries;
 
                 let message_body = v_flex()
                     .w_full()
@@ -7052,7 +7059,7 @@ impl ThreadView {
                     v_flex()
                         .px_5()
                         .py_1p5()
-                        .when(is_last, |this| this.pb_4())
+                        .when(is_thread_bottom, |this| this.pb_4())
                         .w_full()
                         .text_ui(cx)
                         .child(message_body)
@@ -7227,8 +7234,8 @@ impl ThreadView {
                 .child(self.render_thread_controls(
                     &thread,
                     entry_ix,
-                    entry_ix + 1 == total_entries,
-                    user_message_index,
+                    is_thread_bottom,
+                    ThreadControlsPosition::TurnEnd { user_message_index },
                     cx,
                 ))
                 .into_any_element()
@@ -7240,12 +7247,18 @@ impl ThreadView {
 
         let comments_editor = self.thread_feedback.comments_editor.clone();
 
-        let primary = if entry_ix + 1 == total_entries {
+        let primary = if is_thread_bottom {
             v_flex()
                 .w_full()
                 .child(primary)
                 .when(!is_assistant, |this| {
-                    this.child(self.render_thread_controls(&thread, entry_ix, true, None, cx))
+                    this.child(self.render_thread_controls(
+                        &thread,
+                        entry_ix,
+                        is_thread_bottom,
+                        ThreadControlsPosition::ThreadBottom,
+                        cx,
+                    ))
                 })
                 .when_some(comments_editor, |this, editor| {
                     this.child(Self::render_feedback_feedback_editor(editor, cx))
@@ -7445,7 +7458,7 @@ impl ThreadView {
         thread: &Entity<AcpThread>,
         entry_ix: usize,
         is_thread_bottom: bool,
-        user_message_index: Option<usize>,
+        position: ThreadControlsPosition,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let is_generating = matches!(thread.read(cx).status(), ThreadStatus::Generating);
@@ -7456,6 +7469,13 @@ impl ThreadView {
             return Empty.into_any_element();
         }
 
+        let user_message_index = match position {
+            ThreadControlsPosition::TurnEnd { user_message_index } => user_message_index,
+            ThreadControlsPosition::ThreadBottom => None,
+        };
+
+        // Not `Some(entry_ix)` for turn ends: a turn that only has thoughts would copy nothing
+        // but still show the copied state. The search stops at `entry_ix` when it has text.
         let copy_response_button =
             Self::agent_message_copy_index(thread.read(cx).entries(), entry_ix, cx).map(
                 |response_index| {
