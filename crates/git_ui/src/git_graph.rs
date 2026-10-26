@@ -3382,7 +3382,7 @@ impl GitGraph {
                                         )
                                         .tooltip({
                                             move |_window, cx: &mut App| {
-                                                Tooltip::simple("Open in Browser", cx)
+                                                Tooltip::simple("Open In Browser", cx)
                                             }
                                         })
                                         .start_icon(
