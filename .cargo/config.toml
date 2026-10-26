@@ -21,4 +21,4 @@ rustflags = [
 rustflags = ["-C", "link-arg=-fuse-ld=lld"]
 
 [env]
-MACOSX_DEPLOYMENT_TARGET = "10.15.7"
+MACOSX_DEPLOYMENT_TARGET = "12.0"
