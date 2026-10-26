@@ -1,4 +1,3 @@
-
 /// Defines a Criterion benchmark group for benchmarks annotated with [`gpui::bench`].
 ///
 /// This mirrors `criterion::criterion_group!`, but the group measures with the
