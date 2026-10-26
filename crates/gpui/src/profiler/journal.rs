@@ -1712,7 +1712,7 @@ mod tests {
         cx.update(|cx| {
             cx.system_wake_observers
                 .clone()
-                .retain(&(), |callback| callback(cx))
+                .retain(|callback| callback(cx))
         });
         cx.run_until_parked();
         handle

@@ -30,7 +30,6 @@ use std::{
     collections::VecDeque,
     fmt::{Debug, Display, Formatter},
     hash::{Hash, Hasher},
-    mem,
     ops::{Deref, DerefMut, Range},
     sync::{
         Arc,

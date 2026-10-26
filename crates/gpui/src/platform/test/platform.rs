@@ -83,7 +83,7 @@ impl ScreenCaptureSource for TestScreenCaptureSource {
         _foreground_executor: &ForegroundExecutor,
         _frame_callback: Box<dyn Fn(ScreenCaptureFrame) + Send>,
     ) -> oneshot::Receiver<Result<Box<dyn ScreenCaptureStream>>> {
-        let (mut tx, rx) = oneshot::channel();
+        let (tx, rx) = oneshot::channel();
         let stream = TestScreenCaptureStream {};
         tx.send(Ok(Box::new(stream) as Box<dyn ScreenCaptureStream>))
             .ok();
@@ -573,7 +573,7 @@ impl Platform for TestPlatform {
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
-        let (mut tx, rx) = oneshot::channel();
+        let (tx, rx) = oneshot::channel();
         tx.send(Ok(self
             .screen_capture_sources
             .borrow()

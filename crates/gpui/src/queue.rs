@@ -511,7 +511,7 @@ mod tests {
 
     #[test]
     fn all_tasks_get_yielded() {
-        let (tx, mut rx) = PriorityQueueReceiver::new();
+        let (tx, rx) = PriorityQueueReceiver::new();
         tx.send(Priority::Medium, 20).unwrap();
         tx.send(Priority::High, 30).unwrap();
         tx.send(Priority::Low, 10).unwrap();
