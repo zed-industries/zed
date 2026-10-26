@@ -163,8 +163,16 @@ impl Vim {
             let snapshot = display_map.buffer_snapshot();
             let mut edits = Vec::new();
             let mut ranges = Vec::new();
-            // The length of the text requested so far at each offset.
+            // The length of the text requested so far at each insertion
+            // point. Keyed by the position in the source buffer: offsets on
+            // both sides of an excerpt boundary can map to the same source
+            // position, and the multi buffer coalesces their insertions.
             let mut requested_at = HashMap::default();
+            let insertion_point = |offset| {
+                snapshot
+                    .point_to_buffer_offset(offset)
+                    .map(|(buffer, offset)| (buffer.remote_id(), offset))
+            };
 
             // Like Helix, the new selection covers the surrounded text
             // including the added delimiters, so that surrounds compose and
@@ -178,12 +186,12 @@ impl Vim {
                 let start = range.start.to_offset(display_map, Bias::Right);
                 let end = range.end.to_offset(display_map, Bias::Left);
 
-                let requested = requested_at.entry(start).or_insert(0);
+                let requested = requested_at.entry(insertion_point(start)).or_insert(0);
                 let start_edge = SurroundedEdge::new(snapshot, start, *requested);
                 *requested += pair.start.len();
                 edits.push((start..start, pair.start.clone()));
 
-                let requested = requested_at.entry(end).or_insert(0);
+                let requested = requested_at.entry(insertion_point(end)).or_insert(0);
                 *requested += pair.end.len();
                 let end_edge = SurroundedEdge::new(snapshot, end, *requested);
                 edits.push((end..end, pair.end.clone()));
@@ -362,6 +370,62 @@ mod test {
         cx.set_selections_state("«Aaˇ»");
         cx.simulate_keystrokes("m s (");
         cx.assert_editor_state("«(Aaˇ»");
+        assert_eq!(source_text(&mut cx), "(Aa)b");
+    }
+
+    #[gpui::test]
+    async fn test_helix_surround_add_between_excerpts(cx: &mut gpui::TestAppContext) {
+        VimTestContext::init(cx);
+        cx.update(|cx| {
+            VimTestContext::init_keybindings(true, cx);
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |s| s.helix_mode = Some(true));
+            });
+        });
+        let (editor, cx) = cx.add_window_view(|window, cx| {
+            let multi_buffer = MultiBuffer::build_multi(
+                [(
+                    "a\nx\nb",
+                    vec![
+                        Point::new(0, 0)..Point::new(0, 1),
+                        Point::new(2, 0)..Point::new(2, 1),
+                    ],
+                )],
+                cx,
+            );
+            // Delete the text between the excerpts, so that the end of the
+            // first and the start of the second map to the same source
+            // offset.
+            let buffer = multi_buffer
+                .read(cx)
+                .all_buffers()
+                .into_iter()
+                .next()
+                .unwrap();
+            buffer.update(cx, |buffer, cx| buffer.edit([(1..4, "")], None, cx));
+            Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+        });
+        let mut cx = EditorTestContext::for_editor_in(editor, cx).await;
+
+        // Both delimiters land at the same source offset and show up at the
+        // start of the second excerpt.
+        cx.set_selections_state("a«\nˇ»b");
+        cx.simulate_keystrokes("m s (");
+        cx.assert_editor_state("a«\n()ˇ»b");
+        assert_eq!(source_text(&mut cx), "a()b");
+    }
+
+    fn source_text(cx: &mut EditorTestContext) -> String {
+        cx.update_editor(|editor, _window, cx| {
+            let buffer = editor
+                .buffer()
+                .read(cx)
+                .all_buffers()
+                .into_iter()
+                .next()
+                .unwrap();
+            buffer.read(cx).text()
+        })
     }
 
     #[gpui::test]
