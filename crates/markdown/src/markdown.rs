@@ -2772,6 +2772,19 @@ impl Element for MarkdownElement {
                                     None,
                                     None,
                                 );
+                            } else {
+                                current_img_block_range = Some(range.clone());
+                                let enclosing_link_url = (builder.link_depth > 0)
+                                    .then(|| builder.rendered_links.last())
+                                    .flatten()
+                                    .map(|link| link.destination_url.clone());
+                                let fallback_opens_image_url = enclosing_link_url.is_none();
+                                let fallback_image = image_fallback_element(
+                                    dest_url.clone(),
+                                    alt_text.clone(),
+                                    fallback_opens_image_url,
+                                );
+                                builder.push_image_child(fallback_image);
                             }
                         }
                         MarkdownTag::Paragraph => {
