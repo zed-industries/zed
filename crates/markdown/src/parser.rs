@@ -956,8 +956,8 @@ mod tests {
     use super::*;
 
     const CONDITIONAL_OPTIONS: Options = Options::ENABLE_YAML_STYLE_METADATA_BLOCKS;
-    const UNWANTED_OPTIONS: Options = Options::ENABLE_DEFINITION_LIST
-        .union(Options::ENABLE_WIKILINKS);
+    const UNWANTED_OPTIONS: Options =
+        Options::ENABLE_DEFINITION_LIST.union(Options::ENABLE_WIKILINKS);
 
     #[test]
     fn all_options_considered() {
@@ -1880,7 +1880,10 @@ mod tests {
             .events
             .iter()
             .any(|(_, event)| matches!(event, MarkdownEvent::InlineMath(_)));
-        assert!(!has_math, "math inside code blocks should not be parsed as math");
+        assert!(
+            !has_math,
+            "math inside code blocks should not be parsed as math"
+        );
     }
 
     #[test]
@@ -1908,7 +1911,7 @@ mod tests {
         let math_events: Vec<_> = parsed
             .events
             .iter()
-            .filter_map(|(range, event)| match event {
+            .filter_map(|(_range, event)| match event {
                 MarkdownEvent::InlineMath(latex) => Some(latex.clone()),
                 _ => None,
             })
@@ -1926,16 +1929,28 @@ mod tests {
             .iter()
             .filter(|(_, event)| matches!(event, MarkdownEvent::InlineMath(_)))
             .count();
-        assert_eq!(math_count, 2, "adjacent math expressions should each be parsed");
+        assert_eq!(
+            math_count, 2,
+            "adjacent math expressions should each be parsed"
+        );
     }
 
     #[test]
     fn test_math_preserves_surrounding_markdown() {
         let input = "**bold** and $x^2$ and *italic*";
         let parsed = parse_markdown_with_options(input, false, false, false);
-        let has_bold = parsed.events.iter().any(|(_, e)| matches!(e, MarkdownEvent::Start(MarkdownTag::Strong)));
-        let has_italic = parsed.events.iter().any(|(_, e)| matches!(e, MarkdownEvent::Start(MarkdownTag::Emphasis)));
-        let has_math = parsed.events.iter().any(|(_, e)| matches!(e, MarkdownEvent::InlineMath(_)));
+        let has_bold = parsed
+            .events
+            .iter()
+            .any(|(_, e)| matches!(e, MarkdownEvent::Start(MarkdownTag::Strong)));
+        let has_italic = parsed
+            .events
+            .iter()
+            .any(|(_, e)| matches!(e, MarkdownEvent::Start(MarkdownTag::Emphasis)));
+        let has_math = parsed
+            .events
+            .iter()
+            .any(|(_, e)| matches!(e, MarkdownEvent::InlineMath(_)));
         assert!(has_bold, "bold should still be parsed");
         assert!(has_italic, "italic should still be parsed");
         assert!(has_math, "math should be parsed");

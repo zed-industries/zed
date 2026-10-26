@@ -129,7 +129,6 @@ members = [
     "crates/llama_cpp",
     "crates/lmstudio",
     "crates/lsp",
-    "crates/latex_preview",
     "crates/lsp_locations",
     "crates/markdown",
     "crates/markdown_preview",
@@ -250,7 +249,6 @@ members = [
 
     "extensions/glsl",
     "extensions/html",
-    "extensions/latex",
     "extensions/proto",
     "extensions/test-extension",
 
@@ -355,7 +353,7 @@ grammars = { path = "crates/grammars" }
 gpui = { path = "crates/gpui", default-features = false }
 gpui_shared_string = { path = "crates/gpui_shared_string" }
 gpui_linux = { path = "crates/gpui_linux", default-features = false }
-gpui_macos = { path = "crates/gpui_macos", default-features = false }
+gpui_macos = { path = "crates/gpui_macos", default-features = false, features = ["runtime_shaders"] }
 gpui_macros = { path = "crates/gpui_macros" }
 gpui_platform = { path = "crates/gpui_platform", default-features = false }
 gpui_web = { path = "crates/gpui_web" }

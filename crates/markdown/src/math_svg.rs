@@ -78,9 +78,7 @@ pub fn display_list_to_svg(display_list: &DisplayList, font_size: f32) -> MathSv
 
                 let ch = ratex_font::katex_ttf_glyph_char(font_id, *char_code);
 
-                if let Some(path_data) =
-                    resolve_glyph_path(font_id, ch, &fonts, &mut font_refs)
-                {
+                if let Some(path_data) = resolve_glyph_path(font_id, ch, &fonts, &mut font_refs) {
                     let fill = color_to_svg(color);
                     svg.push_str(&format!(
                         "<path d=\"{}\" fill=\"{}\" transform=\"translate({:.2},{:.2}) scale({:.4})\" />",
@@ -147,7 +145,10 @@ pub fn display_list_to_svg(display_list: &DisplayList, font_size: f32) -> MathSv
                 let stroke_attr = if *is_fill {
                     String::new()
                 } else {
-                    format!(" stroke=\"{}\" stroke-width=\"{:.2}\" fill=\"none\"", fill_attr, 1.5)
+                    format!(
+                        " stroke=\"{}\" stroke-width=\"{:.2}\" fill=\"none\"",
+                        fill_attr, 1.5
+                    )
                 };
                 let fill_attr_final = if *is_fill {
                     format!(" fill=\"{}\"", fill_attr)
@@ -192,9 +193,8 @@ fn resolve_glyph_path<'a>(
         return None;
     }
 
-    let outlines = ratex_font_loader::outline_cache::get_or_compute_outline(
-        font_id, font_ref, glyph_id,
-    )?;
+    let outlines =
+        ratex_font_loader::outline_cache::get_or_compute_outline(font_id, font_ref, glyph_id)?;
 
     let units_per_em = font_ref.units_per_em().unwrap_or(1000.0);
     let scale = 1000.0 / units_per_em;
@@ -215,7 +215,10 @@ fn resolve_glyph_path<'a>(
                 }
                 d.push_str(&format!(
                     " Q{} {} {} {}",
-                    p1.x * scale, -p1.y * scale, p2.x * scale, -p2.y * scale
+                    p1.x * scale,
+                    -p1.y * scale,
+                    p2.x * scale,
+                    -p2.y * scale
                 ));
             }
             OutlineCurve::Cubic(p0, p1, p2, p3) => {
@@ -224,9 +227,12 @@ fn resolve_glyph_path<'a>(
                 }
                 d.push_str(&format!(
                     " C{} {} {} {} {} {}",
-                    p1.x * scale, -p1.y * scale,
-                    p2.x * scale, -p2.y * scale,
-                    p3.x * scale, -p3.y * scale
+                    p1.x * scale,
+                    -p1.y * scale,
+                    p2.x * scale,
+                    -p2.y * scale,
+                    p3.x * scale,
+                    -p3.y * scale
                 ));
             }
         }
@@ -304,17 +310,17 @@ mod tests {
     #[test]
     fn test_display_list_to_svg_rect() {
         let items = vec![DisplayItem::Rect {
-            x: 0,
-            y: 0,
-            width: 10,
-            height: 10,
+            x: 0.0,
+            y: 0.0,
+            width: 10.0,
+            height: 10.0,
             color: Color::new(0.0, 0.0, 0.0, 1.0),
         }];
         let list = DisplayList {
             items,
-            width: 10,
-            height: 10,
-            depth: 0,
+            width: 10.0,
+            height: 10.0,
+            depth: 0.0,
         };
         let output = display_list_to_svg(&list, 12.0);
         assert!(output.svg_bytes.len() > 50, "SVG should be non-trivial");
@@ -328,9 +334,9 @@ mod tests {
     fn test_display_list_to_svg_empty() {
         let list = DisplayList {
             items: vec![],
-            width: 0,
-            height: 0,
-            depth: 0,
+            width: 0.0,
+            height: 0.0,
+            depth: 0.0,
         };
         let output = display_list_to_svg(&list, 12.0);
         assert!(output.svg_bytes.len() > 0);
@@ -345,12 +351,6 @@ fn color_to_svg(color: &Color) -> String {
     if (a - 1.0).abs() < 0.01 {
         format!("#{:02x}{:02x}{:02x}", r, g, b)
     } else {
-        format!(
-            "rgba({},{},{},{:.2})",
-            r,
-            g,
-            b,
-            a
-        )
+        format!("rgba({},{},{},{:.2})", r, g, b, a)
     }
 }

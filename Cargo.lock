@@ -9003,7 +9003,6 @@ dependencies = [
  "qoi",
  "ravif",
  "rayon",
- "rgb",
  "tiff",
  "zune-core",
  "zune-jpeg",
@@ -10085,17 +10084,6 @@ dependencies = [
  "unindent",
  "url",
  "util",
-]
-
-[[package]]
-name = "latex_preview"
-version = "0.1.0"
-dependencies = [
- "image",
- "ratex-layout",
- "ratex-parser",
- "ratex-render",
- "ratex-types",
 ]
 
 [[package]]
@@ -23742,13 +23730,6 @@ dependencies = [
 [[package]]
 name = "zed_html"
 version = "0.3.1"
-dependencies = [
- "zed_extension_api 0.7.0",
-]
-
-[[package]]
-name = "zed_latex"
-version = "0.1.0"
 dependencies = [
  "zed_extension_api 0.7.0",
 ]
