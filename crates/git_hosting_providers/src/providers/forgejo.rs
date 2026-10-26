@@ -228,6 +228,21 @@ impl GitHostingProvider for Forgejo {
         permalink
     }
 
+    fn build_create_pull_request_url(
+        &self,
+        remote: &ParsedGitRemote,
+        source_branch: &str,
+    ) -> Option<Url> {
+        let ParsedGitRemote { owner, repo } = remote;
+        let mut url = self.base_url();
+        url.path_segments_mut()
+            .ok()?
+            .pop_if_empty()
+            .extend([owner.as_ref(), repo.as_ref(), "compare"])
+            .extend(source_branch.split('/'));
+        Some(url)
+    }
+
     async fn commit_author_avatar_url(
         &self,
         repo_owner: &str,
