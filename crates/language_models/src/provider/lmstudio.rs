@@ -23,6 +23,7 @@ use std::sync::LazyLock;
 use std::{collections::BTreeMap, sync::Arc};
 use ui::{ButtonLike, ConfiguredApiCard, Divider, List, ListBulletItem, Tooltip, prelude::*};
 use ui_input::InputField;
+use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
 use language_model::chat_completion::ChatCompletionEventMapper;
@@ -55,7 +56,8 @@ pub struct State {
     credentials_provider: Arc<dyn CredentialsProvider>,
     http_client: Arc<dyn HttpClient>,
     available_models: Vec<lmstudio::Model>,
-    fetch_model_task: Option<Task<Result<()>>>,
+    fetch_model_task: Option<Task<()>>,
+    last_fetch_models_error: Option<String>,
     _subscription: Subscription,
 }
 
@@ -122,14 +124,23 @@ impl State {
     }
 
     fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
-        let task = self.fetch_models(cx);
+        let fetch_task = self.fetch_models(cx);
+        let task = cx.spawn(async move |this, cx| {
+            let result = fetch_task.await;
+            this.update(cx, |this, _cx| {
+                this.last_fetch_models_error =
+                    result.as_ref().err().map(|error| format!("{error:#}"));
+            })
+            .ok();
+            result.log_err();
+        });
         self.fetch_model_task.replace(task);
     }
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         let credentials_provider = self.credentials_provider.clone();
         let api_url = LmStudioLanguageModelProvider::api_url(cx).into();
-        let _task = self.api_key_state.load_if_needed(
+        let load_key = self.api_key_state.load_if_needed(
             api_url,
             |this| &mut this.api_key_state,
             credentials_provider,
@@ -140,8 +151,9 @@ impl State {
             return Task::ready(Ok(()));
         }
 
-        let fetch_models_task = self.fetch_models(cx);
-        cx.spawn(async move |_this, _cx| {
+        cx.spawn(async move |state, cx| {
+            load_key.await?;
+            let fetch_models_task = state.update(cx, |state, cx| state.fetch_models(cx))?;
             match fetch_models_task.await {
                 Ok(()) => Ok(()),
                 Err(err) => {
@@ -207,6 +219,7 @@ impl LmStudioLanguageModelProvider {
                     http_client,
                     available_models: Default::default(),
                     fetch_model_task: None,
+                    last_fetch_models_error: None,
                     _subscription: subscription,
                 }
             }),
@@ -315,6 +328,11 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
 
     fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
         self.state.update(cx, |state, cx| state.authenticate(cx))
+    }
+
+    fn refresh_models(&self, cx: &mut App) {
+        self.state
+            .update(cx, |state, cx| state.restart_fetch_models_task(cx));
     }
 
     fn settings_view(&self, _cx: &mut App) -> Option<ProviderSettingsView> {
@@ -893,5 +911,105 @@ impl Render for ConfigurationView {
                         }
                     }),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use credentials_provider::test_support::FakeCredentialsProvider;
+    use gpui::TestAppContext;
+    use http_client::{AsyncBody, FakeHttpClient, Response};
+
+    #[gpui::test]
+    async fn enabling_ai_discovers_models_with_stored_credentials(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let mut store = SettingsStore::test(cx);
+            store.update_user_settings(cx, |settings| {
+                settings.project.disable_ai = Some(true.into());
+            });
+            cx.set_global(store);
+            language_model::set_credentials_read_gate::<SettingsStore>(crate::ai_disabled, cx);
+        });
+        let credentials = Arc::new(FakeCredentialsProvider::default());
+        credentials
+            .state
+            .lock()
+            .keys
+            .insert(LMSTUDIO_API_URL.to_string(), b"stored-key".to_vec());
+        let client = FakeHttpClient::create(|request| async move {
+            if request
+                .headers()
+                .get("Authorization")
+                .and_then(|value| value.to_str().ok())
+                != Some("Bearer stored-key")
+            {
+                return Ok(Response::builder().status(401).body(AsyncBody::default())?);
+            }
+            Ok(Response::builder().status(200).body(AsyncBody::from(
+                r#"{"data":[{"id":"stored-model","object":"model","type":"llm","publisher":"test","compatibility_type":"gguf","state":"loaded"}]}"#,
+            ))?)
+        });
+        let provider = cx.update(|cx| {
+            let provider = LmStudioLanguageModelProvider::new(client, credentials.clone(), cx);
+            provider.state.update(cx, |state, _| {
+                state.api_key_state = ApiKeyState::new(
+                    SharedString::from(LMSTUDIO_API_URL),
+                    EnvVar {
+                        name: SharedString::from("TEST_API_KEY"),
+                        value: None,
+                    },
+                );
+            });
+            provider
+        });
+        let authentication = cx.update(|cx| provider.authenticate(cx));
+        cx.run_until_parked();
+        credentials.assert_reads(&[]);
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.disable_ai = Some(false.into());
+            });
+        });
+        authentication
+            .await
+            .expect("authentication after enabling AI");
+        assert_eq!(
+            cx.update(|cx| provider
+                .provided_models(cx)
+                .into_iter()
+                .map(|model| model.id.0.to_string())
+                .collect::<Vec<_>>()),
+            ["stored-model"]
+        );
+        credentials.assert_reads(&[LMSTUDIO_API_URL]);
+    }
+
+    #[gpui::test]
+    async fn restart_fetch_models_task_records_error_on_failure(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        let http_client = FakeHttpClient::create(|_request| async move {
+            Ok(http_client::Response::builder()
+                .status(500)
+                .body(http_client::AsyncBody::from("server error"))?)
+        });
+        let provider = cx.update(|cx| {
+            LmStudioLanguageModelProvider::new(
+                http_client,
+                Arc::new(FakeCredentialsProvider::default()),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let error = cx.read(|cx| provider.state.read(cx).last_fetch_models_error.clone());
+        assert!(
+            error.is_some(),
+            "a failed model fetch should be recorded, not silently dropped"
+        );
     }
 }

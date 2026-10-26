@@ -1,8 +1,8 @@
 use documented::Documented;
 use gpui::{
-    AnyElement, AnyView, ClickEvent, CursorStyle, DefiniteLength, FocusHandle, Hsla, MouseButton,
-    MouseClickEvent, MouseDownEvent, MouseUpEvent, Rems, Role, StyleRefinement, Toggled, relative,
-    transparent_black,
+    AnyElement, AnyView, ClickEvent, CursorStyle, DefiniteLength, FocusHandle, Hsla, Length,
+    MouseButton, MouseClickEvent, MouseDownEvent, MouseUpEvent, Rems, Role, StyleRefinement,
+    Toggled, relative, transparent_black,
 };
 use smallvec::SmallVec;
 
@@ -489,10 +489,10 @@ pub struct ButtonLike {
     pub(super) hover_background: Option<Hsla>,
     pub(super) active_background: Option<Hsla>,
     pub(super) width: Option<DefiniteLength>,
-    pub(super) height: Option<DefiniteLength>,
+    pub(super) height: Option<Length>,
     pub(super) layer: Option<ElevationIndex>,
     tab_index: Option<isize>,
-    size: ButtonSize,
+    pub(super) size: ButtonSize,
     rounding: Option<ButtonLikeRounding>,
     pub(super) aria_label: Option<SharedString>,
     aria_description: Option<SharedString>,
@@ -567,7 +567,12 @@ impl ButtonLike {
     }
 
     pub fn height(mut self, height: DefiniteLength) -> Self {
-        self.height = Some(height);
+        self.height = Some(height.into());
+        self
+    }
+
+    pub fn auto_height(mut self) -> Self {
+        self.height = Some(Length::Auto);
         self
     }
 

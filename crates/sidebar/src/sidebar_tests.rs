@@ -4146,8 +4146,33 @@ async fn test_archive_selected_thread_archives_closed_linked_worktree(cx: &mut T
     });
 
     focus_sidebar(&sidebar, cx);
-    sidebar.update_in(cx, |sidebar, _window, _cx| {
+    let previous_status = sidebar.update_in(cx, |sidebar, _window, _cx| {
         sidebar.selection = Some(thread_index);
+        let Some(ListEntry::Thread(thread)) = sidebar.contents.entries.get_mut(thread_index) else {
+            panic!("expected selected thread");
+        };
+        std::mem::replace(
+            &mut Arc::make_mut(thread).status,
+            AgentThreadStatus::Unconfirmed,
+        )
+    });
+    cx.dispatch_action(ArchiveSelectedThread);
+    cx.run_until_parked();
+    assert_eq!(
+        cx.update(|_, cx| {
+            ThreadMetadataStore::global(cx)
+                .read(cx)
+                .entry_by_session(&worktree_session_id)
+                .map(|thread| thread.archived)
+        }),
+        Some(false),
+        "unconfirmed activity must not permit archival"
+    );
+    sidebar.update_in(cx, |sidebar, _window, _cx| {
+        let Some(ListEntry::Thread(thread)) = sidebar.contents.entries.get_mut(thread_index) else {
+            panic!("expected selected thread");
+        };
+        Arc::make_mut(thread).status = previous_status;
     });
     cx.dispatch_action(ArchiveSelectedThread);
     for _ in 0..8 {
@@ -4568,11 +4593,22 @@ async fn test_subagent_permission_request_marks_parent_sidebar_thread_waiting(
     save_test_thread_metadata(&parent_session_id, &project, cx).await;
 
     let subagent_session_id = acp::SessionId::new("subagent-session");
-    cx.update(|_, cx| {
-        let parent_thread = panel.read(cx).active_agent_thread(cx).unwrap();
-        parent_thread.update(cx, |thread: &mut AcpThread, cx| {
-            thread.subagent_spawned(subagent_session_id.clone(), cx);
-        });
+    let parent_thread = cx.update(|_, cx| panel.read(cx).active_agent_thread(cx).unwrap());
+    let subagent = cx
+        .update(|_, cx| {
+            let parent = parent_thread.read(cx);
+            parent.connection().clone().load_session(
+                subagent_session_id.clone(),
+                parent.project().clone(),
+                PathList::default(),
+                None,
+                cx,
+            )
+        })
+        .await
+        .expect("subagent session");
+    parent_thread.update(cx, |thread: &mut AcpThread, cx| {
+        thread.register_subagent(subagent, cx);
     });
     cx.run_until_parked();
 
@@ -13408,8 +13444,7 @@ mod property_test {
                     let thread_id = active_thread_id(&panel, cx);
                     let session_id = active_session_id(&panel, cx);
                     // Make the thread non-draft without exercising the prompt
-                    // send path; these invariants are about sidebar state, not
-                    // git checkpointing during user prompts.
+                    // send path; these invariants are about sidebar state.
                     cx.update(|_, cx| {
                         connection.send_update(
                             session_id.clone(),

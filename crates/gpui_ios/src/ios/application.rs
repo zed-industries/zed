@@ -1,14 +1,16 @@
 use super::{CallbackSlot, platform::IosPlatformState, window::IosWindowState};
 use gpui::{AppLifecyclePhase, WindowVisibility};
+use gpui_apple::main_thread_marker;
 use objc2::{
-    ClassType, DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, extern_class,
-    extern_methods, msg_send,
+    ClassType, DefinedClass, MainThreadOnly, Message, define_class, extern_class, extern_methods,
+    msg_send,
     rc::{Allocated, Retained},
     runtime::AnyObject,
     sel,
 };
 use objc2_foundation::{
     NSDictionary, NSObject, NSObjectProtocol, NSRunLoop, NSRunLoopCommonModes, NSSet, NSString,
+    NSUserActivity, NSUserActivityTypeBrowsingWeb,
 };
 use objc2_quartz_core::CADisplayLink;
 use objc2_ui_kit::{
@@ -46,7 +48,7 @@ pub(super) fn current_platform() -> Option<Rc<IosPlatformState>> {
 }
 
 pub(super) fn run(platform: &Rc<IosPlatformState>, on_finish_launching: Box<dyn FnOnce()>) {
-    let main_thread = MainThreadMarker::new().expect("UIKit requires the main thread");
+    let main_thread = main_thread_marker().expect("UIKit requires the main thread");
     CURRENT_PLATFORM.with_borrow_mut(|current| {
         assert!(
             current.upgrade().is_none(),
@@ -161,6 +163,17 @@ impl IosApplicationState {
             .collect();
         self.open_urls.with(|callback| callback(urls));
     }
+
+    fn continue_user_activity(&self, activity: &NSUserActivity) {
+        if &*activity.activityType() != unsafe { NSUserActivityTypeBrowsingWeb } {
+            return;
+        }
+        let Some(url) = activity.webpageURL().and_then(|url| url.absoluteString()) else {
+            return;
+        };
+        self.open_urls
+            .with(|callback| callback(vec![url.to_string()]));
+    }
 }
 
 impl Drop for IosApplicationState {
@@ -181,6 +194,10 @@ impl SceneConnectionOptions {
         #[unsafe(method(URLContexts))]
         #[unsafe(method_family = none)]
         fn url_contexts(&self) -> Option<Retained<NSSet<UIOpenURLContext>>>;
+
+        #[unsafe(method(userActivities))]
+        #[unsafe(method_family = none)]
+        fn user_activities(&self) -> Option<Retained<NSSet<NSUserActivity>>>;
     );
 }
 
@@ -305,6 +322,11 @@ define_class!(
             if let Some(contexts) = options.url_contexts() {
                 application.open_urls(&contexts);
             }
+            if let Some(activities) = options.user_activities() {
+                for activity in activities.iter() {
+                    application.continue_user_activity(&activity);
+                }
+            }
 
             application.stop_display_link();
             let display_link = unsafe {
@@ -365,6 +387,13 @@ define_class!(
                 platform.application.open_urls(contexts);
             }
         }
+
+        #[unsafe(method(scene:continueUserActivity:))]
+        fn continue_user_activity(&self, scene: &UIScene, activity: &NSUserActivity) {
+            if let Some(platform) = self.platform_for_scene(scene) {
+                platform.application.continue_user_activity(activity);
+            }
+        }
     }
 );
 
@@ -383,6 +412,38 @@ impl SceneDelegate {
 mod tests {
     use super::*;
     use std::{cell::Cell, rc::Rc};
+
+    #[test]
+    fn browsing_activity_delivers_url_without_losing_query_or_fragment() {
+        use objc2::AnyThread;
+        use objc2_foundation::NSURL;
+
+        let state = IosApplicationState::default();
+        let received = Rc::new(RefCell::new(Vec::new()));
+        state.open_urls.set(Box::new({
+            let received = received.clone();
+            move |urls| received.borrow_mut().extend(urls)
+        }));
+        let url_string = "https://example.com/thread/123?source=link#selection";
+        let url = NSURL::URLWithString(&NSString::from_str(url_string)).expect("test URL is valid");
+        let activity = NSUserActivity::initWithActivityType(NSUserActivity::alloc(), unsafe {
+            NSUserActivityTypeBrowsingWeb
+        });
+        state.continue_user_activity(&activity);
+        assert!(received.borrow().is_empty());
+
+        activity.setWebpageURL(Some(&url));
+        state.continue_user_activity(&activity);
+        assert_eq!(*received.borrow(), vec![url_string.to_string()]);
+
+        let unrelated = NSUserActivity::initWithActivityType(
+            NSUserActivity::alloc(),
+            &NSString::from_str("com.example.edit"),
+        );
+        unrelated.setWebpageURL(Some(&url));
+        state.continue_user_activity(&unrelated);
+        assert_eq!(*received.borrow(), vec![url_string.to_string()]);
+    }
 
     #[test]
     fn launch_callback_runs_once_and_can_register_callbacks() {

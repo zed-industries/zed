@@ -554,7 +554,7 @@ fn main() {
             tx.send(Some(options)).log_err();
         })
         .detach();
-        ui::on_new_scrollbars::<SettingsStore>(cx);
+        ui::observe_scrollbar_settings::<SettingsStore>(cx);
 
         let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);
 

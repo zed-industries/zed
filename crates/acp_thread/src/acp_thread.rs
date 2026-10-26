@@ -9,6 +9,7 @@ pub mod elicitation;
 mod mention;
 pub mod notices;
 pub mod prompt_capabilities;
+pub mod subagents;
 mod submission;
 mod terminal;
 pub use ::terminal::HeadlessTerminal;
@@ -35,10 +36,7 @@ use language::{
 use markdown::{Markdown, MarkdownOptions};
 pub use mention::*;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
-use project::{
-    AgentLocation, Project,
-    git_store::{GitStoreCheckpoint, GitStoreEvent, RepositoryEvent},
-};
+use project::{AgentLocation, Project};
 use serde::{Deserialize, Serialize};
 use serde_json::to_string_pretty;
 use settings::{Settings, SettingsStore};
@@ -60,6 +58,37 @@ use util::markdown::{MarkdownCodeBlock, MarkdownEscaped};
 use util::path_list::PathList;
 use util::{ResultExt, get_default_system_shell_preferring_bash, paths::PathStyle};
 use uuid::Uuid;
+
+pub(crate) enum MetadataUpdate {
+    V1(MaybeUndefined<acp_v2::Meta>),
+    V2(MaybeUndefined<acp_v2::Meta>),
+}
+
+impl MetadataUpdate {
+    pub(crate) fn apply(self, stored: &mut Option<acp_v2::Meta>) -> bool {
+        if matches!(
+            &self,
+            Self::V1(MaybeUndefined::Undefined) | Self::V2(MaybeUndefined::Undefined)
+        ) {
+            return false;
+        }
+        let previous = stored.clone();
+        match self {
+            Self::V1(update) => {
+                *stored = update.take();
+            }
+            Self::V2(update) => {
+                let mut metadata = stored.take().map(MaybeUndefined::Value).unwrap_or_default();
+                acp_v2::apply_meta_update(&mut metadata, update);
+                *stored = metadata.take();
+                // Empty entity metadata and absent metadata have the same meaning in v2.
+                return stored.as_ref().filter(|metadata| !metadata.is_empty())
+                    != previous.as_ref().filter(|metadata| !metadata.is_empty());
+            }
+        }
+        *stored != previous
+    }
+}
 
 /// Returned when the model stops because it exhausted its output token budget.
 #[derive(Debug)]
@@ -310,7 +339,6 @@ pub struct UserMessage {
     pub client_id: Option<ClientUserMessageId>,
     pub is_optimistic: bool,
     pub content: MessageContent,
-    pub checkpoint: Option<Checkpoint>,
     pub indented: bool,
 }
 
@@ -327,30 +355,43 @@ pub enum MessageKind {
     User,
     Assistant,
     Thought,
-}
-
-#[derive(Debug)]
-pub struct Checkpoint {
-    git_checkpoint: GitStoreCheckpoint,
-    pub show: bool,
+    Session,
 }
 
 impl UserMessage {
     fn to_markdown(&self, cx: &App) -> String {
         let mut markdown = String::new();
-        if self
-            .checkpoint
-            .as_ref()
-            .is_some_and(|checkpoint| checkpoint.show)
-        {
-            writeln!(markdown, "## User (checkpoint)").unwrap();
-        } else {
-            writeln!(markdown, "## User").unwrap();
-        }
+        writeln!(markdown, "## User").unwrap();
         writeln!(markdown).unwrap();
         writeln!(markdown, "{}", self.content.to_markdown(cx)).unwrap();
         writeln!(markdown).unwrap();
         markdown
+    }
+}
+
+/// A message between this session and another, such as a parent and its subagent. The
+/// session that sent it is the outgoing view; the session that received it is the incoming
+/// view. Either participant may be unknown.
+#[derive(Debug)]
+pub struct SessionMessage {
+    pub identity: MessageIdentity,
+    pub sender_session_id: Option<acp_v2::SessionId>,
+    pub recipient_session_id: Option<acp_v2::SessionId>,
+    pub meta: Option<acp_v2::Meta>,
+    pub content: MessageContent,
+}
+
+impl SessionMessage {
+    fn to_markdown(&self, cx: &App) -> String {
+        let heading = match (&self.sender_session_id, &self.recipient_session_id) {
+            (Some(sender), Some(recipient)) => {
+                format!("## Message from `{sender}` to `{recipient}`")
+            }
+            (Some(sender), None) => format!("## Message from `{sender}`"),
+            (None, Some(recipient)) => format!("## Message to `{recipient}`"),
+            (None, None) => "## Session message".to_string(),
+        };
+        format!("{heading}\n\n{}\n\n", self.content.to_markdown(cx))
     }
 }
 
@@ -443,12 +484,17 @@ enum MessageLocation {
         entry_index: usize,
         chunk_index: usize,
     },
+    Session {
+        entry_index: usize,
+    },
 }
 
 impl MessageLocation {
     fn entry_index(self) -> usize {
         match self {
-            Self::User { entry_index } | Self::Assistant { entry_index, .. } => entry_index,
+            Self::User { entry_index }
+            | Self::Assistant { entry_index, .. }
+            | Self::Session { entry_index } => entry_index,
         }
     }
 
@@ -465,6 +511,9 @@ impl MessageLocation {
                     AssistantMessageChunk::Message { block, meta, .. }
                     | AssistantMessageChunk::Thought { block, meta, .. } => Some((block, meta)),
                 }
+            }
+            (Self::Session { .. }, AgentThreadEntry::SessionMessage(message)) => {
+                Some((&mut message.content, &mut message.meta))
             }
             _ => None,
         }
@@ -483,6 +532,7 @@ impl MessageLocation {
 pub enum AgentThreadEntry {
     UserMessage(UserMessage),
     AssistantMessage(AssistantMessage),
+    SessionMessage(SessionMessage),
     ToolCall(ToolCall),
     Elicitation(ElicitationEntryId),
     ContextCompaction(ContextCompaction),
@@ -894,6 +944,7 @@ impl ContextCompaction {
     fn apply_update(
         &mut self,
         update: acp_v2::CompactionUpdate,
+        metadata: MetadataUpdate,
         language_registry: &Arc<LanguageRegistry>,
         cx: &mut App,
     ) {
@@ -919,11 +970,7 @@ impl ContextCompaction {
                 }
             }
         }
-        match update.meta {
-            MaybeUndefined::Undefined => {}
-            MaybeUndefined::Null => self.meta = None,
-            MaybeUndefined::Value(meta) => self.meta = Some(meta),
-        }
+        metadata.apply(&mut self.meta);
     }
 
     fn append_summary(
@@ -949,9 +996,41 @@ impl AgentThreadEntry {
         match self {
             Self::UserMessage(message) => message.indented,
             Self::AssistantMessage(message) => message.indented,
+            Self::SessionMessage(_) => false,
             Self::ToolCall(_) => false,
             Self::Elicitation(_) => false,
             Self::ContextCompaction(_) => false,
+        }
+    }
+
+    pub fn has_pending_markdown_render(&self, cx: &App) -> bool {
+        let has_pending_render =
+            |markdown: &Entity<Markdown>| markdown.read(cx).has_pending_render();
+        match self {
+            Self::UserMessage(message) => message.content.markdowns().any(has_pending_render),
+            Self::AssistantMessage(message) => message.chunks.iter().any(|chunk| {
+                let (AssistantMessageChunk::Message { block, .. }
+                | AssistantMessageChunk::Thought { block, .. }) = chunk;
+                block.markdowns().any(has_pending_render)
+            }),
+            Self::SessionMessage(message) => message.content.markdowns().any(has_pending_render),
+            Self::ToolCall(call) => {
+                has_pending_render(&call.label)
+                    || call
+                        .raw_input_markdown
+                        .as_ref()
+                        .is_some_and(has_pending_render)
+                    || call
+                        .content()
+                        .iter()
+                        .filter_map(ToolCallContent::markdown)
+                        .any(has_pending_render)
+            }
+            Self::ContextCompaction(compaction) => {
+                compaction.error.as_ref().is_some_and(has_pending_render)
+                    || compaction.summary.markdowns().any(has_pending_render)
+            }
+            Self::Elicitation(_) => false,
         }
     }
 
@@ -959,6 +1038,7 @@ impl AgentThreadEntry {
         match self {
             Self::UserMessage(message) => message.to_markdown(cx),
             Self::AssistantMessage(message) => message.to_markdown(cx),
+            Self::SessionMessage(message) => message.to_markdown(cx),
             Self::ToolCall(tool_call) => tool_call.to_markdown(cx),
             Self::Elicitation(_) => "## Input Requested\n\n".to_string(),
             Self::ContextCompaction(compaction) => {
@@ -1326,7 +1406,11 @@ impl ToolCall {
             .and_then(|input| markdown_for_raw_output(input, &language_registry, cx));
         let meta = match patch.meta {
             ToolMetadataPatch::Legacy(meta) => meta,
-            ToolMetadataPatch::Protocol(meta) => meta.take(),
+            ToolMetadataPatch::Protocol(meta) => {
+                let mut stored = None;
+                MetadataUpdate::V2(meta).apply(&mut stored);
+                stored
+            }
         };
         let tool_name = name.clone().or_else(|| tool_name_from_meta(&meta));
         let subagent_session_info = subagent_session_info_from_meta(&meta);
@@ -1522,9 +1606,9 @@ impl ToolCall {
                 }
             }
             ToolMetadataPatch::Protocol(meta) => {
-                let meta_changed = !meta.is_undefined();
+                let cleared = matches!(&meta, MaybeUndefined::Null);
+                let meta_changed = MetadataUpdate::V2(meta).apply(&mut self.meta) || cleared;
                 if meta_changed {
-                    self.meta = meta.take();
                     self.subagent_session_info = subagent_session_info_from_meta(&self.meta);
                     self.sandbox_authorization_details =
                         sandbox_authorization_details_from_meta(&self.meta);
@@ -1612,7 +1696,7 @@ impl ToolCall {
                     (Some(markdown), Some(text)) => update_markdown_in_place(markdown, &text, cx),
                     (_, Some(text)) => {
                         self.raw_input_markdown = Some(cx.new(|cx| {
-                            Markdown::new(text.into(), Some(language_registry.clone()), None, cx)
+                            Markdown::new_deferred(text, Some(language_registry.clone()), cx)
                         }));
                     }
                     (_, None) => self.raw_input_markdown = None,
@@ -1665,7 +1749,7 @@ impl ToolCall {
             update_markdown_in_place(markdown, &text, cx);
         } else {
             let markdown =
-                cx.new(|cx| Markdown::new(text.into(), Some(language_registry.clone()), None, cx));
+                cx.new(|cx| Markdown::new_deferred(text, Some(language_registry.clone()), cx));
             self.raw_output_content = Some(Box::new(ToolCallContent::ContentBlock {
                 block: ContentBlock::from_markdown(markdown),
                 meta: None,
@@ -2657,6 +2741,7 @@ impl ContentBlock {
                 MarkdownOptions {
                     render_mermaid_diagrams: true,
                     render_metadata_blocks: true,
+                    defer_parsing: true,
                     ..Default::default()
                 },
                 cx,
@@ -3063,13 +3148,12 @@ impl ToolCallContent {
                 meta: content.meta,
             },
             PreparedToolCallContent::LegacyDiff(source) => {
-                let diff = cx.new(|cx| {
+                let diff = cx.new(|_| {
                     Diff::finalized(
                         source.path.to_string_lossy().into_owned(),
                         source.old_text.clone(),
                         source.new_text.clone(),
                         language_registry.clone(),
-                        cx,
                     )
                 });
                 Self::LegacyDiff { source, diff }
@@ -3147,7 +3231,7 @@ impl ToolCallContent {
 
     pub fn to_markdown(&self, cx: &App) -> String {
         match self {
-            Self::ContentBlock { block, .. } => block.to_markdown(cx).to_string(),
+            Self::ContentBlock { block, .. } => block.to_markdown(cx).to_owned(),
             Self::Diff(diff) | Self::LegacyDiff { diff, .. } => diff.read(cx).to_markdown(cx),
             Self::Terminal { terminal, .. } => terminal.read(cx).to_markdown(cx),
             Self::DiffPatch { source, .. } => format!(
@@ -3427,6 +3511,10 @@ fn stop_reason_from_v1(reason: &acp_v1::StopReason) -> Option<acp_v2::StopReason
 pub struct AcpThread {
     session_info: AgentSessionInfo,
     parent_session_id: Option<acp_v2::SessionId>,
+    /// Child sessions this session owns, such as subagents, in registration order.
+    subagents: IndexMap<acp_v2::SessionId, Entity<AcpThread>>,
+    /// Set when this session is an ACP subagent announced by its parent.
+    subagent_association: Option<subagents::SubagentAssociation>,
     provisional_title: Option<SharedString>,
     entries: Vec<AgentThreadEntry>,
     // Notices stay with the live session, but never enter conversation history or exports.
@@ -3438,14 +3526,14 @@ pub struct AcpThread {
     visible_plan: Option<PlanIdentity>,
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
-    _git_store_subscription: Subscription,
-    update_last_checkpoint_if_changed_task: Option<Task<Result<()>>>,
     shared_buffers: HashMap<Entity<Buffer>, BufferSnapshot>,
     turn_id: u32,
     running_turn: Option<RunningTurn>,
     connection: Rc<dyn AgentConnection>,
     submissions: SessionSubmissions,
     activity: SessionActivity,
+    received_session_state: bool,
+    reported_usage: Option<ReportedTokenUsage>,
     token_usage: Option<TokenUsage>,
     cost: Option<SessionCost>,
     prompt_capabilities: acp_v2::PromptCapabilities,
@@ -3565,15 +3653,42 @@ impl From<&AcpThread> for ActionLogTelemetry {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ReportedTokenUsage {
+    activity_generation: u64,
+    input_tokens: u64,
+    output_tokens: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OutputTokensUpdate {
+    Unchanged,
+    /// Preserve additive presentation for legacy/native usage notifications.
+    LegacyAdd {
+        activity_generation: u64,
+        output_tokens: u64,
+    },
+    Snapshot {
+        activity_generation: u64,
+        output_tokens: u64,
+    },
+}
+
 #[derive(Debug)]
 pub enum AcpThreadEvent {
     StatusChanged,
+    /// The parent's title, description, or capabilities for this subagent changed. Views that
+    /// read them from the parent's side, such as its subagent card, observe this event.
+    SubagentAssociationUpdated,
+    /// Idle confirmed after unconfirmed or unknown activity, without completing
+    /// foreground work.
+    ActivityConfirmedIdle,
     SubmissionUpdated(SubmissionId),
     PromptUpdated,
     NewEntry,
     TitleUpdated,
     NoticesUpdated,
-    TokenUsageUpdated,
+    TokenUsageUpdated(OutputTokensUpdate),
     EntryUpdated(usize),
     EntriesRemoved(Range<usize>),
     ToolAuthorizationRequested(PermissionRequestId),
@@ -3582,6 +3697,7 @@ pub enum AcpThreadEvent {
     /// The request left `Pending`; this does not imply delivery to its response waiter.
     ElicitationResponded(ElicitationEntryId),
     Retry(RetryStatus),
+    /// A child session was registered; read it with [`AcpThread::subagent`].
     SubagentSpawned(acp_v2::SessionId),
     Stopped {
         activity_generation: u64,
@@ -3589,6 +3705,7 @@ pub enum AcpThreadEvent {
         stop_reason: Option<acp_v2::StopReason>,
     },
     Error,
+    ConnectionLost,
     LoadError(LoadError),
     PromptCapabilitiesUpdated,
     Refusal,
@@ -3641,6 +3758,7 @@ pub enum TerminalProviderCommand {
 
 #[derive(PartialEq, Eq, Debug)]
 pub enum ThreadStatus {
+    Unconfirmed,
     Idle,
     Generating,
 }
@@ -3721,16 +3839,19 @@ impl AcpThread {
                     this.update_idle_sleep_prevention(cx);
                 }
                 AcpThreadEvent::PromptUpdated
+                | AcpThreadEvent::ActivityConfirmedIdle
                 | AcpThreadEvent::SubmissionUpdated(_)
                 | AcpThreadEvent::NewEntry
                 | AcpThreadEvent::TitleUpdated
                 | AcpThreadEvent::NoticesUpdated
-                | AcpThreadEvent::TokenUsageUpdated
+                | AcpThreadEvent::TokenUsageUpdated(_)
                 | AcpThreadEvent::EntryUpdated(_)
                 | AcpThreadEvent::Retry(_)
                 | AcpThreadEvent::SubagentSpawned(_)
+                | AcpThreadEvent::SubagentAssociationUpdated
                 | AcpThreadEvent::Stopped { .. }
                 | AcpThreadEvent::Error
+                | AcpThreadEvent::ConnectionLost
                 | AcpThreadEvent::LoadError(_)
                 | AcpThreadEvent::PromptCapabilitiesUpdated
                 | AcpThreadEvent::Refusal
@@ -3739,21 +3860,6 @@ impl AcpThread {
                 | AcpThreadEvent::ConfigOptionsUpdated(_)
                 | AcpThreadEvent::WorkingDirectoriesUpdated => {}
             });
-
-        let git_store = project.read(cx).git_store().clone();
-        let _git_store_subscription = cx.subscribe(&git_store, |this, _, event, cx| {
-            if matches!(
-                event,
-                GitStoreEvent::RepositoryUpdated(
-                    _,
-                    RepositoryEvent::StatusesChanged | RepositoryEvent::HeadChanged,
-                    _
-                )
-            ) {
-                this.update_last_checkpoint_if_changed_task =
-                    Some(this.update_last_checkpoint_if_changed(cx));
-            }
-        });
 
         let receipt_submissions = connection.receipt_submissions(&session_id, cx);
         Self {
@@ -3767,22 +3873,28 @@ impl AcpThread {
                 meta: None,
             },
             action_log,
-            _git_store_subscription,
-            update_last_checkpoint_if_changed_task: None,
             shared_buffers: Default::default(),
             entries: Default::default(),
             notices: Vec::new(),
             next_notice_id: 0,
             elicitations: ElicitationStore::default(),
             permission_requests: IndexMap::default(),
+            subagents: IndexMap::default(),
+            subagent_association: None,
             plans: HashMap::default(),
             visible_plan: None,
             provisional_title: None,
             project,
             running_turn: None,
             turn_id: 0,
-            submissions: SessionSubmissions::new(receipt_submissions),
+            submissions: SessionSubmissions::new(
+                receipt_submissions.map_or(SubmissionTransport::Completion, |transport| {
+                    SubmissionTransport::Receipt(transport)
+                }),
+            ),
             activity: SessionActivity::default(),
+            received_session_state: false,
+            reported_usage: None,
             connection,
             token_usage: None,
             cost: None,
@@ -3803,6 +3915,53 @@ impl AcpThread {
             ui_scroll_position: None,
             streaming_text_buffer: None,
             idle_sleep_prevention: IdleSleepPrevention::Inactive,
+        }
+    }
+
+    /// Marks an ACP subagent session, whose work its parent agent owns. Zed cannot
+    /// submit prompts to it, and its foreground state is unconfirmed until the agent
+    /// reports one.
+    pub fn agent_owned(mut self) -> Self {
+        self.submissions = SessionSubmissions::new(SubmissionTransport::AgentOwned);
+        self.activity.mark_unconfirmed();
+        self.subagent_association = Some(subagents::SubagentAssociation::default());
+        self
+    }
+
+    pub fn subagent_association(&self) -> Option<&subagents::SubagentAssociation> {
+        self.subagent_association.as_ref()
+    }
+
+    pub fn update_subagent_association(
+        &mut self,
+        update: &acp_v2::SubagentUpdate,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let association = self
+            .subagent_association
+            .as_mut()
+            .context("Session is not an ACP subagent")?;
+        association.apply(update);
+        cx.emit(AcpThreadEvent::SubagentAssociationUpdated);
+        cx.notify();
+        Ok(())
+    }
+
+    /// Ends a history replay into this session, after a successful load or resume. The
+    /// subagents RFD treats the work states and cancel grants that the replay reported for
+    /// subagents as history, outcomes included: each subagent's work state is unconfirmed,
+    /// and it cannot be cancelled, until the agent reports current ones after the response.
+    /// Titles and transcripts stay.
+    pub fn invalidate_replayed_subagent_state(&mut self, cx: &mut Context<Self>) {
+        for subagent in self.subagents.values() {
+            subagent.update(cx, |subagent, cx| {
+                if let Some(association) = subagent.subagent_association.as_mut() {
+                    association.can_cancel = false;
+                    cx.notify();
+                }
+                subagent.clear_session_state(cx).log_err();
+                subagent.invalidate_replayed_subagent_state(cx);
+            });
         }
     }
 
@@ -3970,8 +4129,7 @@ impl AcpThread {
         self.connection.truncate(self.session_id(), cx).is_some()
     }
 
-    /// Gates editing and restoring user messages, and whether sending one takes
-    /// a git checkpoint, which only the "Restore Checkpoint" button consumes.
+    /// Gates editing user messages and rewinding the thread to them.
     pub fn can_rewind_to(&self, client_id: Option<&ClientUserMessageId>, cx: &App) -> bool {
         client_id.is_some() && self.parent_session_id.is_none() && self.supports_truncate(cx)
     }
@@ -3987,17 +4145,43 @@ impl AcpThread {
 
     pub fn status(&self) -> ThreadStatus {
         match self.foreground_activity() {
+            ForegroundActivity::Unconfirmed | ForegroundActivity::Unknown => {
+                ThreadStatus::Unconfirmed
+            }
             ForegroundActivity::Idle => ThreadStatus::Idle,
-            _ => ThreadStatus::Generating,
+            ForegroundActivity::Running | ForegroundActivity::RequiresAction => {
+                ThreadStatus::Generating
+            }
         }
     }
 
+    /// Whether the agent reports this session's foreground state, rather than Zed
+    /// deriving it from its own prompt turns.
     pub fn uses_reported_activity(&self) -> bool {
-        self.submissions.receipt_transport().is_some()
+        !matches!(
+            self.submissions.transport(),
+            SubmissionTransport::Completion
+        )
     }
 
-    pub fn foreground_state(&self) -> &acp_v2::StateUpdate {
+    pub fn foreground_state(&self) -> Option<&acp_v2::StateUpdate> {
         self.activity.state()
+    }
+
+    pub fn mark_activity_unconfirmed(&mut self, cx: &mut Context<Self>) {
+        if self.uses_reported_activity()
+            && !self.received_session_state
+            && self.activity.generation() == 0
+        {
+            self.activity.mark_unconfirmed();
+            cx.emit(AcpThreadEvent::StatusChanged);
+            cx.notify();
+        }
+    }
+
+    /// Distinguishes a received snapshot from the default Idle used by new sessions.
+    pub fn has_received_session_state(&self) -> bool {
+        self.received_session_state
     }
 
     pub fn foreground_activity(&self) -> ForegroundActivity {
@@ -4006,6 +4190,12 @@ impl AcpThread {
 
     pub fn activity_generation(&self) -> u64 {
         self.activity.generation()
+    }
+
+    pub fn reported_activity_output_tokens(&self) -> Option<u64> {
+        self.reported_usage
+            .filter(|usage| usage.activity_generation == self.activity.generation())
+            .map(|usage| usage.output_tokens)
     }
 
     pub fn activity_started_at(&self) -> Option<Instant> {
@@ -4087,6 +4277,7 @@ impl AcpThread {
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::Elicitation(_)
                 | AgentThreadEntry::AssistantMessage(_)
+                | AgentThreadEntry::SessionMessage(_)
                 | AgentThreadEntry::ContextCompaction(_) => {}
             }
         }
@@ -4115,6 +4306,10 @@ impl AcpThread {
         self.submissions.recoverable()
     }
 
+    pub fn is_observation_closed(&self) -> bool {
+        self.activity.observation_closed()
+    }
+
     pub fn is_idle_for_retention(&self) -> bool {
         self.status() == ThreadStatus::Idle
             && !self.has_unsettled_submissions()
@@ -4139,8 +4334,10 @@ impl AcpThread {
         }
     }
 
-    /// Settles receipt observations without declaring that remote execution stopped.
-    pub fn disconnect_submissions(&mut self, cx: &mut Context<Self>) {
+    /// Ends receipt and cancellation observations without declaring remote execution stopped.
+    pub fn handle_connection_lost(&mut self, cx: &mut Context<Self>) {
+        let was_observable = self.activity.ensure_observable().is_ok();
+        self.activity.close_observation();
         let changed = self.submissions.disconnect();
         if !changed.is_empty() {
             for id in changed {
@@ -4148,6 +4345,52 @@ impl AcpThread {
             }
             cx.notify();
         }
+        if was_observable {
+            cx.emit(AcpThreadEvent::ConnectionLost);
+            cx.notify();
+        }
+    }
+
+    pub fn prepare_session_close(&mut self, cx: &mut Context<Self>) {
+        self.cancel_generic_permission_requests(cx);
+        let pending_receipt_ids = self.submissions.pending_receipt_ids().collect::<Vec<_>>();
+        if pending_receipt_ids.is_empty() {
+            return;
+        }
+        // Prompt receipts may follow successful close. Pin only those already pending:
+        // a rejected close must not extend this retention to later submissions.
+        let (sender, received) = oneshot::channel();
+        let mut sender = Some(sender);
+        let subscription = cx.subscribe_self(move |this, event, _cx| {
+            if matches!(event, AcpThreadEvent::SubmissionUpdated(_))
+                && !pending_receipt_ids.iter().any(|id| {
+                    this.submissions
+                        .get(*id)
+                        .is_some_and(|record| matches!(record.state, SubmissionState::Pending))
+                })
+                && let Some(sender) = sender.take()
+                && sender.send(()).is_err()
+            {
+                log::debug!("Receipt retention observer was dropped");
+            }
+        });
+        let thread = cx.entity();
+        cx.spawn(async move |_, _| {
+            let _subscription = subscription;
+            let _thread = thread;
+            if let Err(error) = received.await {
+                log::debug!("Receipt retention ended before settlement: {error}");
+            }
+        })
+        .detach();
+    }
+
+    pub fn handle_session_closed(&mut self, cx: &mut Context<Self>) {
+        // Close confirms stopping without inventing an Idle snapshot or ending receipts.
+        self.activity.finish_close();
+        self.cancel_generic_permission_requests(cx);
+        self.cancel_outstanding_elicitations(cx);
+        cx.notify();
     }
 
     fn register_submission(
@@ -4171,6 +4414,7 @@ impl AcpThread {
     fn track_submission(
         &mut self,
         id: SubmissionId,
+        applied: Option<oneshot::Sender<bool>>,
         cx: &mut Context<Self>,
         complete: impl 'static
         + AsyncFnOnce(
@@ -4180,7 +4424,9 @@ impl AcpThread {
     ) -> Submission {
         let (sender, receiver) = oneshot::channel();
         let (disconnect_sender, disconnect_receiver) = self
-            .uses_reported_activity()
+            .submissions
+            .receipt_transport()
+            .is_some()
             .then(oneshot::channel::<()>)
             .unzip();
         let task = cx.spawn(async move |this, cx| {
@@ -4201,15 +4447,18 @@ impl AcpThread {
                 response => response,
             };
             let update = this.update(cx, |this, cx| {
-                if this.uses_reported_activity()
+                if this.submissions.receipt_transport().is_some()
                     && response.as_ref().err().is_some_and(|error| {
                         error.is::<SubmissionDisconnected>()
                             || error
                                 .downcast_ref::<agent_client_protocol::Error>()
-                                .is_some_and(agent_client_protocol::is_incoming_transport_closed)
+                                .is_some_and(|error| {
+                                    agent_client_protocol::is_incoming_transport_closed(error)
+                                        || agent_client_protocol::is_connection_terminated(error)
+                                })
                     })
                 {
-                    this.disconnect_submissions(cx);
+                    this.handle_connection_lost(cx);
                 }
                 let state = match &response {
                     Ok(Some(SubmissionResponse::Accepted(receipt))) => {
@@ -4224,6 +4473,11 @@ impl AcpThread {
                     Err(error) => SubmissionState::Failed(format!("{error:#}").into()),
                 };
                 let changed = this.submissions.settle(id, state);
+                if let Some(applied) = applied
+                    && applied.send(response.is_ok()).is_err()
+                {
+                    log::debug!("Receipt transport ended before application acknowledgement");
+                }
                 // The thread owns settlement even when the response observer has gone away.
                 if let Err(Err(error)) = sender.send(response) {
                     log::debug!("Submission observer was dropped: {error:#}");
@@ -4250,11 +4504,10 @@ impl AcpThread {
     }
 
     fn set_foreground_state(&mut self, state: acp_v2::StateUpdate, cx: &mut Context<Self>) {
-        let previous = self.foreground_activity();
+        let previous_generation = self.activity.generation();
         self.activity
             .update(state, self.entries.len().saturating_sub(1));
-        let current = self.foreground_activity();
-        if previous == ForegroundActivity::Idle && current != ForegroundActivity::Idle {
+        if self.activity.generation() != previous_generation {
             self.had_error = false;
             self.local_execution_error = None;
         }
@@ -4262,7 +4515,7 @@ impl AcpThread {
     }
 
     pub fn sync_local_action_state(&mut self, cx: &mut Context<Self>) {
-        if self.foreground_activity() == ForegroundActivity::Idle {
+        if !self.foreground_activity().is_active() {
             return;
         }
         let desired = if self.has_pending_turn_action() {
@@ -4293,17 +4546,32 @@ impl AcpThread {
             "Session does not report foreground state"
         );
         let previous = self.foreground_activity();
-        let was_active = previous != ForegroundActivity::Idle;
+        let was_in_progress = self.activity.in_progress();
+        self.received_session_state = true;
         self.set_foreground_state(state, cx);
-        if let acp_v2::StateUpdate::Idle(idle) = self.activity.state() {
+        if let Some(acp_v2::StateUpdate::Idle(idle)) = self.activity.state() {
             let stop_reason = idle.stop_reason.clone();
             if let Some(usage) = &idle.usage {
+                let reported = ReportedTokenUsage {
+                    activity_generation: self.activity.generation(),
+                    input_tokens: usage.input_tokens,
+                    output_tokens: usage.output_tokens,
+                };
+                let changed = self.reported_usage != Some(reported);
                 let stored = self.token_usage.get_or_insert_with(Default::default);
                 stored.input_tokens = usage.input_tokens;
                 stored.output_tokens = usage.output_tokens;
-                cx.emit(AcpThreadEvent::TokenUsageUpdated);
+                self.reported_usage = Some(reported);
+                if changed {
+                    cx.emit(AcpThreadEvent::TokenUsageUpdated(
+                        OutputTokensUpdate::Snapshot {
+                            activity_generation: reported.activity_generation,
+                            output_tokens: usage.output_tokens,
+                        },
+                    ));
+                }
             }
-            if was_active {
+            if was_in_progress {
                 self.flush_streaming_text(cx);
                 self.shrink_message_source_capacity(self.activity.first_entry_index());
                 if self.parent_session_id.is_none() {
@@ -4322,10 +4590,41 @@ impl AcpThread {
                 cx.emit(AcpThreadEvent::Stopped {
                     activity_generation: self.activity.generation(),
                     activity_duration: self.activity.duration(),
-                    stop_reason,
+                    stop_reason: stop_reason.clone(),
                 });
             }
+            // A subagent's work can stop because Zed cancelled an ancestor. Its requests stay
+            // answerable until it reports that, and then go as if Zed had cancelled it.
+            if self.subagent_association.is_some()
+                && matches!(stop_reason, Some(acp_v2::StopReason::Cancelled))
+            {
+                self.cancel_local_actions(RequestPermissionOutcome::Cancelled, cx);
+            }
         }
+        if previous != self.foreground_activity() {
+            cx.emit(AcpThreadEvent::StatusChanged);
+        }
+        if !was_in_progress
+            && matches!(
+                previous,
+                ForegroundActivity::Unconfirmed | ForegroundActivity::Unknown
+            )
+            && self.foreground_activity() == ForegroundActivity::Idle
+        {
+            cx.emit(AcpThreadEvent::ActivityConfirmedIdle);
+        }
+        Ok(())
+    }
+
+    /// Forgets the reported foreground state without implying idle, as when an ACP
+    /// subagent association clears its `state`. Work in progress stays in progress.
+    pub fn clear_session_state(&mut self, cx: &mut Context<Self>) -> Result<()> {
+        anyhow::ensure!(
+            self.uses_reported_activity(),
+            "Session does not report foreground state"
+        );
+        let previous = self.foreground_activity();
+        self.activity.mark_unconfirmed();
         if previous != self.foreground_activity() {
             cx.emit(AcpThreadEvent::StatusChanged);
         }
@@ -4351,6 +4650,7 @@ impl AcpThread {
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::Elicitation(_)
                 | AgentThreadEntry::AssistantMessage(_)
+                | AgentThreadEntry::SessionMessage(_)
                 | AgentThreadEntry::ContextCompaction(_) => {}
             }
         }
@@ -4373,6 +4673,7 @@ impl AcpThread {
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::Elicitation(_)
                 | AgentThreadEntry::AssistantMessage(_)
+                | AgentThreadEntry::SessionMessage(_)
                 | AgentThreadEntry::ContextCompaction(_) => {}
             }
         }
@@ -4385,6 +4686,7 @@ impl AcpThread {
             match entry {
                 AgentThreadEntry::UserMessage(..) => return false,
                 AgentThreadEntry::AssistantMessage(..)
+                | AgentThreadEntry::SessionMessage(_)
                 | AgentThreadEntry::ContextCompaction(_)
                 | AgentThreadEntry::Elicitation(_) => continue,
                 AgentThreadEntry::ToolCall(..) => return true,
@@ -4465,10 +4767,10 @@ impl AcpThread {
                 self.update_tool_call(tool_call_update, cx)?;
             }
             acp_v1::SessionUpdate::CompactionUpdate(compaction_update) => {
-                self.upsert_context_compaction_update(
-                    compaction::update_from_v1(compaction_update).map_err(acp_v1::Error::from)?,
-                    cx,
-                );
+                let mut update =
+                    compaction::update_from_v1(compaction_update).map_err(acp_v1::Error::from)?;
+                let metadata = MetadataUpdate::V1(mem::take(&mut update.meta));
+                self.upsert_context_compaction_update_inner(update, metadata, cx);
             }
             acp_v1::SessionUpdate::CompactionSummaryChunk(summary_chunk) => {
                 self.append_context_compaction_summary(
@@ -4483,7 +4785,7 @@ impl AcpThread {
                 self.push_notice(notices::from_v1(notice).map_err(acp_v1::Error::from)?, cx);
             }
             acp_v1::SessionUpdate::SessionInfoUpdate(info_update) => {
-                self.update_session_info(session_info_update_from_v1(info_update), cx);
+                self.update_session_info(info_update, cx);
             }
             acp_v1::SessionUpdate::AvailableCommandsUpdate(acp_v1::AvailableCommandsUpdate {
                 available_commands,
@@ -4516,6 +4818,47 @@ impl AcpThread {
                     cx,
                 );
             }
+            acp_v1::SessionUpdate::SessionMessage(message) => {
+                let content = match message.content {
+                    MaybeUndefined::Undefined => MaybeUndefined::Undefined,
+                    MaybeUndefined::Null => MaybeUndefined::Null,
+                    MaybeUndefined::Value(blocks) => MaybeUndefined::Value(
+                        blocks
+                            .into_iter()
+                            .map(content::from_v1)
+                            .collect::<Result<Vec<_>>>()
+                            .map_err(acp_v1::Error::from)?,
+                    ),
+                };
+                self.upsert_session_message_inner(
+                    acp_v2::SessionMessage::new(message.message_id.0)
+                        .sender_session_id(
+                            message
+                                .sender_session_id
+                                .map(|id| acp_v2::SessionId::new(id.0)),
+                        )
+                        .recipient_session_id(
+                            message
+                                .recipient_session_id
+                                .map(|id| acp_v2::SessionId::new(id.0)),
+                        )
+                        .content(content)
+                        .meta(message.meta),
+                    MetadataUpdate::V1,
+                    cx,
+                )
+                .map_err(acp_v1::Error::from)?;
+            }
+            acp_v1::SessionUpdate::SessionMessageChunk(chunk) => {
+                self.append_session_message_chunk(
+                    acp_v2::SessionMessageChunk::new(
+                        chunk.message_id.0,
+                        content::from_v1(chunk.content).map_err(acp_v1::Error::from)?,
+                    ),
+                    cx,
+                )
+                .map_err(acp_v1::Error::from)?;
+            }
             _ => {}
         }
         Ok(())
@@ -4530,7 +4873,7 @@ impl AcpThread {
             MessageKind::User,
             update.message_id,
             update.content,
-            update.meta,
+            MetadataUpdate::V2(update.meta),
             cx,
         )
     }
@@ -4544,7 +4887,7 @@ impl AcpThread {
             MessageKind::Assistant,
             update.message_id,
             update.content,
-            update.meta,
+            MetadataUpdate::V2(update.meta),
             cx,
         )
     }
@@ -4558,9 +4901,90 @@ impl AcpThread {
             MessageKind::Thought,
             update.message_id,
             update.content,
-            update.meta,
+            MetadataUpdate::V2(update.meta),
             cx,
         )
+    }
+
+    pub fn upsert_session_message(
+        &mut self,
+        update: acp_v2::SessionMessage,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        self.upsert_session_message_inner(update, MetadataUpdate::V2, cx)
+    }
+
+    fn upsert_session_message_inner(
+        &mut self,
+        update: acp_v2::SessionMessage,
+        metadata: fn(MaybeUndefined<acp_v2::Meta>) -> MetadataUpdate,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let previous_entry_count = self.entries.len();
+        let location = self.session_message_location(
+            update.message_id,
+            update.sender_session_id,
+            update.recipient_session_id,
+            cx,
+        )?;
+        self.replace_message_content(
+            location,
+            MessageKind::Session,
+            update.content,
+            metadata(update.meta),
+            previous_entry_count,
+            cx,
+        )
+    }
+
+    pub fn append_session_message_chunk(
+        &mut self,
+        chunk: acp_v2::SessionMessageChunk,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        // A chunk carries only content: its metadata does not patch the message's, and the
+        // RFD keeps a message's participants on `session_message`, so the participant fields
+        // that this schema version still has on chunks are ignored.
+        let previous_entry_count = self.entries.len();
+        let location = self.keyed_message_location(MessageKind::Session, chunk.message_id, cx)?;
+        self.append_message_content(
+            location,
+            MessageKind::Session,
+            chunk.content,
+            previous_entry_count,
+            cx,
+        )
+    }
+
+    /// Participants that an update omits keep their earlier value, and a known participant
+    /// cannot change.
+    fn session_message_location(
+        &mut self,
+        id: acp_v2::MessageId,
+        sender: Option<acp_v2::SessionId>,
+        recipient: Option<acp_v2::SessionId>,
+        cx: &mut Context<Self>,
+    ) -> Result<MessageLocation> {
+        let location = self.keyed_message_location(MessageKind::Session, id, cx)?;
+        let Some(AgentThreadEntry::SessionMessage(message)) =
+            self.entries.get_mut(location.entry_index())
+        else {
+            anyhow::bail!("session message disappeared during update");
+        };
+        for (stored, reported) in [
+            (&mut message.sender_session_id, sender),
+            (&mut message.recipient_session_id, recipient),
+        ] {
+            let Some(reported) = reported else {
+                continue;
+            };
+            anyhow::ensure!(
+                stored.as_ref().is_none_or(|stored| stored == &reported),
+                "Session message participants cannot change"
+            );
+            *stored = Some(reported);
+        }
+        Ok(location)
     }
 
     fn update_keyed_message(
@@ -4568,11 +4992,23 @@ impl AcpThread {
         kind: MessageKind,
         id: acp_v2::MessageId,
         content: MaybeUndefined<Vec<acp_v2::ContentBlock>>,
-        meta: MaybeUndefined<acp_v2::Meta>,
+        meta: MetadataUpdate,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let previous_entry_count = self.entries.len();
         let location = self.keyed_message_location(kind, id, cx)?;
+        self.replace_message_content(location, kind, content, meta, previous_entry_count, cx)
+    }
+
+    fn replace_message_content(
+        &mut self,
+        location: MessageLocation,
+        kind: MessageKind,
+        content: MaybeUndefined<Vec<acp_v2::ContentBlock>>,
+        meta: MetadataUpdate,
+        previous_entry_count: usize,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
         if !content.is_undefined()
             && self
                 .streaming_text_buffer
@@ -4601,11 +5037,7 @@ impl AcpThread {
                 message_content.replace(replacement, &language_registry, path_style, cx);
             }
         }
-        match meta {
-            MaybeUndefined::Undefined => {}
-            MaybeUndefined::Null => *message_meta = None,
-            MaybeUndefined::Value(meta) => *message_meta = Some(meta),
-        }
+        meta.apply(message_meta);
         self.emit_message_update(location, previous_entry_count, cx);
         Ok(())
     }
@@ -4624,6 +5056,17 @@ impl AcpThread {
         } = chunk;
         let previous_entry_count = self.entries.len();
         let location = self.keyed_message_location(kind, message_id, cx)?;
+        self.append_message_content(location, kind, content, previous_entry_count, cx)
+    }
+
+    fn append_message_content(
+        &mut self,
+        location: MessageLocation,
+        kind: MessageKind,
+        content: acp_v2::ContentBlock,
+        previous_entry_count: usize,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
         let content = match content {
             acp_v2::ContentBlock::Text(text) => {
                 let (content, _) = location
@@ -4692,6 +5135,11 @@ impl AcpThread {
                 {
                     Some(MessageLocation::User { entry_index })
                 }
+                AgentThreadEntry::SessionMessage(message)
+                    if kind == MessageKind::Session && message.identity == identity =>
+                {
+                    Some(MessageLocation::Session { entry_index })
+                }
                 AgentThreadEntry::AssistantMessage(message) => message
                     .chunks
                     .iter()
@@ -4720,10 +5168,20 @@ impl AcpThread {
                         client_id: None,
                         is_optimistic: false,
                         content: MessageContent::default(),
-                        checkpoint: None,
                         indented: false,
                     }));
                 Ok(MessageLocation::User { entry_index })
+            }
+            MessageKind::Session => {
+                self.entries
+                    .push(AgentThreadEntry::SessionMessage(SessionMessage {
+                        identity,
+                        sender_session_id: None,
+                        recipient_session_id: None,
+                        meta: None,
+                        content: MessageContent::default(),
+                    }));
+                Ok(MessageLocation::Session { entry_index })
             }
             MessageKind::Assistant | MessageKind::Thought => {
                 let chunk = if kind == MessageKind::Thought {
@@ -4771,7 +5229,7 @@ impl AcpThread {
         previous_entry_count: usize,
         cx: &mut Context<Self>,
     ) {
-        if self.uses_reported_activity()
+        if self.submissions.receipt_transport().is_some()
             && let Some(AgentThreadEntry::UserMessage(message)) =
                 self.entries.get(location.entry_index())
             && let MessageIdentity::Keyed(id) = &message.identity
@@ -4871,7 +5329,6 @@ impl AcpThread {
                     client_id: incoming_client_id,
                     is_optimistic,
                     content,
-                    checkpoint: None,
                     indented,
                 }),
                 cx,
@@ -5195,7 +5652,17 @@ impl AcpThread {
 
     pub fn upsert_context_compaction_update(
         &mut self,
+        mut update: acp_v2::CompactionUpdate,
+        cx: &mut Context<Self>,
+    ) {
+        let metadata = MetadataUpdate::V2(mem::take(&mut update.meta));
+        self.upsert_context_compaction_update_inner(update, metadata, cx);
+    }
+
+    fn upsert_context_compaction_update_inner(
+        &mut self,
         update: acp_v2::CompactionUpdate,
+        metadata: MetadataUpdate,
         cx: &mut Context<Self>,
     ) {
         let id = ContextCompactionId(update.compaction_id.0.clone());
@@ -5213,7 +5680,7 @@ impl AcpThread {
                     _ => None,
                 })
         {
-            compaction.apply_update(update, &language_registry, cx);
+            compaction.apply_update(update, metadata, &language_registry, cx);
             cx.emit(AcpThreadEvent::EntryUpdated(entry_index));
             return;
         }
@@ -5225,7 +5692,7 @@ impl AcpThread {
             summary: MessageContent::default(),
             meta: None,
         };
-        compaction.apply_update(update, &language_registry, cx);
+        compaction.apply_update(update, metadata, &language_registry, cx);
         self.push_entry(AgentThreadEntry::ContextCompaction(compaction), cx);
     }
 
@@ -5301,12 +5768,12 @@ impl AcpThread {
 
     pub fn update_session_info(
         &mut self,
-        update: acp_v2::SessionInfoUpdate,
+        update: impl Into<AgentSessionInfoUpdate>,
         cx: &mut Context<Self>,
     ) {
+        let update = update.into();
         let previous_title = self.session_info.title.clone();
-        let had_provisional =
-            !update.title.is_undefined() && self.provisional_title.take().is_some();
+        let had_provisional = update.has_title() && self.provisional_title.take().is_some();
         let changed = self.session_info.apply_update(update);
         if self.session_info.title != previous_title || had_provisional {
             cx.emit(AcpThreadEvent::TitleUpdated);
@@ -5344,16 +5811,40 @@ impl AcpThread {
         cx.emit(AcpThreadEvent::TitleUpdated);
     }
 
-    pub fn subagent_spawned(&mut self, session_id: acp_v2::SessionId, cx: &mut Context<Self>) {
+    /// Takes ownership of a child session. A session ID that is already registered
+    /// keeps its existing thread. Callers must not register this session or one of its
+    /// ancestors, since the registry holds children strongly.
+    pub fn register_subagent(&mut self, subagent: Entity<AcpThread>, cx: &mut Context<Self>) {
+        let session_id = subagent.read(cx).session_id().clone();
+        if self.subagents.contains_key(&session_id) {
+            return;
+        }
+        self.subagents.insert(session_id.clone(), subagent);
         cx.emit(AcpThreadEvent::SubagentSpawned(session_id));
+    }
+
+    pub fn subagent(&self, session_id: &acp_v2::SessionId) -> Option<&Entity<AcpThread>> {
+        self.subagents.get(session_id)
+    }
+
+    pub fn subagents(&self) -> impl Iterator<Item = &Entity<AcpThread>> {
+        self.subagents.values()
     }
 
     pub fn update_token_usage(&mut self, usage: Option<TokenUsage>, cx: &mut Context<Self>) {
         if usage.is_none() {
             self.cost = None;
         }
+        let output = usage
+            .as_ref()
+            .map_or(OutputTokensUpdate::Unchanged, |usage| {
+                OutputTokensUpdate::LegacyAdd {
+                    activity_generation: self.activity.generation(),
+                    output_tokens: usage.output_tokens,
+                }
+            });
         self.token_usage = usage;
-        cx.emit(AcpThreadEvent::TokenUsageUpdated);
+        cx.emit(AcpThreadEvent::TokenUsageUpdated(output));
     }
 
     pub fn update_usage(&mut self, update: acp_v2::UsageUpdate, cx: &mut Context<Self>) {
@@ -5368,7 +5859,9 @@ impl AcpThread {
                 meta: cost.meta,
             });
         }
-        cx.emit(AcpThreadEvent::TokenUsageUpdated);
+        cx.emit(AcpThreadEvent::TokenUsageUpdated(
+            OutputTokensUpdate::Unchanged,
+        ));
     }
 
     pub fn update_retry_status(&mut self, status: RetryStatus, cx: &mut Context<Self>) {
@@ -5747,8 +6240,10 @@ impl AcpThread {
             })
     }
 
+    /// The latest tool call that ran the subagent `session_id`. A resumed subagent has one
+    /// per run, and the latest says how the subagent's current work went.
     pub fn tool_call_for_subagent(&self, session_id: &acp_v2::SessionId) -> Option<&ToolCall> {
-        self.entries.iter().find_map(|entry| match entry {
+        self.entries.iter().rev().find_map(|entry| match entry {
             AgentThreadEntry::ToolCall(tool_call) => {
                 if let Some(subagent_session_info) = &tool_call.subagent_session_info
                     && &subagent_session_info.session_id == session_id
@@ -6403,23 +6898,47 @@ impl AcpThread {
         push_user_message: bool,
         cx: &mut Context<Self>,
     ) -> Submission {
-        if let Some(submissions) = self.submissions.receipt_transport() {
-            let response = submissions.prompt(message.clone(), cx);
-            self.submit_receipt(message, response, cx)
-        } else {
-            let id = self.register_submission(message.clone().into(), cx);
-            self.send_inner(id, message, push_user_message, cx)
+        let id = self.register_submission(message.clone().into(), cx);
+        match self.submissions.transport().clone() {
+            SubmissionTransport::Receipt(submissions) => {
+                let request = submissions.submit(message, cx);
+                self.track_receipt_submission(id, request, cx)
+            }
+            SubmissionTransport::Completion => self.send_inner(id, message, push_user_message, cx),
+            SubmissionTransport::AgentOwned => self.reject_agent_owned_submission(id, cx),
         }
+    }
+
+    fn reject_agent_owned_submission(
+        &mut self,
+        id: SubmissionId,
+        cx: &mut Context<Self>,
+    ) -> Submission {
+        self.track_submission(id, None, cx, async move |_, _| {
+            Err(anyhow!(
+                "The agent owns this session, so it does not accept prompts"
+            ))
+        })
     }
 
     pub fn submit_receipt(
         &mut self,
         content: Vec<acp_v2::ContentBlock>,
-        response: Task<Result<acp_v2::PromptResponse>>,
+        request: impl Into<ReceiptSubmission>,
         cx: &mut Context<Self>,
     ) -> Submission {
         let id = self.register_submission(content.into(), cx);
-        self.track_submission(id, cx, async move |_, _| {
+        self.track_receipt_submission(id, request.into(), cx)
+    }
+
+    fn track_receipt_submission(
+        &mut self,
+        id: SubmissionId,
+        request: ReceiptSubmission,
+        cx: &mut Context<Self>,
+    ) -> Submission {
+        let ReceiptSubmission { response, applied } = request;
+        self.track_submission(id, applied, cx, async move |_, _| {
             Ok(Some(SubmissionResponse::Accepted(response.await?)))
         })
     }
@@ -6449,61 +6968,9 @@ impl AcpThread {
         Ok(())
     }
 
-    pub fn prepare_local_prompt(
-        &mut self,
-        id: ClientUserMessageId,
-        content: Vec<acp_v2::ContentBlock>,
-        cx: &mut Context<Self>,
-    ) -> Result<Task<()>> {
-        let should_checkpoint = !content.is_empty() && self.can_rewind_to(Some(&id), cx);
-        self.upsert_local_user_message(id.clone(), content, cx)?;
-        if !should_checkpoint {
-            return Ok(Task::ready(()));
-        }
-
-        let git_store = self.project.read(cx).git_store().clone();
-        let checkpoint = git_store.update(cx, |git, cx| git.checkpoint(cx));
-        Ok(cx.spawn(async move |this, cx| {
-            let checkpoint = checkpoint
-                .await
-                .context("failed to get old checkpoint")
-                .log_err();
-            this.update(cx, |this, cx| {
-                let identity = MessageIdentity::Keyed(id.message_id());
-                if let Some((index, message)) =
-                    this.entries
-                        .iter_mut()
-                        .enumerate()
-                        .find_map(|(index, entry)| match entry {
-                            AgentThreadEntry::UserMessage(message)
-                                if message.identity == identity =>
-                            {
-                                Some((index, message))
-                            }
-                            _ => None,
-                        })
-                {
-                    message.checkpoint = checkpoint.map(|git_checkpoint| Checkpoint {
-                        git_checkpoint,
-                        show: false,
-                    });
-                    cx.emit(AcpThreadEvent::EntryUpdated(index));
-                }
-            })
-            .log_err();
-        }))
-    }
-
-    pub fn finish_local_turn(
-        &mut self,
-        reason: acp_v2::StopReason,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        // Capture the checkpoint target before refusal cleanup can remove its message.
-        let checkpoint = self.update_last_checkpoint(cx);
+    pub fn finish_local_turn(&mut self, reason: acp_v2::StopReason, cx: &mut Context<Self>) {
         self.flush_streaming_text(cx);
         self.cleanup_local_turn(&reason, true, cx);
-        checkpoint
     }
 
     pub fn validate_prompt_content(&self, content: &[acp_v2::ContentBlock]) -> Result<()> {
@@ -6519,7 +6986,7 @@ impl AcpThread {
     ) -> Submission {
         let request = acp_v2::PromptRequest::new(self.session_id().clone(), message);
         if let Err(error) = self.validate_prompt_content(&request.prompt) {
-            return self.track_submission(id, cx, async move |_, _| Err(error));
+            return self.track_submission(id, None, cx, async move |_, _| Err(error));
         }
         let language_registry = self.project.read(cx).languages().clone();
         let path_style = self.project.read(cx).path_style(cx);
@@ -6527,13 +6994,10 @@ impl AcpThread {
         for chunk in &request.prompt {
             block.append_prompt(chunk.clone(), &language_registry, path_style, cx);
         }
-        let git_store = self.project.read(cx).git_store().clone();
-
         let client_user_message_ids = self.connection.client_user_message_ids(cx);
         let client_id = client_user_message_ids
             .as_ref()
             .map(|client_user_message_ids| client_user_message_ids.new_id());
-        let should_checkpoint = self.can_rewind_to(client_id.as_ref(), cx);
 
         self.run_turn(id, cx, async move |this, cx| {
             if push_user_message {
@@ -6545,30 +7009,12 @@ impl AcpThread {
                             client_id: client_id.clone(),
                             is_optimistic: true,
                             content: block,
-                            checkpoint: None,
                             indented: false,
                         }),
                         cx,
                     );
                 })
                 .ok();
-
-                if should_checkpoint {
-                    let old_checkpoint = git_store
-                        .update(cx, |git, cx| git.checkpoint(cx))
-                        .await
-                        .context("failed to get old checkpoint")
-                        .log_err();
-                    this.update(cx, |this, _cx| {
-                        if let Some((_ix, message)) = this.last_user_message() {
-                            message.checkpoint = old_checkpoint.map(|git_checkpoint| Checkpoint {
-                                git_checkpoint,
-                                show: false,
-                            });
-                        }
-                    })
-                    .ok();
-                }
             }
 
             this.update(cx, |this, cx| {
@@ -6583,14 +7029,19 @@ impl AcpThread {
     }
 
     pub fn can_retry(&self, cx: &App) -> bool {
-        self.submissions.receipt_transport().map_or_else(
-            || self.connection.retry(self.session_id(), cx).is_some(),
-            |submissions| submissions.supports_retry(),
-        ) && self
-            .submissions
-            .latest_id()
-            .and_then(|id| self.submissions.get(id))
-            .is_none_or(|submission| self.validate_prompt_content(&submission.content).is_ok())
+        let supports_retry = match self.submissions.transport() {
+            SubmissionTransport::Receipt(submissions) => submissions.supports_retry(),
+            SubmissionTransport::Completion => {
+                self.connection.retry(self.session_id(), cx).is_some()
+            }
+            SubmissionTransport::AgentOwned => false,
+        };
+        supports_retry
+            && self
+                .submissions
+                .latest_id()
+                .and_then(|id| self.submissions.get(id))
+                .is_none_or(|submission| self.validate_prompt_content(&submission.content).is_ok())
     }
 
     pub fn retry(&mut self, cx: &mut Context<Self>) -> Submission {
@@ -6602,13 +7053,17 @@ impl AcpThread {
             .unwrap_or_default();
         let id = self.register_submission(content.clone(), cx);
         if let Err(error) = self.validate_prompt_content(&content) {
-            return self.track_submission(id, cx, async move |_, _| Err(error));
+            return self.track_submission(id, None, cx, async move |_, _| Err(error));
         }
-        if let Some(submissions) = self.submissions.receipt_transport() {
-            let response = submissions.retry(cx);
-            return self.track_submission(id, cx, async move |_, _| {
-                Ok(Some(SubmissionResponse::Accepted(response.await?)))
-            });
+        match self.submissions.transport() {
+            SubmissionTransport::Receipt(submissions) => {
+                let request = submissions.retry(cx);
+                return self.track_receipt_submission(id, request, cx);
+            }
+            SubmissionTransport::AgentOwned => {
+                return self.reject_agent_owned_submission(id, cx);
+            }
+            SubmissionTransport::Completion => {}
         }
         self.run_turn(id, cx, async move |this, cx| {
             this.update(cx, |this, cx| {
@@ -6627,12 +7082,17 @@ impl AcpThread {
         cx: &mut Context<Self>,
         f: impl 'static + AsyncFnOnce(WeakEntity<Self>, &mut AsyncApp) -> Result<acp_v1::PromptResponse>,
     ) -> Submission {
+        let cancel_task = match self
+            .request_cancellation(RequestPermissionOutcome::InterruptedByFollowUp, cx)
+        {
+            Ok(task) => task,
+            Err(error) => return self.track_submission(id, None, cx, async move |_, _| Err(error)),
+        };
         self.clear_completed_plan_entries(cx);
         self.had_error = false;
         self.local_execution_error = None;
 
         let (tx, rx) = oneshot::channel();
-        let cancel_task = self.cancel_inner(RequestPermissionOutcome::InterruptedByFollowUp, cx);
 
         self.turn_id += 1;
         let turn_id = self.turn_id;
@@ -6642,8 +7102,13 @@ impl AcpThread {
             id: turn_id,
             first_entry_index,
             send_task: cx.spawn(async move |this, cx| {
-                cancel_task.await;
-                tx.send(f(this, cx).await).ok();
+                let response = match cancel_task.await {
+                    Ok(()) => f(this, cx).await,
+                    Err(error) => Err(error),
+                };
+                if let Err(Err(error)) = tx.send(response) {
+                    log::debug!("Legacy submission observer was released: {error:#}");
+                }
             }),
         });
         self.set_foreground_state(
@@ -6654,16 +7119,6 @@ impl AcpThread {
 
         let completion = async move |thread: WeakEntity<Self>, cx: &mut AsyncApp| {
             let response = rx.await;
-
-            thread
-                .update(cx, |this, cx| {
-                    if this.turn_id == turn_id {
-                        this.update_last_checkpoint(cx)
-                    } else {
-                        Task::ready(Ok(()))
-                    }
-                })?
-                .await?;
 
             thread.update(cx, |this, cx| {
                 if this.turn_id == turn_id && this.parent_session_id.is_none() {
@@ -6752,7 +7207,12 @@ impl AcpThread {
                             let usage = this.token_usage.get_or_insert_with(Default::default);
                             usage.input_tokens = response_usage.input_tokens;
                             usage.output_tokens = response_usage.output_tokens;
-                            cx.emit(AcpThreadEvent::TokenUsageUpdated);
+                            cx.emit(AcpThreadEvent::TokenUsageUpdated(
+                                OutputTokensUpdate::LegacyAdd {
+                                    activity_generation: this.activity.generation(),
+                                    output_tokens: usage.output_tokens,
+                                },
+                            ));
                         }
 
                         if is_same_turn {
@@ -6788,37 +7248,62 @@ impl AcpThread {
                 }
             })?
         };
-        self.track_submission(id, cx, async move |thread, cx| {
+        self.track_submission(id, None, cx, async move |thread, cx| {
             Ok(completion(thread, cx)
                 .await?
                 .map(SubmissionResponse::LegacyCompleted))
         })
     }
 
-    pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<()> {
-        self.cancel_inner(RequestPermissionOutcome::Cancelled, cx)
+    /// Receipt sessions wait for reported Idle without withdrawing pending prompt RPCs.
+    pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        match self.request_cancellation(RequestPermissionOutcome::Cancelled, cx) {
+            Ok(task) => task,
+            Err(error) => Task::ready(Err(error)),
+        }
     }
 
-    fn cancel_inner(
+    fn request_cancellation(
         &mut self,
         permission_outcome: RequestPermissionOutcome,
         cx: &mut Context<Self>,
-    ) -> Task<()> {
+    ) -> Result<Task<Result<()>>> {
+        anyhow::ensure!(
+            self.subagent_association
+                .as_ref()
+                .is_none_or(|association| association.can_cancel),
+            "This subagent's parent does not allow cancelling it"
+        );
         self.flush_streaming_text(cx);
         if self.uses_reported_activity() {
-            self.cancel_generic_permission_requests(cx);
-            let receiver = self.activity.wait_for_idle();
-            if receiver.is_some() || self.has_unsettled_submissions() {
-                self.connection.cancel(self.session_id(), cx);
+            self.activity.ensure_observable()?;
+            if self.foreground_activity() != ForegroundActivity::Idle
+                || self.has_unsettled_submissions()
+            {
+                self.connection.cancel(self.session_id(), cx)?;
             }
-            let Some(receiver) = receiver else {
-                return Task::ready(());
-            };
-            return cx.spawn(async move |_, _| {
-                if receiver.await.is_err() {
-                    log::debug!("Session released before foreground cancellation completed");
+            if self.subagent_association.is_some() {
+                // The subagents RFD has a cancelled subagent answer all of its permission
+                // requests, including the tool-call ones a v1 subagent makes.
+                let request_ids = self.permission_requests.keys().copied().collect::<Vec<_>>();
+                for id in request_ids {
+                    self.cancel_permission_request(id, cx);
                 }
-            });
+            } else {
+                self.cancel_generic_permission_requests(cx);
+            }
+            let receiver = self.activity.wait_for_idle()?;
+            let Some(receiver) = receiver else {
+                return Ok(Task::ready(Ok(())));
+            };
+            return Ok(cx.spawn(async move |_, _| {
+                receiver
+                    .await
+                    .context("Agent connection lost before cancellation was confirmed")
+            }));
+        }
+        if self.running_turn.is_some() {
+            self.connection.cancel(self.session_id(), cx)?;
         }
         self.cancel_outstanding_elicitations(cx);
 
@@ -6827,11 +7312,10 @@ impl AcpThread {
             for id in request_ids {
                 self.cancel_permission_request_with_outcome(id, permission_outcome.clone(), cx);
             }
-            return Task::ready(());
+            return Ok(Task::ready(Ok(())));
         };
         self.shrink_message_source_capacity(turn.first_entry_index);
         self.mark_pending_entries_as_canceled(permission_outcome, cx);
-        self.connection.cancel(self.session_id(), cx);
         self.set_foreground_state(
             acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new()),
             cx,
@@ -6839,7 +7323,10 @@ impl AcpThread {
         cx.emit(AcpThreadEvent::StatusChanged);
 
         // Wait for the send task to complete
-        cx.background_spawn(turn.send_task)
+        Ok(cx.background_spawn(async move {
+            turn.send_task.await;
+            Ok(())
+        }))
     }
 
     fn update_idle_sleep_prevention(&mut self, cx: &mut Context<Self>) {
@@ -6979,42 +7466,8 @@ impl AcpThread {
         }
     }
 
-    /// Restores the git working tree to the state at the given checkpoint (if one exists)
-    pub fn restore_checkpoint(
-        &mut self,
-        client_id: ClientUserMessageId,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        let Some((_, message)) = self.user_message_mut(&client_id) else {
-            return Task::ready(Err(anyhow!("message not found")));
-        };
-
-        let checkpoint = message
-            .checkpoint
-            .as_ref()
-            .map(|c| c.git_checkpoint.clone());
-
-        // Cancel any in-progress generation before restoring
-        let cancel_task = self.cancel(cx);
-        let rewind = self.rewind(client_id.clone(), cx);
-        let git_store = self.project.read(cx).git_store().clone();
-
-        cx.spawn(async move |_, cx| {
-            cancel_task.await;
-            rewind.await?;
-            if let Some(checkpoint) = checkpoint {
-                git_store
-                    .update(cx, |git, cx| git.restore_checkpoint(checkpoint, cx))
-                    .await?;
-            }
-
-            Ok(())
-        })
-    }
-
     /// Rewinds this thread to before the entry at `index`, removing it and all
     /// subsequent entries while rejecting any action_log changes made from that point.
-    /// Unlike `restore_checkpoint`, this method does not restore from git.
     pub fn rewind(
         &mut self,
         client_id: ClientUserMessageId,
@@ -7056,124 +7509,6 @@ impl AcpThread {
                 })
             })?
             .await;
-            Ok(())
-        })
-    }
-
-    fn update_last_checkpoint_if_changed(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        if self.foreground_activity() == ForegroundActivity::Idle {
-            return Task::ready(Ok(()));
-        }
-        let activity_generation = self.activity_generation();
-
-        let git_store = self.project.read(cx).git_store().clone();
-
-        let Some((client_id, checkpoint)) = self.last_user_message().and_then(|(_, message)| {
-            let id = message.client_id.clone()?;
-            let checkpoint = message.checkpoint.as_ref()?;
-            Some((id, checkpoint))
-        }) else {
-            return Task::ready(Ok(()));
-        };
-        if checkpoint.show {
-            return Task::ready(Ok(()));
-        }
-        let old_checkpoint = checkpoint.git_checkpoint.clone();
-
-        let new_checkpoint = git_store.update(cx, |git, cx| git.checkpoint(cx));
-        cx.spawn(async move |this, cx| {
-            let Some(new_checkpoint) = new_checkpoint
-                .await
-                .context("failed to get new checkpoint")
-                .log_err()
-            else {
-                return Ok(());
-            };
-
-            let Some(equal) = git_store
-                .update(cx, |git, cx| {
-                    git.compare_checkpoints(old_checkpoint.clone(), new_checkpoint, cx)
-                })
-                .await
-                .context("failed to compare checkpoints")
-                .log_err()
-            else {
-                return Ok(());
-            };
-
-            if equal {
-                return Ok(());
-            }
-
-            this.update(cx, |this, cx| {
-                if this.foreground_activity() == ForegroundActivity::Idle
-                    || this.activity_generation() != activity_generation
-                {
-                    return;
-                }
-
-                let Some((ix, message)) = this.last_user_message() else {
-                    return;
-                };
-                if message.client_id.as_ref() != Some(&client_id) {
-                    return;
-                }
-                if let Some(checkpoint) = message.checkpoint.as_mut()
-                    && !checkpoint.show
-                {
-                    checkpoint.show = true;
-                    cx.emit(AcpThreadEvent::EntryUpdated(ix));
-                }
-            })?;
-
-            Ok(())
-        })
-    }
-
-    fn update_last_checkpoint(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let git_store = self.project.read(cx).git_store().clone();
-
-        let Some((_, message)) = self.last_user_message() else {
-            return Task::ready(Ok(()));
-        };
-        let Some(client_id) = message.client_id.clone() else {
-            return Task::ready(Ok(()));
-        };
-        let Some(checkpoint) = message.checkpoint.as_ref() else {
-            return Task::ready(Ok(()));
-        };
-        let old_checkpoint = checkpoint.git_checkpoint.clone();
-
-        let new_checkpoint = git_store.update(cx, |git, cx| git.checkpoint(cx));
-        cx.spawn(async move |this, cx| {
-            let Some(new_checkpoint) = new_checkpoint
-                .await
-                .context("failed to get new checkpoint")
-                .log_err()
-            else {
-                return Ok(());
-            };
-
-            let Some(equal) = git_store
-                .update(cx, |git, cx| {
-                    git.compare_checkpoints(old_checkpoint.clone(), new_checkpoint, cx)
-                })
-                .await
-                .context("failed to compare checkpoints")
-                .log_err()
-            else {
-                return Ok(());
-            };
-
-            this.update(cx, |this, cx| {
-                if let Some((ix, message)) = this.user_message_mut(&client_id) {
-                    if let Some(checkpoint) = message.checkpoint.as_mut() {
-                        checkpoint.show = !equal;
-                        cx.emit(AcpThreadEvent::EntryUpdated(ix));
-                    }
-                }
-            })?;
-
             Ok(())
         })
     }
@@ -7484,7 +7819,7 @@ impl AcpThread {
                 #[cfg(not(target_os = "windows"))]
                 let (task_command, task_args, task_env, sandbox, spawn_cwd) = {
                     let mut builder = ShellBuilder::new(&Shell::Program(shell), is_windows);
-                    if headless {
+                    if headless || (cfg!(target_os = "linux") && sandbox_wrap.is_some()) {
                         builder = builder.non_interactive();
                     }
                     let (task_command, task_args) = builder
@@ -7811,7 +8146,7 @@ fn markdown_for_raw_output(
     cx: &mut App,
 ) -> Option<Entity<Markdown>> {
     let text = raw_output_text(raw_output)?;
-    Some(cx.new(|cx| Markdown::new(text.into(), Some(language_registry.clone()), None, cx)))
+    Some(cx.new(|cx| Markdown::new_deferred(text, Some(language_registry.clone()), cx)))
 }
 
 fn raw_output_text(raw_output: &serde_json::Value) -> Option<String> {
@@ -7844,9 +8179,9 @@ mod tests {
     use futures::stream::StreamExt as _;
     use futures::{channel::mpsc, future::LocalBoxFuture, select};
     use gpui::UpdateGlobal as _;
-    use gpui::{App, AsyncApp, TestAppContext, WeakEntity};
+    use gpui::{App, AsyncApp, TaskExt as _, TestAppContext, WeakEntity};
     use indoc::indoc;
-    use project::{AgentId, FakeFs, Fs, RemoveOptions};
+    use project::{AgentId, FakeFs};
     use rand::{distr, prelude::*};
     use serde_json::json;
     use settings::SettingsStore;
@@ -7855,7 +8190,7 @@ mod tests {
         cell::RefCell,
         path::Path,
         rc::Rc,
-        sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
+        sync::atomic::{AtomicBool, Ordering::SeqCst},
         time::Duration,
     };
     use util::{path, path_list::PathList};
@@ -7928,7 +8263,7 @@ mod tests {
                 .streaming_content_target(None, false, false)
                 .expect("streaming target");
             assert_eq!(target.markdown.read(cx).source(), "before");
-            thread.cancel(cx).detach();
+            thread.cancel(cx).detach_and_log_err(cx);
             assert_eq!(target.markdown.read(cx).source(), "before buffered");
             assert!(thread.streaming_text_buffer.is_none());
             target.markdown
@@ -9461,13 +9796,12 @@ mod tests {
             };
             assert_eq!(source.path, PathBuf::from("second.rs"));
             assert_ne!(diff, &previous);
-            let native_diff = cx.new(|cx| {
+            let native_diff = cx.new(|_| {
                 Diff::finalized(
                     "native.rs".into(),
                     Some("before".into()),
                     "after".into(),
                     languages.clone(),
-                    cx,
                 )
             });
             let mut native = ToolCallContent::Diff(native_diff.clone());
@@ -10960,6 +11294,9 @@ mod tests {
             AgentThreadEntry::UserMessage(message) => {
                 (&message.identity, &message.content, &message.meta)
             }
+            AgentThreadEntry::SessionMessage(message) => {
+                (&message.identity, &message.content, &message.meta)
+            }
             AgentThreadEntry::AssistantMessage(message) => {
                 let [chunk] = message.chunks.as_slice() else {
                     panic!("expected one assistant chunk");
@@ -10978,6 +11315,23 @@ mod tests {
                 }
             }
             _ => panic!("expected a message"),
+        }
+    }
+
+    /// Session messages take chunks through their own API, which also records participants.
+    fn append_keyed_chunk(
+        thread: &mut AcpThread,
+        kind: MessageKind,
+        chunk: acp_v2::ContentChunk,
+        cx: &mut Context<AcpThread>,
+    ) -> Result<()> {
+        if kind == MessageKind::Session {
+            thread.append_session_message_chunk(
+                acp_v2::SessionMessageChunk::new(chunk.message_id, chunk.content).meta(chunk.meta),
+                cx,
+            )
+        } else {
+            thread.append_message_chunk(kind, chunk, cx)
         }
     }
 
@@ -11081,6 +11435,357 @@ mod tests {
         (thread, connection)
     }
 
+    async fn new_agent_owned_test_thread(
+        cx: &mut TestAppContext,
+    ) -> (Entity<AcpThread>, Rc<StubAgentConnection>) {
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let connection = Rc::new(StubAgentConnection::new());
+        let thread = cx.update(|cx| {
+            let action_log = cx.new(|_| ActionLog::new(project.clone()));
+            cx.new(|cx| {
+                AcpThread::new(
+                    Some(acp_v2::SessionId::new("parent")),
+                    None,
+                    None,
+                    connection.clone(),
+                    project,
+                    action_log,
+                    acp_v2::SessionId::new("child"),
+                    watch::Receiver::constant(acp_v2::PromptCapabilities::new()),
+                    cx,
+                )
+                .agent_owned()
+            })
+        });
+        cx.update(|cx| connection.track_session(&thread, cx));
+        (thread, connection)
+    }
+
+    fn idle_with(stop_reason: acp_v2::StopReason) -> acp_v2::StateUpdate {
+        acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new().stop_reason(stop_reason))
+    }
+
+    fn legacy_permission_request(
+        thread: &mut AcpThread,
+        tool_call_id: &str,
+        cx: &mut Context<AcpThread>,
+    ) -> Task<RequestPermissionOutcome> {
+        thread
+            .request_tool_call_authorization(
+                acp_v1::ToolCall::new(acp_v1::ToolCallId::new(tool_call_id), "Edit").into(),
+                PermissionOptions::Flat(vec![acp_v2::PermissionOption::new(
+                    "allow",
+                    "Allow",
+                    acp_v2::PermissionOptionKind::AllowOnce,
+                )]),
+                AuthorizationKind::PermissionGrant,
+                cx,
+            )
+            .expect("permission request")
+    }
+
+    #[gpui::test]
+    async fn test_cancelling_a_subagent_needs_its_parents_permission(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (thread, connection) = new_agent_owned_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                    cx,
+                )
+                .expect("running");
+        });
+        let refused = thread.update(cx, |thread, cx| thread.cancel(cx));
+        assert!(refused.await.is_err());
+        assert!(connection.take_cancel_calls().is_empty());
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_subagent_association(
+                    &acp_v2::SubagentUpdate::new("child").capabilities(
+                        acp_v2::SubagentSessionCapabilities::new()
+                            .cancel(acp_v2::SessionCancelCapabilities::new()),
+                    ),
+                    cx,
+                )
+                .expect("subagent")
+        });
+        // A v1 subagent's permission requests are anchored to its tool calls.
+        let permission = thread.update(cx, |thread, cx| {
+            legacy_permission_request(thread, "edit", cx)
+        });
+        let cancellation = thread.update(cx, |thread, cx| thread.cancel(cx));
+        assert_eq!(
+            connection.take_cancel_calls(),
+            vec![acp_v2::SessionId::new("child")]
+        );
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.pending_permission_requests().count(), 0);
+        });
+        assert!(matches!(
+            permission.await,
+            RequestPermissionOutcome::Cancelled
+        ));
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(idle_with(acp_v2::StopReason::Cancelled), cx)
+                .expect("idle")
+        });
+        cancellation
+            .await
+            .expect("the subagent confirmed cancellation");
+    }
+
+    #[gpui::test]
+    async fn test_a_cancelled_subagent_releases_its_pending_actions(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (thread, _connection) = new_agent_owned_test_thread(cx).await;
+        let running = || acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new());
+        thread.update(cx, |thread, cx| {
+            thread.update_session_state(running(), cx).expect("running");
+        });
+        let (generic, legacy, elicitation) = thread.update(cx, |thread, cx| {
+            let request = test_generic_permission_request(thread, "allow");
+            let (_, generic) = thread.request_permission(request, cx).expect("request");
+            let legacy = legacy_permission_request(thread, "edit", cx);
+            let session_id = thread.session_id().clone();
+            let elicitation = thread
+                .request_elicitation(
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationFormMode::new(
+                            acp_v2::ElicitationSessionScope::new(session_id),
+                            acp_v2::ElicitationSchema::new().string("name", true),
+                        ),
+                        "Provide a name",
+                    ),
+                    cx,
+                )
+                .expect("elicitation");
+            (generic, legacy, elicitation)
+        });
+
+        // Work that ends normally may leave background requests that still apply.
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(idle_with(acp_v2::StopReason::EndTurn), cx)
+                .expect("idle");
+            assert_eq!(thread.pending_permission_requests().count(), 2);
+            thread.update_session_state(running(), cx).expect("running");
+        });
+
+        // Zed did not cancel this subagent: its work stopped with an ancestor's.
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(idle_with(acp_v2::StopReason::Cancelled), cx)
+                .expect("idle");
+            assert_eq!(thread.pending_permission_requests().count(), 0);
+            let (_, tool_call) = thread
+                .tool_call(&acp_v2::ToolCallId::new("edit"))
+                .expect("tool call");
+            assert_eq!(tool_call.status(), ToolCallStatus::Canceled);
+            let elicitation_id = thread
+                .entries()
+                .iter()
+                .find_map(|entry| match entry {
+                    AgentThreadEntry::Elicitation(id) => Some(id.clone()),
+                    _ => None,
+                })
+                .expect("elicitation entry");
+            let (_, elicitation) = thread.elicitation(&elicitation_id).expect("elicitation");
+            assert!(matches!(elicitation.status, ElicitationStatus::Canceled));
+        });
+        assert_eq!(generic.await, acp_v2::RequestPermissionOutcome::Cancelled);
+        assert!(matches!(legacy.await, RequestPermissionOutcome::Cancelled));
+        assert!(matches!(
+            elicitation.await.action,
+            acp_v2::ElicitationAction::Cancel
+        ));
+    }
+
+    #[gpui::test]
+    async fn test_agent_owned_sessions_report_activity_without_accepting_prompts(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (thread, _connection) = new_agent_owned_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            assert!(thread.uses_reported_activity());
+            assert_eq!(
+                thread.foreground_activity(),
+                ForegroundActivity::Unconfirmed
+            );
+            assert!(!thread.can_retry(cx));
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                    cx,
+                )
+                .expect("agent-owned sessions accept reported state");
+            assert_eq!(thread.status(), ThreadStatus::Generating);
+        });
+
+        let submission = thread.update(cx, |thread, cx| thread.send(vec!["prompt".into()], cx));
+        let submission_id = submission.id;
+        cx.run_until_parked();
+        assert!(submission.await.is_err());
+        thread.read_with(cx, |thread, _| {
+            assert!(matches!(
+                thread
+                    .submission(submission_id)
+                    .expect("rejected prompt")
+                    .state,
+                SubmissionState::Failed(_)
+            ));
+        });
+
+        let retry = thread.update(cx, |thread, cx| thread.retry(cx));
+        cx.run_until_parked();
+        assert!(retry.await.is_err());
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.entries().is_empty());
+            assert!(thread.running_turn.is_none());
+            assert_eq!(thread.foreground_activity(), ForegroundActivity::Running);
+            assert_eq!(thread.activity_generation(), 1);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_unknown_activity_is_unconfirmed_without_ending_work(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (thread, _) = new_receipt_test_thread(cx).await;
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&thread, {
+                let events = events.clone();
+                move |_, event, _| match event {
+                    AcpThreadEvent::Stopped {
+                        activity_generation,
+                        stop_reason,
+                        ..
+                    } => events.borrow_mut().push(format!(
+                        "stopped {activity_generation} {}",
+                        matches!(stop_reason, Some(acp_v2::StopReason::Error(_)))
+                    )),
+                    AcpThreadEvent::ActivityConfirmedIdle => {
+                        events.borrow_mut().push("confirmed idle".to_string())
+                    }
+                    _ => {}
+                }
+            })
+        });
+        let running = || acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new());
+        let unknown = || acp_v2::StateUpdate::Unknown(acp_v2::UnknownStateUpdate::new());
+
+        thread.update(cx, |thread, cx| {
+            thread.update_session_state(running(), cx).expect("running");
+        });
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+
+        thread.update(cx, |thread, cx| {
+            thread.update_session_state(unknown(), cx).expect("unknown");
+            assert_eq!(thread.foreground_activity(), ForegroundActivity::Unknown);
+            assert_eq!(thread.status(), ThreadStatus::Unconfirmed);
+            assert!(!thread.is_waiting_for_confirmation());
+        });
+        cx.run_until_parked();
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(running(), cx)
+                .expect("running again");
+            assert_eq!(
+                thread.activity_generation(),
+                1,
+                "unknown must not end the work that was in progress"
+            );
+            thread
+                .update_session_state(unknown(), cx)
+                .expect("unknown again");
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Idle(
+                        acp_v2::IdleStateUpdate::new()
+                            .stop_reason(acp_v2::StopReason::Error(acp_v2::ErrorStopReason::new())),
+                    ),
+                    cx,
+                )
+                .expect("failed idle");
+            assert!(thread.had_error());
+        });
+        cx.run_until_parked();
+        assert_eq!(*events.borrow(), ["stopped 1 true"]);
+
+        events.borrow_mut().clear();
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(unknown(), cx)
+                .expect("unknown while idle");
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new()),
+                    cx,
+                )
+                .expect("idle");
+            assert_eq!(thread.activity_generation(), 1);
+        });
+        cx.run_until_parked();
+        assert_eq!(*events.borrow(), ["confirmed idle"]);
+    }
+
+    #[gpui::test]
+    async fn test_cancel_send_failure_preserves_legacy_turn(cx: &mut TestAppContext) {
+        init_test(cx);
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let connection = Rc::new(StubAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.clone().new_session(
+                    project,
+                    PathList::new(&[Path::new(path!("/test"))]),
+                    cx,
+                )
+            })
+            .await
+            .expect("legacy session");
+        let complete = connection.defer_next_prompt_response();
+        let running = thread.update(cx, |thread, cx| thread.send(vec!["original".into()], cx));
+        cx.run_until_parked();
+        let before = thread.read_with(cx, |thread, _| {
+            (
+                thread.turn_id,
+                thread.entries.len(),
+                thread.activity_generation(),
+            )
+        });
+        connection.set_next_cancel_error(anyhow!("cancel send failed"));
+        let rejected = thread.update(cx, |thread, cx| thread.send(vec!["follow-up".into()], cx));
+        assert_eq!(
+            rejected
+                .await
+                .expect_err("failed cancellation prevents follow-up")
+                .to_string(),
+            "cancel send failed"
+        );
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(
+                (
+                    thread.turn_id,
+                    thread.entries.len(),
+                    thread.activity_generation()
+                ),
+                before
+            );
+            assert_eq!(thread.status(), ThreadStatus::Generating);
+        });
+        complete
+            .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
+            .expect("original request remains live");
+        running.await.expect("original turn completes");
+    }
+
     #[gpui::test]
     async fn test_receipt_disconnect_settles_waiters_and_preserves_recovery(
         cx: &mut TestAppContext,
@@ -11122,8 +11827,8 @@ mod tests {
                     cx,
                 )
                 .expect("confirmed echo");
-            thread.disconnect_submissions(cx);
-            thread.disconnect_submissions(cx);
+            thread.handle_connection_lost(cx);
+            thread.handle_connection_lost(cx);
             assert!(!thread.has_unsettled_submissions());
             assert!(!thread.is_idle_for_retention());
             assert!(
@@ -11185,7 +11890,7 @@ mod tests {
                     .expect("reported activity");
                 let submission =
                     thread.submit_receipt(vec!["ready".into()], Task::ready(response), cx);
-                thread.disconnect_submissions(cx);
+                thread.handle_connection_lost(cx);
                 submission
             });
             let id = submission.id;
@@ -11252,7 +11957,7 @@ mod tests {
         let id = submission.id;
         cx.run_until_parked();
         thread.update(cx, |thread, cx| {
-            thread.disconnect_submissions(cx);
+            thread.handle_connection_lost(cx);
             assert!(matches!(
                 thread.submission(id).expect("still pending").state,
                 SubmissionState::Pending
@@ -11278,10 +11983,9 @@ mod tests {
         let source = vec!["local prompt".into()];
         thread
             .update(cx, |thread, cx| {
-                thread.prepare_local_prompt(id.clone(), vec!["initial".into()], cx)
+                thread.upsert_local_user_message(id.clone(), vec!["initial".into()], cx)
             })
-            .expect("synchronous local insertion")
-            .await;
+            .expect("synchronous local insertion");
         thread.update(cx, |thread, cx| {
             thread
                 .upsert_assistant_message(
@@ -11292,16 +11996,14 @@ mod tests {
         });
         thread
             .update(cx, |thread, cx| {
-                thread.prepare_local_prompt(ClientUserMessageId::new(), Vec::new(), cx)
+                thread.upsert_local_user_message(ClientUserMessageId::new(), Vec::new(), cx)
             })
-            .expect("empty command marker")
-            .await;
+            .expect("empty command marker");
         thread
             .update(cx, |thread, cx| {
-                thread.prepare_local_prompt(id.clone(), source.clone(), cx)
+                thread.upsert_local_user_message(id.clone(), source.clone(), cx)
             })
-            .expect("replace exact keyed local message")
-            .await;
+            .expect("replace exact keyed local message");
         let submission = thread.update(cx, |thread, cx| {
             thread.submit_receipt(
                 source.clone(),
@@ -11375,15 +12077,12 @@ mod tests {
                 .expect("generic permission before local failure")
         });
         let original_error = Arc::new(anyhow!(MaxOutputTokensError));
-        thread
-            .update(cx, |thread, cx| {
-                thread.finish_local_turn(
-                    acp_v2::StopReason::Error(acp_v2::ErrorStopReason::new()),
-                    cx,
-                )
-            })
-            .await
-            .expect("local cleanup");
+        thread.update(cx, |thread, cx| {
+            thread.finish_local_turn(
+                acp_v2::StopReason::Error(acp_v2::ErrorStopReason::new()),
+                cx,
+            )
+        });
         assert!(stops.borrow().is_empty());
         assert!(matches!(
             permission.await,
@@ -11507,134 +12206,6 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_local_checkpoints_target_exact_message_and_activity_generation(
-        cx: &mut TestAppContext,
-    ) {
-        init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/test"), json!({".git": {}})).await;
-        let project = Project::test(fs, [Path::new(path!("/test"))], cx).await;
-        let connection = Rc::new(StubAgentConnection::new().with_receipt_submissions(true));
-        let thread = cx
-            .update(|cx| {
-                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
-            })
-            .await
-            .expect("local checkpoint thread");
-        cx.run_until_parked();
-        let id = ClientUserMessageId::new();
-        let marker_id = ClientUserMessageId::new();
-        let preparation = thread
-            .update(cx, |thread, cx| {
-                thread.prepare_local_prompt(id.clone(), vec!["source".into()], cx)
-            })
-            .expect("prepare source");
-        thread
-            .update(cx, |thread, cx| {
-                thread.prepare_local_prompt(marker_id.clone(), Vec::new(), cx)
-            })
-            .expect("interleaved hidden marker")
-            .await;
-        preparation.await;
-        thread.update(cx, |thread, cx| {
-            assert!(
-                thread
-                    .user_message_mut(&id)
-                    .expect("source")
-                    .1
-                    .checkpoint
-                    .is_some()
-            );
-            assert!(
-                thread
-                    .user_message_mut(&marker_id)
-                    .expect("marker")
-                    .1
-                    .checkpoint
-                    .is_none()
-            );
-            thread.truncate_entries(1, cx);
-            thread
-                .update_session_state(
-                    acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
-                    cx,
-                )
-                .expect("reported running without legacy turn");
-            assert!(thread.running_turn.is_none());
-        });
-        thread
-            .update(cx, |thread, cx| {
-                thread.write_text_file(PathBuf::from(path!("/test/file.txt")), "after".into(), cx)
-            })
-            .await
-            .expect("local edit");
-        cx.run_until_parked();
-        let stale_checkpoint = thread.update(cx, |thread, cx| {
-            let checkpoint = thread
-                .user_message_mut(&id)
-                .expect("source")
-                .1
-                .checkpoint
-                .as_mut()
-                .expect("checkpoint");
-            assert!(checkpoint.show, "reported edit must reveal checkpoint");
-            checkpoint.show = false;
-            let stale_checkpoint = thread.update_last_checkpoint_if_changed(cx);
-            thread
-                .update_session_state(
-                    acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new()),
-                    cx,
-                )
-                .expect("old activity ends");
-            thread
-                .update_session_state(
-                    acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
-                    cx,
-                )
-                .expect("successor activity");
-            stale_checkpoint
-        });
-        stale_checkpoint.await.expect("stale checkpoint completes");
-        thread.update(cx, |thread, _| {
-            assert!(
-                !thread
-                    .user_message_mut(&id)
-                    .expect("source")
-                    .1
-                    .checkpoint
-                    .as_ref()
-                    .expect("checkpoint")
-                    .show
-            );
-        });
-        thread
-            .update(cx, |thread, cx| {
-                thread.finish_local_turn(acp_v2::StopReason::EndTurn, cx)
-            })
-            .await
-            .expect("local final checkpoint");
-        thread.update(cx, |thread, cx| {
-            assert!(
-                thread
-                    .user_message_mut(&id)
-                    .expect("source")
-                    .1
-                    .checkpoint
-                    .as_ref()
-                    .expect("checkpoint")
-                    .show
-            );
-            assert_eq!(thread.foreground_activity(), ForegroundActivity::Running);
-            thread
-                .update_session_state(
-                    acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new()),
-                    cx,
-                )
-                .expect("driver finishes");
-        });
-    }
-
-    #[gpui::test]
     async fn test_local_refusal_reports_one_stop(cx: &mut TestAppContext) {
         init_test(cx);
         let (thread, _) = new_receipt_test_thread(cx).await;
@@ -11652,7 +12223,7 @@ mod tests {
                 }
             })
         });
-        let finish = thread.update(cx, |thread, cx| {
+        thread.update(cx, |thread, cx| {
             thread
                 .upsert_local_user_message(ClientUserMessageId::new(), vec!["prompt".into()], cx)
                 .expect("accepted local message");
@@ -11664,7 +12235,6 @@ mod tests {
                 .expect("running");
             thread.finish_local_turn(acp_v2::StopReason::Refusal, cx)
         });
-        finish.await.expect("local cleanup");
         assert!(events.borrow().is_empty());
         thread.update(cx, |thread, cx| {
             assert!(thread.entries().is_empty());
@@ -11690,7 +12260,10 @@ mod tests {
         let response = connection.defer_next_receipt_response();
         let submission = thread.update(cx, |thread, cx| thread.send(vec!["pending".into()], cx));
         let id = submission.id;
-        thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+        thread
+            .update(cx, |thread, cx| thread.cancel(cx))
+            .await
+            .expect("cancellation succeeds");
         assert_eq!(
             connection.take_cancel_calls(),
             [thread.read_with(cx, |thread, _| thread.session_id().clone())]
@@ -11716,7 +12289,10 @@ mod tests {
             assert!(!thread.had_error());
             assert!(thread.entries().is_empty());
         });
-        thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+        thread
+            .update(cx, |thread, cx| thread.cancel(cx))
+            .await
+            .expect("cancellation succeeds");
         assert!(connection.take_cancel_calls().is_empty());
     }
 
@@ -11898,7 +12474,7 @@ mod tests {
             assert!(thread.activity_started_at().is_some());
             assert!(thread.activity_duration().is_some());
             assert!(
-                matches!(thread.foreground_state(), acp_v2::StateUpdate::Running(running)
+                matches!(thread.foreground_state(), Some(acp_v2::StateUpdate::Running(running))
                 if running.meta.as_ref().and_then(|meta| meta.get("future")) == Some(&json!(42)))
             );
         });
@@ -11936,7 +12512,7 @@ mod tests {
                 SubmissionState::Pending
             ));
             assert!(
-                matches!(thread.foreground_state(), acp_v2::StateUpdate::Idle(idle)
+                matches!(thread.foreground_state(), Some(acp_v2::StateUpdate::Idle(idle))
                 if idle.stop_reason == Some(acp_v2::StopReason::Refusal))
             );
         });
@@ -12096,7 +12672,7 @@ mod tests {
                     .expect("running");
                 assert!(!thread.had_error());
                 thread.update_session_state(idle.clone(), cx).expect("idle");
-                assert_eq!(thread.foreground_state(), &idle);
+                assert_eq!(thread.foreground_state(), Some(&idle));
                 assert_eq!(thread.had_error(), expected_had_error);
                 assert_eq!(thread.entries().len(), 3);
                 assert!(matches!(
@@ -12123,6 +12699,382 @@ mod tests {
             assert_eq!(thread.latest_submission_id(), None);
             assert_eq!(thread.entries().len(), 3);
         });
+    }
+
+    #[gpui::test]
+    async fn test_unconfirmed_activity_waits_for_idle_without_inventing_completion(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        for initially_blocked in [false, true] {
+            let (thread, connection) = new_receipt_test_thread(cx).await;
+            let events = Rc::new(RefCell::new((0, 0)));
+            let _subscription = cx.update(|cx| {
+                cx.subscribe(&thread, {
+                    let events = events.clone();
+                    move |_, event, _| match event {
+                        AcpThreadEvent::Stopped { .. } => events.borrow_mut().0 += 1,
+                        AcpThreadEvent::ActivityConfirmedIdle => events.borrow_mut().1 += 1,
+                        _ => {}
+                    }
+                })
+            });
+            let mut cancelled = thread.update(cx, |thread, cx| {
+                thread.mark_activity_unconfirmed(cx);
+                assert_eq!(thread.status(), ThreadStatus::Unconfirmed);
+                assert!(thread.foreground_state().is_none());
+                assert!(thread.activity_started_at().is_none());
+                assert!(thread.activity_duration().is_none());
+                assert!(!thread.is_idle_for_retention());
+                thread.cancel(cx)
+            });
+            cx.run_until_parked();
+            assert!((&mut cancelled).now_or_never().is_none());
+            assert_eq!(connection.take_cancel_calls().len(), 1);
+            if initially_blocked {
+                thread.update(cx, |thread, cx| {
+                    thread
+                        .update_session_state(
+                            acp_v2::StateUpdate::RequiresAction(
+                                acp_v2::RequiresActionStateUpdate::new(),
+                            ),
+                            cx,
+                        )
+                        .expect("first report is blocked work");
+                    thread.mark_activity_unconfirmed(cx);
+                    assert_eq!(
+                        thread.foreground_activity(),
+                        ForegroundActivity::RequiresAction
+                    );
+                    assert_eq!(thread.activity_generation(), 1);
+                });
+                cx.run_until_parked();
+                assert!((&mut cancelled).now_or_never().is_none());
+            }
+            for _ in 0..2 {
+                thread.update(cx, |thread, cx| {
+                    thread
+                        .update_session_state(
+                            acp_v2::StateUpdate::Idle(
+                                acp_v2::IdleStateUpdate::new()
+                                    .stop_reason(acp_v2::StopReason::Cancelled),
+                            ),
+                            cx,
+                        )
+                        .expect("confirmed idle");
+                });
+            }
+            cancelled.await.expect("stop is now confirmed");
+            cx.run_until_parked();
+            assert_eq!(
+                *events.borrow(),
+                (
+                    usize::from(initially_blocked),
+                    usize::from(!initially_blocked)
+                )
+            );
+            thread.read_with(cx, |thread, _| {
+                assert_eq!(thread.status(), ThreadStatus::Idle);
+                assert_eq!(thread.activity_generation(), u64::from(initially_blocked));
+                assert!(thread.is_idle_for_retention());
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn test_unconfirmed_stop_reports_observation_loss(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (thread, _) = new_receipt_test_thread(cx).await;
+        let mut cancelled = thread.update(cx, |thread, cx| {
+            thread.mark_activity_unconfirmed(cx);
+            thread.cancel(cx)
+        });
+        cx.run_until_parked();
+        assert!((&mut cancelled).now_or_never().is_none());
+        thread.update(cx, |thread, cx| thread.handle_connection_lost(cx));
+        assert!(
+            cancelled
+                .await
+                .expect_err("observation loss cannot confirm stop")
+                .to_string()
+                .contains("before cancellation was confirmed")
+        );
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(
+                thread.foreground_activity(),
+                ForegroundActivity::Unconfirmed
+            );
+            assert_eq!(thread.activity_generation(), 0);
+            assert!(thread.activity_duration().is_none());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_reported_snapshots_are_idempotent_and_preserve_url_interactions(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (thread, _) = new_receipt_test_thread(cx).await;
+        thread.update(cx, |thread, cx| thread.mark_activity_unconfirmed(cx));
+        let stops = Rc::new(RefCell::new(Vec::new()));
+        let usage_updates = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&thread, {
+                let stops = stops.clone();
+                let usage_updates = usage_updates.clone();
+                move |_, event, _| match event {
+                    AcpThreadEvent::Stopped {
+                        activity_generation,
+                        stop_reason,
+                        ..
+                    } => {
+                        stops
+                            .borrow_mut()
+                            .push((*activity_generation, stop_reason.clone()));
+                    }
+                    AcpThreadEvent::TokenUsageUpdated(update) => {
+                        usage_updates.borrow_mut().push(*update)
+                    }
+                    _ => {}
+                }
+            })
+        });
+        let (entry_id, response) = thread.update(cx, |thread, cx| {
+            thread
+                .request_elicitation_with_id(
+                    acp_v2::CreateElicitationRequest::new(
+                        acp_v2::ElicitationUrlMode::new(
+                            acp_v2::ElicitationSessionScope::new(thread.session_id().clone()),
+                            "current-url",
+                            "https://example.com/finish",
+                        ),
+                        "Continue in browser",
+                    ),
+                    cx,
+                )
+                .expect("URL elicitation")
+        });
+        thread.update(cx, |thread, cx| {
+            thread.respond_to_elicitation(
+                &entry_id,
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
+                    acp_v2::ElicitationAcceptAction::new(),
+                )),
+                cx,
+            );
+        });
+        assert!(matches!(
+            response.await.action,
+            acp_v2::ElicitationAction::Accept(_)
+        ));
+        let idle: acp_v2::StateUpdate = serde_json::from_value(json!({
+            "state": "idle", "stopReason": "cancelled",
+            "usage": {"totalTokens": 12, "inputTokens": 5, "outputTokens": 7}
+        }))
+        .expect("idle snapshot");
+        for _ in 0..2 {
+            thread
+                .update(cx, |thread, cx| {
+                    thread.update_session_state(idle.clone(), cx)
+                })
+                .expect("initial snapshot");
+        }
+        cx.run_until_parked();
+        assert!(stops.borrow().is_empty());
+        assert_eq!(usage_updates.borrow().len(), 1);
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.activity_generation(), 0);
+            assert!(matches!(
+                thread
+                    .elicitation(&entry_id)
+                    .expect("URL interaction")
+                    .1
+                    .status,
+                ElicitationStatus::Accepted
+            ));
+        });
+        for output_tokens in [7, 9] {
+            thread.update(cx, |thread, cx| {
+                thread
+                    .update_session_state(
+                        acp_v2::StateUpdate::RequiresAction(
+                            acp_v2::RequiresActionStateUpdate::new(),
+                        ),
+                        cx,
+                    )
+                    .expect("work starts blocked");
+            });
+            let generation = thread.read_with(cx, |thread, _| thread.activity_generation());
+            let snapshot: acp_v2::StateUpdate = serde_json::from_value(json!({
+                "state": "idle", "stopReason": "end_turn",
+                "usage": {"totalTokens": 5 + output_tokens, "inputTokens": 5, "outputTokens": output_tokens}
+            })).expect("completion snapshot");
+            for _ in 0..2 {
+                thread
+                    .update(cx, |thread, cx| {
+                        thread.update_session_state(snapshot.clone(), cx)
+                    })
+                    .expect("completion or repeat");
+            }
+            cx.run_until_parked();
+            assert_eq!(stops.borrow().len(), generation as usize);
+            assert_eq!(
+                usage_updates.borrow().last(),
+                Some(&OutputTokensUpdate::Snapshot {
+                    activity_generation: generation,
+                    output_tokens
+                })
+            );
+        }
+        assert_eq!(
+            usage_updates.borrow().len(),
+            3,
+            "one usage snapshot per observed interval"
+        );
+        let correction: acp_v2::StateUpdate = serde_json::from_value(json!({
+            "state": "idle", "stopReason": "cancelled",
+            "usage": {"totalTokens": 15, "inputTokens": 5, "outputTokens": 10}
+        }))
+        .expect("updated idle information");
+        thread
+            .update(cx, |thread, cx| thread.update_session_state(correction, cx))
+            .expect("idle information changes");
+        cx.run_until_parked();
+        assert_eq!(stops.borrow().len(), 2);
+        assert_eq!(usage_updates.borrow().len(), 4);
+        thread.update(cx, |thread, cx| {
+            assert!(matches!(
+                thread.elicitation(&entry_id).expect("URL").1.status,
+                ElicitationStatus::Accepted
+            ));
+            thread.complete_url_elicitation(&"current-url".into(), cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_reported_interactions_do_not_invent_foreground_transitions(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (thread, _) = new_receipt_test_thread(cx).await;
+        let (permission_id, permission) = thread.update(cx, |thread, cx| {
+            thread
+                .request_permission(test_generic_permission_request(thread, "background"), cx)
+                .expect("background permission")
+        });
+        let (elicitation_id, elicitation) = request_test_form_elicitation(&thread, cx);
+        cx.run_until_parked();
+        assert_eq!(
+            thread.read_with(cx, |thread, _| thread.foreground_activity()),
+            ForegroundActivity::Idle
+        );
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::RequiresAction(acp_v2::RequiresActionStateUpdate::new()),
+                    cx,
+                )
+                .expect("blocked foreground work");
+            thread.cancel_permission_request(permission_id, cx);
+        });
+        assert_eq!(
+            permission.await,
+            acp_v2::RequestPermissionOutcome::Cancelled
+        );
+        cx.run_until_parked();
+        assert_eq!(
+            thread.read_with(cx, |thread, _| thread.foreground_activity()),
+            ForegroundActivity::RequiresAction
+        );
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+                    cx,
+                )
+                .expect("other foreground work can progress");
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            thread.read_with(cx, |thread, _| thread.foreground_activity()),
+            ForegroundActivity::Running
+        );
+        thread.update(cx, |thread, cx| {
+            thread.cancel_elicitation(&elicitation_id, cx)
+        });
+        assert_eq!(elicitation.await.action, acp_v2::ElicitationAction::Cancel);
+        cx.run_until_parked();
+        assert_eq!(
+            thread.read_with(cx, |thread, _| thread.foreground_activity()),
+            ForegroundActivity::Running
+        );
+        thread.update(cx, |thread, cx| {
+            thread
+                .update_session_state(
+                    acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new()),
+                    cx,
+                )
+                .expect("reported end");
+            assert_eq!(thread.activity_generation(), 1);
+            assert!(thread.latest_submission_id().is_none());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_reported_idle_preserves_unknown_completion_outcomes(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (thread, _) = new_receipt_test_thread(cx).await;
+        let stops = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&thread, {
+                let stops = stops.clone();
+                move |_, event, _| {
+                    if let AcpThreadEvent::Stopped { stop_reason, .. } = event {
+                        stops.borrow_mut().push(stop_reason.clone());
+                    }
+                }
+            })
+        });
+        for reason in [
+            None,
+            Some(json!(null)),
+            Some(json!(7)),
+            Some(json!({"invalid": true})),
+            Some(json!("_future")),
+        ] {
+            let mut snapshot = json!({"state": "idle"});
+            if let Some(reason) = reason {
+                snapshot["stopReason"] = reason;
+            }
+            let snapshot: acp_v2::StateUpdate =
+                serde_json::from_value(snapshot).expect("tolerant idle decoding");
+            thread.update(cx, |thread, cx| {
+                thread
+                    .update_session_state(
+                        acp_v2::StateUpdate::RequiresAction(
+                            acp_v2::RequiresActionStateUpdate::new(),
+                        ),
+                        cx,
+                    )
+                    .expect("active interval");
+                thread
+                    .update_session_state(snapshot.clone(), cx)
+                    .expect("idle");
+                thread
+                    .update_session_state(snapshot, cx)
+                    .expect("idle repeat");
+                assert_eq!(thread.foreground_activity(), ForegroundActivity::Idle);
+                assert!(!thread.had_error());
+            });
+            cx.run_until_parked();
+        }
+        let stops = stops.borrow();
+        assert_eq!(stops.len(), 5);
+        assert!(
+            stops
+                .iter()
+                .all(|reason| matches!(reason, None | Some(acp_v2::StopReason::Other(_))))
+        );
     }
 
     #[gpui::test]
@@ -12222,7 +13174,7 @@ mod tests {
             cx.spawn({
                 let cancelled = cancelled.clone();
                 async move |_| {
-                    cancel.await;
+                    cancel.await.expect("cancellation succeeds");
                     cancelled.set(true);
                 }
             })
@@ -12509,6 +13461,7 @@ mod tests {
             MessageKind::User,
             MessageKind::Assistant,
             MessageKind::Thought,
+            MessageKind::Session,
         ] {
             let thread = new_test_thread(cx).await;
             let original = json!([{"type": "text", "text": "original", "_meta": {"block": true}}]);
@@ -12575,6 +13528,10 @@ mod tests {
                             serde_json::from_value(patch).expect("thought patch"),
                             cx,
                         ),
+                        MessageKind::Session => thread.upsert_session_message(
+                            serde_json::from_value(patch).expect("session message patch"),
+                            cx,
+                        ),
                     }
                     .expect("apply patch");
                     let (identity, content, meta) = only_keyed_message(thread);
@@ -12596,19 +13553,362 @@ mod tests {
                     acp_v2::TextContent::new("chunk")
                         .meta(acp_v2::Meta::from_iter([("block".into(), json!(true))])),
                 );
-                thread
-                    .append_message_chunk(
-                        kind,
-                        acp_v2::ContentChunk::new(block.clone(), "patch")
-                            .meta(acp_v2::Meta::from_iter([("envelope".into(), json!(true))])),
-                        cx,
-                    )
-                    .expect("append scoped metadata");
+                append_keyed_chunk(
+                    thread,
+                    kind,
+                    acp_v2::ContentChunk::new(block.clone(), "patch")
+                        .meta(acp_v2::Meta::from_iter([("envelope".into(), json!(true))])),
+                    cx,
+                )
+                .expect("append scoped metadata");
                 let (_, content, meta) = only_keyed_message(thread);
                 assert_eq!(content.source_blocks(), &[block]);
                 assert_eq!(
                     meta,
                     &Some(acp_v2::Meta::from_iter([("restored".into(), json!(true))]))
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn test_session_messages_keep_participants_and_convert_from_v1(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            thread
+                .append_session_message_chunk(
+                    acp_v2::SessionMessageChunk::new("task", "Start by ".into()),
+                    cx,
+                )
+                .expect("a message can start with a chunk and no participants");
+            thread
+                .upsert_session_message(
+                    acp_v2::SessionMessage::new("task")
+                        .sender_session_id(acp_v2::SessionId::new("parent"))
+                        .recipient_session_id(acp_v2::SessionId::new("child")),
+                    cx,
+                )
+                .expect("participants can arrive later");
+            thread
+                .append_session_message_chunk(
+                    acp_v2::SessionMessageChunk::new("task", "reproducing".into())
+                        .sender_session_id(acp_v2::SessionId::new("other")),
+                    cx,
+                )
+                .expect("a chunk's participant fields are ignored");
+            let error = thread
+                .upsert_session_message(
+                    acp_v2::SessionMessage::new("task")
+                        .sender_session_id(acp_v2::SessionId::new("other")),
+                    cx,
+                )
+                .expect_err("a known participant cannot change");
+            assert!(error.to_string().contains("cannot change"), "{error}");
+            thread
+                .upsert_assistant_message(
+                    acp_v2::AgentMessage::new("task").content(vec!["answer".into()]),
+                    cx,
+                )
+                .expect("assistant messages have their own ID space");
+
+            let [
+                AgentThreadEntry::SessionMessage(message),
+                AgentThreadEntry::AssistantMessage(_),
+            ] = thread.entries()
+            else {
+                panic!("expected a session message, then an assistant message");
+            };
+            assert_eq!(message.identity, MessageIdentity::Keyed("task".into()));
+            assert_eq!(message.sender_session_id, Some("parent".into()));
+            assert_eq!(message.recipient_session_id, Some("child".into()));
+            assert_eq!(
+                message.content.source_blocks(),
+                &["Start by ".into(), "reproducing".into()]
+            );
+        });
+
+        // v1 replaces message metadata where v2 patches it by key.
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            for update in [
+                json!({
+                    "sessionUpdate": "session_message",
+                    "messageId": "reply",
+                    "senderSessionId": "child",
+                    "content": [{"type": "text", "text": "Done"}],
+                    "_meta": {"first": true},
+                }),
+                json!({
+                    "sessionUpdate": "session_message",
+                    "messageId": "reply",
+                    "recipientSessionId": "parent",
+                    "_meta": {"second": true},
+                }),
+                json!({
+                    "sessionUpdate": "session_message_chunk",
+                    "messageId": "reply",
+                    "senderSessionId": "other",
+                    "content": {"type": "text", "text": " now"},
+                    "_meta": {"chunk": true},
+                }),
+            ] {
+                thread
+                    .handle_session_update(serde_json::from_value(update).expect("v1 update"), cx)
+                    .expect("v1 session message");
+            }
+            let [AgentThreadEntry::SessionMessage(message)] = thread.entries() else {
+                panic!("expected one session message");
+            };
+            assert_eq!(message.sender_session_id, Some("child".into()));
+            assert_eq!(message.recipient_session_id, Some("parent".into()));
+            assert_eq!(
+                message.meta,
+                Some(acp_v2::Meta::from_iter([("second".into(), json!(true))]))
+            );
+            assert_eq!(
+                message.content.source_blocks(),
+                &["Done".into(), " now".into()]
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_v2_entity_metadata_patches_by_key(cx: &mut TestAppContext) {
+        init_test(cx);
+        let mut messages = Vec::new();
+        for kind in [
+            MessageKind::User,
+            MessageKind::Assistant,
+            MessageKind::Thought,
+            MessageKind::Session,
+        ] {
+            messages.push((kind, new_test_thread(cx).await));
+        }
+        let thread = new_test_thread(cx).await;
+        let snapshot_meta: acp_v2::Meta =
+            serde_json::from_value(json!({"literal": null})).expect("snapshot metadata");
+        let block = acp_v2::ContentBlock::Text(
+            acp_v2::TextContent::new("snapshot").meta(snapshot_meta.clone()),
+        );
+        for (patch, expected) in [
+            (None, json!(null)),
+            (
+                Some(
+                    json!({"keep": 1, "remove": true, "absent": null, "nested": {"old": 1, "literal": null}}),
+                ),
+                json!({"keep": 1, "remove": true, "nested": {"old": 1, "literal": null}}),
+            ),
+            (
+                Some(json!({"remove": null, "added": [], "nested": {"new": 2, "literal": null}})),
+                json!({"keep": 1, "added": [], "nested": {"new": 2, "literal": null}}),
+            ),
+            (
+                Some(json!({})),
+                json!({"keep": 1, "added": [], "nested": {"new": 2, "literal": null}}),
+            ),
+            (
+                None,
+                json!({"keep": 1, "added": [], "nested": {"new": 2, "literal": null}}),
+            ),
+            (
+                Some(json!({"keep": null, "nested": null})),
+                json!({"added": []}),
+            ),
+            (Some(json!(null)), json!(null)),
+            (
+                Some(json!({"gone": null, "last": {"literal": null}})),
+                json!({"last": {"literal": null}}),
+            ),
+        ] {
+            let metadata = patch.map_or(MaybeUndefined::Undefined, |patch| {
+                serde_json::from_value::<MaybeUndefined<acp_v2::Meta>>(patch)
+                    .expect("metadata patch")
+            });
+            let expected: Option<acp_v2::Meta> =
+                serde_json::from_value(expected).expect("expected stored metadata");
+            for (kind, message) in &messages {
+                message.update(cx, |thread, cx| {
+                    match kind {
+                        MessageKind::User => thread.upsert_user_message(
+                            acp_v2::UserMessage::new("metadata")
+                                .content(vec![block.clone()])
+                                .meta(metadata.clone()),
+                            cx,
+                        ),
+                        MessageKind::Assistant => thread.upsert_assistant_message(
+                            acp_v2::AgentMessage::new("metadata")
+                                .content(vec![block.clone()])
+                                .meta(metadata.clone()),
+                            cx,
+                        ),
+                        MessageKind::Thought => thread.upsert_thought(
+                            acp_v2::AgentThought::new("metadata")
+                                .content(vec![block.clone()])
+                                .meta(metadata.clone()),
+                            cx,
+                        ),
+                        MessageKind::Session => thread.upsert_session_message(
+                            acp_v2::SessionMessage::new("metadata")
+                                .content(vec![block.clone()])
+                                .meta(metadata.clone()),
+                            cx,
+                        ),
+                    }
+                    .expect("message upsert");
+                    let (_, content, stored) = only_keyed_message(thread);
+                    assert_eq!(stored, &expected, "{kind:?}");
+                    assert_eq!(content.source_blocks(), std::slice::from_ref(&block));
+                    append_keyed_chunk(
+                        thread,
+                        *kind,
+                        acp_v2::ContentChunk::new("chunk".into(), "metadata")
+                            .meta(snapshot_meta.clone()),
+                        cx,
+                    )
+                    .expect("message chunk");
+                    assert_eq!(only_keyed_message(thread).2, &expected);
+                });
+            }
+            thread.update(cx, |thread, cx| {
+                thread
+                    .upsert_wire_tool_call(
+                        acp_v2::ToolCallUpdate::new("metadata").meta(metadata.clone()),
+                        cx,
+                    )
+                    .expect("tool upsert");
+                assert_eq!(
+                    thread.tool_call(&"metadata".into()).expect("tool").1.meta,
+                    expected
+                );
+                thread
+                    .upsert_display_terminal(
+                        "metadata".into(),
+                        DisplayTerminalPatch {
+                            meta: metadata.clone(),
+                            output: MaybeUndefined::Value(DisplayTerminalOutput {
+                                data: b"snapshot".to_vec(),
+                                meta: Some(snapshot_meta.clone()),
+                            }),
+                            exit_status: MaybeUndefined::Value(
+                                acp_v2::TerminalExitStatus::new().meta(snapshot_meta.clone()),
+                            ),
+                            ..Default::default()
+                        },
+                        cx,
+                    )
+                    .expect("terminal upsert");
+                let terminal = thread.terminal("metadata".into()).expect("terminal");
+                let terminal = terminal.read(cx);
+                let display = terminal.display_state().expect("display");
+                assert_eq!(display.meta, expected);
+                assert_eq!(display.output_meta.as_ref(), Some(&snapshot_meta));
+                assert_eq!(
+                    terminal
+                        .output()
+                        .expect("exit snapshot")
+                        .exit_status
+                        .meta
+                        .as_ref(),
+                    Some(&snapshot_meta)
+                );
+                thread.upsert_context_compaction_update(
+                    acp_v2::CompactionUpdate::new("metadata", acp_v2::CompactionStatus::InProgress)
+                        .summary(vec![block.clone()])
+                        .meta(metadata.clone()),
+                    cx,
+                );
+                let compaction = thread
+                    .entries
+                    .iter()
+                    .find_map(|entry| match entry {
+                        AgentThreadEntry::ContextCompaction(compaction) => Some(compaction),
+                        _ => None,
+                    })
+                    .expect("compaction");
+                assert_eq!(compaction.meta, expected);
+                assert_eq!(
+                    compaction.summary.source_blocks(),
+                    std::slice::from_ref(&block)
+                );
+                thread.append_context_compaction_summary(
+                    acp_v2::CompactionSummaryChunk::new("metadata", "chunk".into())
+                        .meta(snapshot_meta.clone()),
+                    cx,
+                );
+                thread.update_session_info(acp_v2::SessionInfoUpdate::new().meta(metadata), cx);
+                assert_eq!(thread.session_info().meta, expected);
+            });
+        }
+        let permission = thread.update(cx, |thread, cx| {
+            let permission = thread
+                .request_tool_call_update_authorization_with_id(
+                    acp_v2::ToolCallUpdate::new("metadata").meta(
+                        serde_json::from_value::<acp_v2::Meta>(json!({"permission": true}))
+                            .expect("permission metadata"),
+                    ),
+                    PermissionOptions::Flat(vec![acp_v2::PermissionOption::new(
+                        "allow",
+                        "Allow",
+                        acp_v2::PermissionOptionKind::AllowOnce,
+                    )]),
+                    AuthorizationKind::PermissionGrant,
+                    cx,
+                )
+                .expect("permission subject");
+            assert_eq!(
+                thread.tool_call(&"metadata".into()).expect("tool").1.meta,
+                Some(
+                    serde_json::from_value(json!({"last": {"literal": null}, "permission": true}))
+                        .expect("merged permission metadata")
+                )
+            );
+            thread.cancel_permission_request(permission.0, cx);
+            permission.1
+        });
+        assert!(matches!(
+            permission.await,
+            RequestPermissionOutcome::Cancelled
+        ));
+    }
+
+    #[gpui::test]
+    async fn test_v1_compaction_metadata_keeps_replacement_semantics(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        for (patch, expected) in [
+            (
+                json!({"_meta": {"first": 1, "literal": null}}),
+                json!({"first": 1, "literal": null}),
+            ),
+            (
+                json!({"_meta": {"replacement": 2}}),
+                json!({"replacement": 2}),
+            ),
+            (json!({"_meta": {}}), json!({})),
+            (json!({}), json!({})),
+            (json!({"_meta": null}), json!(null)),
+        ] {
+            thread.update(cx, |thread, cx| {
+                let mut patch = patch;
+                let fields = patch.as_object_mut().expect("update object");
+                fields.insert("compactionId".into(), json!("legacy"));
+                fields.insert("status".into(), json!("in_progress"));
+                thread
+                    .handle_session_update(
+                        acp_v1::SessionUpdate::CompactionUpdate(
+                            serde_json::from_value(patch).expect("v1 compaction"),
+                        ),
+                        cx,
+                    )
+                    .expect("legacy update");
+                let Some(AgentThreadEntry::ContextCompaction(compaction)) = thread.entries.first()
+                else {
+                    panic!("compaction");
+                };
+                assert_eq!(
+                    serde_json::to_value(&compaction.meta).expect("metadata JSON"),
+                    expected
                 );
             });
         }
@@ -12806,7 +14106,7 @@ mod tests {
                     cx,
                 )
                 .expect("buffer before cancellation");
-            thread.cancel(cx).detach();
+            thread.cancel(cx).detach_and_log_err(cx);
             assert!(thread.streaming_text_buffer.is_none());
             current
         });
@@ -13859,7 +15159,10 @@ mod tests {
             ));
         });
 
-        thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+        thread
+            .update(cx, |thread, cx| thread.cancel(cx))
+            .await
+            .expect("cancellation succeeds");
 
         thread.read_with(cx, |thread, _| {
             assert!(matches!(
@@ -13961,6 +15264,12 @@ mod tests {
                     thread.to_markdown(cx),
                     format!("## Context Compaction (Completed)\n\n{summary}\n\n")
                 );
+                let entry = thread.entries.last().expect("compaction entry must exist");
+                assert!(!entry.has_pending_markdown_render(cx));
+                for markdown in compaction.summary.markdowns() {
+                    markdown.update(cx, |markdown, cx| markdown.ensure_parsed(cx));
+                }
+                assert!(entry.has_pending_markdown_render(cx));
             }
 
             thread
@@ -13992,6 +15301,13 @@ mod tests {
             assert_eq!(
                 thread.to_markdown(cx),
                 "## Context Compaction (Failed)\n\n**Error:** model unavailable\n\n"
+            );
+            assert!(
+                thread
+                    .entries
+                    .last()
+                    .expect("compaction entry must exist")
+                    .has_pending_markdown_render(cx)
             );
 
             for error in [
@@ -14364,6 +15680,8 @@ mod tests {
             "compaction".into(),
             serde_json::json!({"nested": [1, "retained"]}),
         )]);
+        let mut expected_metadata = metadata.clone();
+        expected_metadata.insert("original".into(), json!(true));
         thread.update(cx, |thread, cx| {
             thread.upsert_context_compaction_update(
                 acp_v2::CompactionUpdate::new("first", acp_v2::CompactionStatus::Completed)
@@ -14393,7 +15711,7 @@ mod tests {
                 ContextCompactionStatus::Other("_future".into())
             );
             assert_eq!(first.summary.source_blocks(), source);
-            assert_eq!(first.meta.as_ref(), Some(&metadata));
+            assert_eq!(first.meta.as_ref(), Some(&expected_metadata));
             assert!(!thread.is_compacting());
         });
         assert_eq!(
@@ -14425,7 +15743,7 @@ mod tests {
                 panic!("the original compaction must remain");
             };
             assert_eq!(first.summary.source_blocks(), source);
-            assert_eq!(first.meta, Some(acp_v2::Meta::new()));
+            assert_eq!(first.meta, Some(expected_metadata.clone()));
             assert_eq!(
                 first
                     .error
@@ -15216,7 +16534,10 @@ mod tests {
             }
             assert_eq!(
                 thread.tool_call(&id).expect("tool").1.meta,
-                Some(acp_v2::Meta::new())
+                Some(
+                    serde_json::from_value(json!({"opaque": {"nested": [1, 2]}}))
+                        .expect("retained metadata")
+                )
             );
             thread
                 .upsert_wire_tool_call(acp_v2::ToolCallUpdate::new("patch").title("  "), cx)
@@ -15463,6 +16784,35 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_tool_call_for_subagent_is_its_latest_run(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            for (id, status) in [
+                ("first-run", acp_v1::ToolCallStatus::Failed),
+                ("resumed-run", acp_v1::ToolCallStatus::InProgress),
+            ] {
+                thread
+                    .upsert_tool_call(
+                        acp_v1::ToolCall::new(acp_v1::ToolCallId::new(id), "Run subagent")
+                            .status(status)
+                            .meta(acp_v1::Meta::from_iter([(
+                                SUBAGENT_SESSION_INFO_META_KEY.into(),
+                                json!({"session_id": "child", "message_start_index": 0}),
+                            )])),
+                        cx,
+                    )
+                    .expect("tool call");
+            }
+            let latest = thread
+                .tool_call_for_subagent(&acp_v2::SessionId::new("child"))
+                .expect("the subagent has a tool call");
+            assert_eq!(latest.id, acp_v2::ToolCallId::new("resumed-run"));
+            assert_eq!(latest.status(), ToolCallStatus::InProgress);
+        });
+    }
+
+    #[gpui::test]
     async fn test_tool_patch_metadata_policy_preserves_legacy_hints_and_clears_v2_hints(
         cx: &mut TestAppContext,
     ) {
@@ -15511,9 +16861,19 @@ mod tests {
                     acp_v2::ToolCallUpdate::new("metadata").meta(acp_v2::Meta::new()),
                     cx,
                 )
-                .expect("authoritative metadata replacement");
+                .expect("empty metadata patch");
             let (_, call) = thread.tool_call(&id).expect("tool");
-            assert_eq!(call.meta, Some(acp_v2::Meta::new()));
+            assert_eq!(call.meta.as_ref(), Some(&newer_meta));
+            assert_eq!(call.tool_name.as_deref(), Some("legacy_name"));
+            assert!(call.subagent_session_info.is_some());
+            thread
+                .upsert_wire_tool_call(
+                    acp_v2::ToolCallUpdate::new("metadata").meta(None::<acp_v2::Meta>),
+                    cx,
+                )
+                .expect("explicit metadata clear");
+            let (_, call) = thread.tool_call(&id).expect("tool");
+            assert_eq!(call.meta, None);
             assert_eq!(call.tool_name, None);
             assert!(call.subagent_session_info.is_none());
             assert_eq!(call.label.read(cx).source(), "Tool call");
@@ -17461,449 +18821,6 @@ mod tests {
         assert!(cx.read(|cx| !thread.read(cx).has_pending_edit_tool_calls()));
     }
 
-    #[gpui::test(iterations = 10)]
-    async fn test_checkpoints(cx: &mut TestAppContext) {
-        init_test(cx);
-        let fs = FakeFs::new(cx.background_executor.clone());
-        fs.insert_tree(
-            path!("/test"),
-            json!({
-                ".git": {}
-            }),
-        )
-        .await;
-        let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
-
-        let simulate_changes = Arc::new(AtomicBool::new(true));
-        let next_filename = Arc::new(AtomicUsize::new(0));
-        let connection = Rc::new(FakeAgentConnection::new().on_user_message({
-            let simulate_changes = simulate_changes.clone();
-            let next_filename = next_filename.clone();
-            let fs = fs.clone();
-            move |request, thread, mut cx| {
-                let fs = fs.clone();
-                let simulate_changes = simulate_changes.clone();
-                let next_filename = next_filename.clone();
-                async move {
-                    if simulate_changes.load(SeqCst) {
-                        let filename = format!("/test/file-{}", next_filename.fetch_add(1, SeqCst));
-                        fs.write(Path::new(&filename), b"").await?;
-                    }
-
-                    let acp_v2::ContentBlock::Text(content) = &request.prompt[0] else {
-                        panic!("expected text content block");
-                    };
-                    thread.update(&mut cx, |thread, cx| {
-                        thread
-                            .handle_session_update(
-                                acp_v1::SessionUpdate::AgentMessageChunk(
-                                    acp_v1::ContentChunk::new(content.text.to_uppercase().into()),
-                                ),
-                                cx,
-                            )
-                            .unwrap();
-                    })?;
-                    Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
-                }
-                .boxed_local()
-            }
-        }));
-        let thread = cx
-            .update(|cx| {
-                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
-            })
-            .await
-            .unwrap();
-
-        cx.update(|cx| thread.update(cx, |thread, cx| thread.send(vec!["Lorem".into()], cx)))
-            .await
-            .unwrap();
-        thread.read_with(cx, |thread, cx| {
-            assert_eq!(
-                thread.to_markdown(cx),
-                indoc! {"
-                    ## User (checkpoint)
-
-                    Lorem
-
-                    ## Assistant
-
-                    LOREM
-
-                "}
-            );
-        });
-        assert_eq!(fs.files(), vec![Path::new(path!("/test/file-0"))]);
-
-        cx.update(|cx| thread.update(cx, |thread, cx| thread.send(vec!["ipsum".into()], cx)))
-            .await
-            .unwrap();
-        thread.read_with(cx, |thread, cx| {
-            assert_eq!(
-                thread.to_markdown(cx),
-                indoc! {"
-                    ## User (checkpoint)
-
-                    Lorem
-
-                    ## Assistant
-
-                    LOREM
-
-                    ## User (checkpoint)
-
-                    ipsum
-
-                    ## Assistant
-
-                    IPSUM
-
-                "}
-            );
-        });
-        assert_eq!(
-            fs.files(),
-            vec![
-                Path::new(path!("/test/file-0")),
-                Path::new(path!("/test/file-1"))
-            ]
-        );
-
-        // Checkpoint isn't stored when there are no changes.
-        simulate_changes.store(false, SeqCst);
-        cx.update(|cx| thread.update(cx, |thread, cx| thread.send(vec!["dolor".into()], cx)))
-            .await
-            .unwrap();
-        thread.read_with(cx, |thread, cx| {
-            assert_eq!(
-                thread.to_markdown(cx),
-                indoc! {"
-                    ## User (checkpoint)
-
-                    Lorem
-
-                    ## Assistant
-
-                    LOREM
-
-                    ## User (checkpoint)
-
-                    ipsum
-
-                    ## Assistant
-
-                    IPSUM
-
-                    ## User
-
-                    dolor
-
-                    ## Assistant
-
-                    DOLOR
-
-                "}
-            );
-        });
-        assert_eq!(
-            fs.files(),
-            vec![
-                Path::new(path!("/test/file-0")),
-                Path::new(path!("/test/file-1"))
-            ]
-        );
-
-        // Rewinding the conversation truncates the history and restores the checkpoint.
-        thread
-            .update(cx, |thread, cx| {
-                let AgentThreadEntry::UserMessage(message) = &thread.entries[2] else {
-                    panic!("unexpected entries {:?}", thread.entries)
-                };
-                thread.restore_checkpoint(message.client_id.clone().unwrap(), cx)
-            })
-            .await
-            .unwrap();
-        thread.read_with(cx, |thread, cx| {
-            assert_eq!(
-                thread.to_markdown(cx),
-                indoc! {"
-                    ## User (checkpoint)
-
-                    Lorem
-
-                    ## Assistant
-
-                    LOREM
-
-                "}
-            );
-        });
-        assert_eq!(fs.files(), vec![Path::new(path!("/test/file-0"))]);
-    }
-
-    #[gpui::test(iterations = 10)]
-    async fn test_checkpoint_shows_when_file_changes_during_pending_message(
-        cx: &mut TestAppContext,
-    ) {
-        init_test(cx);
-        let fs = FakeFs::new(cx.background_executor.clone());
-        fs.insert_tree(
-            path!("/test"),
-            json!({
-                ".git": {}
-            }),
-        )
-        .await;
-        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
-
-        let (request_started_tx, request_started_rx) = oneshot::channel::<()>();
-        let request_started_tx = Rc::new(RefCell::new(Some(request_started_tx)));
-        let (write_file_tx, write_file_rx) = oneshot::channel::<()>();
-        let write_file_rx = Rc::new(RefCell::new(Some(write_file_rx)));
-        let (file_written_tx, file_written_rx) = oneshot::channel::<()>();
-        let file_written_tx = Rc::new(RefCell::new(Some(file_written_tx)));
-        let (finish_response_tx, finish_response_rx) = oneshot::channel::<()>();
-        let finish_response_tx = Rc::new(RefCell::new(Some(finish_response_tx)));
-        let finish_response_rx = Rc::new(RefCell::new(Some(finish_response_rx)));
-        let connection = Rc::new(FakeAgentConnection::new().on_user_message({
-            let request_started_tx = request_started_tx.clone();
-            let write_file_rx = write_file_rx.clone();
-            let file_written_tx = file_written_tx.clone();
-            let finish_response_rx = finish_response_rx.clone();
-            move |_request, thread, mut cx| {
-                let write_file_rx = write_file_rx.borrow_mut().take();
-                let finish_response_rx = finish_response_rx.borrow_mut().take();
-                let request_started_tx = request_started_tx.borrow_mut().take();
-                let file_written_tx = file_written_tx.borrow_mut().take();
-                async move {
-                    if let Some(request_started_tx) = request_started_tx {
-                        request_started_tx.send(()).ok();
-                    }
-                    if let Some(write_file_rx) = write_file_rx {
-                        write_file_rx.await.ok();
-                    }
-
-                    thread
-                        .update(&mut cx, |thread, cx| {
-                            thread.write_text_file(
-                                PathBuf::from(path!("/test/file")),
-                                String::new(),
-                                cx,
-                            )
-                        })?
-                        .await?;
-
-                    if let Some(file_written_tx) = file_written_tx {
-                        file_written_tx.send(()).ok();
-                    }
-                    if let Some(finish_response_rx) = finish_response_rx {
-                        finish_response_rx.await.ok();
-                    }
-
-                    Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
-                }
-                .boxed_local()
-            }
-        }));
-        let thread = cx
-            .update(|cx| {
-                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
-            })
-            .await
-            .unwrap();
-
-        let send = thread.update(cx, |thread, cx| thread.send(vec!["hello".into()], cx));
-        let send_task = cx.background_executor.spawn(send);
-        request_started_rx.await.unwrap();
-        cx.run_until_parked();
-
-        thread.read_with(cx, |thread, cx| {
-            assert_eq!(
-                thread.to_markdown(cx),
-                indoc! {"
-                    ## User
-
-                    hello
-
-                "}
-            );
-        });
-
-        write_file_tx.send(()).ok();
-        file_written_rx.await.unwrap();
-        cx.run_until_parked();
-
-        thread.read_with(cx, |thread, cx| {
-            assert_eq!(
-                thread.to_markdown(cx),
-                indoc! {"
-                    ## User (checkpoint)
-
-                    hello
-
-                "}
-            );
-        });
-
-        finish_response_tx
-            .borrow_mut()
-            .take()
-            .unwrap()
-            .send(())
-            .ok();
-        send_task.await.unwrap();
-    }
-
-    #[gpui::test]
-    async fn test_no_checkpoints_when_restore_is_unavailable(cx: &mut TestAppContext) {
-        init_test(cx);
-        let fs = FakeFs::new(cx.background_executor.clone());
-        fs.insert_tree(
-            path!("/test"),
-            json!({
-                ".git": {}
-            }),
-        )
-        .await;
-        let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
-        let checkpoint_jobs = |cx: &mut TestAppContext| {
-            project.read_with(cx, |project, cx| {
-                let repository = project.git_store().read(cx).active_repository().unwrap();
-                let queue = repository.read(cx).job_debug_queue().to_debug_value();
-                queue["entries"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .filter(|job| job["description"] == "checkpoint")
-                    .count()
-            })
-        };
-
-        let next_filename = Arc::new(AtomicUsize::new(0));
-        let finish_turn_rx_slot = Rc::new(RefCell::new(None::<oneshot::Receiver<()>>));
-        let write_file_on_prompt = {
-            let fs = fs.clone();
-            let finish_turn_rx_slot = finish_turn_rx_slot.clone();
-            move |_request: acp_v2::PromptRequest,
-                  _thread: WeakEntity<AcpThread>,
-                  _cx: AsyncApp|
-                  -> LocalBoxFuture<'static, Result<acp_v1::PromptResponse>> {
-                let fs = fs.clone();
-                let path = Path::new(path!("/test"))
-                    .join(format!("file-{}", next_filename.fetch_add(1, SeqCst)));
-                let finish_turn_rx = finish_turn_rx_slot.borrow_mut().take();
-                async move {
-                    fs.write(&path, b"").await?;
-                    if let Some(finish_turn_rx) = finish_turn_rx {
-                        finish_turn_rx.await.ok();
-                    }
-                    Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
-                }
-                .boxed_local()
-            }
-        };
-
-        let connection = Rc::new(
-            FakeAgentConnection::new()
-                .without_truncate_support()
-                .on_user_message(write_file_on_prompt.clone()),
-        );
-        let thread_without_truncate = cx
-            .update(|cx| {
-                connection.new_session(
-                    project.clone(),
-                    PathList::new(&[Path::new(path!("/test"))]),
-                    cx,
-                )
-            })
-            .await
-            .unwrap();
-
-        let connection = Rc::new(FakeAgentConnection::new().on_user_message(write_file_on_prompt));
-        let parent = cx
-            .update(|cx| {
-                connection.clone().new_session(
-                    project.clone(),
-                    PathList::new(&[Path::new(path!("/test"))]),
-                    cx,
-                )
-            })
-            .await
-            .unwrap();
-        let subagent_session_id = acp_v2::SessionId::new("subagent");
-        let subagent = cx.update(|cx| {
-            let action_log = cx.new(|_| ActionLog::new(project.clone()));
-            cx.new(|cx| {
-                AcpThread::new(
-                    Some(parent.read(cx).session_id().clone()),
-                    None,
-                    None,
-                    connection.clone(),
-                    project.clone(),
-                    action_log,
-                    subagent_session_id.clone(),
-                    watch::Receiver::constant(acp_v2::PromptCapabilities::new()),
-                    cx,
-                )
-            })
-        });
-        connection
-            .sessions
-            .lock()
-            .insert(subagent_session_id, subagent.downgrade());
-
-        // The parent shows that sending, repository updates during the turn, and
-        // turn completion each take checkpoints, so zero counts elsewhere mean
-        // those paths ran without taking any.
-        for (thread, can_rewind) in [
-            (thread_without_truncate, false),
-            (subagent, false),
-            (parent, true),
-        ] {
-            assert_eq!(
-                thread.read_with(cx, |thread, cx| {
-                    thread.can_rewind_to(Some(&ClientUserMessageId::new()), cx)
-                }),
-                can_rewind
-            );
-            let jobs_before_send = checkpoint_jobs(cx);
-            let (finish_turn_tx, finish_turn_rx) = oneshot::channel();
-            finish_turn_rx_slot.replace(Some(finish_turn_rx));
-            let send = thread.update(cx, |thread, cx| thread.send(vec!["hello".into()], cx));
-            let send_task = cx.background_executor.spawn(send);
-            cx.run_until_parked();
-
-            assert!(thread.read_with(cx, |thread, _| thread.running_turn.is_some()));
-            let jobs_while_running = checkpoint_jobs(cx);
-            finish_turn_tx.send(()).ok();
-            send_task.await.unwrap();
-            cx.run_until_parked();
-            let jobs_after_turn = checkpoint_jobs(cx);
-
-            if can_rewind {
-                assert_eq!(jobs_while_running, jobs_before_send + 2);
-                assert_eq!(jobs_after_turn, jobs_while_running + 1);
-            } else {
-                assert_eq!(jobs_while_running, jobs_before_send);
-                assert_eq!(jobs_after_turn, jobs_before_send);
-            }
-            thread.read_with(cx, |thread, _| {
-                let AgentThreadEntry::UserMessage(message) = &thread.entries[0] else {
-                    panic!("unexpected entries {:?}", thread.entries)
-                };
-                assert_eq!(message.checkpoint.is_some(), can_rewind);
-            });
-        }
-        assert_eq!(
-            fs.files(),
-            vec![
-                Path::new(path!("/test/file-0")),
-                Path::new(path!("/test/file-1")),
-                Path::new(path!("/test/file-2"))
-            ]
-        );
-    }
-
     #[gpui::test]
     async fn test_tool_result_refusal(cx: &mut TestAppContext) {
         use std::sync::atomic::AtomicUsize;
@@ -18378,7 +19295,7 @@ mod tests {
         ));
 
         thread.update(cx, |thread, cx| {
-            thread.cancel(cx).detach();
+            thread.cancel(cx).detach_and_log_err(cx);
         });
         thread.read_with(cx, |thread, _| {
             let Some((_, elicitation)) = thread.elicitation(&entry_id) else {
@@ -18447,7 +19364,7 @@ mod tests {
         });
 
         thread.update(cx, |thread, cx| {
-            thread.cancel(cx).detach();
+            thread.cancel(cx).detach_and_log_err(cx);
         });
         thread.read_with(cx, |thread, _| {
             let Some((_, elicitation)) = thread.elicitation(&entry_id) else {
@@ -18782,7 +19699,7 @@ mod tests {
         });
 
         thread.update(cx, |thread, cx| {
-            thread.cancel(cx).detach();
+            thread.cancel(cx).detach_and_log_err(cx);
         });
 
         assert_eq!(
@@ -19402,7 +20319,7 @@ mod tests {
                 acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Decline),
                 cx,
             );
-            thread.cancel(cx).detach();
+            thread.cancel(cx).detach_and_log_err(cx);
         });
 
         assert_eq!(
@@ -19732,7 +20649,9 @@ mod tests {
             })
         }
 
-        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) {}
+        fn cancel(&self, _session_id: &acp_v2::SessionId, _cx: &mut App) -> anyhow::Result<()> {
+            Ok(())
+        }
 
         fn truncate(
             &self,
@@ -19856,14 +20775,13 @@ mod tests {
         });
     }
 
-    /// Tests that restoring a checkpoint properly cleans up terminals that were
-    /// created after that checkpoint, and cancels any in-progress generation.
+    /// Tests that rewinding properly cleans up terminals that were created after
+    /// the message being rewound to.
     ///
-    /// Reproduces issue #35142: When a checkpoint is restored, any terminal processes
-    /// that were started after that checkpoint should be terminated, and any in-progress
-    /// AI generation should be canceled.
+    /// Reproduces issue #35142: When the thread is rewound, any terminal processes
+    /// that were started after that message should be terminated.
     #[gpui::test]
-    async fn test_restore_checkpoint_kills_terminal(cx: &mut TestAppContext) {
+    async fn test_rewind_kills_terminal(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
@@ -19876,7 +20794,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Send first user message to create a checkpoint
+        // Send first user message
         cx.update(|cx| {
             thread.update(cx, |thread, cx| {
                 thread.send(vec!["first message".into()], cx)
@@ -19885,7 +20803,7 @@ mod tests {
         .await
         .unwrap();
 
-        // Send second message (creates another checkpoint) - we'll restore to this one
+        // Send second message - we'll rewind to this one
         cx.update(|cx| {
             thread.update(cx, |thread, cx| {
                 thread.send(vec!["second message".into()], cx)
@@ -19894,7 +20812,7 @@ mod tests {
         .await
         .unwrap();
 
-        // Create 2 terminals BEFORE the checkpoint that have completed running
+        // Create 2 terminals BEFORE the second message that have completed running
         let terminal_id_1 = acp_v1::TerminalId::new(uuid::Uuid::new_v4().to_string());
         let mock_terminal_1 = cx.new(|cx| {
             let builder = ::terminal::TerminalBuilder::new_display_only(
@@ -19987,11 +20905,11 @@ mod tests {
             );
         });
 
-        // Get the second message ID to restore to
+        // Get the second message ID to rewind to
         let second_message_id = thread.read_with(cx, |thread, _| {
             // At this point we have:
-            // - Index 0: First user message (with checkpoint)
-            // - Index 1: Second user message (with checkpoint)
+            // - Index 0: First user message
+            // - Index 1: Second user message
             // No assistant responses because FakeAgentConnection just returns EndTurn
             let AgentThreadEntry::UserMessage(message) = &thread.entries[1] else {
                 panic!("expected user message at index 1");
@@ -19999,7 +20917,7 @@ mod tests {
             message.client_id.clone().unwrap()
         });
 
-        // Create a terminal AFTER the checkpoint we'll restore to.
+        // Create a terminal AFTER the message we'll rewind to.
         // This simulates the AI agent starting a long-running terminal command.
         let terminal_id = acp_v1::TerminalId::new(uuid::Uuid::new_v4().to_string());
         let mock_terminal = cx.new(|cx| {
@@ -20066,7 +20984,7 @@ mod tests {
             thread.read_with(cx, |thread, _| thread.terminals.contains_key(&terminal_id));
         assert!(
             terminal_exists_before,
-            "Terminal should exist before checkpoint restore"
+            "Terminal should exist before rewind"
         );
 
         // Verify the terminal's underlying task is still running (not completed)
@@ -20078,49 +20996,37 @@ mod tests {
         });
         assert!(
             terminal_running_before,
-            "Terminal should be running before checkpoint restore"
+            "Terminal should be running before rewind"
         );
 
         // Verify we have the expected entries before restore
         let entry_count_before = thread.read_with(cx, |thread, _| thread.entries.len());
         assert!(
             entry_count_before > 1,
-            "Should have multiple entries before restore"
+            "Should have multiple entries before rewind"
         );
 
-        // Restore the checkpoint to the second message.
-        // This should:
-        // 1. Cancel any in-progress generation (via the cancel() call)
-        // 2. Remove the terminal that was created after that point
+        // Rewinding to the second message should remove the terminal that was
+        // created after that point.
         thread
-            .update(cx, |thread, cx| {
-                thread.restore_checkpoint(second_message_id, cx)
-            })
+            .update(cx, |thread, cx| thread.rewind(second_message_id, cx))
             .await
             .unwrap();
 
-        // Verify that no send_task is in progress after restore
-        // (cancel() clears the send_task)
-        let has_send_task_after = thread.read_with(cx, |thread, _| thread.running_turn.is_some());
-        assert!(
-            !has_send_task_after,
-            "Should not have a send_task after restore (cancel should have cleared it)"
-        );
-
-        // Verify the entries were truncated (restoring to index 1 truncates at 1, keeping only index 0)
+        // Verify the entries were truncated (rewinding to index 1 truncates at 1, keeping only index 0)
         let entry_count = thread.read_with(cx, |thread, _| thread.entries.len());
         assert_eq!(
             entry_count, 1,
-            "Should have 1 entry after restore (only the first user message)"
+            "Should have 1 entry after rewind (only the first user message)"
         );
 
-        // Verify the 2 completed terminals from before the checkpoint still exist
+        // Verify the 2 completed terminals from before the second message still exist
         let terminal_1_exists = thread.read_with(cx, |thread, _| {
             thread.terminals.contains_key(&terminal_id_1)
         });
         assert!(
             terminal_1_exists,
-            "Terminal 1 (from before checkpoint) should still exist"
+            "Terminal 1 (from before the second message) should still exist"
         );
 
         let terminal_2_exists = thread.read_with(cx, |thread, _| {
@@ -20128,7 +21034,7 @@ mod tests {
         });
         assert!(
             terminal_2_exists,
-            "Terminal 2 (from before checkpoint) should still exist"
+            "Terminal 2 (from before the second message) should still exist"
         );
 
         // Verify they're still in completed state
@@ -20144,174 +21050,20 @@ mod tests {
         });
         assert!(terminal_2_completed, "Terminal 2 should still be completed");
 
-        // Verify the running terminal (created after checkpoint) was removed
+        // Verify the running terminal (created after the second message) was removed
         let terminal_3_exists =
             thread.read_with(cx, |thread, _| thread.terminals.contains_key(&terminal_id));
         assert!(
             !terminal_3_exists,
-            "Terminal 3 (created after checkpoint) should have been removed"
+            "Terminal 3 (created after the second message) should have been removed"
         );
 
-        // Verify total count is 2 (the two from before the checkpoint)
+        // Verify total count is 2 (the two from before the second message)
         let terminal_count = thread.read_with(cx, |thread, _| thread.terminals.len());
         assert_eq!(
             terminal_count, 2,
-            "Should have exactly 2 terminals (the completed ones from before checkpoint)"
+            "Should have exactly 2 terminals (the completed ones from before the second message)"
         );
-    }
-
-    /// Tests that update_last_checkpoint correctly updates the original message's checkpoint
-    /// even when a new user message is added while the async checkpoint comparison is in progress.
-    ///
-    /// This is a regression test for a bug where update_last_checkpoint would fail with
-    /// "no checkpoint" if a new user message (without a checkpoint) was added between when
-    /// update_last_checkpoint started and when its async closure ran.
-    #[gpui::test]
-    async fn test_update_last_checkpoint_with_new_message_added(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/test"), json!({".git": {}, "file.txt": "content"}))
-            .await;
-        let project = Project::test(fs.clone(), [Path::new(path!("/test"))], cx).await;
-
-        let handler_done = Arc::new(AtomicBool::new(false));
-        let handler_done_clone = handler_done.clone();
-        let connection = Rc::new(FakeAgentConnection::new().on_user_message(
-            move |_, _thread, _cx| {
-                handler_done_clone.store(true, SeqCst);
-                async move { Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)) }
-                    .boxed_local()
-            },
-        ));
-
-        let thread = cx
-            .update(|cx| {
-                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
-            })
-            .await
-            .unwrap();
-
-        let send_future = thread.update(cx, |thread, cx| thread.send_raw("First message", cx));
-        let send_task = cx.background_executor.spawn(send_future);
-
-        // Tick until handler completes, then a few more to let update_last_checkpoint start
-        while !handler_done.load(SeqCst) {
-            cx.executor().tick();
-        }
-        for _ in 0..5 {
-            cx.executor().tick();
-        }
-
-        thread.update(cx, |thread, cx| {
-            let languages = thread.project.read(cx).languages().clone();
-            let path_style = thread.project.read(cx).path_style(cx);
-            let content = MessageContent::new(
-                "Injected message (no checkpoint)".into(),
-                &languages,
-                path_style,
-                cx,
-            );
-            thread.push_entry(
-                AgentThreadEntry::UserMessage(UserMessage {
-                    identity: MessageIdentity::Legacy(None),
-                    meta: None,
-                    client_id: Some(ClientUserMessageId::new()),
-                    is_optimistic: true,
-                    content,
-                    checkpoint: None,
-                    indented: false,
-                }),
-                cx,
-            );
-        });
-
-        cx.run_until_parked();
-        let result = send_task.await;
-
-        assert!(
-            result.is_ok(),
-            "send should succeed even when new message added during update_last_checkpoint: {:?}",
-            result.err()
-        );
-    }
-
-    /// This is a regression test for a bug where update_last_checkpoint would
-    /// swallow a checkpoint comparison error and hide an already-visible
-    /// "Restore checkpoint" button without logging anything.
-    #[gpui::test]
-    async fn test_update_last_checkpoint_compare_error_keeps_checkpoint_visible(
-        cx: &mut TestAppContext,
-    ) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/test"), json!({".git": {}, "file.txt": "content"}))
-            .await;
-        let project = Project::test(fs.clone(), [Path::new(path!("/test"))], cx).await;
-
-        // The handler waits for this signal so the repository can be swapped
-        // out while the turn is still running.
-        let (complete_tx, complete_rx) = futures::channel::oneshot::channel::<()>();
-        let complete_rx = RefCell::new(Some(complete_rx));
-        let connection = Rc::new(FakeAgentConnection::new().on_user_message(
-            move |_, _thread, _cx| {
-                let complete_rx = complete_rx.borrow_mut().take();
-                async move {
-                    if let Some(rx) = complete_rx {
-                        rx.await.ok();
-                    }
-                    Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
-                }
-                .boxed_local()
-            },
-        ));
-
-        let thread = cx
-            .update(|cx| {
-                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
-            })
-            .await
-            .unwrap();
-
-        let send_future = thread.update(cx, |thread, cx| thread.send_raw("message", cx));
-        let send_task = cx.background_executor.spawn(send_future);
-        cx.run_until_parked();
-
-        // Show the checkpoint, as update_last_checkpoint_if_changed does when
-        // files change during the turn.
-        thread.update(cx, |thread, _| {
-            let (_, message) = thread.last_user_message().unwrap();
-            message.checkpoint.as_mut().unwrap().show = true;
-        });
-
-        // Recreate `.git` so the git store reopens the repository. The fresh
-        // fake repository doesn't contain the checkpoint recorded at send
-        // time, so the end-of-turn comparison fails.
-        fs.remove_dir(
-            Path::new(path!("/test/.git")),
-            RemoveOptions {
-                recursive: true,
-                ignore_if_not_exists: false,
-            },
-        )
-        .await
-        .unwrap();
-        cx.run_until_parked();
-        fs.create_dir(Path::new(path!("/test/.git"))).await.unwrap();
-        cx.run_until_parked();
-
-        complete_tx.send(()).unwrap();
-        send_task.await.unwrap();
-        cx.run_until_parked();
-
-        thread.update(cx, |thread, _| {
-            let (_, message) = thread.last_user_message().unwrap();
-            assert!(
-                message.checkpoint.as_ref().unwrap().show,
-                "a checkpoint comparison failure must not hide the restore checkpoint button"
-            );
-        });
     }
 
     /// Tests that when a follow-up message is sent during generation,
@@ -21527,6 +22279,65 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_register_subagent_keeps_the_first_thread_for_a_session(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (parent, connection) = new_receipt_test_thread(cx).await;
+        let parent_session_id = parent.read_with(cx, |thread, _| thread.session_id().clone());
+        let new_child = |session_id: &str, cx: &mut TestAppContext| {
+            let connection = connection.clone();
+            let parent_session_id = parent_session_id.clone();
+            let project = parent.read_with(cx, |thread, _| thread.project().clone());
+            let session_id = acp_v2::SessionId::new(session_id);
+            cx.update(|cx| {
+                let action_log = cx.new(|_| ActionLog::new(project.clone()));
+                cx.new(|cx| {
+                    AcpThread::new(
+                        Some(parent_session_id),
+                        None,
+                        None,
+                        connection,
+                        project,
+                        action_log,
+                        session_id,
+                        watch::Receiver::constant(acp_v2::PromptCapabilities::new()),
+                        cx,
+                    )
+                })
+            })
+        };
+        let first = new_child("child", cx);
+        let duplicate = new_child("child", cx);
+        let other = new_child("other", cx);
+        let spawned = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&parent, {
+                let spawned = spawned.clone();
+                move |_, event, _| {
+                    if let AcpThreadEvent::SubagentSpawned(session_id) = event {
+                        spawned.borrow_mut().push(session_id.to_string());
+                    }
+                }
+            })
+        });
+
+        parent.update(cx, |parent, cx| {
+            parent.register_subagent(first.clone(), cx);
+            parent.register_subagent(duplicate.clone(), cx);
+            parent.register_subagent(other.clone(), cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(*spawned.borrow(), ["child", "other"]);
+        parent.read_with(cx, |parent, _| {
+            assert_eq!(
+                parent.subagent(&acp_v2::SessionId::new("child")),
+                Some(&first)
+            );
+            assert_eq!(parent.subagents().collect::<Vec<_>>(), [&first, &other]);
+        });
+    }
+
+    #[gpui::test]
     async fn test_idle_sleep_prevention_overlaps_distinct_threads_and_subagent(
         cx: &mut TestAppContext,
     ) {
@@ -21574,7 +22385,7 @@ mod tests {
                 acp_v1::StopReason::Cancelled,
             )))
             .expect("parent backend should still be running");
-        parent_cancel.await;
+        parent_cancel.await.expect("cancellation succeeds");
         parent_request.await.expect("parent turn should complete");
         assert_eq!(cx.active_idle_sleep_preventions(), 2);
 
@@ -21635,7 +22446,7 @@ mod tests {
             complete
                 .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
                 .expect("backend should still be running");
-            cancel.await;
+            cancel.await.expect("cancellation succeeds");
             request.await.expect("turn should complete");
             assert_eq!(cx.active_idle_sleep_preventions(), 0);
         }
@@ -21849,7 +22660,7 @@ mod tests {
                 .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
                 .expect("backend should still be running");
             if let Some(cancel) = cancel {
-                cancel.await;
+                cancel.await.expect("cancellation succeeds");
             }
             request.await.expect("turn should complete");
             thread.read_with(cx, |thread, _| {
@@ -22290,7 +23101,7 @@ mod tests {
                 acp_v1::StopReason::Cancelled,
             )))
             .expect("backend should still be running");
-        cancel.await;
+        cancel.await.expect("cancellation succeeds");
         request.await.expect("turn should complete");
         assert_eq!(cx.active_idle_sleep_preventions(), 0);
     }
@@ -22463,7 +23274,7 @@ mod tests {
                 acp_v1::StopReason::Cancelled,
             )))
             .expect("backend should still be running");
-        cancel.await;
+        cancel.await.expect("cancellation succeeds");
         request.await.expect("turn should complete");
     }
 
@@ -22734,12 +23545,15 @@ mod tests {
             assert!(thread.is_idle_for_retention());
             cancellation
         });
-        cancellation.await;
+        cancellation.await.expect("cancellation succeeds");
         assert!(matches!(
             response.await,
             RequestPermissionOutcome::Cancelled
         ));
-        thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+        thread
+            .update(cx, |thread, cx| thread.cancel(cx))
+            .await
+            .expect("cancellation succeeds");
         assert_eq!(*events.borrow(), [(true, id), (false, id)]);
     }
 
@@ -23787,16 +24601,13 @@ mod tests {
                     complete
                         .send(Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn)))
                         .expect("backend still running after local cancellation");
-                    cancellation.await;
+                    cancellation.await.expect("cancellation succeeds");
                 }
                 turn.await.expect("turn settles");
             } else if matches!(lifecycle, "local refusal" | "local refusal after tool") {
-                thread
-                    .update(cx, |thread, cx| {
-                        thread.finish_local_turn(acp_v2::StopReason::Refusal, cx)
-                    })
-                    .await
-                    .expect("local refusal cleanup");
+                thread.update(cx, |thread, cx| {
+                    thread.finish_local_turn(acp_v2::StopReason::Refusal, cx)
+                });
                 thread.update(cx, |thread, cx| {
                     assert_eq!(thread.foreground_activity(), ForegroundActivity::Running);
                     thread
@@ -23825,9 +24636,12 @@ mod tests {
                         )
                         .expect("reported cancellation completion");
                 });
-                cancellation.await;
+                cancellation.await.expect("cancellation succeeds");
             } else {
-                thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+                thread
+                    .update(cx, |thread, cx| thread.cancel(cx))
+                    .await
+                    .expect("cancellation succeeds");
             }
             thread.update(cx, |thread, cx| {
                 assert_eq!(
