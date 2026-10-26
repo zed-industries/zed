@@ -949,11 +949,16 @@ async fn load_and_apply_calls(
             let buffer_font_size = settings.buffer_font_size(cx);
             let path_font_size = TextSize::Small.rems(cx).to_pixels(window.rem_size());
             for call in calls.iter_mut() {
-                let signature = call
-                    .display
-                    .label_text
-                    .clone()
-                    .unwrap_or_else(|| call.display.full_signature.clone());
+                let signature = if let Some(label_text) = &call.display.label_text {
+                    match &call.display.detail {
+                        Some(detail) if !label_carries_detail(call.label.as_deref()) => {
+                            SharedString::from(format!("{label_text} {detail}"))
+                        }
+                        _ => label_text.clone()
+                    }
+                } else {
+                   call.display.full_signature.clone()
+                };
                 let signature_width = shaped_width(
                     signature,
                     settings.buffer_font.clone(),
