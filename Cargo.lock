@@ -4421,6 +4421,7 @@ dependencies = [
  "dap-types",
  "fs",
  "futures 0.3.34",
+ "github_releases",
  "gpui",
  "http_client",
  "language",
@@ -6063,6 +6064,7 @@ dependencies = [
  "extension",
  "fs",
  "futures 0.3.34",
+ "github_releases",
  "gpui",
  "gpui_tokio",
  "http_client",
@@ -7163,6 +7165,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "github_releases"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-compression",
+ "async-fs",
+ "async-tar",
+ "futures 0.3.34",
+ "gpui",
+ "http_client",
+ "log",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "util",
+]
+
+[[package]]
 name = "gl_generator"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8214,9 +8235,6 @@ name = "http_client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-compression",
- "async-fs",
- "async-tar",
  "bytes 1.11.1",
  "futures 0.3.34",
  "http 1.3.1",
@@ -8226,10 +8244,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_urlencoded",
- "sha2",
- "tempfile",
  "url",
- "util",
 ]
 
 [[package]]
@@ -9735,10 +9750,10 @@ dependencies = [
  "collections",
  "fs",
  "futures 0.3.34",
+ "github_releases",
  "globset",
  "gpui",
  "grammars",
- "http_client",
  "itertools 0.14.0",
  "json_schema_store",
  "language",
@@ -13862,6 +13877,7 @@ dependencies = [
  "fuzzy_nucleo",
  "git",
  "git_hosting_providers",
+ "github_releases",
  "globset",
  "gpui",
  "http_client",

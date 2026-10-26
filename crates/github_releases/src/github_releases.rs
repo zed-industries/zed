@@ -1,11 +1,18 @@
-use std::{path::Path, pin::Pin, task::Poll};
+mod releases;
+
+pub use releases::{
+    AssetKind, GitHubLspBinaryVersion, GithubRelease, GithubReleaseAsset, build_asset_url,
+    get_release_by_tag_name, latest_github_release,
+};
+
+use std::{path::Path, pin::Pin, sync::Arc, task::Poll};
 
 use anyhow::{Context, Result};
 use async_compression::futures::bufread::{BzDecoder, GzipDecoder};
 use futures::{AsyncRead, AsyncSeekExt, AsyncWrite, io::BufReader};
+use gpui::{BackgroundExecutor, Task};
+use http_client::HttpClient;
 use sha2::{Digest, Sha256};
-
-use crate::{HttpClient, github::AssetKind};
 
 fn sha256_matches(actual: &str, expected: &str) -> bool {
     actual.eq_ignore_ascii_case(expected)
@@ -36,43 +43,68 @@ impl GithubBinaryMetadata {
     }
 }
 
-pub async fn download_server_binary(
-    http_client: &dyn HttpClient,
+pub fn download_server_binary(
+    executor: &BackgroundExecutor,
+    http_client: Arc<dyn HttpClient>,
     url: &str,
     digest: Option<&str>,
     destination_path: &Path,
     asset_kind: AssetKind,
-) -> Result<(), anyhow::Error> {
-    download_server_asset(
+) -> Task<Result<()>> {
+    spawn_download(
+        executor,
         http_client,
         url,
         digest,
         destination_path,
         DownloadedAsset::Archive(asset_kind),
     )
-    .await
 }
 
-pub async fn download_server_raw_binary(
-    http_client: &dyn HttpClient,
+pub fn download_server_raw_binary(
+    executor: &BackgroundExecutor,
+    http_client: Arc<dyn HttpClient>,
     url: &str,
     digest: Option<&str>,
     destination_path: &Path,
     binary_file_name: &str,
-) -> Result<(), anyhow::Error> {
-    download_server_asset(
+) -> Task<Result<()>> {
+    spawn_download(
+        executor,
         http_client,
         url,
         digest,
         destination_path,
-        DownloadedAsset::RawBinary(binary_file_name),
+        DownloadedAsset::RawBinary(binary_file_name.to_owned()),
     )
-    .await
 }
 
-enum DownloadedAsset<'a> {
+enum DownloadedAsset {
     Archive(AssetKind),
-    RawBinary(&'a str),
+    RawBinary(String),
+}
+
+fn spawn_download(
+    executor: &BackgroundExecutor,
+    http_client: Arc<dyn HttpClient>,
+    url: &str,
+    digest: Option<&str>,
+    destination_path: &Path,
+    downloaded_asset: DownloadedAsset,
+) -> Task<Result<()>> {
+    let url = url.to_owned();
+    let digest = digest.map(ToOwned::to_owned);
+    let destination_path = destination_path.to_owned();
+    executor.spawn(async move {
+        download_server_asset(
+            &*http_client,
+            &url,
+            digest.as_deref(),
+            &destination_path,
+            downloaded_asset,
+        )
+        .await
+    })
 }
 
 async fn download_server_asset(
@@ -80,7 +112,7 @@ async fn download_server_asset(
     url: &str,
     digest: Option<&str>,
     destination_path: &Path,
-    downloaded_asset: DownloadedAsset<'_>,
+    downloaded_asset: DownloadedAsset,
 ) -> Result<()> {
     log::info!("downloading {url} into {destination_path:?}");
     let mut response = http_client
@@ -129,13 +161,14 @@ async fn download_server_asset(
         }
     }
 
+    // `remove_dir_all` removes a symlink itself without following it, including dangling ones.
     if async_fs::symlink_metadata(destination_path)
         .await
-        .is_ok_and(|metadata| metadata.is_dir())
+        .is_ok_and(|metadata| metadata.is_dir() || metadata.is_symlink())
     {
         async_fs::remove_dir_all(destination_path)
             .await
-            .with_context(|| format!("removing existing directory {destination_path:?}"))?;
+            .with_context(|| format!("removing existing {destination_path:?}"))?;
     }
     async_fs::rename(&staged_path, destination_path)
         .await
@@ -311,10 +344,8 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for HashingWriter<W> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AsyncBody, Response};
     use futures::future::BoxFuture;
-    use http::HeaderValue;
-    use url::Url;
+    use http_client::{AsyncBody, Response, Url, http::HeaderValue};
 
     struct StaticResponseClient {
         body: Vec<u8>,
@@ -323,7 +354,7 @@ mod tests {
     impl HttpClient for StaticResponseClient {
         fn send(
             &self,
-            _req: http::Request<AsyncBody>,
+            _req: http_client::Request<AsyncBody>,
         ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
             let body = self.body.clone();
             Box::pin(async move {
@@ -343,127 +374,175 @@ mod tests {
         }
     }
 
-    #[test]
-    fn downloads_raw_binary_with_uppercase_digest_into_destination_dir() {
-        futures::executor::block_on(async {
-            let temp_dir = tempfile::tempdir().unwrap();
-            let destination_path = temp_dir.path().join("v_1");
-            let contents = b"#!/bin/sh\necho hello\n".to_vec();
-            let expected_sha_256 = format!("{:X}", Sha256::digest(&contents));
-            let client = StaticResponseClient { body: contents };
+    #[gpui::test]
+    async fn downloads_raw_binary_with_uppercase_digest_into_destination_dir(
+        executor: BackgroundExecutor,
+    ) {
+        executor.allow_parking();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let destination_path = temp_dir.path().join("v_1");
+        let contents = b"#!/bin/sh\necho hello\n".to_vec();
+        let expected_sha_256 = format!("{:X}", Sha256::digest(&contents));
+        let client = StaticResponseClient { body: contents };
 
-            download_server_raw_binary(
-                &client,
-                "https://example.com/agent-binary",
-                Some(&expected_sha_256),
-                &destination_path,
-                "agent-binary",
-            )
-            .await
-            .unwrap();
+        download_server_raw_binary(
+            &executor,
+            Arc::new(client),
+            "https://example.com/agent-binary",
+            Some(&expected_sha_256),
+            &destination_path,
+            "agent-binary",
+        )
+        .await
+        .unwrap();
 
-            let binary_path = destination_path.join("agent-binary");
-            assert_eq!(
-                std::fs::read(&binary_path).unwrap(),
-                b"#!/bin/sh\necho hello\n"
-            );
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let mode = std::fs::metadata(&binary_path)
-                    .unwrap()
-                    .permissions()
-                    .mode();
-                assert_eq!(mode & 0o111, 0o111, "binary should be executable");
-            }
-        });
+        let binary_path = destination_path.join("agent-binary");
+        assert_eq!(
+            std::fs::read(&binary_path).unwrap(),
+            b"#!/bin/sh\necho hello\n"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&binary_path)
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o111, 0o111, "binary should be executable");
+        }
     }
 
-    #[test]
-    fn raw_binary_digest_mismatch_cleans_up_staging() {
-        futures::executor::block_on(async {
-            let temp_dir = tempfile::tempdir().unwrap();
-            let destination_path = temp_dir.path().join("v_1");
-            let client = StaticResponseClient {
-                body: b"some binary".to_vec(),
-            };
+    #[gpui::test]
+    async fn raw_binary_digest_mismatch_cleans_up_staging(executor: BackgroundExecutor) {
+        executor.allow_parking();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let destination_path = temp_dir.path().join("v_1");
+        let client = StaticResponseClient {
+            body: b"some binary".to_vec(),
+        };
 
-            let error = download_server_raw_binary(
-                &client,
-                "https://example.com/agent-binary",
-                Some("0000000000000000000000000000000000000000000000000000000000000000"),
-                &destination_path,
-                "agent-binary",
-            )
-            .await
-            .unwrap_err();
+        let error = download_server_raw_binary(
+            &executor,
+            Arc::new(client),
+            "https://example.com/agent-binary",
+            Some("0000000000000000000000000000000000000000000000000000000000000000"),
+            &destination_path,
+            "agent-binary",
+        )
+        .await
+        .unwrap_err();
 
-            assert!(error.to_string().contains("SHA-256 mismatch"));
-            assert!(!destination_path.exists());
-            let leftover_entries = std::fs::read_dir(temp_dir.path()).unwrap().count();
-            assert_eq!(leftover_entries, 0, "staging directory should be removed");
-        });
+        assert!(error.to_string().contains("SHA-256 mismatch"));
+        assert!(!destination_path.exists());
+        let leftover_entries = std::fs::read_dir(temp_dir.path()).unwrap().count();
+        assert_eq!(leftover_entries, 0, "staging directory should be removed");
     }
 
-    #[test]
-    fn downloads_archive_with_uppercase_digest_and_extracts_contents() {
-        futures::executor::block_on(async {
-            let archive = vec![
-                0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21, 0x00,
-                0x86, 0xa6, 0x10, 0x36, 0x05, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x05, 0x00,
-                0x00, 0x00, 0x61, 0x67, 0x65, 0x6e, 0x74, 0x68, 0x65, 0x6c, 0x6c, 0x6f, 0x50, 0x4b,
-                0x01, 0x02, 0x14, 0x03, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21, 0x00,
-                0x86, 0xa6, 0x10, 0x36, 0x05, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x05, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00,
-                0x00, 0x00, 0x61, 0x67, 0x65, 0x6e, 0x74, 0x50, 0x4b, 0x05, 0x06, 0x00, 0x00, 0x00,
-                0x00, 0x01, 0x00, 0x01, 0x00, 0x33, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00, 0x00,
-                0x00,
-            ];
-            let expected_sha_256 = format!("{:X}", Sha256::digest(&archive));
-            let client = StaticResponseClient { body: archive };
-            let temp_dir = tempfile::tempdir().unwrap();
-            let destination_path = temp_dir.path().join("v_1");
+    #[gpui::test]
+    async fn downloads_archive_with_uppercase_digest_and_extracts_contents(
+        executor: BackgroundExecutor,
+    ) {
+        executor.allow_parking();
+        let archive = vec![
+            0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21, 0x00,
+            0x86, 0xa6, 0x10, 0x36, 0x05, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x05, 0x00,
+            0x00, 0x00, 0x61, 0x67, 0x65, 0x6e, 0x74, 0x68, 0x65, 0x6c, 0x6c, 0x6f, 0x50, 0x4b,
+            0x01, 0x02, 0x14, 0x03, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21, 0x00,
+            0x86, 0xa6, 0x10, 0x36, 0x05, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x05, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00,
+            0x00, 0x00, 0x61, 0x67, 0x65, 0x6e, 0x74, 0x50, 0x4b, 0x05, 0x06, 0x00, 0x00, 0x00,
+            0x00, 0x01, 0x00, 0x01, 0x00, 0x33, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00, 0x00,
+            0x00,
+        ];
+        let expected_sha_256 = format!("{:X}", Sha256::digest(&archive));
+        let client = StaticResponseClient { body: archive };
+        let temp_dir = tempfile::tempdir().unwrap();
+        let destination_path = temp_dir.path().join("v_1");
 
-            download_server_binary(
-                &client,
-                "https://example.com/agent.zip",
-                Some(&expected_sha_256),
-                &destination_path,
-                AssetKind::Zip,
-            )
-            .await
-            .unwrap();
+        download_server_binary(
+            &executor,
+            Arc::new(client),
+            "https://example.com/agent.zip",
+            Some(&expected_sha_256),
+            &destination_path,
+            AssetKind::Zip,
+        )
+        .await
+        .unwrap();
 
-            assert_eq!(
-                std::fs::read(destination_path.join("agent")).unwrap(),
-                b"hello"
-            );
-        });
+        assert_eq!(
+            std::fs::read(destination_path.join("agent")).unwrap(),
+            b"hello"
+        );
     }
 
-    #[test]
-    fn archive_digest_mismatch_prevents_extraction_and_cleans_up_staging() {
-        futures::executor::block_on(async {
-            let temp_dir = tempfile::tempdir().unwrap();
-            let destination_path = temp_dir.path().join("v_1");
-            let client = StaticResponseClient {
-                body: b"not an archive".to_vec(),
-            };
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn replaces_symlinked_destination_without_touching_its_target(
+        executor: BackgroundExecutor,
+    ) {
+        executor.allow_parking();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let symlink_target = temp_dir.path().join("target");
+        std::fs::create_dir(&symlink_target).unwrap();
+        std::fs::write(symlink_target.join("existing"), b"keep").unwrap();
+        let destination_path = temp_dir.path().join("v_1");
+        std::os::unix::fs::symlink(&symlink_target, &destination_path).unwrap();
+        let client = StaticResponseClient {
+            body: b"binary".to_vec(),
+        };
 
-            let error = download_server_binary(
-                &client,
-                "https://example.com/agent.zip",
-                Some("0000000000000000000000000000000000000000000000000000000000000000"),
-                &destination_path,
-                AssetKind::Zip,
-            )
-            .await
-            .unwrap_err();
+        download_server_raw_binary(
+            &executor,
+            Arc::new(client),
+            "https://example.com/agent-binary",
+            None,
+            &destination_path,
+            "agent-binary",
+        )
+        .await
+        .unwrap();
 
-            assert!(error.to_string().contains("SHA-256 mismatch"));
-            assert!(!destination_path.exists());
-            let leftover_entries = std::fs::read_dir(temp_dir.path()).unwrap().count();
-            assert_eq!(leftover_entries, 0, "staging directory should be removed");
-        });
+        assert!(
+            !std::fs::symlink_metadata(&destination_path)
+                .unwrap()
+                .is_symlink()
+        );
+        assert_eq!(
+            std::fs::read(destination_path.join("agent-binary")).unwrap(),
+            b"binary"
+        );
+        assert_eq!(
+            std::fs::read(symlink_target.join("existing")).unwrap(),
+            b"keep"
+        );
+    }
+
+    #[gpui::test]
+    async fn archive_digest_mismatch_prevents_extraction_and_cleans_up_staging(
+        executor: BackgroundExecutor,
+    ) {
+        executor.allow_parking();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let destination_path = temp_dir.path().join("v_1");
+        let client = StaticResponseClient {
+            body: b"not an archive".to_vec(),
+        };
+
+        let error = download_server_binary(
+            &executor,
+            Arc::new(client),
+            "https://example.com/agent.zip",
+            Some("0000000000000000000000000000000000000000000000000000000000000000"),
+            &destination_path,
+            AssetKind::Zip,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("SHA-256 mismatch"));
+        assert!(!destination_path.exists());
+        let leftover_entries = std::fs::read_dir(temp_dir.path()).unwrap().count();
+        assert_eq!(leftover_entries, 0, "staging directory should be removed");
     }
 }
