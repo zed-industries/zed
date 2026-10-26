@@ -810,32 +810,45 @@ struct CallSignatureTooltip {
     max_width: Pixels,
 }
 
+impl CallSignatureTooltip {
+    fn signature_parts(&self) -> (SharedString, Option<SharedString>) {
+        match &self.label {
+            Some((label, label_text)) => {
+                let separate_detail = if label_carries_detail(Some(label)) {
+                    None
+                } else {
+                    self.detail.clone()
+                };
+                (label_text.clone(), separate_detail)
+            }
+            None => (self.full_signature.clone(), None),
+        }
+    }
+}
+
 impl Render for CallSignatureTooltip {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut signature_style = buffer_text_style(cx);
         signature_style.line_height =
             relative(ThemeSettings::get_global(cx).buffer_line_height.value());
+        let (signature_text, separate_detail) = self.signature_parts();
         let signature = match &self.label {
-            Some((label, label_text)) => StyledText::new(label_text.clone())
+            Some((label, _)) => StyledText::new(signature_text)
                 .with_default_highlights(
                     &signature_style,
                     cx.theme().syntax().resolve_runs(&label.runs),
                 )
                 .into_any_element(),
-            None => div().child(self.full_signature.clone()).into_any_element(),
+            None => div().child(signature_text).into_any_element(),
         };
         let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size(cx);
         let max_width = self.max_width;
         let path = self.path.clone();
-        let detail_styled = if label_carries_detail(self.label.as_ref().map(|(label, _)| label.as_ref())) {
-            None
-        } else {
-            self.detail.clone().map(|detail| {
-                let mut detail_style = signature_style.clone();
-                detail_style.color = cx.theme().colors().text_muted;
-                StyledText::new(detail).with_default_highlights(&detail_style, std::iter::empty())
-            })
-        };
+        let detail_styled = separate_detail.map(|detail| {
+            let mut detail_style = signature_style.clone();
+            detail_style.color = cx.theme().colors().text_muted;
+            StyledText::new(detail).with_default_highlights(&detail_style, std::iter::empty())
+        });
 
         tooltip_container(cx, move |el, _| {
             el.max_w(max_width)
@@ -1570,6 +1583,52 @@ mod tests {
                 (39..41, lifetime),
             ]
         );
+    }
+
+    #[test]
+    fn test_tooltip_appends_separate_detail_for_name_only_label() {
+        // Go labels are name-only ("func helper"), so the package-path detail
+        // lives outside the label and must be appended by the tooltip.
+        let tooltip = CallSignatureTooltip {
+            label: Some((
+                Arc::new(CodeLabel::new("func helper".to_string(), 5..11, Vec::new())),
+                "func helper".into(),
+            )),
+            full_signature: "helper github.com/foo/bar".into(),
+            detail: Some("github.com/foo/bar".into()),
+            path: None,
+            max_width: px(400.),
+        };
+
+        let (signature, detail) = tooltip.signature_parts();
+
+        assert_eq!(signature, "func helper");
+        assert_eq!(detail.as_deref(), Some("github.com/foo/bar"));
+    }
+
+    #[test]
+    fn test_tooltip_does_not_duplicate_detail_for_complete_signature_label() {
+        // Rust labels are complete signatures, so the detail is already part of
+        // the label text and must not be appended again.
+        let tooltip = CallSignatureTooltip {
+            label: Some((
+                Arc::new(CodeLabel::new(
+                    "fn helper(&self) -> i32".to_string(),
+                    3..9,
+                    Vec::new(),
+                )),
+                "fn helper(&self) -> i32".into(),
+            )),
+            full_signature: "helper (&self) -> i32".into(),
+            detail: Some("(&self) -> i32".into()),
+            path: None,
+            max_width: px(400.),
+        };
+
+        let (signature, detail) = tooltip.signature_parts();
+
+        assert_eq!(signature, "fn helper(&self) -> i32");
+        assert_eq!(detail, None);
     }
 
     #[test]
