@@ -14,7 +14,7 @@
       page: "publishing/publishing-guide",
     },
     "#updating-an-extension": {
-      page: "publishing/publishing-guide",
+      page: "publishing/updating-and-maintenance",
       hash: "#updating-an-extension",
     },
   };

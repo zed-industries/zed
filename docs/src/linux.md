@@ -45,6 +45,7 @@ There are several third-party Zed packages for various Linux distributions and p
 - Arch: [`zed`](https://archlinux.org/packages/extra/x86_64/zed/)
 - Arch (AUR): [`zed-git`](https://aur.archlinux.org/packages/zed-git), [`zed-preview`](https://aur.archlinux.org/packages/zed-preview), [`zed-preview-bin`](https://aur.archlinux.org/packages/zed-preview-bin)
 - Fedora/Ultramarine (Terra): [`zed`](https://github.com/terrapkg/packages/tree/frawhide/anda/devs/zed/stable), [`zed-preview`](https://github.com/terrapkg/packages/tree/frawhide/anda/devs/zed/preview), [`zed-nightly`](https://github.com/terrapkg/packages/tree/frawhide/anda/devs/zed/nightly)
+- Homebrew: [`zed`](https://formulae.brew.sh/cask/zed), [`zed@preview`](https://formulae.brew.sh/cask/zed@preview)
 - Manjaro: [`zed`](https://manjaristas.org/branch_compare?q=zed)
 - Conda: [`zed`](https://anaconda.org/conda-forge/zed)
 - Nix: `zed-editor` ([unstable](https://search.nixos.org/packages?channel=unstable&show=zed-editor))
@@ -97,29 +98,31 @@ sed -i "s|Exec=zed|Exec=$HOME/.local/zed.app/bin/zed|g" ~/.local/share/applicati
 
 ### Standard Uninstall
 
-If Zed was installed using the default installation script, it can be uninstalled by supplying the `--uninstall` flag to the `zed` shell command
+If Zed was installed using the default installation script, it can be uninstalled by supplying the `--uninstall` flag to the `zed` shell command:
 
 ```sh
 zed --uninstall
 ```
 
+Note that this will uninstall the Zed variant that the symlink points to. If you have multiple, parallel installations (such as both Stable and Preview), then you should instead use its absolute path as described further down in this section.
+
 If there are no errors, the shell will then prompt you whether you'd like to keep your preferences or delete them. After making a choice, you should see a message that Zed was successfully uninstalled.
 
-In the case that the `zed` shell command was not found in your PATH, you can try one of the following commands
+In the case that the `zed` shell command was not found in your PATH, you can try one of the following commands:
 
 ```sh
 $HOME/.local/bin/zed --uninstall
 ```
 
-or
+or the absolute path to your installation, such as
 
 ```sh
-$HOME/.local/zed.app/bin.zed --uninstall
+$HOME/.local/zed.app/bin/zed --uninstall
 ```
 
-The first case might fail if a symlink was not properly established between `$HOME/.local/bin/zed` and `$HOME/.local/zed.app/bin.zed`. But the second case should work as long as Zed was installed to its default location.
+The first case might fail if a symlink was not properly established between `$HOME/.local/bin/zed` and `$HOME/.local/zed.app/bin/zed`, or if the symlink was overwritten by having parallel installations of different versions of Zed. But the second command should always work as long as Zed was installed to its default location.
 
-If Zed was installed to a different location, you must invoke the `zed` binary stored in that installation directory and pass the `--uninstall` flag to it in the same format as the previous commands.
+If Zed was installed to a different location (such as the `zed-preview.app` variant), you must invoke the `zed` binary stored in that installation directory and pass the `--uninstall` flag to it in the same format as the previous commands.
 
 ### Package Manager
 

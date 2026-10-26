@@ -188,7 +188,9 @@ impl LanguageSelectorDelegate {
         matcher
             .path_suffixes
             .iter()
-            .find_map(|extension| file_icons::FileIcons::get_icon(Path::new(extension), cx))
+            .find_map(|extension| {
+                file_icons::FileIcons::get_icon(Path::new(extension.as_str()), cx)
+            })
             .map(Icon::from_path)
             .map(|icon| icon.color(Color::Muted))
     }
@@ -232,7 +234,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.language_selector
             .update(cx, |_, cx| cx.emit(DismissEvent))
-            .log_err();
+            .ok();
     }
 
     fn selected_index(&self) -> usize {
@@ -367,7 +369,7 @@ mod tests {
                     LanguageConfig {
                         name: language_name.into(),
                         matcher: (LanguageMatcher {
-                            path_suffixes: vec![path_suffix.to_string()],
+                            path_suffixes: vec![path_suffix.into()],
                             ..Default::default()
                         })
                         .into(),

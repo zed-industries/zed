@@ -5,25 +5,27 @@ pub mod responses;
 #[cfg(test)]
 mod chat_completion_transport_tests;
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{
     AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
     StatusCode,
     http::{HeaderMap, HeaderValue},
 };
+use language_model_core::LanguageModelCompletionError;
 pub use language_model_core::ReasoningEffort;
+pub use language_model_core::chat_completion::{
+    ChoiceDelta, FunctionChunk, PromptTokensDetails, ResponseMessageDelta, ResponseStreamError,
+    ResponseStreamEvent, ResponseStreamResult, ToolCallChunk, Usage,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use serde_json::value::RawValue;
 use std::{convert::TryFrom, future::Future, io};
 use strum::EnumIter;
 use thiserror::Error;
 
 pub const OPEN_AI_API_URL: &str = "https://api.openai.com/v1";
-
-fn is_none_or_empty<T: AsRef<[U]>, U>(opt: &Option<T>) -> bool {
-    opt.as_ref().is_none_or(|v| v.as_ref().is_empty())
-}
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -99,6 +101,14 @@ pub enum Model {
     FivePointSixTerra,
     #[serde(rename = "gpt-5.6-luna")]
     FivePointSixLuna,
+    #[serde(rename = "gpt-6-astra")]
+    SixAstra,
+    #[serde(rename = "gpt-6-sol")]
+    SixSol,
+    #[serde(rename = "gpt-6-luna")]
+    SixLuna,
+    #[serde(rename = "gpt-6.1-sol")]
+    SixPointOneSol,
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -148,6 +158,10 @@ impl Model {
             "gpt-5.6-sol" => Ok(Self::FivePointSixSol),
             "gpt-5.6-terra" => Ok(Self::FivePointSixTerra),
             "gpt-5.6-luna" => Ok(Self::FivePointSixLuna),
+            "gpt-6-astra" => Ok(Self::SixAstra),
+            "gpt-6-sol" => Ok(Self::SixSol),
+            "gpt-6-luna" => Ok(Self::SixLuna),
+            "gpt-6.1-sol" => Ok(Self::SixPointOneSol),
             invalid_id => anyhow::bail!("invalid model id '{invalid_id}'"),
         }
     }
@@ -172,6 +186,10 @@ impl Model {
             Self::FivePointSixSol => "gpt-5.6-sol",
             Self::FivePointSixTerra => "gpt-5.6-terra",
             Self::FivePointSixLuna => "gpt-5.6-luna",
+            Self::SixAstra => "gpt-6-astra",
+            Self::SixSol => "gpt-6-sol",
+            Self::SixLuna => "gpt-6-luna",
+            Self::SixPointOneSol => "gpt-6.1-sol",
             Self::Custom { name, .. } => name,
         }
     }
@@ -196,6 +214,10 @@ impl Model {
             Self::FivePointSixSol => "GPT-5.6 Sol",
             Self::FivePointSixTerra => "GPT-5.6 Terra",
             Self::FivePointSixLuna => "GPT-5.6 Luna",
+            Self::SixAstra => "GPT-6 Astra",
+            Self::SixSol => "GPT-6 Sol",
+            Self::SixLuna => "GPT-6 Luna",
+            Self::SixPointOneSol => "GPT-6.1 Sol",
             Self::Custom { display_name, .. } => display_name.as_deref().unwrap_or(&self.id()),
         }
     }
@@ -220,6 +242,10 @@ impl Model {
             Self::FivePointSixSol => 1_050_000,
             Self::FivePointSixTerra => 1_050_000,
             Self::FivePointSixLuna => 1_050_000,
+            Self::SixAstra => 1_050_000,
+            Self::SixSol => 1_050_000,
+            Self::SixLuna => 1_050_000,
+            Self::SixPointOneSol => 1_050_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -247,6 +273,10 @@ impl Model {
             Self::FivePointSixSol => Some(128_000),
             Self::FivePointSixTerra => Some(128_000),
             Self::FivePointSixLuna => Some(128_000),
+            Self::SixAstra => Some(128_000),
+            Self::SixSol => Some(128_000),
+            Self::SixLuna => Some(128_000),
+            Self::SixPointOneSol => Some(128_000),
         }
     }
 
@@ -270,7 +300,11 @@ impl Model {
             | Self::FivePointFive
             | Self::FivePointFivePro
             | Self::FivePointSixTerra
-            | Self::FivePointSixLuna => Some(ReasoningEffort::Medium),
+            | Self::FivePointSixLuna
+            | Self::SixAstra
+            | Self::SixSol
+            | Self::SixLuna
+            | Self::SixPointOneSol => Some(ReasoningEffort::Medium),
             _ => None,
         }
     }
@@ -317,8 +351,19 @@ impl Model {
                 ReasoningEffort::High,
                 ReasoningEffort::XHigh,
             ],
-            Self::FivePointSixSol | Self::FivePointSixTerra | Self::FivePointSixLuna => &[
+            Self::FivePointSixSol
+            | Self::FivePointSixTerra
+            | Self::FivePointSixLuna
+            | Self::SixSol
+            | Self::SixLuna => &[
                 ReasoningEffort::None,
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+                ReasoningEffort::XHigh,
+                ReasoningEffort::Max,
+            ],
+            Self::SixAstra | Self::SixPointOneSol => &[
                 ReasoningEffort::Low,
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
@@ -371,6 +416,10 @@ impl Model {
             | Self::FivePointSixSol
             | Self::FivePointSixTerra
             | Self::FivePointSixLuna
+            | Self::SixAstra
+            | Self::SixSol
+            | Self::SixLuna
+            | Self::SixPointOneSol
             | Self::FiveNano => true,
             Self::O3 | Model::Custom { .. } => false,
         }
@@ -401,7 +450,11 @@ impl Model {
             | Self::FivePointFivePro
             | Self::FivePointSixSol
             | Self::FivePointSixTerra
-            | Self::FivePointSixLuna => true,
+            | Self::FivePointSixLuna
+            | Self::SixAstra
+            | Self::SixSol
+            | Self::SixLuna
+            | Self::SixPointOneSol => true,
             Self::Four
             | Self::FourOmniMini
             | Self::O3
@@ -431,7 +484,11 @@ impl Model {
             | Self::FivePointFive
             | Self::FivePointSixSol
             | Self::FivePointSixTerra
-            | Self::FivePointSixLuna => true,
+            | Self::FivePointSixLuna
+            | Self::SixAstra
+            | Self::SixSol
+            | Self::SixLuna
+            | Self::SixPointOneSol => true,
             Self::Four
             | Self::FiveNano
             | Self::FivePointFourNano
@@ -444,7 +501,12 @@ impl Model {
 
 #[cfg(test)]
 mod tests {
-    use super::{Model, ReasoningEffort};
+    use language_model_core::{
+        LanguageModelCompletionError, LanguageModelProviderName, OPEN_AI_PROVIDER_NAME,
+        ProviderErrorCategory,
+    };
+
+    use super::{Model, ReasoningEffort, RequestError, StatusCode};
 
     #[test]
     fn gpt_5_1_uses_none_reasoning_by_default() {
@@ -515,6 +577,145 @@ mod tests {
             expected_efforts.as_slice()
         );
     }
+
+    #[test]
+    fn http_credit_balance_exhaustion_is_payment_required() {
+        let error = LanguageModelCompletionError::from(RequestError::HttpResponseError {
+            provider: OPEN_AI_PROVIDER_NAME.to_string(),
+            status_code: StatusCode::TOO_MANY_REQUESTS,
+            body: serde_json::json!({
+                "error": {
+                    "message": "You have no credits remaining.",
+                    "type": "insufficient_quota",
+                    "param": null,
+                    "code": "credit_balance_exhausted"
+                }
+            })
+            .to_string(),
+            headers: Box::default(),
+        });
+
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                status: Some(StatusCode::TOO_MANY_REQUESTS),
+                code: Some(code),
+                message,
+                category: ProviderErrorCategory::PaymentRequired,
+                ..
+            } if code == "credit_balance_exhausted"
+                && message == "You have no credits remaining."
+        ));
+    }
+
+    #[test]
+    fn http_usage_limit_type_is_payment_required() {
+        let error = LanguageModelCompletionError::from(RequestError::HttpResponseError {
+            provider: OPEN_AI_PROVIDER_NAME.to_string(),
+            status_code: StatusCode::TOO_MANY_REQUESTS,
+            body: serde_json::json!({
+                "error": {
+                    "type": "usage_limit_reached",
+                    "message": "The usage limit has been reached",
+                    "plan_type": "plus"
+                }
+            })
+            .to_string(),
+            headers: Box::default(),
+        });
+
+        assert!(!error.is_transient());
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                status: Some(StatusCode::TOO_MANY_REQUESTS),
+                code: Some(code),
+                message,
+                category: ProviderErrorCategory::PaymentRequired,
+                ..
+            } if code == "usage_limit_reached"
+                && message == "The usage limit has been reached"
+        ));
+    }
+
+    #[test]
+    fn http_unknown_error_type_is_preserved_for_compatible_provider() {
+        let error = LanguageModelCompletionError::from(RequestError::HttpResponseError {
+            provider: "Compatible Provider".to_string(),
+            status_code: StatusCode::BAD_REQUEST,
+            body: serde_json::json!({
+                "error": {
+                    "type": "provider_specific_error",
+                    "message": "Provider-specific rejection"
+                }
+            })
+            .to_string(),
+            headers: Box::default(),
+        });
+
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                code: Some(code),
+                message,
+                category: ProviderErrorCategory::InvalidRequest,
+                ..
+            } if provider == LanguageModelProviderName::from("Compatible Provider".to_string())
+                && code == "provider_specific_error"
+                && message == "Provider-specific rejection"
+        ));
+    }
+
+    #[test]
+    fn http_invalid_prompt_is_content_policy_rejection() {
+        let error = LanguageModelCompletionError::from(RequestError::HttpResponseError {
+            provider: OPEN_AI_PROVIDER_NAME.to_string(),
+            status_code: StatusCode::BAD_REQUEST,
+            body: serde_json::json!({
+                "error": {
+                    "message": "Invalid prompt: your prompt was flagged as potentially violating our usage policy.",
+                    "type": "invalid_request_error",
+                    "param": null,
+                    "code": "invalid_prompt"
+                }
+            })
+            .to_string(),
+            headers: Box::default(),
+        });
+
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                status: Some(StatusCode::BAD_REQUEST),
+                code: Some(code),
+                message,
+                category: ProviderErrorCategory::ContentPolicy,
+                ..
+            } if code == "invalid_prompt"
+                && message
+                    == "Invalid prompt: your prompt was flagged as potentially violating our usage policy."
+        ));
+    }
+
+    #[test]
+    fn stream_usage_with_null_prompt_cache_tokens_is_not_an_error() {
+        let chunk = r#"{"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":3,"total_tokens":8,"prompt_tokens_details":{"cached_tokens":0,"cache_write_tokens":null}}}"#;
+
+        let super::ResponseStreamResult::Ok(event) =
+            serde_json::from_str::<super::ResponseStreamResult>(chunk).unwrap()
+        else {
+            panic!("usage-only chunk with null cache token fields must not fail to parse");
+        };
+
+        let details = event
+            .usage
+            .unwrap()
+            .prompt_tokens_details
+            .expect("prompt_tokens_details should be present");
+        assert_eq!(details.cached_tokens, Some(0));
+        assert_eq!(details.cache_write_tokens, None);
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -560,11 +761,11 @@ pub struct Request {
     pub service_tier: Option<ServiceTier>,
 }
 
-/// Service tier for OpenAI requests. Maps to the top-level `service_tier`
-/// field on Responses and Chat Completions. We only ever send `Priority`
-/// today (in response to Fast Mode being enabled); the other variants are
-/// included for symmetry with the API and so deserialization of echoed
-/// values does not fail.
+/// Selects the service tier for OpenAI requests.
+///
+/// This maps to the top-level `service_tier` field on Responses and Chat
+/// Completions. `Priority` serializes as `priority` for compatibility, while
+/// deserialization also accepts the `fast` value echoed by some models.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ServiceTier {
@@ -572,6 +773,7 @@ pub enum ServiceTier {
     Default,
     Flex,
     Scale,
+    #[serde(alias = "fast")]
     Priority,
 }
 
@@ -716,68 +918,6 @@ pub struct Choice {
     pub finish_reason: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct ResponseMessageDelta {
-    pub role: Option<Role>,
-    pub content: Option<String>,
-    pub reasoning: Option<String>,
-    #[serde(default, skip_serializing_if = "is_none_or_empty")]
-    pub tool_calls: Option<Vec<ToolCallChunk>>,
-    #[serde(default, skip_serializing_if = "is_none_or_empty")]
-    pub reasoning_content: Option<String>,
-    /// Provider-defined structured reasoning metadata.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning_details: Option<Value>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct ToolCallChunk {
-    pub index: usize,
-    pub id: Option<String>,
-
-    // There is also an optional `type` field that would determine if a
-    // function is there. Sometimes this streams in with the `function` before
-    // it streams in the `type`
-    pub function: Option<FunctionChunk>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct FunctionChunk {
-    pub name: Option<String>,
-    pub arguments: Option<String>,
-    /// Provider-defined metadata required to replay a reasoning tool call.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub thought_signature: Option<String>,
-}
-
-/// Reports prompt-cache token usage from compatible providers.
-#[derive(Clone, Serialize, Deserialize, Debug, Default)]
-pub struct PromptTokensDetails {
-    /// Tokens read from a prompt cache.
-    #[serde(default)]
-    pub cached_tokens: u64,
-    /// Tokens written to a prompt cache.
-    #[serde(default)]
-    pub cache_write_tokens: u64,
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct Usage {
-    pub prompt_tokens: Option<u64>,
-    pub completion_tokens: Option<u64>,
-    pub total_tokens: Option<u64>,
-    /// Prompt-cache usage when reported by the provider.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub prompt_tokens_details: Option<PromptTokensDetails>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ChoiceDelta {
-    pub index: u32,
-    pub delta: Option<ResponseMessageDelta>,
-    pub finish_reason: Option<String>,
-}
-
 /// An error produced while sending an OpenAI-compatible request.
 ///
 /// Transport and wire-format failures retain their category so callers can
@@ -803,9 +943,10 @@ pub enum RequestError {
         #[source]
         error: http_client::http::Error,
     },
-    #[error("error sending HTTP request to {provider}'s API")]
+    #[error("error sending HTTP request to {host} for {provider}")]
     HttpSend {
         provider: String,
+        host: String,
         #[source]
         error: anyhow::Error,
     },
@@ -825,32 +966,20 @@ pub enum RequestError {
     Other(#[from] anyhow::Error),
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ResponseStreamError {
-    message: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(untagged)]
-pub enum ResponseStreamResult {
-    Ok(ResponseStreamEvent),
-    Err { error: ResponseStreamError },
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ResponseStreamEvent {
-    pub choices: Vec<ChoiceDelta>,
-    pub usage: Option<Usage>,
+#[derive(Deserialize)]
+struct ResponseErrorEnvelope {
+    error: responses::ResponseError,
 }
 
 /// A framed Chat Completions server-sent event.
 ///
 /// `Done` is distinct from the underlying response body ending so callers can
 /// tell whether the server completed the stream according to the protocol.
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub enum ChatCompletionStreamEvent {
-    /// A JSON payload from a `data` field.
-    Data(Value),
+    /// A JSON payload from a `data` field, kept as raw text so consumers can
+    /// deserialize it into their own wire types in a single pass.
+    Data(Box<RawValue>),
     /// The protocol terminator `data: [DONE]`.
     Done,
 }
@@ -877,11 +1006,13 @@ where
     RequestBody: Serialize + ?Sized,
 {
     let request = chat_completion_request(provider_name, api_url, api_key, extra_headers, request)?;
+    let host = request.uri().host().unwrap_or(api_url).to_owned();
     let mut response = client
         .send(request)
         .await
         .map_err(|error| RequestError::HttpSend {
             provider: provider_name.to_string(),
+            host,
             error,
         })?;
     if !response.status().is_success() {
@@ -945,11 +1076,13 @@ where
     RequestBody: Serialize + ?Sized,
 {
     let request = chat_completion_request(provider_name, api_url, api_key, extra_headers, request)?;
+    let host = request.uri().host().unwrap_or(api_url).to_owned();
     let mut response = client
         .send(request)
         .await
         .map_err(|error| RequestError::HttpSend {
             provider: provider_name.to_string(),
+            host,
             error,
         })?;
     if !response.status().is_success() {
@@ -1008,7 +1141,10 @@ pub async fn stream_completion(
     api_key: &str,
     request: Request,
     extra_headers: &CustomHeaders,
-) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>, RequestError> {
+) -> Result<
+    BoxStream<'static, Result<ResponseStreamEvent, LanguageModelCompletionError>>,
+    RequestError,
+> {
     let events = stream_chat_completion(
         client,
         provider_name,
@@ -1018,24 +1154,47 @@ pub async fn stream_completion(
         &request,
     )
     .await?;
+    let provider_name =
+        language_model_core::LanguageModelProviderName::from(provider_name.to_string());
     Ok(events
-        .filter_map(|event| async move {
-            let value = match event {
-                Ok(ChatCompletionStreamEvent::Data(value)) => value,
-                Ok(ChatCompletionStreamEvent::Done) => return None,
-                Err(error) => return Some(Err(anyhow!(error))),
-            };
-            match ResponseStreamResult::deserialize(&value) {
-                Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
-                Ok(ResponseStreamResult::Err { error }) => Some(Err(anyhow!(error.message))),
-                Err(error) => {
-                    log::error!(
-                        "Failed to parse OpenAI response into ResponseStreamResult: `{}`\n\
-                        Response: `{}`",
-                        error,
-                        value,
-                    );
-                    Some(Err(anyhow!(error)))
+        .filter_map(move |event| {
+            let provider_name = provider_name.clone();
+            async move {
+                let value = match event {
+                    Ok(ChatCompletionStreamEvent::Data(value)) => value,
+                    Ok(ChatCompletionStreamEvent::Done) => return None,
+                    Err(error) => return Some(Err(error.into())),
+                };
+                match serde_json::from_str::<ResponseStreamResult>(value.get()) {
+                    Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
+                    Ok(ResponseStreamResult::Err { error }) => {
+                        let category = completion::response_error_category(
+                            error.code.as_deref(),
+                            error.error_type.as_deref(),
+                            None,
+                            &error.message,
+                        );
+                        Some(Err(LanguageModelCompletionError::from_provider_response(
+                            provider_name,
+                            None,
+                            error.code.or(error.error_type),
+                            error.message,
+                            None,
+                            category,
+                        )))
+                    }
+                    Err(error) => {
+                        log::error!(
+                            "Failed to parse OpenAI response into ResponseStreamResult: `{}`\n\
+                            Response: `{}`",
+                            error,
+                            value,
+                        );
+                        Some(Err(LanguageModelCompletionError::DeserializeResponse {
+                            provider: provider_name,
+                            error,
+                        }))
+                    }
                 }
             }
         })
@@ -1175,7 +1334,25 @@ impl From<RequestError> for language_model_core::LanguageModelCompletionError {
                     .and_then(|val| val.to_str().ok()?.parse::<u64>().ok())
                     .map(std::time::Duration::from_secs);
 
-                Self::from_http_status(provider.into(), status_code, body, retry_after)
+                if let Ok(error_response) = serde_json::from_str::<ResponseErrorEnvelope>(&body) {
+                    let error = error_response.error;
+                    let category = completion::response_error_category(
+                        error.code.as_deref(),
+                        error.error_type.as_deref(),
+                        Some(status_code),
+                        &error.message,
+                    );
+                    Self::from_provider_response(
+                        provider.into(),
+                        Some(status_code),
+                        error.code.or(error.error_type),
+                        error.message,
+                        retry_after,
+                        category,
+                    )
+                } else {
+                    Self::from_http_status(provider.into(), status_code, body, retry_after)
+                }
             }
             RequestError::SerializeRequest { provider, error } => Self::SerializeRequest {
                 provider: provider.into(),
@@ -1185,8 +1362,13 @@ impl From<RequestError> for language_model_core::LanguageModelCompletionError {
                 provider: provider.into(),
                 error,
             },
-            RequestError::HttpSend { provider, error } => Self::HttpSend {
+            RequestError::HttpSend {
+                provider,
+                host,
+                error,
+            } => Self::HttpSend {
                 provider: provider.into(),
+                host,
                 error,
             },
             RequestError::ReadResponse { provider, error } => Self::ApiReadResponseError {

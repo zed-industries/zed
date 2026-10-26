@@ -71,12 +71,17 @@ pub(super) fn try_handle_client_command(
 
     let arguments = command.arguments.as_deref().unwrap_or_default();
     let project = workspace.read(cx).project().clone();
+    let path_style = workspace.read(cx).path_style(cx);
     let client_command = project
         .read(cx)
         .lsp_store()
         .read(cx)
         .language_server_adapter_for_id(action.server_id)
-        .and_then(|adapter| adapter.adapter.client_command(&command.command, arguments))
+        .and_then(|adapter| {
+            adapter
+                .adapter
+                .client_command(&command.command, arguments, path_style)
+        })
         .or_else(|| match command.command.as_str() {
             "editor.action.showReferences"
             | "editor.action.goToLocations"
@@ -616,6 +621,10 @@ fn build_code_lens_renderer(line: CodeLensLine, editor: WeakEntity<Editor>) -> R
         let text_style = &cx.editor_style.text;
         let font = text_style.font();
         let font_size = text_style.font_size.to_pixels(cx.window.rem_size()) * 0.9;
+        let colors = cx.app.theme().colors();
+        let code_lens_color = colors
+            .editor_code_lens_foreground
+            .unwrap_or(colors.text_muted);
 
         for (i, (title, action)) in resolved_items.into_iter().enumerate() {
             if i > 0 {
@@ -623,7 +632,7 @@ fn build_code_lens_renderer(line: CodeLensLine, editor: WeakEntity<Editor>) -> R
                     div()
                         .font(font.clone())
                         .text_size(font_size)
-                        .text_color(cx.app.theme().colors().text_muted)
+                        .text_color(code_lens_color)
                         .child(CODE_LENS_SEPARATOR)
                         .into_any_element(),
                 );
@@ -634,7 +643,7 @@ fn build_code_lens_renderer(line: CodeLensLine, editor: WeakEntity<Editor>) -> R
                     .id(ElementId::from(i))
                     .font(font.clone())
                     .text_size(font_size)
-                    .text_color(cx.app.theme().colors().text_muted)
+                    .text_color(code_lens_color)
                     .child(title.clone())
                     .when_some(action, |code_lens_div, action| {
                         let position = line.position;
@@ -1710,7 +1719,7 @@ mod tests {
             language::LanguageConfig {
                 name: "TypeScript".into(),
                 matcher: (language::LanguageMatcher {
-                    path_suffixes: vec!["ts".to_string()],
+                    path_suffixes: vec!["ts".into()],
                     ..language::LanguageMatcher::default()
                 })
                 .into(),

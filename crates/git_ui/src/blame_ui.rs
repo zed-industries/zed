@@ -1,5 +1,5 @@
 use crate::{
-    commit_tooltip::{CommitAvatar, CommitTooltip, commit_tag_chips},
+    commit_tooltip::{CommitAvatar, CommitTooltip, commit_tag_chips, shallow_boundary_notice},
     commit_view::{CommitView, GitBlob, build_buffer, worktree_id_for_repo_path},
 };
 use anyhow::Context as _;
@@ -399,6 +399,10 @@ impl BlameRenderer for GitBlameRenderer {
             author_name: author.clone(),
             has_parent: false,
         };
+        let boundary_notice = blame
+            .boundary
+            .then(|| shallow_boundary_notice(repository.clone(), workspace.clone(), window, cx))
+            .flatten();
 
         Some(
             tooltip_container(cx, |this, cx| {
@@ -426,6 +430,7 @@ impl BlameRenderer for GitBlameRenderer {
                                         )
                                     }),
                             )
+                            .children(boundary_notice)
                             .child(
                                 div()
                                     .id("inline-blame-commit-message")
@@ -555,13 +560,8 @@ fn deploy_blame_entry_context_menu(
         .and_then(|blame| blame.read(cx).highlighted_sha());
     let context_menu = ContextMenu::build(window, cx, move |menu, _, _| {
         let sha = format!("{}", blame_entry.sha);
-        let blame_revision = (!blame_entry.sha.is_zero()
-            && Some(blame_entry.sha) != highlighted_sha)
-            .then_some(blame_entry.sha)
-            .zip(RepoPath::new(&blame_entry.filename).ok());
-        let blame_previous_revision = blame_entry
-            .previous_sha_and_filename()
-            .and_then(|(sha, filename)| Some((sha, RepoPath::new(filename).ok()?)));
+        let blame_revision = blame_entry.revision_target(highlighted_sha);
+        let blame_previous_revision = blame_entry.previous_revision_target();
         let has_blame_targets = blame_revision.is_some() || blame_previous_revision.is_some();
         menu.on_blur_subscription(Subscription::new(|| {}))
             .entry("Copy Commit SHA", None, move |_, cx| {
@@ -570,7 +570,7 @@ fn deploy_blame_entry_context_menu(
             .when_some(
                 details.and_then(|details| details.permalink.clone()),
                 |this, url| {
-                    this.entry("Open Permalink", None, move |_, cx| {
+                    this.entry("Open Commit Permalink", None, move |_, cx| {
                         cx.open_url(url.as_str())
                     })
                 },

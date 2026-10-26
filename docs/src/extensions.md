@@ -25,3 +25,5 @@ If you are considering to publish your extension, please have a look through our
   - [Publishing Prerequisites](./extensions/publishing/prerequisites.md)
   - [License Requirements](./extensions/publishing/license-requirements.md)
   - [Publishing Guide](./extensions/publishing/publishing-guide.md)
+  - [Updating an Extension](./extensions/publishing/updating-and-maintenance.md)
+  - [Frequently Asked Questions](./extensions/publishing/faq.md)

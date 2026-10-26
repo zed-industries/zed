@@ -17,6 +17,7 @@ use crate::{
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use futures::{StreamExt, stream::FuturesUnordered};
+use git::{CopyFilePermalink, OpenFilePermalink};
 use gpui::{
     Action, Anchor, AnyElement, App, AsyncWindowContext, ClickEvent, ClipboardItem, Context, Div,
     DragMoveEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent,
@@ -1238,6 +1239,8 @@ impl Pane {
             .iter()
             .any(|existing_item| existing_item.item_id() == item.item_id());
 
+        let mut replaces_existing_item_in_pane = false;
+
         if !item_already_exists {
             self.close_items_on_item_open(window, cx);
         }
@@ -1304,7 +1307,7 @@ impl Pane {
                 if existing_item_is_active && destination_index.is_none() {
                     insertion_index = existing_item_index;
                 } else {
-                    self.items.remove(existing_item_index);
+                    let removed_item = self.items.remove(existing_item_index);
                     if existing_item_index < self.active_item_index {
                         self.active_item_index -= 1;
                     }
@@ -1316,6 +1319,10 @@ impl Pane {
                         self.active_item_index = insertion_index;
                     } else if insertion_index <= self.active_item_index {
                         self.active_item_index += 1;
+                    }
+
+                    if removed_item.item_id() != item.item_id() {
+                        replaces_existing_item_in_pane = true;
                     }
                 }
 
@@ -1340,7 +1347,11 @@ impl Pane {
             }
         }
 
-        cx.emit(Event::AddItem { item });
+        // only new adds or replaced items should be treated as "added". treating existing items as "added" would cause listeners
+        // like markdown auto preview to treat a pane move as a new item / fresh open.
+        if existing_item_index.is_none() || replaces_existing_item_in_pane {
+            cx.emit(Event::AddItem { item: item.clone() });
+        }
     }
 
     pub fn add_item(
@@ -2269,6 +2280,14 @@ impl Pane {
             return Ok(true);
         };
 
+        if (save_intent == SaveIntent::Save
+            || save_intent == SaveIntent::FormatAndSave
+            || save_intent == SaveIntent::SaveWithoutFormat)
+            && cx.update(|_window, cx| !item.capability(cx).editable())?
+        {
+            return Ok(true);
+        }
+
         let (
             mut has_conflict,
             mut is_dirty,
@@ -2589,6 +2608,30 @@ impl Pane {
 
     pub fn toolbar(&self) -> &Entity<Toolbar> {
         &self.toolbar
+    }
+
+    pub fn remove_navigation_history_paths(
+        &mut self,
+        project_paths: &HashSet<ProjectPath>,
+        cx: &mut Context<Self>,
+    ) {
+        let open_item_ids = self
+            .items
+            .iter()
+            .map(|item| item.item_id())
+            .collect::<HashSet<_>>();
+        let mut item_ids = HashSet::default();
+        self.nav_history
+            .for_each_entry(cx, &mut |entry, (path, _)| {
+                if project_paths.contains(&path) && !open_item_ids.contains(&entry.item.id()) {
+                    item_ids.insert(entry.item.id());
+                }
+            });
+        if item_ids.is_empty() {
+            return;
+        }
+        self.nav_history.remove_items(&item_ids);
+        self.history_updated(cx);
     }
 
     pub fn handle_deleted_project_item(
@@ -3281,8 +3324,19 @@ impl Pane {
                             let parent_abs_path = entry_abs_path
                                 .as_deref()
                                 .and_then(|abs_path| Some(abs_path.parent()?.to_path_buf()));
+                            let has_git_repo = project_path.as_ref().is_some_and(|project_path| {
+                                pane.read(cx).project.upgrade().is_some_and(|project| {
+                                    project
+                                        .read(cx)
+                                        .git_store()
+                                        .read(cx)
+                                        .repository_and_path_for_project_path(project_path, cx)
+                                        .is_some()
+                                })
+                            });
                             let relative_path = project_path
-                                .map(|project_path| project_path.path)
+                                .as_ref()
+                                .map(|project_path| project_path.path.clone())
                                 .filter(|_| has_relative_path);
 
                             let visible_in_project_panel = relative_path.is_some()
@@ -3326,6 +3380,53 @@ impl Pane {
                                                 relative_path.display(path_style).to_string(),
                                             ));
                                         }),
+                                    )
+                                })
+                                .when(has_git_repo, |menu| {
+                                    menu.separator().when_some(
+                                        project_path.clone(),
+                                        |menu, project_path| {
+                                            menu.entry(
+                                                "Open File Permalink",
+                                                Some(OpenFilePermalink.boxed_clone()),
+                                                window.handler_for(&pane, {
+                                                    let project_path = project_path.clone();
+                                                    move |pane, window, cx| {
+                                                        let Some(project) = pane.project.upgrade()
+                                                        else {
+                                                            return;
+                                                        };
+                                                        crate::open_file_permalink(
+                                                            project,
+                                                            project_path.clone(),
+                                                            pane.workspace.clone(),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    }
+                                                }),
+                                            )
+                                            .entry(
+                                                "Copy File Permalink",
+                                                Some(CopyFilePermalink.boxed_clone()),
+                                                window.handler_for(
+                                                    &pane,
+                                                    move |pane, window, cx| {
+                                                        let Some(project) = pane.project.upgrade()
+                                                        else {
+                                                            return;
+                                                        };
+                                                        crate::copy_file_permalink(
+                                                            project,
+                                                            project_path.clone(),
+                                                            pane.workspace.clone(),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    },
+                                                ),
+                                            )
+                                        },
                                     )
                                 })
                                 .when(is_local, |menu| {
@@ -3620,7 +3721,7 @@ impl Pane {
             .overflow_x_scroll()
             .w_full()
             .track_scroll(&self.tab_bar_scroll_handle)
-            .on_scroll_wheel(cx.listener(|this, _, _, _| {
+            .on_scroll(cx.listener(|this, _, _, _| {
                 this.suppress_scroll = true;
             }))
             .children(unpinned_tabs)
@@ -4341,7 +4442,7 @@ impl Focusable for Pane {
 
 impl Render for Pane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut key_context = KeyContext::new_with_defaults();
+        let mut key_context = KeyContext::new_with_defaults(cx.platform_info().os);
         key_context.add("Pane");
         if self.active_item().is_none() {
             key_context.add("EmptyPane");
@@ -4487,16 +4588,18 @@ impl Render for Pane {
             ))
             .on_action(cx.listener(
                 |pane: &mut Self, action: &RevealInProjectPanel, _window, cx| {
-                    let active_item = pane.active_item();
-                    let entry_id = active_item.as_ref().and_then(|item| {
-                        action
-                            .entry_id
-                            .map(ProjectEntryId::from_proto)
-                            .or_else(|| item.project_entry_ids(cx).first().copied())
-                    });
+                    let entry_id = action.entry_id.map(ProjectEntryId::from_proto);
+                    let active_project_path =
+                        pane.active_item().and_then(|item| item.project_path(cx));
 
                     pane.project
                         .update(cx, |project, cx| {
+                            let entry_id = entry_id.or_else(|| {
+                                active_project_path
+                                    .as_ref()
+                                    .and_then(|path| project.entry_for_path(path, cx))
+                                    .map(|entry| entry.id)
+                            });
                             if let Some(entry_id) = entry_id
                                 && project
                                     .worktree_for_entry(entry_id, cx)
@@ -4870,18 +4973,15 @@ impl NavHistory {
     pub fn remove_item(&mut self, item_id: EntityId) {
         let mut state = self.0.lock();
         state.paths_by_item.remove(&item_id);
-        state
-            .backward_stack
-            .retain(|entry| entry.item.id() != item_id);
-        state
-            .forward_stack
-            .retain(|entry| entry.item.id() != item_id);
-        state
-            .closed_stack
-            .retain(|entry| entry.item.id() != item_id);
-        state
-            .tag_stack
-            .retain(|entry| entry.origin.item.id() != item_id && entry.target.item.id() != item_id);
+        state.retain_entries(|id| id != item_id);
+    }
+
+    pub fn remove_items(&mut self, item_ids: &HashSet<EntityId>) {
+        let mut state = self.0.lock();
+        for item_id in item_ids {
+            state.paths_by_item.remove(item_id);
+        }
+        state.retain_entries(|id| !item_ids.contains(&id));
     }
 
     pub fn rename_item(
@@ -4945,6 +5045,22 @@ impl NavHistoryState {
                 pane.update(cx, |pane, cx| pane.history_updated(cx));
             });
         }
+    }
+
+    fn retain_entries(&mut self, retain: impl Fn(EntityId) -> bool) {
+        self.backward_stack.retain(|entry| retain(entry.item.id()));
+        self.forward_stack.retain(|entry| retain(entry.item.id()));
+        self.closed_stack.retain(|entry| retain(entry.item.id()));
+        let old_position = self.tag_stack_pos;
+        let mut index = 0;
+        self.tag_stack.retain(|entry| {
+            let keep = retain(entry.origin.item.id()) && retain(entry.target.item.id());
+            if index < old_position && !keep {
+                self.tag_stack_pos -= 1;
+            }
+            index += 1;
+            keep
+        });
     }
 }
 
@@ -5086,6 +5202,86 @@ mod tests {
             }
             is_dragged_tab
         }
+    }
+
+    #[gpui::test]
+    async fn test_remove_navigation_history_paths(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let [live, first_removed, second_removed, retained] = std::array::from_fn(|index| {
+            cx.new(|cx| {
+                TestItem::new(cx).with_project_items(&[TestProjectItem::new(
+                    index as u64,
+                    &format!("{index}.rs"),
+                    cx,
+                )])
+            })
+        });
+        pane.update_in(cx, |pane, window, cx| {
+            pane.add_item(Box::new(live.clone()), false, false, None, window, cx);
+        });
+        let entry = |item: &Entity<TestItem>| NavigationEntry {
+            item: Arc::new(item.downgrade()),
+            data: None,
+            timestamp: 0,
+            is_preview: false,
+            row: None,
+        };
+        pane.update(cx, |pane, cx| {
+            {
+                let mut state = pane.nav_history.0.lock();
+                let items = [&live, &first_removed, &second_removed, &retained];
+                state.backward_stack = items.map(entry).into();
+                state.forward_stack = state.backward_stack.clone();
+                state.closed_stack = state.backward_stack.clone();
+                for item in items {
+                    state
+                        .paths_by_item
+                        .insert(item.entity_id(), (item.project_path(cx).unwrap(), None));
+                }
+            }
+            let history = pane.nav_history_mut();
+            history.push_tag(entry(&first_removed), entry(&second_removed));
+            history.push_tag(entry(&live), entry(&retained));
+            assert_eq!(
+                history.pop_tag(TagNavigationMode::Older).unwrap().item.id(),
+                live.entity_id()
+            );
+            let paths = [&live, &first_removed, &second_removed]
+                .map(|item| item.project_path(cx).unwrap())
+                .into_iter()
+                .collect::<HashSet<_>>();
+            pane.remove_navigation_history_paths(&paths, cx);
+            {
+                let state = pane.nav_history.0.lock();
+                for stack in [
+                    &state.backward_stack,
+                    &state.forward_stack,
+                    &state.closed_stack,
+                ] {
+                    assert_eq!(
+                        stack
+                            .iter()
+                            .map(|entry| entry.item.id())
+                            .collect::<Vec<_>>(),
+                        vec![live.entity_id(), retained.entity_id()]
+                    );
+                }
+                assert_eq!(state.paths_by_item.len(), 2);
+            }
+            assert_eq!(
+                pane.nav_history_mut()
+                    .pop_tag(TagNavigationMode::Newer)
+                    .unwrap()
+                    .item
+                    .id(),
+                retained.entity_id()
+            );
+        });
     }
 
     #[gpui::test]
@@ -7288,6 +7484,116 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_move_item(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let [first_item, _, _] = set_labeled_items(&pane, ["A", "B*", "C"], cx);
+
+        let add_item_event_count = Rc::new(Cell::new(0));
+        let _subscription = cx.update(|_, cx| {
+            cx.subscribe(&pane, {
+                let add_item_event_count = add_item_event_count.clone();
+                move |_pane, event: &Event, _cx| {
+                    if matches!(event, Event::AddItem { .. }) {
+                        add_item_event_count.set(add_item_event_count.get() + 1);
+                    }
+                }
+            })
+        });
+
+        pane.update_in(cx, |pane, window, cx| {
+            // move pane
+            pane.add_item(first_item, false, false, Some(1), window, cx)
+        });
+
+        assert_item_labels(&pane, ["B", "A*", "C"], cx);
+        assert_eq!(add_item_event_count.get(), 0);
+
+        add_labeled_item(&pane, "D", false, cx);
+        assert_eq!(add_item_event_count.get(), 1);
+    }
+
+    #[gpui::test]
+    async fn test_move_item_to_different_pane(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane1 = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let pane2 = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.split_pane(pane1.clone(), SplitDirection::Right, window, cx)
+        });
+
+        let item_a = pane1.update_in(cx, |pane, window, cx| {
+            let item = Box::new(cx.new(|cx| {
+                TestItem::new(cx)
+                    .with_buffer_kind(ItemBufferKind::Singleton)
+                    .with_label("a")
+                    .with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
+            }));
+            pane.add_item(item.clone(), false, false, None, window, cx);
+            item
+        });
+
+        pane2.update_in(cx, |pane, window, cx| {
+            let item = Box::new(cx.new(|cx| {
+                TestItem::new(cx)
+                    .with_buffer_kind(ItemBufferKind::Singleton)
+                    .with_label("b")
+                    .with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
+            }));
+            pane.add_item(item.clone(), false, false, None, window, cx);
+            item
+        });
+
+        assert_item_labels(&pane1, ["a*"], cx);
+        assert_item_labels(&pane2, ["b*"], cx);
+
+        let add_item_event_count = Rc::new(Cell::new(0));
+        let _subscription = cx.update(|_, cx| {
+            cx.subscribe(&pane2, {
+                let add_item_event_count = add_item_event_count.clone();
+                move |_pane, event: &Event, _cx| {
+                    if matches!(event, Event::AddItem { .. }) {
+                        add_item_event_count.set(add_item_event_count.get() + 1);
+                    }
+                }
+            })
+        });
+        workspace.update_in(cx, |_, window, cx| {
+            move_item(
+                &pane1,
+                &pane2,
+                item_a.clone().entity_id(),
+                2,
+                true,
+                window,
+                cx,
+            );
+        });
+
+        assert_item_labels(&pane1, [], cx);
+        assert_item_labels(&pane2, ["a*"], cx);
+
+        assert_eq!(add_item_event_count.get(), 1);
+
+        let pane_holding_item_a = workspace.read_with(cx, |workspace, _| {
+            let pane_id = workspace.pane_for_item_id(item_a.item_id()).unwrap();
+            pane_id
+        });
+        assert_eq!(pane_holding_item_a.entity_id(), pane2.entity_id());
+    }
+
+    #[gpui::test]
     async fn test_add_item_with_same_project_entries(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
@@ -8939,6 +9245,45 @@ mod tests {
             pane.activate_next_item(&ActivateNextItem { wrap_around: false }, window, cx);
         });
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_save_intents_are_noops_for_read_only_items(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let item = pane.update_in(cx, |pane, window, cx| {
+            let item = cx.new(|cx| {
+                TestItem::new(cx)
+                    .with_dirty(true)
+                    .with_capability(Capability::ReadOnly)
+                    .with_project_items(&[TestProjectItem::new(1, "read_only.txt", cx)])
+            });
+            pane.add_item(Box::new(item.clone()), true, true, None, window, cx);
+            item
+        });
+
+        for save_intent in [
+            SaveIntent::Save,
+            SaveIntent::FormatAndSave,
+            SaveIntent::SaveWithoutFormat,
+        ] {
+            workspace
+                .update_in(cx, |workspace, window, cx| {
+                    workspace.save_active_item(save_intent, window, cx)
+                })
+                .await
+                .unwrap();
+        }
+
+        item.read_with(cx, |item, _| {
+            assert_eq!(item.save_count, 0);
+            assert_eq!(item.save_as_count, 0);
+        });
     }
 
     fn init_test(cx: &mut TestAppContext) {

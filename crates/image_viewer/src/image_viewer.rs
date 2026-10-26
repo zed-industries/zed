@@ -13,9 +13,9 @@ use gpui::{
     AnyElement, App, Bounds, Context, DispatchPhase, Element, ElementId, Entity, EventEmitter,
     FocusHandle, Focusable, Font, GlobalElementId, InspectorElementId, InteractiveElement,
     IntoElement, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, PinchEvent, Pixels, Point, Render, RenderImage, ScrollDelta, ScrollWheelEvent,
-    Style, Styled, Subscription, Task, WeakEntity, Window, actions, checkerboard, div, img, point,
-    px, size,
+    ParentElement, PinchEvent, Pixels, Point, Render, RenderImage, ScrollDelta, ScrollEvent, Style,
+    Styled, Subscription, Task, WeakEntity, Window, actions, checkerboard, div, img, point, px,
+    size,
 };
 use language::File as _;
 use persistence::ImageViewerDb;
@@ -288,7 +288,7 @@ impl ImageView {
 
     fn handle_scroll_wheel(
         &mut self,
-        event: &ScrollWheelEvent,
+        event: &ScrollEvent,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -737,7 +737,6 @@ impl SerializableItem for ImageView {
         workspace: &mut Workspace,
         item_id: ItemId,
         _closing: bool,
-        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<anyhow::Result<()>>> {
         let workspace_id = workspace.database_id()?;
@@ -788,7 +787,7 @@ impl Render for ImageView {
                     } else {
                         gpui::CursorStyle::OpenHand
                     })
-                    .on_scroll_wheel(cx.listener(Self::handle_scroll_wheel))
+                    .on_scroll(cx.listener(Self::handle_scroll_wheel))
                     .on_pinch(cx.listener(Self::handle_pinch))
                     .on_mouse_down(MouseButton::Left, cx.listener(Self::handle_mouse_down))
                     .on_mouse_down(MouseButton::Middle, cx.listener(Self::handle_mouse_down))
@@ -985,8 +984,8 @@ impl Render for ImageViewToolbarControls {
                     })
                     .child(editor.clone())
                     .on_action::<menu::Confirm>({
-                        move |_: &menu::Confirm, window, _| {
-                            window.blur();
+                        move |_: &menu::Confirm, window, cx| {
+                            window.blur(cx);
                         }
                     })
                     .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {

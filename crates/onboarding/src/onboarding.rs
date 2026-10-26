@@ -306,7 +306,7 @@ impl Render for Onboarding {
         div()
             .image_cache(gpui::retain_all("onboarding-page"))
             .key_context({
-                let mut ctx = KeyContext::new_with_defaults();
+                let mut ctx = KeyContext::new_with_defaults(cx.platform_info().os);
                 ctx.add("Onboarding");
                 ctx.add("menu");
                 ctx
@@ -630,7 +630,6 @@ impl workspace::SerializableItem for Onboarding {
         workspace: &mut Workspace,
         item_id: workspace::ItemId,
         _closing: bool,
-        _window: &mut Window,
         cx: &mut ui::Context<Self>,
     ) -> Option<gpui::Task<gpui::Result<()>>> {
         let workspace_id = workspace.database_id()?;

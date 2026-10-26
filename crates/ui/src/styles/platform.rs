@@ -1,3 +1,21 @@
+/// Expands to a literal so platform-specific hints can use `concat!` without allocating.
+#[cfg(target_os = "macos")]
+#[macro_export]
+macro_rules! alt_key_name {
+    () => {
+        "option"
+    };
+}
+
+/// Expands to a literal so platform-specific hints can use `concat!` without allocating.
+#[cfg(not(target_os = "macos"))]
+#[macro_export]
+macro_rules! alt_key_name {
+    () => {
+        "alt"
+    };
+}
+
 /// The platform style to use when rendering UI.
 ///
 /// This can be used to abstract over platform differences.

@@ -3,8 +3,8 @@ use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    GitPanelClickBehavior, GitPanelGroupBy, GitPanelSortBy, IntoGpui, RegisterSetting, Settings,
-    StatusStyle,
+    FolderIndicator, GitPanelClickBehavior, GitPanelCommitEditor, GitPanelGroupBy, GitPanelSortBy,
+    IntoGpui, RegisterSetting, Settings, StatusStyle,
 };
 use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 use workspace::dock::DockPosition;
@@ -21,7 +21,7 @@ pub struct GitPanelSettings {
     pub default_width: Pixels,
     pub status_style: StatusStyle,
     pub file_icons: bool,
-    pub folder_icons: bool,
+    pub folder_indicator: FolderIndicator,
     pub scrollbar: ScrollbarSettings,
     pub fallback_branch_name: String,
     pub sort_by: GitPanelSortBy,
@@ -33,6 +33,7 @@ pub struct GitPanelSettings {
     pub starts_open: bool,
     pub commit_title_max_length: usize,
     pub entry_primary_click_action: GitPanelClickBehavior,
+    pub commit_editor: GitPanelCommitEditor,
 }
 
 #[derive(Default)]
@@ -64,7 +65,7 @@ impl Settings for GitPanelSettings {
             default_width: git_panel.default_width.unwrap().into_gpui(),
             status_style: git_panel.status_style.unwrap(),
             file_icons: git_panel.file_icons.unwrap(),
-            folder_icons: git_panel.folder_icons.unwrap(),
+            folder_indicator: git_panel.folder_indicator.unwrap(),
             scrollbar: ScrollbarSettings {
                 show: git_panel
                     .scrollbar
@@ -82,6 +83,7 @@ impl Settings for GitPanelSettings {
             starts_open: git_panel.starts_open.unwrap(),
             commit_title_max_length: git_panel.commit_title_max_length.unwrap(),
             entry_primary_click_action: git_panel.entry_primary_click_action.unwrap(),
+            commit_editor: git_panel.commit_editor.unwrap(),
         }
     }
 }

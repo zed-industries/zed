@@ -2,7 +2,7 @@ pub mod copilot_oauth;
 mod model;
 pub mod responses;
 
-pub use model::{PROVIDER_ID, PROVIDER_NAME, create_language_model};
+pub use model::{PROVIDER_ID, PROVIDER_NAME, language_model, stream_completion};
 
 use std::sync::Arc;
 
@@ -41,10 +41,14 @@ impl CopilotChatConfiguration {
     pub fn graphql_url(&self) -> String {
         if let Some(enterprise_uri) = &self.enterprise_uri {
             let domain = Self::parse_domain(enterprise_uri);
-            format!("https://{}/api/graphql", domain)
+            format!("https://api.{domain}/graphql")
         } else {
             "https://api.github.com/graphql".to_string()
         }
+    }
+
+    fn credentials_url(&self) -> String {
+        format!("https://{}/copilot-agent", self.oauth_domain())
     }
 
     pub fn chat_completions_url(&self, api_endpoint: &str) -> String {
@@ -275,8 +279,14 @@ impl Model {
         self.capabilities.limits.max_context_window_tokens as u64
     }
 
-    pub fn max_output_tokens(&self) -> usize {
-        self.capabilities.limits.max_output_tokens
+    pub fn max_prompt_tokens(&self) -> Option<u64> {
+        let limit = self.capabilities.limits.max_prompt_tokens;
+        (limit > 0).then_some(limit)
+    }
+
+    pub fn max_output_tokens(&self) -> Option<u64> {
+        let limit = self.capabilities.limits.max_output_tokens as u64;
+        (limit > 0).then_some(limit)
     }
 
     pub fn supports_tools(&self) -> bool {
@@ -352,6 +362,8 @@ pub struct Request {
     pub temperature: f32,
     pub model: String,
     pub messages: Vec<ChatMessage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<Tool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -505,11 +517,6 @@ struct GlobalCopilotChat(gpui::Entity<CopilotChat>);
 
 impl Global for GlobalCopilotChat {}
 
-/// The keychain URL under which the Copilot agent's OAuth token is stored. This
-/// is intentionally distinct from the edit-prediction token so the two Copilot
-/// providers are authenticated entirely separately.
-const COPILOT_AGENT_CREDENTIALS_URL: &str = "https://github.com/copilot-agent";
-
 /// Authentication state for the Copilot agent (chat) provider.
 #[derive(Clone, Debug)]
 pub enum CopilotChatStatus {
@@ -531,6 +538,7 @@ pub struct CopilotChat {
     models: Option<Vec<Model>>,
     client: Arc<dyn HttpClient>,
     credentials_provider: Arc<dyn CredentialsProvider>,
+    load_task: Option<Task<Result<()>>>,
     sign_in_task: Option<Task<()>>,
 }
 
@@ -553,13 +561,17 @@ fn oauth_token_from_env() -> Option<String> {
 
 async fn load_stored_token(
     credentials_provider: &Arc<dyn CredentialsProvider>,
+    configuration: &CopilotChatConfiguration,
     cx: &AsyncApp,
 ) -> Option<String> {
-    let (_, token) = credentials_provider
-        .read_credentials(COPILOT_AGENT_CREDENTIALS_URL, cx)
-        .await
-        .ok()
-        .flatten()?;
+    let (_, token) = language_model::read_credentials(
+        credentials_provider.as_ref(),
+        &configuration.credentials_url(),
+        cx,
+    )
+    .await
+    .ok()
+    .flatten()?;
     String::from_utf8(token).ok()
 }
 
@@ -579,17 +591,25 @@ impl CopilotChat {
 
         // Load a previously-stored token (or the one from the environment) and
         // fetch models if we end up authenticated.
-        cx.spawn(async move |this, cx| {
-            let (env_token, credentials_provider) = this.read_with(cx, |this, _| {
-                (this.oauth_token.clone(), this.credentials_provider.clone())
-            })?;
+        let load_task = cx.spawn(async move |this, cx| {
+            let (env_token, credentials_provider, configuration) =
+                this.read_with(cx, |this, _| {
+                    (
+                        this.oauth_token.clone(),
+                        this.credentials_provider.clone(),
+                        this.configuration.clone(),
+                    )
+                })?;
 
             let token = match env_token {
                 Some(token) => Some(token),
-                None => load_stored_token(&credentials_provider, cx).await,
+                None => load_stored_token(&credentials_provider, &configuration, cx).await,
             };
 
-            this.update(cx, |this, cx| {
+            let configuration_is_current = this.update(cx, |this, cx| {
+                if this.configuration != configuration {
+                    return false;
+                }
                 this.oauth_token = token.clone();
                 this.status = if token.is_some() {
                     CopilotChatStatus::Authorized
@@ -597,14 +617,14 @@ impl CopilotChat {
                     CopilotChatStatus::SignedOut
                 };
                 cx.notify();
+                true
             })?;
 
-            if token.is_some() {
+            if configuration_is_current && token.is_some() {
                 Self::update_models(&this, cx).await?;
             }
             anyhow::Ok(())
-        })
-        .detach();
+        });
 
         Self {
             status: CopilotChatStatus::Starting,
@@ -614,6 +634,7 @@ impl CopilotChat {
             configuration,
             client,
             credentials_provider,
+            load_task: Some(load_task),
             sign_in_task: None,
         }
     }
@@ -632,8 +653,10 @@ impl CopilotChat {
             return;
         }
 
+        self.load_task = None;
         let client = self.client.clone();
         let configuration = self.configuration.clone();
+        let credentials_url = configuration.credentials_url();
         let credentials_provider = self.credentials_provider.clone();
         let executor = cx.background_executor().clone();
 
@@ -657,12 +680,7 @@ impl CopilotChat {
                 .await?;
 
                 credentials_provider
-                    .write_credentials(
-                        COPILOT_AGENT_CREDENTIALS_URL,
-                        "Bearer",
-                        token.as_bytes(),
-                        cx,
-                    )
+                    .write_credentials(&credentials_url, "Bearer", token.as_bytes(), cx)
                     .await
                     .context("writing Copilot agent credentials to the keychain")?;
 
@@ -694,16 +712,18 @@ impl CopilotChat {
 
     pub fn sign_out(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let credentials_provider = self.credentials_provider.clone();
+        let credentials_url = self.configuration.credentials_url();
         self.oauth_token = None;
         self.api_endpoint = None;
         self.models = None;
+        self.load_task = None;
         self.sign_in_task = None;
         self.status = CopilotChatStatus::SignedOut;
         cx.notify();
 
         cx.spawn(async move |_, cx| {
             credentials_provider
-                .delete_credentials(COPILOT_AGENT_CREDENTIALS_URL, cx)
+                .delete_credentials(&credentials_url, cx)
                 .await
                 .context("deleting Copilot agent credentials from the keychain")?;
             anyhow::Ok(())
@@ -754,7 +774,7 @@ impl CopilotChat {
             Self::get_auth_details(&copilot_chat, &mut cx).await?;
 
         let api_url = configuration.chat_completions_url(&api_endpoint);
-        stream_completion(
+        stream_chat_completion(
             client.clone(),
             oauth_token,
             api_url.into(),
@@ -852,6 +872,7 @@ impl CopilotChat {
     ) -> Result<String> {
         let api_endpoint = match discover_api_endpoint(oauth_token, configuration, client).await {
             Ok(endpoint) => endpoint,
+            Err(error) if configuration.enterprise_uri.is_some() => return Err(error),
             Err(error) => {
                 log::warn!(
                     "Failed to discover Copilot API endpoint via GraphQL, \
@@ -877,12 +898,41 @@ impl CopilotChat {
         let same_configuration = self.configuration == configuration;
         self.configuration = configuration;
         if !same_configuration {
+            self.oauth_token = None;
             self.api_endpoint = None;
-            cx.spawn(async move |this, cx| {
-                Self::update_models(&this, cx).await?;
+            self.models = None;
+            self.sign_in_task = None;
+            self.status = CopilotChatStatus::Starting;
+            cx.notify();
+
+            let credentials_provider = self.credentials_provider.clone();
+            let configuration = self.configuration.clone();
+            self.load_task = Some(cx.spawn(async move |this, cx| {
+                let token = load_stored_token(&credentials_provider, &configuration, cx).await;
+                let configuration_is_current = this.update(cx, |this, cx| {
+                    if this.configuration != configuration {
+                        return false;
+                    }
+                    this.oauth_token = token.clone();
+                    this.status = if token.is_some() {
+                        CopilotChatStatus::Authorized
+                    } else {
+                        CopilotChatStatus::SignedOut
+                    };
+                    cx.notify();
+                    true
+                })?;
+
+                if configuration_is_current && token.is_some() {
+                    if let Err(error) = Self::update_models(&this, cx).await {
+                        this.update(cx, |this, cx| {
+                            this.status = CopilotChatStatus::Error(error.to_string().into());
+                            cx.notify();
+                        })?;
+                    }
+                }
                 Ok::<_, anyhow::Error>(())
-            })
-            .detach();
+            }));
         }
     }
 }
@@ -1038,7 +1088,7 @@ async fn request_models(
     Ok(models)
 }
 
-async fn stream_completion(
+async fn stream_chat_completion(
     client: Arc<dyn HttpClient>,
     oauth_token: String,
     completion_url: Arc<str>,
@@ -1183,6 +1233,37 @@ async fn stream_messages(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use credentials_provider::test_support::FakeCredentialsProvider;
+    use gpui::TestAppContext;
+    use http_client::FakeHttpClient;
+
+    #[test]
+    fn test_github_urls() {
+        let configuration = CopilotChatConfiguration::default();
+        assert_eq!(
+            configuration.graphql_url(),
+            "https://api.github.com/graphql"
+        );
+        assert_eq!(
+            configuration.credentials_url(),
+            "https://github.com/copilot-agent"
+        );
+    }
+
+    #[test]
+    fn test_ghe_data_residency_urls() {
+        let configuration = CopilotChatConfiguration {
+            enterprise_uri: Some("https://acme.ghe.com/".to_string()),
+        };
+        assert_eq!(
+            configuration.graphql_url(),
+            "https://api.acme.ghe.com/graphql"
+        );
+        assert_eq!(
+            configuration.credentials_url(),
+            "https://acme.ghe.com/copilot-agent"
+        );
+    }
 
     #[test]
     fn test_resilient_model_schema_deserialize() {
@@ -1855,4 +1936,44 @@ mod tests {
             "\"none\""
         );
     }
+
+    #[gpui::test]
+    async fn test_disabled_credential_load_configuration_and_signout(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            language_model::set_credentials_read_gate::<DisabledAi>(
+                |cx| cx.global::<DisabledAi>().0,
+                cx,
+            );
+        });
+        for sign_out in [false, true] {
+            cx.update(|cx| cx.set_global(DisabledAi(true)));
+            let credentials = Arc::new(FakeCredentialsProvider::default());
+            let client = FakeHttpClient::create(|_| async { panic!("unexpected HTTP request") });
+            let mut configuration = CopilotChatConfiguration::default();
+            let chat = cx.new(|cx| {
+                let mut chat =
+                    CopilotChat::new(client, credentials.clone(), configuration.clone(), cx);
+                chat.oauth_token = None;
+                chat
+            });
+            cx.run_until_parked();
+            configuration.enterprise_uri = Some("https://enterprise.example".to_string());
+            chat.update(cx, |chat, cx| chat.set_configuration(configuration, cx));
+            cx.run_until_parked();
+            assert_eq!(credentials.take_reads(), Vec::<String>::new());
+            if sign_out {
+                chat.update(cx, |chat, cx| chat.sign_out(cx))
+                    .await
+                    .expect("sign out");
+            }
+            cx.update(|cx| cx.set_global(DisabledAi(false)));
+            cx.run_until_parked();
+            let expected = vec!["https://enterprise.example/copilot-agent"; usize::from(!sign_out)];
+            assert_eq!(credentials.take_reads(), expected);
+        }
+    }
+
+    struct DisabledAi(bool);
+
+    impl Global for DisabledAi {}
 }

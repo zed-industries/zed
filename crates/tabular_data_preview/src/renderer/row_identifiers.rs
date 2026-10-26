@@ -1,20 +1,21 @@
-use ui::{
-    ActiveTheme as _, AnyElement, Button, ButtonCommon as _, ButtonSize, ButtonStyle,
-    Clickable as _, Context, ElementId, IntoElement as _, ParentElement as _, SharedString,
-    Styled as _, StyledTypography as _, Tooltip, div,
-};
-
 use crate::{
-    TabularDataPreviewPane,
+    TableView,
     settings::RowIdentifiers,
     types::{DataRow, DisplayRow, LineNumber},
 };
+use ui::{
+    ActiveTheme as _, AnyElement, ButtonCommon as _, ButtonSize, Clickable, Context,
+    FluentBuilder as _, IconButton, IconButtonShape, IconName, IconSize, IntoElement as _,
+    ParentElement as _, SharedString, Styled as _, StyledTypography as _, Tooltip, div, h_flex,
+};
+
+use super::settings::settings_popover_menu;
 
 pub enum RowIdentDisplayMode {
     /// E.g
     /// ```text
     /// 1
-    /// ...
+    /// -
     /// 5
     /// ```
     Vertical,
@@ -45,7 +46,7 @@ impl LineNumber {
     }
 }
 
-impl TabularDataPreviewPane {
+impl TableView {
     /// Calculate the optimal width for the row identifier column (line numbers or row numbers).
     ///
     /// This ensures the column is wide enough to display the largest identifier comfortably,
@@ -104,60 +105,72 @@ impl TabularDataPreviewPane {
 
     pub(crate) fn create_row_identifier_header(
         &self,
-        cx: &mut Context<'_, TabularDataPreviewPane>,
+        cx: &mut Context<'_, TableView>,
     ) -> AnyElement {
-        // First column: row identifier (clickable to toggle between Lines and Rows)
-        let row_identifier_text = match self.settings.numbering_type {
-            RowIdentifiers::SrcLines => "Lines",
-            RowIdentifiers::RowNum => "Rows",
-        };
+        let has_line_numbers = !self.engine.contents.line_numbers.is_empty();
 
-        let view = cx.entity();
-        let value = div()
-            .font_buffer(cx)
-            .child(
-                Button::new(
-                    ElementId::Name("row-identifier-toggle".into()),
-                    row_identifier_text,
+        h_flex()
+            .size_full()
+            .items_center()
+            .justify_center()
+            .gap_1()
+            .when(has_line_numbers, |row| {
+                // A dedicated toggle (rather than only exposing this in the settings popover) so
+                // toggling shows its effect on the row identifier column immediately, instead of
+                // being hidden behind the open popover until it's dismissed.
+                let (icon, tooltip_text) = match self.settings.numbering_type {
+                    RowIdentifiers::SrcLines => (
+                        IconName::Code,
+                        "Showing file line numbers.\nClick to show sequential row numbers.",
+                    ),
+                    RowIdentifiers::RowNum => (
+                        IconName::Hash,
+                        "Showing sequential row numbers.\nClick to show file line numbers.",
+                    ),
+                };
+
+                let view = cx.entity();
+                row.child(
+                    IconButton::new("row-identifier-toggle", icon)
+                        .shape(IconButtonShape::Square)
+                        .icon_size(IconSize::Small)
+                        .size(ButtonSize::Compact)
+                        .tooltip(Tooltip::text(tooltip_text))
+                        .on_click(move |_event, _window, cx| {
+                            view.update(cx, |this, cx| {
+                                this.settings.numbering_type = match this.settings.numbering_type {
+                                    RowIdentifiers::SrcLines => RowIdentifiers::RowNum,
+                                    RowIdentifiers::RowNum => RowIdentifiers::SrcLines,
+                                };
+                                this.sync_column_widths(cx);
+                                cx.notify();
+                            });
+                        }),
                 )
-                .style(ButtonStyle::Subtle)
-                .size(ButtonSize::Compact)
-                .tooltip(Tooltip::text(
-                    "Toggle between: file line numbers or sequential row numbers",
-                ))
-                .on_click(move |_event, _window, cx| {
-                    view.update(cx, |this, cx| {
-                        this.settings.numbering_type = match this.settings.numbering_type {
-                            RowIdentifiers::SrcLines => RowIdentifiers::RowNum,
-                            RowIdentifiers::RowNum => RowIdentifiers::SrcLines,
-                        };
-                        this.sync_column_widths(cx);
-                        cx.notify();
-                    });
-                }),
-            )
-            .into_any_element();
-        value
+            })
+            .child(settings_popover_menu(cx.entity()))
+            .into_any_element()
     }
 
     pub(crate) fn create_row_identifier_cell(
         &self,
         display_row: DisplayRow,
         data_row: DataRow,
-        cx: &Context<'_, TabularDataPreviewPane>,
+        cx: &Context<'_, TableView>,
     ) -> Option<AnyElement> {
         let row_identifier: SharedString = match self.settings.numbering_type {
-            RowIdentifiers::SrcLines => self
-                .engine
-                .contents
-                .line_numbers
-                .get(*data_row)?
-                .display_string(if self.settings.multiline_cells_effectively_enabled() {
-                    RowIdentDisplayMode::Vertical
-                } else {
-                    RowIdentDisplayMode::Horizontal
-                })
-                .into(),
+            // Fall back to a sequential row number when there is no source line for this row (e.g.
+            // content that did not originate from a text buffer, such as a database result set).
+            RowIdentifiers::SrcLines => match self.engine.contents.line_numbers.get(*data_row) {
+                Some(line) => line
+                    .display_string(if self.settings.multiline_cells_effectively_enabled() {
+                        RowIdentDisplayMode::Vertical
+                    } else {
+                        RowIdentDisplayMode::Horizontal
+                    })
+                    .into(),
+                None => (*display_row + 1).to_string().into(),
+            },
             RowIdentifiers::RowNum => (*display_row + 1).to_string().into(),
         };
 

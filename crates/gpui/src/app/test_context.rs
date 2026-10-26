@@ -1,12 +1,12 @@
 use crate::{
     Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, AsyncApp, AvailableSpace,
-    BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DrawPhase, Drawable,
-    Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke,
-    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Platform, Point, Render, Result, SharedString, Size, SystemNotification,
-    SystemNotificationResponse, Task, TestDispatcher, TestPlatform, TestScreenCaptureSource,
-    TestWindow, TextSystem, VisualContext, Window, WindowBounds, WindowHandle, WindowOptions,
-    app::GpuiMode, window::ElementArenaScope,
+    BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DisplayId, DrawPhase,
+    Drawable, Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, InputEvent,
+    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Platform, PlatformTextSystem, Point, Render, Result, SharedString, Size,
+    SystemNotification, SystemNotificationResponse, Task, TestDispatcher, TestPlatform,
+    TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
+    WindowHandle, WindowOptions, WindowVisibility, app::GpuiMode, window::ElementArenaScope,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -123,12 +123,56 @@ impl AppContext for TestAppContext {
 }
 
 impl TestAppContext {
+    /// Sets the runtime identity used by this test's application.
+    pub fn set_platform_info(&mut self, platform_info: crate::PlatformInfo) {
+        self.test_platform.platform_info.set(platform_info);
+    }
+
     /// Creates a new `TestAppContext`. Usually you can rely on `#[gpui::test]` to do this for you.
     pub fn build(dispatcher: TestDispatcher, fn_name: Option<&'static str>) -> Self {
         let arc_dispatcher = Arc::new(dispatcher.clone());
         let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
         let platform = TestPlatform::new(background_executor.clone(), foreground_executor.clone());
+        Self::build_with_platform(
+            dispatcher,
+            fn_name,
+            background_executor,
+            foreground_executor,
+            platform,
+        )
+    }
+
+    /// Creates a test context backed by the provided platform text system.
+    pub fn build_with_text_system(
+        dispatcher: TestDispatcher,
+        fn_name: Option<&'static str>,
+        platform_text_system: Arc<dyn PlatformTextSystem>,
+    ) -> Self {
+        let arc_dispatcher = Arc::new(dispatcher.clone());
+        let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
+        let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
+        let platform = TestPlatform::with_text_system(
+            background_executor.clone(),
+            foreground_executor.clone(),
+            platform_text_system,
+        );
+        Self::build_with_platform(
+            dispatcher,
+            fn_name,
+            background_executor,
+            foreground_executor,
+            platform,
+        )
+    }
+
+    fn build_with_platform(
+        dispatcher: TestDispatcher,
+        fn_name: Option<&'static str>,
+        background_executor: BackgroundExecutor,
+        foreground_executor: ForegroundExecutor,
+        platform: Rc<TestPlatform>,
+    ) -> Self {
         let asset_source = Arc::new(());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
@@ -146,6 +190,11 @@ impl TestAppContext {
             fn_name,
             on_quit: Rc::new(RefCell::new(Vec::default())),
         }
+    }
+
+    /// Disables accessibility for subsequently created test windows.
+    pub fn disable_accessibility(&mut self) {
+        self.update(|cx| cx.accessibility_force_disabled = true);
     }
 
     /// Skip all drawing operations for the duration of this test.
@@ -167,6 +216,21 @@ impl TestAppContext {
     /// Checks whether there have been any new path prompts received by the platform.
     pub fn did_prompt_for_new_path(&self) -> bool {
         self.test_platform.did_prompt_for_new_path()
+    }
+
+    /// Returns the number of active idle sleep prevention tokens.
+    pub fn active_idle_sleep_preventions(&self) -> usize {
+        self.test_platform.active_idle_sleep_preventions()
+    }
+
+    /// Sets the delay for subsequent idle sleep prevention acquisitions.
+    pub fn set_idle_sleep_prevention_delay(&self, delay: Duration) {
+        self.test_platform.set_idle_sleep_prevention_delay(delay);
+    }
+
+    /// Makes subsequent idle sleep prevention acquisitions fail or succeed.
+    pub fn set_idle_sleep_prevention_fails(&self, fails: bool) {
+        self.test_platform.set_idle_sleep_prevention_fails(fails);
     }
 
     /// returns a new `TestAppContext` re-using the same executors to interleave tasks.
@@ -403,6 +467,66 @@ impl TestAppContext {
         self.test_window(window_handle).simulate_resize(size);
     }
 
+    /// Simulates a change in whether the platform is presenting the window.
+    pub fn simulate_window_visibility_change(
+        &self,
+        window_handle: AnyWindowHandle,
+        visibility: WindowVisibility,
+    ) {
+        self.test_window(window_handle)
+            .simulate_visibility_change(visibility);
+    }
+
+    /// Simulates connecting a display.
+    pub fn simulate_display_added(
+        &self,
+        display_id: DisplayId,
+        refresh_interval: Option<std::time::Duration>,
+    ) {
+        self.test_platform
+            .simulate_display_added(display_id, refresh_interval);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_platform(&self) -> &TestPlatform {
+        &self.test_platform
+    }
+
+    /// Simulates disconnecting a display.
+    pub fn simulate_display_removed(&self, display_id: DisplayId) {
+        self.test_platform.simulate_display_removed(display_id);
+    }
+
+    /// Simulates a connected display changing its refresh interval.
+    pub fn simulate_display_refresh_interval_change(
+        &self,
+        display_id: DisplayId,
+        refresh_interval: Option<std::time::Duration>,
+    ) {
+        self.test_platform
+            .simulate_display_refresh_interval_change(display_id, refresh_interval);
+    }
+
+    /// Simulates visible viewport changes without resizing the window's layout area.
+    pub fn simulate_window_visual_viewport_change(
+        &self,
+        window_handle: AnyWindowHandle,
+        bounds: Bounds<Pixels>,
+    ) {
+        self.test_window(window_handle)
+            .simulate_visual_viewport_change(bounds);
+    }
+
+    /// Simulates the window moving to a display with a different scale factor.
+    pub fn simulate_window_scale_factor_change(
+        &self,
+        window_handle: AnyWindowHandle,
+        scale_factor: f32,
+    ) {
+        self.test_window(window_handle)
+            .simulate_scale_factor_change(scale_factor);
+    }
+
     /// Returns true if there's an alert dialog open.
     pub fn expect_restart(&self) -> oneshot::Receiver<(Option<PathBuf>, Vec<std::ffi::OsString>)> {
         let (tx, rx) = futures::channel::oneshot::channel();
@@ -496,9 +620,10 @@ impl TestAppContext {
     /// in Zed, this will run backspace on the current editor through the command palette.
     /// This will also run the background executor until it's parked.
     pub fn simulate_keystrokes(&mut self, window: AnyWindowHandle, keystrokes: &str) {
+        let os = self.read(|cx| cx.platform_info().os);
         for keystroke in keystrokes
             .split(' ')
-            .map(Keystroke::parse)
+            .map(|source| Keystroke::parse_with_os(source, os))
             .map(Result::unwrap)
         {
             self.dispatch_keystroke(window, keystroke);
@@ -512,7 +637,12 @@ impl TestAppContext {
     /// will type abc into your current editor
     /// This will also run the background executor until it's parked.
     pub fn simulate_input(&mut self, window: AnyWindowHandle, input: &str) {
-        for keystroke in input.split("").map(Keystroke::parse).map(Result::unwrap) {
+        let os = self.read(|cx| cx.platform_info().os);
+        for keystroke in input
+            .split("")
+            .map(|source| Keystroke::parse_with_os(source, os))
+            .map(Result::unwrap)
+        {
             self.dispatch_keystroke(window, keystroke);
         }
 
@@ -884,7 +1014,20 @@ impl VisualTestContext {
         self.simulate_window_resize(self.window, size)
     }
 
-    /// debug_bounds returns the bounds of the element with the given selector.
+    /// Simulates a change in whether the platform is presenting this window.
+    pub fn simulate_visibility_change(&self, visibility: WindowVisibility) {
+        self.simulate_window_visibility_change(self.window, visibility);
+    }
+
+    /// Simulates the window moving to a display with a different scale factor.
+    pub fn simulate_scale_factor_change(&self, scale_factor: f32) {
+        self.simulate_window_scale_factor_change(self.window, scale_factor)
+    }
+
+    /// Returns the bounds of the element with the given debug selector.
+    ///
+    /// Returns `None` in builds without `debug_assertions`, which don't record
+    /// selectors; see [`crate::InteractiveElement::debug_selector`].
     pub fn debug_bounds(&mut self, selector: &'static str) -> Option<Bounds<Pixels>> {
         self.update(|window, _| window.rendered_frame.debug_bounds.get(selector).copied())
     }
@@ -920,7 +1063,7 @@ impl VisualTestContext {
         })
     }
 
-    /// Simulate an event from the platform, e.g. a ScrollWheelEvent
+    /// Simulate an event from the platform, e.g. a ScrollEvent
     /// Make sure you've called [VisualTestContext::draw] first!
     pub fn simulate_event<E: InputEvent>(&mut self, event: E) {
         self.test_window(self.window)
@@ -1149,6 +1292,74 @@ mod tests {
     use std::cell::RefCell;
     use std::path::PathBuf;
     use std::rc::Rc;
+
+    #[gpui::test]
+    fn test_mobile_lifecycle_subscriptions(cx: &mut TestAppContext) {
+        use crate::AppLifecyclePhase;
+
+        let phases = Rc::new(RefCell::new(Vec::new()));
+        let subscription = cx.update(|cx| {
+            cx.on_app_lifecycle({
+                let phases = phases.clone();
+                move |phase, cx| {
+                    phases.borrow_mut().push(phase);
+                    cx.defer(|cx| {
+                        cx.set_global(LifecycleObserved);
+                    });
+                }
+            })
+        });
+        struct LifecycleObserved;
+        impl crate::Global for LifecycleObserved {}
+
+        let mut callback = cx
+            .test_platform
+            .app_lifecycle_callback
+            .borrow_mut()
+            .take()
+            .expect("App registers the native lifecycle callback");
+        for phase in [
+            AppLifecyclePhase::Foreground,
+            AppLifecyclePhase::Active,
+            AppLifecyclePhase::Inactive,
+            AppLifecyclePhase::Background,
+            AppLifecyclePhase::Disconnected,
+        ] {
+            callback(phase);
+        }
+        assert_eq!(phases.borrow().len(), 5);
+        assert_eq!(
+            phases.borrow().last(),
+            Some(&AppLifecyclePhase::Disconnected)
+        );
+        cx.update(|cx| assert!(cx.has_global::<LifecycleObserved>()));
+        drop(subscription);
+        callback(AppLifecyclePhase::Foreground);
+        assert_eq!(phases.borrow().len(), 5);
+    }
+
+    #[gpui::test]
+    fn test_memory_warning_subscriptions(cx: &mut TestAppContext) {
+        let warnings = Rc::new(std::cell::Cell::new(0));
+        let subscription = cx.update(|cx| {
+            cx.on_memory_warning({
+                let warnings = warnings.clone();
+                move |_| warnings.set(warnings.get() + 1)
+            })
+        });
+        let mut callback = cx
+            .test_platform
+            .memory_warning_callback
+            .borrow_mut()
+            .take()
+            .expect("App registers the native memory warning callback");
+        callback();
+        callback();
+        assert_eq!(warnings.get(), 2);
+        drop(subscription);
+        callback();
+        assert_eq!(warnings.get(), 2);
+    }
 
     #[gpui::test]
     async fn test_system_notifications_require_identity_and_replace_matching_tags(
