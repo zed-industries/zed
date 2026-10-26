@@ -9,7 +9,8 @@ use theme_settings::ThemeSettings;
 use ui::prelude::*;
 
 use super::{Markdown, ParsedMarkdown};
-use crate::parser::MarkdownEvent;
+use crate::parser::{MarkdownEvent, MarkdownTag, MarkdownTagEnd};
+use pulldown_cmark::HeadingLevel;
 
 #[path = "math_svg.rs"]
 mod math_svg;
@@ -24,6 +25,20 @@ pub(crate) struct ParsedMarkdownMathExpression {
     pub(crate) latex: SharedString,
     /// Whether this is a display math expression (`$$...$$` / `\[...\]`).
     pub(crate) is_display: bool,
+    /// Font size multiplier relative to base font size (e.g. 1.875 for H1, 1.5 for H2, 1.0 for body).
+    pub(crate) font_scale: f32,
+}
+
+pub(crate) fn heading_level_font_scale(level: Option<HeadingLevel>) -> f32 {
+    match level {
+        Some(HeadingLevel::H1) => 1.875,
+        Some(HeadingLevel::H2) => 1.5,
+        Some(HeadingLevel::H3) => 1.25,
+        Some(HeadingLevel::H4) => 1.125,
+        Some(HeadingLevel::H5) => 1.0,
+        Some(HeadingLevel::H6) => 0.875,
+        None => 1.0,
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -179,8 +194,8 @@ impl MathState {
     /// in the background, avoiding UI thread blocking.
     pub(crate) fn retheme(&mut self, text_color: gpui::Hsla, cx: &mut Context<Markdown>) {
         let svg_renderer = cx.svg_renderer();
-        let font_size = self.font_size;
-        for cached in self.cache.values() {
+        for (key, cached) in &self.cache {
+            let font_size = f32::from_bits(key.font_size_bits);
             cached.recolor_and_render(font_size, text_color, svg_renderer.clone(), cx);
         }
     }
@@ -219,16 +234,20 @@ impl MathState {
 
         let mut new_keys = Vec::new();
         for expr in parsed.math_expressions.values() {
-            new_keys.push(MathCacheKey::new(expr.latex.clone(), font_size));
+            let expr_font_size = font_size * expr.font_scale;
+            new_keys.push((
+                MathCacheKey::new(expr.latex.clone(), expr_font_size),
+                expr_font_size,
+            ));
         }
 
-        for key in &new_keys {
+        for (key, expr_font_size) in &new_keys {
             if !self.cache.contains_key(key) {
                 self.cache.insert(
                     key.clone(),
                     Arc::new(CachedMathExpression::new(
                         key.latex.clone(),
-                        font_size,
+                        *expr_font_size,
                         text_color,
                         cx,
                     )),
@@ -236,7 +255,8 @@ impl MathState {
             }
         }
 
-        let new_key_set: std::collections::HashSet<_> = new_keys.iter().cloned().collect();
+        let new_key_set: std::collections::HashSet<_> =
+            new_keys.iter().map(|(k, _)| k.clone()).collect();
         self.cache.retain(|key, _| new_key_set.contains(key));
     }
 }
@@ -384,7 +404,8 @@ pub(crate) fn render_math_expression(
     math_state: &MathState,
     text_baseline: Option<f32>,
 ) -> AnyElement {
-    let key = MathCacheKey::new(parsed.latex.clone(), math_state.font_size);
+    let font_size = math_state.font_size * parsed.font_scale;
+    let key = MathCacheKey::new(parsed.latex.clone(), font_size);
     let render_result = math_state
         .cache
         .get(&key)
@@ -438,9 +459,16 @@ pub(crate) fn extract_math_expressions(
     events: &[(Range<usize>, MarkdownEvent)],
 ) -> BTreeMap<usize, ParsedMarkdownMathExpression> {
     let mut expressions = BTreeMap::default();
+    let mut current_heading_level: Option<pulldown_cmark::HeadingLevel> = None;
 
     for (source_range, event) in events {
         match event {
+            MarkdownEvent::Start(MarkdownTag::Heading { level, .. }) => {
+                current_heading_level = Some(*level);
+            }
+            MarkdownEvent::End(MarkdownTagEnd::Heading(_)) => {
+                current_heading_level = None;
+            }
             MarkdownEvent::InlineMath(latex) => {
                 expressions.insert(
                     source_range.start,
@@ -448,6 +476,7 @@ pub(crate) fn extract_math_expressions(
                         source_range: source_range.clone(),
                         latex: SharedString::from(latex.trim()),
                         is_display: false,
+                        font_scale: heading_level_font_scale(current_heading_level),
                     },
                 );
             }
@@ -458,6 +487,7 @@ pub(crate) fn extract_math_expressions(
                         source_range: source_range.clone(),
                         latex: SharedString::from(latex.trim()),
                         is_display: true,
+                        font_scale: heading_level_font_scale(current_heading_level),
                     },
                 );
             }
@@ -501,6 +531,21 @@ mod tests {
         let parsed = parse_markdown_with_options(input, false, false, false);
         let expressions = extract_math_expressions(&parsed.events);
         assert_eq!(expressions.len(), 3);
+    }
+
+    #[test]
+    fn test_math_in_heading_has_scaled_font_size() {
+        let input = "# Title with $E = mc^2$\n\n## Subtitle with $x^2$\n\nBody with $y$";
+        let parsed = parse_markdown_with_options(input, false, false, false);
+        let expressions = extract_math_expressions(&parsed.events);
+        assert_eq!(expressions.len(), 3);
+        let exprs: Vec<_> = expressions.values().collect();
+        assert_eq!(exprs[0].latex.as_ref(), "E = mc^2");
+        assert_eq!(exprs[0].font_scale, 1.875);
+        assert_eq!(exprs[1].latex.as_ref(), "x^2");
+        assert_eq!(exprs[1].font_scale, 1.5);
+        assert_eq!(exprs[2].latex.as_ref(), "y");
+        assert_eq!(exprs[2].font_scale, 1.0);
     }
 
     #[test]

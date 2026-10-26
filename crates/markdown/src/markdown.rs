@@ -1691,13 +1691,13 @@ impl MarkdownElement {
         };
 
         let mut heading_style = self.style.heading.clone();
-        let heading_text_style = heading_style.text_style().clone();
         heading.style().refine(&heading_style);
 
-        builder.push_text_style(TextStyleRefinement {
-            text_align: Some(align),
-            ..heading_text_style
-        });
+        let mut heading_text_style = heading.style().text.clone();
+        heading_text_style.refine(heading_style.text_style());
+        heading_text_style.text_align = Some(align);
+
+        builder.push_text_style(heading_text_style);
         builder.push_div(heading, range, markdown_end);
     }
 
