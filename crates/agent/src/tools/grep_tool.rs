@@ -355,7 +355,9 @@ impl AgentTool for GrepTool {
                             )),
                         ));
                         locations.push(
-                            acp::ToolCallLocation::new(abs_path.clone()).line(Some(range.start.row)),
+                            // ACP numbers lines from 1.
+                            acp::ToolCallLocation::new(abs_path.clone())
+                                .line(Some(range.start.row + 1)),
                         );
                     }
                     // Use a fence longer than any backtick run in the snippet so
@@ -677,14 +679,14 @@ mod tests {
         );
 
         // Each match also reports a location so the panel can reveal the file at
-        // the matched (0-based) row.
+        // the matched line, numbered from 1 as ACP numbers lines.
         let locations = update.locations.take().expect("expected locations");
         assert_eq!(locations.len(), 2);
         assert!(
             locations.iter().any(|location| {
                 location.path.0.to_string_lossy().replace('\\', "/")
                     == path!("/root/src/alpha.txt").replace('\\', "/")
-                    && location.line == Some(0)
+                    && location.line == Some(1)
             }),
             "missing location for alpha.txt, got: {locations:?}"
         );
@@ -692,7 +694,7 @@ mod tests {
             locations.iter().any(|location| {
                 location.path.0.to_string_lossy().replace('\\', "/")
                     == path!("/root/beta.txt").replace('\\', "/")
-                    && location.line == Some(0)
+                    && location.line == Some(1)
             }),
             "missing location for beta.txt, got: {locations:?}"
         );
