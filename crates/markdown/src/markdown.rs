@@ -1612,6 +1612,11 @@ impl MarkdownElement {
         text_align_override: Option<TextAlign>,
     ) {
         let align = text_align_override.unwrap_or(self.style.base_text_style.text_align);
+        let line_height_refinement = if !self.style.height_is_multiple_of_line_height {
+            Some(rems(1.3).into())
+        } else {
+            None
+        };
         let mut paragraph = div().when(!self.style.height_is_multiple_of_line_height, |el| {
             el.mb_2().line_height(rems(1.3))
         });
@@ -1624,6 +1629,7 @@ impl MarkdownElement {
 
         builder.push_text_style(TextStyleRefinement {
             text_align: Some(align),
+            line_height: line_height_refinement,
             ..Default::default()
         });
         builder.push_div(paragraph, range, markdown_end);
@@ -1840,6 +1846,11 @@ impl MarkdownElement {
         range: &Range<usize>,
         markdown_end: usize,
     ) {
+        let line_height_refinement = if !self.style.height_is_multiple_of_line_height {
+            Some(rems(1.3).into())
+        } else {
+            None
+        };
         builder.push_div(
             div()
                 .when(!self.style.height_is_multiple_of_line_height, |el| {
@@ -1851,12 +1862,17 @@ impl MarkdownElement {
             range,
             markdown_end,
         );
+        builder.push_text_style(TextStyleRefinement {
+            line_height: line_height_refinement,
+            ..Default::default()
+        });
         // Without `w_0`, text doesn't wrap to the width of the container.
         builder.push_div(div().flex_1().w_0(), range, markdown_end);
     }
 
     fn pop_markdown_list_item(&self, builder: &mut MarkdownElementBuilder) {
         builder.pop_div();
+        builder.pop_text_style();
         builder.pop_div();
     }
 
@@ -2943,20 +2959,24 @@ impl Element for MarkdownElement {
                     if render_math {
                         if let Some(expr) = parsed_markdown.math_expressions.get(&range.start) {
                             let text_style = builder.text_style();
-                            let text_font_size =
-                                text_style.font_size.to_pixels(window.rem_size()).as_f32();
-                            let text_line_height =
-                                text_style.line_height_in_pixels(window.rem_size()).as_f32();
+                            let text_font_size = text_style.font_size.to_pixels(window.rem_size());
+                            let line_height_length = if !self.style.height_is_multiple_of_line_height
+                                && text_style.line_height == self.style.base_text_style.line_height
+                            {
+                                rems(1.3).into()
+                            } else {
+                                text_style.line_height
+                            };
+                            let text_line_height = window.pixel_snap(
+                                line_height_length
+                                    .to_pixels(text_font_size.into(), window.rem_size()),
+                            );
                             let text_system = cx.text_system();
                             let font_id = text_system.resolve_font(&text_style.font());
-                            let text_ascent = text_system
-                                .ascent(font_id, Pixels::from(text_font_size))
-                                .as_f32();
-                            let text_descent = text_system
-                                .descent(font_id, Pixels::from(text_font_size))
-                                .as_f32();
+                            let text_ascent = text_system.ascent(font_id, text_font_size);
+                            let text_descent = text_system.descent(font_id, text_font_size);
                             let padding_top = (text_line_height - text_ascent - text_descent) / 2.0;
-                            let text_baseline = padding_top + text_ascent;
+                            let text_baseline = (padding_top + text_ascent).as_f32();
 
                             builder.push_inline_sourced_element(
                                 range.clone(),
