@@ -858,10 +858,9 @@ impl Render for CallSignatureTooltip {
                         .gap_1()
                         .flex_wrap()
                         .text_size(buffer_font_size)
-                        .child(signature)
-                        .children(detail_styled)
+                        .child(div().max_w(max_width).child(signature))
+                        .children(detail_styled.map(|detail| div().max_w(max_width).child(detail))),
                 )
-
                 .children(
                     path.map(|path| Label::new(path).size(LabelSize::Small).color(Color::Muted)),
                 )
@@ -988,10 +987,10 @@ async fn load_and_apply_calls(
                         Some(detail) if !label_carries_detail(call.label.as_deref()) => {
                             SharedString::from(format!("{label_text} {detail}"))
                         }
-                        _ => label_text.clone()
+                        _ => label_text.clone(),
                     }
                 } else {
-                   call.display.full_signature.clone()
+                    call.display.full_signature.clone()
                 };
                 let signature_width = shaped_width(
                     signature,
