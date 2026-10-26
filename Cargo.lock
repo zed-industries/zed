@@ -10802,7 +10802,6 @@ dependencies = [
  "ratex-font-loader",
  "ratex-layout",
  "ratex-parser",
- "ratex-render",
  "ratex-types",
  "settings",
  "smallvec",
@@ -15058,26 +15057,6 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "unicode-normalization",
-]
-
-[[package]]
-name = "ratex-render"
-version = "0.1.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b2d7bcecada23ba0d1f2d2a4c4cf39d451e8b90264f8e3929d566de38dedb56"
-dependencies = [
- "ab_glyph",
- "png 0.17.16",
- "ratex-font",
- "ratex-font-loader",
- "ratex-katex-fonts",
- "ratex-layout",
- "ratex-parser",
- "ratex-types",
- "ratex-unicode-font",
- "serde_json",
- "tiny-skia",
- "ttf-parser",
 ]
 
 [[package]]

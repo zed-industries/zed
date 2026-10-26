@@ -18,6 +18,7 @@ mod math_svg;
 #[derive(Clone, Debug)]
 pub(crate) struct ParsedMarkdownMathExpression {
     /// Byte range of the full math expression in the source (including delimiters).
+    #[allow(dead_code)]
     pub(crate) source_range: Range<usize>,
     /// The raw LaTeX content (without delimiters).
     pub(crate) latex: SharedString,
@@ -60,7 +61,8 @@ struct MathRenderResult {
 struct CachedMathExpression {
     display_tree: Arc<OnceLock<anyhow::Result<(DisplayList, f32)>>>,
     rendered: Arc<Mutex<Option<anyhow::Result<MathRenderResult>>>>,
-    _parse_task: Task<()>,
+    theme_color: Arc<Mutex<gpui::Hsla>>,
+    _task: Arc<Mutex<Option<Task<()>>>>,
 }
 
 /// Convert a GPUI Hsla color to a ratex Color (RGBA f32).
@@ -69,8 +71,13 @@ fn gpui_color_to_ratex(color: gpui::Hsla) -> ratex_types::color::Color {
     ratex_types::color::Color::new(rgba.r, rgba.g, rgba.b, rgba.a)
 }
 
-/// Replace every color in a DisplayList with the given color.
-/// This avoids re-parsing and re-laying-out LaTeX when only the theme color changes.
+/// Helper to identify unstyled default items in ratex layout (black or transparent).
+fn is_default_placeholder_color(c: &ratex_types::color::Color) -> bool {
+    c.r == 0.0 && c.g == 0.0 && c.b == 0.0
+}
+
+/// Replace default placeholder colors in a DisplayList with the given theme color,
+/// while preserving explicit custom colors (e.g. \textcolor{red}{x} or \colorbox).
 fn recolor_display_list(
     display_list: &DisplayList,
     color: &ratex_types::color::Color,
@@ -86,14 +93,18 @@ fn recolor_display_list(
                     scale,
                     font,
                     char_code,
-                    ..
+                    color: item_color,
                 } => DisplayItem::GlyphPath {
                     x: *x,
                     y: *y,
                     scale: *scale,
                     font: font.clone(),
                     char_code: *char_code,
-                    color: *color,
+                    color: if is_default_placeholder_color(item_color) {
+                        *color
+                    } else {
+                        *item_color
+                    },
                 },
                 DisplayItem::Line {
                     x,
@@ -101,40 +112,52 @@ fn recolor_display_list(
                     width,
                     thickness,
                     dashed,
-                    ..
+                    color: item_color,
                 } => DisplayItem::Line {
                     x: *x,
                     y: *y,
                     width: *width,
                     thickness: *thickness,
                     dashed: *dashed,
-                    color: *color,
+                    color: if is_default_placeholder_color(item_color) {
+                        *color
+                    } else {
+                        *item_color
+                    },
                 },
                 DisplayItem::Rect {
                     x,
                     y,
                     width,
                     height,
-                    ..
+                    color: item_color,
                 } => DisplayItem::Rect {
                     x: *x,
                     y: *y,
                     width: *width,
                     height: *height,
-                    color: *color,
+                    color: if is_default_placeholder_color(item_color) {
+                        *color
+                    } else {
+                        *item_color
+                    },
                 },
                 DisplayItem::Path {
                     x,
                     y,
                     commands,
                     fill,
-                    ..
+                    color: item_color,
                 } => DisplayItem::Path {
                     x: *x,
                     y: *y,
                     commands: commands.clone(),
                     fill: *fill,
-                    color: *color,
+                    color: if is_default_placeholder_color(item_color) {
+                        *color
+                    } else {
+                        *item_color
+                    },
                 },
             })
             .collect(),
@@ -150,19 +173,14 @@ impl MathState {
         self.order.clear();
     }
 
-    pub(crate) fn invalidate(&mut self) {
-        self.cache.clear();
-        self.order.clear();
-    }
-
-    /// Re-color every cached expression with the current theme color,
-    /// avoiding a full parse + layout cycle.
-    pub(crate) fn retheme(&mut self, cx: &Context<Markdown>) {
+    /// Re-color every cached expression with the current theme color asynchronously
+    /// in the background, avoiding UI thread blocking.
+    pub(crate) fn retheme(&mut self, cx: &mut Context<Markdown>) {
         let text_color = cx.theme().colors().text;
         let svg_renderer = cx.svg_renderer();
         let font_size = self.font_size;
         for cached in self.cache.values() {
-            cached.recolor_and_render(font_size, text_color, svg_renderer.clone());
+            cached.recolor_and_render(font_size, text_color, svg_renderer.clone(), cx);
         }
     }
 
@@ -214,12 +232,12 @@ impl CachedMathExpression {
     fn new(latex: SharedString, font_size: f32, cx: &mut Context<Markdown>) -> Self {
         let display_tree = Arc::new(OnceLock::new());
         let rendered = Arc::new(Mutex::new(None));
-
-        let text_color = cx.theme().colors().text;
+        let theme_color = Arc::new(Mutex::new(cx.theme().colors().text));
         let svg_renderer = cx.svg_renderer();
 
         let dt = display_tree.clone();
         let rd = rendered.clone();
+        let tc = theme_color.clone();
         let parse_task = cx.spawn(async move |this, cx| {
             // Phase 1 — parse + layout in background, store neutral display tree
             let parse_result = cx
@@ -237,18 +255,27 @@ impl CachedMathExpression {
                 .await;
             let _ = dt.set(parse_result);
 
-            // Phase 2 — recolor with current theme and render SVG
+            // Phase 2 — recolor with latest theme color in background and render SVG
             if let Some(Ok((dl, baseline_y))) = dt.get() {
-                let ratex_color = gpui_color_to_ratex(text_color);
-                let recolored = recolor_display_list(dl, &ratex_color);
-                let svg = math_svg::display_list_to_svg(&recolored, font_size);
-                let image = svg_renderer
-                    .render_single_frame(&svg.svg_bytes, 1.0)
-                    .map_err(|e| anyhow::anyhow!("SVG render error: {}", e));
-                let result = image.map(|img| MathRenderResult {
-                    image: img,
-                    baseline_y: *baseline_y,
-                });
+                let current_color = *tc.lock().unwrap();
+                let dl = dl.clone();
+                let baseline_y = *baseline_y;
+                let svg_renderer = svg_renderer.clone();
+
+                let result = cx
+                    .background_spawn(async move {
+                        let ratex_color = gpui_color_to_ratex(current_color);
+                        let recolored = recolor_display_list(&dl, &ratex_color);
+                        let svg = math_svg::display_list_to_svg(&recolored, font_size);
+                        let image = svg_renderer
+                            .render_single_frame(&svg.svg_bytes, 1.0)
+                            .map_err(|e| anyhow::anyhow!("SVG render error: {}", e));
+                        image.map(|img| MathRenderResult {
+                            image: img,
+                            baseline_y,
+                        })
+                    })
+                    .await;
                 *rd.lock().unwrap() = Some(result);
             }
 
@@ -258,30 +285,51 @@ impl CachedMathExpression {
         Self {
             display_tree,
             rendered,
-            _parse_task: parse_task,
+            theme_color,
+            _task: Arc::new(Mutex::new(Some(parse_task))),
         }
     }
 
     fn recolor_and_render(
         &self,
         font_size: f32,
-        text_color: gpui::Hsla,
+        new_color: gpui::Hsla,
         svg_renderer: gpui::SvgRenderer,
+        cx: &mut Context<Markdown>,
     ) {
-        let Some(Ok((display_list, baseline_y))) = self.display_tree.get() else {
-            return;
-        };
-        let ratex_color = gpui_color_to_ratex(text_color);
-        let recolored = recolor_display_list(display_list, &ratex_color);
-        let svg = math_svg::display_list_to_svg(&recolored, font_size);
-        let image = svg_renderer
-            .render_single_frame(&svg.svg_bytes, 1.0)
-            .map_err(|e| anyhow::anyhow!("SVG render error: {}", e));
-        let result = image.map(|img| MathRenderResult {
-            image: img,
-            baseline_y: *baseline_y,
+        *self.theme_color.lock().unwrap() = new_color;
+        let dt = self.display_tree.clone();
+        let rd = self.rendered.clone();
+        let tc = self.theme_color.clone();
+
+        let task = cx.spawn(async move |this, cx| {
+            let Some(Ok((display_list, baseline_y))) = dt.get() else {
+                return;
+            };
+            let current_color = *tc.lock().unwrap();
+            let dl = display_list.clone();
+            let baseline_y = *baseline_y;
+            let svg_renderer = svg_renderer.clone();
+
+            let result = cx
+                .background_spawn(async move {
+                    let ratex_color = gpui_color_to_ratex(current_color);
+                    let recolored = recolor_display_list(&dl, &ratex_color);
+                    let svg = math_svg::display_list_to_svg(&recolored, font_size);
+                    let image = svg_renderer
+                        .render_single_frame(&svg.svg_bytes, 1.0)
+                        .map_err(|e| anyhow::anyhow!("SVG render error: {}", e));
+                    image.map(|img| MathRenderResult {
+                        image: img,
+                        baseline_y,
+                    })
+                })
+                .await;
+            *rd.lock().unwrap() = Some(result);
+            this.update(cx, |_, cx| cx.notify()).ok();
         });
-        *self.rendered.lock().unwrap() = Some(result);
+
+        *self._task.lock().unwrap() = Some(task);
     }
 
     fn rendered_data(&self) -> Option<anyhow::Result<(Arc<RenderImage>, f32)>> {
@@ -309,7 +357,12 @@ pub(crate) fn render_math_expression(
     match render_result {
         Some(Ok((image, baseline_y))) => {
             if parsed.is_display {
-                div().child(gpui::img(image)).into_any_element()
+                div()
+                    .flex()
+                    .w_full()
+                    .justify_center()
+                    .child(gpui::img(image))
+                    .into_any_element()
             } else {
                 let shift = math_state.text_ascent - baseline_y;
                 div()

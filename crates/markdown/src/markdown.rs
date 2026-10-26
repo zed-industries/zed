@@ -420,7 +420,7 @@ pub struct Markdown {
     fallback_code_block_language: Option<LanguageName>,
     options: MarkdownOptions,
     mermaid_state: MermaidState,
-    _theme_subscription: Option<Subscription>,
+    _theme_subscriptions: Vec<Subscription>,
     mermaid_showing_code: HashSet<usize>,
     math_state: MathState,
     copied_code_blocks: HashSet<ElementId>,
@@ -590,20 +590,26 @@ impl Markdown {
     ) -> Self {
         let focus_handle = cx.focus_handle();
 
-        let theme_subscription = if options.render_mermaid_diagrams || options.render_math {
-            Some(
-                cx.observe_global::<theme::GlobalTheme>(|this: &mut Self, cx| {
+        let mut theme_subscriptions = Vec::new();
+        if options.render_mermaid_diagrams || options.render_math {
+            theme_subscriptions.push(cx.observe_global::<theme::GlobalTheme>(
+                |this: &mut Self, cx| {
                     if this.options.render_mermaid_diagrams {
                         this.invalidate_mermaid_cache(cx);
                     }
                     if this.options.render_math {
                         this.invalidate_math_cache(cx);
                     }
-                }),
-            )
-        } else {
-            None
-        };
+                },
+            ));
+        }
+        if options.render_math {
+            theme_subscriptions.push(cx.observe_global::<theme_settings::ThemeSettings>(
+                |this: &mut Self, cx| {
+                    this.invalidate_math_cache(cx);
+                },
+            ));
+        }
         let mut this = Self {
             source,
             selection: Selection::default(),
@@ -622,7 +628,7 @@ impl Markdown {
             fallback_code_block_language,
             options,
             mermaid_state: MermaidState::default(),
-            _theme_subscription: theme_subscription,
+            _theme_subscriptions: theme_subscriptions,
             mermaid_showing_code: HashSet::default(),
             math_state: MathState::default(),
             copied_code_blocks: HashSet::default(),

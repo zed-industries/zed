@@ -9,10 +9,13 @@ use std::collections::HashMap;
 pub struct MathSvgOutput {
     pub svg_bytes: Vec<u8>,
     /// Logical width in pixels.
+    #[allow(dead_code)]
     pub width: f32,
     /// Logical height in pixels.
+    #[allow(dead_code)]
     pub height: f32,
     /// Baseline Y position from the top of the image, in pixels.
+    #[allow(dead_code)]
     pub baseline_y: f32,
 }
 
@@ -200,33 +203,48 @@ fn resolve_glyph_path<'a>(
     let scale = 1000.0 / units_per_em;
 
     let mut d = String::with_capacity(256);
+    let mut last_point: Option<ab_glyph::Point> = None;
     for curve in outlines.iter() {
         use ab_glyph::OutlineCurve;
-        match curve {
-            OutlineCurve::Line(p0, p1) => {
-                if d.is_empty() {
-                    d.push_str(&format!("M{} {}", p0.x * scale, -p0.y * scale));
-                }
-                d.push_str(&format!(" L{} {}", p1.x * scale, -p1.y * scale));
+        let p0 = match curve {
+            OutlineCurve::Line(p0, _)
+            | OutlineCurve::Quad(p0, _, _)
+            | OutlineCurve::Cubic(p0, _, _, _) => *p0,
+        };
+        let p_end = match curve {
+            OutlineCurve::Line(_, p1) => *p1,
+            OutlineCurve::Quad(_, _, p2) => *p2,
+            OutlineCurve::Cubic(_, _, _, p3) => *p3,
+        };
+
+        let needs_move = match last_point {
+            None => true,
+            Some(last) => (last.x - p0.x).abs() > 0.001 || (last.y - p0.y).abs() > 0.001,
+        };
+
+        if needs_move {
+            if last_point.is_some() {
+                d.push_str(" Z ");
             }
-            OutlineCurve::Quad(p0, p1, p2) => {
-                if d.is_empty() {
-                    d.push_str(&format!("M{} {}", p0.x * scale, -p0.y * scale));
-                }
+            d.push_str(&format!("M{:.2} {:.2}", p0.x * scale, -p0.y * scale));
+        }
+
+        match curve {
+            OutlineCurve::Line(_, p1) => {
+                d.push_str(&format!(" L{:.2} {:.2}", p1.x * scale, -p1.y * scale));
+            }
+            OutlineCurve::Quad(_, p1, p2) => {
                 d.push_str(&format!(
-                    " Q{} {} {} {}",
+                    " Q{:.2} {:.2} {:.2} {:.2}",
                     p1.x * scale,
                     -p1.y * scale,
                     p2.x * scale,
                     -p2.y * scale
                 ));
             }
-            OutlineCurve::Cubic(p0, p1, p2, p3) => {
-                if d.is_empty() {
-                    d.push_str(&format!("M{} {}", p0.x * scale, -p0.y * scale));
-                }
+            OutlineCurve::Cubic(_, p1, p2, p3) => {
                 d.push_str(&format!(
-                    " C{} {} {} {} {} {}",
+                    " C{:.2} {:.2} {:.2} {:.2} {:.2} {:.2}",
                     p1.x * scale,
                     -p1.y * scale,
                     p2.x * scale,
@@ -236,8 +254,9 @@ fn resolve_glyph_path<'a>(
                 ));
             }
         }
+        last_point = Some(p_end);
     }
-    if !d.is_empty() {
+    if last_point.is_some() {
         d.push('Z');
     }
 

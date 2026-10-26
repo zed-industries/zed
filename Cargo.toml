@@ -760,7 +760,7 @@ ratex-render = { version = "0.1.13", features = ["embed-fonts"] }
 ratex-layout = "0.1.13"
 ratex-parser = "0.1.13"
 ratex-font = "0.1.13"
-ratex-font-loader = "0.1.13"
+ratex-font-loader = { version = "0.1.13", features = ["embed-fonts"] }
 ratex-types = "0.1.13"
 ab_glyph = "0.2"
 rayon = "1.8"
