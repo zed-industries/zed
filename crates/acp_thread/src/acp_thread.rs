@@ -1129,7 +1129,6 @@ impl AgentThreadEntry {
 #[derive(Clone, Debug, Eq)]
 pub struct ToolCallLocation {
     pub path: PathBuf,
-    /// The 1-based line, as ACP numbers lines.
     pub line: Option<u32>,
     pub meta: Option<acp_v2::Meta>,
 }
