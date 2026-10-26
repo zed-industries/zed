@@ -6350,17 +6350,53 @@ async fn test_newline_with_mixed_indentation(cx: &mut TestAppContext) {
             editor_cx.set_state(&format!("{indent}{{ˇ}}"));
             editor_cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
             editor_cx.wait_for_autoindent_applied().await;
-            let extra_indent = if auto_indent == settings::AutoIndentMode::SyntaxAware
+            let new_indent = if auto_indent == settings::AutoIndentMode::SyntaxAware
                 && indent.starts_with(' ')
             {
-                "    "
+                " ".repeat(indent.len() + 4)
             } else {
-                ""
+                indent.to_owned()
             };
-            editor_cx
-                .assert_editor_state(&format!("{indent}{{\n{extra_indent}{indent}ˇ\n{indent}}}"));
+            editor_cx.assert_editor_state(&format!("{indent}{{\n{new_indent}ˇ\n{indent}}}"));
         }
     }
+}
+
+#[gpui::test]
+async fn test_newline_outdents_mixed_indentation(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut editor_cx = EditorTestContext::new(cx).await;
+    let language = languages::language(
+        "typescript",
+        tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+    );
+    editor_cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    editor_cx.set_state("\t\tfoo(a,\n\t\t    b);ˇ");
+    editor_cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+    editor_cx.wait_for_autoindent_applied().await;
+    editor_cx.assert_editor_state("\t\tfoo(a,\n\t\t    b);\n\t\tˇ");
+}
+
+#[gpui::test]
+async fn test_newline_after_paste_outdents_mixed_indentation(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut editor_cx = EditorTestContext::new(cx).await;
+    let language = languages::language(
+        "typescript",
+        tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+    );
+    editor_cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+    editor_cx.set_state("\t\tfoo(a,\n\t\tˇ");
+    editor_cx.write_to_clipboard(ClipboardItem::new_string("    b);".into()));
+    editor_cx.update_editor(|editor, window, cx| {
+        editor.transact(window, cx, |editor, window, cx| {
+            editor.paste(&Paste, window, cx);
+            editor.newline(&Newline, window, cx);
+        });
+    });
+    editor_cx.wait_for_autoindent_applied().await;
+    editor_cx.assert_editor_state("\t\tfoo(a,\n\t\t    b);\n\t\tˇ");
 }
 
 #[gpui::test]
