@@ -1182,6 +1182,10 @@ fn shaped_width(
         .width
 }
 
+fn label_carries_detail(label: Option<&CodeLabel>) -> bool {
+    label.is_some_and(|label| detail_from_label_suffix(label).is_some())
+}
+
 fn render_item(
     call_item: &Call,
     match_ranges: impl IntoIterator<Item = Range<usize>>,
@@ -1195,11 +1199,7 @@ fn render_item(
         ..HighlightStyle::default()
     };
 
-    let label_carries_detail = call_item
-        .label
-        .as_ref()
-        .is_some_and(|label| detail_from_label_suffix(label).is_some());
-    let detail_styled = if label_carries_detail {
+    let detail_styled = if label_carries_detail(call_item.label.as_deref()) {
         None
     } else {
         call_item.display.detail.clone().map(|detail| {
