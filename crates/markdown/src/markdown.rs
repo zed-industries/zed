@@ -693,6 +693,30 @@ impl Markdown {
         cx.notify();
     }
 
+    fn current_text_color(&self, cx: &gpui::App) -> gpui::Hsla {
+        if self.options.font == Some(MarkdownFont::Preview)
+            && cx.has_global::<settings::SettingsStore>()
+        {
+            let theme_settings = ThemeSettings::get_global(cx);
+            if let Some(theme_selection) = theme_settings.markdown_preview_theme.as_ref() {
+                let appearance = if cx.has_global::<theme::GlobalTheme>() {
+                    theme::SystemAppearance::global(cx).0
+                } else {
+                    theme::Appearance::Dark
+                };
+                let theme_name = theme_selection.name(appearance);
+                if let Ok(theme) = theme::ThemeRegistry::global(cx).get(&theme_name.0) {
+                    return theme.colors().text;
+                }
+            }
+        }
+        if cx.has_global::<theme::GlobalTheme>() {
+            cx.theme().colors().text
+        } else {
+            gpui::black()
+        }
+    }
+
     pub fn invalidate_math_cache(&mut self, cx: &mut Context<Self>) {
         if !self.options.render_math || self.parsed_markdown.math_expressions.is_empty() {
             return;
@@ -704,12 +728,13 @@ impl Markdown {
             Some(MarkdownFont::Preview) => theme_settings.markdown_preview_font_size(cx).as_f32(),
             _ => theme_settings.ui_font_size(cx).as_f32(),
         };
+        let text_color = self.current_text_color(cx);
         let font_size = base_font_size * crate::math::MATH_FONT_SCALE_FACTOR;
         if (self.math_state.font_size() - font_size).abs() > 0.01 {
             let parsed = self.parsed_markdown.clone();
-            self.math_state.update(&parsed, font_size, cx);
+            self.math_state.update(&parsed, font_size, text_color, cx);
         } else {
-            self.math_state.retheme(cx);
+            self.math_state.retheme(text_color, cx);
         }
         cx.notify();
     }
@@ -1195,8 +1220,10 @@ impl Markdown {
                         }
                         _ => theme_settings.ui_font_size(cx).as_f32(),
                     };
+                    let text_color = this.current_text_color(cx);
                     let font_size = base_font_size * crate::math::MATH_FONT_SCALE_FACTOR;
-                    this.math_state.update(&parsed_markdown, font_size, cx);
+                    this.math_state
+                        .update(&parsed_markdown, font_size, text_color, cx);
                 } else {
                     this.math_state.clear();
                 }

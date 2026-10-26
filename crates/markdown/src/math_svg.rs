@@ -43,6 +43,7 @@ pub fn display_list_to_svg(display_list: &DisplayList, font_size: f32) -> MathSv
         Ok(f) => f,
         Err(e) => {
             log::error!("Failed to load math fonts: {}", e);
+            svg.push_str("</svg>");
             return MathSvgOutput {
                 svg_bytes: svg.into_bytes(),
                 width: svg_w,
@@ -359,6 +360,18 @@ mod tests {
         };
         let output = display_list_to_svg(&list, 12.0);
         assert!(output.svg_bytes.len() > 0);
+    }
+
+    #[test]
+    fn test_display_list_to_svg_glyphs() {
+        let nodes = ratex_parser::parse("x^2 + y = 0").unwrap();
+        let layout = ratex_layout::layout(&nodes, &Default::default());
+        let list = ratex_layout::to_display_list(&layout);
+        let output = display_list_to_svg(&list, 16.0);
+        let svg_str = String::from_utf8_lossy(&output.svg_bytes);
+        assert!(svg_str.starts_with("<svg"), "must start with svg tag");
+        assert!(svg_str.ends_with("</svg>"), "must end with svg closing tag");
+        assert!(svg_str.contains("<path"), "must contain glyph paths");
     }
 }
 

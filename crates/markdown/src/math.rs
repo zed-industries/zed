@@ -46,7 +46,6 @@ type MathExpressionCache = HashMap<MathCacheKey, Arc<CachedMathExpression>>;
 #[derive(Default, Clone)]
 pub(crate) struct MathState {
     cache: MathExpressionCache,
-    order: Vec<MathCacheKey>,
     font_size: f32,
     /// Ascent of the buffer font at `font_size`, in pixels.
     /// Used to align inline math baselines with surrounding text.
@@ -170,7 +169,6 @@ fn recolor_display_list(
 impl MathState {
     pub(crate) fn clear(&mut self) {
         self.cache.clear();
-        self.order.clear();
     }
 
     pub(crate) fn font_size(&self) -> f32 {
@@ -179,8 +177,7 @@ impl MathState {
 
     /// Re-color every cached expression with the current theme color asynchronously
     /// in the background, avoiding UI thread blocking.
-    pub(crate) fn retheme(&mut self, cx: &mut Context<Markdown>) {
-        let text_color = cx.theme().colors().text;
+    pub(crate) fn retheme(&mut self, text_color: gpui::Hsla, cx: &mut Context<Markdown>) {
         let svg_renderer = cx.svg_renderer();
         let font_size = self.font_size;
         for cached in self.cache.values() {
@@ -192,6 +189,7 @@ impl MathState {
         &mut self,
         parsed: &ParsedMarkdown,
         font_size: f32,
+        text_color: gpui::Hsla,
         cx: &mut Context<Markdown>,
     ) {
         self.font_size = font_size;
@@ -219,31 +217,40 @@ impl MathState {
         let padding_top = (line_height - ascent - descent.abs()) / 2.0;
         self.text_ascent = padding_top + ascent;
 
-        let mut new_order = Vec::new();
+        let mut new_keys = Vec::new();
         for expr in parsed.math_expressions.values() {
-            new_order.push(MathCacheKey::new(expr.latex.clone(), font_size));
+            new_keys.push(MathCacheKey::new(expr.latex.clone(), font_size));
         }
 
-        for key in &new_order {
+        for key in &new_keys {
             if !self.cache.contains_key(key) {
                 self.cache.insert(
                     key.clone(),
-                    Arc::new(CachedMathExpression::new(key.latex.clone(), font_size, cx)),
+                    Arc::new(CachedMathExpression::new(
+                        key.latex.clone(),
+                        font_size,
+                        text_color,
+                        cx,
+                    )),
                 );
             }
         }
 
-        let new_order_set: std::collections::HashSet<_> = new_order.iter().cloned().collect();
-        self.cache.retain(|key, _| new_order_set.contains(key));
-        self.order = new_order;
+        let new_key_set: std::collections::HashSet<_> = new_keys.iter().cloned().collect();
+        self.cache.retain(|key, _| new_key_set.contains(key));
     }
 }
 
 impl CachedMathExpression {
-    fn new(latex: SharedString, font_size: f32, cx: &mut Context<Markdown>) -> Self {
+    fn new(
+        latex: SharedString,
+        font_size: f32,
+        theme_color: gpui::Hsla,
+        cx: &mut Context<Markdown>,
+    ) -> Self {
         let display_tree = Arc::new(OnceLock::new());
         let rendered = Arc::new(Mutex::new(None));
-        let theme_color = Arc::new(Mutex::new(cx.theme().colors().text));
+        let theme_color = Arc::new(Mutex::new(theme_color));
         let svg_renderer = cx.svg_renderer();
 
         let dt = display_tree.clone();
@@ -308,6 +315,14 @@ impl CachedMathExpression {
         cx: &mut Context<Markdown>,
     ) {
         *self.theme_color.lock().unwrap() = new_color;
+
+        // If Phase 1 (parsing/layout) is still running, self.display_tree has not been populated yet.
+        // The in-flight parse_task dynamically reads self.theme_color when transitioning to Phase 2,
+        // so we must not cancel it by overwriting self._task.
+        if self.display_tree.get().is_none() {
+            return;
+        }
+
         let dt = self.display_tree.clone();
         let rd = self.rendered.clone();
         let tc = self.theme_color.clone();
@@ -399,7 +414,17 @@ pub(crate) fn render_math_expression(
             } else {
                 format!("${}$", parsed.latex)
             };
-            div().child(StyledText::new(label)).into_any_element()
+            if parsed.is_display {
+                div()
+                    .flex()
+                    .w_full()
+                    .justify_center()
+                    .my_2()
+                    .child(StyledText::new(label))
+                    .into_any_element()
+            } else {
+                div().child(StyledText::new(label)).into_any_element()
+            }
         }
     }
 }
@@ -571,5 +596,88 @@ mod tests {
 
         let c = MathCacheKey::new("x^2".into(), 14.0);
         assert_eq!(a, c);
+    }
+
+    #[test]
+    fn test_recolor_display_list_replaces_default_colors() {
+        use ratex_types::color::Color;
+        use ratex_types::display_item::DisplayItem;
+
+        let original = DisplayList {
+            items: vec![
+                DisplayItem::Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 10.0,
+                    height: 10.0,
+                    color: Color::new(0.0, 0.0, 0.0, 1.0),
+                },
+                DisplayItem::Line {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 5.0,
+                    thickness: 1.0,
+                    dashed: false,
+                    color: Color::new(0.0, 0.0, 0.0, 1.0),
+                },
+            ],
+            width: 10.0,
+            height: 10.0,
+            depth: 0.0,
+        };
+
+        let theme_color = Color::new(0.8, 0.2, 0.5, 1.0);
+        let recolored = recolor_display_list(&original, &theme_color);
+
+        for item in &recolored.items {
+            match item {
+                DisplayItem::Rect { color, .. } => assert_eq!(*color, theme_color),
+                DisplayItem::Line { color, .. } => assert_eq!(*color, theme_color),
+                _ => panic!("unexpected item"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_recolor_display_list_preserves_custom_colors() {
+        use ratex_types::color::Color;
+        use ratex_types::display_item::DisplayItem;
+
+        let custom_color = Color::new(1.0, 0.0, 0.0, 1.0);
+        let default_color = Color::new(0.0, 0.0, 0.0, 1.0);
+
+        let original = DisplayList {
+            items: vec![
+                DisplayItem::Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 10.0,
+                    height: 10.0,
+                    color: custom_color,
+                },
+                DisplayItem::Rect {
+                    x: 10.0,
+                    y: 0.0,
+                    width: 10.0,
+                    height: 10.0,
+                    color: default_color,
+                },
+            ],
+            width: 20.0,
+            height: 10.0,
+            depth: 0.0,
+        };
+
+        let theme_color = Color::new(0.2, 0.8, 0.2, 1.0);
+        let recolored = recolor_display_list(&original, &theme_color);
+
+        match &recolored.items[0] {
+            DisplayItem::Rect { color, .. } => assert_eq!(*color, custom_color),
+            _ => panic!("unexpected item"),
+        }
+        match &recolored.items[1] {
+            DisplayItem::Rect { color, .. } => assert_eq!(*color, theme_color),
+            _ => panic!("unexpected item"),
+        }
     }
 }
