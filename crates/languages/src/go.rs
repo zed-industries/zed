@@ -2105,10 +2105,8 @@ mod tests {
     async fn test_go_method_type_parameters_highlighted_as_type() {
         let language = go_language();
 
-        let theme = SyntaxTheme::new_test([
-            ("type", Hsla::default()),
-            ("variable", Hsla::default()),
-        ]);
+        let theme =
+            SyntaxTheme::new_test([("type", Hsla::default()), ("variable", Hsla::default())]);
         language.set_theme(&theme);
 
         let grammar = language.grammar().unwrap();
