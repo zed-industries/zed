@@ -14,6 +14,7 @@ test-support = ["dep:log"]
 
 [lib]
 path = "src/http_client.rs"
+test = false
 doctest = false
 
 [dependencies]

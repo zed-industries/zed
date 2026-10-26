@@ -348,6 +348,7 @@ mod tests {
     use http_client::{AsyncBody, Response, Url, http::HeaderValue};
 
     struct StaticResponseClient {
+        status: u16,
         body: Vec<u8>,
     }
 
@@ -356,10 +357,11 @@ mod tests {
             &self,
             _req: http_client::Request<AsyncBody>,
         ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
+            let status = self.status;
             let body = self.body.clone();
             Box::pin(async move {
                 Ok(Response::builder()
-                    .status(200)
+                    .status(status)
                     .body(AsyncBody::from(body))
                     .unwrap())
             })
@@ -383,7 +385,10 @@ mod tests {
         let destination_path = temp_dir.path().join("v_1");
         let contents = b"#!/bin/sh\necho hello\n".to_vec();
         let expected_sha_256 = format!("{:X}", Sha256::digest(&contents));
-        let client = StaticResponseClient { body: contents };
+        let client = StaticResponseClient {
+            status: 200,
+            body: contents,
+        };
 
         download_server_raw_binary(
             &executor,
@@ -413,11 +418,42 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn raw_binary_without_digest_rejects_failed_response(executor: BackgroundExecutor) {
+        executor.allow_parking();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let destination_path = temp_dir.path().join("v_1");
+        let client = StaticResponseClient {
+            status: 403,
+            body: b"rate limit exceeded".to_vec(),
+        };
+
+        let error = download_server_raw_binary(
+            &executor,
+            Arc::new(client),
+            "https://example.com/agent-binary",
+            None,
+            &destination_path,
+            "agent-binary",
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("403"));
+        assert!(!destination_path.exists());
+        let leftover_entries = std::fs::read_dir(temp_dir.path()).unwrap().count();
+        assert_eq!(
+            leftover_entries, 0,
+            "no staging directory should be created"
+        );
+    }
+
+    #[gpui::test]
     async fn raw_binary_digest_mismatch_cleans_up_staging(executor: BackgroundExecutor) {
         executor.allow_parking();
         let temp_dir = tempfile::tempdir().unwrap();
         let destination_path = temp_dir.path().join("v_1");
         let client = StaticResponseClient {
+            status: 200,
             body: b"some binary".to_vec(),
         };
 
@@ -455,7 +491,10 @@ mod tests {
             0x00,
         ];
         let expected_sha_256 = format!("{:X}", Sha256::digest(&archive));
-        let client = StaticResponseClient { body: archive };
+        let client = StaticResponseClient {
+            status: 200,
+            body: archive,
+        };
         let temp_dir = tempfile::tempdir().unwrap();
         let destination_path = temp_dir.path().join("v_1");
 
@@ -489,6 +528,7 @@ mod tests {
         let destination_path = temp_dir.path().join("v_1");
         std::os::unix::fs::symlink(&symlink_target, &destination_path).unwrap();
         let client = StaticResponseClient {
+            status: 200,
             body: b"binary".to_vec(),
         };
 
@@ -526,6 +566,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let destination_path = temp_dir.path().join("v_1");
         let client = StaticResponseClient {
+            status: 200,
             body: b"not an archive".to_vec(),
         };
 
