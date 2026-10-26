@@ -3007,8 +3007,10 @@ impl Element for MarkdownElement {
                             let padding_top = (text_line_height - text_ascent - text_descent) / 2.0;
                             let text_baseline = (padding_top + text_ascent).as_f32();
 
+                            let raw_source = &parsed_markdown.source[range.clone()];
                             builder.push_inline_sourced_element(
                                 range.clone(),
+                                raw_source,
                                 render_math_expression(expr, &math_state, Some(text_baseline)),
                             );
                         }
@@ -3026,9 +3028,18 @@ impl Element for MarkdownElement {
                 MarkdownEvent::DisplayMath(_) => {
                     if render_math {
                         if let Some(expr) = parsed_markdown.math_expressions.get(&range.start) {
+                            let raw_source = &parsed_markdown.source[range.clone()];
+                            let copy_button = render_copy_code_block_button(
+                                range.start,
+                                expr.latex.to_string(),
+                                self.markdown.clone(),
+                            )
+                            .into_any_element();
                             builder.push_display_sourced_element(
                                 range.clone(),
+                                raw_source,
                                 render_math_expression(expr, &math_state, None),
+                                Some(copy_button),
                             );
                         }
                     } else {
@@ -3612,7 +3623,7 @@ impl MarkdownElementBuilder {
 
     fn push_sourced_element(&mut self, source_range: Range<usize>, element: impl Into<AnyElement>) {
         self.flush_text();
-        let anchor = self.render_source_anchor(source_range);
+        let anchor = self.render_source_anchor(source_range, None, true);
         self.append_child(
             div()
                 .relative()
@@ -3630,10 +3641,11 @@ impl MarkdownElementBuilder {
     fn push_inline_sourced_element(
         &mut self,
         source_range: Range<usize>,
+        source_text: &str,
         element: impl Into<AnyElement>,
     ) {
-        self.flush_text();
-        let anchor = self.render_source_anchor(source_range);
+        self.flush_text_inline();
+        let anchor = self.render_source_anchor(source_range, Some(source_text), false);
         self.modify_current_div(|el| el.flex().flex_row().flex_wrap().items_start());
         self.div_stack.last_mut().unwrap().line_break_mode = LineBreakMode::FlexWrap;
         self.append_child(
@@ -3653,14 +3665,28 @@ impl MarkdownElementBuilder {
     fn push_display_sourced_element(
         &mut self,
         source_range: Range<usize>,
+        source_text: &str,
         element: impl Into<AnyElement>,
+        copy_button: Option<AnyElement>,
     ) {
         self.flush_text();
-        let anchor = self.render_source_anchor(source_range);
+        let anchor = self.render_source_anchor(source_range, Some(source_text), true);
         self.append_child(
             div()
                 .relative()
+                .group("display-math")
                 .child(anchor)
+                .when_some(copy_button, |this, btn| {
+                    this.child(
+                        div()
+                            .absolute()
+                            .top_1()
+                            .right_1()
+                            .invisible()
+                            .group_hover("display-math", |this| this.visible())
+                            .child(btn),
+                    )
+                })
                 .child(
                     div()
                         .flex()
@@ -3830,10 +3856,15 @@ impl MarkdownElementBuilder {
         source_range_for_rendered(&self.pending_line.source_mappings, rendered)
     }
 
-    fn render_source_anchor(&mut self, source_range: Range<usize>) -> AnyElement {
+    fn render_source_anchor(
+        &mut self,
+        source_range: Range<usize>,
+        anchor_text: Option<&str>,
+        ends_with_newline: bool,
+    ) -> AnyElement {
         let mut text_style = self.base_text_style.clone();
         text_style.color = Hsla::transparent_black();
-        let text = "\u{200B}";
+        let text = anchor_text.unwrap_or("\u{200B}");
         let styled_text = StyledText::new(text).with_runs(vec![text_style.to_run(text.len())]);
         self.rendered_lines.push(RenderedLine {
             layout: styled_text.layout().clone(),
@@ -3844,6 +3875,7 @@ impl MarkdownElementBuilder {
             source_end: source_range.end,
             language: None,
             text_align: TextAlign::Left,
+            ends_with_newline,
         });
         div()
             .absolute()
@@ -3855,6 +3887,14 @@ impl MarkdownElementBuilder {
     }
 
     fn flush_text(&mut self) {
+        self.flush_text_with_newline(true);
+    }
+
+    fn flush_text_inline(&mut self) {
+        self.flush_text_with_newline(false);
+    }
+
+    fn flush_text_with_newline(&mut self, ends_with_newline: bool) {
         let text_align = self.text_style().text_align;
         let line = mem::take(&mut self.pending_line);
         if line.text.is_empty() {
@@ -3868,6 +3908,7 @@ impl MarkdownElementBuilder {
             source_end: self.current_source_index,
             language: self.code_block_stack.last().cloned().flatten(),
             text_align,
+            ends_with_newline,
         });
         self.append_child(text.into_any());
     }
@@ -3893,6 +3934,7 @@ struct RenderedLine {
     source_end: usize,
     language: Option<Arc<Language>>,
     text_align: TextAlign,
+    ends_with_newline: bool,
 }
 
 impl RenderedLine {
@@ -4403,10 +4445,14 @@ impl RenderedText {
             .min(text.len());
 
             accumulator.push_str(&text[start..end]);
-            accumulator.push('\n');
+            if line.ends_with_newline {
+                accumulator.push('\n');
+            }
         }
         // Remove trailing newline
-        accumulator.pop();
+        if accumulator.ends_with('\n') {
+            accumulator.pop();
+        }
         accumulator
     }
 
@@ -4749,6 +4795,41 @@ mod tests {
             cx,
         );
         assert_eq!(rendered.text_for_range(0..26), "tags:\n  - zed\nBody");
+    }
+
+    #[gpui::test]
+    fn test_copy_inline_math_copies_latex(cx: &mut TestAppContext) {
+        let input = "The formula $E = mc^2$ is true.";
+        let rendered = render_markdown_with_options(
+            input,
+            None,
+            MarkdownOptions {
+                render_math: true,
+                ..Default::default()
+            },
+            cx,
+        );
+        assert_eq!(rendered.text_for_range(0..input.len()), input);
+
+        // Selecting just the formula itself copies the formula with delimiters:
+        let math_start = input.find('$').unwrap();
+        let math_end = input.rfind('$').unwrap() + 1;
+        assert_eq!(rendered.text_for_range(math_start..math_end), "$E = mc^2$");
+    }
+
+    #[gpui::test]
+    fn test_copy_display_math_copies_latex(cx: &mut TestAppContext) {
+        let input = "$$\n\\sum_{i=1}^n i = \\frac{n(n+1)}{2}\n$$";
+        let rendered = render_markdown_with_options(
+            input,
+            None,
+            MarkdownOptions {
+                render_math: true,
+                ..Default::default()
+            },
+            cx,
+        );
+        assert_eq!(rendered.text_for_range(0..input.len()), input);
     }
 
     fn render_markdown_with_code_span_link(
