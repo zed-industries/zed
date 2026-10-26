@@ -2793,7 +2793,7 @@ impl Thread {
 
     pub(crate) fn prepare_local_turn(&mut self, cx: &mut Context<Self>) {
         // Freeze the old partial before inserting a successor's user message,
-        // and fence detached cleanup while its checkpoint or command is prepared.
+        // and fence detached cleanup while its command is prepared.
         self.flush_pending_message(cx);
         self.advance_prompt_id();
     }

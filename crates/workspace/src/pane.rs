@@ -2610,6 +2610,30 @@ impl Pane {
         &self.toolbar
     }
 
+    pub fn remove_navigation_history_paths(
+        &mut self,
+        project_paths: &HashSet<ProjectPath>,
+        cx: &mut Context<Self>,
+    ) {
+        let open_item_ids = self
+            .items
+            .iter()
+            .map(|item| item.item_id())
+            .collect::<HashSet<_>>();
+        let mut item_ids = HashSet::default();
+        self.nav_history
+            .for_each_entry(cx, &mut |entry, (path, _)| {
+                if project_paths.contains(&path) && !open_item_ids.contains(&entry.item.id()) {
+                    item_ids.insert(entry.item.id());
+                }
+            });
+        if item_ids.is_empty() {
+            return;
+        }
+        self.nav_history.remove_items(&item_ids);
+        self.history_updated(cx);
+    }
+
     pub fn handle_deleted_project_item(
         &mut self,
         entry_id: ProjectEntryId,
@@ -4949,18 +4973,15 @@ impl NavHistory {
     pub fn remove_item(&mut self, item_id: EntityId) {
         let mut state = self.0.lock();
         state.paths_by_item.remove(&item_id);
-        state
-            .backward_stack
-            .retain(|entry| entry.item.id() != item_id);
-        state
-            .forward_stack
-            .retain(|entry| entry.item.id() != item_id);
-        state
-            .closed_stack
-            .retain(|entry| entry.item.id() != item_id);
-        state
-            .tag_stack
-            .retain(|entry| entry.origin.item.id() != item_id && entry.target.item.id() != item_id);
+        state.retain_entries(|id| id != item_id);
+    }
+
+    pub fn remove_items(&mut self, item_ids: &HashSet<EntityId>) {
+        let mut state = self.0.lock();
+        for item_id in item_ids {
+            state.paths_by_item.remove(item_id);
+        }
+        state.retain_entries(|id| !item_ids.contains(&id));
     }
 
     pub fn rename_item(
@@ -5024,6 +5045,22 @@ impl NavHistoryState {
                 pane.update(cx, |pane, cx| pane.history_updated(cx));
             });
         }
+    }
+
+    fn retain_entries(&mut self, retain: impl Fn(EntityId) -> bool) {
+        self.backward_stack.retain(|entry| retain(entry.item.id()));
+        self.forward_stack.retain(|entry| retain(entry.item.id()));
+        self.closed_stack.retain(|entry| retain(entry.item.id()));
+        let old_position = self.tag_stack_pos;
+        let mut index = 0;
+        self.tag_stack.retain(|entry| {
+            let keep = retain(entry.origin.item.id()) && retain(entry.target.item.id());
+            if index < old_position && !keep {
+                self.tag_stack_pos -= 1;
+            }
+            index += 1;
+            keep
+        });
     }
 }
 
@@ -5165,6 +5202,86 @@ mod tests {
             }
             is_dragged_tab
         }
+    }
+
+    #[gpui::test]
+    async fn test_remove_navigation_history_paths(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let [live, first_removed, second_removed, retained] = std::array::from_fn(|index| {
+            cx.new(|cx| {
+                TestItem::new(cx).with_project_items(&[TestProjectItem::new(
+                    index as u64,
+                    &format!("{index}.rs"),
+                    cx,
+                )])
+            })
+        });
+        pane.update_in(cx, |pane, window, cx| {
+            pane.add_item(Box::new(live.clone()), false, false, None, window, cx);
+        });
+        let entry = |item: &Entity<TestItem>| NavigationEntry {
+            item: Arc::new(item.downgrade()),
+            data: None,
+            timestamp: 0,
+            is_preview: false,
+            row: None,
+        };
+        pane.update(cx, |pane, cx| {
+            {
+                let mut state = pane.nav_history.0.lock();
+                let items = [&live, &first_removed, &second_removed, &retained];
+                state.backward_stack = items.map(entry).into();
+                state.forward_stack = state.backward_stack.clone();
+                state.closed_stack = state.backward_stack.clone();
+                for item in items {
+                    state
+                        .paths_by_item
+                        .insert(item.entity_id(), (item.project_path(cx).unwrap(), None));
+                }
+            }
+            let history = pane.nav_history_mut();
+            history.push_tag(entry(&first_removed), entry(&second_removed));
+            history.push_tag(entry(&live), entry(&retained));
+            assert_eq!(
+                history.pop_tag(TagNavigationMode::Older).unwrap().item.id(),
+                live.entity_id()
+            );
+            let paths = [&live, &first_removed, &second_removed]
+                .map(|item| item.project_path(cx).unwrap())
+                .into_iter()
+                .collect::<HashSet<_>>();
+            pane.remove_navigation_history_paths(&paths, cx);
+            {
+                let state = pane.nav_history.0.lock();
+                for stack in [
+                    &state.backward_stack,
+                    &state.forward_stack,
+                    &state.closed_stack,
+                ] {
+                    assert_eq!(
+                        stack
+                            .iter()
+                            .map(|entry| entry.item.id())
+                            .collect::<Vec<_>>(),
+                        vec![live.entity_id(), retained.entity_id()]
+                    );
+                }
+                assert_eq!(state.paths_by_item.len(), 2);
+            }
+            assert_eq!(
+                pane.nav_history_mut()
+                    .pop_tag(TagNavigationMode::Newer)
+                    .unwrap()
+                    .item
+                    .id(),
+                retained.entity_id()
+            );
+        });
     }
 
     #[gpui::test]

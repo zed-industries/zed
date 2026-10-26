@@ -10,6 +10,7 @@ use crate::plan_chip::PlanChip;
 use agent_settings::{AgentSettings, WindowLayout};
 use arrayvec::ArrayVec;
 use git_ui_core::worktree_picker::WorktreePicker;
+use path::PathStyle;
 pub use platform_title_bar::{
     self, DraggedWindowTab, MergeAllWindows, MoveTabToNewWindow, PlatformTitleBar,
     ShowNextWindowTab, ShowPreviousWindowTab,
@@ -249,7 +250,8 @@ impl Render for TitleBar {
         let mut repository = None;
         let mut linked_worktree_name = None;
         if let Some(worktree) = self.effective_active_worktree(cx) {
-            repository = self.get_repository_for_worktree(&worktree, cx);
+            let path_style = worktree.read(cx).path_style();
+            repository = self.get_repository_for_worktree(&worktree, path_style, cx);
             let worktree_abs_path = worktree.read(cx).abs_path();
             project_name = worktree
                 .read(cx)
@@ -258,9 +260,9 @@ impl Render for TitleBar {
                 .map(|name| SharedString::from(name.to_string()));
             if let Some(repo) = &repository {
                 let repo = repo.read(cx);
-                let identity = repo_identity_path(&repo.common_dir_abs_path, repo.path_style);
+                let identity = repo_identity_path(&repo.common_dir_abs_path, path_style);
                 let identity_fallback =
-                    repo_identity_path_if_local(&repo.common_dir_abs_path, repo.path_style);
+                    repo_identity_path_if_local(&repo.common_dir_abs_path, path_style);
                 linked_worktree_name = linked_worktree_name_anchor(
                     repo.main_worktree_abs_path(),
                     identity_fallback,
@@ -270,7 +272,7 @@ impl Render for TitleBar {
                     linked_worktree_short_name(
                         name_anchor_path,
                         repo.work_directory_abs_path.as_ref(),
-                        repo.path_style,
+                        path_style,
                     )
                 })
                 .or_else(|| {
@@ -282,19 +284,25 @@ impl Render for TitleBar {
                 let display_name = if identity.extension() == Some(std::ffi::OsStr::new("git")) {
                     identity.file_stem()
                 } else {
-                    repo.path_style.file_name(identity)
+                    path_style.file_name(identity)
                 };
 
                 if let Some(repo_name) = display_name.and_then(|n| n.to_str()) {
-                    let visible_worktrees_in_repo = self.visible_worktrees_in_repository(repo, cx);
+                    let visible_worktrees_in_repo =
+                        self.visible_worktrees_in_repository(repo, path_style, cx);
                     let name = if visible_worktrees_in_repo == 1 {
-                        if let Ok(relative) =
-                            worktree_abs_path.strip_prefix(&*repo.work_directory_abs_path)
+                        if let Ok(relative) = path_style
+                            .strip_prefix(&worktree_abs_path, &*repo.work_directory_abs_path)
                         {
                             if relative.as_os_str().is_empty() {
                                 repo_name.to_string()
                             } else {
-                                format!("{}/{}", repo_name, relative.display())
+                                format!(
+                                    "{}{}{}",
+                                    repo_name,
+                                    path_style.primary_separator(),
+                                    relative.display()
+                                )
                             }
                         } else {
                             repo_name.to_string()
@@ -576,6 +584,7 @@ impl TitleBar {
     fn get_repository_for_worktree(
         &self,
         worktree: &Entity<project::Worktree>,
+        path_style: PathStyle,
         cx: &App,
     ) -> Option<Entity<project::git_store::Repository>> {
         let project = self.project.read(cx);
@@ -587,7 +596,8 @@ impl TitleBar {
             .values()
             .filter(|repo| {
                 let repo_path = &repo.read(cx).work_directory_abs_path;
-                worktree_path == *repo_path || worktree_path.starts_with(repo_path.as_ref())
+                worktree_path == *repo_path
+                    || path_style.starts_with(&worktree_path, repo_path.as_ref())
             })
             .max_by_key(|repo| repo.read(cx).work_directory_abs_path.as_os_str().len())
             .cloned()
@@ -596,6 +606,7 @@ impl TitleBar {
     fn visible_worktrees_in_repository(
         &self,
         repository: &project::git_store::Repository,
+        path_style: PathStyle,
         cx: &App,
     ) -> usize {
         let repo_path = &repository.work_directory_abs_path;
@@ -604,7 +615,8 @@ impl TitleBar {
             .visible_worktrees(cx)
             .filter(|worktree| {
                 let worktree_path = worktree.read(cx).abs_path();
-                worktree_path == *repo_path || worktree_path.starts_with(repo_path.as_ref())
+                worktree_path == *repo_path
+                    || path_style.starts_with(&worktree_path, repo_path.as_ref())
             })
             .count()
     }
