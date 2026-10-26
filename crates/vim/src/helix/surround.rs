@@ -268,12 +268,14 @@ impl Vim {
 
 #[cfg(test)]
 mod test {
+    use editor::actions::ExpandAllDiffHunks;
     use editor::test::editor_test_context::EditorTestContext;
-    use editor::{Editor, EditorMode, MultiBuffer};
-    use gpui::UpdateGlobal;
+    use editor::{Editor, EditorMode, MultiBuffer, MultiBufferOffset};
+    use gpui::{Entity, UpdateGlobal};
     use indoc::indoc;
-    use language::Point;
+    use language::{Buffer, Point};
     use settings::SettingsStore;
+    use std::ops::Range;
 
     use crate::{state::Mode, test::VimTestContext};
 
@@ -339,93 +341,69 @@ mod test {
 
     #[gpui::test]
     async fn test_helix_surround_add_at_excerpt_end(cx: &mut gpui::TestAppContext) {
-        VimTestContext::init(cx);
-        cx.update(|cx| {
-            VimTestContext::init_keybindings(true, cx);
-            SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |s| s.helix_mode = Some(true));
-            });
-        });
-        let (editor, cx) = cx.add_window_view(|window, cx| {
-            let multi_buffer = MultiBuffer::build_multi(
-                [("a\nx\nb", vec![Point::new(0, 0)..Point::new(0, 1)])],
-                cx,
-            );
-            // Edit the source so that the excerpt still shows `Aa` but no
-            // longer grows over text inserted at its end.
-            let buffer = multi_buffer
-                .read(cx)
-                .all_buffers()
-                .into_iter()
-                .next()
-                .unwrap();
-            buffer.update(cx, |buffer, cx| {
+        let (mut cx, source) = helix_multibuffer_context(
+            cx,
+            "a\nx\nb",
+            vec![Point::new(0, 0)..Point::new(0, 1)],
+            |buffer, cx| {
+                // Edit the source so that the excerpt still shows `Aa` but no
+                // longer grows over text inserted at its end.
                 buffer.edit([(1..4, "")], None, cx);
                 buffer.edit([(0..0, "A")], None, cx);
-            });
-            Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
-        });
-        let mut cx = EditorTestContext::for_editor_in(editor, cx).await;
+            },
+        )
+        .await;
 
         cx.set_selections_state("«Aaˇ»");
         cx.simulate_keystrokes("m s (");
         cx.assert_editor_state("«(Aaˇ»");
-        assert_eq!(source_text(&mut cx), "(Aa)b");
+        assert_eq!(source.read_with(&cx.cx, |buffer, _| buffer.text()), "(Aa)b");
     }
 
     #[gpui::test]
     async fn test_helix_surround_add_between_excerpts(cx: &mut gpui::TestAppContext) {
-        VimTestContext::init(cx);
-        cx.update(|cx| {
-            VimTestContext::init_keybindings(true, cx);
-            SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |s| s.helix_mode = Some(true));
-            });
-        });
-        let (editor, cx) = cx.add_window_view(|window, cx| {
-            let multi_buffer = MultiBuffer::build_multi(
-                [(
-                    "a\nx\nb",
-                    vec![
-                        Point::new(0, 0)..Point::new(0, 1),
-                        Point::new(2, 0)..Point::new(2, 1),
-                    ],
-                )],
-                cx,
-            );
-            // Delete the text between the excerpts, so that the end of the
-            // first and the start of the second map to the same source
-            // offset.
-            let buffer = multi_buffer
-                .read(cx)
-                .all_buffers()
-                .into_iter()
-                .next()
-                .unwrap();
-            buffer.update(cx, |buffer, cx| buffer.edit([(1..4, "")], None, cx));
-            Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
-        });
-        let mut cx = EditorTestContext::for_editor_in(editor, cx).await;
+        let (mut cx, source) = helix_multibuffer_context(
+            cx,
+            "a\nx\nb",
+            vec![
+                Point::new(0, 0)..Point::new(0, 1),
+                Point::new(2, 0)..Point::new(2, 1),
+            ],
+            |buffer, cx| {
+                // Delete the text between the excerpts, so that the end of the
+                // first and the start of the second map to the same source
+                // offset.
+                buffer.edit([(1..4, "")], None, cx);
+            },
+        )
+        .await;
 
         // Both delimiters land at the same source offset and show up at the
         // start of the second excerpt.
         cx.set_selections_state("a«\nˇ»b");
         cx.simulate_keystrokes("m s (");
         cx.assert_editor_state("a«\n()ˇ»b");
-        assert_eq!(source_text(&mut cx), "a()b");
+        assert_eq!(source.read_with(&cx.cx, |buffer, _| buffer.text()), "a()b");
     }
 
-    fn source_text(cx: &mut EditorTestContext) -> String {
-        cx.update_editor(|editor, _window, cx| {
-            let buffer = editor
-                .buffer()
-                .read(cx)
-                .all_buffers()
-                .into_iter()
-                .next()
-                .unwrap();
-            buffer.read(cx).text()
-        })
+    #[gpui::test]
+    async fn test_helix_surround_add_adjacent_across_deleted_hunk(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        cx.set_state("ˇa\nb\n", Mode::HelixNormal);
+        cx.set_head_text("a\nX\nb\n");
+        cx.update_editor(|editor, window, cx| {
+            editor.expand_all_diff_hunks(&ExpandAllDiffHunks, window, cx);
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.select_ranges([
+                    MultiBufferOffset(1)..MultiBufferOffset(4),
+                    MultiBufferOffset(4)..MultiBufferOffset(5),
+                ])
+            });
+        });
+        cx.simulate_keystrokes("m s (");
+        cx.assert_state("a«(\n)ˇ»«(b)ˇ»\n", Mode::HelixNormal);
     }
 
     #[gpui::test]
@@ -692,5 +670,33 @@ mod test {
         cx.set_state("([woˇrld])", Mode::HelixNormal);
         cx.simulate_keystrokes("m r m {");
         cx.assert_state("({woˇrld})", Mode::HelixNormal);
+    }
+
+    async fn helix_multibuffer_context(
+        cx: &mut gpui::TestAppContext,
+        text: &str,
+        excerpts: Vec<Range<Point>>,
+        edit_source: impl FnOnce(&mut Buffer, &mut gpui::Context<Buffer>),
+    ) -> (EditorTestContext, Entity<Buffer>) {
+        VimTestContext::init(cx);
+        let (multi_buffer, source) = cx.update(|cx| {
+            VimTestContext::init_keybindings(true, cx);
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |s| s.helix_mode = Some(true));
+            });
+            let multi_buffer = MultiBuffer::build_multi([(text, excerpts)], cx);
+            let source = multi_buffer
+                .read(cx)
+                .all_buffers()
+                .into_iter()
+                .next()
+                .unwrap();
+            source.update(cx, edit_source);
+            (multi_buffer, source)
+        });
+        let (editor, cx) = cx.add_window_view(|window, cx| {
+            Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+        });
+        (EditorTestContext::for_editor_in(editor, cx).await, source)
     }
 }
