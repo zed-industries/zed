@@ -785,7 +785,7 @@ impl HitboxId {
 impl HitboxId {
     /// Checks if the hitbox with this ID is currently hovered. Returns `false` during keyboard
     /// input modality so that keyboard navigation suppresses hover highlights. Except when handling
-    /// `ScrollWheelEvent`, this is typically what you want when determining whether to handle mouse
+    /// `ScrollEvent`, this is typically what you want when determining whether to handle mouse
     /// events or paint hover styles.
     ///
     /// See [`Hitbox::is_hovered`] for details.
@@ -823,7 +823,7 @@ impl HitboxId {
     }
 
     /// Checks if the hitbox with this ID contains the mouse and should handle scroll events.
-    /// Typically this should only be used when handling `ScrollWheelEvent`, and otherwise
+    /// Typically this should only be used when handling `ScrollEvent`, and otherwise
     /// `is_hovered` should be used. See the documentation of `Hitbox::is_hovered` for details about
     /// this distinction.
     pub fn should_handle_scroll(self, window: &Window) -> bool {
@@ -853,7 +853,7 @@ pub struct Hitbox {
 impl Hitbox {
     /// Checks if the hitbox is currently hovered. Returns `false` during keyboard input modality
     /// so that keyboard navigation suppresses hover highlights. Except when handling
-    /// `ScrollWheelEvent`, this is typically what you want when determining whether to handle mouse
+    /// `ScrollEvent`, this is typically what you want when determining whether to handle mouse
     /// events or paint hover styles.
     ///
     /// This can return `false` even when the hitbox contains the mouse, if a hitbox in front of
@@ -861,7 +861,7 @@ impl Hitbox {
     /// `HitboxBehavior::BlockMouseExceptScroll` (`InteractiveElement::block_mouse_except_scroll`),
     /// or if the current input modality is keyboard (see [`Window::last_input_was_keyboard`]).
     ///
-    /// Handling of `ScrollWheelEvent` should typically use `should_handle_scroll` instead.
+    /// Handling of `ScrollEvent` should typically use `should_handle_scroll` instead.
     /// Concretely, this is due to use-cases like overlays that cause the elements under to be
     /// non-interactive while still allowing scrolling. More abstractly, this is because
     /// `is_hovered` is about element interactions directly under the mouse - mouse moves, clicks,
@@ -883,7 +883,7 @@ impl Hitbox {
     }
 
     /// Checks if the hitbox contains the mouse and should handle scroll events. Typically this
-    /// should only be used when handling `ScrollWheelEvent`, and otherwise `is_hovered` should be
+    /// should only be used when handling `ScrollEvent`, and otherwise `is_hovered` should be
     /// used. See the documentation of `Hitbox::is_hovered` for details about this distinction.
     ///
     /// This can return `false` even when the hitbox contains the mouse, if a hitbox in front of
@@ -930,7 +930,7 @@ pub enum HitboxBehavior {
     /// [`InteractiveElement::block_mouse_except_scroll`].
     ///
     /// For mouse handlers that check those hitboxes, this behaves the same as registering a
-    /// bubble-phase handler for every mouse event type **except** `ScrollWheelEvent`:
+    /// bubble-phase handler for every mouse event type **except** `ScrollEvent`:
     ///
     /// ```ignore
     /// window.on_mouse_event(move |_: &EveryMouseEventTypeExceptScroll, phase, window, cx| {
@@ -940,7 +940,7 @@ pub enum HitboxBehavior {
     /// })
     /// ```
     ///
-    /// See the documentation of [`Hitbox::is_hovered`] for details of why `ScrollWheelEvent` is
+    /// See the documentation of [`Hitbox::is_hovered`] for details of why `ScrollEvent` is
     /// handled differently than other mouse events. If also blocking these scroll events is
     /// desired, then a `cx.stop_propagation()` handler like the one above can be used.
     ///
@@ -5615,13 +5615,13 @@ impl Window {
 
     /// Return a key binding string for an action, to display in the UI. Uses the highest precedence
     /// binding for the action (last binding added to the keymap).
-    pub fn keystroke_text_for(&self, action: &dyn Action) -> String {
+    pub fn keystroke_text_for(&self, action: &dyn Action, cx: &App) -> String {
         self.highest_precedence_binding_for_action(action)
             .map(|binding| {
                 binding
                     .keystrokes()
                     .iter()
-                    .map(ToString::to_string)
+                    .map(|keystroke| keystroke.display(cx.platform_info().os).to_string())
                     .collect::<Vec<_>>()
                     .join(" ")
             })
@@ -5683,10 +5683,10 @@ impl Window {
                 self.capslock = modifiers_changed.capslock;
                 PlatformInput::ModifiersChanged(modifiers_changed)
             }
-            PlatformInput::ScrollWheel(scroll_wheel) => {
+            PlatformInput::Scroll(scroll_wheel) => {
                 self.mouse_position = scroll_wheel.position;
                 self.modifiers = scroll_wheel.modifiers;
-                PlatformInput::ScrollWheel(scroll_wheel)
+                PlatformInput::Scroll(scroll_wheel)
             }
             PlatformInput::Pinch(pinch) => {
                 self.mouse_position = pinch.position;
@@ -5760,6 +5760,10 @@ impl Window {
             PlatformInput::TouchDrag(touch_drag) => {
                 self.mouse_position = touch_drag.start_position;
                 PlatformInput::TouchDrag(touch_drag)
+            }
+            PlatformInput::BackGesture(back) => {
+                self.mouse_position = back.start_position;
+                PlatformInput::BackGesture(back)
             }
             PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
         };
@@ -7282,7 +7286,7 @@ impl Window {
                     inspector.select(inspector_id, self);
                 }
             });
-        } else if let Some(event) = event.downcast_ref::<crate::ScrollWheelEvent>() {
+        } else if let Some(event) = event.downcast_ref::<crate::ScrollEvent>() {
             // This should be kept in sync with SCROLL_LINES in x11 platform.
             const SCROLL_LINES: f32 = 3.0;
             const SCROLL_PIXELS_PER_LAYER: f32 = 36.0;
@@ -7919,14 +7923,14 @@ mod tests {
     };
 
     use crate::{
-        AnyWindowHandle, AppContext as _, Bounds, ContentMask, Context, DispatchPhase,
-        DragMoveEvent, Empty, ExternalDragPayload, ExternalPaths, FileDragPaths, FileDropEvent,
-        FocusHandle, InputEvent as _, InteractiveElement as _, IntoElement, KeyDownEvent,
-        Keystroke, LongPressEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement,
-        Pixels, PlatformInput, Point, Render, RequestFrameOptions, ScaledPixels,
-        StatefulInteractiveElement as _, Styled, TestAppContext, TouchDragEvent, TouchEvent,
-        TouchId, TouchPhase, Underline, UnderlineStyle, Window, WindowAppearance, WindowOptions,
-        canvas, div, hsla, point, px, size,
+        AnyWindowHandle, AppContext as _, BackGestureEvent, BackGesturePhase, Bounds, ContentMask,
+        Context, DispatchPhase, DragMoveEvent, Empty, ExternalDragPayload, ExternalPaths,
+        FileDragPaths, FileDropEvent, FocusHandle, InputEvent as _, InteractiveElement as _,
+        IntoElement, KeyDownEvent, Keystroke, LongPressEvent, MouseButton, MouseDownEvent,
+        MouseMoveEvent, ParentElement, Pixels, PlatformInput, Point, Render, RequestFrameOptions,
+        ScaledPixels, StatefulInteractiveElement as _, Styled, TestAppContext, TouchDragEvent,
+        TouchEvent, TouchId, TouchPhase, Underline, UnderlineStyle, Window, WindowAppearance,
+        WindowOptions, canvas, div, hsla, point, px, size,
     };
 
     #[gpui::test]
@@ -8369,6 +8373,7 @@ mod tests {
                 bottom: px(350.),
                 ..Default::default()
             },
+            ..Default::default()
         };
         platform_window.simulate_insets_change(insets.clone());
         assert!(platform_window.frame_wake_count() > wakes);
@@ -9243,6 +9248,58 @@ mod tests {
                 (TouchPhase::Ended, px(40.)),
             ]
         );
+    }
+
+    #[gpui::test]
+    fn back_gesture_is_claimed_by_the_innermost_listener(cx: &mut TestAppContext) {
+        let claims = Rc::new(RefCell::new(Vec::new()));
+        let window = cx.add_window({
+            let claims = claims.clone();
+            move |_, _| BackListeners { claims }
+        });
+        let dispatch_back = |cx: &mut TestAppContext, x: f32| {
+            window
+                .update(cx, |_, window, cx| {
+                    window
+                        .dispatch_event(
+                            BackGestureEvent {
+                                phase: BackGesturePhase::Started,
+                                start_position: point(px(x), px(10.)),
+                                progress: 0.,
+                            }
+                            .to_platform_input(),
+                            cx,
+                        )
+                        .default_prevented
+                })
+                .unwrap()
+        };
+        assert!(dispatch_back(cx, 10.));
+        assert!(dispatch_back(cx, 80.));
+        assert!(!dispatch_back(cx, 150.));
+        assert_eq!(claims.borrow().as_slice(), ["inner", "outer"]);
+    }
+
+    struct BackListeners {
+        claims: Rc<RefCell<Vec<&'static str>>>,
+    }
+
+    impl Render for BackListeners {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let claim = |name: &'static str| {
+                let claims = self.claims.clone();
+                move |_: &BackGestureEvent, _: &mut Window, _: &mut crate::App| {
+                    claims.borrow_mut().push(name)
+                }
+            };
+            div().size_full().child(
+                div()
+                    .w(px(100.))
+                    .h_full()
+                    .on_back_gesture(claim("outer"))
+                    .child(div().w(px(50.)).h_full().on_back_gesture(claim("inner"))),
+            )
+        }
     }
 
     struct TouchDragListener {

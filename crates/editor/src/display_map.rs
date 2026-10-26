@@ -1586,6 +1586,10 @@ impl DisplaySnapshot {
         })
     }
 
+    pub(crate) fn diagnostics_visible(&self) -> bool {
+        self.diagnostics_max_severity.into_lsp().is_some()
+    }
+
     fn diagnostic_severity_is_visible(&self, severity: lsp::DiagnosticSeverity) -> bool {
         self.diagnostics_max_severity
             .into_lsp()
