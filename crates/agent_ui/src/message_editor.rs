@@ -2636,6 +2636,88 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_mention_completion_without_cursor_after_link_adds_no_crease(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({"file": ""})).await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let message_editor = cx.update(|window, cx| {
+            cx.new(|cx| {
+                MessageEditor::new(
+                    workspace.downgrade(),
+                    project.downgrade(),
+                    None,
+                    Default::default(),
+                    "Test Agent".into(),
+                    "Test",
+                    EditorMode::AutoHeight {
+                        min_lines: 1,
+                        max_lines: None,
+                    },
+                    window,
+                    cx,
+                )
+            })
+        });
+        let editor = message_editor.update(cx, |message_editor, _| message_editor.editor.clone());
+
+        cx.run_until_parked();
+
+        let completions = editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello @file ", window, cx);
+            let buffer = editor.buffer().read(cx).as_singleton().unwrap();
+            let completion_provider = editor.completion_provider().unwrap();
+            completion_provider.completions(
+                &buffer,
+                text::Anchor::max_for_buffer(buffer.read(cx).remote_id()),
+                CompletionContext {
+                    trigger_kind: CompletionTriggerKind::TRIGGER_CHARACTER,
+                    trigger_character: Some("@".into()),
+                },
+                window,
+                cx,
+            )
+        });
+        let [_, completion]: [_; 2] = completions
+            .await
+            .unwrap()
+            .into_iter()
+            .flat_map(|response| response.completions)
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap();
+        let new_text = completion.new_text.clone();
+
+        editor.update_in(cx, |editor, window, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let range = snapshot
+                .buffer_anchor_range_to_anchor_range(completion.replace_range)
+                .unwrap();
+            editor.edit([(range, completion.new_text)], cx);
+            editor.change_selections(Default::default(), window, cx, |selections| {
+                selections.select_ranges([MultiBufferOffset(0)..MultiBufferOffset(0)]);
+            });
+            (completion.confirm.unwrap())(CompletionIntent::Complete, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        editor.update(cx, |editor, cx| {
+            assert_eq!(editor.text(cx), format!("Hello {new_text}"));
+            assert!(fold_ranges(editor, cx).is_empty());
+        });
+        assert!(mention_contents(&message_editor, cx).await.is_empty());
+    }
+
+    #[gpui::test]
     async fn test_slash_command_validation(cx: &mut gpui::TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());

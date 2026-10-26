@@ -1951,10 +1951,15 @@ fn confirm_completion_callback<T: PromptCompletionProviderDelegate>(
                         .newest_anchor()
                         .head()
                         .to_offset(&snapshot);
+                    let start_offset = snapshot.anchor_in_excerpt(start)?.to_offset(&snapshot);
+                    let end_offset = cursor.saturating_sub_usize(1);
+                    // Folding from anywhere else would cover the wrong text, so leave the link unfolded.
+                    if end_offset <= start_offset || !snapshot.contains_str_at(end_offset, " ") {
+                        log::error!("cursor is not after the inserted mention link");
+                        return None;
+                    }
                     snapshot
-                        .anchor_to_buffer_anchor(
-                            snapshot.anchor_before(cursor.saturating_sub_usize(1)),
-                        )
+                        .anchor_to_buffer_anchor(snapshot.anchor_before(end_offset))
                         .map(|(end, _)| end)
                 });
                 let Some(end) = end else {
