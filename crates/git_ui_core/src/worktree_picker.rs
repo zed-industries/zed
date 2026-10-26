@@ -8,11 +8,10 @@ use git::repository::Worktree as GitWorktree;
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, PromptLevel,
-    Render, SharedString, Styled, Subscription, Task, TaskExt, WeakEntity, Window, WindowHandle,
-    actions,
+    Render, SharedString, Styled, Subscription, Task, TaskExt, WeakEntity, Window, actions,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
-use project::{Project, git_store::RepositoryEvent, repo_identity_path_if_local};
+use project::{Project, WorktreeId, git_store::RepositoryEvent, repo_identity_path_if_local};
 use remote::RemoteConnectionOptions;
 use ui::{
     Button, CommonAnimationExt as _, Divider, HighlightedLabel, IconButton, KeyBinding, ListItem,
@@ -20,7 +19,7 @@ use ui::{
 };
 use util::{ResultExt as _, paths::PathExt};
 use workspace::{
-    CloseIntent, ModalView, MultiWorkspace, RemovalIntent, Workspace, dock::DockPosition,
+    ModalView, MultiWorkspace, RemovalIntent, Workspace, dock::DockPosition,
     notifications::DetachAndPromptErr,
 };
 
@@ -331,19 +330,26 @@ fn remove_worktree_command(path: &Path, force: bool) -> String {
     }
 }
 
-fn is_rooted_in(
-    workspace: &Entity<Workspace>,
+fn affected_worktree_ids(
+    project: &Entity<Project>,
     path: &Path,
     host: Option<&RemoteConnectionOptions>,
     cx: &App,
-) -> bool {
-    let project = workspace.read(cx).project().read(cx);
-    if project.remote_connection_options(cx).as_ref() != host {
-        return false;
+) -> Vec<WorktreeId> {
+    let project = project.read(cx);
+    if project.is_via_collab() || project.remote_connection_options(cx).as_ref() != host {
+        return Vec::new();
     }
-    let mut worktrees = project.visible_worktrees(cx).peekable();
-    worktrees.peek().is_some()
-        && worktrees.all(|worktree| worktree.read(cx).abs_path().starts_with(path))
+    project
+        .visible_worktrees(cx)
+        .filter_map(|worktree| {
+            let worktree = worktree.read(cx);
+            worktree
+                .abs_path()
+                .starts_with(path)
+                .then_some(worktree.id())
+        })
+        .collect()
 }
 
 struct WorktreeRemoveForceDeletePrompt {
@@ -546,7 +552,7 @@ impl WorktreePickerDelegate {
         cx.notify();
 
         cx.spawn_in(window, async move |picker, cx| {
-            let candidates: Vec<(WindowHandle<MultiWorkspace>, Entity<Workspace>)> = gpui::AsyncApp::update(cx, |cx| {
+            let candidates: Vec<(Entity<Project>, Entity<Workspace>, Vec<WorktreeId>)> = gpui::AsyncApp::update(cx, |cx| {
                 cx.windows()
                     .into_iter()
                     .filter_map(|window_handle| {
@@ -555,34 +561,19 @@ impl WorktreePickerDelegate {
                         Some(
                             multi_workspace
                                 .workspaces()
-                                .filter(|workspace| is_rooted_in(workspace, &path, host.as_ref(), cx))
-                                .map(|workspace| (window_handle, workspace.clone()))
+                                .filter_map(|workspace| {
+                                    let project = workspace.read(cx).project();
+                                    let ids = affected_worktree_ids(project, &path, host.as_ref(), cx);
+                                    (!ids.is_empty()).then(|| (project.clone(), workspace.clone(), ids))
+                                })
                                 .collect::<Vec<_>>(),
                         )
                     })
                     .flatten()
                     .collect::<Vec<_>>()
             });
-            // Resolve close consent before removing anything from disk.
-            for (window_handle, workspace) in &candidates {
-                let should_continue = window_handle.update(cx, |_, window, cx| {
-                    workspace.update(cx, |workspace, cx| {
-                        workspace.prepare_to_close(CloseIntent::ReplaceWindow, window, cx)
-                    })
-                })?.await?;
-                if !should_continue {
-                    picker.update_in(cx, |picker, _window, cx| {
-                        if picker.delegate.deleting_worktree_paths.remove(&path) {
-                            cx.notify();
-                        }
-                    })?;
-                    return Ok(());
-                }
-            }
-
-            // Hot exit can preserve dirty buffers without asking for close consent.
             let has_dirty_buffers = gpui::AsyncApp::update(cx, |cx| {
-                candidates.iter().any(|(_, workspace)| {
+                candidates.iter().any(|(_, workspace, _)| {
                     workspace.read(cx).items(cx).any(|item| item.is_dirty(cx))
                 })
             });
@@ -736,20 +727,9 @@ impl WorktreePickerDelegate {
                 log::error!("Failed to update worktree picker after delete: {error}");
             }
 
-            // A successfully deleted worktree can no longer back its projects, so close them.
-            for (window_handle, workspace) in candidates {
-                let removal = window_handle.update(cx, |multi_workspace, window, cx| {
-                    multi_workspace.remove([workspace], RemovalIntent::CloseProject, window, cx)
-                });
-                match removal {
-                    Ok(removal) => {
-                        match removal.await {
-                            Ok(false) => log::error!("deleted worktree project could not be closed: {path:?}"),
-                            Ok(true) => {},
-                            Err(error) => log::error!("Failed to close deleted worktree project: {error}"),
-                        }
-                    }
-                    Err(error) => log::error!("Failed to close deleted worktree project: {error}"),
+            for (project, _, ids) in candidates {
+                for id in ids {
+                    project.update(cx, |project, cx| project.remove_worktree(id, cx));
                 }
             }
 
@@ -2020,50 +2000,57 @@ mod tests {
             ..Default::default()
         });
         cx.update(|_, cx| {
-            assert!(is_rooted_in(&workspace, &worktree_path, None, cx));
-            assert!(!is_rooted_in(&workspace, &worktree_path, Some(&host), cx));
+            let project = workspace.read(cx).project();
+            let root = project.read(cx).visible_worktrees(cx).next().expect("root");
+            assert_eq!(
+                affected_worktree_ids(project, &worktree_path, None, cx),
+                vec![root.read(cx).id()]
+            );
+            assert!(affected_worktree_ids(project, &worktree_path, Some(&host), cx).is_empty());
         });
     }
 
     #[gpui::test]
-    async fn test_delete_worktree_declined_close_keeps_worktree_on_disk(cx: &mut TestAppContext) {
+    async fn test_guest_project_is_not_affected_by_local_worktree_deletion(
+        cx: &mut TestAppContext,
+    ) {
+        let (fs, worktree_picker, _repository, worktree_path, mut cx) =
+            init_worktree_picker_test(cx).await;
+        let (_, workspace, _) =
+            open_worktree_workspace(fs, &worktree_picker, &worktree_path, &mut cx).await;
+        cx.update(|_, cx| {
+            let project = workspace.read(cx).project().clone();
+            assert_eq!(
+                affected_worktree_ids(&project, &worktree_path, None, cx).len(),
+                1
+            );
+            project.update(cx, |project, _| project.mark_as_collab_for_testing());
+            assert!(project.read(cx).is_via_collab());
+            assert!(project.read(cx).remote_connection_options(cx).is_none());
+            assert!(affected_worktree_ids(&project, &worktree_path, None, cx).is_empty());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_delete_worktree_keeps_unrelated_root_worktree(cx: &mut TestAppContext) {
         let (fs, worktree_picker, repository, worktree_path, mut cx) =
             init_worktree_picker_test(cx).await;
-        cx.update(|_, cx| {
-            cx.update_global::<SettingsStore, _>(|store, cx| {
-                store.update_user_settings(cx, |settings| {
-                    settings
-                        .session
-                        .get_or_insert_default()
-                        .restore_unsaved_buffers = Some(false);
-                });
-            });
-        });
-        let (_, workspace, _) =
-            open_worktree_workspace(fs.clone(), &worktree_picker, &worktree_path, &mut cx).await;
-        let project = workspace.update(&mut cx, |workspace, _| {
-            workspace.set_random_database_id();
-            workspace.project().clone()
-        });
-        workspace
-            .update_in(&mut cx, |workspace, window, cx| {
-                workspace.flush_serialization(window, cx)
-            })
+        let unrelated_path = PathBuf::from(path!("/root/unrelated"));
+        fs.insert_tree(&unrelated_path, json!({"file.txt": "unrelated"}))
             .await;
-        let buffer = project.update(&mut cx, |project, cx| {
-            project.create_local_buffer("", None, true, cx)
-        });
-        let editor = cx.update(|window, cx| {
-            cx.new(|cx| Editor::for_buffer(buffer, Some(project), window, cx))
-        });
-        workspace.update_in(&mut cx, |workspace, window, cx| {
-            workspace.active_pane().update(cx, |pane, cx| {
-                pane.add_item(Box::new(editor.clone()), true, true, None, window, cx)
+        let (window_handle, workspace, weak_project) =
+            open_worktree_workspace(fs, &worktree_picker, &worktree_path, &mut cx).await;
+        let project = weak_project.upgrade().expect("project should be open");
+        let (unrelated_worktree, _) = project
+            .update(&mut cx, |project, cx| {
+                project.find_or_create_worktree(&unrelated_path, true, cx)
             })
-        });
-        editor.update_in(&mut cx, |editor, window, cx| editor.insert("x", window, cx));
-        assert!(editor.read_with(&cx, |editor, cx| editor.is_dirty(cx)));
-
+            .await
+            .expect("unrelated root should open");
+        let unrelated_id = unrelated_worktree.read_with(&cx, |worktree, _| worktree.id());
+        let deleted_ids =
+            cx.update(|_, cx| affected_worktree_ids(&project, &worktree_path, None, cx));
+        assert_eq!(deleted_ids.len(), 1);
         let index = worktree_index(&worktree_picker, &worktree_path, &mut cx);
         worktree_picker.update_in(&mut cx, |worktree_picker, window, cx| {
             worktree_picker.picker.update(cx, |picker, cx| {
@@ -2071,26 +2058,29 @@ mod tests {
             })
         });
         cx.run_until_parked();
-        let (message, _) = cx.pending_prompt().expect("close prompt should appear");
-        assert_eq!(
-            message,
-            "This buffer contains unsaved edits. Do you want to save it?"
+        assert!(!repo_contains_worktree(&repository, &worktree_path, &mut cx).await);
+        assert!(
+            window_handle
+                .read_with(&cx, |multi_workspace, _| {
+                    multi_workspace
+                        .workspaces()
+                        .any(|open_workspace| *open_workspace == workspace)
+                })
+                .expect("window should remain open")
         );
-        cx.simulate_prompt_answer("Cancel");
-        cx.run_until_parked();
-
-        assert!(repo_contains_worktree(&repository, &worktree_path, &mut cx).await);
-        assert!(fs.is_dir(&worktree_path).await);
-        assert!(deleting_worktree_paths(&worktree_picker, &mut cx).is_empty());
-        assert!(picker_contains_worktree(
-            &worktree_picker,
-            &worktree_path,
-            &mut cx
-        ));
+        project.read_with(&cx, |project, cx| {
+            for id in deleted_ids {
+                assert!(project.worktree_for_id(id, cx).is_none());
+            }
+            assert!(project.worktree_for_id(unrelated_id, cx).is_some());
+        });
+        assert!(!cx.has_pending_prompt());
     }
 
     #[gpui::test]
-    async fn test_delete_worktree_closes_project_rooted_in_deleted_path(cx: &mut TestAppContext) {
+    async fn test_delete_worktree_unregisters_root_and_keeps_workspace_open(
+        cx: &mut TestAppContext,
+    ) {
         let (fs, worktree_picker, repository, worktree_path, mut cx) =
             init_worktree_picker_test(cx).await;
         let (window_handle, worktree_workspace, weak_project) =
@@ -2105,18 +2095,25 @@ mod tests {
         let still_present = repo_contains_worktree(&repository, &worktree_path, &mut cx).await;
         assert!(!still_present, "worktree should be removed from git");
         let workspace_open = window_handle
-            .read_with(&cx, |multi_workspace, cx| {
+            .read_with(&cx, |multi_workspace, _| {
                 multi_workspace
                     .workspaces()
-                    .any(|workspace| is_rooted_in(workspace, &worktree_path, None, cx))
+                    .any(|workspace| *workspace == worktree_workspace)
             })
             .expect("test window should remain open");
-        assert!(!workspace_open, "deleted workspace is still open");
-        drop(worktree_workspace);
-        cx.run_until_parked();
-        // GPUI completes entity release on the next app update.
-        cx.update(|_, _| {});
-        assert!(weak_project.upgrade().is_none(), "project is still loaded");
+        assert!(workspace_open, "workspace should remain open");
+        let project = weak_project.upgrade().expect("project should remain open");
+        project.read_with(&cx, |project, cx| {
+            assert!(
+                project
+                    .worktree_store()
+                    .read(cx)
+                    .worktrees()
+                    .next()
+                    .is_none()
+            );
+        });
+        assert!(!cx.has_pending_prompt());
     }
 
     #[gpui::test]
@@ -2164,7 +2161,7 @@ mod tests {
         let (fs, worktree_picker, repository, worktree_path, mut cx) =
             init_worktree_picker_test(cx).await;
         let (window_handle, worktree_workspace, weak_project) =
-            open_worktree_workspace(fs, &worktree_picker, &worktree_path, &mut cx).await;
+            open_worktree_workspace(fs.clone(), &worktree_picker, &worktree_path, &mut cx).await;
         let project = worktree_workspace.update(&mut cx, |workspace, _| {
             workspace.set_random_database_id();
             workspace.project().clone()
@@ -2200,9 +2197,34 @@ mod tests {
             message,
             "Unsaved changes in this worktree will be lost when it is deleted. Delete it anyway?"
         );
+        assert!(repo_contains_worktree(&repository, &worktree_path, &mut cx).await);
+        repository.read_with(&cx, |repository, _| {
+            assert!(
+                !repository
+                    .job_debug_queue()
+                    .to_debug_string()
+                    .contains("remove_worktree")
+            );
+        });
         cx.simulate_prompt_answer("Cancel");
         cx.run_until_parked();
 
+        assert!(!cx.has_pending_prompt());
+        assert!(fs.is_dir(&worktree_path).await);
+        assert!(deleting_worktree_paths(&worktree_picker, &mut cx).is_empty());
+        assert!(picker_contains_worktree(
+            &worktree_picker,
+            &worktree_path,
+            &mut cx
+        ));
+        repository.read_with(&cx, |repository, _| {
+            assert!(
+                !repository
+                    .job_debug_queue()
+                    .to_debug_string()
+                    .contains("remove_worktree")
+            );
+        });
         let still_present = repo_contains_worktree(&repository, &worktree_path, &mut cx).await;
         assert!(still_present, "cancelled deletion removed the worktree");
         let workspace_open = window_handle
