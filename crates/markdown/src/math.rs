@@ -86,6 +86,12 @@ fn gpui_color_to_ratex(color: gpui::Hsla) -> ratex_types::color::Color {
 }
 
 /// Helper to identify unstyled default items in ratex layout (black or transparent).
+///
+/// Note: Unstyled items in ratex layout default to solid black `(0.0, 0.0, 0.0, 1.0)`.
+/// This heuristic recolors them to match the active preview theme text color (essential
+/// for visibility in dark mode), while preserving explicit user colors like `\textcolor{red}{x}`.
+/// In the rare case of explicit `\textcolor{black}{x}`, ratex's color model currently lacks an
+/// `Option<Color>` or unstyled flag, so it is also adapted to theme text color.
 fn is_default_placeholder_color(c: &ratex_types::color::Color) -> bool {
     c.r == 0.0 && c.g == 0.0 && c.b == 0.0
 }

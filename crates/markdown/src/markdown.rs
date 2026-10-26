@@ -3425,6 +3425,7 @@ struct MarkdownElementBuilder {
     list_stack: Vec<ListStackEntry>,
     table: TableState,
     syntax_theme: Arc<SyntaxTheme>,
+    last_child_was_inline: bool,
 }
 
 struct DivStackEntry {
@@ -3485,6 +3486,7 @@ impl MarkdownElementBuilder {
             list_stack: Vec::new(),
             table: TableState::default(),
             syntax_theme,
+            last_child_was_inline: false,
         }
     }
 
@@ -3548,10 +3550,12 @@ impl MarkdownElementBuilder {
     fn push_image_child(&mut self, child: impl IntoElement) {
         self.modify_current_div(|el| el.flex().flex_row().flex_wrap().items_start());
         self.div_stack.last_mut().unwrap().line_break_mode = LineBreakMode::FlexWrap;
+        self.last_child_was_inline = false;
         self.append_child(child.into_any_element());
     }
 
     fn push_line_break(&mut self, source_range: Range<usize>) {
+        self.last_child_was_inline = false;
         if self.uses_flex_line_breaks() {
             self.modify_current_div(|el| el.child(div().w_full().h_0()));
         } else {
@@ -3560,9 +3564,14 @@ impl MarkdownElementBuilder {
     }
 
     fn push_soft_break(&mut self, source_range: Range<usize>) {
-        // A soft break right after an item in flex wrap container would otherwise
-        // render as a stray leading space before the next wrapped item.
-        if self.uses_flex_line_breaks() && self.pending_line.text.is_empty() {
+        // In flex wrap containers, a soft break right after a block-level item (like an image
+        // or a <br>) would render as a stray leading space before the next wrapped item.
+        // However, if the preceding item was an inline element (like inline math), the soft
+        // break represents word spacing in continuous text and must be preserved.
+        if self.uses_flex_line_breaks()
+            && self.pending_line.text.is_empty()
+            && !self.last_child_was_inline
+        {
             return;
         }
         self.push_text(" ", source_range);
@@ -3648,6 +3657,7 @@ impl MarkdownElementBuilder {
         let anchor = self.render_source_anchor(source_range, Some(source_text), false);
         self.modify_current_div(|el| el.flex().flex_row().flex_wrap().items_start());
         self.div_stack.last_mut().unwrap().line_break_mode = LineBreakMode::FlexWrap;
+        self.last_child_was_inline = true;
         self.append_child(
             div()
                 .relative()
@@ -3749,6 +3759,7 @@ impl MarkdownElementBuilder {
     }
 
     fn push_text(&mut self, text: &str, source_range: Range<usize>) {
+        self.last_child_was_inline = false;
         self.pending_line.source_mappings.push(SourceMapping {
             rendered_index: self.pending_line.text.len(),
             source_index: source_range.start,
@@ -4815,6 +4826,25 @@ mod tests {
         let math_start = input.find('$').unwrap();
         let math_end = input.rfind('$').unwrap() + 1;
         assert_eq!(rendered.text_for_range(math_start..math_end), "$E = mc^2$");
+    }
+
+    #[gpui::test]
+    fn test_soft_break_after_inline_math_preserves_space(cx: &mut TestAppContext) {
+        let input = "Let $x$\nbe a variable.";
+        let rendered = render_markdown_with_options(
+            input,
+            None,
+            MarkdownOptions {
+                render_math: true,
+                ..Default::default()
+            },
+            cx,
+        );
+        let copied = rendered.text_for_range(0..input.len());
+        assert_eq!(
+            copied, "Let $x$ be a variable.",
+            "copied text must preserve space between inline math and following text across soft break; got: {copied:?}"
+        );
     }
 
     #[gpui::test]
