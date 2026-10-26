@@ -325,7 +325,7 @@ impl DirectWriteState {
                         font,
                         font_collection,
                         &components.factory,
-                        &this.system_font_collection,
+                        [&this.custom_font_collection, &this.system_font_collection],
                         &components.system_ui_font_name,
                     )
                 })?;
@@ -399,7 +399,7 @@ impl DirectWriteState {
     fn generate_font_fallbacks(
         fallbacks: &FontFallbacks,
         factory: &IDWriteFactory5,
-        system_font_collection: &IDWriteFontCollection1,
+        collections: [&IDWriteFontCollection1; 2],
     ) -> Result<Option<IDWriteFontFallback>> {
         let fallback_list = fallbacks.fallback_list();
         if fallback_list.is_empty() {
@@ -407,22 +407,11 @@ impl DirectWriteState {
         }
         unsafe {
             let builder = factory.CreateFontFallbackBuilder()?;
-            let font_set = &system_font_collection.GetFontSet()?;
             let mut unicode_ranges = Vec::new();
             for family_name in fallback_list {
                 let family_name = HSTRING::from(family_name);
-                let Some(fonts) = font_set
-                    .GetMatchingFonts(
-                        &family_name,
-                        DWRITE_FONT_WEIGHT_NORMAL,
-                        DWRITE_FONT_STRETCH_NORMAL,
-                        DWRITE_FONT_STYLE_NORMAL,
-                    )
-                    .log_err()
+                let Some((collection, font_face)) = find_fallback_font(collections, &family_name)
                 else {
-                    continue;
-                };
-                let Ok(font_face) = fonts.GetFontFaceReference(0) else {
                     continue;
                 };
                 let font = font_face.CreateFontFace()?;
@@ -442,7 +431,7 @@ impl DirectWriteState {
                 builder.AddMapping(
                     &unicode_ranges,
                     &[family_name.as_ptr()],
-                    None,
+                    collection,
                     None,
                     None,
                     1.0,
@@ -473,7 +462,7 @@ impl DirectWriteState {
         }: &Font,
         collection: &IDWriteFontCollection1,
         factory: &IDWriteFactory5,
-        system_font_collection: &IDWriteFontCollection1,
+        fallback_collections: [&IDWriteFontCollection1; 2],
         system_ui_font_name: &SharedString,
     ) -> Option<FontInfo> {
         const SYSTEM_UI_FONT_NAME: &str = ".SystemUIFont";
@@ -502,7 +491,7 @@ impl DirectWriteState {
                 let direct_write_features =
                     unsafe { Self::generate_font_features(factory, features).log_err()? };
                 let fallbacks = fallbacks.as_ref().and_then(|fallbacks| {
-                    Self::generate_font_fallbacks(fallbacks, factory, system_font_collection)
+                    Self::generate_font_fallbacks(fallbacks, factory, fallback_collections)
                         .log_err()
                         .flatten()
                 });
@@ -1036,6 +1025,13 @@ impl DirectWriteState {
 
                 let color_bounds =
                     unsafe { color_analysis.GetAlphaTextureBounds(DWRITE_TEXTURE_ALIASED_1x1) }?;
+                // Color layers can extend beyond the base glyph's raster bounds. The viewport would
+                // clip those pixels anyway, so don't rasterize or upload them.
+                let color_bounds = clip_color_glyph_bounds(
+                    color_bounds,
+                    bitmap_size.width.0,
+                    bitmap_size.height.0,
+                );
 
                 let color_size = size(
                     color_bounds.right - color_bounds.left,
@@ -1365,6 +1361,37 @@ impl DirectWriteState {
             GPUState::new(directx_devices).context("Recreating GPU state for DirectWrite")
         })
         .map(|gpu_state| self.gpu_state = Some(gpu_state))
+    }
+}
+
+fn find_fallback_font<'a>(
+    collections: [&'a IDWriteFontCollection1; 2],
+    family_name: &HSTRING,
+) -> Option<(&'a IDWriteFontCollection1, IDWriteFontFaceReference)> {
+    // Matching a family name against the system collection alone ignores add_fonts().
+    collections.into_iter().find_map(|collection| unsafe {
+        let font_set = collection.GetFontSet().log_err()?;
+        let fonts = font_set
+            .GetMatchingFonts(
+                family_name,
+                DWRITE_FONT_WEIGHT_NORMAL,
+                DWRITE_FONT_STRETCH_NORMAL,
+                DWRITE_FONT_STYLE_NORMAL,
+            )
+            .log_err()?;
+        if fonts.GetFontCount() == 0 {
+            return None;
+        }
+        Some((collection, fonts.GetFontFaceReference(0).log_err()?))
+    })
+}
+
+fn clip_color_glyph_bounds(bounds: RECT, width: i32, height: i32) -> RECT {
+    RECT {
+        left: bounds.left.max(0),
+        top: bounds.top.max(0),
+        right: bounds.right.min(width),
+        bottom: bounds.bottom.min(height),
     }
 }
 
@@ -2034,7 +2061,10 @@ fn is_line_separator(character: char) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{DirectWriteState, DirectWriteTextSystem, GPUState, GlyphLayerTexture};
+    use super::{
+        DirectWriteState, DirectWriteTextSystem, GPUState, GlyphLayerTexture,
+        clip_color_glyph_bounds, find_fallback_font,
+    };
     use crate::direct_write::ClusterAnalyzer;
     use crate::directx_devices::DirectXDevices;
     use anyhow::Result;
@@ -2042,13 +2072,81 @@ mod tests {
         DevicePixels, Font, FontWeight, PlatformTextSystem, RenderGlyphParams, Rgba, TextRun,
         TextSystem, WindowTextSystem, bounds, point, px, size,
     };
-    use std::{ffi::c_void, sync::Arc};
+    use std::{borrow::Cow, ffi::c_void, sync::Arc};
     use windows::Win32::Graphics::Direct3D11::{
         D3D11_BIND_RENDER_TARGET, D3D11_RENDER_TARGET_VIEW_DESC, D3D11_RENDER_TARGET_VIEW_DESC_0,
         D3D11_RTV_DIMENSION_TEXTURE2D, D3D11_SUBRESOURCE_DATA, D3D11_TEX2D_RTV,
         D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
     };
     use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC};
+    use windows::{
+        Win32::Foundation::RECT,
+        core::{HSTRING, IUnknown, Interface},
+    };
+
+    #[test]
+    fn registered_fallbacks_precede_system_fonts_and_keep_their_collection() -> Result<()> {
+        let text_system = DirectWriteTextSystem::new(None)?;
+        let empty_collection = text_system.state.read().custom_font_collection.clone();
+        text_system.add_fonts(vec![Cow::Borrowed(include_bytes!(
+            "../../../assets/fonts/lilex/Lilex-Regular.ttf"
+        ))])?;
+        let state = text_system.state.read();
+        let custom_collection = &state.custom_font_collection;
+        let shadowed_collection = unsafe {
+            text_system
+                .components
+                .factory
+                .CreateFontCollectionFromFontSet(&custom_collection.GetFontSet()?)?
+        };
+        let family_name = HSTRING::from("Lilex");
+
+        for collections in [
+            [custom_collection, &empty_collection],
+            [custom_collection, &shadowed_collection],
+            [&empty_collection, custom_collection],
+        ] {
+            let (collection, _) = find_fallback_font(collections, &family_name)
+                .ok_or_else(|| anyhow::anyhow!("registered fallback family was not found"))?;
+            assert_eq!(
+                collection.cast::<IUnknown>()?,
+                custom_collection.cast::<IUnknown>()?
+            );
+        }
+        assert!(
+            find_fallback_font(
+                [custom_collection, &empty_collection],
+                &HSTRING::from("Mock Missing Font Family"),
+            )
+            .is_none()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn color_glyph_layers_are_clipped_to_the_destination_bitmap() {
+        for (input, expected) in [
+            ((-2, -3, 12, 13), (0, 0, 8, 9)),
+            ((1, 2, 6, 7), (1, 2, 6, 7)),
+            ((-5, 1, -1, 4), (0, 1, -1, 4)),
+            ((10, 11, 14, 15), (10, 11, 8, 9)),
+        ] {
+            let actual = clip_color_glyph_bounds(
+                RECT {
+                    left: input.0,
+                    top: input.1,
+                    right: input.2,
+                    bottom: input.3,
+                },
+                8,
+                9,
+            );
+            assert_eq!(
+                (actual.left, actual.top, actual.right, actual.bottom),
+                expected
+            );
+        }
+    }
 
     #[test]
     fn unicode_line_separators_preserve_shaped_line_cursor() -> Result<()> {
