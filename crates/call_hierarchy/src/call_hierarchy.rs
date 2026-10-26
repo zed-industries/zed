@@ -773,6 +773,7 @@ impl PickerDelegate for CallHierarchyDelegate {
                         .text_ui(cx)
                         .child(
                             h_flex()
+                                .gap_1()
                                 .overflow_x_hidden()
                                 .text_size(ThemeSettings::get_global(cx).buffer_font_size(cx))
                                 .child(name_styled)
@@ -1111,7 +1112,7 @@ fn compute_call_display(call: &Call, cx: &App) -> CallDisplay {
 
     let detail = extract_call_detail(call).map(SharedString::from);
     let full_signature = SharedString::from(match &detail {
-        Some(detail) => format!("{}{detail}", call.item.name),
+        Some(detail) => format!("{} {detail}", call.item.name),
         None => call.item.name.clone(),
     });
     let label_text = call
