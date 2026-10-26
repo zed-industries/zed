@@ -335,6 +335,22 @@ mod tests {
     }
 
     #[test]
+    fn test_build_codeberg_create_pull_request_url() {
+        let remote = ParsedGitRemote {
+            owner: "zed-industries".into(),
+            repo: "zed".into(),
+        };
+        let url = Forgejo::public_instance()
+            .build_create_pull_request_url(&remote, "feature/new-feature")
+            .expect("should be able to build pull request url");
+
+        assert_eq!(
+            url.as_str(),
+            "https://codeberg.org/zed-industries/zed/compare/feature/new-feature"
+        );
+    }
+
+    #[test]
     fn test_parse_remote_url_given_self_hosted_https_url() {
         let remote_url = "https://forgejo.my-enterprise.com/zed-industries/zed.git";
         let parsed_remote = Forgejo::from_remote_url(remote_url)
