@@ -1083,7 +1083,8 @@ pub(crate) fn paste_images_as_context(
     }))
 }
 
-/// Inserts `link` followed by `separator` at the newest cursor, returning the range the link occupies.
+/// Inserts `link` followed by `separator` at every cursor, returning the range the link occupies at
+/// the newest one, or `None` if nothing could be inserted.
 ///
 /// The range is read back from the buffer because the buffer normalizes line endings on insert,
 /// so the inserted text can be shorter than `link`.
@@ -1094,6 +1095,11 @@ pub(crate) fn insert_mention_link(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) -> Option<Range<text::Anchor>> {
+    // A read-only editor ignores the insert, which would leave a mention with no text to fold.
+    if editor.read_only(cx) {
+        return None;
+    }
+
     let cursor_anchor = |editor: &Editor, cx: &App| {
         let snapshot = editor.buffer().read(cx).snapshot(cx);
         let (anchor, buffer_snapshot) =

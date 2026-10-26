@@ -5616,6 +5616,33 @@ mod tests {
         }
     }
 
+    #[gpui::test]
+    async fn test_paste_image_into_read_only_editor_adds_no_mention(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (message_editor, editor, mut cx) = setup_paste_test_message_editor(json!({}), cx).await;
+        editor.update_in(&mut cx, |editor, window, cx| {
+            editor.set_text("prompt", window, cx);
+            editor.change_selections(Default::default(), window, cx, |selections| {
+                selections.select_ranges([MultiBufferOffset(0)..MultiBufferOffset(0)]);
+            });
+            editor.set_read_only(true);
+        });
+
+        let (_, raw_image) = paste_test_image();
+        paste_image_context(
+            &message_editor,
+            vec![ClipboardEntry::Image(raw_image)],
+            true,
+            &mut cx,
+        );
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "prompt");
+            assert!(fold_ranges(editor, cx).is_empty());
+        });
+        assert!(mention_contents(&message_editor, &mut cx).await.is_empty());
+    }
+
     fn paste_test_image() -> (image::DynamicImage, gpui::Image) {
         let image = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
             2,
