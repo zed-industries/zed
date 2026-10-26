@@ -25,10 +25,12 @@ use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::{SmallVec, smallvec};
 use std::{
     borrow::Cow,
+    cell::RefCell,
     cmp,
     collections::VecDeque,
     fmt::{Debug, Display, Formatter},
     hash::{Hash, Hasher},
+    mem,
     ops::{Deref, DerefMut, Range},
     sync::{
         Arc,
@@ -233,7 +235,6 @@ pub struct TextSystem {
     font_metrics: RwLock<FxHashMap<FontId, FontMetrics>>,
     raster_bounds: RwLock<FxHashMap<RenderGlyphParams, Bounds<DevicePixels>>>,
     wrapper_pool: Mutex<FxHashMap<FontIdWithSize, Vec<LineWrapper>>>,
-    font_runs_pool: Mutex<Vec<Vec<FontRun>>>,
     fallback_font_stack: SmallVec<[Font; 2]>,
     font_generation: Arc<AtomicUsize>,
     missing_glyph_reporter: Arc<MissingGlyphReporter>,
@@ -258,7 +259,6 @@ impl TextSystem {
             raster_bounds: RwLock::default(),
             font_ids_by_font: RwLock::default(),
             wrapper_pool: Mutex::default(),
-            font_runs_pool: Mutex::default(),
             fallback_font_stack: smallvec![
                 // TODO: Remove this when Linux have implemented setting fallbacks.
                 font(".ZedMono"),
@@ -634,6 +634,7 @@ impl TextSystem {
 #[derive(Deref)]
 pub struct WindowTextSystem {
     line_layout_cache: LineLayoutCache,
+    font_runs_buffer: RefCell<Vec<FontRun>>,
     #[deref]
     text_system: Arc<TextSystem>,
 }
@@ -646,6 +647,7 @@ impl WindowTextSystem {
                 text_system.platform_text_system.clone(),
                 text_system.font_generation.clone(),
             ),
+            font_runs_buffer: RefCell::default(),
             text_system,
         }
     }
@@ -789,7 +791,7 @@ impl WindowTextSystem {
         line_clamp: Option<usize>,
     ) -> Result<SmallVec<[WrappedLine; 1]>> {
         let mut runs = runs.iter().filter(|run| run.len > 0).cloned().peekable();
-        let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
+        let mut font_runs = mem::take(&mut *self.font_runs_buffer.borrow_mut());
 
         let mut lines = SmallVec::new();
         let mut max_wrap_lines = line_clamp;
@@ -903,7 +905,7 @@ impl WindowTextSystem {
             process_line(text, 0, end);
         }
 
-        self.font_runs_pool.lock().push(font_runs);
+        *self.font_runs_buffer.borrow_mut() = font_runs;
 
         Ok(lines)
     }
@@ -924,7 +926,7 @@ impl WindowTextSystem {
         force_width: Option<Pixels>,
     ) -> Arc<LineLayout> {
         let mut last_run = None::<&TextRun>;
-        let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
+        let mut font_runs = mem::take(&mut *self.font_runs_buffer.borrow_mut());
         font_runs.clear();
 
         for run in runs.iter() {
@@ -962,7 +964,7 @@ impl WindowTextSystem {
             force_width,
         );
 
-        self.font_runs_pool.lock().push(font_runs);
+        *self.font_runs_buffer.borrow_mut() = font_runs;
 
         layout
     }
@@ -1006,7 +1008,7 @@ impl WindowTextSystem {
         force_width: Option<Pixels>,
     ) -> Option<Arc<LineLayout>> {
         let mut last_run = None::<&TextRun>;
-        let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
+        let mut font_runs = mem::take(&mut *self.font_runs_buffer.borrow_mut());
         font_runs.clear();
 
         for run in runs.iter() {
@@ -1045,7 +1047,7 @@ impl WindowTextSystem {
             force_width,
         );
 
-        self.font_runs_pool.lock().push(font_runs);
+        *self.font_runs_buffer.borrow_mut() = font_runs;
 
         layout
     }
@@ -1068,7 +1070,7 @@ impl WindowTextSystem {
         materialize_text: impl FnOnce() -> SharedString,
     ) -> Arc<LineLayout> {
         let mut last_run = None::<&TextRun>;
-        let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
+        let mut font_runs = mem::take(&mut *self.font_runs_buffer.borrow_mut());
         font_runs.clear();
 
         for run in runs.iter() {
@@ -1108,7 +1110,7 @@ impl WindowTextSystem {
             materialize_text,
         );
 
-        self.font_runs_pool.lock().push(font_runs);
+        *self.font_runs_buffer.borrow_mut() = font_runs;
 
         layout
     }
