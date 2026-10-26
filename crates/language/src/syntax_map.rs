@@ -2,8 +2,8 @@
 mod syntax_map_tests;
 
 use crate::{
-    CaptureId, Grammar, InjectionConfig, Language, LanguageId, LanguageRegistry, QUERY_CURSORS,
-    with_parser,
+    CaptureId, File, Grammar, InjectionConfig, Language, LanguageId, LanguageRegistry,
+    QUERY_CURSORS, with_parser,
 };
 use collections::HashMap;
 use futures::FutureExt;
@@ -115,7 +115,7 @@ pub(crate) fn flattened_highlight_regions(
     flatten_capture_regions(range, capture_refs)
 }
 
-fn flatten_capture_regions(
+pub(crate) fn flatten_capture_regions(
     range: Range<usize>,
     mut captures: impl Iterator<Item = (Range<usize>, HighlightCaptureRef)>,
 ) -> Vec<HighlightCaptureRegion> {
@@ -223,7 +223,7 @@ impl SyntaxLayerContent {
         }
     }
 
-    #[cfg(debug_assertions)]
+    #[cfg(any(test, debug_assertions))]
     fn language_name(&self) -> SharedString {
         match self {
             SyntaxLayerContent::Parsed { language, .. } => language.name().0,
@@ -347,9 +347,7 @@ struct ChangedRegion {
 #[derive(Default)]
 struct ChangeRegionSet(Vec<ChangedRegion>);
 
-struct TextProvider<'a>(&'a Rope);
-
-struct ByteChunks<'a>(text::Chunks<'a>);
+pub(crate) struct TextProvider<'a>(pub(crate) &'a Rope);
 
 pub(crate) struct QueryCursorHandle(Option<QueryCursor>);
 
@@ -380,7 +378,7 @@ impl SyntaxMap {
     #[cfg(test)]
     pub fn reparse(&mut self, language: Arc<Language>, text: &BufferSnapshot) {
         self.snapshot
-            .reparse(text, self.language_registry.clone(), language);
+            .reparse(text, None, self.language_registry.clone(), language);
     }
 
     pub fn did_parse(&mut self, snapshot: SyntaxSnapshot) {
@@ -544,27 +542,31 @@ impl SyntaxSnapshot {
     pub fn reparse(
         &mut self,
         text: &BufferSnapshot,
+        file: Option<&dyn File>,
         registry: Option<Arc<LanguageRegistry>>,
         root_language: Arc<Language>,
     ) {
-        self.reparse_(text, registry, root_language, None).ok();
+        self.reparse_(text, file, registry, root_language, None)
+            .ok();
     }
 
     #[ztracing::instrument(skip_all)]
     pub fn reparse_with_timeout(
         &mut self,
         text: &BufferSnapshot,
+        file: Option<&dyn File>,
         registry: Option<Arc<LanguageRegistry>>,
         root_language: Arc<Language>,
         budget: Duration,
     ) -> Result<(), ParseTimeout> {
-        self.reparse_(text, registry, root_language, Some(budget))
+        self.reparse_(text, file, registry, root_language, Some(budget))
     }
 
     #[ztracing::instrument(skip_all, fields(lang = root_language.config.name.0.as_str()))]
     fn reparse_(
         &mut self,
         text: &BufferSnapshot,
+        file: Option<&dyn File>,
         registry: Option<Arc<LanguageRegistry>>,
         root_language: Arc<Language>,
         mut budget: Option<Duration>,
@@ -576,6 +578,7 @@ impl SyntaxSnapshot {
             .collect::<Vec<_>>();
         self.reparse_with_ranges(
             text,
+            file,
             root_language.clone(),
             edit_ranges,
             registry.as_ref(),
@@ -612,6 +615,7 @@ impl SyntaxSnapshot {
             if !resolved_injection_ranges.is_empty() {
                 self.reparse_with_ranges(
                     text,
+                    file,
                     root_language,
                     resolved_injection_ranges,
                     Some(&registry),
@@ -629,13 +633,15 @@ impl SyntaxSnapshot {
     fn reparse_with_ranges(
         &mut self,
         text: &BufferSnapshot,
+        file: Option<&dyn File>,
         root_language: Arc<Language>,
         invalidated_ranges: Vec<Range<usize>>,
         registry: Option<&Arc<LanguageRegistry>>,
         budget: &mut Option<Duration>,
     ) -> Result<(), ParseTimeout> {
         log::trace!(
-            "reparse. invalidated ranges:{:?}",
+            "reparse. file:{:?}, invalidated ranges:{:?}",
+            file.map(File::path),
             LogOffsetRanges(&invalidated_ranges, text),
         );
 
@@ -993,15 +999,22 @@ impl SyntaxSnapshot {
         self.layers = layers;
         self.interpolated_version = text.version.clone();
         self.parsed_version = text.version.clone();
-        #[cfg(debug_assertions)]
-        self.check_invariants(text);
+        #[cfg(any(test, debug_assertions))]
+        self.check_invariants(text, file);
         Ok(())
     }
 
-    #[cfg(debug_assertions)]
-    fn check_invariants(&self, text: &BufferSnapshot) {
+    #[cfg(any(test, debug_assertions))]
+    fn check_invariants(&self, text: &BufferSnapshot, file: Option<&dyn File>) {
         let out_of_order = |reason: &str| -> ! {
-            let mut dump = format!("layers out of order: {reason}\nlayers:\n");
+            let file_path = file.map_or_else(
+                || "<untitled>".to_owned(),
+                |file| format!("{:?}", file.path()),
+            );
+            let mut dump = format!(
+                "layers out of order: {reason}\nbuffer: {:?}\nfile: {file_path}\nlayers:\n",
+                text.remote_id(),
+            );
             for layer in self.layers.iter() {
                 dump.push_str(&format!(
                     "  depth={} range={:?} language={} id={:?}\n",
@@ -1024,48 +1037,24 @@ impl SyntaxSnapshot {
                         match layer.range.start.cmp(&prev_range.start, text) {
                             Ordering::Less => out_of_order("start decreased"),
                             Ordering::Equal => match layer.range.end.cmp(&prev_range.end, text) {
-                                Ordering::Less => out_of_order("end decreased at equal start"),
+                                Ordering::Greater => out_of_order("end increased at equal start"),
                                 Ordering::Equal => {
                                     if layer.content.language_id() < prev_language_id {
                                         out_of_order("language id decreased at equal range")
                                     }
                                 }
-                                Ordering::Greater => {}
+                                Ordering::Less => {}
                             },
                             Ordering::Greater => {}
                         }
                     }
-                    prev_layer = Some((layer.range.clone(), layer.content.language_id()));
                 }
-                Ordering::Greater => {
-                    prev_layer = None;
-                }
+                Ordering::Greater => {}
             }
 
+            prev_layer = Some((layer.range.clone(), layer.content.language_id()));
             max_depth = layer.depth;
         }
-    }
-
-    pub fn single_tree_captures<'a>(
-        range: Range<usize>,
-        text: &'a Rope,
-        tree: &'a tree_sitter::Tree,
-        language: &'a Arc<Language>,
-        query: fn(&Grammar) -> Option<&Query>,
-    ) -> SyntaxMapCaptures<'a> {
-        SyntaxMapCaptures::new(
-            range,
-            text,
-            [SyntaxLayer {
-                language,
-                tree,
-                included_sub_ranges: None,
-                depth: 0,
-                offset: (0, tree_sitter::Point::new(0, 0)),
-            }]
-            .into_iter(),
-            query,
-        )
     }
 
     pub fn captures<'a>(
@@ -1642,7 +1631,8 @@ fn parse_text(
             .parse_with_options(
                 &mut move |offset, _| {
                     chunks.seek(start_byte + offset);
-                    chunks.next().unwrap_or("").as_bytes()
+                    // Tree-sitter can request bytes inside a UTF-8 character.
+                    chunks.peek_bytes().unwrap_or_default()
                 },
                 old_tree,
                 progress_callback
@@ -2248,18 +2238,10 @@ impl std::fmt::Debug for SyntaxLayerEntry {
 }
 
 impl<'a> tree_sitter::TextProvider<&'a [u8]> for TextProvider<'a> {
-    type I = ByteChunks<'a>;
+    type I = text::Bytes<'a>;
 
     fn text(&mut self, node: tree_sitter::Node) -> Self::I {
-        ByteChunks(self.0.chunks_in_range(node.byte_range()))
-    }
-}
-
-impl<'a> Iterator for ByteChunks<'a> {
-    type Item = &'a [u8];
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().map(str::as_bytes)
+        self.0.bytes_in_range(node.byte_range())
     }
 }
 

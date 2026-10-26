@@ -118,6 +118,11 @@ impl AgentDiffPane {
                 cx.subscribe(&thread, |this, _thread, event, cx| {
                     this.handle_acp_thread_event(event, cx)
                 }),
+                cx.subscribe(&editor, |_, _, event: &EditorEvent, cx| {
+                    if event == &(EditorEvent::SelectionsChanged { local: true }) {
+                        cx.emit(event.clone())
+                    }
+                }),
             ],
             multibuffer,
             editor,
@@ -1304,6 +1309,19 @@ impl AgentDiff {
         });
     }
 
+    #[cfg(test)]
+    pub(crate) fn reviewed_thread(
+        workspace: &WeakEntity<Workspace>,
+        cx: &mut App,
+    ) -> Option<Entity<AcpThread>> {
+        Self::global(cx)
+            .read(cx)
+            .workspace_threads
+            .get(workspace)?
+            .thread
+            .upgrade()
+    }
+
     fn register_active_thread_impl(
         &mut self,
         workspace: &WeakEntity<Workspace>,
@@ -1456,16 +1474,23 @@ impl AgentDiff {
                     self.update_reviewing_editors(workspace, window, cx);
                 }
             }
-            AcpThreadEvent::Stopped(_) => {
+            AcpThreadEvent::Stopped { .. } => {
                 self.update_reviewing_editors(workspace, window, cx);
             }
-            AcpThreadEvent::Error | AcpThreadEvent::LoadError(_) | AcpThreadEvent::Refusal => {
+            AcpThreadEvent::Error
+            | AcpThreadEvent::ConnectionLost
+            | AcpThreadEvent::LoadError(_)
+            | AcpThreadEvent::Refusal => {
                 self.update_reviewing_editors(workspace, window, cx);
             }
             AcpThreadEvent::TitleUpdated
+            | AcpThreadEvent::ActivityConfirmedIdle
             | AcpThreadEvent::StatusChanged
-            | AcpThreadEvent::TokenUsageUpdated
+            | AcpThreadEvent::SubmissionUpdated(_)
+            | AcpThreadEvent::TokenUsageUpdated(_)
+            | AcpThreadEvent::NoticesUpdated
             | AcpThreadEvent::SubagentSpawned(_)
+            | AcpThreadEvent::SubagentAssociationUpdated
             | AcpThreadEvent::EntriesRemoved(_)
             | AcpThreadEvent::ToolAuthorizationRequested(_)
             | AcpThreadEvent::ToolAuthorizationReceived(_)

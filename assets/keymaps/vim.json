@@ -504,7 +504,7 @@
       "*": "buffer_search::UseSelectionForFind",
       "shift-x": "editor::SelectLine",
       "_": "vim::HelixTrimSelections",
-      "ctrl-c": "editor::ToggleComments",
+      "ctrl-c": ["editor::ToggleComments", { "advance_downwards": false, "comment_empty_lines": false }],
       "alt-o": "editor::SelectLargerSyntaxNode",
       "alt-i": "editor::SelectSmallerSyntaxNode",
       "alt-p": "editor::SelectPreviousSyntaxNode",
@@ -553,7 +553,7 @@
       "space w d": "pane::SplitDown", // not a helix default
 
       // Space mode
-      "space b": "tab_switcher::ToggleAll",
+      "space b": "tab_switcher::OpenInActivePane",
       "space f": "file_finder::Toggle",
       "space k": "editor::Hover",
       "space s": "outline::Toggle",
@@ -562,7 +562,7 @@
       "space r": "editor::Rename",
       "space a": "editor::ToggleCodeActions",
       "space h": "editor::SelectAllMatches",
-      "space c": "editor::ToggleComments",
+      "space c": ["editor::ToggleComments", { "advance_downwards": false, "comment_empty_lines": false }],
       "space p": "editor::Paste",
       "space y": "editor::Copy",
       "space /": "pane::DeploySearch",
@@ -1009,6 +1009,20 @@
     },
   },
   {
+    "context": "Editor && DebuggerHover && VimControl && (vim_mode == normal || vim_mode == helix_normal)",
+    "bindings": {
+      "escape": "editor::Cancel",
+      "h": "editor::DebuggerHoverCollapseSelected",
+      "j": "editor::DebuggerHoverSelectNext",
+      "k": "editor::DebuggerHoverSelectPrevious",
+      "l": "editor::DebuggerHoverExpandSelected",
+      "left": "editor::DebuggerHoverCollapseSelected",
+      "down": "editor::DebuggerHoverSelectNext",
+      "up": "editor::DebuggerHoverSelectPrevious",
+      "right": "editor::DebuggerHoverExpandSelected"
+    }
+  },
+  {
     // netrw compatibility
     "context": "ProjectPanel && not_editing",
     "bindings": {
@@ -1216,6 +1230,8 @@
       "ctrl-d": "markdown::ScrollPageDown",
       "ctrl-y": "markdown::ScrollUp",
       "ctrl-e": "markdown::ScrollDown",
+      "ctrl-o": "pane::GoBack",
+      "ctrl-i": "pane::GoForward",
       "g g": "markdown::ScrollToTop",
       "shift-g": "markdown::ScrollToBottom",
       "/": "buffer_search::Deploy",

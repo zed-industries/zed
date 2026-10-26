@@ -1,18 +1,19 @@
 use anyhow::{Result, anyhow};
 use credentials_provider::CredentialsProvider;
 use fs::Fs;
-use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
+use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{App, AsyncApp, Context, Entity, Subscription, Task, TaskExt};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelToolChoice, LanguageModelToolResultContent,
-    MessageContent, env_var,
+    LanguageModelCompletionStream, LanguageModelToolChoice, LanguageModelToolChoiceSupport,
+    LanguageModelToolResultContent, MessageContent, env_var, unavailable_error,
 };
 use language_model::{
-    InlineDescription, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, ProviderSettingsView, RateLimiter, Role, SubPageProviderSettings,
+    InlineDescription, LanguageModelClient, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, ModelRateLimiters, ProviderSettingsView,
+    RateLimiter, Role, SubPageProviderSettings,
 };
 use lmstudio::{LMSTUDIO_API_URL, ModelType, get_models};
 
@@ -22,6 +23,7 @@ use std::sync::LazyLock;
 use std::{collections::BTreeMap, sync::Arc};
 use ui::{ButtonLike, ConfiguredApiCard, Divider, List, ListBulletItem, Tooltip, prelude::*};
 use ui_input::InputField;
+use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
 use language_model::chat_completion::ChatCompletionEventMapper;
@@ -46,6 +48,7 @@ pub struct LmStudioSettings {
 pub struct LmStudioLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
     state: Entity<State>,
+    request_limiters: ModelRateLimiters,
 }
 
 pub struct State {
@@ -53,7 +56,8 @@ pub struct State {
     credentials_provider: Arc<dyn CredentialsProvider>,
     http_client: Arc<dyn HttpClient>,
     available_models: Vec<lmstudio::Model>,
-    fetch_model_task: Option<Task<Result<()>>>,
+    fetch_model_task: Option<Task<()>>,
+    last_fetch_models_error: Option<String>,
     _subscription: Subscription,
 }
 
@@ -120,14 +124,23 @@ impl State {
     }
 
     fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
-        let task = self.fetch_models(cx);
+        let fetch_task = self.fetch_models(cx);
+        let task = cx.spawn(async move |this, cx| {
+            let result = fetch_task.await;
+            this.update(cx, |this, _cx| {
+                this.last_fetch_models_error =
+                    result.as_ref().err().map(|error| format!("{error:#}"));
+            })
+            .ok();
+            result.log_err();
+        });
         self.fetch_model_task.replace(task);
     }
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         let credentials_provider = self.credentials_provider.clone();
         let api_url = LmStudioLanguageModelProvider::api_url(cx).into();
-        let _task = self.api_key_state.load_if_needed(
+        let load_key = self.api_key_state.load_if_needed(
             api_url,
             |this| &mut this.api_key_state,
             credentials_provider,
@@ -138,8 +151,9 @@ impl State {
             return Task::ready(Ok(()));
         }
 
-        let fetch_models_task = self.fetch_models(cx);
-        cx.spawn(async move |_this, _cx| {
+        cx.spawn(async move |state, cx| {
+            load_key.await?;
+            let fetch_models_task = state.update(cx, |state, cx| state.fetch_models(cx))?;
             match fetch_models_task.await {
                 Ok(()) => Ok(()),
                 Err(err) => {
@@ -205,9 +219,11 @@ impl LmStudioLanguageModelProvider {
                     http_client,
                     available_models: Default::default(),
                     fetch_model_task: None,
+                    last_fetch_models_error: None,
                     _subscription: subscription,
                 }
             }),
+            request_limiters: ModelRateLimiters::default(),
         };
         this.state
             .update(cx, |state, cx| state.restart_fetch_models_task(cx));
@@ -223,6 +239,46 @@ impl LmStudioLanguageModelProvider {
 
     fn has_custom_url(cx: &App) -> bool {
         Self::api_url(cx) != LMSTUDIO_API_URL
+    }
+
+    /// Every model this provider offers, keyed by id: the models LM Studio
+    /// reports, with settings entries added or overriding reported ones.
+    fn lmstudio_models(&self, cx: &App) -> BTreeMap<String, lmstudio::Model> {
+        let mut models: BTreeMap<String, lmstudio::Model> = BTreeMap::default();
+
+        for model in self.state.read(cx).available_models.iter() {
+            models.insert(model.name.clone(), model.clone());
+        }
+
+        for model in AllLanguageModelSettings::get_global(cx)
+            .lmstudio
+            .available_models
+            .iter()
+        {
+            models.insert(
+                model.name.clone(),
+                lmstudio::Model {
+                    name: model.name.clone(),
+                    display_name: model.display_name.clone(),
+                    max_tokens: model.max_tokens,
+                    supports_tool_calls: model.supports_tool_calls,
+                    supports_images: model.supports_images,
+                },
+            );
+        }
+
+        models
+    }
+
+    /// The current configuration of `model`, if this provider still offers it.
+    fn config(
+        &self,
+        model: &LanguageModel,
+        cx: &App,
+    ) -> Result<lmstudio::Model, LanguageModelCompletionError> {
+        self.lmstudio_models(cx)
+            .remove(model.id.0.as_ref())
+            .ok_or_else(|| unavailable_error(model))
     }
 }
 
@@ -247,55 +303,22 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
         IconOrSvg::Icon(IconName::AiLmStudio)
     }
 
-    fn default_model(&self, _: &App) -> Option<Arc<dyn LanguageModel>> {
+    fn default_model(&self, _: &App) -> Option<LanguageModel> {
         // We shouldn't try to select default model, because it might lead to a load call for an unloaded model.
         // In a constrained environment where user might not have enough resources it'll be a bad UX to select something
         // to load by default.
         None
     }
 
-    fn default_fast_model(&self, _: &App) -> Option<Arc<dyn LanguageModel>> {
+    fn default_fast_model(&self, _: &App) -> Option<LanguageModel> {
         // See explanation for default_model.
         None
     }
 
-    fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        let mut models: BTreeMap<String, lmstudio::Model> = BTreeMap::default();
-
-        // Add models from the LM Studio API
-        for model in self.state.read(cx).available_models.iter() {
-            models.insert(model.name.clone(), model.clone());
-        }
-
-        // Override with available models from settings
-        for model in AllLanguageModelSettings::get_global(cx)
-            .lmstudio
-            .available_models
-            .iter()
-        {
-            models.insert(
-                model.name.clone(),
-                lmstudio::Model {
-                    name: model.name.clone(),
-                    display_name: model.display_name.clone(),
-                    max_tokens: model.max_tokens,
-                    supports_tool_calls: model.supports_tool_calls,
-                    supports_images: model.supports_images,
-                },
-            );
-        }
-
-        models
-            .into_values()
-            .map(|model| {
-                Arc::new(LmStudioLanguageModel {
-                    id: LanguageModelId::from(model.name.clone()),
-                    model,
-                    http_client: self.http_client.clone(),
-                    request_limiter: RateLimiter::new(4),
-                    state: self.state.clone(),
-                }) as Arc<dyn LanguageModel>
-            })
+    fn provided_models(&self, cx: &App) -> Vec<LanguageModel> {
+        self.lmstudio_models(cx)
+            .values()
+            .map(language_model)
             .collect()
     }
 
@@ -305,6 +328,11 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
 
     fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
         self.state.update(cx, |state, cx| state.authenticate(cx))
+    }
+
+    fn refresh_models(&self, cx: &mut App) {
+        self.state
+            .update(cx, |state, cx| state.restart_fetch_models_task(cx));
     }
 
     fn settings_view(&self, _cx: &mut App) -> Option<ProviderSettingsView> {
@@ -321,149 +349,175 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
     }
 }
 
-pub struct LmStudioLanguageModel {
-    id: LanguageModelId,
-    model: lmstudio::Model,
-    http_client: Arc<dyn HttpClient>,
-    request_limiter: RateLimiter,
-    state: Entity<State>,
+impl LanguageModelClient for LmStudioLanguageModelProvider {
+    fn stream_completion(
+        &self,
+        model: &LanguageModel,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<LanguageModelCompletionStream, LanguageModelCompletionError>>
+    {
+        let config = match cx.update(|cx| self.config(model, cx)) {
+            Ok(config) => config,
+            Err(error) => return async move { Err(error) }.boxed(),
+        };
+        let request_limiter = self.request_limiters.for_model(&model.id);
+        let request = match to_lmstudio_request(&config, request) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
+        let completions = self.stream_lmstudio_request(request, &request_limiter, cx);
+        async move {
+            let mapper = ChatCompletionEventMapper::new();
+            Ok(mapper.map_stream(completions.await?).boxed())
+        }
+        .boxed()
+    }
 }
 
-impl LmStudioLanguageModel {
-    fn to_lmstudio_request(
-        &self,
-        request: LanguageModelRequest,
-    ) -> Result<lmstudio::ChatCompletionRequest> {
-        if request.contains_custom_tool_input() {
-            anyhow::bail!("LM Studio does not support custom tools");
-        }
+fn to_lmstudio_request(
+    config: &lmstudio::Model,
+    request: LanguageModelRequest,
+) -> Result<lmstudio::ChatCompletionRequest> {
+    if request.contains_custom_tool_input() {
+        anyhow::bail!("LM Studio does not support custom tools");
+    }
 
-        let mut messages = Vec::new();
+    let mut messages = Vec::new();
 
-        for message in request.messages {
-            for content in message.content {
-                match content {
-                    MessageContent::Text(text) => add_message_content_part(
-                        lmstudio::MessagePart::Text { text },
+    for message in request.messages {
+        for content in message.content {
+            match content {
+                MessageContent::Text(text) => add_message_content_part(
+                    lmstudio::MessagePart::Text { text },
+                    message.role,
+                    &mut messages,
+                ),
+                MessageContent::Thinking { .. } => {}
+                MessageContent::RedactedThinking(_) => {}
+                MessageContent::Compaction(_) => {}
+                MessageContent::Image(image) => {
+                    add_message_content_part(
+                        lmstudio::MessagePart::Image {
+                            image_url: lmstudio::ImageUrl {
+                                url: image.to_base64_url(),
+                                detail: None,
+                            },
+                        },
                         message.role,
                         &mut messages,
-                    ),
-                    MessageContent::Thinking { .. } => {}
-                    MessageContent::RedactedThinking(_) => {}
-                    MessageContent::Compaction(_) => {}
-                    MessageContent::Image(image) => {
-                        add_message_content_part(
-                            lmstudio::MessagePart::Image {
-                                image_url: lmstudio::ImageUrl {
-                                    url: image.to_base64_url(),
-                                    detail: None,
-                                },
+                    );
+                }
+                MessageContent::ToolUse(tool_use) => {
+                    let input = tool_use
+                        .input
+                        .as_json()
+                        .ok_or_else(|| anyhow!("LM Studio does not support custom tool calls"))?;
+                    let tool_call = lmstudio::ToolCall {
+                        id: tool_use.id.to_string(),
+                        content: lmstudio::ToolCallContent::Function {
+                            function: lmstudio::FunctionContent {
+                                name: tool_use.name.to_string(),
+                                arguments: serde_json::to_string(input).unwrap_or_default(),
                             },
-                            message.role,
-                            &mut messages,
-                        );
-                    }
-                    MessageContent::ToolUse(tool_use) => {
-                        let input = tool_use.input.as_json().ok_or_else(|| {
-                            anyhow!("LM Studio does not support custom tool calls")
-                        })?;
-                        let tool_call = lmstudio::ToolCall {
-                            id: tool_use.id.to_string(),
-                            content: lmstudio::ToolCallContent::Function {
-                                function: lmstudio::FunctionContent {
-                                    name: tool_use.name.to_string(),
-                                    arguments: serde_json::to_string(input).unwrap_or_default(),
-                                },
-                            },
-                        };
+                        },
+                    };
 
-                        if let Some(lmstudio::ChatMessage::Assistant { tool_calls, .. }) =
-                            messages.last_mut()
-                        {
-                            tool_calls.push(tool_call);
-                        } else {
-                            messages.push(lmstudio::ChatMessage::Assistant {
-                                content: None,
-                                tool_calls: vec![tool_call],
-                            });
-                        }
-                    }
-                    MessageContent::ToolResult(tool_result) => {
-                        let content: Vec<lmstudio::MessagePart> = tool_result
-                            .content
-                            .iter()
-                            .map(|part| match part {
-                                LanguageModelToolResultContent::Text(text) => {
-                                    lmstudio::MessagePart::Text {
-                                        text: text.to_string(),
-                                    }
-                                }
-                                LanguageModelToolResultContent::Image(image) => {
-                                    lmstudio::MessagePart::Image {
-                                        image_url: lmstudio::ImageUrl {
-                                            url: image.to_base64_url(),
-                                            detail: None,
-                                        },
-                                    }
-                                }
-                            })
-                            .collect();
-
-                        messages.push(lmstudio::ChatMessage::Tool {
-                            content: content.into(),
-                            tool_call_id: tool_result.tool_use_id.to_string(),
+                    if let Some(lmstudio::ChatMessage::Assistant { tool_calls, .. }) =
+                        messages.last_mut()
+                    {
+                        tool_calls.push(tool_call);
+                    } else {
+                        messages.push(lmstudio::ChatMessage::Assistant {
+                            content: None,
+                            tool_calls: vec![tool_call],
                         });
                     }
                 }
+                MessageContent::ToolResult(tool_result) => {
+                    let content: Vec<lmstudio::MessagePart> = tool_result
+                        .content
+                        .iter()
+                        .map(|part| match part {
+                            LanguageModelToolResultContent::Text(text) => {
+                                lmstudio::MessagePart::Text {
+                                    text: text.to_string(),
+                                }
+                            }
+                            LanguageModelToolResultContent::Image(image) => {
+                                lmstudio::MessagePart::Image {
+                                    image_url: lmstudio::ImageUrl {
+                                        url: image.to_base64_url(),
+                                        detail: None,
+                                    },
+                                }
+                            }
+                        })
+                        .collect();
+
+                    messages.push(lmstudio::ChatMessage::Tool {
+                        content: content.into(),
+                        tool_call_id: tool_result.tool_use_id.to_string(),
+                    });
+                }
             }
         }
-
-        Ok(lmstudio::ChatCompletionRequest {
-            model: self.model.name.clone(),
-            messages,
-            stream: true,
-            stream_options: Some(lmstudio::StreamOptions {
-                include_usage: true,
-            }),
-            max_tokens: Some(-1),
-            stop: Some(request.stop),
-            // In LM Studio you can configure specific settings you'd like to use for your model.
-            // For example Qwen3 is recommended to be used with 0.7 temperature.
-            // It would be a bad UX to silently override these settings from Zed, so we pass no temperature as a default.
-            temperature: request.temperature.or(None),
-            tools: request
-                .tools
-                .into_iter()
-                .map(|tool| {
-                    let input_schema = match tool.input {
-                        language_model::LanguageModelRequestToolInput::Function {
-                            input_schema,
-                            ..
-                        } => input_schema,
-                        language_model::LanguageModelRequestToolInput::Custom { .. } => {
-                            return Err(anyhow::anyhow!("LM Studio does not support custom tools"));
-                        }
-                    };
-                    Ok(lmstudio::ToolDefinition::Function {
-                        function: lmstudio::FunctionDefinition {
-                            name: tool.name,
-                            description: Some(tool.description),
-                            parameters: Some(input_schema),
-                        },
-                    })
-                })
-                .collect::<Result<_>>()?,
-            tool_choice: request.tool_choice.map(|choice| match choice {
-                LanguageModelToolChoice::Auto => lmstudio::ToolChoice::Auto,
-                LanguageModelToolChoice::Any => lmstudio::ToolChoice::Required,
-                LanguageModelToolChoice::None => lmstudio::ToolChoice::None,
-            }),
-        })
     }
 
-    fn stream_completion(
+    Ok(lmstudio::ChatCompletionRequest {
+        model: config.name.clone(),
+        messages,
+        stream: true,
+        stream_options: Some(lmstudio::StreamOptions {
+            include_usage: true,
+        }),
+        max_tokens: Some(
+            request
+                .max_output_tokens
+                .map(i32::try_from)
+                .transpose()?
+                .unwrap_or(-1),
+        ),
+        stop: Some(request.stop),
+        // In LM Studio you can configure specific settings you'd like to use for your model.
+        // For example Qwen3 is recommended to be used with 0.7 temperature.
+        // It would be a bad UX to silently override these settings from Zed, so we pass no temperature as a default.
+        temperature: request.temperature.or(None),
+        tools: request
+            .tools
+            .into_iter()
+            .map(|tool| {
+                let input_schema = match tool.input {
+                    language_model::LanguageModelRequestToolInput::Function {
+                        input_schema,
+                        ..
+                    } => input_schema,
+                    language_model::LanguageModelRequestToolInput::Custom { .. } => {
+                        return Err(anyhow::anyhow!("LM Studio does not support custom tools"));
+                    }
+                };
+                Ok(lmstudio::ToolDefinition::Function {
+                    function: lmstudio::FunctionDefinition {
+                        name: tool.name,
+                        description: Some(tool.description),
+                        parameters: Some(input_schema),
+                    },
+                })
+            })
+            .collect::<Result<_>>()?,
+        tool_choice: request.tool_choice.map(|choice| match choice {
+            LanguageModelToolChoice::Auto => lmstudio::ToolChoice::Auto,
+            LanguageModelToolChoice::Any => lmstudio::ToolChoice::Required,
+            LanguageModelToolChoice::None => lmstudio::ToolChoice::None,
+        }),
+    })
+}
+
+impl LmStudioLanguageModelProvider {
+    fn stream_lmstudio_request(
         &self,
         request: lmstudio::ChatCompletionRequest,
+        request_limiter: &RateLimiter,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -479,7 +533,7 @@ impl LmStudioLanguageModel {
             (state.api_key_state.key(&api_url), api_url, extra_headers)
         });
 
-        let future = self.request_limiter.stream(async move {
+        let future = request_limiter.stream(async move {
             let stream = lmstudio::stream_chat_completion(
                 http_client.as_ref(),
                 &api_url,
@@ -495,69 +549,24 @@ impl LmStudioLanguageModel {
     }
 }
 
-impl LanguageModel for LmStudioLanguageModel {
-    fn id(&self) -> LanguageModelId {
-        self.id.clone()
-    }
-
-    fn name(&self) -> LanguageModelName {
-        LanguageModelName::from(self.model.display_name().to_string())
-    }
-
-    fn provider_id(&self) -> LanguageModelProviderId {
-        PROVIDER_ID
-    }
-
-    fn provider_name(&self) -> LanguageModelProviderName {
-        PROVIDER_NAME
-    }
-
-    fn supports_tools(&self) -> bool {
-        self.model.supports_tool_calls()
-    }
-
-    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
-        self.supports_tools()
-            && match choice {
-                LanguageModelToolChoice::Auto => true,
-                LanguageModelToolChoice::Any => true,
-                LanguageModelToolChoice::None => true,
-            }
-    }
-
-    fn supports_images(&self) -> bool {
-        self.model.supports_images
-    }
-
-    fn telemetry_id(&self) -> String {
-        format!("lmstudio/{}", self.model.id())
-    }
-
-    fn max_token_count(&self) -> u64 {
-        self.model.max_token_count()
-    }
-
-    fn stream_completion(
-        &self,
-        request: LanguageModelRequest,
-        cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<
-            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
-            LanguageModelCompletionError,
-        >,
-    > {
-        let request = match self.to_lmstudio_request(request) {
-            Ok(request) => request,
-            Err(error) => return async move { Err(error.into()) }.boxed(),
-        };
-        let completions = self.stream_completion(request, cx);
-        async move {
-            let mapper = ChatCompletionEventMapper::new();
-            Ok(mapper.map_stream(completions.await?).boxed())
-        }
-        .boxed()
+fn language_model(model: &lmstudio::Model) -> LanguageModel {
+    let supports_tools = model.supports_tool_calls();
+    LanguageModel {
+        supports_tools,
+        tool_choice_support: LanguageModelToolChoiceSupport {
+            auto: supports_tools,
+            any: supports_tools,
+            none: supports_tools,
+        },
+        supports_images: model.supports_images,
+        ..LanguageModel::new(
+            LanguageModelId::from(model.name.clone()),
+            LanguageModelName::from(model.display_name().to_string()),
+            PROVIDER_ID,
+            PROVIDER_NAME,
+            format!("lmstudio/{}", model.id()),
+            model.max_token_count(),
+        )
     }
 }
 
@@ -902,5 +911,105 @@ impl Render for ConfigurationView {
                         }
                     }),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use credentials_provider::test_support::FakeCredentialsProvider;
+    use gpui::TestAppContext;
+    use http_client::{AsyncBody, FakeHttpClient, Response};
+
+    #[gpui::test]
+    async fn enabling_ai_discovers_models_with_stored_credentials(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let mut store = SettingsStore::test(cx);
+            store.update_user_settings(cx, |settings| {
+                settings.project.disable_ai = Some(true.into());
+            });
+            cx.set_global(store);
+            language_model::set_credentials_read_gate::<SettingsStore>(crate::ai_disabled, cx);
+        });
+        let credentials = Arc::new(FakeCredentialsProvider::default());
+        credentials
+            .state
+            .lock()
+            .keys
+            .insert(LMSTUDIO_API_URL.to_string(), b"stored-key".to_vec());
+        let client = FakeHttpClient::create(|request| async move {
+            if request
+                .headers()
+                .get("Authorization")
+                .and_then(|value| value.to_str().ok())
+                != Some("Bearer stored-key")
+            {
+                return Ok(Response::builder().status(401).body(AsyncBody::default())?);
+            }
+            Ok(Response::builder().status(200).body(AsyncBody::from(
+                r#"{"data":[{"id":"stored-model","object":"model","type":"llm","publisher":"test","compatibility_type":"gguf","state":"loaded"}]}"#,
+            ))?)
+        });
+        let provider = cx.update(|cx| {
+            let provider = LmStudioLanguageModelProvider::new(client, credentials.clone(), cx);
+            provider.state.update(cx, |state, _| {
+                state.api_key_state = ApiKeyState::new(
+                    SharedString::from(LMSTUDIO_API_URL),
+                    EnvVar {
+                        name: SharedString::from("TEST_API_KEY"),
+                        value: None,
+                    },
+                );
+            });
+            provider
+        });
+        let authentication = cx.update(|cx| provider.authenticate(cx));
+        cx.run_until_parked();
+        credentials.assert_reads(&[]);
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.disable_ai = Some(false.into());
+            });
+        });
+        authentication
+            .await
+            .expect("authentication after enabling AI");
+        assert_eq!(
+            cx.update(|cx| provider
+                .provided_models(cx)
+                .into_iter()
+                .map(|model| model.id.0.to_string())
+                .collect::<Vec<_>>()),
+            ["stored-model"]
+        );
+        credentials.assert_reads(&[LMSTUDIO_API_URL]);
+    }
+
+    #[gpui::test]
+    async fn restart_fetch_models_task_records_error_on_failure(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        let http_client = FakeHttpClient::create(|_request| async move {
+            Ok(http_client::Response::builder()
+                .status(500)
+                .body(http_client::AsyncBody::from("server error"))?)
+        });
+        let provider = cx.update(|cx| {
+            LmStudioLanguageModelProvider::new(
+                http_client,
+                Arc::new(FakeCredentialsProvider::default()),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let error = cx.read(|cx| provider.state.read(cx).last_fetch_models_error.clone());
+        assert!(
+            error.is_some(),
+            "a failed model fetch should be recorded, not silently dropped"
+        );
     }
 }

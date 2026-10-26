@@ -24,7 +24,7 @@ pub struct TerminalToolHeader {
     running: bool,
     truncated_tooltip: Option<SharedString>,
     failed: bool,
-    exit_code: Option<i32>,
+    exit_code: Option<u32>,
     sandbox_warning: Option<TerminalSandboxWarning>,
     on_toggle_expand: Option<ClickHandler>,
     on_stop: Option<ClickHandler>,
@@ -70,7 +70,7 @@ impl TerminalToolHeader {
         self
     }
 
-    pub fn failed(mut self, exit_code: Option<i32>) -> Self {
+    pub fn failed(mut self, exit_code: Option<u32>) -> Self {
         self.failed = true;
         self.exit_code = exit_code;
         self
@@ -178,22 +178,25 @@ impl RenderOnce for TerminalToolHeader {
                             .color(Color::Muted)
                             .with_rotate_animation(2),
                     )
-                    .child(Divider::vertical().color(DividerColor::Border).ml_1())
-                    .child(
-                        IconButton::new(child_id("stop"), IconName::Stop)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Error)
-                            .tooltip(move |_window, cx| {
-                                Tooltip::with_meta(
-                                    "Stop This Command",
-                                    None,
-                                    "Also possible by placing your cursor inside the terminal \
-                                     and using regular terminal bindings.",
-                                    cx,
-                                )
-                            })
-                            .when_some(on_stop, |this, handler| this.on_click(handler)),
-                    )
+                    .when_some(on_stop, |header, handler| {
+                        header
+                            .child(Divider::vertical().color(DividerColor::Border).ml_1())
+                            .child(
+                                IconButton::new(child_id("stop"), IconName::Stop)
+                                    .icon_size(IconSize::Small)
+                                    .icon_color(Color::Error)
+                                    .tooltip(move |_window, cx| {
+                                        Tooltip::with_meta(
+                                            "Stop This Command",
+                                            None,
+                                            "Also possible by placing your cursor inside the \
+                                             terminal and using regular terminal bindings.",
+                                            cx,
+                                        )
+                                    })
+                                    .on_click(handler),
+                            )
+                    })
             })
             .when_some(truncated_tooltip, |header, tooltip| {
                 header.child(
@@ -206,16 +209,18 @@ impl RenderOnce for TerminalToolHeader {
                 )
             })
             .when(failed, |header| {
-                header.child(
-                    IconButton::new(child_id("failed"), IconName::Close)
-                        .cursor_style(CursorStyle::Arrow)
-                        .style(ButtonStyle::Transparent)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Error)
-                        .when_some(exit_code, |this, code| {
-                            this.tooltip(Tooltip::text(format!("Exited with code {code}")))
-                        }),
-                )
+                header
+                    .debug_selector(|| format!("terminal-tool-failed-{exit_code:?}"))
+                    .child(
+                        IconButton::new(child_id("failed"), IconName::Close)
+                            .cursor_style(CursorStyle::Arrow)
+                            .style(ButtonStyle::Transparent)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Error)
+                            .when_some(exit_code, |this, code| {
+                                this.tooltip(Tooltip::text(format!("Exited with code {code}")))
+                            }),
+                    )
             })
             .when_some(sandbox_warning, |header, warning| {
                 let TerminalSandboxWarning {
@@ -244,6 +249,48 @@ impl RenderOnce for TerminalToolHeader {
             .bg(header_bg)
             .child(header_row)
             .children(command_slot)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[gpui::test]
+    fn running_header_only_offers_stop_when_control_is_available(cx: &mut gpui::TestAppContext) {
+        struct Header {
+            stoppable: bool,
+            stops: usize,
+        }
+        impl Render for Header {
+            fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+                div().w(px(400.)).child(
+                    TerminalToolHeader::new("test", "test", "/project", true)
+                        .running(true)
+                        .when(self.stoppable, |header| {
+                            header.on_stop(cx.listener(|this, _, _, _| this.stops += 1))
+                        }),
+                )
+            }
+        }
+
+        crate::test_support::init_test(cx);
+        let (header, cx) = cx.add_window_view(|_, _| Header {
+            stoppable: false,
+            stops: 0,
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("ICON-Stop").is_none());
+
+        header.update(cx, |header, cx| {
+            header.stoppable = true;
+            cx.notify();
+        });
+        let stop = cx
+            .debug_bounds("ICON-Stop")
+            .expect("owned process Stop control");
+        cx.simulate_click(stop.center(), gpui::Modifiers::default());
+        assert_eq!(header.read_with(cx, |header, _| header.stops), 1);
     }
 }
 

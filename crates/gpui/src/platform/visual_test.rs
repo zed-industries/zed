@@ -65,6 +65,10 @@ impl VisualTestPlatform {
 }
 
 impl Platform for VisualTestPlatform {
+    fn platform_info(&self) -> crate::PlatformInfo {
+        self.platform.platform_info()
+    }
+
     fn background_executor(&self) -> BackgroundExecutor {
         self.background_executor.clone()
     }
@@ -99,6 +103,10 @@ impl Platform for VisualTestPlatform {
 
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         self.platform.primary_display()
+    }
+
+    fn on_displays_changed(&self, callback: Box<dyn FnMut()>) {
+        self.platform.on_displays_changed(callback)
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
@@ -175,6 +183,8 @@ impl Platform for VisualTestPlatform {
     fn on_quit(&self, _callback: Box<dyn FnMut() -> bool>) {}
 
     fn on_reopen(&self, _callback: Box<dyn FnMut()>) {}
+
+    fn on_system_sleep(&self, _callback: Box<dyn FnMut()>) {}
 
     fn on_system_wake(&self, _callback: Box<dyn FnMut()>) {}
 

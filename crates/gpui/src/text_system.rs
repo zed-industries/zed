@@ -16,8 +16,8 @@ use crate::{
     Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size,
     StrikethroughStyle, TextRenderingMode, UnderlineStyle, px,
 };
-use anyhow::{Context as _, anyhow};
-use collections::FxHashMap;
+use anyhow::Context as _;
+use collections::{FxHashMap, FxHashSet};
 use core::fmt;
 use derive_more::{Add, Deref, FromStr, Sub};
 use itertools::Itertools;
@@ -25,11 +25,17 @@ use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::{SmallVec, smallvec};
 use std::{
     borrow::Cow,
+    cell::RefCell,
     cmp,
+    collections::VecDeque,
     fmt::{Debug, Display, Formatter},
     hash::{Hash, Hasher},
+    mem,
     ops::{Deref, DerefMut, Range},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 /// An opaque identifier for a specific font.
@@ -47,27 +53,212 @@ pub const SUBPIXEL_VARIANTS_X: u8 = 4;
 /// Number of subpixel glyph variants along the Y axis.
 pub const SUBPIXEL_VARIANTS_Y: u8 = 1;
 
+// Leave enough room below the underline for its stroke while keeping it below the baseline.
+const UNDERLINE_DESCENT_OFFSET_FACTOR: f32 = 0.618;
+
+/// Returns the vertical offset used to paint an underline within a line.
+pub fn underline_y_offset(line_height: Pixels, ascent: Pixels, descent: Pixels) -> Pixels {
+    let padding_top = (line_height - ascent - descent) / 2.;
+    padding_top + ascent + descent * UNDERLINE_DESCENT_OFFSET_FACTOR
+}
+
+const MAX_REPORTED_MISSING_GLYPHS: usize = 1024;
+
+/// The spacing behavior required of a fallback font.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum FallbackFontClass {
+    /// A proportionally spaced fallback font.
+    Proportional,
+    /// A fixed-width fallback font.
+    Monospace,
+}
+
+/// A grapheme cluster that could not be represented by any available font.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct MissingGlyph {
+    grapheme: SharedString,
+    font_class: FallbackFontClass,
+}
+
+impl MissingGlyph {
+    /// Creates a missing-glyph report.
+    pub fn new(grapheme: SharedString, font_class: FallbackFontClass) -> Self {
+        Self {
+            grapheme,
+            font_class,
+        }
+    }
+
+    /// Returns the unresolved grapheme cluster.
+    pub fn grapheme(&self) -> &str {
+        &self.grapheme
+    }
+
+    /// Returns the spacing behavior required of a fallback font.
+    pub fn font_class(&self) -> FallbackFontClass {
+        self.font_class
+    }
+}
+
+/// Accepts missing glyphs detected by a platform text system.
+pub trait MissingGlyphSink: Send + Sync {
+    /// Reports grapheme clusters that exhausted font fallback.
+    fn report(&self, missing_glyphs: Vec<MissingGlyph>);
+}
+
+#[derive(Default)]
+struct MissingGlyphState {
+    reported: FxHashSet<MissingGlyph>,
+    reported_order: VecDeque<MissingGlyph>,
+    generation: usize,
+}
+
+impl MissingGlyphState {
+    fn reset(&mut self, generation: usize) {
+        self.reported.clear();
+        self.reported_order.clear();
+        self.generation = generation;
+    }
+}
+
+struct QueuedMissingGlyph {
+    generation: usize,
+    missing_glyph: MissingGlyph,
+}
+
+/// Collects missing-glyph reports without invoking application code during layout.
+struct MissingGlyphReporter {
+    generation: Arc<AtomicUsize>,
+    sender: async_channel::Sender<QueuedMissingGlyph>,
+}
+
+impl MissingGlyphSink for MissingGlyphReporter {
+    fn report(&self, missing_glyphs: Vec<MissingGlyph>) {
+        if self.sender.is_closed() {
+            return;
+        }
+
+        let generation = self.generation.load(Ordering::Acquire);
+        // Repetitions within a line must not fill the queue before its other
+        // missing glyphs. Cross-report deduplication belongs to the receiver.
+        for missing_glyph in missing_glyphs.into_iter().unique() {
+            let queued = QueuedMissingGlyph {
+                generation,
+                missing_glyph,
+            };
+            if self.sender.try_send(queued).is_err() {
+                break;
+            }
+        }
+    }
+}
+
+impl MissingGlyphReporter {
+    fn reset(&self) {
+        self.generation.fetch_add(1, Ordering::AcqRel);
+    }
+}
+
+/// Receives batches of grapheme clusters that exhausted font fallback.
+pub(crate) struct MissingGlyphReceiver {
+    state: MissingGlyphState,
+    generation: Arc<AtomicUsize>,
+    receiver: async_channel::Receiver<QueuedMissingGlyph>,
+}
+
+impl MissingGlyphReceiver {
+    /// Waits until at least one new missing glyph has been observed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`async_channel::RecvError`] if the reporting channel is closed.
+    pub(crate) async fn recv(
+        &mut self,
+    ) -> std::result::Result<Vec<MissingGlyph>, async_channel::RecvError> {
+        loop {
+            let queued = self.receiver.recv().await?;
+            let mut missing_glyphs = Vec::new();
+            for queued in std::iter::once(queued)
+                .chain(std::iter::from_fn(|| self.receiver.try_recv().ok()))
+                .take(MAX_REPORTED_MISSING_GLYPHS)
+            {
+                let generation = self.generation.load(Ordering::Acquire);
+                if self.state.generation != generation {
+                    self.state.reset(generation);
+                    missing_glyphs.clear();
+                }
+                if queued.generation != generation
+                    || !self.state.reported.insert(queued.missing_glyph.clone())
+                {
+                    continue;
+                }
+                self.state
+                    .reported_order
+                    .push_back(queued.missing_glyph.clone());
+                missing_glyphs.push(queued.missing_glyph);
+                if self.state.reported.len() > MAX_REPORTED_MISSING_GLYPHS
+                    && let Some(expired) = self.state.reported_order.pop_front()
+                {
+                    self.state.reported.remove(&expired);
+                }
+            }
+            if !missing_glyphs.is_empty() {
+                return Ok(missing_glyphs);
+            }
+            // A producer can keep refilling the queue with already-reported
+            // glyphs. Bound work per poll even when every report is filtered out.
+            let mut yielded = false;
+            std::future::poll_fn(|cx| {
+                if std::mem::replace(&mut yielded, true) {
+                    std::task::Poll::Ready(())
+                } else {
+                    cx.waker().wake_by_ref();
+                    std::task::Poll::Pending
+                }
+            })
+            .await;
+        }
+    }
+}
+
+impl Drop for MissingGlyphReceiver {
+    fn drop(&mut self) {
+        self.receiver.close();
+        while self.receiver.try_recv().is_ok() {}
+    }
+}
+
 /// The GPUI text rendering sub system.
 pub struct TextSystem {
     platform_text_system: Arc<dyn PlatformTextSystem>,
-    font_ids_by_font: RwLock<FxHashMap<Font, Result<FontId>>>,
+    font_ids_by_font: RwLock<FxHashMap<Font, CachedFont>>,
     font_metrics: RwLock<FxHashMap<FontId, FontMetrics>>,
     raster_bounds: RwLock<FxHashMap<RenderGlyphParams, Bounds<DevicePixels>>>,
     wrapper_pool: Mutex<FxHashMap<FontIdWithSize, Vec<LineWrapper>>>,
-    font_runs_pool: Mutex<Vec<Vec<FontRun>>>,
     fallback_font_stack: SmallVec<[Font; 2]>,
+    font_generation: Arc<AtomicUsize>,
+    missing_glyph_reporter: Arc<MissingGlyphReporter>,
+    missing_glyph_receiver: Mutex<Option<MissingGlyphReceiver>>,
+}
+
+#[derive(Clone)]
+enum CachedFont {
+    Direct(FontId),
+    Fallback(FontId),
+    Missing(Arc<anyhow::Error>),
 }
 
 impl TextSystem {
     /// Create a new TextSystem with the given platform text system.
     pub fn new(platform_text_system: Arc<dyn PlatformTextSystem>) -> Self {
+        let (sender, receiver) = async_channel::bounded(MAX_REPORTED_MISSING_GLYPHS);
+        let missing_glyph_generation = Arc::<AtomicUsize>::default();
         TextSystem {
             platform_text_system,
             font_metrics: RwLock::default(),
             raster_bounds: RwLock::default(),
             font_ids_by_font: RwLock::default(),
             wrapper_pool: Mutex::default(),
-            font_runs_pool: Mutex::default(),
             fallback_font_stack: smallvec![
                 // TODO: Remove this when Linux have implemented setting fallbacks.
                 font(".ZedMono"),
@@ -81,51 +272,64 @@ impl TextSystem {
                 font("DejaVu Sans"),
                 font("Arial"), // macOS, Windows
             ],
+            font_generation: Arc::default(),
+            missing_glyph_reporter: Arc::new(MissingGlyphReporter {
+                generation: missing_glyph_generation.clone(),
+                sender,
+            }),
+            missing_glyph_receiver: Mutex::new(Some(MissingGlyphReceiver {
+                state: MissingGlyphState::default(),
+                generation: missing_glyph_generation,
+                receiver,
+            })),
         }
     }
 
-    /// Get a list of all available font names from the operating system.
+    /// Get sorted, unique font family names available to the platform text system.
+    ///
+    /// Includes fonts registered with [`Self::add_fonts`].
     pub fn all_font_names(&self) -> Vec<String> {
         let mut names = self.platform_text_system.all_font_names();
-        names.extend(
-            self.fallback_font_stack
-                .iter()
-                .map(|font| font.family.to_string()),
-        );
-        names.push(".SystemUIFont".to_string());
         names.sort_unstable();
         names.dedup();
         names
     }
 
     /// Add a font's data to the text system.
+    ///
+    /// Cached font resolution and line layouts are invalidated after installation.
+    /// Layouts already in progress may complete against the previous font set.
     pub fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
-        self.platform_text_system.add_fonts(fonts)
+        self.platform_text_system.add_fonts(fonts)?;
+        self.font_ids_by_font.write().clear();
+        self.missing_glyph_reporter.reset();
+        self.font_generation.fetch_add(1, Ordering::Release);
+        Ok(())
     }
 
-    /// Get the FontId for the configure font family and style.
-    fn font_id(&self, font: &Font) -> Result<FontId> {
-        fn clone_font_id_result(font_id: &Result<FontId>) -> Result<FontId> {
-            match font_id {
-                Ok(font_id) => Ok(*font_id),
-                Err(err) => Err(anyhow!("{err}")),
-            }
-        }
+    /// Takes the receiver for missing-glyph reports.
+    ///
+    /// Only one receiver is available for each text system. Returns `None` when
+    /// the receiver was already taken or another caller is taking it.
+    pub(crate) fn take_missing_glyph_receiver(&self) -> Option<MissingGlyphReceiver> {
+        self.missing_glyph_receiver
+            .try_lock()
+            .and_then(|mut receiver| receiver.take())
+    }
 
-        let font_id = self
-            .font_ids_by_font
-            .read()
-            .get(font)
-            .map(clone_font_id_result);
-        if let Some(font_id) = font_id {
-            font_id
-        } else {
-            let font_id = self.platform_text_system.font_id(font);
-            self.font_ids_by_font
-                .write()
-                .insert(font.clone(), clone_font_id_result(&font_id));
-            font_id
-        }
+    pub(crate) fn enable_missing_glyph_reporting(&self) {
+        self.platform_text_system
+            .set_missing_glyph_sink(Some(self.missing_glyph_reporter.clone()));
+    }
+
+    pub(crate) fn disable_missing_glyph_reporting(&self) {
+        self.platform_text_system.set_missing_glyph_sink(None);
+        self.missing_glyph_reporter.reset();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn report_missing_glyphs_in_test(&self, missing_glyphs: Vec<MissingGlyph>) {
+        self.missing_glyph_reporter.report(missing_glyphs);
     }
 
     /// Get the Font for the Font Id.
@@ -133,7 +337,7 @@ impl TextSystem {
         let lock = self.font_ids_by_font.read();
         lock.iter()
             .filter_map(|(font, result)| match result {
-                Ok(font_id) if *font_id == id => Some(font.clone()),
+                CachedFont::Direct(font_id) if *font_id == id => Some(font.clone()),
                 _ => None,
             })
             .next()
@@ -146,23 +350,12 @@ impl TextSystem {
     ///
     /// Panics if the font and none of the fallbacks can be resolved.
     pub fn resolve_font(&self, font: &Font) -> FontId {
-        if let Ok(font_id) = self.font_id(font) {
-            return font_id;
+        if let Some(CachedFont::Direct(font_id) | CachedFont::Fallback(font_id)) =
+            self.font_ids_by_font.read().get(font)
+        {
+            return *font_id;
         }
-        for fallback in &self.fallback_font_stack {
-            if let Ok(font_id) = self.font_id(fallback) {
-                return font_id;
-            }
-        }
-
-        panic!(
-            "failed to resolve font '{}' or any of the fallbacks: {}",
-            font.family,
-            self.fallback_font_stack
-                .iter()
-                .map(|fallback| &fallback.family)
-                .join(", ")
-        );
+        self.resolve_font_uncached(font)
     }
 
     /// Prewarm any system font caches needed to shape text.
@@ -373,12 +566,75 @@ impl TextSystem {
         self.platform_text_system
             .recommended_rendering_mode(font_id, font_size)
     }
+
+    fn resolve_font_uncached(&self, font: &Font) -> FontId {
+        let mut font_error = None;
+        let font_id = {
+            let mut font_ids = self.font_ids_by_font.upgradable_read();
+            if let Some(CachedFont::Direct(font_id) | CachedFont::Fallback(font_id)) =
+                font_ids.get(font)
+            {
+                return *font_id;
+            }
+
+            let mut lookup_font = |candidate: &Font| {
+                let cached = if let Some(cached) = font_ids.get(candidate) {
+                    cached.clone()
+                } else {
+                    let cached = match self.platform_text_system.font_id(candidate) {
+                        Ok(font_id) => CachedFont::Direct(font_id),
+                        Err(error) => CachedFont::Missing(Arc::new(error)),
+                    };
+                    font_ids.with_upgraded(|font_ids| {
+                        font_ids.insert(candidate.clone(), cached.clone());
+                    });
+                    cached
+                };
+                match cached {
+                    CachedFont::Direct(font_id) => Some(font_id),
+                    CachedFont::Fallback(_) => None,
+                    CachedFont::Missing(error) => {
+                        if candidate == font {
+                            font_error = Some(error);
+                        }
+                        None
+                    }
+                }
+            };
+
+            if let Some(font_id) = lookup_font(font) {
+                Some(font_id)
+            } else {
+                let font_id = self.fallback_font_stack.iter().find_map(lookup_font);
+                if let Some(font_id) = font_id {
+                    font_ids.with_upgraded(|font_ids| {
+                        font_ids.insert(font.clone(), CachedFont::Fallback(font_id));
+                    });
+                }
+                font_id
+            }
+        };
+        if let Some(error) = font_error {
+            log::warn!("failed to load font {font:?}: {error:#}");
+        }
+        font_id.unwrap_or_else(|| {
+            panic!(
+                "failed to resolve font '{}' or any of the fallbacks: {}",
+                font.family,
+                self.fallback_font_stack
+                    .iter()
+                    .map(|fallback| &fallback.family)
+                    .join(", ")
+            );
+        })
+    }
 }
 
 /// The GPUI text layout subsystem.
 #[derive(Deref)]
 pub struct WindowTextSystem {
     line_layout_cache: LineLayoutCache,
+    font_runs_buffer: RefCell<Vec<FontRun>>,
     #[deref]
     text_system: Arc<TextSystem>,
 }
@@ -387,7 +643,11 @@ impl WindowTextSystem {
     /// Create a new WindowTextSystem with the given TextSystem.
     pub fn new(text_system: Arc<TextSystem>) -> Self {
         Self {
-            line_layout_cache: LineLayoutCache::new(text_system.platform_text_system.clone()),
+            line_layout_cache: LineLayoutCache::new(
+                text_system.platform_text_system.clone(),
+                text_system.font_generation.clone(),
+            ),
+            font_runs_buffer: RefCell::default(),
             text_system,
         }
     }
@@ -531,7 +791,7 @@ impl WindowTextSystem {
         line_clamp: Option<usize>,
     ) -> Result<SmallVec<[WrappedLine; 1]>> {
         let mut runs = runs.iter().filter(|run| run.len > 0).cloned().peekable();
-        let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
+        let mut font_runs = mem::take(&mut *self.font_runs_buffer.borrow_mut());
 
         let mut lines = SmallVec::new();
         let mut max_wrap_lines = line_clamp;
@@ -645,7 +905,7 @@ impl WindowTextSystem {
             process_line(text, 0, end);
         }
 
-        self.font_runs_pool.lock().push(font_runs);
+        *self.font_runs_buffer.borrow_mut() = font_runs;
 
         Ok(lines)
     }
@@ -666,7 +926,7 @@ impl WindowTextSystem {
         force_width: Option<Pixels>,
     ) -> Arc<LineLayout> {
         let mut last_run = None::<&TextRun>;
-        let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
+        let mut font_runs = mem::take(&mut *self.font_runs_buffer.borrow_mut());
         font_runs.clear();
 
         for run in runs.iter() {
@@ -704,7 +964,7 @@ impl WindowTextSystem {
             force_width,
         );
 
-        self.font_runs_pool.lock().push(font_runs);
+        *self.font_runs_buffer.borrow_mut() = font_runs;
 
         layout
     }
@@ -748,7 +1008,7 @@ impl WindowTextSystem {
         force_width: Option<Pixels>,
     ) -> Option<Arc<LineLayout>> {
         let mut last_run = None::<&TextRun>;
-        let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
+        let mut font_runs = mem::take(&mut *self.font_runs_buffer.borrow_mut());
         font_runs.clear();
 
         for run in runs.iter() {
@@ -787,7 +1047,7 @@ impl WindowTextSystem {
             force_width,
         );
 
-        self.font_runs_pool.lock().push(font_runs);
+        *self.font_runs_buffer.borrow_mut() = font_runs;
 
         layout
     }
@@ -810,7 +1070,7 @@ impl WindowTextSystem {
         materialize_text: impl FnOnce() -> SharedString,
     ) -> Arc<LineLayout> {
         let mut last_run = None::<&TextRun>;
-        let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
+        let mut font_runs = mem::take(&mut *self.font_runs_buffer.borrow_mut());
         font_runs.clear();
 
         for run in runs.iter() {
@@ -850,7 +1110,7 @@ impl WindowTextSystem {
             materialize_text,
         );
 
-        self.font_runs_pool.lock().push(font_runs);
+        *self.font_runs_buffer.borrow_mut() = font_runs;
 
         layout
     }
@@ -1218,5 +1478,90 @@ pub fn font_name_with_fallbacks_shared<'a>(
         ".ZedSans" | "Zed Plex Sans" => const { &SharedString::new_static("IBM Plex Sans") },
         ".ZedMono" | "Zed Plex Mono" => const { &SharedString::new_static("Lilex") },
         _ => name,
+    }
+}
+
+#[cfg(test)]
+mod font_resolution_tests {
+    use super::*;
+    use crate::NoopTextSystem;
+
+    #[test]
+    fn caches_resolved_font_fallbacks() {
+        let mut text_system = TextSystem::new(Arc::new(NoopTextSystem::new()));
+        let requested = font("Missing Font").bold().italic();
+        let missing = CachedFont::Missing(Arc::new(anyhow::anyhow!("missing font")));
+        {
+            let mut font_ids = text_system.font_ids_by_font.write();
+            font_ids.insert(requested.clone(), missing.clone());
+            for fallback in &text_system.fallback_font_stack {
+                font_ids.insert(fallback.clone(), missing.clone());
+            }
+            font_ids.insert(font("Arial"), CachedFont::Direct(FontId(42)));
+        }
+
+        assert_eq!(text_system.resolve_font(&requested), FontId(42));
+        assert_eq!(text_system.get_font_for_id(FontId(42)), Some(font("Arial")));
+
+        text_system.fallback_font_stack.clear();
+        assert_eq!(text_system.resolve_font(&requested), FontId(42));
+    }
+}
+
+#[cfg(test)]
+mod missing_glyph_tests {
+    use super::*;
+    use futures::FutureExt as _;
+
+    #[test]
+    fn bounds_retained_missing_glyphs() {
+        let (reporter, mut receiver) = missing_glyph_channel();
+        reporter.report(
+            (0..MAX_REPORTED_MISSING_GLYPHS)
+                .map(|index| {
+                    MissingGlyph::new(index.to_string().into(), FallbackFontClass::Proportional)
+                })
+                .collect(),
+        );
+        assert!(receiver.recv().now_or_never().unwrap().is_ok());
+
+        let newest = MissingGlyph::new("newest".into(), FallbackFontClass::Monospace);
+        reporter.report(vec![newest.clone()]);
+        assert!(receiver.recv().now_or_never().unwrap().is_ok());
+
+        let state = &receiver.state;
+        assert_eq!(state.reported.len(), MAX_REPORTED_MISSING_GLYPHS);
+        assert_eq!(state.reported_order.len(), MAX_REPORTED_MISSING_GLYPHS);
+        assert!(state.reported.contains(&newest));
+    }
+
+    #[test]
+    fn dropping_receiver_closes_and_clears_reports() {
+        let (reporter, receiver) = missing_glyph_channel();
+        reporter.report(vec![missing_glyph("missing")]);
+
+        drop(receiver);
+
+        assert!(reporter.sender.is_closed());
+        assert!(reporter.sender.is_empty());
+    }
+
+    fn missing_glyph_channel() -> (MissingGlyphReporter, MissingGlyphReceiver) {
+        let (sender, receiver) = async_channel::bounded(MAX_REPORTED_MISSING_GLYPHS);
+        let generation = Arc::<AtomicUsize>::default();
+        let reporter = MissingGlyphReporter {
+            generation: generation.clone(),
+            sender,
+        };
+        let receiver = MissingGlyphReceiver {
+            state: MissingGlyphState::default(),
+            generation,
+            receiver,
+        };
+        (reporter, receiver)
+    }
+
+    fn missing_glyph(grapheme: &'static str) -> MissingGlyph {
+        MissingGlyph::new(grapheme.into(), FallbackFontClass::Proportional)
     }
 }

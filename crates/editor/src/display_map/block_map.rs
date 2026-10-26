@@ -1135,7 +1135,6 @@ impl BlockMap {
 
             // For each of these blocks, insert a new isomorphic transform preceding the block,
             // and then insert the block itself.
-            let mut just_processed_folded_buffer = false;
             for (block_placement, block) in blocks_in_edit.drain(..) {
                 let span =
                     ztracing::debug_span!("for block in edits", block_height = block.height());
@@ -1157,12 +1156,8 @@ impl BlockMap {
                             continue;
                         };
                         rows_before_block = delta;
-                        just_processed_folded_buffer = false;
                     }
                     &BlockPlacement::Near(position) | &BlockPlacement::Below(position) => {
-                        if just_processed_folded_buffer {
-                            continue;
-                        }
                         let Some(delta) = (position + RowDelta(1)).checked_sub(input_rows) else {
                             continue;
                         };
@@ -1174,7 +1169,6 @@ impl BlockMap {
                         };
                         rows_before_block = delta;
                         summary.input_rows = WrapRow(1) + (*range.end() - *range.start());
-                        just_processed_folded_buffer = matches!(block, Block::FoldedBuffer { .. });
                     }
                 }
 
@@ -1627,6 +1621,7 @@ impl BlockMap {
         });
         blocks.dedup_by(|right, left| match (left.0.clone(), right.0.clone()) {
             (BlockPlacement::Replace(range), BlockPlacement::Above(row))
+            | (BlockPlacement::Replace(range), BlockPlacement::Near(row))
             | (BlockPlacement::Replace(range), BlockPlacement::Below(row)) => range.contains(&row),
             (BlockPlacement::Replace(range_a), BlockPlacement::Replace(range_b)) => {
                 if range_a.end() >= range_b.start() && range_a.start() <= range_b.end() {
@@ -2628,6 +2623,11 @@ impl BlockSnapshot {
             self.wrap_snapshot.max_point()
         }
     }
+
+    pub(super) fn replacement_block_input_range(&self, row: WrapRow) -> Option<Range<WrapRow>> {
+        let (start, end, item) = self.transforms.find::<WrapRow, _>((), &row, Bias::Right);
+        item?.block.as_ref()?.is_replacement().then_some(start..end)
+    }
 }
 
 impl BlockChunks<'_> {
@@ -2951,8 +2951,8 @@ mod tests {
     use super::*;
     use crate::{
         display_map::{
-            Companion, fold_map::FoldMap, fold_map::FoldPlaceholder, inlay_map::InlayMap,
-            tab_map::TabMap, wrap_map::WrapMap,
+            Companion, DisplayMap, fold_map::FoldMap, fold_map::FoldPlaceholder,
+            inlay_map::InlayMap, tab_map::TabMap, wrap_map::WrapMap,
         },
         test::test_font,
     };
@@ -2961,6 +2961,7 @@ mod tests {
     use itertools::Itertools;
     use language::{Buffer, Capability, Point};
     use multi_buffer::{MultiBuffer, PathKey};
+    use project::project_settings::DiagnosticSeverity;
     use rand::prelude::*;
     use settings::SettingsStore;
     use std::env;
@@ -5616,6 +5617,91 @@ mod tests {
 
         let snapshot = block_map.read(new_wrap_snapshot, edits, None);
         assert_eq!(snapshot.snapshot.text(), "aaa\nbbb\nccc\nddd\neee\n");
+    }
+
+    #[gpui::test]
+    fn test_replacement_input_ranges_preserve_partial_tab_rows(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            init_test(cx);
+            crate::init(cx);
+        });
+        let buffer = cx.update(|cx| {
+            MultiBuffer::build_simple("one two three\nfour five six\nseven eight", cx)
+        });
+        let map = cx.new(|cx| {
+            DisplayMap::new(
+                buffer,
+                font("Helvetica"),
+                px(14.0),
+                Some(px(90.)),
+                1,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+        let mut snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+        let wraps = snapshot.wrap_snapshot().clone();
+        assert_eq!(
+            wraps.text(),
+            "one two \nthree\nfour five \nsix\nseven \neight"
+        );
+        for height in [0, 1, 4] {
+            let block = Block::Custom(Arc::new(CustomBlock {
+                id: CustomBlockId(0),
+                placement: BlockPlacement::Replace(Anchor::Min..=Anchor::Max),
+                height: Some(height),
+                style: BlockStyle::Fixed,
+                render: Arc::new(Mutex::new(Arc::new(|_| div().into_any()))),
+                priority: 0,
+            }));
+            for (hidden, expected) in [
+                (0..6, [Some(0..=2), Some(0..=2), Some(0..=2)]),
+                (1..5, [None, Some(1..=1), None]),
+                (0..5, [Some(0..=1), Some(0..=1), None]),
+                (1..6, [None, Some(1..=2), Some(1..=2)]),
+                (2..4, [None, Some(1..=1), None]),
+                (0..2, [Some(0..=0), None, None]),
+                (4..6, [None, None, Some(2..=2)]),
+                (0..1, [None, None, None]),
+                (5..6, [None, None, None]),
+            ] {
+                let mut transforms = SumTree::new(());
+                push_isomorphic(&mut transforms, RowDelta(hidden.start), &wraps);
+                transforms.push(
+                    Transform {
+                        summary: TransformSummary {
+                            input_rows: WrapRow(hidden.end - hidden.start),
+                            output_rows: BlockRow(height),
+                            ..TransformSummary::default()
+                        },
+                        block: Some(block.clone()),
+                    },
+                    (),
+                );
+                push_isomorphic(&mut transforms, RowDelta(6 - hidden.end), &wraps);
+                snapshot.block_snapshot.transforms = transforms;
+                assert_eq!(
+                    (0..3)
+                        .map(|row| snapshot.fully_replaced_tab_rows(row))
+                        .collect::<Vec<_>>(),
+                    expected,
+                    "hidden: {hidden:?}, height: {height}"
+                );
+                for row in 0..=6 {
+                    assert_eq!(
+                        snapshot
+                            .block_snapshot
+                            .replacement_block_input_range(WrapRow(row)),
+                        hidden
+                            .contains(&row)
+                            .then_some(WrapRow(hidden.start)..WrapRow(hidden.end)),
+                        "row: {row}, hidden: {hidden:?}, height: {height}"
+                    );
+                }
+            }
+        }
     }
 
     fn init_test(cx: &mut gpui::App) {
