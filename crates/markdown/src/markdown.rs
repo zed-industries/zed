@@ -149,7 +149,7 @@ impl Default for MarkdownStyle {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MarkdownFont {
     Agent,
     Editor,
@@ -433,7 +433,7 @@ pub struct Markdown {
     active_search_highlight: Option<usize>,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
 pub struct MarkdownOptions {
     pub parse_links_only: bool,
     pub parse_html: bool,
@@ -441,6 +441,7 @@ pub struct MarkdownOptions {
     pub render_math: bool,
     pub parse_heading_slugs: bool,
     pub render_metadata_blocks: bool,
+    pub font: Option<MarkdownFont>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -697,7 +698,19 @@ impl Markdown {
             return;
         }
 
-        self.math_state.retheme(cx);
+        let theme_settings = ThemeSettings::get_global(cx);
+        let base_font_size = match self.options.font {
+            Some(MarkdownFont::Agent) => theme_settings.agent_ui_font_size(cx).as_f32(),
+            Some(MarkdownFont::Preview) => theme_settings.markdown_preview_font_size(cx).as_f32(),
+            _ => theme_settings.ui_font_size(cx).as_f32(),
+        };
+        let font_size = base_font_size * 1.21;
+        if (self.math_state.font_size() - font_size).abs() > 0.01 {
+            let parsed = self.parsed_markdown.clone();
+            self.math_state.update(&parsed, font_size, cx);
+        } else {
+            self.math_state.retheme(cx);
+        }
         cx.notify();
     }
 
@@ -1174,7 +1187,15 @@ impl Markdown {
                 }
                 if this.options.render_math {
                     let parsed_markdown = this.parsed_markdown.clone();
-                    let font_size = ThemeSettings::get_global(cx).buffer_font_size(cx).as_f32();
+                    let theme_settings = ThemeSettings::get_global(cx);
+                    let base_font_size = match this.options.font {
+                        Some(MarkdownFont::Agent) => theme_settings.agent_ui_font_size(cx).as_f32(),
+                        Some(MarkdownFont::Preview) => {
+                            theme_settings.markdown_preview_font_size(cx).as_f32()
+                        }
+                        _ => theme_settings.ui_font_size(cx).as_f32(),
+                    };
+                    let font_size = base_font_size * 1.21;
                     this.math_state.update(&parsed_markdown, font_size, cx);
                 } else {
                     this.math_state.clear();
@@ -2921,9 +2942,25 @@ impl Element for MarkdownElement {
                 MarkdownEvent::InlineMath(_) => {
                     if render_math {
                         if let Some(expr) = parsed_markdown.math_expressions.get(&range.start) {
+                            let text_style = builder.text_style();
+                            let text_font_size =
+                                text_style.font_size.to_pixels(window.rem_size()).as_f32();
+                            let text_line_height =
+                                text_style.line_height_in_pixels(window.rem_size()).as_f32();
+                            let text_system = cx.text_system();
+                            let font_id = text_system.resolve_font(&text_style.font());
+                            let text_ascent = text_system
+                                .ascent(font_id, Pixels::from(text_font_size))
+                                .as_f32();
+                            let text_descent = text_system
+                                .descent(font_id, Pixels::from(text_font_size))
+                                .as_f32();
+                            let padding_top = (text_line_height - text_ascent - text_descent) / 2.0;
+                            let text_baseline = padding_top + text_ascent;
+
                             builder.push_inline_sourced_element(
                                 range.clone(),
-                                render_math_expression(expr, &math_state),
+                                render_math_expression(expr, &math_state, Some(text_baseline)),
                             );
                         }
                     } else {
@@ -2942,7 +2979,7 @@ impl Element for MarkdownElement {
                         if let Some(expr) = parsed_markdown.math_expressions.get(&range.start) {
                             builder.push_display_sourced_element(
                                 range.clone(),
-                                render_math_expression(expr, &math_state),
+                                render_math_expression(expr, &math_state, None),
                             );
                         }
                     } else {

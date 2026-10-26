@@ -59,7 +59,7 @@ struct MathRenderResult {
 }
 
 struct CachedMathExpression {
-    display_tree: Arc<OnceLock<anyhow::Result<(DisplayList, f32)>>>,
+    display_tree: Arc<OnceLock<anyhow::Result<DisplayList>>>,
     rendered: Arc<Mutex<Option<anyhow::Result<MathRenderResult>>>>,
     theme_color: Arc<Mutex<gpui::Hsla>>,
     _task: Arc<Mutex<Option<Task<()>>>>,
@@ -173,6 +173,10 @@ impl MathState {
         self.order.clear();
     }
 
+    pub(crate) fn font_size(&self) -> f32 {
+        self.font_size
+    }
+
     /// Re-color every cached expression with the current theme color asynchronously
     /// in the background, avoiding UI thread blocking.
     pub(crate) fn retheme(&mut self, cx: &mut Context<Markdown>) {
@@ -192,21 +196,28 @@ impl MathState {
     ) {
         self.font_size = font_size;
 
-        // Compute the actual font ascent from GPUI metrics so inline math
-        // baseline aligns with surrounding text.
+        // Compute the baseline of the surrounding text line using the UI font
+        // and standard line padding so inline math baselines align with text.
         let theme_settings = ThemeSettings::get_global(cx);
         let font = gpui::Font {
-            family: theme_settings.buffer_font.family.clone(),
-            fallbacks: theme_settings.buffer_font.fallbacks.clone(),
-            features: theme_settings.buffer_font.features.clone(),
+            family: theme_settings.ui_font.family.clone(),
+            fallbacks: theme_settings.ui_font.fallbacks.clone(),
+            features: theme_settings.ui_font.features.clone(),
             style: Default::default(),
-            weight: theme_settings.buffer_font.weight,
+            weight: theme_settings.ui_font.weight,
         };
         let text_system = cx.text_system();
         let font_id = text_system.resolve_font(&font);
-        self.text_ascent = text_system
-            .ascent(font_id, Pixels::from(font_size))
+        let base_font_size = font_size / 1.21;
+        let ascent = text_system
+            .ascent(font_id, Pixels::from(base_font_size))
             .as_f32();
+        let descent = text_system
+            .descent(font_id, Pixels::from(base_font_size))
+            .as_f32();
+        let line_height = base_font_size * 1.75;
+        let padding_top = (line_height - ascent - descent) / 2.0;
+        self.text_ascent = padding_top + ascent;
 
         let mut new_order = Vec::new();
         for expr in parsed.math_expressions.values() {
@@ -248,18 +259,16 @@ impl CachedMathExpression {
                             .map_err(|e| anyhow::anyhow!("LaTeX parse error: {}", e))?;
                         let layout = ratex_layout::layout(&nodes, &Default::default());
                         let dl = ratex_layout::to_display_list(&layout);
-                        let baseline_y = dl.height as f32 * font_size + 2.0;
-                        Ok((dl, baseline_y))
+                        Ok(dl)
                     }
                 })
                 .await;
             let _ = dt.set(parse_result);
 
             // Phase 2 — recolor with latest theme color in background and render SVG
-            if let Some(Ok((dl, baseline_y))) = dt.get() {
+            if let Some(Ok(dl)) = dt.get() {
                 let current_color = *tc.lock().unwrap();
                 let dl = dl.clone();
-                let baseline_y = *baseline_y;
                 let svg_renderer = svg_renderer.clone();
 
                 let result = cx
@@ -267,6 +276,7 @@ impl CachedMathExpression {
                         let ratex_color = gpui_color_to_ratex(current_color);
                         let recolored = recolor_display_list(&dl, &ratex_color);
                         let svg = math_svg::display_list_to_svg(&recolored, font_size);
+                        let baseline_y = svg.baseline_y;
                         let image = svg_renderer
                             .render_single_frame(&svg.svg_bytes, 1.0)
                             .map_err(|e| anyhow::anyhow!("SVG render error: {}", e));
@@ -303,12 +313,11 @@ impl CachedMathExpression {
         let tc = self.theme_color.clone();
 
         let task = cx.spawn(async move |this, cx| {
-            let Some(Ok((display_list, baseline_y))) = dt.get() else {
+            let Some(Ok(display_list)) = dt.get() else {
                 return;
             };
             let current_color = *tc.lock().unwrap();
             let dl = display_list.clone();
-            let baseline_y = *baseline_y;
             let svg_renderer = svg_renderer.clone();
 
             let result = cx
@@ -316,6 +325,7 @@ impl CachedMathExpression {
                     let ratex_color = gpui_color_to_ratex(current_color);
                     let recolored = recolor_display_list(&dl, &ratex_color);
                     let svg = math_svg::display_list_to_svg(&recolored, font_size);
+                    let baseline_y = svg.baseline_y;
                     let image = svg_renderer
                         .render_single_frame(&svg.svg_bytes, 1.0)
                         .map_err(|e| anyhow::anyhow!("SVG render error: {}", e));
@@ -347,6 +357,7 @@ impl CachedMathExpression {
 pub(crate) fn render_math_expression(
     parsed: &ParsedMarkdownMathExpression,
     math_state: &MathState,
+    text_baseline: Option<f32>,
 ) -> AnyElement {
     let key = MathCacheKey::new(parsed.latex.clone(), math_state.font_size);
     let render_result = math_state
@@ -361,10 +372,12 @@ pub(crate) fn render_math_expression(
                     .flex()
                     .w_full()
                     .justify_center()
+                    .my_2()
                     .child(gpui::img(image))
                     .into_any_element()
             } else {
-                let shift = math_state.text_ascent - baseline_y;
+                let baseline = text_baseline.unwrap_or(math_state.text_ascent);
+                let shift = baseline - baseline_y;
                 div()
                     .child(gpui::img(image).mt(px(shift)))
                     .into_any_element()

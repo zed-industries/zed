@@ -294,6 +294,7 @@ impl MarkdownPreviewView {
                         render_math: true,
                         parse_heading_slugs: true,
                         render_metadata_blocks: true,
+                        font: Some(MarkdownFont::Preview),
                         ..Default::default()
                     },
                     cx,
